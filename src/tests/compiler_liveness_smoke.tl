@@ -31,7 +31,7 @@
           (live_tests.compiler-live-i64-ty)))]
     (and
       (live.compiler-live-set-eq?
-        (live.compiler-live-instr-uses instr)
+        (live.compiler-live-instr-uses (clone instr))
         (live.compiler-live-set3 20 21 22))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs instr)
@@ -53,19 +53,19 @@
       (ir.ir-instr-descriptor-pair-length 5 (ir.CompilerIrValue.Var 3))]
     (and
       (live.compiler-live-set-eq?
-        (live.compiler-live-instr-uses pack)
+        (live.compiler-live-instr-uses (clone pack))
         (live.compiler-live-set2 1 2))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs pack)
         (live.compiler-live-set1 3))
       (live.compiler-live-set-eq?
-        (live.compiler-live-instr-uses data)
+        (live.compiler-live-instr-uses (clone data))
         (live.compiler-live-set1 3))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs data)
         (live.compiler-live-set1 4))
       (live.compiler-live-set-eq?
-        (live.compiler-live-instr-uses length)
+        (live.compiler-live-instr-uses (clone length))
         (live.compiler-live-set1 3))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs length)

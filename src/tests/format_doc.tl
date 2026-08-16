@@ -6,8 +6,9 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import format_render_buf as fmt_buf)
+(import compiler_owned_view as owned_view)
 
-(define (fmt-len [text : String]) : i64
+(define (fmt-len [text : (& text str)]) : i64
   (string.string-length text))
 
 (define (fmt-eq? [left : String] [right : String]) : bool
@@ -38,10 +39,10 @@
   (Doc.HardLine))
 
 (define (doc-append [left : Doc] [right : Doc]) : Doc
-  (match left
+  (match (& left)
     [(Doc.Empty) right]
     [_
-      (match right
+      (match (& right)
         [(Doc.Empty) left]
         [_ (Doc.Concat (box left) (box right))])]))
 
@@ -51,16 +52,18 @@
 (define (doc-group [doc : Doc]) : Doc
   (Doc.Group (box doc)))
 
-(define (flat-width [doc : Doc]) : i64
+(define (flat-width [doc : (& doc Doc)]) : i64
   (match doc
     [(Doc.Empty) 0]
     [(Doc.Text text) (fmt-len text)]
     [(Doc.SoftLine) 1]
     [(Doc.HardLine) 1000000]
     [(Doc.Concat left right)
-      (+ (flat-width (__tl-box-place left)) (flat-width (__tl-box-place right)))]
-    [(Doc.Nest _ inner) (flat-width (__tl-box-place inner))]
-    [(Doc.Group inner) (flat-width (__tl-box-place inner))]))
+      (+
+        (flat-width (& (__tl-box-place left)))
+        (flat-width (& (__tl-box-place right))))]
+    [(Doc.Nest _ inner) (flat-width (& (__tl-box-place inner)))]
+    [(Doc.Group inner) (flat-width (& (__tl-box-place inner)))]))
 
 ;; Add the flat width of `doc` to `acc`, but stop descending as soon as the
 ;; running total exceeds `limit`: once a subtree is over budget the rest is left
@@ -70,7 +73,10 @@
 ;; work makes it O(width) per group. The total is monotonically non-decreasing,
 ;; so `(<= (flat-width-capped doc 0 r) r)` equals `(<= (flat-width doc) r)` for
 ;; every `doc` and `r` (used by `fits-flat`).
-(define (flat-width-capped [doc : Doc] [acc : i64] [limit : i64]) : i64
+(define (flat-width-capped
+  [doc : (& doc Doc)]
+  [acc : i64]
+  [limit : i64]) : i64
   (if (> acc limit)
     acc
     (match doc
@@ -80,13 +86,15 @@
       [(Doc.HardLine) (+ acc 1000000)]
       [(Doc.Concat left right)
         (flat-width-capped
-          (__tl-box-place right)
-          (flat-width-capped (__tl-box-place left) acc limit)
+          (& (__tl-box-place right))
+          (flat-width-capped (& (__tl-box-place left)) acc limit)
           limit)]
-      [(Doc.Nest _ inner) (flat-width-capped (__tl-box-place inner) acc limit)]
-      [(Doc.Group inner) (flat-width-capped (__tl-box-place inner) acc limit)])))
+      [(Doc.Nest _ inner)
+        (flat-width-capped (& (__tl-box-place inner)) acc limit)]
+      [(Doc.Group inner)
+        (flat-width-capped (& (__tl-box-place inner)) acc limit)])))
 
-(define (fits-flat [doc : Doc] [remaining : i64]) : bool
+(define (fits-flat [doc : (& doc Doc)] [remaining : i64]) : bool
   (<= (flat-width-capped doc 0 remaining) remaining))
 
 ;; Render `doc` by appending into `buf` in place, returning the resulting column.
@@ -94,7 +102,7 @@
 ;; renderer no longer allocates a fresh `TextBuf` (and a wrapping `RenderState`)
 ;; per node -- it mutates one builder and passes the column along as a plain i64.
 (define (render-doc-into
-  [doc : Doc]
+  [doc : (& doc Doc)]
   [width : i64]
   [indent : i64]
   [col : i64]
@@ -106,7 +114,7 @@
       (let
         [text-width : i64 (fmt-len text)]
         (begin
-          (fmt_buf.fmt-render-buf-append buf text)
+          (fmt_buf.fmt-render-buf-append buf (string.copy text))
           (+ col text-width)))]
     [(Doc.SoftLine)
       (if flat
@@ -123,29 +131,53 @@
     [(Doc.Concat left right)
       (let
         [left-col : i64
-          (render-doc-into (__tl-box-place left) width indent col flat buf)]
-        (render-doc-into (__tl-box-place right) width indent left-col flat buf))]
+          (render-doc-into
+            (& (__tl-box-place left))
+            width
+            indent
+            col
+            flat
+            buf)]
+        (render-doc-into
+          (& (__tl-box-place right))
+          width
+          indent
+          left-col
+          flat
+          buf))]
     [(Doc.Nest extra inner)
       (render-doc-into
-        (__tl-box-place inner)
+        (& (__tl-box-place inner))
         width
-        (+ indent extra)
+        (+ indent (deref extra))
         col
         flat
         buf)]
     [(Doc.Group inner)
-      (if (fits-flat (__tl-box-place inner) (- width col))
-        (render-doc-into (__tl-box-place inner) width indent col true buf)
-        (render-doc-into (__tl-box-place inner) width indent col false buf))]))
+      (if (fits-flat (& (__tl-box-place inner)) (- width col))
+        (render-doc-into
+          (& (__tl-box-place inner))
+          width
+          indent
+          col
+          true
+          buf)
+        (render-doc-into
+          (& (__tl-box-place inner))
+          width
+          indent
+          col
+          false
+          buf))]))
 
-(define (render-doc-width [doc : Doc] [width : i64]) : String
+(define (render-doc-width [doc : (& doc Doc)] [width : i64]) : String
   (let
     [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
     (begin
       (render-doc-into doc width 0 0 false (&mut buf))
       (fmt_buf.fmt-render-buf-string buf))))
 
-(define (render-doc [doc : Doc]) : String
+(define (render-doc [doc : (& doc Doc)]) : String
   (render-doc-width doc (fmt_buf.format-width)))
 
 (define (sample-group-doc) : Doc
@@ -259,12 +291,24 @@
 (define (format-doc-seq-branching-ok?) : bool
   (let
     [base : Doc (doc-append (doc-text "a") (doc-text "b"))]
-    [with-c : Doc (doc-append base (doc-text "c"))]
-    [with-d : Doc (doc-append base (doc-text "d"))]
+    [with-c : Doc
+      (doc-append
+        (owned_view.compiler-owned-shared-view base)
+        (doc-text "c"))]
+    [with-d : Doc
+      (doc-append
+        (owned_view.compiler-owned-shared-view base)
+        (doc-text "d"))]
     [tail : Doc
       (doc-append (doc-text "b") (doc-append (doc-text "c") (doc-text "d")))]
-    [with-a : Doc (doc-append (doc-text "a") tail)]
-    [with-z : Doc (doc-append (doc-text "z") tail)]
+    [with-a : Doc
+      (doc-append
+        (doc-text "a")
+        (owned_view.compiler-owned-shared-view tail))]
+    [with-z : Doc
+      (doc-append
+        (doc-text "z")
+        (owned_view.compiler-owned-shared-view tail))]
     (and
       (fmt-eq? (render-doc-width base 80) "ab")
       (fmt-eq? (render-doc-width with-c 80) "abc")
@@ -274,10 +318,13 @@
 
 (define (format-doc-self-test) : i64
   (let
-    [flat : String (render-doc-width (sample-group-doc) 80)]
-    [broken : String (render-doc-width (sample-group-doc) 6)]
-    [hard : String (render-doc-width (sample-hard-line-doc) 80)]
-    [empty : String (render-doc (doc-append (doc-empty) (doc-text "x")))]
+    [group-doc : Doc (sample-group-doc)]
+    [hard-doc : Doc (sample-hard-line-doc)]
+    [empty-doc : Doc (doc-append (doc-empty) (doc-text "x"))]
+    [flat : String (render-doc-width group-doc 80)]
+    [broken : String (render-doc-width group-doc 6)]
+    [hard : String (render-doc-width hard-doc 80)]
+    [empty : String (render-doc empty-doc)]
     (begin
       (unless (fmt-eq? flat "alpha beta") (return 1))
       (unless (fmt-eq? broken "alpha\n  beta") (return 2))

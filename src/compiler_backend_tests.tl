@@ -26,6 +26,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_float)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 (import compiler_profile_state as profile_state)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -15279,14 +15280,18 @@
     [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
     [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new intern-state)]
+      (compiler_backend.compiler-backend-state-new
+        (owned_view.compiler-owned-shared-view intern-state))]
     [function-a : i64
-      (ci.intern-compat-state-intern intern-state "debug_sparse_a")]
+      (ci.intern-compat-state-intern (&mut intern-state) "debug_sparse_a")]
     [function-b : i64
-      (ci.intern-compat-state-intern intern-state "debug_sparse_b")]
-    [path-a : i64 (ci.intern-compat-state-intern intern-state "src/debug_a.tl")]
+      (ci.intern-compat-state-intern (&mut intern-state) "debug_sparse_b")]
+    [path-a : i64
+      (ci.intern-compat-state-intern (&mut intern-state) "src/debug_a.tl")]
     [path-b : i64
-      (ci.intern-compat-state-generated-name intern-state "src/debug_high.tl")]
+      (ci.intern-compat-state-generated-name
+        (&mut intern-state)
+        "src/debug_high.tl")]
     [symbol-a : compiler_ir_types.CompilerIrSymbolId
       (compiler_ir_types.compiler-ir-symbol-typed-id function-a)]
     [symbol-b : compiler_ir_types.CompilerIrSymbolId
@@ -15369,10 +15374,12 @@
   (let
     [caller : arena.Arena (arena.current)]
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [name-id : i64
+      (ci.intern-compat-state-intern
+        (&mut intern-state)
+        "emission_arena_6274")]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-state)]
-    [name-id : i64
-      (ci.intern-compat-state-intern intern-state "emission_arena_6274")]
     [owner-symbol : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
@@ -15489,18 +15496,20 @@
     [caller : arena.Arena (arena.current)]
     [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new intern-state)]
     [function-a : i64
-      (ci.intern-compat-state-intern intern-state "debug_owner_a")]
+      (ci.intern-compat-state-intern (&mut intern-state) "debug_owner_a")]
     [function-b : i64
-      (ci.intern-compat-state-intern intern-state "debug_owner_b")]
+      (ci.intern-compat-state-intern (&mut intern-state) "debug_owner_b")]
     [path-a : i64
-      (ci.intern-compat-state-intern intern-state "src/debug_owner_a.tl")]
+      (ci.intern-compat-state-intern
+        (&mut intern-state)
+        "src/debug_owner_a.tl")]
     [path-b : i64
       (ci.intern-compat-state-generated-name
-        intern-state
+        (&mut intern-state)
         "src/debug_owner_high.tl")]
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
     [symbol-a : compiler_ir_types.CompilerIrSymbolId
       (compiler_ir_types.compiler-ir-symbol-typed-id function-a)]
     [symbol-b : compiler_ir_types.CompilerIrSymbolId
@@ -15698,18 +15707,26 @@
       (ci.intern-compat-state-capture-active)]
     [builtin-before : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [_install-a : unit (ci.intern-compat-state-install! intern-a)]
+    [_install-a : unit
+      (ci.intern-compat-state-install!
+        (ci.intern-global-shared-view intern-a))]
     [_reset-a : unit (cbi.compiler-builtin-reset!)]
     [_init-a : unit (cbi.compiler-builtin-initialize-for-parse!)]
-    [_capture-a : unit (ci.intern-compat-state-capture-from-globals! intern-a)]
-    [name-a : i64 (ci.intern-compat-state-intern intern-a "route_a")]
+    [_capture-a : unit
+      (ci.intern-compat-state-capture-from-globals! (&mut intern-a))]
+    [name-a : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "route_a")]
     [builtin-a : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [_install-b : unit (ci.intern-compat-state-install! intern-b)]
+    [_install-b : unit
+      (ci.intern-compat-state-install!
+        (ci.intern-global-shared-view intern-b))]
     [_reset-b : unit (cbi.compiler-builtin-reset!)]
     [_init-b : unit (cbi.compiler-builtin-initialize-for-parse!)]
-    [_capture-b : unit (ci.intern-compat-state-capture-from-globals! intern-b)]
-    [name-b : i64 (ci.intern-compat-state-intern intern-b "route_b")]
+    [_capture-b : unit
+      (ci.intern-compat-state-capture-from-globals! (&mut intern-b))]
+    [name-b : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "route_b")]
     [builtin-b : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [state-a : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-a)]
@@ -16116,12 +16133,15 @@
       (ci.intern-compat-state-capture-active)]
     [builtin-before : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
-    [_install-state : unit (ci.intern-compat-state-install! intern-state)]
+    [_install-state : unit
+      (ci.intern-compat-state-install!
+        (ci.intern-global-shared-view intern-state))]
     [_reset-state : unit (cbi.compiler-builtin-reset!)]
     [_init-state : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [_capture-state : unit
-      (ci.intern-compat-state-capture-from-globals! intern-state)]
-    [name-id : i64 (ci.intern-compat-state-intern intern-state "dup_abort")]
+      (ci.intern-compat-state-capture-from-globals! (&mut intern-state))]
+    [name-id : i64
+      (ci.intern-compat-state-intern (&mut intern-state) "dup_abort")]
     [_restore-active : unit
       (begin
         (ci.intern-compat-state-install! active-before)
@@ -28992,7 +29012,7 @@
 ;; fixed array as a parameter; a separate literal source below covers the
 ;; stack/local fixed-array storage path.
 (define (compiler-backend-fixed-array-source) : String
-  "(define (use-fixed [a : (Array i64 3) (:consume)]) : i64
+  "(define (use-fixed [a : (Array i64 3)]) : i64
   (begin
     (set! (array-ref a 0) 42)
     (array-ref a 0)))
@@ -37642,10 +37662,11 @@
 (define (compiler-backend-state-one-word-ok?) : bool
   (let
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [name-id : i64
+      (ci.intern-compat-state-intern (&mut intern-state) "one_word_state")]
+    [pool-len : i64 (ci.intern-compat-state-pool-len intern-state)]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-state)]
-    [name-id : i64
-      (ci.intern-compat-state-intern intern-state "one_word_state")]
     [before-capacity : i64
       (compiler_backend.compiler-backend-state-user-symbol-cache-capacity
         backend-state)]
@@ -37660,7 +37681,7 @@
         backend-state
         name-id)]
     (and
-      (= (ci.intern-compat-state-pool-len intern-state) 1)
+      (= pool-len 1)
       (= before-capacity 0)
       (= before-bytes 0)
       (= before-emission-arena 0)
@@ -37692,6 +37713,19 @@
 (define (compiler-backend-user-symbol-cache-growth-ok?) : bool
   (let
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [id-a : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_a")]
+    [id-b : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_b")]
+    [id-c : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_c")]
+    [id-d : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_d")]
+    [id-e : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_e")]
+    [id-f : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_f")]
+    [id-g : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_g")]
+    [id-h : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_h")]
+    [id-i : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_i")]
+    [id-j : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_j")]
+    [id-k : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_k")]
+    [id-l : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_l")]
+    [id-m : i64 (ci.intern-compat-state-intern (&mut intern-state) "growth_m")]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-state)]
     [before-capacity : i64
@@ -37703,19 +37737,6 @@
     [before-count : i64
       (compiler_backend.compiler-backend-state-user-symbol-cache-count
         backend-state)]
-    [id-a : i64 (ci.intern-compat-state-intern intern-state "growth_a")]
-    [id-b : i64 (ci.intern-compat-state-intern intern-state "growth_b")]
-    [id-c : i64 (ci.intern-compat-state-intern intern-state "growth_c")]
-    [id-d : i64 (ci.intern-compat-state-intern intern-state "growth_d")]
-    [id-e : i64 (ci.intern-compat-state-intern intern-state "growth_e")]
-    [id-f : i64 (ci.intern-compat-state-intern intern-state "growth_f")]
-    [id-g : i64 (ci.intern-compat-state-intern intern-state "growth_g")]
-    [id-h : i64 (ci.intern-compat-state-intern intern-state "growth_h")]
-    [id-i : i64 (ci.intern-compat-state-intern intern-state "growth_i")]
-    [id-j : i64 (ci.intern-compat-state-intern intern-state "growth_j")]
-    [id-k : i64 (ci.intern-compat-state-intern intern-state "growth_k")]
-    [id-l : i64 (ci.intern-compat-state-intern intern-state "growth_l")]
-    [id-m : i64 (ci.intern-compat-state-intern intern-state "growth_m")]
     [symbol-a : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
@@ -37827,8 +37848,10 @@
       (ci.intern-compat-state-capture-active)]
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [id-a : i64 (ci.intern-compat-state-intern intern-a "persistent/a")]
-    [id-b : i64 (ci.intern-compat-state-intern intern-b "persistent/b")]
+    [id-a : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "persistent/a")]
+    [id-b : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "persistent/b")]
     [state-a : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-a)]
     [state-b : compiler_backend.CompilerBackendState
@@ -37870,13 +37893,18 @@
 (define (compiler-backend-user-symbol-cache-generated-bound-ok?) : bool
   (let
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [generated-id : i64
+      (ci.intern-compat-state-generated-name
+        (&mut intern-state)
+        "generated/high")]
+    [pool-len : i64 (ci.intern-compat-state-pool-len intern-state)]
+    [generated-active : bool
+      (ci.intern-compat-state-generated-id-active? intern-state generated-id)]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-state)]
     [before-capacity : i64
       (compiler_backend.compiler-backend-state-user-symbol-cache-capacity
         backend-state)]
-    [generated-id : i64
-      (ci.intern-compat-state-generated-name intern-state "generated/high")]
     [generated-symbol : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
@@ -37899,8 +37927,8 @@
         backend-state)]
     (and
       (= before-capacity 0)
-      (> generated-id (ci.intern-compat-state-pool-len intern-state))
-      (ci.intern-compat-state-generated-id-active? intern-state generated-id)
+      (> generated-id pool-len)
+      generated-active
       (string.eq generated-symbol "_tl_generated_high")
       (= after-generated-capacity 16)
       (= after-generated-count 1)
@@ -37965,9 +37993,11 @@
       [backend-state : compiler_backend.CompilerBackendState
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active))]
+      [backend-intern : ci.InternCompatState
+        (compiler_backend.compiler-backend-state-intern backend-state)]
       [_capture-path : unit
         (ci.intern-compat-state-capture-from-globals!
-          (compiler_backend.compiler-backend-state-intern backend-state))]
+          (&mut backend-intern))]
       [_reset : unit
         (compiler_backend.compiler-backend-state-user-symbol-cache-reset!
           backend-state)]
@@ -37988,7 +38018,7 @@
       [main-id : i64 (ci.intern "main")]
       [_capture-main : unit
         (ci.intern-compat-state-capture-from-globals!
-          (compiler_backend.compiler-backend-state-intern backend-state))]
+          (&mut backend-intern))]
       [main-symbol-first : String
         (compiler_backend.compiler-backend-state-user-symbol-id
           backend-state
@@ -38028,25 +38058,29 @@
     [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
     [id-a : i64
       (begin
-        (ci.intern-compat-state-install! state-a)
+        (ci.intern-compat-state-install!
+          (ci.intern-global-shared-view state-a))
         (ci.intern-reset!)
         (ci.intern "first-state-name"))]
     [symbol-a : String
       (begin
-        (ci.intern-compat-state-capture-from-globals! state-a)
+        (ci.intern-compat-state-capture-from-globals! (&mut state-a))
         (compiler_backend.compiler-backend-state-user-symbol-id
-          (compiler_backend.compiler-backend-state-new state-a)
+          (compiler_backend.compiler-backend-state-new
+            (ci.intern-global-shared-view state-a))
           id-a))]
     [id-b : i64
       (begin
-        (ci.intern-compat-state-install! state-b)
+        (ci.intern-compat-state-install!
+          (ci.intern-global-shared-view state-b))
         (ci.intern-reset!)
         (ci.intern "second-state-name"))]
     [symbol-b : String
       (begin
-        (ci.intern-compat-state-capture-from-globals! state-b)
+        (ci.intern-compat-state-capture-from-globals! (&mut state-b))
         (compiler_backend.compiler-backend-state-user-symbol-id
-          (compiler_backend.compiler-backend-state-new state-b)
+          (compiler_backend.compiler-backend-state-new
+            (ci.intern-global-shared-view state-b))
           id-b))]
     (and
       (= id-a id-b)
@@ -47439,53 +47473,3 @@ b_keep:
     (compiler-backend-object-semantic-eligibility-ok?))
     42
     (io.panic "backend: smoke output mismatch")))
-
-;; Scratch-vreg production emission fails closed when a fixture bypasses the
-;; planner. This focused aggregate exposes the suites whose fixtures install a
-;; complete modeled plan, so the scratch configuration has a stable smoke gate
-;; independent of legacy direct-emitter coverage.
-(define (compiler-backend-scratch-vreg-self-test) : i64
-  (if (and
-    (compiler-backend-scratch-vreg-call-target-plan-ok?)
-    (compiler-backend-scratch-vreg-switch-plan-ok?)
-    (compiler-backend-scratch-vreg-aggregate-plan-ok?)
-    (compiler-backend-scratch-vreg-phi-plan-ok?)
-    (compiler-backend-scratch-vreg-emission-uses-plan-ok?)
-    (compiler-backend-scratch-vreg-memory-emission-uses-plan-ok?)
-    (compiler-backend-scratch-vreg-aggregate-copy-c-emission-uses-plan-ok?)
-    (compiler-backend-scratch-vreg-future-window-ok?)
-    (compiler-backend-scratch-vreg-c-abi-return-plan-ok?)
-    (compiler-backend-scratch-vreg-bounds-plan-ok?)
-    (compiler-backend-scratch-vreg-fused-sibling-plan-ok?)
-    (compiler-backend-scratch-vreg-memory-plan-ok?)
-    (compiler-backend-scratch-vreg-copy-xmm-plan-ok?)
-    (compiler-backend-scratch-vreg-c-memory-plan-ok?)
-    (compiler-backend-scratch-vreg-float-memory-plan-ok?)
-    (compiler-backend-scratch-vreg-float-memory-emission-uses-plan-ok?)
-    (compiler-backend-scratch-vreg-float-compute-plan-ok?)
-    (compiler-backend-scratch-vreg-float-compute-emission-uses-plan-ok?)
-    (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
-    (compiler-backend-scratch-vreg-simd-plan-ok?)
-    (compiler-backend-scratch-vreg-indexed-simd-plan-ok?)
-    (compiler-backend-scratch-vreg-tail-mask-plan-ok?)
-    (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?)
-    (compiler-backend-scratch-vreg-scalar-plan-ok?)
-    (compiler-backend-scratch-vreg-scalar-shift-plan-ok?)
-    (compiler-backend-scratch-vreg-scalar-return-plan-ok?)
-    (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
-    (compiler-backend-scratch-vreg-select-plan-ok?)
-    (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
-    (compiler-backend-bounds-index-arms-planned-preserve-ok?)
-    (compiler-backend-divmod-polish-arms-planned-preserve-ok?)
-    (compiler-backend-scratch-vreg-constraint-shapes-ok?)
-    (compiler-backend-phi-parallel-copy-ok?)
-    (compiler-backend-phi-forward-edge-unbracket-ok?)
-    (compiler-backend-phi-planned-live-through-preserved-ok?)
-    (compiler-backend-phi-xmm-stage-preserved-ok?)
-    (compiler-backend-phi-xmm-fused-stage-preserved-ok?)
-    (compiler-backend-phi-xmm-back-edge-gap-preserved-ok?)
-    (compiler-backend-phi-group-cycle-copy-ok?)
-    (compiler-backend-phi-group-stack-copy-split-scratch-ok?)
-    (compiler-backend-phi-float-cycle-copy-ok?))
-    42
-    (io.panic "backend: scratch-vreg smoke output mismatch")))

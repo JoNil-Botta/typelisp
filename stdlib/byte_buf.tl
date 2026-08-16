@@ -36,6 +36,10 @@
   (slots (__tl_dyn-array u8))
   (len i64))
 
+(defstruct ByteBufMutViewRef
+  (:lifetimes source)
+  (value (&mut source bytes)))
+
 (unsafe
   (extern (tl_bytes_view_from_str_parts
     [data : (Ptr u8)]
@@ -67,19 +71,19 @@
     [owner : (&mut source bytes)]) : (&mut source bytes)))
 
 ;: Number of live bytes in `buf`.
-(define (len [buf : ByteBuf]) : i64
+(define (len [buf : (& buf ByteBuf)]) : i64
   buf.len)
 
 ;: Number of live bytes in `buf`.
-(define (length [buf : ByteBuf]) : i64
+(define (length [buf : (& buf ByteBuf)]) : i64
   (len buf))
 
 ;: Number of bytes the backing array can hold without growing.
-(define (capacity [buf : ByteBuf]) : i64
+(define (capacity [buf : (& buf ByteBuf)]) : i64
   (array-length buf.slots))
 
 ;: True when `buf` has no live bytes.
-(define (empty? [buf : ByteBuf]) : bool
+(define (empty? [buf : (& buf ByteBuf)]) : bool
   (<= (len buf) 0))
 
 ;: Create an empty buffer with backing capacity `capacity`. Non-positive
@@ -155,12 +159,20 @@
   [view : (&mut source bytes)]
   [index : i64]
   [fallback : u8]) : u8
-  (if (if (>= index 0)
-    (< index (bytes-mut-length view))
-    false)
-    (unsafe
-      (ptr-read (ptr-offset (ptr-cast (bytes-mut-data view) : (Ptr u8)) index)))
-    fallback))
+  (let
+    [cell : (ByteBufMutViewRef source) (ByteBufMutViewRef view)]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
+    [owned : String
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr String))))]
+    (if (if (>= index 0)
+      (< index (string-length (& owned)))
+      false)
+      (unsafe
+        (ptr-read (ptr-offset (string-data (& owned)) index)))
+      fallback)))
 
 ;: Read byte `index`, trapping when `index` is outside the view.
 (define (bytes-ref [view : (& source bytes)] [index : i64]) : u8
@@ -171,17 +183,35 @@
 
 ;: Read byte `index` from a mutable view, trapping when outside the view.
 (define (bytes-mut-ref [view : (&mut source bytes)] [index : i64]) : u8
-  (begin
-    (check-range (bytes-mut-length view) index 1)
-    (unsafe
-      (ptr-read (ptr-offset (ptr-cast (bytes-mut-data view) : (Ptr u8)) index)))))
+  (let
+    [cell : (ByteBufMutViewRef source) (ByteBufMutViewRef view)]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
+    [owned : String
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr String))))]
+    (begin
+      (check-range (string-length (& owned)) index 1)
+      (unsafe
+        (ptr-read (ptr-offset (string-data (& owned)) index))))))
 
 ;: Overwrite byte `index` inside a mutable fixed-length view.
 (define (bytes-set! [view : (&mut source bytes)] [index : i64] [value : u8]) : unit
-  (begin
-    (check-range (bytes-mut-length view) index 1)
-    (unsafe
-      (ptr-write! (ptr-offset (bytes-mut-data view) index) value))))
+  (let
+    [cell : (ByteBufMutViewRef source) (ByteBufMutViewRef view)]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
+    [owned : String
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr String))))]
+    (begin
+      (check-range (string-length (& owned)) index 1)
+      (unsafe
+        (ptr-write!
+          (ptr-offset (ptr-cast (string-data (& owned)) : (MutPtr u8)) index)
+          value)))))
 
 ;: Convert a borrowed `str` view into an immutable borrowed byte view.
 (define (str-as-bytes [text : (& source str)]) : (& source bytes)
@@ -205,13 +235,21 @@
   [view : (&mut source bytes)]
   [start : i64]
   [count : i64]) : (&mut source bytes)
-  (begin
-    (check-range (bytes-mut-length view) start count)
-    (unsafe
-      (tl_bytes_mut_view_from_bytes_parts
-        (ptr-offset (bytes-mut-data view) start)
-        count
-        view))))
+  (let
+    [cell : (ByteBufMutViewRef source) (ByteBufMutViewRef view)]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
+    [owned : String
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr String))))]
+    (begin
+      (check-range (string-length (& owned)) start count)
+      (unsafe
+        (tl_bytes_mut_view_from_bytes_parts
+          (ptr-offset (ptr-cast (string-data (& owned)) : (MutPtr u8)) start)
+          count
+          cell.value)))))
 
 ;: Copy all bytes in `view` into a fresh `String`.
 (define (bytes-to-string [view : (& source bytes)]) : String
@@ -249,7 +287,7 @@
 
 ;: Read live byte `index`, returning `fallback` when `index` is outside
 ;: `[0, len)`.
-(define (get [buf : ByteBuf] [index : i64] [fallback : u8]) : u8
+(define (get [buf : (& buf ByteBuf)] [index : i64] [fallback : u8]) : u8
   (if (if (>= index 0)
     (< index (len buf))
     false)
@@ -257,7 +295,7 @@
     fallback))
 
 ;: Read live byte `index`, trapping when `index` is outside `[0, len)`.
-(define (ref [buf : ByteBuf] [index : i64]) : u8
+(define (ref [buf : (& buf ByteBuf)] [index : i64]) : u8
   (begin
     (check-range (len buf) index 1)
     (array-ref buf.slots index)))
@@ -273,9 +311,9 @@
 ;: Copy `count` bytes from `src[src-start..]` into `dst[dst-start..]`,
 ;: trapping on invalid source or destination ranges.
 (define (byte-buf-copy-slots-range-into
-  [dst : (__tl_dyn-array u8)]
+  [dst : (&mut dst (__tl_dyn-array u8))]
   [dst-start : i64]
-  [src : (__tl_dyn-array u8)]
+  [src : (& src (__tl_dyn-array u8))]
   [src-start : i64]
   [count : i64]) : unit
   (begin
@@ -308,22 +346,30 @@
           doubled)]
       [bigger : (__tl_dyn-array u8) (array.make-array u8 new-capacity)]
       (begin
-        (byte-buf-copy-slots-range-into bigger 0 buf.slots 0 (len buf))
+        (byte-buf-copy-slots-range-into
+          (&mut bigger)
+          0
+          (& buf.slots)
+          0
+          (len buf))
         (ByteBuf bigger (len buf))))))
 
 ;: Grow `buf` to at least twice its current capacity.
 (define (grow [buf : ByteBuf]) : ByteBuf
-  (grow-to
-    buf
-    (if (< (capacity buf) 1)
-      1
-      (* (capacity buf) 2))))
+  (let
+    [target-capacity : i64
+      (if (< (capacity buf) 1)
+        1
+        (* (capacity buf) 2))]
+    (grow-to buf target-capacity)))
 
 ;: Reserve space for `additional` more bytes without changing `len`.
 (define (reserve [buf : ByteBuf] [additional : i64]) : ByteBuf
   (if (<= additional 0)
     buf
-    (grow-to buf (+ (len buf) additional))))
+    (let
+      [target-capacity : i64 (+ (len buf) additional)]
+      (grow-to buf target-capacity))))
 
 ;: Clear all live bytes while retaining the backing capacity for reuse.
 (define (clear! [buf : ByteBuf]) : ByteBuf
@@ -372,7 +418,9 @@
 
 ;: Append every byte from `src`.
 (define (append-string [buf : ByteBuf] [src : String]) : ByteBuf
-  (append-string-range buf src 0 (string-length src)))
+  (let
+    [src-len : i64 (string-length src)]
+    (append-string-range buf src 0 src-len)))
 
 ;: Append `count` bytes from a borrowed byte view, trapping on invalid ranges.
 (define (append-bytes-range
@@ -408,7 +456,9 @@
 
 ;: Copy every byte from `src` into a new buffer.
 (define (from-string [src : String]) : ByteBuf
-  (from-string-range src 0 (string-length src)))
+  (let
+    [src-len : i64 (string-length src)]
+    (from-string-range src 0 src-len)))
 
 ;: Copy `count` borrowed bytes into a new buffer.
 (define (from-bytes-range [src : (& source bytes)] [start : i64] [count : i64]) : ByteBuf
@@ -424,7 +474,7 @@
     [n : i64 (len buf)]
     [out : (__tl_dyn-array u8) (array.make-array u8 n)]
     (begin
-      (byte-buf-copy-slots-range-into out 0 buf.slots 0 n)
+      (byte-buf-copy-slots-range-into (&mut out) 0 (& buf.slots) 0 n)
       out)))
 
 ;: Copy all live bytes into a fresh `String`.

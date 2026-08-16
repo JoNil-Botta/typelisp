@@ -33,7 +33,7 @@
 ;; Linear-probe lookup mirroring intern-lookup: walk slots, on a hash hit compare
 ;; the (pointer) key against `name`, and on a key match return the (int) id.
 (define (slot-lookup
-  [slots : (__tl_dyn-array Slot)]
+  [slots : (& slots (__tl_dyn-array Slot))]
   [n : i64]
   [name : String]
   [hash : i64]) : i64
@@ -75,9 +75,9 @@
       (set! (array-ref slots 5) (SlotEmpty))
       ;; gamma -> id (s+30) at hash 300; delta -> id (s+40) at hash 400.
       (let
-        [g : i64 (slot-lookup slots n "gamma" 300)]
-        [d : i64 (slot-lookup slots n "delta" 400)]
-        [miss : i64 (slot-lookup slots n "zzz" 999)]
+        [g : i64 (slot-lookup (& slots) n "gamma" 300)]
+        [d : i64 (slot-lookup (& slots) n "delta" 400)]
+        [miss : i64 (slot-lookup (& slots) n "zzz" 999)]
         (if (and (= g (+ s 30)) (= d (+ s 40)) (= miss -1))
           42
           1)))))

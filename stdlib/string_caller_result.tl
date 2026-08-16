@@ -22,12 +22,12 @@
 
 ;: True when `result` carries the caller input text borrow.
 (define (string-replace-result-borrowed?
-  [result : (StringReplaceResult text old replacement)]) : bool
+  [result : (& result (StringReplaceResult text old replacement))]) : bool
   (not result.is-owned))
 
 ;: True when `result` carries owned replacement output.
 (define (string-replace-result-owned?
-  [result : (StringReplaceResult text old replacement)]) : bool
+  [result : (& result (StringReplaceResult text old replacement))]) : bool
   result.is-owned)
 
 ;: Construct a no-match replacement result that borrows the caller input text.

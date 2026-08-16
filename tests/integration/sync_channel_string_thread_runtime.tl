@@ -7,9 +7,9 @@
 (define sync-string-integration-count : i64
   48)
 
-(define (sync-string-integration-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
-  (unsafe
-    (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
+(defmacro (sync-string-integration-array-i64-addr [items : Expr]) : i64
+  `(unsafe
+    (cast (ptr->int (ptr-cast (array-data ,items) : (Ptr u8))) : i64)))
 
 (define (sync-string-integration-addr->mut-i64 [addr : i64]) : (MutPtr i64)
   (unsafe
@@ -93,7 +93,7 @@
     [(ThreadJoinErr _) -1]))
 
 (define (sync-string-integration-pack-context!
-  [ctx : (__tl_dyn-array i64)]
+  [ctx : (&mut ctx (__tl_dyn-array i64))]
   [channel : sync.ChannelString]
   [count : i64]) : unit
   (begin
@@ -112,7 +112,7 @@
     [ok : bool true]
     (begin
       (sync-string-integration-pack-context!
-        ctx
+        (&mut ctx)
         channel
         sync-string-integration-count)
       (match (thread.spawn

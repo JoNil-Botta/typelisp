@@ -29,7 +29,7 @@
     (unsafe
       (ptr-read (ptr-addr-of embedded-stdlib-tlci-build-error)))))
 
-(define (embedded-stdlib-tlci-hash-text! [text : String]) : unit
+(define (embedded-stdlib-tlci-hash-text! [text : (& text str)]) : unit
   (let
     [index : i64 0]
     [length : i64 (string.string-length text)]
@@ -44,7 +44,7 @@
             2147483647))
         (set! index (+ index 1))))))
 
-(define (embedded-stdlib-tlci-line-end [text : String] [start : i64]) : i64
+(define (embedded-stdlib-tlci-line-end [text : (& text str)] [start : i64]) : i64
   (let
     [index : i64 start]
     [length : i64 (string.string-length text)]
@@ -60,7 +60,7 @@
       (string.substring line 0 (- length 1))
       line)))
 
-(define (embedded-stdlib-tlci-module-name [suffix : String]) : String
+(define (embedded-stdlib-tlci-module-name [suffix : (& suffix str)]) : String
   (let
     [length : i64 (string.string-length suffix)]
     (if (and
@@ -73,13 +73,13 @@
 
 (define (embedded-stdlib-tlci-push-name!
   [names : (&mut names svec.Vec)]
-  [module : String]
+  [module : (& module str)]
   [name-id : i64]) : unit
   (let
     [name : String
       (if (= (string.string-length module) 0)
         (ci.intern-str name-id)
-        (str_cat.str-cat module "/" (ci.intern-str name-id)))]
+        (str_cat.str-cat (string.copy module) "/" (ci.intern-str name-id)))]
     [index : i64 0]
     [duplicate : bool false]
     (begin
@@ -95,7 +95,7 @@
 
 (define (embedded-stdlib-tlci-collect-decl!
   [decl : ast.AstDecl]
-  [module : String]
+  [module : (& module str)]
   [names : (&mut names svec.Vec)]
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
@@ -107,19 +107,19 @@
           captures
           (compiler_tlci_native_producer.TlciNativeMacroCapture
             (compiler_tlci_native_producer.embedded-stdlib-tlci-identity
-              module
+              (string.copy module)
               name)
             params
             body)))]
     [(ast.AstDecl.Unsafe inner)
       (embedded-stdlib-tlci-collect-decl!
-        (__tl-box-place inner)
+        (ast.ast-decl-box-shared-view inner)
         module
         names
         captures)]
     [(ast.AstDecl.ModuleBody nested body)
       (embedded-stdlib-tlci-collect-decls!
-        (__tl-box-place body)
+        (ast.ast-decl-list-box-shared-view body)
         (ci.intern-str nested)
         names
         captures)]
@@ -134,7 +134,7 @@
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) unit]
     [(ast.AstDeclListStep.Cons decl rest)
-      (match decl
+      (match (ast.ast-place-shared-view decl)
         [(ast.AstDecl.Module next-module)
           (embedded-stdlib-tlci-collect-decls!
             rest
@@ -143,26 +143,27 @@
             captures)]
         [_
           (begin
-            (embedded-stdlib-tlci-collect-decl! decl module names captures)
+            (embedded-stdlib-tlci-collect-decl! decl (& module) names captures)
             (embedded-stdlib-tlci-collect-decls! rest module names captures))])]))
 
 (define (embedded-stdlib-tlci-collect-file!
-  [root : String]
+  [root : (& root str)]
   [suffix : String]
   [names : (&mut names svec.Vec)]
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
   (let
-    [module : String (embedded-stdlib-tlci-module-name suffix)]
-    [path : String (str_cat.str-cat root "/" suffix)]
-    [source : String (byte_buf.to-string (io.read-file path))]
+    [module : String (embedded-stdlib-tlci-module-name (& suffix))]
+    [path : String
+      (str_cat.str-cat (string.copy root) "/" (string.copy (& suffix)))]
+    [source : String (byte_buf.to-string (io.read-file (string.copy (& path))))]
     (if (= (string.string-length module) 0)
       (set!
         embedded-stdlib-tlci-build-error
         (str_cat.str-cat "invalid embedded stdlib module suffix: " suffix))
       (begin
-        (embedded-stdlib-tlci-hash-text! suffix)
-        (embedded-stdlib-tlci-hash-text! source)
+        (embedded-stdlib-tlci-hash-text! (& suffix))
+        (embedded-stdlib-tlci-hash-text! (& source))
         (match (compiler_parse_core.parse-ast-source source)
           [(compiler_parse_core.ResultAstProgram.Err message)
             (set!
@@ -172,7 +173,7 @@
             (match program
               [(ast.AstProgram.Program decls)
                 (embedded-stdlib-tlci-collect-decls!
-                  (__tl-box-place decls)
+                  (ast.ast-decl-list-box-shared-view decls)
                   module
                   names
                   captures)])])))))
@@ -191,7 +192,7 @@
         0)
       (< start (string.string-length manifest)))
     (let
-      [end : i64 (embedded-stdlib-tlci-line-end manifest start)]
+      [end : i64 (embedded-stdlib-tlci-line-end (& manifest) start)]
       [line : String
         (embedded-stdlib-tlci-trim-cr
           (string.substring manifest start (- end start)))]
@@ -202,7 +203,7 @@
       (begin
         (when
           (> (string.string-length line) 0)
-          (embedded-stdlib-tlci-collect-file! root line names captures))
+          (embedded-stdlib-tlci-collect-file! (& root) line names captures))
         (embedded-stdlib-tlci-collect-manifest!
           manifest
           root
@@ -225,7 +226,7 @@
     build-hash
     windows-target
     rodata
-    names
+    (ast.ast-place-shared-view names)
     captures)
     [(compiler_tlci_native_producer.ResultProducerBytes.Err message)
       (begin

@@ -35,7 +35,7 @@
     (set! snapshot-slots (array.make-array IndexedSnapshotSlot 0))))
 
 (define (snapshot-grow-copy!
-  [dst : (__tl_dyn-array IndexedSnapshotSlot)]
+  [dst : (&mut dst (__tl_dyn-array IndexedSnapshotSlot))]
   [src : (& src (__tl_dyn-array IndexedSnapshotSlot))]
   [index : i64]) : unit
   (if (>= index snapshot-count)
@@ -56,7 +56,7 @@
       [next-slots : (__tl_dyn-array IndexedSnapshotSlot)
         (array.make-array IndexedSnapshotSlot next-capacity)]
       (begin
-        (snapshot-grow-copy! next-slots (& snapshot-slots) 0)
+        (snapshot-grow-copy! (&mut next-slots) (& snapshot-slots) 0)
         (set! snapshot-slots next-slots)))))
 
 (define (snapshot-push-head [parent : i64] [key : i64] [value : i64]) : i64

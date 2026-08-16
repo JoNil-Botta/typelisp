@@ -40,7 +40,7 @@
     [(process.ErrProcessOutput error)
       (begin
         (test.assert-true
-          (process.error-spawn-failed? error)
+          (process.error-spawn-failed? (clone error))
           "process missing executable spawn failed")
         (assert-owned-string-eq
           (process.error-message error)
@@ -60,7 +60,7 @@
     [(process.ErrProcessChild error)
       (begin
         (test.assert-true
-          (process.error-spawn-failed? error)
+          (process.error-spawn-failed? (clone error))
           "process async missing executable spawn failed")
         (assert-owned-string-eq
           (process.error-message error)
@@ -74,7 +74,7 @@
     [(process.ErrProcessChild error)
       (begin
         (test.assert-true
-          (process.error-unsupported? error)
+          (process.error-unsupported? (clone error))
           "process async unsupported")
         (assert-owned-string-eq
           (process.error-message error)
@@ -89,7 +89,7 @@
     [(process.ErrProcessOutput error)
       (begin
         (test.assert-true
-          (process.error-unsupported? error)
+          (process.error-unsupported? (clone error))
           "process async wait unsupported")
         (assert-owned-string-eq
           (process.error-message error)
@@ -170,7 +170,10 @@
         (process_borrowed.args-single (string.substring-view (& argv) 0 2))
         (process_borrowed.args-single
           (string.substring-view (& argv) 2 (- (string-length (& argv)) 2))))]
-    (process_borrowed.output (process_borrowed.command (& exe) args))))
+    (let
+      [command : (process_borrowed.ProcessBorrowedCommand exe argv exe exe exe)
+        (process_borrowed.command (& exe) args)]
+      (process_borrowed.output (& command)))))
 
 (define (windows-missing-command) : process.ProcessCommand
   (process.command
@@ -228,18 +231,25 @@
         (process_borrowed.args-append
           (process_borrowed.args-single (string.substring-view (& argv) 5 8))
           (process_borrowed.args-single (string.substring-view (& argv) 13 4))))]
-    (process_borrowed.output (process_borrowed.command (& exe) args))))
+    (let
+      [command : (process_borrowed.ProcessBorrowedCommand exe argv exe exe exe)
+        (process_borrowed.command (& exe) args)]
+      (process_borrowed.output (& command)))))
 
 (define (linux-async-process-command [text : String]) : process.ProcessCommand
   (process.command "/usr/bin/printf" (process.args-single text)))
 
 (define (linux-borrowed-process-output [exe : String] [text : String]) : process.ResultProcessOutput
-  (process_borrowed.output
-    (process_borrowed.command (& exe) (process_borrowed.args-single (& text)))))
+  (let
+    [command : (process_borrowed.ProcessBorrowedCommand exe text exe exe exe)
+      (process_borrowed.command (& exe) (process_borrowed.args-single (& text)))]
+    (process_borrowed.output (& command))))
 
 (define (linux-borrowed-process-start [exe : String] [text : String]) : process.ResultProcessChild
-  (process_borrowed.start
-    (process_borrowed.command (& exe) (process_borrowed.args-single (& text)))))
+  (let
+    [command : (process_borrowed.ProcessBorrowedCommand exe text exe exe exe)
+      (process_borrowed.command (& exe) (process_borrowed.args-single (& text)))]
+    (process_borrowed.start (& command))))
 
 (define (linux-missing-command) : process.ProcessCommand
   (process.command "/definitely-missing-typelisp" (process.args-empty)))

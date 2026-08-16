@@ -16,6 +16,7 @@
 (import compiler_ast_types as ast)
 (import compiler_load)
 (import package_source_core)
+(import compiler_owned_view as owned_view)
 
 (define (selfhost-lint-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
@@ -760,20 +761,27 @@ end
   [rule-id : String]
   [index : i64]
   [count : i64]) : i64
-  (if (>= index (lint_core.lint-findings-count findings))
+  (if (>=
+    index
+    (lint_core.lint-findings-count
+      (owned_view.compiler-owned-shared-view findings)))
     count
-    (match (lint_core.lint-findings-get findings index)
+    (match (lint_core.lint-findings-get
+      (owned_view.compiler-owned-shared-view findings)
+      index)
       [(lint_core.LintMaybeFinding.Some finding)
         (selfhost-lint-findings-rule-count-from
-          findings
-          rule-id
+          (owned_view.compiler-owned-shared-view findings)
+          (owned_view.compiler-owned-shared-view rule-id)
           (+ index 1)
-          (if (string.eq finding.rule-id rule-id)
+          (if (string.eq
+            finding.rule-id
+            (owned_view.compiler-owned-shared-view rule-id))
             (+ count 1)
             count))]
       [(lint_core.LintMaybeFinding.No)
         (selfhost-lint-findings-rule-count-from
-          findings
+          (owned_view.compiler-owned-shared-view findings)
           rule-id
           (+ index 1)
           count)])))

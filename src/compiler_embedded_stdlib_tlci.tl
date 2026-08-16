@@ -427,10 +427,18 @@
 (define compiler-comptime-host-diagnostic : (__tl_dyn-array String)
   (__tl_make-array ""))
 
-;; Computed-body local slots for let-bound transformer bodies. Slots are
-;; addressed by immediate operand and validated per session; the producer owns
-;; the matching upper bound. Vector's full module generator exceeds 32 locals.
-;; Refs #5603, #6556.
+;; The host pool is a process-global owner cell. Pass its state-cell addresses
+;; across constructor boundaries so by-value AstNodePoolContext parameters do
+;; not detach the count/dedup state from the session that receives the result.
+(define (compiler-comptime-host-pool-cell-address [field-index : i64]) : u64
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (ptr-cast (array-data compiler-comptime-host-pools) : (Ptr u64))
+        field-index))))
+
+;; Computed-body local slots for let-bound transformer bodies (refs #5603).
+;; Slots are addressed by immediate operand and validated per session.
 (define compiler-comptime-host-locals-cap : i64
   64)
 (define compiler-comptime-host-locals : (__tl_dyn-array
@@ -2584,11 +2592,9 @@
                   [(ctfe_support.CompilerCtfeValue.Type ty)
                     (let
                       [node : i64
-                        (ast.ast-expr-make-array-with-pools
-                          (array-ref
-                            (compiler-comptime-host-global-shared-view
-                              compiler-comptime-host-pools)
-                            0)
+                        (ast.ast-expr-make-array-with-cells
+                          (compiler-comptime-host-pool-cell-address 0)
+                          (compiler-comptime-host-pool-cell-address 1)
                           ty
                           size-node)]
                       (begin

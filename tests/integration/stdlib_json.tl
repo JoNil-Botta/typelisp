@@ -20,7 +20,7 @@
       [(json.JsonFound value)
         (match value
           [(json.JsonArray items)
-            (= (json.list-count (__tl-box-place items)) 5)]
+            (= (json.list-count (json.json-box-shared-view items)) 5)]
           [_ false])]
       [(json.JsonMissing) false])))
 
@@ -109,10 +109,10 @@
     (match (json.parse (& text))
       [(json.OkJson doc)
         (begin
-          (unless (json-test-name doc) (return 1))
-          (unless (json-test-items doc) (return 2))
-          (unless (json-test-escaped doc) (return 3))
-          (unless (json-test-stringify doc) (return 4))
+          (unless (json-test-name (json.json-shared-view doc)) (return 1))
+          (unless (json-test-items (json.json-shared-view doc)) (return 2))
+          (unless (json-test-escaped (json.json-shared-view doc)) (return 3))
+          (unless (json-test-stringify (json.json-shared-view doc)) (return 4))
           42)]
       [(json.ErrJson _) 7])))
 

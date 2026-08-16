@@ -25,6 +25,7 @@
 ;; abandons it. Parse and type errors report diagnostics, discard only the
 ;; failing input, and return to the prompt with previously accepted declarations
 ;; intact.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -142,7 +143,7 @@
       (= (cast (string.string-ref text 2) : i64) 191))))
 
 (define (repl-trim-leading-utf8-bom [text : String]) : String
-  (if (repl-leading-utf8-bom? text)
+  (if (repl-leading-utf8-bom? (owned_view.compiler-owned-shared-view text))
     (string.substring text 3 (- (string.string-length text) 3))
     text))
 
@@ -166,7 +167,7 @@
   (repl-trim-right-line-ending (repl-trim-leading-utf8-bom text)))
 
 (define (repl-type-command [line : String]) : ReplTypeCommand
-  (if (repl-string-prefix? line ".type")
+  (if (repl-string-prefix? (owned_view.compiler-owned-shared-view line) ".type")
     (if (= (string.string-length line) 5)
       (ReplTypeCommand.Expr "")
       (if (repl-space? (string.string-ref line 5))
@@ -175,7 +176,7 @@
     (ReplTypeCommand.No)))
 
 (define (repl-load-command [line : String]) : ReplLoadCommand
-  (if (repl-string-prefix? line ".load")
+  (if (repl-string-prefix? (owned_view.compiler-owned-shared-view line) ".load")
     (if (= (string.string-length line) 5)
       (ReplLoadCommand.Path "")
       (if (repl-space? (string.string-ref line 5))
@@ -236,14 +237,16 @@
     [(ast.AstType.Func args ret)
       (str_cat.str-cat
         "(->"
-        (repl-type-list-render-spaced (__tl-box-place args))
+        (repl-type-list-render-spaced
+          (owned_view.compiler-owned-box-shared-view args))
         " "
         (repl-type-render (ast.ty-node-get ret))
         ")")]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple"
-        (repl-type-list-render-spaced (__tl-box-place elems))
+        (repl-type-list-render-spaced
+          (owned_view.compiler-owned-box-shared-view elems))
         ")")]
     [(ast.AstType.Array elem count)
       (str_cat.str-cat
@@ -288,26 +291,24 @@
       (str_cat.str-cat
         "("
         (ast.ast-nominal-name-id-display name)
-        (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
+        (repl-lifetime-list-render-spaced
+          (owned_view.compiler-owned-box-shared-view lifetimes))
         ")")]
     [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
       (str_cat.str-cat
         "("
         (ast.ast-nominal-name-id-display name)
-        (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
+        (repl-lifetime-list-render-spaced
+          (owned_view.compiler-owned-box-shared-view lifetimes))
         ")")]
     [(ast.AstType.Var name) (str_cat.str-cat "'" (ci.intern-str name) "'")]
     [(ast.AstType.VarArgs name lifetimes)
       (str_cat.str-cat
         "("
         (ci.intern-str name)
-        (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
-        ")")]
-    [(ast.AstType.Consume inner)
-      (str_cat.str-cat
-        "(:consume "
-        (repl-type-render (ast.ty-node-get inner))
+        (repl-lifetime-list-render-spaced
+          (owned_view.compiler-owned-box-shared-view lifetimes))
         ")")]))
 
 (define (repl-print-error-line [message : String]) : unit
@@ -318,12 +319,16 @@
 
 (define (repl-report-diagnostics [diagnostics : cdiag.CompilerDiagnosticList]) : unit
   (let
-    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
+    [count : i64
+      (cdiag.compiler-diagnostic-list-count
+        (owned_view.compiler-owned-shared-view diagnostics))]
     [index : i64 0]
     (while (< index count)
       (begin
         (repl-report-diagnostic
-          (cdiag.compiler-diagnostic-list-get diagnostics index))
+          (cdiag.compiler-diagnostic-list-get
+            (owned_view.compiler-owned-shared-view diagnostics)
+            index))
         (set! index (+ index 1))))))
 
 (define (repl-char-display-helpers-source) : String
@@ -414,7 +419,7 @@
     ">\")\n  (io.println \"\"))"))
 
 (define (repl-display-body [ty : ast.AstType] [expr-source : String]) : ResultReplString
-  (match ty
+  (match (owned_view.compiler-owned-shared-view ty)
     [(ast.AstType.I64)
       (ResultReplString.Ok
         (str_cat.str-cat "(io.println \"{}\"\n" expr-source "\n)"))]
@@ -471,7 +476,9 @@
   [session-source : String]
   [expr-source : String]
   [ty : ast.AstType]) : ResultReplString
-  (match (repl-display-body ty expr-source)
+  (match (repl-display-body
+    (owned_view.compiler-owned-shared-view ty)
+    expr-source)
     [(ResultReplString.Ok body)
       (ResultReplString.Ok
         (str_cat.str-cat
@@ -503,7 +510,8 @@
         (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
 
 (define (repl-typecheck-session-source [session-source : String]) : tc.ResultCompilerTypecheck
-  (match (repl-load-session-decls session-source)
+  (match (repl-load-session-decls
+    (owned_view.compiler-owned-shared-view session-source))
     [(ResultReplDeclList.Ok decls)
       (compiler_typecheck_api.typecheck-compiler-program
         (ast.ast-program decls))]
@@ -526,9 +534,12 @@
   (match (build_run_core.source-tool-create-temp-dir "typelisp-repl")
     [(build_run_core.ResultSourceToolString.Ok temp-dir)
       (let
-        [source-path : String (repl-path-join temp-dir "repl_expr.tl")]
+        [source-path : String
+          (repl-path-join
+            (owned_view.compiler-owned-shared-view temp-dir)
+            "repl_expr.tl")]
         (match (build_run_core.source-tool-write-file
-          source-path
+          (owned_view.compiler-owned-shared-view source-path)
           source
           "repl: failed to write scratch source")
           [(build_run_core.SourceToolCommandStatus.Err message)
@@ -539,7 +550,7 @@
             (let
               [status : i64
                 (build_run_core.source-tool-run-source-in-temp
-                  source-path
+                  (owned_view.compiler-owned-shared-view source-path)
                   (build_run_core.source-tool-default-target)
                   (cli_svec.new)
                   (build_run_core.source-tool-cfg-names-empty)
@@ -548,7 +559,7 @@
                   (backend.CompilerBackendMode.Scalar)
                   (build_run_core.source-tool-link-inputs-empty)
                   false
-                  temp-dir)]
+                  (owned_view.compiler-owned-shared-view temp-dir))]
               (begin
                 (repl-clean-scratch-source temp-dir source-path)
                 (repl-report-run-status status)))]))]
@@ -560,7 +571,8 @@
   [session-source : String]
   [expr-source : String]
   [expr : ast.AstExpr]) : unit
-  (match (repl-load-session-decls session-source)
+  (match (repl-load-session-decls
+    (owned_view.compiler-owned-shared-view session-source))
     [(ResultReplDeclList.Ok decls)
       (match (compiler_typecheck_api.typecheck-compiler-repl-expr decls expr)
         [(tc.ResultTcType.Ok ty)
@@ -611,15 +623,20 @@
       [(io.OkIoBytes contents)
         (let
           [source : String (byte_buf.to-string contents)]
-          [candidate : String (repl-session-candidate session-source source)]
-          (match (repl-typecheck-session-source candidate)
+          [candidate : String
+            (repl-session-candidate
+              (owned_view.compiler-owned-shared-view session-source)
+              source)]
+          (match (repl-typecheck-session-source
+            (owned_view.compiler-owned-shared-view candidate))
             [(tc.ResultCompilerTypecheck.Ok _)
               (begin
                 (repl-stdout-write-line (str_cat.str-cat "Loaded " path))
                 candidate)]
             [(tc.ResultCompilerTypecheck.Err diag)
               (begin
-                (repl-report-diagnostics (__tl-box-place diag))
+                (repl-report-diagnostics
+                  (owned_view.compiler-owned-box-shared-view diag))
                 session-source)]))]
       [(io.ErrIoBytes error)
         (begin
@@ -628,21 +645,30 @@
           session-source)])))
 
 (define (repl-handle-input [session-source : String] [input : String]) : String
-  (match (parser.parse-ast-repl-source input)
+  (match (parser.parse-ast-repl-source
+    (owned_view.compiler-owned-shared-view input))
     [(parser.ResultAstReplItem.Ok item)
       (match item
         [(AstReplDecl _)
           (let
-            [candidate : String (repl-session-candidate session-source input)]
-            (match (repl-typecheck-session-source candidate)
+            [candidate : String
+              (repl-session-candidate
+                (owned_view.compiler-owned-shared-view session-source)
+                (owned_view.compiler-owned-shared-view input))]
+            (match (repl-typecheck-session-source
+              (owned_view.compiler-owned-shared-view candidate))
               [(tc.ResultCompilerTypecheck.Ok _) candidate]
               [(tc.ResultCompilerTypecheck.Err diag)
                 (begin
-                  (repl-report-diagnostics (__tl-box-place diag))
+                  (repl-report-diagnostics
+                    (owned_view.compiler-owned-box-shared-view diag))
                   session-source)]))]
         [(AstReplExpr expr)
           (begin
-            (repl-evaluate-expr session-source input (ast.ast-node-get expr))
+            (repl-evaluate-expr
+              (owned_view.compiler-owned-shared-view session-source)
+              (owned_view.compiler-owned-shared-view input)
+              (ast.ast-node-get expr))
             session-source)])]
     [(parser.ResultAstReplItem.Err message)
       (begin
@@ -747,7 +773,7 @@
                 false)])]
         [(= c ';')
           (repl-input-complete-loop
-            text
+            (owned_view.compiler-owned-shared-view text)
             (repl-skip-comment text (+ idx 1) len)
             len
             parens
@@ -765,7 +791,7 @@
             false)]
         [(= c '\'')
           (repl-input-complete-loop
-            text
+            (owned_view.compiler-owned-shared-view text)
             (repl-skip-apostrophe-char-literal text idx len)
             len
             parens
@@ -774,7 +800,7 @@
             false)]
         [(= c '#')
           (repl-input-complete-loop
-            text
+            (owned_view.compiler-owned-shared-view text)
             (repl-skip-char-literal text (+ idx 1) len)
             len
             parens
@@ -833,7 +859,7 @@
 
 (define (repl-input-complete? [input : String]) : bool
   (repl-input-complete-loop
-    input
+    (owned_view.compiler-owned-shared-view input)
     0
     (string.string-length input)
     0
@@ -852,7 +878,8 @@
   [line : String]) : ReplLineResult
   (let
     [next-pending : String (repl-append-pending pending line)]
-    (if (repl-input-complete? next-pending)
+    (if (repl-input-complete?
+      (owned_view.compiler-owned-shared-view next-pending))
       (ReplLineResult.Line (repl-handle-input session-source next-pending) "")
       (ReplLineResult.Line session-source next-pending))))
 
@@ -865,13 +892,16 @@
   (if (string.eq pending "")
     (if (string.eq line "")
       (ReplLineResult.Line session-source "")
-      (match (repl-type-command line)
+      (match (repl-type-command (owned_view.compiler-owned-shared-view line))
         [(ReplTypeCommand.Expr expr-source)
           (begin
-            (repl-handle-type-command session-source expr-source)
+            (repl-handle-type-command
+              (owned_view.compiler-owned-shared-view session-source)
+              expr-source)
             (ReplLineResult.Line session-source ""))]
         [(ReplTypeCommand.No)
-          (match (repl-load-command line)
+          (match (repl-load-command
+            (owned_view.compiler-owned-shared-view line))
             [(ReplLoadCommand.Path path)
               (ReplLineResult.Line
                 (repl-handle-load-command session-source path)
@@ -881,7 +911,8 @@
                 (begin
                   (repl-stdout-write (repl-help-text))
                   (ReplLineResult.Line session-source ""))
-                (if (repl-dot-command? line)
+                (if (repl-dot-command?
+                  (owned_view.compiler-owned-shared-view line))
                   (begin
                     (repl-stderr-write
                       (str_cat.str-cat "Unknown REPL command: " line))
@@ -907,7 +938,9 @@
           [line-read : io.StdinRead (io.stdin-read-line)]
           [line : String
             (repl-normalize-input-line
-              (byte_buf.to-string (io.stdin-read-buffer line-read)))]
+              (byte_buf.to-string
+                (io.stdin-read-buffer
+                  (owned_view.compiler-owned-shared-view line-read))))]
           (if (and (not pending?) (string.eq line ".exit"))
             unit
             ;; A blank line while a form is pending cancels it. Guard on the

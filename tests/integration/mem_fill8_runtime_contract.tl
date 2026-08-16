@@ -22,7 +22,7 @@
 (define fill-slots : i64
   4096)
 
-(define (dirty! [items : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (dirty! [items : (&mut items (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -31,7 +31,7 @@
         (set! i (+ i 1))))))
 
 (define (count-eq
-  [items : (__tl_dyn-array i64)]
+  [items : (& items (__tl_dyn-array i64))]
   [lo : i64]
   [hi : i64]
   [want : i64]) : i64
@@ -47,7 +47,7 @@
           (set! i (+ i 1))))
       seen)))
 
-(define (count-dirty [items : (__tl_dyn-array i64)] [lo : i64] [hi : i64]) : i64
+(define (count-dirty [items : (& items (__tl_dyn-array i64))] [lo : i64] [hi : i64]) : i64
   (let
     [i : i64 lo]
     [seen : i64 0]
@@ -62,50 +62,49 @@
 
 ;; Fill `count` slots starting at element `start` of `items`.
 (define (fill-window
-  [items : (__tl_dyn-array i64)]
+  [slots : (MutPtr u64)]
   [start : i64]
   [count : i64]
   [value : i64]) : unit
-  (let
-    [slots : (MutPtr u64)
-      (unsafe
-        (ptr-cast (array-data items) : (MutPtr u64)))]
-    (unsafe
-      (runtime.mem-fill8
-        (ptr-cast (ptr-offset slots start) : (MutPtr u8))
-        count
-        (cast value : u64)))))
+  (unsafe
+    (runtime.mem-fill8
+      (ptr-cast (ptr-offset slots start) : (MutPtr u8))
+      count
+      (cast value : u64))))
 
 ;; Returns a bitmask of failures; 0 is a pass.
 (define (fill-checks) : i64
   (let
     [n : i64 fill-slots]
     [items : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [slots : (MutPtr u64)
+      (unsafe
+        (ptr-cast (array-data items) : (MutPtr u64)))]
     [bad : i64 0]
     (begin
       ;; (1) exactness: fill [1, n-1), leave the two edge slots alone.
-      (dirty! items n)
-      (fill-window items 1 (- n 2) 0)
+      (dirty! (&mut items) n)
+      (fill-window slots 1 (- n 2) 0)
       (if (= (array-ref items 0) 1000)
         unit
         (set! bad (bit-or bad 1)))
       (if (= (array-ref items (- n 1)) (+ 1000 (- n 1)))
         unit
         (set! bad (bit-or bad 2)))
-      (if (= (count-eq items 1 (- n 1) 0) (- n 2))
+      (if (= (count-eq (& items) 1 (- n 1) 0) (- n 2))
         unit
         (set! bad (bit-or bad 4)))
       ;; (2) no early-out, and the value is written verbatim.
-      (dirty! items n)
-      (fill-window items 0 n 305419896)
-      (if (= (count-eq items 0 n 305419896) n)
+      (dirty! (&mut items) n)
+      (fill-window slots 0 n 305419896)
+      (if (= (count-eq (& items) 0 n 305419896) n)
         unit
         (set! bad (bit-or bad 8)))
       ;; (3) a zero or negative count stores nothing.
-      (dirty! items n)
-      (fill-window items 0 0 5)
-      (fill-window items 0 (- 0 5) 5)
-      (if (= (count-dirty items 0 n) n)
+      (dirty! (&mut items) n)
+      (fill-window slots 0 0 5)
+      (fill-window slots 0 (- 0 5) 5)
+      (if (= (count-dirty (& items) 0 n) n)
         unit
         (set! bad (bit-or bad 16)))
       bad)))
@@ -124,7 +123,9 @@
       ;; entirely on already-written memory.
       (unsafe
         (arena.rewind mark))
-      (dirty! (array.make-array i64 65536) 65536)
+      (let
+        [dirty-items : (__tl_dyn-array i64) (array.make-array i64 65536)]
+        (dirty! (&mut dirty-items) 65536))
       (unsafe
         (arena.rewind mark))
       (let

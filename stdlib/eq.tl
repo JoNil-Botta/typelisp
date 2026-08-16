@@ -2,6 +2,12 @@
 ;: Generate an equality module for concrete scalar and aggregate type `T`.
 (import stdlib.comptime)
 
+;; Read a place without transferring ownership. Generated equality is an
+;; observer, and its staged recursive projections revisit aggregate operands.
+(defmacro (eq-shared-view [place : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
+
 ;: Emit short-circuiting equality for all fields of a struct.
 (defmacro (struct-eq-fields
   [T : type]
@@ -20,9 +26,15 @@
             (comptime.expr-struct-get left field-name)]
           [right-field : comptime.Expr
             (comptime.expr-struct-get right field-name)]
-          `(if (stdlib.eq.inline-eq ,field-type ,left-field ,right-field)
-            (stdlib.eq.struct-eq-fields ,T ,next-index ,left ,right)
-            false)))]
+          `(let
+            [__eq_left_field (stdlib.eq.eq-shared-view ,left-field)]
+            [__eq_right_field (stdlib.eq.eq-shared-view ,right-field)]
+            (if (stdlib.eq.inline-eq
+              ,field-type
+              __eq_left_field
+              __eq_right_field)
+              (stdlib.eq.struct-eq-fields ,T ,next-index ,left ,right)
+              false))))]
     [_
       (comptime.comptime-error
         "eq: struct field index must be an integer literal")]))
@@ -42,9 +54,15 @@
           [element-type : comptime.Expr (tuple-element-type T index)]
           [left-item : comptime.Expr (comptime.expr-tuple-ref left index)]
           [right-item : comptime.Expr (comptime.expr-tuple-ref right index)]
-          `(if (stdlib.eq.inline-eq ,element-type ,left-item ,right-item)
-            (stdlib.eq.tuple-eq-elements ,T ,next-index ,left ,right)
-            false)))]
+          `(let
+            [__eq_left_item (stdlib.eq.eq-shared-view ,left-item)]
+            [__eq_right_item (stdlib.eq.eq-shared-view ,right-item)]
+            (if (stdlib.eq.inline-eq
+              ,element-type
+              __eq_left_item
+              __eq_right_item)
+              (stdlib.eq.tuple-eq-elements ,T ,next-index ,left ,right)
+              false))))]
     [_
       (comptime.comptime-error
         "eq: tuple element index must be an integer literal")]))
@@ -62,14 +80,21 @@
     [__eq_same : bool true]
     (begin
       (while (and (< __eq_i ,length-expr) __eq_same)
-        (begin
-          (if (stdlib.eq.inline-eq
-            ,element-type
-            (__tl_array-ref __eq_left __eq_i)
-            (__tl_array-ref __eq_right __eq_i))
-            unit
-            (set! __eq_same false))
-          (set! __eq_i (+ __eq_i 1))))
+        (let
+          [__eq_left_item
+            (stdlib.eq.eq-shared-view
+              (__tl_array-ref __eq_left __eq_i))]
+          [__eq_right_item
+            (stdlib.eq.eq-shared-view
+              (__tl_array-ref __eq_right __eq_i))]
+          (begin
+            (if (stdlib.eq.inline-eq
+              ,element-type
+              __eq_left_item
+              __eq_right_item)
+              unit
+              (set! __eq_same false))
+            (set! __eq_i (+ __eq_i 1)))))
       __eq_same)))
 
 ;: Emit finite structural equality for a nested value expression.
@@ -142,9 +167,20 @@
                     (comptime.int->string payload-index)))]
               [payload-type : comptime.Expr
                 (enum-variant-payload-type T variant-index payload-index)]
-              `(if (stdlib.eq.inline-eq ,payload-type ,left-value ,right-value)
-                (stdlib.eq.enum-eq-payloads ,T ,variant-index-expr ,next-index)
-                false)))]
+              `(let
+                [__eq_left_payload
+                  (stdlib.eq.eq-shared-view ,left-value)]
+                [__eq_right_payload
+                  (stdlib.eq.eq-shared-view ,right-value)]
+                (if (stdlib.eq.inline-eq
+                  ,payload-type
+                  __eq_left_payload
+                  __eq_right_payload)
+                  (stdlib.eq.enum-eq-payloads
+                    ,T
+                    ,variant-index-expr
+                    ,next-index)
+                  false))))]
         [_
           (comptime.comptime-error
             "eq: enum payload index must be an integer literal")])]
@@ -189,7 +225,7 @@
             `(stdlib.eq.enum-eq-payloads ,T ,variant-index-expr 0)]
           [right-match : comptime.Expr
             (comptime.expr-match
-              right
+              `(stdlib.eq.eq-shared-view ,right)
               (comptime.match-arm-list-cons
                 (comptime.match-arm right-pattern payload-body)
                 (comptime.match-arm-list-cons
@@ -199,7 +235,7 @@
           [fallback : comptime.Expr
             `(stdlib.eq.enum-eq-dispatch ,T ,left ,right ,next-index)]
           (comptime.expr-match
-            left
+            `(stdlib.eq.eq-shared-view ,left)
             (comptime.match-arm-list-cons
               (comptime.match-arm left-pattern right-match)
               (comptime.match-arm-list-cons

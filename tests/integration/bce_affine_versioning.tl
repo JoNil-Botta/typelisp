@@ -7,7 +7,7 @@
 (import stdlib.io)
 (import stdlib.string)
 
-(define (scaled-sum [items : (__tl_dyn-array i64)] [start : i64] [end : i64]) : i64
+(define (scaled-sum [items : (& items (__tl_dyn-array i64))] [start : i64] [end : i64]) : i64
   (let
     [i : i64 start]
     [sum : i64 0]
@@ -18,7 +18,7 @@
           (set! i (+ i 1))))
       sum)))
 
-(define (offset-sum [items : (__tl_dyn-array i64)] [start : i64] [end : i64]) : i64
+(define (offset-sum [items : (& items (__tl_dyn-array i64))] [start : i64] [end : i64]) : i64
   (let
     [i : i64 start]
     [sum : i64 0]
@@ -38,7 +38,7 @@
       (set! (array-ref items 2) 12)
       (set! (array-ref items 3) 20)
       (set! (array-ref items 6) 12)
-      (if (and (= (scaled-sum items 0 3) 42) (= (offset-sum items 2 5) 42))
+      (if (and (= (scaled-sum (& items) 0 3) 42) (= (offset-sum (& items) 2 5) 42))
         42
         1))))
 
@@ -46,10 +46,12 @@
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [start : i64 3074457345618258603]
-    (scaled-sum items start (+ start 1))))
+    (scaled-sum (& items) start (+ start 1))))
 
 (define (underflow-trap) : i64
-  (offset-sum (__tl_make-array i64 8) 0 1))
+  (let
+    [items : (__tl_dyn-array i64) (make-array i64 8)]
+    (offset-sum (& items) 0 1)))
 
 (define (main) : i64
   (match (string.>int (io.arg 1))

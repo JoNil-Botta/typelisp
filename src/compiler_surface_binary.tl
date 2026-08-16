@@ -11,10 +11,10 @@
   (import stdlib.byte_buf_core))
 (import stdlib.string)
 
-(define (surface-binary-string-length [text : String]) : i64
+(define (surface-binary-string-length [text : (& text str)]) : i64
   (string.string-length text))
 
-(define (surface-binary-string-ref [text : String] [index : i64]) : char
+(define (surface-binary-string-ref [text : (& text str)] [index : i64]) : char
   (string.string-ref text index))
 
 (cfg
@@ -71,10 +71,14 @@
             (set! index (+ index 1))))
         unit))))
 
-(define (surface-binary-byte [bytes : (__tl_dyn-array u8)] [offset : i64]) : i64
+(define (surface-binary-byte
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [offset : i64]) : i64
   (cast (array-ref bytes offset) : i64))
 
-(define (surface-binary-read-u64 [bytes : (__tl_dyn-array u8)] [offset : i64]) : i64
+(define (surface-binary-read-u64
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [offset : i64]) : i64
   (+
     (surface-binary-byte bytes offset)
     (+
@@ -92,7 +96,7 @@
                 (shl (surface-binary-byte bytes (+ offset 7)) 56)))))))))
 
 (define (surface-binary-bytes->string
-  [bytes : (__tl_dyn-array u8)]
+  [bytes : (& bytes (__tl_dyn-array u8))]
   [offset : i64]
   [length : i64]) : String
   (let
@@ -105,3 +109,17 @@
           (set! index (+ index 1))))
       (unsafe
         (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) length)))))
+
+(cfg
+  (any compiler-surface-producer compiler-surface-selftest)
+  (define (surface-binary-copy [bytes : (& bytes (__tl_dyn-array u8))]) : (__tl_dyn-array
+      u8)
+    (let
+      [out : (__tl_dyn-array u8) (make-array u8 (array-length bytes))]
+      [index : i64 0]
+      (begin
+        (while (< index (array-length bytes))
+          (begin
+            (set! (array-ref out index) (array-ref bytes index))
+            (set! index (+ index 1))))
+        out))))

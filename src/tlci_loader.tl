@@ -2114,11 +2114,11 @@
         [_bad-slot : unit
           (begin
             (tlci.tlci-set-u64!
-              bad-slot-bytes
+              (&mut bad-slot-bytes)
               (+ imports-offset tlci.tlci-section-import-header-size)
               8)
             (tlci.tlci-set-u64!
-              bad-slot-bytes
+              (&mut bad-slot-bytes)
               tlci.tlci-hash-field-offset
               (tlci.tlci-content-hash bad-slot-bytes)))]
         [bad-slot : bool

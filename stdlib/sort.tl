@@ -108,6 +108,10 @@
       (if scalar?
         `(array-ref slots (- j 1))
         `(clone (array-ref slots (- j 1))))]
+    [insertion-value : comptime.Expr
+      (if scalar?
+        `(array-ref slots i)
+        `(clone (array-ref slots i)))]
     [boundary-less : comptime.Expr
       (if scalar?
         `(< (array-ref slots mid) (array-ref slots (- mid 1)))
@@ -148,7 +152,7 @@
               (begin
                 (while (< i chunk-end)
                   (let
-                    [value : ,T (array-ref slots i)]
+                    [value : ,T ,insertion-value]
                     [j : i64 i]
                     (begin
                       (while (if (> j chunk-start)

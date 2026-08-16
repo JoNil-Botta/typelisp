@@ -29,7 +29,7 @@
     (string.append ":" (string.int->string idx))))
 
 (define (fill-items
-  [items : (__tl_dyn-array String)]
+  [items : (&mut items (__tl_dyn-array String))]
   [index : i64]
   [count : i64]
   [seed : i64]) : unit
@@ -43,11 +43,11 @@
   (let
     [items : (__tl_dyn-array String) (array.make-array String count)]
     (begin
-      (fill-items items 0 count seed)
+      (fill-items (&mut items) 0 count seed)
       items)))
 
 (define (items-ok-from?
-  [items : (__tl_dyn-array String)]
+  [items : (& items (__tl_dyn-array String))]
   [index : i64]
   [count : i64]
   [seed : i64]) : bool
@@ -57,7 +57,7 @@
       (string.eq (array-ref items index) (payload seed (- count index)))
       (items-ok-from? items (+ index 1) count seed))))
 
-(define (items-ok? [items : (__tl_dyn-array String)] [count : i64] [seed : i64]) : bool
+(define (items-ok? [items : (& items (__tl_dyn-array String))] [count : i64] [seed : i64]) : bool
   (and (= (array-length items) count) (items-ok-from? items 0 count seed)))
 
 (define (escape-string [seed : i64]) : String
@@ -141,7 +141,7 @@
       [noise : (__tl_dyn-array String) (escape-items 8 (+ n 1000))]
       (if (and
         (string.eq escaped (payload n 999))
-        (items-ok? noise 8 (+ n 1000)))
+        (items-ok? (& noise) 8 (+ n 1000)))
         (string-cycles (- n 1) (+ acc (string-length escaped)))
         0))))
 
@@ -152,7 +152,7 @@
       [items : (__tl_dyn-array String) (escape-items 96 n)]
       [after : String (escape-string (+ n 2000))]
       (if (and
-        (items-ok? items 96 n)
+        (items-ok? (& items) 96 n)
         (string.eq after (payload (+ n 2000) 999)))
         (item-cycles (- n 1) (+ acc 1))
         0))))
@@ -164,7 +164,7 @@
       [items : (__tl_dyn-array String) (escape-items-rewind scratch 96 n)]
       [after : (__tl_dyn-array String)
         (escape-items-rewind scratch 8 (+ n 3000))]
-      (if (and (items-ok? after 8 (+ n 3000)) (items-ok? items 96 n))
+      (if (and (items-ok? (& after) 8 (+ n 3000)) (items-ok? (& items) 96 n))
         (rewind-item-cycles-inner scratch (- n 1) (+ acc 1))
         0))))
 

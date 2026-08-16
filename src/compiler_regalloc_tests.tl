@@ -139,37 +139,45 @@
       (let
         [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
         (begin
-          (reg.compiler-reg-fill-i64-array counts 0)
-          (reg.compiler-reg-ref-counts-blocks! counts blocks)
+          (reg.compiler-reg-fill-i64-array
+            (reg.compiler-reg-global-shared-view counts)
+            0)
+          (reg.compiler-reg-ref-counts-blocks!
+            (reg.compiler-reg-global-shared-view counts)
+            blocks)
           counts))]))
 
 (define (compiler-reg-function-spill-weights-remat
   [func : ir.CompilerIrFunction]
   [coalesce : reg.CompilerRegCoalesceMap]) : (__tl_dyn-array i64)
-  (match func
+  (match (reg.compiler-reg-global-shared-view func)
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [def-status : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [rebates : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [depths : (__tl_dyn-array i64)
-          (reg.compiler-reg-function-loop-depths blocks)]
+          (reg.compiler-reg-function-loop-depths
+            (reg.compiler-reg-global-shared-view blocks))]
         [allow-invariant-loads : bool
-          (reg.compiler-reg-remat-invariant-loads-ok? func)]
+          (reg.compiler-reg-remat-invariant-loads-ok?
+            (reg.compiler-reg-global-shared-view func))]
         (begin
-          (reg.compiler-reg-fill-i64-array counts 0)
-          (reg.compiler-reg-fill-i64-array def-status 0)
-          (reg.compiler-reg-fill-i64-array rebates 0)
+          (reg.compiler-reg-fill-i64-array
+            (reg.compiler-reg-global-shared-view counts)
+            0)
+          (reg.compiler-reg-fill-i64-array
+            (reg.compiler-reg-global-shared-view def-status)
+            0)
           (reg.compiler-reg-ref-counts-blocks-weighted-remat!
-            counts
-            def-status
-            rebates
+            (reg.compiler-reg-global-shared-view counts)
+            (reg.compiler-reg-global-shared-view def-status)
             blocks
             depths
             0
             allow-invariant-loads)
           (reg.compiler-reg-remat-discount-single-def-spill-weights!
-            counts
+            (reg.compiler-reg-global-shared-view counts)
             def-status
             coalesce)
           counts))]))
@@ -323,14 +331,19 @@
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq blocks)]
           [body : ir.CompilerIrInstrSeq
-            (match (ir.compiler-ir-block-seq-ref seq 5)
+            (match (ir.compiler-ir-block-seq-ref
+              (ir.compiler-ir-global-shared-view seq)
+              5)
               [(ir.CompilerIrBlock.Block _ instrs) instrs])]
           (and
             (= (ir.compiler-ir-param-list-count params) 2)
             (match ret-ty
               [(ast.AstType.I64) true]
               [_ false])
-            (= (ir.compiler-ir-block-seq-count seq) 10)
+            (=
+              (ir.compiler-ir-block-seq-count
+                (ir.compiler-ir-global-shared-view seq))
+              10)
             (= reg.compiler-reg-early-exit-prefix-count 4)
             (=
               reg.compiler-reg-early-exit-saving-label
@@ -338,7 +351,9 @@
             (string.eq
               (reg.compiler-reg-early-exit-bare-label-current)
               "entry__shrinkwrap_bare")
-            (match (ir.compiler-ir-block-seq-ref seq 0)
+            (match (ir.compiler-ir-block-seq-ref
+              (ir.compiler-ir-global-shared-view seq)
+              0)
               [(ir.CompilerIrBlock.Block label instrs)
                 (and
                   (= label (ir.compiler-ir-label "entry"))
@@ -348,7 +363,9 @@
                         (= yes (ir.compiler-ir-label "entry__shrinkwrap_bare0"))
                         (= no (ir.compiler-ir-label "guard_limit")))]
                     [_ false]))])
-            (match (ir.compiler-ir-block-seq-ref seq 1)
+            (match (ir.compiler-ir-block-seq-ref
+              (ir.compiler-ir-global-shared-view seq)
+              1)
               [(ir.CompilerIrBlock.Block label instrs)
                 (and
                   (= label (ir.compiler-ir-label "guard_limit"))
@@ -362,7 +379,9 @@
               [(ir.CompilerIrInstr.Jump target)
                 (= target (ir.compiler-ir-label "entry__shrinkwrap_framed"))]
               [_ false])
-            (match (ir.compiler-ir-block-seq-ref seq 7)
+            (match (ir.compiler-ir-block-seq-ref
+              (ir.compiler-ir-global-shared-view seq)
+              7)
               [(ir.CompilerIrBlock.Block label _)
                 (=
                   label
@@ -533,9 +552,12 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler-reg-cold-call-test-function))]
       [rewritten : ir.CompilerIrFunction
-        (reg.compiler-reg-cold-call-rewrite-function-value rewrite)]
-      [temp-start : i64 (reg.compiler-reg-cold-call-rewrite-temp-start rewrite)]
-      (match rewritten
+        (reg.compiler-reg-cold-call-rewrite-function-value
+          (reg.compiler-reg-global-shared-view rewrite))]
+      [temp-start : i64
+        (reg.compiler-reg-cold-call-rewrite-temp-start
+          (reg.compiler-reg-global-shared-view rewrite))]
+      (match (ir.compiler-ir-global-shared-view rewritten)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (let
             [seq : ir.CompilerIrBlockSeq
@@ -551,54 +573,82 @@
             (and
               (= temp-start 6)
               (= vars 9)
-              (= (ir.compiler-ir-instr-seq-count instrs) 8)
+              (=
+                (ir.compiler-ir-instr-seq-count
+                  (ir.compiler-ir-global-shared-view instrs))
+                8)
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 0)
+                (ir.compiler-ir-instr-seq-ref
+                  (ir.compiler-ir-global-shared-view instrs)
+                  0)
                 6
                 0)
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 1)
+                (ir.compiler-ir-instr-seq-ref
+                  (ir.compiler-ir-global-shared-view instrs)
+                  1)
                 7
                 1)
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 2)
+                (ir.compiler-ir-instr-seq-ref
+                  (ir.compiler-ir-global-shared-view instrs)
+                  2)
                 8
                 2)
-              (match (ir.compiler-ir-instr-seq-ref instrs 3)
+              (match (ir.compiler-ir-instr-seq-ref
+                (ir.compiler-ir-global-shared-view instrs)
+                3)
                 [(ir.CompilerIrInstr.Call _ _ _ _) true]
                 [_ false])
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 4)
+                (ir.compiler-ir-instr-seq-ref
+                  (ir.compiler-ir-global-shared-view instrs)
+                  4)
                 0
                 6)
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 5)
+                (ir.compiler-ir-instr-seq-ref
+                  (ir.compiler-ir-global-shared-view instrs)
+                  5)
                 1
                 7)
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 6)
+                (ir.compiler-ir-instr-seq-ref
+                  (ir.compiler-ir-global-shared-view instrs)
+                  6)
                 2
                 8)
-              (match (ir.compiler-ir-instr-seq-ref instrs 7)
+              (match (ir.compiler-ir-instr-seq-ref
+                (ir.compiler-ir-global-shared-view instrs)
+                7)
                 [(ir.CompilerIrInstr.Jump target)
                   (= target (ir.compiler-ir-label "join"))]
                 [_ false])
               (reg.compiler-reg-location-register?
-                (match plan
+                (match (reg.compiler-reg-global-shared-view plan)
                   [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
-                    (reg.compiler-reg-assignment-lookup assignments 0)])
+                    (reg.compiler-reg-assignment-lookup
+                      (reg.compiler-reg-global-shared-view assignments)
+                      0)])
                 cabi.compiler-reg-id-rdi)
               (reg.compiler-reg-location-register?
-                (match plan
+                (match (reg.compiler-reg-global-shared-view plan)
                   [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
-                    (reg.compiler-reg-assignment-lookup assignments 1)])
+                    (reg.compiler-reg-assignment-lookup
+                      (reg.compiler-reg-global-shared-view assignments)
+                      1)])
                 cabi.compiler-reg-id-rsi)
               (reg.compiler-reg-location-register?
-                (match plan
+                (match (reg.compiler-reg-global-shared-view plan)
                   [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
-                    (reg.compiler-reg-assignment-lookup assignments 2)])
+                    (reg.compiler-reg-assignment-lookup
+                      (reg.compiler-reg-global-shared-view assignments)
+                      2)])
                 cabi.compiler-reg-id-rdx)
-              (reg.compiler-reg-cold-call-carriers-stack? plan temp-start vars)))]))))
+              (reg.compiler-reg-cold-call-carriers-stack?
+                (reg.compiler-reg-global-shared-view plan)
+                temp-start
+                vars)))]))))
 
 ;; Fast scalar backend plan: keep type discovery for emission decisions, but
 ;; leave values in their stack slots instead of spending compile time on liveness
@@ -762,18 +812,26 @@
               (cfg
                 scratch-vreg
                 (reg.compiler-reg-location-register?
-                  (reg.compiler-reg-assignment-lookup splat-assignments 0)
+                  (reg.compiler-reg-assignment-lookup
+                    (reg.compiler-reg-global-shared-view splat-assignments)
+                    0)
                   (cabi.compiler-abi-xmm-register-id 0))
                 (not
                   (compiler-reg-location-any-register?
-                    (reg.compiler-reg-assignment-lookup splat-assignments 0))))
+                    (reg.compiler-reg-assignment-lookup
+                      (reg.compiler-reg-global-shared-view splat-assignments)
+                      0))))
               (not
                 (reg.compiler-reg-location-register?
-                  (reg.compiler-reg-assignment-lookup clobber-assignments 0)
+                  (reg.compiler-reg-assignment-lookup
+                    (reg.compiler-reg-global-shared-view clobber-assignments)
+                    0)
                   (cabi.compiler-abi-xmm-register-id 0)))
               (not
                 (reg.compiler-reg-location-register?
-                  (reg.compiler-reg-assignment-lookup clobber-assignments 0)
+                  (reg.compiler-reg-assignment-lookup
+                    (reg.compiler-reg-global-shared-view clobber-assignments)
+                    0)
                   (cabi.compiler-abi-xmm-register-id 1))))])])))
 
 (cfg
@@ -1053,7 +1111,7 @@
       (ir.CompilerIrFunction.Function
         (ir.compiler-ir-test-symbol "param_aggregate")
         (ir.compiler-ir-param-cons
-          (ir.CompilerIrParam.Param "state" ty 0)
+          (ir.CompilerIrParam.Param "state" (ast.ast-global-shared-view ty) 0)
           ir.CompilerIrParamList.Nil)
         (ast.AstType.Unit)
         2
@@ -1154,13 +1212,23 @@
       (compiler-reg-param-const-shift-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 0))
-          (not (live.compiler-live-set-contains? ineligible 1))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              1))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             cabi.compiler-reg-id-rdi)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             cabi.compiler-reg-id-rsi))])))
 
 (cfg
@@ -1177,13 +1245,23 @@
       (compiler-reg-param-var-shift-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 0))
-          (not (live.compiler-live-set-contains? ineligible 1))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              1))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             cabi.compiler-reg-id-rdi)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             cabi.compiler-reg-id-rsi))])))
 
 (cfg
@@ -1237,12 +1315,19 @@
       (compiler-reg-param-dead-before-call-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 0))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             cabi.compiler-reg-id-rdi)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             cabi.compiler-reg-id-r12))])))
 
 (cfg
@@ -1303,15 +1388,24 @@
       (compiler-reg-param-rdx-div-span-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 2))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              2))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             cabi.compiler-reg-id-rdi)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             cabi.compiler-reg-id-rsi)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 2)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              2)
             cabi.compiler-reg-id-r12))])))
 
 (cfg
@@ -1381,18 +1475,29 @@
       (compiler-reg-param-rcx-shift-span-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 3))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              3))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             cabi.compiler-reg-id-rdi)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             cabi.compiler-reg-id-rsi)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 2)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              2)
             cabi.compiler-reg-id-rdx)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 3)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              3)
             cabi.compiler-reg-id-r12))])))
 
 (cfg
@@ -1453,11 +1558,18 @@
         (and
           (not
             (reg.compiler-reg-location-register?
-              (reg.compiler-reg-assignment-lookup assignments 0)
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                0)
               cabi.compiler-reg-id-rdi))
           (compiler-reg-location-any-register?
-            (reg.compiler-reg-assignment-lookup assignments 0))
-          (compiler-reg-same-location? assignments 0 1))])))
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0))
+          (compiler-reg-same-location?
+            (reg.compiler-reg-global-shared-view assignments)
+            0
+            1))])))
 
 (define (compiler-reg-self-loop-exit-live-phi-mask-ok?) : bool
   (let
@@ -1467,16 +1579,19 @@
       (compiler-reg-self-loop-exit-live-phi-function false)]
     [loop-first-mask : (__tl_dyn-array i64)
       (reg.compiler-reg-function-phi-touched-safe
-        loop-first
-        (live.compiler-live-analyze-function-edge-precise loop-first))]
+        (ir.compiler-ir-global-shared-view loop-first)
+        (live.compiler-live-analyze-function-edge-precise
+          (ir.compiler-ir-global-shared-view loop-first)))]
     [exit-first-mask : (__tl_dyn-array i64)
       (reg.compiler-reg-function-phi-touched-safe
-        exit-first
-        (live.compiler-live-analyze-function-edge-precise exit-first))]
+        (ir.compiler-ir-global-shared-view exit-first)
+        (live.compiler-live-analyze-function-edge-precise
+          (ir.compiler-ir-global-shared-view exit-first)))]
     [fixed-register-mask : (__tl_dyn-array i64)
       (reg.compiler-reg-function-phi-touched-safe-mode
-        loop-first
-        (live.compiler-live-analyze-function-edge-precise loop-first)
+        (ir.compiler-ir-global-shared-view loop-first)
+        (live.compiler-live-analyze-function-edge-precise
+          (ir.compiler-ir-global-shared-view loop-first))
         false)]
     (and
       (compiler-reg-self-loop-exit-live-phi-mask-shape-ok? loop-first-mask)
@@ -1501,10 +1616,16 @@
         (= (array-ref prefs 0) -1)
         (=
           (array-ref prefs 1)
-          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rsi 0))
+          (reg.compiler-reg-id-seq-index-of
+            (reg.compiler-reg-global-shared-view pool)
+            cabi.compiler-reg-id-rsi
+            0))
         (=
           (array-ref prefs 2)
-          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rdx 0))))))
+          (reg.compiler-reg-id-seq-index-of
+            (reg.compiler-reg-global-shared-view pool)
+            cabi.compiler-reg-id-rdx
+            0))))))
 
 (cfg
   test
@@ -1514,17 +1635,32 @@
       (compiler-reg-param-register-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 0))
-          (not (live.compiler-live-set-contains? ineligible 1))
-          (not (live.compiler-live-set-contains? ineligible 2))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              1))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              2))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             cabi.compiler-reg-id-rdi)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             cabi.compiler-reg-id-rsi)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 2)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              2)
             cabi.compiler-reg-id-rdx))])))
 
 (cfg
@@ -1539,17 +1675,32 @@
       (compiler-reg-param-register-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 0))
-          (not (live.compiler-live-set-contains? ineligible 1))
-          (not (live.compiler-live-set-contains? ineligible 2))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              1))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              2))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             cabi.compiler-reg-id-rcx)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             cabi.compiler-reg-id-rdx)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 2)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              2)
             cabi.compiler-reg-id-r12))])))
 
 (cfg
@@ -1560,27 +1711,46 @@
       (compiler-reg-float-param-register-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 0))
-          (not (live.compiler-live-set-contains? ineligible 1))
-          (not (live.compiler-live-set-contains? ineligible 2))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              1))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              2))
           (cfg
             scratch-vreg
             (and
               (reg.compiler-reg-location-register?
-                (reg.compiler-reg-assignment-lookup assignments 0)
+                (reg.compiler-reg-assignment-lookup
+                  (reg.compiler-reg-global-shared-view assignments)
+                  0)
                 (cabi.compiler-abi-xmm-register-id 0))
               (reg.compiler-reg-location-register?
-                (reg.compiler-reg-assignment-lookup assignments 1)
+                (reg.compiler-reg-assignment-lookup
+                  (reg.compiler-reg-global-shared-view assignments)
+                  1)
                 (cabi.compiler-abi-xmm-register-id 1)))
             (and
               (not
                 (compiler-reg-location-any-register?
-                  (reg.compiler-reg-assignment-lookup assignments 0)))
+                  (reg.compiler-reg-assignment-lookup
+                    (reg.compiler-reg-global-shared-view assignments)
+                    0)))
               (not
                 (compiler-reg-location-any-register?
-                  (reg.compiler-reg-assignment-lookup assignments 1)))))
+                  (reg.compiler-reg-assignment-lookup
+                    (reg.compiler-reg-global-shared-view assignments)
+                    1)))))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 2)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              2)
             (cabi.compiler-abi-xmm-register-id 2)))])))
 
 (cfg
@@ -1591,23 +1761,38 @@
       (compiler-reg-float-param-register-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 0))
-          (not (live.compiler-live-set-contains? ineligible 1))
-          (not (live.compiler-live-set-contains? ineligible 2))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              1))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              2))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             (cfg
               scratch-vreg
               (cabi.compiler-abi-xmm-register-id 0)
               (cabi.compiler-abi-xmm-register-id 6)))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             (cfg
               scratch-vreg
               (cabi.compiler-abi-xmm-register-id 1)
               (cabi.compiler-abi-xmm-register-id 7)))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 2)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              2)
             (cabi.compiler-abi-xmm-register-id 2)))])))
 
 (cfg
@@ -1618,25 +1803,48 @@
       (compiler-reg-mixed-float-call-arg-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (live.compiler-live-set-contains? ineligible 0)
-          (not (live.compiler-live-set-contains? ineligible 1))
-          (not (live.compiler-live-set-contains? ineligible 2))
-          (not (live.compiler-live-set-contains? ineligible 3))
-          (compiler-reg-unassigned? assignments 0)
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            0)
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              1))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              2))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              3))
+          (compiler-reg-unassigned?
+            (reg.compiler-reg-global-shared-view assignments)
+            0)
           (cfg
             scratch-vreg
             (and
               (reg.compiler-reg-location-register?
-                (reg.compiler-reg-assignment-lookup assignments 1)
+                (reg.compiler-reg-assignment-lookup
+                  (reg.compiler-reg-global-shared-view assignments)
+                  1)
                 (cabi.compiler-abi-xmm-register-id 0))
               (reg.compiler-reg-location-register?
-                (reg.compiler-reg-assignment-lookup assignments 2)
+                (reg.compiler-reg-assignment-lookup
+                  (reg.compiler-reg-global-shared-view assignments)
+                  2)
                 (cabi.compiler-abi-xmm-register-id 1)))
             (and
-              (compiler-reg-unassigned? assignments 1)
-              (compiler-reg-unassigned? assignments 2)))
+              (compiler-reg-unassigned?
+                (reg.compiler-reg-global-shared-view assignments)
+                1)
+              (compiler-reg-unassigned?
+                (reg.compiler-reg-global-shared-view assignments)
+                2)))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 3)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              3)
             (cabi.compiler-abi-xmm-register-id 2)))])))
 
 (cfg
@@ -1647,22 +1855,43 @@
       (compiler-reg-mixed-float-call-arg-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (live.compiler-live-set-contains? ineligible 0)
-          (not (live.compiler-live-set-contains? ineligible 1))
-          (not (live.compiler-live-set-contains? ineligible 2))
-          (not (live.compiler-live-set-contains? ineligible 3))
-          (compiler-reg-unassigned? assignments 0)
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            0)
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              1))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              2))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              3))
+          (compiler-reg-unassigned?
+            (reg.compiler-reg-global-shared-view assignments)
+            0)
           (cfg
             scratch-vreg
             (reg.compiler-reg-location-register?
-              (reg.compiler-reg-assignment-lookup assignments 1)
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                1)
               (cabi.compiler-abi-xmm-register-id 1))
-            (compiler-reg-unassigned? assignments 1))
+            (compiler-reg-unassigned?
+              (reg.compiler-reg-global-shared-view assignments)
+              1))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 2)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              2)
             (cabi.compiler-abi-xmm-register-id 2))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 3)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              3)
             (cabi.compiler-abi-xmm-register-id 3)))])))
 
 (cfg
@@ -1673,13 +1902,19 @@
       (compiler-reg-win64-rsi-rdi-pressure-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 0))
-          (not (live.compiler-live-set-contains? ineligible 6))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              6))
           (reg.compiler-reg-assignments-use-register?
-            assignments
+            (reg.compiler-reg-global-shared-view assignments)
             cabi.compiler-reg-id-rsi)
           (reg.compiler-reg-assignments-use-register?
-            assignments
+            (reg.compiler-reg-global-shared-view assignments)
             cabi.compiler-reg-id-rdi))])))
 
 (cfg
@@ -1689,7 +1924,10 @@
       [parents : (__tl_dyn-array i64) (array.make-array i64 n)]
       [sizes : (__tl_dyn-array i64) (array.make-array i64 n)]
       (begin
-        (reg.compiler-reg-coalesce-map-init! parents sizes 0)
+        (reg.compiler-reg-coalesce-map-init!
+          (reg.compiler-reg-global-shared-view parents)
+          sizes
+          0)
         (reg.CompilerRegCoalesceMap parents)))))
 
 (cfg
@@ -1740,20 +1978,35 @@
       (and
         (=
           (array-ref prefs 0)
-          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rcx 0))
+          (reg.compiler-reg-id-seq-index-of
+            (reg.compiler-reg-global-shared-view pool)
+            cabi.compiler-reg-id-rcx
+            0))
         (=
           (array-ref prefs 1)
-          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rdx 0))
+          (reg.compiler-reg-id-seq-index-of
+            (reg.compiler-reg-global-shared-view pool)
+            cabi.compiler-reg-id-rdx
+            0))
         (=
           (array-ref prefs 2)
-          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-r8 0))
+          (reg.compiler-reg-id-seq-index-of
+            (reg.compiler-reg-global-shared-view pool)
+            cabi.compiler-reg-id-r8
+            0))
         (=
           (array-ref prefs 3)
-          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-r9 0))
+          (reg.compiler-reg-id-seq-index-of
+            (reg.compiler-reg-global-shared-view pool)
+            cabi.compiler-reg-id-r9
+            0))
         (= (array-ref prefs 4) -1)
         (=
           (array-ref prefs 5)
-          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rax 0))))))
+          (reg.compiler-reg-id-seq-index-of
+            (reg.compiler-reg-global-shared-view pool)
+            cabi.compiler-reg-id-rax
+            0))))))
 
 (cfg
   test
@@ -1768,9 +2021,14 @@
       (compiler-reg-param-clobber-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 0))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             cabi.compiler-reg-id-r12))])))
 
 (cfg
@@ -1785,9 +2043,14 @@
       (compiler-reg-param-aggregate-function))
       [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
         (and
-          (not (live.compiler-live-set-contains? ineligible 0))
+          (not
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0))
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             cabi.compiler-reg-id-rdi))])))
 
 ;; M-A (RC1): a used param's interval is force-extended to the function's first
@@ -1807,18 +2070,29 @@
       (compiler-reg-zero-call-param-conflict-function))
       [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
         (and
-          (= (reg.compiler-reg-spill-count assignments) 0)
+          (=
+            (reg.compiler-reg-spill-count
+              (reg.compiler-reg-global-shared-view assignments))
+            0)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 5)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              5)
             cabi.compiler-reg-id-r9)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 6)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              6)
             cabi.compiler-reg-id-rax)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 7)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              7)
             cabi.compiler-reg-id-rsi)
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 8)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              8)
             cabi.compiler-reg-id-rdi))])))
 
 (cfg
@@ -2003,16 +2277,19 @@
       [empty-coalesce : reg.CompilerRegCoalesceMap
         (reg.CompilerRegCoalesceMap (array.make-array i64 0))]
       [raw : (__tl_dyn-array i64)
-        (reg.compiler-reg-function-spill-weights func)]
+        (reg.compiler-reg-function-spill-weights
+          (ir.compiler-ir-global-shared-view func))]
       [discounted : (__tl_dyn-array i64)
-        (compiler-reg-function-spill-weights-remat func empty-coalesce)]
+        (compiler-reg-function-spill-weights-remat
+          (ir.compiler-ir-global-shared-view func)
+          (reg.compiler-reg-global-shared-view empty-coalesce))]
       [multi-raw : (__tl_dyn-array i64)
         (reg.compiler-reg-function-spill-weights
           (compiler-reg-remat-multi-def-function))]
       [multi-discounted : (__tl_dyn-array i64)
         (compiler-reg-function-spill-weights-remat
           (compiler-reg-remat-multi-def-function)
-          empty-coalesce)]
+          (reg.compiler-reg-global-shared-view empty-coalesce))]
       [parents : (__tl_dyn-array i64) (array.make-array i64 2)]
       (begin
         (set! (array-ref parents 0) 0)
@@ -2020,7 +2297,7 @@
         (let
           [coalesced : (__tl_dyn-array i64)
             (compiler-reg-function-spill-weights-remat
-              func
+              (ir.compiler-ir-global-shared-view func)
               (reg.CompilerRegCoalesceMap parents))]
           (and
             (= (array-ref raw 0) 3)
@@ -2180,10 +2457,14 @@
       [empty-coalesce : reg.CompilerRegCoalesceMap
         (reg.CompilerRegCoalesceMap (array.make-array i64 0))]
       [raw : (__tl_dyn-array i64)
-        (reg.compiler-reg-function-spill-weights func)]
+        (reg.compiler-reg-function-spill-weights
+          (ir.compiler-ir-global-shared-view func))]
       [discounted : (__tl_dyn-array i64)
-        (compiler-reg-function-spill-weights-remat func empty-coalesce)]
-      (match (reg.compiler-reg-plan-function-scalar func)
+        (compiler-reg-function-spill-weights-remat
+          (ir.compiler-ir-global-shared-view func)
+          (reg.compiler-reg-global-shared-view empty-coalesce))]
+      (match (reg.compiler-reg-plan-function-scalar
+        (ir.compiler-ir-global-shared-view func))
         [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
           (and
             (> (array-ref raw 0) (array-ref raw 1))
@@ -2192,7 +2473,9 @@
             ;; the rematerialisable values (var0, var2-5) below it, so a remat
             ;; value -- never the costly-to-spill non-remat one -- is the victim.
             (compiler-reg-location-any-register?
-              (reg.compiler-reg-assignment-lookup assignments 1))
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                1))
             ;; Among the remat values the GREEDY spills the genuinely cheapest:
             ;; var0 has 2 uses (spilling it costs 2 recomputes) while var5 has 1
             ;; use (1 recompute), so var0 is KEPT and the 1-use var5 is the victim.
@@ -2200,9 +2483,13 @@
             ;; use-count collapse by raw use density, spilling the least-used
             ;; rematerialisable value rather than the most-used one.
             (compiler-reg-location-any-register?
-              (reg.compiler-reg-assignment-lookup assignments 0))
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                0))
             (compiler-reg-location-spill-offset?
-              (reg.compiler-reg-assignment-lookup assignments 5)
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                5)
               (reg.compiler-reg-stack-slot-offset 5)))]))))
 
 (cfg
@@ -2389,12 +2676,18 @@
       [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
         (and
           (compiler-reg-location-any-register?
-            (reg.compiler-reg-assignment-lookup assignments 0))
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0))
           (compiler-reg-location-spill-offset?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             (reg.compiler-reg-stack-slot-offset 1))
           (compiler-reg-location-any-register?
-            (reg.compiler-reg-assignment-lookup assignments 5)))])))
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              5)))])))
 
 (cfg
   test
@@ -2510,21 +2803,30 @@
       [func : ir.CompilerIrFunction
         (compiler-reg-loop-spill-weight-eviction-function)]
       [static-counts : (__tl_dyn-array i64)
-        (compiler-reg-function-ref-counts func)]
+        (compiler-reg-function-ref-counts
+          (ir.compiler-ir-global-shared-view func))]
       [weighted-counts : (__tl_dyn-array i64)
-        (reg.compiler-reg-function-spill-weights func)]
-      (match (reg.compiler-reg-plan-function-scalar func)
+        (reg.compiler-reg-function-spill-weights
+          (ir.compiler-ir-global-shared-view func))]
+      (match (reg.compiler-reg-plan-function-scalar
+        (ir.compiler-ir-global-shared-view func))
         [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
           (and
             (= (array-ref static-counts 0) (array-ref static-counts 1))
             (> (array-ref weighted-counts 0) (array-ref weighted-counts 1))
             (compiler-reg-location-any-register?
-              (reg.compiler-reg-assignment-lookup assignments 0))
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                0))
             (compiler-reg-location-spill-offset?
-              (reg.compiler-reg-assignment-lookup assignments 1)
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                1)
               (reg.compiler-reg-stack-slot-offset 1))
             (compiler-reg-location-any-register?
-              (reg.compiler-reg-assignment-lookup assignments 5)))]))))
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                5)))]))))
 
 ;; ---------------------------------------------------------------------------
 ;; Memory-operand foldability rebate (compiler-reg-function-foldable-rebates).
@@ -2851,17 +3153,17 @@
                 (if (and (= found-dst dst) (= found value))
                   true
                   (compiler-reg-instr-list-has-mov-i64?
-                    (__tl-box-place rest)
+                    (ir.compiler-ir-box-shared-view rest)
                     dst
                     value))]
               [_
                 (compiler-reg-instr-list-has-mov-i64?
-                  (__tl-box-place rest)
+                  (ir.compiler-ir-box-shared-view rest)
                   dst
                   value)])]
           [_
             (compiler-reg-instr-list-has-mov-i64?
-              (__tl-box-place rest)
+              (ir.compiler-ir-box-shared-view rest)
               dst
               value)])])))
 
@@ -2881,16 +3183,19 @@
                 (if (and (= found-dst dst) (= found-src src))
                   true
                   (compiler-reg-instr-list-has-mov-var?
-                    (__tl-box-place rest)
+                    (ir.compiler-ir-box-shared-view rest)
                     dst
                     src))]
               [_
                 (compiler-reg-instr-list-has-mov-var?
-                  (__tl-box-place rest)
+                  (ir.compiler-ir-box-shared-view rest)
                   dst
                   src)])]
           [_
-            (compiler-reg-instr-list-has-mov-var? (__tl-box-place rest) dst src)])])))
+            (compiler-reg-instr-list-has-mov-var?
+              (ir.compiler-ir-box-shared-view rest)
+              dst
+              src)])])))
 
 (cfg
   test
@@ -2910,17 +3215,17 @@
                   (string.eq (ir.compiler-ir-symbol-text found-name) name))
                   true
                   (compiler-reg-instr-list-has-mov-global?
-                    (__tl-box-place rest)
+                    (ir.compiler-ir-box-shared-view rest)
                     dst
                     name))]
               [_
                 (compiler-reg-instr-list-has-mov-global?
-                  (__tl-box-place rest)
+                  (ir.compiler-ir-box-shared-view rest)
                   dst
                   name)])]
           [_
             (compiler-reg-instr-list-has-mov-global?
-              (__tl-box-place rest)
+              (ir.compiler-ir-box-shared-view rest)
               dst
               name)])])))
 
@@ -2942,17 +3247,17 @@
                   (string.eq (ir.compiler-ir-symbol-text found-name) name))
                   true
                   (compiler-reg-instr-list-has-load-global-addr?
-                    (__tl-box-place rest)
+                    (ir.compiler-ir-box-shared-view rest)
                     dst
                     name))]
               [_
                 (compiler-reg-instr-list-has-load-global-addr?
-                  (__tl-box-place rest)
+                  (ir.compiler-ir-box-shared-view rest)
                   dst
                   name)])]
           [_
             (compiler-reg-instr-list-has-load-global-addr?
-              (__tl-box-place rest)
+              (ir.compiler-ir-box-shared-view rest)
               dst
               name)])])))
 
@@ -2979,31 +3284,33 @@
                         (string.eq (ir.compiler-ir-symbol-text found-name) name)
                         (and
                           (= found-offset-value offset)
-                          (ast.ast-type-eq? found-ty ty))))
+                          (ast.ast-type-eq?
+                            found-ty
+                            (ast.ast-global-shared-view ty)))))
                       true
                       (compiler-reg-instr-list-has-gep-global-i64?
-                        (__tl-box-place rest)
+                        (ir.compiler-ir-box-shared-view rest)
                         dst
                         name
                         offset
                         ty))]
                   [_
                     (compiler-reg-instr-list-has-gep-global-i64?
-                      (__tl-box-place rest)
+                      (ir.compiler-ir-box-shared-view rest)
                       dst
                       name
                       offset
                       ty)])]
               [_
                 (compiler-reg-instr-list-has-gep-global-i64?
-                  (__tl-box-place rest)
+                  (ir.compiler-ir-box-shared-view rest)
                   dst
                   name
                   offset
                   ty)])]
           [_
             (compiler-reg-instr-list-has-gep-global-i64?
-              (__tl-box-place rest)
+              (ir.compiler-ir-box-shared-view rest)
               dst
               name
               offset
@@ -3027,17 +3334,17 @@
                   (= found-src src))
                   true
                   (compiler-reg-instr-list-has-store-var?
-                    (__tl-box-place rest)
+                    (ir.compiler-ir-box-shared-view rest)
                     name
                     src))]
               [_
                 (compiler-reg-instr-list-has-store-var?
-                  (__tl-box-place rest)
+                  (ir.compiler-ir-box-shared-view rest)
                   name
                   src)])]
           [_
             (compiler-reg-instr-list-has-store-var?
-              (__tl-box-place rest)
+              (ir.compiler-ir-box-shared-view rest)
               name
               src)])])))
 
@@ -3055,11 +3362,14 @@
             (if (and (= found-dst dst) (= found-src src))
               true
               (compiler-reg-instr-list-has-addr-of?
-                (__tl-box-place rest)
+                (ir.compiler-ir-box-shared-view rest)
                 dst
                 src))]
           [_
-            (compiler-reg-instr-list-has-addr-of? (__tl-box-place rest) dst src)])])))
+            (compiler-reg-instr-list-has-addr-of?
+              (ir.compiler-ir-box-shared-view rest)
+              dst
+              src)])])))
 
 (cfg
   test
@@ -3076,15 +3386,15 @@
                 (if (= found callee)
                   true
                   (compiler-reg-instr-list-has-call-indirect-var?
-                    (__tl-box-place rest)
+                    (ir.compiler-ir-box-shared-view rest)
                     callee))]
               [_
                 (compiler-reg-instr-list-has-call-indirect-var?
-                  (__tl-box-place rest)
+                  (ir.compiler-ir-box-shared-view rest)
                   callee)])]
           [_
             (compiler-reg-instr-list-has-call-indirect-var?
-              (__tl-box-place rest)
+              (ir.compiler-ir-box-shared-view rest)
               callee)])])))
 
 (cfg
@@ -3104,18 +3414,20 @@
                     (if (= found src)
                       true
                       (compiler-reg-instr-list-has-return-var?
-                        (__tl-box-place rest)
+                        (ir.compiler-ir-box-shared-view rest)
                         src))]
                   [_
                     (compiler-reg-instr-list-has-return-var?
-                      (__tl-box-place rest)
+                      (ir.compiler-ir-box-shared-view rest)
                       src)])]
               [_
                 (compiler-reg-instr-list-has-return-var?
-                  (__tl-box-place rest)
+                  (ir.compiler-ir-box-shared-view rest)
                   src)])]
           [_
-            (compiler-reg-instr-list-has-return-var? (__tl-box-place rest) src)])])))
+            (compiler-reg-instr-list-has-return-var?
+              (ir.compiler-ir-box-shared-view rest)
+              src)])])))
 
 (cfg
   test
@@ -3128,17 +3440,23 @@
           [(ir.CompilerIrBlock.Block label instrs)
             (if (= label want-label)
               (ir.compiler-ir-instr-seq-to-list instrs)
-              (compiler-reg-block-instr-list (__tl-box-place rest) want-label))])]
+              (compiler-reg-block-instr-list
+                (ir.compiler-ir-box-shared-view rest)
+                want-label))])]
       [(ir.CompilerIrBlockList.Array seq)
         (let
           [i : i64 0]
-          [count : i64 (ir.compiler-ir-block-seq-count seq)]
+          [count : i64
+            (ir.compiler-ir-block-seq-count
+              (ir.compiler-ir-global-shared-view seq))]
           [out : ir.CompilerIrInstrList ir.CompilerIrInstrList.Nil]
           [found : bool false]
           (begin
             (while (and (< i count) (not found))
               (begin
-                (match (ir.compiler-ir-block-seq-ref seq i)
+                (match (ir.compiler-ir-block-seq-ref
+                  (ir.compiler-ir-global-shared-view seq)
+                  i)
                   [(ir.CompilerIrBlock.Block label instrs)
                     (if (= label want-label)
                       (begin
@@ -3409,16 +3727,19 @@
   (define (compiler-reg-remat-rewrite-shape-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-remat-rewrite-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-remat-single-spill-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             blocks
             vars
-            (reg.compiler-reg-function-var-types func)
-            plan)
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
             [(reg.CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
@@ -3428,43 +3749,56 @@
               (let
                 [items : ir.CompilerIrInstrList
                   (compiler-reg-block-instr-list
-                    rewritten
+                    (ir.compiler-ir-global-shared-view rewritten)
                     (ir.compiler-ir-label "entry"))]
                 [rewritten-plan : reg.CompilerRegPlan
                   (reg.compiler-reg-plan-with-call-save-rewrite
-                    plan
+                    (reg.compiler-reg-global-shared-view plan)
                     (reg.CompilerRegCallSaveRewrite.Rewrite
-                      rewritten
+                      (ir.compiler-ir-global-shared-view rewritten)
                       vars
                       out-vars
-                      extra-assignments
-                      extra-types))]
+                      (reg.compiler-reg-global-shared-view extra-assignments)
+                      (reg.compiler-reg-global-shared-view extra-types)))]
                 [rewritten-assignments : reg.CompilerRegAssignmentTable
-                  (reg.compiler-reg-plan-assignments rewritten-plan)]
+                  (reg.compiler-reg-plan-assignments
+                    (reg.compiler-reg-global-shared-view rewritten-plan))]
                 [rewritten-types : reg.CompilerRegVarTypes
-                  (reg.compiler-reg-plan-types rewritten-plan)]
+                  (reg.compiler-reg-plan-types
+                    (reg.compiler-reg-global-shared-view rewritten-plan))]
                 (and
                   (= out-vars (+ vars 2))
                   (= (reg.compiler-reg-assignment-count extra-assignments) 2)
                   (reg.compiler-reg-location-register?
                     (reg.compiler-reg-assignment-lookup
-                      rewritten-assignments
+                      (reg.compiler-reg-global-shared-view
+                        rewritten-assignments)
                       vars)
                     cabi.compiler-reg-id-r9)
                   (reg.compiler-reg-location-register?
                     (reg.compiler-reg-assignment-lookup
-                      rewritten-assignments
+                      (reg.compiler-reg-global-shared-view
+                        rewritten-assignments)
                       (+ vars 1))
                     cabi.compiler-reg-id-r9)
-                  (compiler-reg-instr-list-has-mov-i64? items vars 7)
-                  (compiler-reg-instr-list-has-mov-i64? items (+ vars 1) 7)
-                  (compiler-reg-instr-list-has-store-var? items "use0a" vars)
+                  (compiler-reg-instr-list-has-mov-i64?
+                    (ir.compiler-ir-global-shared-view items)
+                    vars
+                    7)
+                  (compiler-reg-instr-list-has-mov-i64?
+                    (ir.compiler-ir-global-shared-view items)
+                    (+ vars 1)
+                    7)
                   (compiler-reg-instr-list-has-store-var?
-                    items
+                    (ir.compiler-ir-global-shared-view items)
+                    "use0a"
+                    vars)
+                  (compiler-reg-instr-list-has-store-var?
+                    (ir.compiler-ir-global-shared-view items)
                     "use0b"
                     (+ vars 1))
                   (match (reg.compiler-reg-var-types-lookup
-                    rewritten-types
+                    (reg.compiler-reg-global-shared-view rewritten-types)
                     vars)
                     [(reg.CompilerRegMaybeType.Some ty)
                       (match ty
@@ -3472,31 +3806,42 @@
                         [_ false])]
                     [(reg.CompilerRegMaybeType.No) false])
                   (match (reg.compiler-reg-var-types-lookup
-                    rewritten-types
+                    (reg.compiler-reg-global-shared-view rewritten-types)
                     (+ vars 1))
                     [(reg.CompilerRegMaybeType.Some ty)
                       (match ty
                         [(ast.AstType.I64) true]
                         [_ false])]
                     [(reg.CompilerRegMaybeType.No) false])
-                  (not (compiler-reg-instr-list-has-store-var? items "use0a" 0))
-                  (not (compiler-reg-instr-list-has-store-var? items "use0b" 0))))])]))))
+                  (not
+                    (compiler-reg-instr-list-has-store-var?
+                      (ir.compiler-ir-global-shared-view items)
+                      "use0a"
+                      0))
+                  (not
+                    (compiler-reg-instr-list-has-store-var?
+                      (ir.compiler-ir-global-shared-view items)
+                      "use0b"
+                      0))))])]))))
 
 (cfg
   test
   (define (compiler-reg-remat-register-conflict-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-remat-conflict-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-remat-conflict-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-remat-conflict-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             blocks
             vars
-            (reg.compiler-reg-function-var-types func)
-            plan)
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
             [(reg.CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
@@ -3519,16 +3864,19 @@
     (let
       [func : ir.CompilerIrFunction
         (compiler-reg-remat-caller-clobber-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-remat-single-spill-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             blocks
             vars
-            (reg.compiler-reg-function-var-types func)
-            plan)
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
             [(reg.CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
@@ -3550,16 +3898,19 @@
   (define (compiler-reg-remat-addr-of-source-refusal-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-remat-addr-of-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-remat-single-spill-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             blocks
             vars
-            (reg.compiler-reg-function-var-types func)
-            plan)
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
             [(reg.CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
@@ -3574,24 +3925,34 @@
                 (and
                   (= out-vars vars)
                   (= (reg.compiler-reg-assignment-count extra-assignments) 0)
-                  (compiler-reg-instr-list-has-addr-of? items 1 0)
-                  (not (compiler-reg-instr-list-has-addr-of? items 1 vars))))])]))))
+                  (compiler-reg-instr-list-has-addr-of?
+                    (ir.compiler-ir-global-shared-view items)
+                    1
+                    0)
+                  (not
+                    (compiler-reg-instr-list-has-addr-of?
+                      (ir.compiler-ir-global-shared-view items)
+                      1
+                      vars))))])]))))
 
 (cfg
   test
   (define (compiler-reg-remat-global-mov-rewrite-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-remat-global-mov-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-remat-single-spill-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             blocks
             vars
-            (reg.compiler-reg-function-var-types func)
-            plan)
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
             [(reg.CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
@@ -3607,27 +3968,35 @@
                   (= out-vars (+ vars 1))
                   (= (reg.compiler-reg-assignment-count extra-assignments) 1)
                   (compiler-reg-instr-list-has-mov-global?
-                    items
+                    (ir.compiler-ir-global-shared-view items)
                     vars
                     "global_value")
-                  (compiler-reg-instr-list-has-return-var? items vars)
-                  (not (compiler-reg-instr-list-has-return-var? items 0))))])]))))
+                  (compiler-reg-instr-list-has-return-var?
+                    (ir.compiler-ir-global-shared-view items)
+                    vars)
+                  (not
+                    (compiler-reg-instr-list-has-return-var?
+                      (ir.compiler-ir-global-shared-view items)
+                      0))))])]))))
 
 (cfg
   test
   (define (compiler-reg-remat-global-load-rewrite-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-remat-global-load-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-remat-single-spill-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             blocks
             vars
-            (reg.compiler-reg-function-var-types func)
-            plan)
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
             [(reg.CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
@@ -3643,27 +4012,35 @@
                   (= out-vars (+ vars 1))
                   (= (reg.compiler-reg-assignment-count extra-assignments) 1)
                   (compiler-reg-instr-list-has-load-global-addr?
-                    items
+                    (ir.compiler-ir-global-shared-view items)
                     vars
                     "global_value")
-                  (compiler-reg-instr-list-has-return-var? items vars)
-                  (not (compiler-reg-instr-list-has-return-var? items 0))))])]))))
+                  (compiler-reg-instr-list-has-return-var?
+                    (ir.compiler-ir-global-shared-view items)
+                    vars)
+                  (not
+                    (compiler-reg-instr-list-has-return-var?
+                      (ir.compiler-ir-global-shared-view items)
+                      0))))])]))))
 
 (cfg
   test
   (define (compiler-reg-remat-global-gep-rewrite-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-remat-global-gep-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-remat-single-spill-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             blocks
             vars
-            (reg.compiler-reg-function-var-types func)
-            plan)
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
             [(reg.CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
@@ -3679,13 +4056,18 @@
                   (= out-vars (+ vars 1))
                   (= (reg.compiler-reg-assignment-count extra-assignments) 1)
                   (compiler-reg-instr-list-has-gep-global-i64?
-                    items
+                    (ir.compiler-ir-global-shared-view items)
                     vars
                     "global_value"
                     3
                     (compiler-reg-i64-ty))
-                  (compiler-reg-instr-list-has-return-var? items vars)
-                  (not (compiler-reg-instr-list-has-return-var? items 0))))])]))))
+                  (compiler-reg-instr-list-has-return-var?
+                    (ir.compiler-ir-global-shared-view items)
+                    vars)
+                  (not
+                    (compiler-reg-instr-list-has-return-var?
+                      (ir.compiler-ir-global-shared-view items)
+                      0))))])]))))
 
 (cfg
   test
@@ -3693,16 +4075,19 @@
     (let
       [func : ir.CompilerIrFunction
         (compiler-reg-remat-global-mutating-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-remat-single-spill-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (match (reg.compiler-reg-remat-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             blocks
             vars
-            (reg.compiler-reg-function-var-types func)
-            plan)
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
             [(reg.CompilerRegCallSaveRewrite.Rewrite
                 rewritten
                 _
@@ -3717,10 +4102,12 @@
                 (and
                   (= out-vars vars)
                   (= (reg.compiler-reg-assignment-count extra-assignments) 0)
-                  (compiler-reg-instr-list-has-return-var? items 0)
+                  (compiler-reg-instr-list-has-return-var?
+                    (ir.compiler-ir-global-shared-view items)
+                    0)
                   (not
                     (compiler-reg-instr-list-has-mov-global?
-                      items
+                      (ir.compiler-ir-global-shared-view items)
                       vars
                       "global_value"))))])]))))
 
@@ -3908,17 +4295,24 @@
             ;; register-homes the hot call-spanning value (spill-weight priority)
             ;; and spills the single-use overflow (var 6) without a save/restore
             ;; rescue.
-            (= (reg.compiler-reg-spill-count assignments) 2)
+            (=
+              (reg.compiler-reg-spill-count
+                (reg.compiler-reg-global-shared-view assignments))
+              2)
             (compiler-reg-location-spill-offset?
-              (reg.compiler-reg-assignment-lookup assignments 6)
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                6)
               (reg.compiler-reg-stack-slot-offset 6))
             (not
               (live.compiler-live-set-contains?
-                (reg.compiler-reg-call-split-shadows split-vars)
+                (reg.compiler-reg-call-split-shadows
+                  (reg.compiler-reg-global-shared-view split-vars))
                 5))
             (not
               (live.compiler-live-set-contains?
-                (reg.compiler-reg-call-split-shadows split-vars)
+                (reg.compiler-reg-call-split-shadows
+                  (reg.compiler-reg-global-shared-view split-vars))
                 6)))]))))
 
 (cfg
@@ -3933,11 +4327,13 @@
           (and
             (not
               (live.compiler-live-set-contains?
-                (reg.compiler-reg-call-split-shadows split-vars)
+                (reg.compiler-reg-call-split-shadows
+                  (reg.compiler-reg-global-shared-view split-vars))
                 5))
             (not
               (live.compiler-live-set-contains?
-                (reg.compiler-reg-call-split-shadows split-vars)
+                (reg.compiler-reg-call-split-shadows
+                  (reg.compiler-reg-global-shared-view split-vars))
                 6)))]))))
 
 ;; ---------------------------------------------------------------------------
@@ -4050,13 +4446,14 @@
             (set! (array-ref order 0) 0)
             (reg.compiler-reg-call-region-loop-rows!
               (ast.ast-node-pool-reader-type-segment-bases)
-              blocks
-              (reg.compiler-reg-function-loop-depths blocks)
+              (ir.compiler-ir-global-shared-view blocks)
+              (reg.compiler-reg-function-loop-depths
+                (ir.compiler-ir-global-shared-view blocks))
               cand
               order
               1
               vars
-              buckets)
+              (reg.compiler-reg-global-shared-view buckets))
             (array-ref buckets 0)))])))
 
 ;; (a) A read-only loop invariant gets ONE loop row anchored in the preheader.
@@ -4269,20 +4666,35 @@
           3
           (reg.compiler-reg-call-region-kind-loop))]
       (begin
-        (reg.compiler-reg-fill-i64-array ends 1073741824)
+        (reg.compiler-reg-fill-i64-array
+          (reg.compiler-reg-global-shared-view ends)
+          1073741824)
         (and
           ;; one use, one entry mov: no static win, so the block row is refused
-          (not (reg.compiler-reg-call-region-stat-eligible? one-use-block ends))
+          (not
+            (reg.compiler-reg-call-region-stat-eligible?
+              (reg.compiler-reg-global-shared-view one-use-block)
+              (reg.compiler-reg-global-shared-view ends)))
           ;; The same shape as a loop row pays weight(1) * T - 1 reloads. The
           ;; trip factor entered here with P11b phase 3: admission proves the
           ;; anchor block is the loop's sole preheader, so the body sits exactly
           ;; one loop level below the entry mov and the ladder's trip-2
           ;; assumption is the wrong absolute frequency. Block rows are NOT
           ;; amplified -- both of their sides sit at the same point.
-          (reg.compiler-reg-call-region-stat-eligible? one-use-loop ends)
-          (= (reg.compiler-reg-call-region-stat-score one-use-loop ends) 15)
+          (reg.compiler-reg-call-region-stat-eligible?
+            (reg.compiler-reg-global-shared-view one-use-loop)
+            (reg.compiler-reg-global-shared-view ends))
+          (=
+            (reg.compiler-reg-call-region-stat-score
+              (reg.compiler-reg-global-shared-view one-use-loop)
+              (reg.compiler-reg-global-shared-view ends))
+            15)
           ;; depth 3, two uses: 2 * 8 * T - 1
-          (= (reg.compiler-reg-call-region-stat-score deep-loop ends) 127)
+          (=
+            (reg.compiler-reg-call-region-stat-score
+              deep-loop
+              (reg.compiler-reg-global-shared-view ends))
+            127)
           ;; the block row's score is untouched by the trip factor
           (=
             (reg.compiler-reg-call-region-stat-score
@@ -4295,7 +4707,7 @@
                 0
                 1
                 (reg.compiler-reg-call-region-kind-block))
-              ends)
+              (reg.compiler-reg-global-shared-view ends))
             4)
           ;; a loop row outside any loop is not a loop row
           (not
@@ -4309,7 +4721,7 @@
                 0
                 0
                 (reg.compiler-reg-call-region-kind-loop))
-              ends)))))))
+              (reg.compiler-reg-global-shared-view ends))))))))
 
 ;; Picked-row exclusion is an OVERLAP test now: a loop row spans the block rows
 ;; nested inside it, and one root can only hold one shadow at a time.
@@ -4324,15 +4736,48 @@
         (set! (array-ref hi 0) 200)
         (and
           ;; strictly inside
-          (reg.compiler-reg-call-region-picked? lo hi 1 120 140)
+          (reg.compiler-reg-call-region-picked?
+            (reg.compiler-reg-global-shared-view lo)
+            (reg.compiler-reg-global-shared-view hi)
+            1
+            120
+            140)
           ;; touching at either end still overlaps
-          (reg.compiler-reg-call-region-picked? lo hi 1 200 260)
-          (reg.compiler-reg-call-region-picked? lo hi 1 40 100)
+          (reg.compiler-reg-call-region-picked?
+            (reg.compiler-reg-global-shared-view lo)
+            (reg.compiler-reg-global-shared-view hi)
+            1
+            200
+            260)
+          (reg.compiler-reg-call-region-picked?
+            (reg.compiler-reg-global-shared-view lo)
+            (reg.compiler-reg-global-shared-view hi)
+            1
+            40
+            100)
           ;; disjoint on both sides
-          (not (reg.compiler-reg-call-region-picked? lo hi 1 40 98))
-          (not (reg.compiler-reg-call-region-picked? lo hi 1 202 260))
+          (not
+            (reg.compiler-reg-call-region-picked?
+              (reg.compiler-reg-global-shared-view lo)
+              (reg.compiler-reg-global-shared-view hi)
+              1
+              40
+              98))
+          (not
+            (reg.compiler-reg-call-region-picked?
+              (reg.compiler-reg-global-shared-view lo)
+              (reg.compiler-reg-global-shared-view hi)
+              1
+              202
+              260))
           ;; nothing picked yet
-          (not (reg.compiler-reg-call-region-picked? lo hi 0 120 140)))))))
+          (not
+            (reg.compiler-reg-call-region-picked?
+              (reg.compiler-reg-global-shared-view lo)
+              (reg.compiler-reg-global-shared-view hi)
+              0
+              120
+              140)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; P11b phase 3: loop-scope EVICTION of a parked occupant.
@@ -4461,8 +4906,12 @@
       [starts : (__tl_dyn-array i64) (array.make-array i64 7)]
       [ends : (__tl_dyn-array i64) (array.make-array i64 7)]
       (begin
-        (reg.compiler-reg-fill-i64-array starts (- 0 1))
-        (reg.compiler-reg-fill-i64-array ends (- 0 1))
+        (reg.compiler-reg-fill-i64-array
+          (reg.compiler-reg-global-shared-view starts)
+          (- 0 1))
+        (reg.compiler-reg-fill-i64-array
+          (reg.compiler-reg-global-shared-view ends)
+          (- 0 1))
         (set! (array-ref starts 3) 2)
         (set! (array-ref ends 3) victim-end)
         (set! (array-ref starts 5) 12)
@@ -4526,8 +4975,9 @@
             (when already-evicted? (set! (array-ref evicted 3) 1))
             (when coalesced? (set! (array-ref parents 5) 3))
             (reg.compiler-reg-call-region-evict-try
-              blocks
-              (reg.compiler-reg-function-loop-depths blocks)
+              (ir.compiler-ir-global-shared-view blocks)
+              (reg.compiler-reg-function-loop-depths
+                (ir.compiler-ir-global-shared-view blocks))
               weights
               (compiler-reg-evict-test-index victim-end)
               parents
@@ -4580,7 +5030,15 @@
       [saves : (__tl_dyn-array i64) (array.make-array i64 4)]
       (and
         (compiler-reg-evict-picked?
-          (compiler-reg-evict-attempt false 18 3 false 1 false points saves)
+          (compiler-reg-evict-attempt
+            false
+            18
+            3
+            false
+            1
+            false
+            (reg.compiler-reg-global-shared-view points)
+            (reg.compiler-reg-global-shared-view saves))
           0
           3
           1
@@ -4767,12 +5225,12 @@
           ;; one entry, one value
           (=
             (reg.compiler-reg-call-region-evict-sole-occupant
-              occ-var
-              occ-reg
-              occ-kind
+              (reg.compiler-reg-global-shared-view occ-var)
+              (reg.compiler-reg-global-shared-view occ-reg)
+              (reg.compiler-reg-global-shared-view occ-kind)
               1
-              index
-              parents
+              (reg.compiler-reg-global-shared-view index)
+              (reg.compiler-reg-global-shared-view parents)
               7
               0
               6
@@ -4781,12 +5239,12 @@
           ;; two entries, two distinct classes -> not lendable
           (<
             (reg.compiler-reg-call-region-evict-sole-occupant
-              occ-var
-              occ-reg
-              occ-kind
+              (reg.compiler-reg-global-shared-view occ-var)
+              (reg.compiler-reg-global-shared-view occ-reg)
+              (reg.compiler-reg-global-shared-view occ-kind)
               2
-              index
-              parents
+              (reg.compiler-reg-global-shared-view index)
+              (reg.compiler-reg-global-shared-view parents)
               7
               0
               6
@@ -4795,12 +5253,12 @@
           ;; the same two entries as ONE storage class -> lendable again
           (=
             (reg.compiler-reg-call-region-evict-sole-occupant
-              occ-var
-              occ-reg
-              occ-kind
+              (reg.compiler-reg-global-shared-view occ-var)
+              (reg.compiler-reg-global-shared-view occ-reg)
+              (reg.compiler-reg-global-shared-view occ-kind)
               2
-              index
-              class-parents
+              (reg.compiler-reg-global-shared-view index)
+              (reg.compiler-reg-global-shared-view class-parents)
               7
               0
               6
@@ -4813,12 +5271,12 @@
               (reg.compiler-reg-call-region-occ-kind-shadow))
             (<
               (reg.compiler-reg-call-region-evict-sole-occupant
-                occ-var
-                occ-reg
-                occ-kind
+                (reg.compiler-reg-global-shared-view occ-var)
+                (reg.compiler-reg-global-shared-view occ-reg)
+                (reg.compiler-reg-global-shared-view occ-kind)
                 1
-                index
-                parents
+                (reg.compiler-reg-global-shared-view index)
+                (reg.compiler-reg-global-shared-view parents)
                 7
                 0
                 6
@@ -4831,12 +5289,12 @@
               (reg.compiler-reg-call-region-occ-kind-pair))
             (<
               (reg.compiler-reg-call-region-evict-sole-occupant
-                occ-var
-                occ-reg
-                occ-kind
+                (reg.compiler-reg-global-shared-view occ-var)
+                (reg.compiler-reg-global-shared-view occ-reg)
+                (reg.compiler-reg-global-shared-view occ-kind)
                 1
-                index
-                parents
+                (reg.compiler-reg-global-shared-view index)
+                (reg.compiler-reg-global-shared-view parents)
                 7
                 0
                 6
@@ -4857,7 +5315,8 @@
             (live.compiler-live-ir-block-list-to-seq blocks)]
           [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
           [points : (__tl_dyn-array i64)
-            (reg.compiler-reg-loop-phi-mb-block-points bslots)]
+            (reg.compiler-reg-loop-phi-mb-block-points
+              (reg.compiler-reg-global-shared-view bslots))]
           [parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
           [class-parents : (__tl_dyn-array i64)
             (compiler-reg-evict-test-parents)]
@@ -4870,32 +5329,32 @@
               ;; v3 alone: parked
               (not
                 (reg.compiler-reg-call-region-evict-var-mentioned?
-                  bslots
-                  points
+                  (reg.compiler-reg-global-shared-view bslots)
+                  (reg.compiler-reg-global-shared-view points)
                   0
                   1
                   6
-                  parents
+                  (reg.compiler-reg-global-shared-view parents)
                   7
                   3))
               ;; v3 with v5 in its class: busy
               (reg.compiler-reg-call-region-evict-var-mentioned?
-                bslots
-                points
+                (reg.compiler-reg-global-shared-view bslots)
+                (reg.compiler-reg-global-shared-view points)
                 0
                 1
                 6
-                class-parents
+                (reg.compiler-reg-global-shared-view class-parents)
                 7
                 3)
               ;; v0 is read three times in the loop under any parenting
               (reg.compiler-reg-call-region-evict-var-mentioned?
-                bslots
-                points
+                (reg.compiler-reg-global-shared-view bslots)
+                (reg.compiler-reg-global-shared-view points)
                 0
                 1
                 6
-                parents
+                (reg.compiler-reg-global-shared-view parents)
                 7
                 0))))])))
 
@@ -4914,7 +5373,7 @@
           [split : reg.CompilerRegCallSplit
             (begin
               (reg.compiler-reg-fill-i64-array
-                shadow-regs
+                (reg.compiler-reg-global-shared-view shadow-regs)
                 cabi.compiler-reg-id-invalid)
               (set! (array-ref shadow-regs 0) cabi.compiler-reg-id-r12)
               (reg.CompilerRegCallSplit
@@ -4958,14 +5417,41 @@
                   (= next-vars 9)
                   ;; entry: 4 originals, the save right after v3's def (index 2)
                   ;; and the shadow load right before the terminator (index 4)
-                  (= (compiler-reg-evict-block-len (array-ref oslots 0)) 6)
-                  (compiler-reg-evict-block-mov? (array-ref oslots 0) 2 7 3)
-                  (compiler-reg-evict-block-mov? (array-ref oslots 0) 4 8 0)
+                  (=
+                    (compiler-reg-evict-block-len
+                      (reg.compiler-reg-global-array-element-shared-view
+                        oslots
+                        0))
+                    6)
+                  (compiler-reg-evict-block-mov?
+                    (reg.compiler-reg-global-array-element-shared-view oslots 0)
+                    2
+                    7
+                    3)
+                  (compiler-reg-evict-block-mov?
+                    (reg.compiler-reg-global-array-element-shared-view oslots 0)
+                    4
+                    8
+                    0)
                   ;; loop body untouched in COUNT: no reload lands inside it
-                  (= (compiler-reg-evict-block-len (array-ref oslots 1)) 5)
+                  (=
+                    (compiler-reg-evict-block-len
+                      (reg.compiler-reg-global-array-element-shared-view
+                        oslots
+                        1))
+                    5)
                   ;; exit: the reload, then the two originals
-                  (= (compiler-reg-evict-block-len (array-ref oslots 2)) 3)
-                  (compiler-reg-evict-block-mov? (array-ref oslots 2) 0 3 7)))]))])))
+                  (=
+                    (compiler-reg-evict-block-len
+                      (reg.compiler-reg-global-array-element-shared-view
+                        oslots
+                        2))
+                    3)
+                  (compiler-reg-evict-block-mov?
+                    (reg.compiler-reg-global-array-element-shared-view oslots 2)
+                    0
+                    3
+                    7)))]))])))
 
 (cfg
   test
@@ -4983,9 +5469,14 @@
     [src : i64]) : bool
     (match block
       [(ir.CompilerIrBlock.Block _ instrs)
-        (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+        (if (>=
+          index
+          (ir.compiler-ir-instr-seq-count
+            (ir.compiler-ir-global-shared-view instrs)))
           false
-          (match (ir.compiler-ir-instr-seq-ref instrs index)
+          (match (ir.compiler-ir-instr-seq-ref
+            (ir.compiler-ir-global-shared-view instrs)
+            index)
             [(ir.CompilerIrInstr.Mov d value _)
               (match value
                 [(ir.CompilerIrValue.Var s) (and (= d dst) (= s src))]
@@ -5070,24 +5561,29 @@
           (ir.compiler-ir-label "hot")
           (reg.compiler-reg-label-seq-empty))]
       (match (compiler-reg-edge-copy-plan-for-region
-        func
+        (ir.compiler-ir-global-shared-view func)
         region
         0
         10
         (compiler-reg-i64-ty))
         [(reg.CompilerRegEdgeCopyPlan.Plan copies)
           (and
-            (= (reg.compiler-reg-edge-copy-list-count copies) 1)
+            (=
+              (reg.compiler-reg-edge-copy-list-count
+                (reg.compiler-reg-global-shared-view copies))
+              1)
             (compiler-reg-edge-copy-list-has?
-              copies
+              (reg.compiler-reg-global-shared-view copies)
               (ir.compiler-ir-label "entry")
               (ir.compiler-ir-label "hot")
               0
               10
               true)
-            (match func
+            (match (ir.compiler-ir-global-shared-view func)
               [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-                (match (reg.compiler-reg-edge-copy-apply blocks copies)
+                (match (reg.compiler-reg-edge-copy-apply
+                  blocks
+                  (reg.compiler-reg-global-shared-view copies))
                   [(reg.CompilerRegEdgeCopyRewrite.Rewrite rewritten)
                     (compiler-reg-instr-list-has-mov-var?
                       (compiler-reg-block-instr-list
@@ -5156,31 +5652,36 @@
           (ir.compiler-ir-label "body")
           (reg.compiler-reg-label-seq-empty))]
       (match (compiler-reg-edge-copy-plan-for-region
-        func
+        (ir.compiler-ir-global-shared-view func)
         region
         0
         10
         (compiler-reg-i64-ty))
         [(reg.CompilerRegEdgeCopyPlan.Plan copies)
           (and
-            (= (reg.compiler-reg-edge-copy-list-count copies) 2)
+            (=
+              (reg.compiler-reg-edge-copy-list-count
+                (reg.compiler-reg-global-shared-view copies))
+              2)
             (compiler-reg-edge-copy-list-has?
-              copies
+              (reg.compiler-reg-global-shared-view copies)
               (ir.compiler-ir-label "loop")
               (ir.compiler-ir-label "body")
               0
               10
               false)
             (compiler-reg-edge-copy-list-has?
-              copies
+              (reg.compiler-reg-global-shared-view copies)
               (ir.compiler-ir-label "body")
               (ir.compiler-ir-label "loop")
               10
               0
               true)
-            (match func
+            (match (ir.compiler-ir-global-shared-view func)
               [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-                (match (reg.compiler-reg-edge-copy-apply blocks copies)
+                (match (reg.compiler-reg-edge-copy-apply
+                  blocks
+                  (reg.compiler-reg-global-shared-view copies))
                   [(reg.CompilerRegEdgeCopyRewrite.Rewrite rewritten)
                     (let
                       [body : ir.CompilerIrInstrList
@@ -5188,8 +5689,14 @@
                           rewritten
                           (ir.compiler-ir-label "body"))]
                       (and
-                        (compiler-reg-instr-list-has-mov-var? body 10 0)
-                        (compiler-reg-instr-list-has-mov-var? body 0 10)))]
+                        (compiler-reg-instr-list-has-mov-var?
+                          (ir.compiler-ir-global-shared-view body)
+                          10
+                          0)
+                        (compiler-reg-instr-list-has-mov-var?
+                          (ir.compiler-ir-global-shared-view body)
+                          0
+                          10)))]
                   [(reg.CompilerRegEdgeCopyRewrite.Refused _) false])]))]
         [(reg.CompilerRegEdgeCopyPlan.Refused _) false]))))
 
@@ -5259,10 +5766,14 @@
   (define (compiler-reg-loop-split-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
     (let
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types func)]
+        (reg.compiler-reg-function-var-types
+          (ir.compiler-ir-global-shared-view func))]
       [liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function func)]
-      (match (reg.compiler-reg-live-interval-selection func liveness)
+        (live.compiler-live-analyze-function
+          (ir.compiler-ir-global-shared-view func))]
+      (match (reg.compiler-reg-live-interval-selection
+        (ir.compiler-ir-global-shared-view func)
+        liveness)
         [(reg.CompilerRegIntervalSelection.Selection intervals _)
           (reg.CompilerRegPlan.Plan
             (reg.compiler-reg-assignments-prepend
@@ -5282,10 +5793,14 @@
   (define (compiler-reg-loop-split-two-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
     (let
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types func)]
+        (reg.compiler-reg-function-var-types
+          (ir.compiler-ir-global-shared-view func))]
       [liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function func)]
-      (match (reg.compiler-reg-live-interval-selection func liveness)
+        (live.compiler-live-analyze-function
+          (ir.compiler-ir-global-shared-view func))]
+      (match (reg.compiler-reg-live-interval-selection
+        (ir.compiler-ir-global-shared-view func)
+        liveness)
         [(reg.CompilerRegIntervalSelection.Selection intervals _)
           (reg.CompilerRegPlan.Plan
             (reg.compiler-reg-assignments-prepend
@@ -5310,10 +5825,14 @@
   (define (compiler-reg-leaf-csr-split-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
     (let
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types func)]
+        (reg.compiler-reg-function-var-types
+          (ir.compiler-ir-global-shared-view func))]
       [liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function func)]
-      (match (reg.compiler-reg-live-interval-selection func liveness)
+        (live.compiler-live-analyze-function
+          (ir.compiler-ir-global-shared-view func))]
+      (match (reg.compiler-reg-live-interval-selection
+        (ir.compiler-ir-global-shared-view func)
+        liveness)
         [(reg.CompilerRegIntervalSelection.Selection intervals _)
           (reg.CompilerRegPlan.Plan
             (reg.compiler-reg-assignments-prepend
@@ -5396,19 +5915,22 @@
   (define (compiler-reg-leaf-csr-split-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-leaf-csr-split-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-leaf-csr-split-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-leaf-csr-split-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (let
             [rewrite : reg.CompilerRegCallSaveRewrite
               (reg.compiler-reg-leaf-csr-split-rewrite-one
                 (ast.ast-node-pool-reader-type-segment-bases)
                 cabi.CompilerRegTargetAbi.Linux
-                func
+                (ir.compiler-ir-global-shared-view func)
                 blocks
                 vars
-                (reg.compiler-reg-function-var-types func)
-                plan)]
+                (reg.compiler-reg-function-var-types
+                  (ir.compiler-ir-global-shared-view func))
+                (reg.compiler-reg-global-shared-view plan))]
             (match rewrite
               [(reg.CompilerRegCallSaveRewrite.Rewrite
                   rewritten
@@ -5423,56 +5945,73 @@
                       ir.CompilerIrParamList.Nil
                       (ast.AstType.I64)
                       out-vars
-                      rewritten)]
+                      (ir.compiler-ir-global-shared-view rewritten))]
                   [rewritten-types : reg.CompilerRegVarTypes
-                    (reg.compiler-reg-function-var-types rewritten-func)]
+                    (reg.compiler-reg-function-var-types
+                      (ir.compiler-ir-global-shared-view rewritten-func))]
                   [raw-plan : reg.CompilerRegPlan
                     (reg.compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-preassignments
                       (ast.ast-node-pool-reader-type-segment-bases)
                       cabi.CompilerRegTargetAbi.Linux
-                      rewritten-func
+                      (ir.compiler-ir-global-shared-view rewritten-func)
                       (- 0 1)
                       rewritten-types
-                      extra-assignments)]
+                      (reg.compiler-reg-global-shared-view extra-assignments))]
                   [rewritten-plan : reg.CompilerRegPlan
                     (reg.compiler-reg-plan-hide-leaf-csr-phantoms
-                      raw-plan
-                      extra-assignments
+                      (reg.compiler-reg-global-shared-view raw-plan)
+                      (reg.compiler-reg-global-shared-view extra-assignments)
                       vars)]
                   [assignments : reg.CompilerRegAssignmentTable
                     (reg.compiler-reg-plan-assignments rewritten-plan)]
                   [body : ir.CompilerIrInstrList
                     (compiler-reg-block-instr-list
-                      rewritten
+                      (ir.compiler-ir-global-shared-view rewritten)
                       (ir.compiler-ir-label "body"))]
                   (and
                     (= out-vars (+ vars 2))
-                    (= (reg.compiler-reg-assignment-count extra-assignments) 2)
-                    (reg.compiler-reg-leaf-csr-fuse-safe? func 1)
+                    (=
+                      (reg.compiler-reg-assignment-count
+                        (reg.compiler-reg-global-shared-view extra-assignments))
+                      2)
+                    (reg.compiler-reg-leaf-csr-fuse-safe?
+                      (ir.compiler-ir-global-shared-view func)
+                      1)
                     (not
                       (reg.compiler-reg-assignments-use-register?
-                        assignments
+                        (reg.compiler-reg-global-shared-view assignments)
                         cabi.compiler-reg-id-r12))
                     (not
                       (compiler-reg-location-any-register?
-                        (reg.compiler-reg-assignment-lookup assignments 0)))
-                    (compiler-reg-location-any-register?
-                      (reg.compiler-reg-assignment-lookup assignments vars))
+                        (reg.compiler-reg-assignment-lookup
+                          (reg.compiler-reg-global-shared-view assignments)
+                          0)))
                     (compiler-reg-location-any-register?
                       (reg.compiler-reg-assignment-lookup
-                        assignments
+                        (reg.compiler-reg-global-shared-view assignments)
+                        vars))
+                    (compiler-reg-location-any-register?
+                      (reg.compiler-reg-assignment-lookup
+                        (reg.compiler-reg-global-shared-view assignments)
                         (+ vars 1)))
                     (not
-                      (compiler-reg-same-location? assignments vars (+ vars 1)))
+                      (compiler-reg-same-location?
+                        (reg.compiler-reg-global-shared-view assignments)
+                        vars
+                        (+ vars 1)))
                     (compiler-reg-instr-list-has-store-var?
-                      body
+                      (ir.compiler-ir-global-shared-view body)
                       "hot0"
                       (+ vars 1))
                     (compiler-reg-instr-list-has-store-var?
-                      body
+                      (ir.compiler-ir-global-shared-view body)
                       "hot1"
                       (+ vars 1))
-                    (not (compiler-reg-instr-list-has-store-var? body "hot0" 0))))]))]))))
+                    (not
+                      (compiler-reg-instr-list-has-store-var?
+                        (ir.compiler-ir-global-shared-view body)
+                        "hot0"
+                        0))))]))]))))
 
 (cfg
   test
@@ -5709,19 +6248,21 @@
   (define (compiler-reg-loop-split-rewrite-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-loop-split-rewrite-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-loop-split-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-loop-split-plan (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (let
             [rewrite : reg.CompilerRegCallSaveRewrite
               (reg.compiler-reg-loop-split-rewrite-blocks
                 (ast.ast-node-pool-reader-type-segment-bases)
-                func
+                (ir.compiler-ir-global-shared-view func)
                 blocks
                 vars
-                (reg.compiler-reg-function-var-types func)
-                plan)]
-            (match rewrite
+                (reg.compiler-reg-function-var-types
+                  (ir.compiler-ir-global-shared-view func))
+                (reg.compiler-reg-global-shared-view plan))]
+            (match (reg.compiler-reg-global-shared-view rewrite)
               [(reg.CompilerRegCallSaveRewrite.Rewrite
                   rewritten
                   _
@@ -5731,10 +6272,12 @@
                 (let
                   [body : ir.CompilerIrInstrList
                     (compiler-reg-block-instr-list
-                      rewritten
+                      (ir.compiler-ir-global-shared-view rewritten)
                       (ir.compiler-ir-label "body"))]
                   [rewritten-plan : reg.CompilerRegPlan
-                    (reg.compiler-reg-plan-with-call-save-rewrite plan rewrite)]
+                    (reg.compiler-reg-plan-with-call-save-rewrite
+                      (reg.compiler-reg-global-shared-view plan)
+                      (reg.compiler-reg-global-shared-view rewrite))]
                   [rewritten-assignments : reg.CompilerRegAssignmentTable
                     (reg.compiler-reg-plan-assignments rewritten-plan)]
                   (and
@@ -5747,14 +6290,31 @@
                     ;; caller-saved widening; only --cfg test builds run this.)
                     (reg.compiler-reg-location-register?
                       (reg.compiler-reg-assignment-lookup
-                        rewritten-assignments
+                        (reg.compiler-reg-global-shared-view
+                          rewritten-assignments)
                         vars)
                       cabi.compiler-reg-id-r8)
-                    (compiler-reg-instr-list-has-mov-var? body vars 0)
-                    (compiler-reg-instr-list-has-mov-var? body 0 vars)
-                    (compiler-reg-instr-list-has-store-var? body "hot0" vars)
-                    (compiler-reg-instr-list-has-store-var? body "hot1" vars)
-                    (not (compiler-reg-instr-list-has-store-var? body "hot0" 0))))]))]))))
+                    (compiler-reg-instr-list-has-mov-var?
+                      (ir.compiler-ir-global-shared-view body)
+                      vars
+                      0)
+                    (compiler-reg-instr-list-has-mov-var?
+                      (ir.compiler-ir-global-shared-view body)
+                      0
+                      vars)
+                    (compiler-reg-instr-list-has-store-var?
+                      (ir.compiler-ir-global-shared-view body)
+                      "hot0"
+                      vars)
+                    (compiler-reg-instr-list-has-store-var?
+                      (ir.compiler-ir-global-shared-view body)
+                      "hot1"
+                      vars)
+                    (not
+                      (compiler-reg-instr-list-has-store-var?
+                        (ir.compiler-ir-global-shared-view body)
+                        "hot0"
+                        0))))]))]))))
 
 (cfg
   test
@@ -5762,19 +6322,22 @@
     (let
       [func : ir.CompilerIrFunction
         (compiler-reg-loop-split-two-rewrite-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-loop-split-two-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-loop-split-two-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (let
             [rewrite : reg.CompilerRegCallSaveRewrite
               (reg.compiler-reg-loop-split-rewrite-blocks
                 (ast.ast-node-pool-reader-type-segment-bases)
-                func
+                (ir.compiler-ir-global-shared-view func)
                 blocks
                 vars
-                (reg.compiler-reg-function-var-types func)
-                plan)]
-            (match rewrite
+                (reg.compiler-reg-function-var-types
+                  (ir.compiler-ir-global-shared-view func))
+                (reg.compiler-reg-global-shared-view plan))]
+            (match (reg.compiler-reg-global-shared-view rewrite)
               [(reg.CompilerRegCallSaveRewrite.Rewrite
                   rewritten
                   _
@@ -5784,10 +6347,12 @@
                 (let
                   [body : ir.CompilerIrInstrList
                     (compiler-reg-block-instr-list
-                      rewritten
+                      (ir.compiler-ir-global-shared-view rewritten)
                       (ir.compiler-ir-label "body"))]
                   [rewritten-plan : reg.CompilerRegPlan
-                    (reg.compiler-reg-plan-with-call-save-rewrite plan rewrite)]
+                    (reg.compiler-reg-plan-with-call-save-rewrite
+                      (reg.compiler-reg-global-shared-view plan)
+                      (reg.compiler-reg-global-shared-view rewrite))]
                   [rewritten-assignments : reg.CompilerRegAssignmentTable
                     (reg.compiler-reg-plan-assignments rewritten-plan)]
                   [split0 : i64 vars]
@@ -5800,35 +6365,59 @@
                     ;; compiler-reg-loop-split-candidate-regs).
                     (reg.compiler-reg-location-register?
                       (reg.compiler-reg-assignment-lookup
-                        rewritten-assignments
+                        (reg.compiler-reg-global-shared-view
+                          rewritten-assignments)
                         split0)
                       cabi.compiler-reg-id-r8)
                     (reg.compiler-reg-location-register?
                       (reg.compiler-reg-assignment-lookup
-                        rewritten-assignments
+                        (reg.compiler-reg-global-shared-view
+                          rewritten-assignments)
                         split1)
                       cabi.compiler-reg-id-r9)
-                    (compiler-reg-instr-list-has-store-var? body "hot0" split0)
-                    (compiler-reg-instr-list-has-store-var? body "hot1" split1)
-                    (compiler-reg-instr-list-has-store-var? body "hot2" split0)
-                    (compiler-reg-instr-list-has-store-var? body "hot3" split1)
-                    (not (compiler-reg-instr-list-has-store-var? body "hot0" 0))
-                    (not (compiler-reg-instr-list-has-store-var? body "hot1" 1))))]))]))))
+                    (compiler-reg-instr-list-has-store-var?
+                      (ir.compiler-ir-global-shared-view body)
+                      "hot0"
+                      split0)
+                    (compiler-reg-instr-list-has-store-var?
+                      (ir.compiler-ir-global-shared-view body)
+                      "hot1"
+                      split1)
+                    (compiler-reg-instr-list-has-store-var?
+                      (ir.compiler-ir-global-shared-view body)
+                      "hot2"
+                      split0)
+                    (compiler-reg-instr-list-has-store-var?
+                      (ir.compiler-ir-global-shared-view body)
+                      "hot3"
+                      split1)
+                    (not
+                      (compiler-reg-instr-list-has-store-var?
+                        (ir.compiler-ir-global-shared-view body)
+                        "hot0"
+                        0))
+                    (not
+                      (compiler-reg-instr-list-has-store-var?
+                        (ir.compiler-ir-global-shared-view body)
+                        "hot1"
+                        1))))]))]))))
 
 (cfg
   test
   (define (compiler-reg-loop-split-noop-for? [func : ir.CompilerIrFunction]) : bool
     (let
-      [plan : reg.CompilerRegPlan (compiler-reg-loop-split-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-loop-split-plan (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (match (reg.compiler-reg-loop-split-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             blocks
             vars
-            (reg.compiler-reg-function-var-types func)
-            plan)
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
             [(reg.CompilerRegCallSaveRewrite.Rewrite
                 _
                 _
@@ -5857,16 +6446,18 @@
     (let
       [func : ir.CompilerIrFunction
         (compiler-reg-loop-split-phi-region-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-loop-split-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-loop-split-plan (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (match (reg.compiler-reg-loop-split-rewrite-blocks
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             blocks
             vars
-            (reg.compiler-reg-function-var-types func)
-            plan)
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
             [(reg.CompilerRegCallSaveRewrite.Rewrite
                 _
                 _
@@ -6028,19 +6619,21 @@
     (let
       [func : ir.CompilerIrFunction
         (compiler-reg-loop-split-nblock-invariant-function)]
-      [plan : reg.CompilerRegPlan (compiler-reg-loop-split-plan func)]
-      (match func
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-loop-split-plan (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (let
             [rewrite : reg.CompilerRegCallSaveRewrite
               (reg.compiler-reg-loop-split-rewrite-blocks
                 (ast.ast-node-pool-reader-type-segment-bases)
-                func
+                (ir.compiler-ir-global-shared-view func)
                 blocks
                 vars
-                (reg.compiler-reg-function-var-types func)
-                plan)]
-            (match rewrite
+                (reg.compiler-reg-function-var-types
+                  (ir.compiler-ir-global-shared-view func))
+                (reg.compiler-reg-global-shared-view plan))]
+            (match (reg.compiler-reg-global-shared-view rewrite)
               [(reg.CompilerRegCallSaveRewrite.Rewrite
                   rewritten
                   _
@@ -6050,27 +6643,28 @@
                 (let
                   [entry-instrs : ir.CompilerIrInstrList
                     (compiler-reg-block-instr-list
-                      rewritten
+                      (ir.compiler-ir-global-shared-view rewritten)
                       (ir.compiler-ir-label "entry"))]
                   [body1 : ir.CompilerIrInstrList
                     (compiler-reg-block-instr-list
-                      rewritten
+                      (ir.compiler-ir-global-shared-view rewritten)
                       (ir.compiler-ir-label "body1"))]
                   [exit-instrs : ir.CompilerIrInstrList
                     (compiler-reg-block-instr-list
-                      rewritten
+                      (ir.compiler-ir-global-shared-view rewritten)
                       (ir.compiler-ir-label "exit"))]
                   [rewritten-assignments : reg.CompilerRegAssignmentTable
                     (reg.compiler-reg-plan-assignments
                       (reg.compiler-reg-plan-with-call-save-rewrite
-                        plan
-                        rewrite))]
+                        (reg.compiler-reg-global-shared-view plan)
+                        (reg.compiler-reg-global-shared-view rewrite)))]
                   (and
                     (= out-vars (+ vars 1))
                     (= (reg.compiler-reg-assignment-count extra-assignments) 1)
                     (reg.compiler-reg-location-register?
                       (reg.compiler-reg-assignment-lookup
-                        rewritten-assignments
+                        (reg.compiler-reg-global-shared-view
+                          rewritten-assignments)
                         vars)
                       cabi.compiler-reg-id-r8)
                     ;; IN copy on the loop-entry edge, in the preheader.
@@ -6078,12 +6672,24 @@
                     ;; OUT copy on the live loop-exit edge, at the exit block top.
                     (compiler-reg-instr-list-has-mov-var? exit-instrs 0 vars)
                     ;; Region uses read the homed register, not the slot.
-                    (compiler-reg-instr-list-has-store-var? body1 "hot0" vars)
-                    (compiler-reg-instr-list-has-store-var? body1 "hot1" vars)
+                    (compiler-reg-instr-list-has-store-var?
+                      (ir.compiler-ir-global-shared-view body1)
+                      "hot0"
+                      vars)
+                    (compiler-reg-instr-list-has-store-var?
+                      (ir.compiler-ir-global-shared-view body1)
+                      "hot1"
+                      vars)
                     (not
-                      (compiler-reg-instr-list-has-store-var? body1 "hot0" 0))
+                      (compiler-reg-instr-list-has-store-var?
+                        (ir.compiler-ir-global-shared-view body1)
+                        "hot0"
+                        0))
                     (not
-                      (compiler-reg-instr-list-has-store-var? body1 "hot1" 0))))]))]))))
+                      (compiler-reg-instr-list-has-store-var?
+                        (ir.compiler-ir-global-shared-view body1)
+                        "hot1"
+                        0))))]))]))))
 
 (cfg
   test
@@ -6149,25 +6755,37 @@
       [call-region : reg.CompilerRegIdSeq
         (reg.compiler-reg-loop-split-candidate-regs false true true)]
       (and
-        (reg.compiler-reg-id-seq-contains? safe cabi.compiler-reg-id-rcx)
-        (reg.compiler-reg-id-seq-contains? safe cabi.compiler-reg-id-rdx)
-        (not
-          (reg.compiler-reg-id-seq-contains? unsafe cabi.compiler-reg-id-rcx))
-        (not
-          (reg.compiler-reg-id-seq-contains? unsafe cabi.compiler-reg-id-rdx))
-        (reg.compiler-reg-id-seq-contains? unsafe cabi.compiler-reg-id-r8)
-        (reg.compiler-reg-id-seq-contains? unsafe cabi.compiler-reg-id-rdi)
+        (reg.compiler-reg-id-seq-contains?
+          (reg.compiler-reg-global-shared-view safe)
+          cabi.compiler-reg-id-rcx)
+        (reg.compiler-reg-id-seq-contains?
+          (reg.compiler-reg-global-shared-view safe)
+          cabi.compiler-reg-id-rdx)
         (not
           (reg.compiler-reg-id-seq-contains?
-            call-region
-            cabi.compiler-reg-id-r8))
-        (not
-          (reg.compiler-reg-id-seq-contains?
-            call-region
+            (reg.compiler-reg-global-shared-view unsafe)
             cabi.compiler-reg-id-rcx))
         (not
           (reg.compiler-reg-id-seq-contains?
-            call-region
+            (reg.compiler-reg-global-shared-view unsafe)
+            cabi.compiler-reg-id-rdx))
+        (reg.compiler-reg-id-seq-contains?
+          (reg.compiler-reg-global-shared-view unsafe)
+          cabi.compiler-reg-id-r8)
+        (reg.compiler-reg-id-seq-contains?
+          (reg.compiler-reg-global-shared-view unsafe)
+          cabi.compiler-reg-id-rdi)
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            (reg.compiler-reg-global-shared-view call-region)
+            cabi.compiler-reg-id-r8))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            (reg.compiler-reg-global-shared-view call-region)
+            cabi.compiler-reg-id-rcx))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            (reg.compiler-reg-global-shared-view call-region)
             cabi.compiler-reg-id-rdx))))))
 
 (cfg
@@ -6181,32 +6799,32 @@
           true
           (reg.compiler-reg-loop-split-region-rcx-safe?
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             0
             12)
           (reg.compiler-reg-loop-split-region-rdx-safe?
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             0
             12))]
       (and
         ;; Point 4 is the variable shift; inclusive-start makes [4,6) unsafe.
         (reg.compiler-reg-loop-split-region-crosses-kind?
           (ast.ast-node-pool-reader-type-segment-bases)
-          func
+          (ir.compiler-ir-global-shared-view func)
           2
           4
           6)
         ;; Points 6 and 8 are the div and mul %rdx fixed-use sites.
         (reg.compiler-reg-loop-split-region-crosses-kind?
           (ast.ast-node-pool-reader-type-segment-bases)
-          func
+          (ir.compiler-ir-global-shared-view func)
           4
           6
           8)
         (reg.compiler-reg-loop-split-region-crosses-kind?
           (ast.ast-node-pool-reader-type-segment-bases)
-          func
+          (ir.compiler-ir-global-shared-view func)
           4
           8
           10)
@@ -6214,20 +6832,24 @@
         (not
           (reg.compiler-reg-loop-split-region-crosses-kind?
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (ir.compiler-ir-global-shared-view func)
             2
             0
             4))
         (not
           (reg.compiler-reg-id-seq-contains?
-            full-window
+            (reg.compiler-reg-global-shared-view full-window)
             cabi.compiler-reg-id-rcx))
         (not
           (reg.compiler-reg-id-seq-contains?
-            full-window
+            (reg.compiler-reg-global-shared-view full-window)
             cabi.compiler-reg-id-rdx))
-        (reg.compiler-reg-id-seq-contains? full-window cabi.compiler-reg-id-r8)
-        (reg.compiler-reg-id-seq-contains? full-window cabi.compiler-reg-id-rdi)))))
+        (reg.compiler-reg-id-seq-contains?
+          (reg.compiler-reg-global-shared-view full-window)
+          cabi.compiler-reg-id-r8)
+        (reg.compiler-reg-id-seq-contains?
+          (reg.compiler-reg-global-shared-view full-window)
+          cabi.compiler-reg-id-rdi)))))
 
 (cfg
   test
@@ -6287,11 +6909,36 @@
     (let
       [points : live.CompilerLiveI64Set (live.compiler-live-set4 2 4 6 8)]
       (and
-        (= (reg.compiler-reg-call-set-count-in-range points 0 2) 0)
-        (= (reg.compiler-reg-call-set-count-in-range points 0 3) 1)
-        (= (reg.compiler-reg-call-set-count-in-range points 0 7) 3)
-        (= (reg.compiler-reg-call-set-count-in-range points 0 9) 4)
-        (= (reg.compiler-reg-call-set-count-in-range points 2 8) 2)))))
+        (=
+          (reg.compiler-reg-call-set-count-in-range
+            (reg.compiler-reg-global-shared-view points)
+            0
+            2)
+          0)
+        (=
+          (reg.compiler-reg-call-set-count-in-range
+            (reg.compiler-reg-global-shared-view points)
+            0
+            3)
+          1)
+        (=
+          (reg.compiler-reg-call-set-count-in-range
+            (reg.compiler-reg-global-shared-view points)
+            0
+            7)
+          3)
+        (=
+          (reg.compiler-reg-call-set-count-in-range
+            (reg.compiler-reg-global-shared-view points)
+            0
+            9)
+          4)
+        (=
+          (reg.compiler-reg-call-set-count-in-range
+            (reg.compiler-reg-global-shared-view points)
+            2
+            8)
+          2)))))
 
 (cfg
   test
@@ -6323,32 +6970,32 @@
             (compiler-reg-many-call-live-function)))]
       (and
         (compiler-reg-call-span-census-count?
-          zero-census
+          (reg.compiler-reg-global-shared-view zero-census)
           0
           (reg.compiler-reg-call-span-outcome-register)
           7)
         (compiler-reg-call-span-census-count?
-          zero-census
+          (reg.compiler-reg-global-shared-view zero-census)
           0
           (reg.compiler-reg-call-span-outcome-spill)
           0)
         (compiler-reg-call-span-census-count?
-          one-census
+          (reg.compiler-reg-global-shared-view one-census)
           1
           (reg.compiler-reg-call-span-outcome-register)
           1)
         (compiler-reg-call-span-census-count?
-          one-census
+          (reg.compiler-reg-global-shared-view one-census)
           0
           (reg.compiler-reg-call-span-outcome-register)
           1)
         (compiler-reg-call-span-census-count?
-          many-census
+          (reg.compiler-reg-global-shared-view many-census)
           3
           (reg.compiler-reg-call-span-outcome-register)
           1)
         (compiler-reg-call-span-census-count?
-          many-census
+          (reg.compiler-reg-global-shared-view many-census)
           0
           (reg.compiler-reg-call-span-outcome-register)
           1)))))
@@ -6560,46 +7207,46 @@
         (=
           (compiler-reg-xmm-ownership-fixed-home
             (cabi.compiler-abi-xmm-register-id 6)
-            overlap
+            (reg.compiler-reg-global-shared-view overlap)
             2
             6
-            vector-pool)
+            (reg.compiler-reg-global-shared-view vector-pool))
           (cabi.compiler-abi-vector-register-id 7))
         (=
           (compiler-reg-xmm-ownership-fixed-home
             (cabi.compiler-abi-vector-register-id 6)
-            overlap
+            (reg.compiler-reg-global-shared-view overlap)
             2
             6
-            vector-pool)
+            (reg.compiler-reg-global-shared-view vector-pool))
           (cabi.compiler-abi-vector-register-id 7))
         (=
           (compiler-reg-xmm-ownership-fixed-home
             (cabi.compiler-abi-vector-register-id 6)
-            overlap
+            (reg.compiler-reg-global-shared-view overlap)
             2
             6
-            vector-pool)
+            (reg.compiler-reg-global-shared-view vector-pool))
           (cabi.compiler-abi-vector-register-id 7))
         ;; Mask-on-vector allocation uses the same ownership query even when
         ;; the preassignment and candidate pools use opposite class spellings.
         (=
           (compiler-reg-xmm-ownership-fixed-home
             (cabi.compiler-abi-vector-register-id 6)
-            overlap
+            (reg.compiler-reg-global-shared-view overlap)
             2
             6
-            scalar-spelled-pool)
+            (reg.compiler-reg-global-shared-view scalar-spelled-pool))
           (cabi.compiler-abi-xmm-register-id 7))
         ;; Touching ranges and a segmented phi/liveness hole may safely reuse
         ;; the physical register; real segment overlap still rejects it.
         (=
           (compiler-reg-xmm-ownership-fixed-home
             (cabi.compiler-abi-xmm-register-id 6)
-            boundary-reuse
+            (reg.compiler-reg-global-shared-view boundary-reuse)
             2
             6
-            vector-pool)
+            (reg.compiler-reg-global-shared-view vector-pool))
           (cabi.compiler-abi-vector-register-id 6))
         (=
           (compiler-reg-xmm-ownership-fixed-home
@@ -6607,7 +7254,7 @@
             (compiler-reg-xmm-ownership-segment-hole-intervals)
             3
             5
-            vector-pool)
+            (reg.compiler-reg-global-shared-view vector-pool))
           (cabi.compiler-abi-vector-register-id 6))))))
 
 (cfg
@@ -6616,25 +7263,35 @@
     (let
       [list-func : ir.CompilerIrFunction (compiler-reg-mask-home-function)]
       [dense-func : ir.CompilerIrFunction
-        (ir.compiler-ir-function-compact-blocks list-func)]
+        (ir.compiler-ir-function-compact-blocks
+          (ir.compiler-ir-global-shared-view list-func))]
       [list-block-assignments : reg.CompilerRegAssignmentTable
         (reg.compiler-reg-plan-assignments
-          (compiler-reg-plan-function-avx2 list-func))]
+          (compiler-reg-plan-function-avx2
+            (ir.compiler-ir-global-shared-view list-func)))]
       [dense-assignments : reg.CompilerRegAssignmentTable
         (reg.compiler-reg-plan-assignments
           (compiler-reg-plan-function-avx2 dense-func))]
       (and
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup list-block-assignments 0)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view list-block-assignments)
+            0)
           (cabi.compiler-abi-vector-register-id 6))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup list-block-assignments 1)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view list-block-assignments)
+            1)
           (cabi.compiler-abi-vector-register-id 7))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup dense-assignments 0)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view dense-assignments)
+            0)
           (cabi.compiler-abi-vector-register-id 6))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup dense-assignments 1)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view dense-assignments)
+            1)
           (cabi.compiler-abi-vector-register-id 7))))))
 
 (cfg
@@ -6654,16 +7311,16 @@
           [liveness : live.CompilerFunctionLiveness handle.baseline]
           (and
             (match (reg.compiler-reg-edge-copy-plan-for-region-with-liveness
-              liveness
-              region
+              (live.compiler-live-shared-view liveness)
+              (reg.compiler-reg-global-shared-view region)
               0
               10
               (compiler-reg-i64-ty))
               [(reg.CompilerRegEdgeCopyPlan.Plan _) true]
               [(reg.CompilerRegEdgeCopyPlan.Refused _) false])
             (match (reg.compiler-reg-edge-copy-plan-for-region-with-liveness
-              liveness
-              region
+              (live.compiler-live-shared-view liveness)
+              (reg.compiler-reg-global-shared-view region)
               0
               11
               (compiler-reg-i64-ty))
@@ -6740,7 +7397,7 @@
       (let
         [_inserted : reg.CompilerRegAssignmentTable
           (reg.compiler-reg-assignment-table-insert
-            assignments
+            (reg.compiler-reg-global-shared-view assignments)
             var
             (reg.CompilerRegLocation.Register
               (reg.compiler-reg-group-pair-csr (- var 1))))]
@@ -6753,6 +7410,81 @@
 ;; synthetic call-save shadow reserves r8 over the same range. A normal-call
 ;; group argument stays eligible for a CSR pair, but not the caller pair,
 ;; until the multiword ABI marshaller can use the pair parallel-move solver.
+(cfg
+  test
+  (define (compiler-reg-group-pair-placement-shapes?
+    [assignments : reg.CompilerRegAssignmentTable]
+    [caller-occupied : reg.CompilerRegAssignmentTable]
+    [csr-assignments : reg.CompilerRegAssignmentTable]) : bool
+    (let
+      [assignment0 : reg.CompilerRegMaybeLocation
+        (reg.compiler-reg-assignment-table-lookup assignments 0)]
+      [assignment1 : reg.CompilerRegMaybeLocation
+        (reg.compiler-reg-assignment-table-lookup assignments 1)]
+      [caller0 : reg.CompilerRegMaybeLocation
+        (reg.compiler-reg-assignment-table-lookup caller-occupied 0)]
+      [caller1 : reg.CompilerRegMaybeLocation
+        (reg.compiler-reg-assignment-table-lookup caller-occupied 1)]
+      [csr0 : reg.CompilerRegMaybeLocation
+        (reg.compiler-reg-assignment-table-lookup csr-assignments 0)]
+      [csr1 : reg.CompilerRegMaybeLocation
+        (reg.compiler-reg-assignment-table-lookup csr-assignments 1)]
+      [csr2 : reg.CompilerRegMaybeLocation
+        (reg.compiler-reg-assignment-table-lookup csr-assignments 2)]
+      (and
+        (match assignment0
+          [(reg.CompilerRegMaybeLocation.Some location)
+            (match location
+              [(reg.CompilerRegLocation.RegisterPair first second)
+                (and
+                  (= first cabi.compiler-reg-id-r8)
+                  (= second cabi.compiler-reg-id-r9))]
+              [_ false])]
+          [(reg.CompilerRegMaybeLocation.No) false])
+        (match assignment1
+          [(reg.CompilerRegMaybeLocation.Some location)
+            (match location
+              [(reg.CompilerRegLocation.Register reg)
+                (= reg cabi.compiler-reg-id-r12)]
+              [_ false])]
+          [(reg.CompilerRegMaybeLocation.No) false])
+        (match caller0
+          [(reg.CompilerRegMaybeLocation.Some location)
+            (match location
+              [(reg.CompilerRegLocation.RegisterPair first second)
+                (and
+                  (= first cabi.compiler-reg-id-r8)
+                  (= second cabi.compiler-reg-id-r9))]
+              [_ false])]
+          [(reg.CompilerRegMaybeLocation.No) false])
+        (match caller1
+          [(reg.CompilerRegMaybeLocation.Some location)
+            (match location
+              [(reg.CompilerRegLocation.Spill _) true]
+              [_ false])]
+          [(reg.CompilerRegMaybeLocation.No) false])
+        (match csr0
+          [(reg.CompilerRegMaybeLocation.Some location)
+            (match location
+              [(reg.CompilerRegLocation.RegisterPair first second)
+                (and
+                  (= first cabi.compiler-reg-id-r12)
+                  (= second cabi.compiler-reg-id-r13))]
+              [_ false])]
+          [(reg.CompilerRegMaybeLocation.No) false])
+        (match csr1
+          [(reg.CompilerRegMaybeLocation.Some location)
+            (match location
+              [(reg.CompilerRegLocation.Spill _) true]
+              [_ false])]
+          [(reg.CompilerRegMaybeLocation.No) false])
+        (match csr2
+          [(reg.CompilerRegMaybeLocation.Some location)
+            (match location
+              [(reg.CompilerRegLocation.Spill _) true]
+              [_ false])]
+          [(reg.CompilerRegMaybeLocation.No) false])))))
+
 (cfg
   test
   (define (compiler-reg-group-pair-widening-ok?) : bool
@@ -6797,10 +7529,12 @@
       [shadow-regs : (__tl_dyn-array i64) (array.make-array i64 2)]
       (begin
         (reg.compiler-reg-fill-i64-array
-          shadow-regs
+          (reg.compiler-reg-global-shared-view shadow-regs)
           cabi.compiler-reg-id-invalid)
         (set! (array-ref members 0) 0)
-        (reg.compiler-reg-fill-i64-array weights 1)
+        (reg.compiler-reg-fill-i64-array
+          (reg.compiler-reg-global-shared-view weights)
+          1)
         (set! (array-ref weights 0) 10)
         (let
           [v : i64 0]
@@ -6810,31 +7544,40 @@
               (set! (array-ref poisoned v) false)
               (set! v (+ v 1)))))
         (set! (array-ref shadow-regs 1) cabi.compiler-reg-id-r8)
-        (compiler-reg-group-pair-test-fill-homes! assignments 1 vars)
-        (compiler-reg-group-pair-test-fill-homes! csr-assignments 1 vars)
-        (compiler-reg-group-pair-test-fill-homes! caller-occupied 1 vars)
+        (compiler-reg-group-pair-test-fill-homes!
+          (reg.compiler-reg-global-shared-view assignments)
+          1
+          vars)
+        (compiler-reg-group-pair-test-fill-homes!
+          (reg.compiler-reg-global-shared-view csr-assignments)
+          1
+          vars)
+        (compiler-reg-group-pair-test-fill-homes!
+          (reg.compiler-reg-global-shared-view caller-occupied)
+          1
+          vars)
         (let
           [_nonoccupying-spill : reg.CompilerRegAssignmentTable
             (reg.compiler-reg-assignment-table-insert
-              nonoccupying
+              (reg.compiler-reg-global-shared-view nonoccupying)
               1
               (reg.CompilerRegLocation.Spill
                 (reg.compiler-reg-stack-slot-offset 1)))]
           [_nonoccupying-pair : reg.CompilerRegAssignmentTable
             (reg.compiler-reg-assignment-table-insert
-              nonoccupying
+              (reg.compiler-reg-global-shared-view nonoccupying)
               2
               (reg.CompilerRegLocation.RegisterPair
                 cabi.compiler-reg-id-r12
                 cabi.compiler-reg-id-r13))]
           [_caller-occupied-r8 : reg.CompilerRegAssignmentTable
             (reg.compiler-reg-assignment-table-insert
-              caller-occupied
+              (reg.compiler-reg-global-shared-view caller-occupied)
               1
               (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r8))]
           [_caller-occupied-r12 : reg.CompilerRegAssignmentTable
             (reg.compiler-reg-assignment-table-insert
-              caller-occupied
+              (reg.compiler-reg-global-shared-view caller-occupied)
               6
               (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))]
           [empty-split : reg.CompilerRegCallSplit
@@ -6882,75 +7625,75 @@
           [pair-conflicts : (__tl_dyn-array i64) (array.make-array i64 vars)]
           [pair-conflict-count : i64
             (reg.compiler-reg-group-pair-conflict-vars!
-              interval-index
-              members
+              (reg.compiler-reg-global-shared-view interval-index)
+              (reg.compiler-reg-global-shared-view members)
               1
               vars
-              pair-conflicts)]
+              (reg.compiler-reg-global-shared-view pair-conflicts))]
           [shadow-cost : i64
             (reg.compiler-reg-group-pair-component-register-cost
-              assignments
-              interval-index
-              members
+              (reg.compiler-reg-global-shared-view assignments)
+              (reg.compiler-reg-global-shared-view interval-index)
+              (reg.compiler-reg-global-shared-view members)
               1
-              pair-conflicts
+              (reg.compiler-reg-global-shared-view pair-conflicts)
               pair-conflict-count
-              weights
+              (reg.compiler-reg-global-shared-view weights)
               10
               true
-              shadow-split
+              (reg.compiler-reg-global-shared-view shadow-split)
               cabi.compiler-reg-id-r8)]
           [free-r8-cost : i64
             (reg.compiler-reg-group-pair-component-register-cost
-              nonoccupying
-              interval-index
-              members
+              (reg.compiler-reg-global-shared-view nonoccupying)
+              (reg.compiler-reg-global-shared-view interval-index)
+              (reg.compiler-reg-global-shared-view members)
               1
-              pair-conflicts
+              (reg.compiler-reg-global-shared-view pair-conflicts)
               pair-conflict-count
-              weights
+              (reg.compiler-reg-global-shared-view weights)
               10
               true
-              empty-split
+              (reg.compiler-reg-global-shared-view empty-split)
               cabi.compiler-reg-id-r8)]
           [occupied-r8-cost : i64
             (reg.compiler-reg-group-pair-component-register-cost
-              caller-occupied
-              interval-index
-              members
+              (reg.compiler-reg-global-shared-view caller-occupied)
+              (reg.compiler-reg-global-shared-view interval-index)
+              (reg.compiler-reg-global-shared-view members)
               1
-              pair-conflicts
+              (reg.compiler-reg-global-shared-view pair-conflicts)
               pair-conflict-count
-              weights
+              (reg.compiler-reg-global-shared-view weights)
               10
               true
-              empty-split
+              (reg.compiler-reg-global-shared-view empty-split)
               cabi.compiler-reg-id-r8)]
           [csr-evict-cost : i64
             (reg.compiler-reg-group-pair-component-register-cost
-              assignments
-              interval-index
-              members
+              (reg.compiler-reg-global-shared-view assignments)
+              (reg.compiler-reg-global-shared-view interval-index)
+              (reg.compiler-reg-global-shared-view members)
               1
-              pair-conflicts
+              (reg.compiler-reg-global-shared-view pair-conflicts)
               pair-conflict-count
-              weights
+              (reg.compiler-reg-global-shared-view weights)
               10
               false
-              empty-split
+              (reg.compiler-reg-global-shared-view empty-split)
               cabi.compiler-reg-id-r12)]
           [blocked-r12-cost : i64
             (reg.compiler-reg-group-pair-component-register-cost
-              nonoccupying
-              interval-index
-              members
+              (reg.compiler-reg-global-shared-view nonoccupying)
+              (reg.compiler-reg-global-shared-view interval-index)
+              (reg.compiler-reg-global-shared-view members)
               1
-              pair-conflicts
+              (reg.compiler-reg-global-shared-view pair-conflicts)
               pair-conflict-count
-              weights
+              (reg.compiler-reg-global-shared-view weights)
               10
               false
-              empty-split
+              (reg.compiler-reg-global-shared-view empty-split)
               cabi.compiler-reg-id-r12)]
           (let
             [_caller-placed : unit
@@ -6962,16 +7705,16 @@
                 (live.compiler-live-set1 0)
                 (live.compiler-live-set-empty)
                 (live.compiler-live-set-empty)
-                interval-index.starts
-                interval-index.ends
-                poisoned
-                parents
-                members
-                interval-index
-                caller-occupied
-                weights
+                (reg.compiler-reg-global-shared-view interval-index.starts)
+                (reg.compiler-reg-global-shared-view interval-index.ends)
+                (reg.compiler-reg-global-shared-view poisoned)
+                (reg.compiler-reg-global-shared-view parents)
+                (reg.compiler-reg-global-shared-view members)
+                (reg.compiler-reg-global-shared-view interval-index)
+                (reg.compiler-reg-global-shared-view caller-occupied)
+                (reg.compiler-reg-global-shared-view weights)
                 (live.compiler-live-set-empty)
-                empty-split)]
+                (reg.compiler-reg-global-shared-view empty-split))]
             [_csr-placed : unit
               (reg.compiler-reg-assign-group-pair-component
                 (ast.ast-node-pool-reader-type-segment-bases)
@@ -6981,16 +7724,16 @@
                 (live.compiler-live-set1 0)
                 (live.compiler-live-set-empty)
                 (live.compiler-live-set1 0)
-                interval-index.starts
-                interval-index.ends
-                poisoned
-                parents
-                members
-                interval-index
-                csr-assignments
-                weights
+                (reg.compiler-reg-global-shared-view interval-index.starts)
+                (reg.compiler-reg-global-shared-view interval-index.ends)
+                (reg.compiler-reg-global-shared-view poisoned)
+                (reg.compiler-reg-global-shared-view parents)
+                (reg.compiler-reg-global-shared-view members)
+                (reg.compiler-reg-global-shared-view interval-index)
+                (reg.compiler-reg-global-shared-view csr-assignments)
+                (reg.compiler-reg-global-shared-view weights)
                 (live.compiler-live-set-empty)
-                empty-split)]
+                (reg.compiler-reg-global-shared-view empty-split))]
             [_placed : unit
               (reg.compiler-reg-assign-group-pair-component
                 (ast.ast-node-pool-reader-type-segment-bases)
@@ -7000,16 +7743,16 @@
                 (live.compiler-live-set1 0)
                 (live.compiler-live-set-empty)
                 (live.compiler-live-set-empty)
-                interval-index.starts
-                interval-index.ends
-                poisoned
-                parents
-                members
-                interval-index
-                assignments
-                weights
+                (reg.compiler-reg-global-shared-view interval-index.starts)
+                (reg.compiler-reg-global-shared-view interval-index.ends)
+                (reg.compiler-reg-global-shared-view poisoned)
+                (reg.compiler-reg-global-shared-view parents)
+                (reg.compiler-reg-global-shared-view members)
+                (reg.compiler-reg-global-shared-view interval-index)
+                (reg.compiler-reg-global-shared-view assignments)
+                (reg.compiler-reg-global-shared-view weights)
                 (live.compiler-live-set-empty)
-                empty-split)]
+                (reg.compiler-reg-global-shared-view empty-split))]
             (and
               (= (reg.compiler-reg-group-pair-candidate-count true) 7)
               (=
@@ -7026,103 +7769,53 @@
                 (reg.compiler-reg-group-pair-candidate false 0)
                 cabi.compiler-reg-id-r12)
               (reg.compiler-reg-group-pair-component-clobber-free?
-                interval-index
+                (reg.compiler-reg-global-shared-view interval-index)
                 (live.compiler-live-set-empty)
-                members
+                (reg.compiler-reg-global-shared-view members)
                 1)
               (not
                 (reg.compiler-reg-group-pair-component-clobber-free?
-                  interval-index
+                  (reg.compiler-reg-global-shared-view interval-index)
                   (live.compiler-live-set1 5)
-                  members
+                  (reg.compiler-reg-global-shared-view members)
                   1))
-              (not (live.compiler-live-set-contains? phi-excluded 0))
-              (live.compiler-live-set-contains? call-caller-unsafe 0)
-              (live.compiler-live-set-contains? indirect-call-caller-unsafe 0)
-              (live.compiler-live-set-contains? indirect-c-call-caller-unsafe 0)
+              (not
+                (live.compiler-live-set-contains?
+                  (live.compiler-live-shared-view phi-excluded)
+                  0))
+              (live.compiler-live-set-contains?
+                (live.compiler-live-shared-view call-caller-unsafe)
+                0)
+              (live.compiler-live-set-contains?
+                (live.compiler-live-shared-view indirect-call-caller-unsafe)
+                0)
+              (live.compiler-live-set-contains?
+                (live.compiler-live-shared-view indirect-c-call-caller-unsafe)
+                0)
               (reg.compiler-reg-group-pair-component-contains?
-                call-caller-unsafe
-                members
+                (live.compiler-live-shared-view call-caller-unsafe)
+                (reg.compiler-reg-global-shared-view members)
                 1)
               (= shadow-cost (- 0 1))
               (= free-r8-cost 0)
               (> occupied-r8-cost 0)
               (> csr-evict-cost 0)
               (= blocked-r12-cost (- 0 1))
-              (match (reg.compiler-reg-assignment-table-lookup assignments 0)
-                [(reg.CompilerRegMaybeLocation.Some location)
-                  (match location
-                    [(reg.CompilerRegLocation.RegisterPair first second)
-                      (and
-                        (= first cabi.compiler-reg-id-r8)
-                        (= second cabi.compiler-reg-id-r9))]
-                    [_ false])]
-                [(reg.CompilerRegMaybeLocation.No) false])
-              (match (reg.compiler-reg-assignment-table-lookup assignments 1)
-                [(reg.CompilerRegMaybeLocation.Some location)
-                  (match location
-                    [(reg.CompilerRegLocation.Register reg)
-                      (= reg cabi.compiler-reg-id-r12)]
-                    [_ false])]
-                [(reg.CompilerRegMaybeLocation.No) false])
-              (match (reg.compiler-reg-assignment-table-lookup
+              (compiler-reg-group-pair-placement-shapes?
+                assignments
                 caller-occupied
-                0)
-                [(reg.CompilerRegMaybeLocation.Some location)
-                  (match location
-                    [(reg.CompilerRegLocation.RegisterPair first second)
-                      (and
-                        (= first cabi.compiler-reg-id-r8)
-                        (= second cabi.compiler-reg-id-r9))]
-                    [_ false])]
-                [(reg.CompilerRegMaybeLocation.No) false])
-              (match (reg.compiler-reg-assignment-table-lookup
-                caller-occupied
-                1)
-                [(reg.CompilerRegMaybeLocation.Some location)
-                  (match location
-                    [(reg.CompilerRegLocation.Spill _) true]
-                    [_ false])]
-                [(reg.CompilerRegMaybeLocation.No) false])
-              (match (reg.compiler-reg-assignment-table-lookup
-                csr-assignments
-                0)
-                [(reg.CompilerRegMaybeLocation.Some location)
-                  (match location
-                    [(reg.CompilerRegLocation.RegisterPair first second)
-                      (and
-                        (= first cabi.compiler-reg-id-r12)
-                        (= second cabi.compiler-reg-id-r13))]
-                    [_ false])]
-                [(reg.CompilerRegMaybeLocation.No) false])
-              (match (reg.compiler-reg-assignment-table-lookup
-                csr-assignments
-                1)
-                [(reg.CompilerRegMaybeLocation.Some location)
-                  (match location
-                    [(reg.CompilerRegLocation.Spill _) true]
-                    [_ false])]
-                [(reg.CompilerRegMaybeLocation.No) false])
-              (match (reg.compiler-reg-assignment-table-lookup
-                csr-assignments
-                2)
-                [(reg.CompilerRegMaybeLocation.Some location)
-                  (match location
-                    [(reg.CompilerRegLocation.Spill _) true]
-                    [_ false])]
-                [(reg.CompilerRegMaybeLocation.No) false]))))))))
+                csr-assignments))))))))
 
 (cfg
   test
   (define (compiler-reg-test-interval-shape?
-    [items : reg.CompilerRegIntervalSeq]
+    [items : (& items reg.CompilerRegIntervalSeq)]
     [index : i64]
     [var : i64]
     [start : i64]
     [end : i64]) : bool
     (let
-      [got : reg.CompilerRegInterval
-        (reg.compiler-reg-interval-seq-ref items index)]
+      [got : reg.CompilerRegInterval (array-ref items.slots index)]
       (and (= got.var var) (= got.start start) (= got.end end)))))
 
 (cfg
@@ -7246,18 +7939,20 @@
           ;; Touching boundaries after point zero remain non-overlapping.
           (not
             (reg.compiler-reg-interval-seq-overlaps?
-              separated-left
-              separated-right))
+              (reg.compiler-reg-global-shared-view separated-left)
+              (reg.compiler-reg-global-shared-view separated-right)))
           ;; The ordered scan must continue far enough to find a late overlap.
           (reg.compiler-reg-interval-seq-overlaps?
-            separated-left
-            late-overlap-right)
+            (reg.compiler-reg-global-shared-view separated-left)
+            (reg.compiler-reg-global-shared-view late-overlap-right))
           (not
             (reg.compiler-reg-interval-seq-overlaps-one?
-              separated-left
+              (reg.compiler-reg-global-shared-view separated-left)
               (reg.CompilerRegInterval 2 4 6)))
           ;; Entry-point touches preserve the prologue-home exception.
-          (reg.compiler-reg-interval-seq-overlaps? zero-left zero-right))))))
+          (reg.compiler-reg-interval-seq-overlaps?
+            (reg.compiler-reg-global-shared-view zero-left)
+            (reg.compiler-reg-global-shared-view zero-right)))))))
 
 (cfg
   test
@@ -7289,7 +7984,9 @@
         (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r12))
         (set!
           id-prepended
-          (reg.compiler-reg-id-seq-prepend cabi.compiler-reg-id-rbx id-snapshot))
+          (reg.compiler-reg-id-seq-prepend
+            cabi.compiler-reg-id-rbx
+            (reg.compiler-reg-global-shared-view id-snapshot)))
         (set! labels (reg.compiler-reg-label-seq-push labels entry-label))
         (set! labels (reg.compiler-reg-label-seq-push labels body-label))
         (set! label-snapshot (clone labels))
@@ -7305,7 +8002,9 @@
           (= (reg.compiler-reg-id-seq-count ids) 3)
           ;; Duplicate register IDs remain ordered rather than being setified.
           (= (reg.compiler-reg-id-seq-ref ids 2) cabi.compiler-reg-id-r12)
-          (reg.compiler-reg-id-seq-contains? ids cabi.compiler-reg-id-r13)
+          (reg.compiler-reg-id-seq-contains?
+            (reg.compiler-reg-global-shared-view ids)
+            cabi.compiler-reg-id-r13)
           (= (reg.compiler-reg-id-seq-count id-prepended) 3)
           (=
             (reg.compiler-reg-id-seq-ref id-prepended 0)
@@ -7321,7 +8020,9 @@
           (= (reg.compiler-reg-label-seq-ref label-snapshot 1) body-label)
           (= (reg.compiler-reg-label-seq-count labels) 3)
           (= (reg.compiler-reg-label-seq-ref labels 2) entry-label)
-          (reg.compiler-reg-label-seq-contains? labels body-label))))))
+          (reg.compiler-reg-label-seq-contains?
+            (reg.compiler-reg-global-shared-view labels)
+            body-label))))))
 
 (cfg
   test
@@ -7349,19 +8050,27 @@
           5
           (ast.AstType.Bool))]
       [merged : reg.CompilerRegVarTypes
-        (reg.compiler-reg-var-types-merge extra base)]
+        (reg.compiler-reg-var-types-merge
+          extra
+          (reg.compiler-reg-global-shared-view base))]
       (and
         (= (array-ref base.present 2) 1)
         (= (array-ref base.present 3) 0)
-        (match (reg.compiler-reg-var-types-lookup base 2)
+        (match (reg.compiler-reg-var-types-lookup
+          (reg.compiler-reg-global-shared-view base)
+          2)
           [(reg.CompilerRegMaybeType.Some (ast.AstType.I64)) true]
           [_ false])
-        (match (reg.compiler-reg-var-types-lookup base 3)
+        (match (reg.compiler-reg-var-types-lookup
+          (reg.compiler-reg-global-shared-view base)
+          3)
           [(reg.CompilerRegMaybeType.No) true]
           [_ false])
         ;; Merge overrides a present extra entry without mutating the published
         ;; base view retained by retry paths.
-        (match (reg.compiler-reg-var-types-lookup base 5)
+        (match (reg.compiler-reg-var-types-lookup
+          (reg.compiler-reg-global-shared-view base)
+          5)
           [(reg.CompilerRegMaybeType.Some (ast.AstType.U64)) true]
           [_ false])
         (match (reg.compiler-reg-var-types-lookup merged 5)
@@ -8007,7 +8716,9 @@
 (define (compiler-reg-unassigned?
   [assignments : reg.CompilerRegAssignmentTable]
   [var : i64]) : bool
-  (match (reg.compiler-reg-assignment-lookup assignments var)
+  (match (reg.compiler-reg-assignment-lookup
+    (reg.compiler-reg-global-shared-view assignments)
+    var)
     [(reg.CompilerRegMaybeLocation.No) true]
     [_ false]))
 
@@ -8280,12 +8991,14 @@
   [hi : i64]) : bool
   (let
     [var : i64 (+ model.scratch-base offset)]
-    [index : reg.CompilerRegIntervalIndex model.interval-index]
+    [index : reg.CompilerRegIntervalIndex
+      (reg.compiler-reg-global-shared-view model.interval-index)]
     (and
       (= (array-ref index.starts var) lo)
       (= (array-ref index.ends var) hi)
       (let
-        [segments : reg.CompilerRegIntervalSeq (array-ref index.segments var)]
+        [segments : reg.CompilerRegIntervalSeq
+          (reg.compiler-reg-global-array-element-shared-view index.segments var)]
         (and
           (= (reg.compiler-reg-interval-seq-count segments) 1)
           (let
@@ -8297,15 +9010,18 @@
   [target-abi : cabi.CompilerRegTargetAbi]) : reg.CompilerRegEarlyScratchModel
   (let
     [func : ir.CompilerIrFunction (compiler-reg-early-scratch-test-function)]
-    [types : reg.CompilerRegVarTypes (reg.compiler-reg-function-var-types func)]
+    [types : reg.CompilerRegVarTypes
+      (reg.compiler-reg-function-var-types
+        (ir.compiler-ir-global-shared-view func))]
     (match (reg.compiler-reg-live-interval-selection
-      func
-      (live.compiler-live-analyze-function func))
+      (ir.compiler-ir-global-shared-view func)
+      (live.compiler-live-analyze-function
+        (ir.compiler-ir-global-shared-view func)))
       [(reg.CompilerRegIntervalSelection.Selection _ index)
         (reg.compiler-reg-early-scratch-model
           (ast.ast-node-pool-reader-type-segment-bases)
           target-abi
-          func
+          (ir.compiler-ir-global-shared-view func)
           index
           types
           (reg.compiler-reg-assignment-table-insert
@@ -8319,10 +9035,13 @@
   (let
     [model : reg.CompilerRegEarlyScratchModel
       (compiler-reg-early-scratch-model-for-test target-abi)]
-    [assignments : reg.CompilerRegAssignmentTable model.assignments]
+    [assignments : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-global-shared-view model.assignments)]
     [base : i64 model.scratch-base]
-    [weights : (__tl_dyn-array i64) model.scratch-weights]
-    [excluded : (__tl_dyn-array reg.CompilerRegIdSeq) model.scratch-excluded]
+    [weights : (__tl_dyn-array i64)
+      (reg.compiler-reg-global-shared-view model.scratch-weights)]
+    [excluded : (__tl_dyn-array reg.CompilerRegIdSeq)
+      (reg.compiler-reg-global-shared-view model.scratch-excluded)]
     (and
       (= base 2)
       (= model.scratch-count 5)
@@ -8333,19 +9052,39 @@
       (= (array-ref weights 3) 1)
       (= (array-ref weights 4) 1)
       (reg.compiler-reg-id-seq-contains?
-        (array-ref excluded (+ base 2))
+        (reg.compiler-reg-global-array-element-shared-view excluded (+ base 2))
         cabi.compiler-reg-id-r10)
       (reg.compiler-reg-id-seq-contains?
-        (array-ref excluded (+ base 3))
+        (reg.compiler-reg-global-array-element-shared-view excluded (+ base 3))
         cabi.compiler-reg-id-r10)
       (reg.compiler-reg-id-seq-contains?
-        (array-ref excluded (+ base 4))
+        (reg.compiler-reg-global-array-element-shared-view excluded (+ base 4))
         cabi.compiler-reg-id-r10)
-      (compiler-reg-early-scratch-slot-range-ok? model 0 2 3)
-      (compiler-reg-early-scratch-slot-range-ok? model 1 2 3)
-      (compiler-reg-early-scratch-slot-range-ok? model 2 2 3)
-      (compiler-reg-early-scratch-slot-range-ok? model 3 2 3)
-      (compiler-reg-early-scratch-slot-range-ok? model 4 2 3)
+      (compiler-reg-early-scratch-slot-range-ok?
+        (reg.compiler-reg-global-shared-view model)
+        0
+        2
+        3)
+      (compiler-reg-early-scratch-slot-range-ok?
+        (reg.compiler-reg-global-shared-view model)
+        1
+        2
+        3)
+      (compiler-reg-early-scratch-slot-range-ok?
+        (reg.compiler-reg-global-shared-view model)
+        2
+        2
+        3)
+      (compiler-reg-early-scratch-slot-range-ok?
+        (reg.compiler-reg-global-shared-view model)
+        3
+        2
+        3)
+      (compiler-reg-early-scratch-slot-range-ok?
+        (reg.compiler-reg-global-shared-view model)
+        4
+        2
+        3)
       (reg.compiler-reg-location-register?
         (reg.compiler-reg-assignment-table-lookup assignments base)
         cabi.compiler-reg-id-rax)
@@ -8397,9 +9136,15 @@
       (reg.compiler-reg-scratch-register-array
         (cabi.CompilerRegTargetAbi.Linux))]
     (begin
-      (reg.compiler-reg-fill-i64-array starts -1)
-      (reg.compiler-reg-fill-i64-array ends -1)
-      (reg.compiler-reg-fill-interval-seq-array! segments 0)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view starts)
+        -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view ends)
+        -1)
+      (reg.compiler-reg-fill-interval-seq-array!
+        (reg.compiler-reg-global-shared-view segments)
+        0)
       ;; 0: resident [0,4)   1: touch at 4   2: overlaps   3: point-0 touch
       ;; 4: two segments past the resident  5: no segments (coarse [4,8))
       ;; 6: overlaps segment 4's second range
@@ -8422,75 +9167,126 @@
           (reg.CompilerRegIntervalIndex starts ends segments)]
         [occupancy : reg.CompilerRegGreedyOccupancy
           (reg.compiler-reg-greedy-occupancy-make
-            assignments
-            index
-            registers
+            (reg.compiler-reg-global-shared-view assignments)
+            (reg.compiler-reg-global-shared-view index)
+            (reg.compiler-reg-global-shared-view registers)
             (array-length registers))]
         [resident-0-ok? : bool false]
         [emptied-ok? : bool false]
         [multi-ok? : bool false]
         [coarse-resident-ok? : bool false]
         (begin
-          (reg.compiler-reg-greedy-occupancy-assign! occupancy 0 0 -1)
+          (reg.compiler-reg-greedy-occupancy-assign!
+            (reg.compiler-reg-global-shared-view occupancy)
+            0
+            0
+            -1)
           (set!
             resident-0-ok?
             (and
               ;; touch at 4 is half-open, so [4,8) may share the register
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0)
+              (reg.compiler-reg-greedy-reg-free?
+                (reg.compiler-reg-global-shared-view occupancy)
+                (reg.compiler-reg-global-shared-view index)
+                (reg.compiler-reg-global-shared-view ref-counts)
+                1
+                0)
               ;; [3,6) genuinely overlaps [0,4)
               (not
                 (reg.compiler-reg-greedy-reg-free?
-                  occupancy
-                  index
-                  ref-counts
+                  (reg.compiler-reg-global-shared-view occupancy)
+                  (reg.compiler-reg-global-shared-view index)
+                  (reg.compiler-reg-global-shared-view ref-counts)
                   2
                   0))
               ;; a point-0 touch counts as overlap (M-A RC1)
               (not
                 (reg.compiler-reg-greedy-reg-free?
-                  occupancy
-                  index
-                  ref-counts
+                  (reg.compiler-reg-global-shared-view occupancy)
+                  (reg.compiler-reg-global-shared-view index)
+                  (reg.compiler-reg-global-shared-view ref-counts)
                   3
                   0))
               ;; both of var 4's segments clear [0,4)
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 4 0)
+              (reg.compiler-reg-greedy-reg-free?
+                (reg.compiler-reg-global-shared-view occupancy)
+                (reg.compiler-reg-global-shared-view index)
+                (reg.compiler-reg-global-shared-view ref-counts)
+                4
+                0)
               ;; var 5 has no segments: coarse [4,8) vs [0,4) via the fallback
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 5 0)))
-          (reg.compiler-reg-greedy-occupancy-clear! occupancy 0)
+              (reg.compiler-reg-greedy-reg-free?
+                (reg.compiler-reg-global-shared-view occupancy)
+                (reg.compiler-reg-global-shared-view index)
+                (reg.compiler-reg-global-shared-view ref-counts)
+                5
+                0)))
+          (reg.compiler-reg-greedy-occupancy-clear!
+            (reg.compiler-reg-global-shared-view occupancy)
+            0)
           (set!
             emptied-ok?
             (and
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 2 0)
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 3 0)))
-          (reg.compiler-reg-greedy-occupancy-assign! occupancy 4 0 -1)
+              (reg.compiler-reg-greedy-reg-free?
+                (reg.compiler-reg-global-shared-view occupancy)
+                (reg.compiler-reg-global-shared-view index)
+                (reg.compiler-reg-global-shared-view ref-counts)
+                2
+                0)
+              (reg.compiler-reg-greedy-reg-free?
+                (reg.compiler-reg-global-shared-view occupancy)
+                (reg.compiler-reg-global-shared-view index)
+                (reg.compiler-reg-global-shared-view ref-counts)
+                3
+                0)))
+          (reg.compiler-reg-greedy-occupancy-assign!
+            (reg.compiler-reg-global-shared-view occupancy)
+            4
+            0
+            -1)
           (set!
             multi-ok?
             (and
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0)
+              (reg.compiler-reg-greedy-reg-free?
+                (reg.compiler-reg-global-shared-view occupancy)
+                (reg.compiler-reg-global-shared-view index)
+                (reg.compiler-reg-global-shared-view ref-counts)
+                1
+                0)
               ;; [13,15) overlaps var 4's second segment [12,14)
               (not
                 (reg.compiler-reg-greedy-reg-free?
-                  occupancy
-                  index
-                  ref-counts
+                  (reg.compiler-reg-global-shared-view occupancy)
+                  (reg.compiler-reg-global-shared-view index)
+                  (reg.compiler-reg-global-shared-view ref-counts)
                   6
                   0))))
-          (reg.compiler-reg-greedy-occupancy-clear! occupancy 4)
-          (reg.compiler-reg-greedy-occupancy-assign! occupancy 5 0 -1)
+          (reg.compiler-reg-greedy-occupancy-clear!
+            (reg.compiler-reg-global-shared-view occupancy)
+            4)
+          (reg.compiler-reg-greedy-occupancy-assign!
+            (reg.compiler-reg-global-shared-view occupancy)
+            5
+            0
+            -1)
           (set!
             coarse-resident-ok?
             (and
               ;; a segment-less resident forces the per-resident scan: var 0's
               ;; coarse [0,4) clears var 5's coarse [4,8) ...
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 0 0)
+              (reg.compiler-reg-greedy-reg-free?
+                (reg.compiler-reg-global-shared-view occupancy)
+                (reg.compiler-reg-global-shared-view index)
+                (reg.compiler-reg-global-shared-view ref-counts)
+                0
+                0)
               ;; ... while var 1 has no coarse interval at all, which the
               ;; predicate answers conservatively as interference
               (not
                 (reg.compiler-reg-greedy-reg-free?
-                  occupancy
-                  index
-                  ref-counts
+                  (reg.compiler-reg-global-shared-view occupancy)
+                  (reg.compiler-reg-global-shared-view index)
+                  (reg.compiler-reg-global-shared-view ref-counts)
                   1
                   0))))
           (and resident-0-ok? emptied-ok? multi-ok? coarse-resident-ok?))))))
@@ -8513,15 +9309,15 @@
         (cabi.CompilerRegTargetAbi.Windows))]
     [linux-occupancy : reg.CompilerRegGreedyOccupancy
       (reg.compiler-reg-greedy-occupancy-make
-        assignments
-        index
-        linux-registers
+        (reg.compiler-reg-global-shared-view assignments)
+        (reg.compiler-reg-global-shared-view index)
+        (reg.compiler-reg-global-shared-view linux-registers)
         (array-length linux-registers))]
     [windows-occupancy : reg.CompilerRegGreedyOccupancy
       (reg.compiler-reg-greedy-occupancy-make
-        assignments
-        index
-        windows-registers
+        (reg.compiler-reg-global-shared-view assignments)
+        (reg.compiler-reg-global-shared-view index)
+        (reg.compiler-reg-global-shared-view windows-registers)
         (array-length windows-registers))]
     [excluded : reg.CompilerRegIdSeq
       (reg.compiler-reg-id-seq-prepend
@@ -8530,36 +9326,36 @@
     (and
       (=
         (reg.compiler-reg-scratch-pick-register
-          assignments
-          linux-occupancy
-          index
+          (reg.compiler-reg-global-shared-view assignments)
+          (reg.compiler-reg-global-shared-view linux-occupancy)
+          (reg.compiler-reg-global-shared-view index)
           (array.make-array i64 0)
           0
           1
           (reg.compiler-reg-scratch-default-pool
             (cabi.CompilerRegTargetAbi.Linux)
             (reg.CompilerRegScratchClass.Gp))
-          excluded)
+          (reg.compiler-reg-global-shared-view excluded))
         cabi.compiler-reg-id-rsi)
       (=
         (reg.compiler-reg-scratch-pick-register
-          assignments
-          windows-occupancy
-          index
+          (reg.compiler-reg-global-shared-view assignments)
+          (reg.compiler-reg-global-shared-view windows-occupancy)
+          (reg.compiler-reg-global-shared-view index)
           (array.make-array i64 0)
           0
           1
           (reg.compiler-reg-scratch-default-pool
             (cabi.CompilerRegTargetAbi.Windows)
             (reg.CompilerRegScratchClass.Gp))
-          excluded)
+          (reg.compiler-reg-global-shared-view excluded))
         cabi.compiler-reg-id-rsi)
       ;; XMM volatility differs materially across ABIs and remains ABI-aware.
       (=
         (reg.compiler-reg-scratch-pick-register
-          assignments
-          windows-occupancy
-          index
+          (reg.compiler-reg-global-shared-view assignments)
+          (reg.compiler-reg-global-shared-view windows-occupancy)
+          (reg.compiler-reg-global-shared-view index)
           (array.make-array i64 0)
           0
           1
@@ -8758,7 +9554,9 @@
           (reg.CompilerRegInterval 1 1 3)
           (reg.compiler-reg-interval-seq-empty)))]
     [index : reg.CompilerRegIntervalIndex
-      (reg.compiler-reg-interval-index-build intervals 2)]
+      (reg.compiler-reg-interval-index-build
+        (reg.compiler-reg-global-shared-view intervals)
+        2)]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-insert
         (reg.compiler-reg-assignment-table-make 2)
@@ -8782,7 +9580,9 @@
           1
           1
           scratch-weights))
-      (reg.compiler-reg-fill-i64-array hints -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view hints)
+        -1)
       (match (reg.compiler-reg-greedy-state
         intervals
         (reg.compiler-reg-id-seq-prepend
@@ -8792,9 +9592,9 @@
         index
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
-        weights
-        hints
-        hints
+        (reg.compiler-reg-global-shared-view weights)
+        (reg.compiler-reg-global-shared-view hints)
+        (reg.compiler-reg-global-shared-view hints)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
@@ -8823,7 +9623,9 @@
           (reg.CompilerRegInterval 1 1 3)
           (reg.compiler-reg-interval-seq-empty)))]
     [index : reg.CompilerRegIntervalIndex
-      (reg.compiler-reg-interval-index-build intervals 2)]
+      (reg.compiler-reg-interval-index-build
+        (reg.compiler-reg-global-shared-view intervals)
+        2)]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-insert
         (reg.compiler-reg-assignment-table-make 2)
@@ -8836,7 +9638,9 @@
     (begin
       (set! (array-ref weights 0) 1)
       (set! (array-ref weights 1) 2)
-      (reg.compiler-reg-fill-i64-array hints -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view hints)
+        -1)
       ;; %r10 is free but is the instruction operand home. The scratch pseudo
       ;; must instead evict the colder, CSR-only real value from %r12; when that
       ;; value is requeued it has no legal register and receives a real spill.
@@ -8857,8 +9661,8 @@
         (live.compiler-live-set-empty)
         (live.compiler-live-set-insert (live.compiler-live-set-empty) 0)
         weights
-        hints
-        hints
+        (reg.compiler-reg-global-shared-view hints)
+        (reg.compiler-reg-global-shared-view hints)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
@@ -9873,18 +10677,21 @@
       (compiler-reg-destructive-straight-chain-function)]
     [straight-moves : reg.CompilerRegMoveSeq
       (reg.compiler-reg-function-moves-with-destructive-and-casts
-        straight
+        (ir.compiler-ir-global-shared-view straight)
         false)]
     [clobber-eligible : (__tl_dyn-array i64) (array.make-array i64 3)]
     [clobber-moves : reg.CompilerRegMoveSeq
       (begin
-        (reg.compiler-reg-fill-i64-array clobber-eligible 1)
+        (reg.compiler-reg-fill-i64-array
+          (reg.compiler-reg-global-shared-view clobber-eligible)
+          1)
         (set! (array-ref clobber-eligible 1) 0)
         (reg.compiler-reg-function-moves-with-destructive-and-casts-eligible
-          straight
+          (ir.compiler-ir-global-shared-view straight)
           false
           clobber-eligible
-          (reg.compiler-reg-function-alu-prefer-rhs straight)))]
+          (reg.compiler-reg-function-alu-prefer-rhs
+            (ir.compiler-ir-global-shared-view straight))))]
     [noncomm : ir.CompilerIrFunction
       (compiler-reg-destructive-noncommutative-function)]
     [noncomm-moves : reg.CompilerRegMoveSeq
@@ -9897,20 +10704,45 @@
       (reg.compiler-reg-function-moves-with-destructive-and-casts
         (compiler-reg-destructive-div-exclusion-function)
         false)]
-    (match (reg.compiler-reg-plan-function-scalar straight)
+    (match (reg.compiler-reg-plan-function-scalar
+      (ir.compiler-ir-global-shared-view straight))
       [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
         (and
-          (reg.compiler-reg-move-list-contains-undirected? straight-moves 0 1)
-          (reg.compiler-reg-move-list-contains-undirected? straight-moves 1 2)
+          (reg.compiler-reg-move-list-contains-undirected?
+            (reg.compiler-reg-global-shared-view straight-moves)
+            0
+            1)
+          (reg.compiler-reg-move-list-contains-undirected?
+            (reg.compiler-reg-global-shared-view straight-moves)
+            1
+            2)
           (not
-            (reg.compiler-reg-move-list-contains-undirected? clobber-moves 0 1))
+            (reg.compiler-reg-move-list-contains-undirected?
+              (reg.compiler-reg-global-shared-view clobber-moves)
+              0
+              1))
           (not
-            (reg.compiler-reg-move-list-contains-undirected? clobber-moves 1 2))
-          (compiler-reg-same-location? assignments 0 1)
-          (compiler-reg-same-location? assignments 1 2)
-          (reg.compiler-reg-move-list-contains-undirected? noncomm-moves 0 2)
+            (reg.compiler-reg-move-list-contains-undirected?
+              (reg.compiler-reg-global-shared-view clobber-moves)
+              1
+              2))
+          (compiler-reg-same-location?
+            (reg.compiler-reg-global-shared-view assignments)
+            0
+            1)
+          (compiler-reg-same-location?
+            (reg.compiler-reg-global-shared-view assignments)
+            1
+            2)
+          (reg.compiler-reg-move-list-contains-undirected?
+            (reg.compiler-reg-global-shared-view noncomm-moves)
+            0
+            2)
           (not
-            (reg.compiler-reg-move-list-contains-undirected? noncomm-moves 1 2))
+            (reg.compiler-reg-move-list-contains-undirected?
+              (reg.compiler-reg-global-shared-view noncomm-moves)
+              1
+              2))
           (reg.compiler-reg-move-list-contains-undirected?
             commutative-rhs-moves
             1
@@ -10106,7 +10938,9 @@
     [flags : (__tl_dyn-array i64) (array.make-array i64 8)]
     [index : i64 0]
     (begin
-      (reg.compiler-reg-fill-i64-array hints -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view hints)
+        -1)
       (while (< index 8)
         (begin
           (set! (array-ref parents index) index)
@@ -10121,7 +10955,7 @@
           (ir.CompilerIrValue.Var 5)
           (ir.CompilerIrValue.Var 3)
           (compiler-reg-i64-ty))
-        hints
+        (reg.compiler-reg-global-shared-view hints)
         parents
         flags)
       (array-ref hints 6))))
@@ -10144,14 +10978,42 @@
         (compiler-reg-alu-load-pair-function)
         false)]
     (and
-      (reg.compiler-reg-move-list-contains-undirected? flipped 3 6)
-      (not (reg.compiler-reg-move-list-contains-undirected? flipped 5 6))
-      (reg.compiler-reg-move-list-contains-undirected? double-use 5 6)
-      (not (reg.compiler-reg-move-list-contains-undirected? double-use 3 6))
-      (reg.compiler-reg-move-list-contains-undirected? noncommutative 5 6)
-      (not (reg.compiler-reg-move-list-contains-undirected? noncommutative 3 6))
-      (reg.compiler-reg-move-list-contains-undirected? pair 7 8)
-      (not (reg.compiler-reg-move-list-contains-undirected? pair 5 8))
+      (reg.compiler-reg-move-list-contains-undirected?
+        (reg.compiler-reg-global-shared-view flipped)
+        3
+        6)
+      (not
+        (reg.compiler-reg-move-list-contains-undirected?
+          (reg.compiler-reg-global-shared-view flipped)
+          5
+          6))
+      (reg.compiler-reg-move-list-contains-undirected?
+        (reg.compiler-reg-global-shared-view double-use)
+        5
+        6)
+      (not
+        (reg.compiler-reg-move-list-contains-undirected?
+          (reg.compiler-reg-global-shared-view double-use)
+          3
+          6))
+      (reg.compiler-reg-move-list-contains-undirected?
+        (reg.compiler-reg-global-shared-view noncommutative)
+        5
+        6)
+      (not
+        (reg.compiler-reg-move-list-contains-undirected?
+          (reg.compiler-reg-global-shared-view noncommutative)
+          3
+          6))
+      (reg.compiler-reg-move-list-contains-undirected?
+        (reg.compiler-reg-global-shared-view pair)
+        7
+        8)
+      (not
+        (reg.compiler-reg-move-list-contains-undirected?
+          (reg.compiler-reg-global-shared-view pair)
+          5
+          8))
       (= (compiler-reg-alu-copy-hint-for true) 3)
       (= (compiler-reg-alu-copy-hint-for false) 5))))
 
@@ -10665,27 +11527,41 @@
   (match (reg.compiler-reg-plan-function (compiler-reg-reuse-function))
     [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
-        (= (reg.compiler-reg-assignment-count assignments) 2)
+        (=
+          (reg.compiler-reg-assignment-count
+            (reg.compiler-reg-global-shared-view assignments))
+          2)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 0)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0)
           cabi.compiler-reg-id-r12)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 1)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            1)
           cabi.compiler-reg-id-r12))]))
 
 (define (compiler-reg-f64-reuse-ok?) : bool
   (match (reg.compiler-reg-plan-function (compiler-reg-f64-reuse-function))
     [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
-        (= (reg.compiler-reg-assignment-count assignments) 2)
+        (=
+          (reg.compiler-reg-assignment-count
+            (reg.compiler-reg-global-shared-view assignments))
+          2)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 0)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0)
           (cfg
             scratch-vreg
             (cabi.compiler-abi-xmm-register-id 0)
             (cabi.compiler-abi-xmm-register-id 2)))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 1)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            1)
           (cfg
             scratch-vreg
             (cabi.compiler-abi-xmm-register-id 0)
@@ -10699,50 +11575,78 @@
       ;; spill. %rbx joined the pool once its fixed scratch role moved under the
       ;; scavenger.
       (and
-        (= (reg.compiler-reg-assignment-count assignments) 7)
-        (= (reg.compiler-reg-spill-count assignments) 2)
+        (=
+          (reg.compiler-reg-assignment-count
+            (reg.compiler-reg-global-shared-view assignments))
+          7)
+        (=
+          (reg.compiler-reg-spill-count
+            (reg.compiler-reg-global-shared-view assignments))
+          2)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 3)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            3)
           cabi.compiler-reg-id-r15)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 4)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            4)
           cabi.compiler-reg-id-rbx)
         (compiler-reg-location-spill-offset?
-          (reg.compiler-reg-assignment-lookup assignments 6)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            6)
           (reg.compiler-reg-stack-slot-offset 6)))]))
 
 (define (compiler-reg-f64-overlap-spill-ok?) : bool
   (match (reg.compiler-reg-plan-function (compiler-reg-f64-overlap-function))
     [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
-        (= (reg.compiler-reg-assignment-count assignments) 5)
-        (= (reg.compiler-reg-spill-count assignments) 0)
+        (=
+          (reg.compiler-reg-assignment-count
+            (reg.compiler-reg-global-shared-view assignments))
+          5)
+        (=
+          (reg.compiler-reg-spill-count
+            (reg.compiler-reg-global-shared-view assignments))
+          0)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 0)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0)
           (cfg
             scratch-vreg
             (cabi.compiler-abi-xmm-register-id 0)
             (cabi.compiler-abi-xmm-register-id 2)))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 1)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            1)
           (cfg
             scratch-vreg
             (cabi.compiler-abi-xmm-register-id 1)
             (cabi.compiler-abi-xmm-register-id 3)))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 2)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            2)
           (cfg
             scratch-vreg
             (cabi.compiler-abi-xmm-register-id 2)
             (cabi.compiler-abi-xmm-register-id 4)))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 3)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            3)
           (cfg
             scratch-vreg
             (cabi.compiler-abi-xmm-register-id 3)
             (cabi.compiler-abi-xmm-register-id 5)))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 4)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            4)
           (cfg
             scratch-vreg
             (cabi.compiler-abi-xmm-register-id 4)
@@ -10756,12 +11660,21 @@
   (match (reg.compiler-reg-plan-function (compiler-reg-call-live-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not (live.compiler-live-set-contains? ineligible 0))
-        (live.compiler-live-set-contains? ineligible 1)
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            0))
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          1)
         (compiler-reg-location-any-register?
-          (reg.compiler-reg-assignment-lookup assignments 0))
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0))
         (compiler-reg-location-any-register?
-          (reg.compiler-reg-assignment-lookup assignments 2)))]))
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            2)))]))
 
 ;; Scalar plan (#perf): the same function, but an integer value live across a
 ;; call now keeps a callee-saved register home (the integer pool is call-safe),
@@ -10771,11 +11684,18 @@
     (compiler-reg-call-live-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not (live.compiler-live-set-contains? ineligible 0))
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            0))
         (compiler-reg-location-any-register?
-          (reg.compiler-reg-assignment-lookup assignments 0))
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0))
         (compiler-reg-location-any-register?
-          (reg.compiler-reg-assignment-lookup assignments 2)))]))
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            2)))]))
 
 ;; Scalar SysV correctness: a FLOAT value live across a call reaches the greedy
 ;; but has no legal nonvolatile XMM home, so it spills without being structurally
@@ -10785,10 +11705,15 @@
     (compiler-reg-f64-call-live-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not (live.compiler-live-set-contains? ineligible 0))
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            0))
         (not
           (compiler-reg-location-any-register?
-            (reg.compiler-reg-assignment-lookup assignments 0))))]))
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0))))]))
 
 (define (compiler-reg-scalar-win64-f64-call-live-ok?) : bool
   (match (reg.compiler-reg-plan-function-scalar-for-abi
@@ -10796,23 +11721,39 @@
     (compiler-reg-f64-call-live-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not (live.compiler-live-set-contains? ineligible 0))
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            0))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 0)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0)
           (cabi.compiler-abi-xmm-register-id 6)))]))
 
 (define (compiler-reg-f64-call-live-ok?) : bool
   (match (reg.compiler-reg-plan-function (compiler-reg-f64-call-live-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not (live.compiler-live-set-contains? ineligible 0))
-        (live.compiler-live-set-contains? ineligible 1)
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            0))
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          1)
         (not
           (compiler-reg-location-any-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)))
-        (compiler-reg-unassigned? assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)))
+        (compiler-reg-unassigned?
+          (reg.compiler-reg-global-shared-view assignments)
+          1)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 2)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            2)
           (cfg
             scratch-vreg
             (cabi.compiler-abi-xmm-register-id 0)
@@ -10822,22 +11763,38 @@
   (match (reg.compiler-reg-plan-function (compiler-reg-call-arg-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (live.compiler-live-set-contains? ineligible 0)
-        (live.compiler-live-set-contains? ineligible 1)
-        (compiler-reg-unassigned? assignments 0)
-        (compiler-reg-unassigned? assignments 1)
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          0)
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          1)
+        (compiler-reg-unassigned?
+          (reg.compiler-reg-global-shared-view assignments)
+          0)
+        (compiler-reg-unassigned?
+          (reg.compiler-reg-global-shared-view assignments)
+          1)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 3)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            3)
           cabi.compiler-reg-id-r12))]))
 
 (define (compiler-reg-f64-call-arg-ok?) : bool
   (match (reg.compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (live.compiler-live-set-contains? ineligible 0)
-        (compiler-reg-unassigned? assignments 0)
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          0)
+        (compiler-reg-unassigned?
+          (reg.compiler-reg-global-shared-view assignments)
+          0)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 2)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            2)
           (cfg
             scratch-vreg
             (cabi.compiler-abi-xmm-register-id 0)
@@ -10849,30 +11806,55 @@
       (let
         [marked : bool
           (and
-            (live.compiler-live-set-contains? ineligible 0)
-            (live.compiler-live-set-contains? ineligible 2)
-            (live.compiler-live-set-contains? ineligible 3)
-            (live.compiler-live-set-contains? ineligible 4)
-            (not (live.compiler-live-set-contains? ineligible 6)))]
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              0)
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              2)
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              3)
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view ineligible)
+              4)
+            (not
+              (live.compiler-live-set-contains?
+                (reg.compiler-reg-global-shared-view ineligible)
+                6)))]
         [unassigned : bool
           (and
-            (compiler-reg-unassigned? assignments 0)
-            (compiler-reg-unassigned? assignments 2)
-            (compiler-reg-unassigned? assignments 3)
-            (compiler-reg-unassigned? assignments 4))]
+            (compiler-reg-unassigned?
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
+            (compiler-reg-unassigned?
+              (reg.compiler-reg-global-shared-view assignments)
+              2)
+            (compiler-reg-unassigned?
+              (reg.compiler-reg-global-shared-view assignments)
+              3)
+            (compiler-reg-unassigned?
+              (reg.compiler-reg-global-shared-view assignments)
+              4))]
         [homes : bool
           (and
             (reg.compiler-reg-location-register?
-              (reg.compiler-reg-assignment-lookup assignments 1)
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                1)
               (cfg
                 scratch-vreg
                 (cabi.compiler-abi-xmm-register-id 0)
                 (cabi.compiler-abi-xmm-register-id 2)))
             (reg.compiler-reg-location-register?
-              (reg.compiler-reg-assignment-lookup assignments 5)
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                5)
               cabi.compiler-reg-id-r12)
             (compiler-reg-location-any-register?
-              (reg.compiler-reg-assignment-lookup assignments 6)))]
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                6)))]
         (and marked unassigned homes))]))
 
 ;; Scalar plan (#perf): String/DynArray handles (vars 2/4), AddrOf results
@@ -10883,13 +11865,29 @@
     (compiler-reg-ineligible-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not (live.compiler-live-set-contains? ineligible 0))
-        (live.compiler-live-set-contains? ineligible 3)
-        (not (live.compiler-live-set-contains? ineligible 2))
-        (not (live.compiler-live-set-contains? ineligible 4))
-        (not (live.compiler-live-set-contains? ineligible 6))
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            0))
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          3)
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            2))
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            4))
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            6))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 0)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0)
           cabi.compiler-reg-id-rdi))]))
 
 ;; M-A2: a handle arg of a gp-parallel direct call is register-eligible exactly
@@ -10902,10 +11900,18 @@
     (compiler-reg-handle-call-arg-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not (live.compiler-live-set-contains? ineligible 0))
-        (not (live.compiler-live-set-contains? ineligible 1))
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            0))
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            1))
         (compiler-reg-location-any-register?
-          (reg.compiler-reg-assignment-lookup assignments 0)))]))
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0)))]))
 
 (define (compiler-reg-scalar-indirect-call-arg-ok?) : bool
   (match (reg.compiler-reg-plan-function-scalar-for-abi
@@ -10913,14 +11919,26 @@
     (compiler-reg-indirect-call-arg-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (live.compiler-live-set-contains? ineligible 0)
-        (not (live.compiler-live-set-contains? ineligible 1))
-        (not (live.compiler-live-set-contains? ineligible 2))
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          0)
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            1))
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            2))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 1)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            1)
           cabi.compiler-reg-id-rsi)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 2)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            2)
           cabi.compiler-reg-id-rdx))]))
 
 (define (compiler-reg-scalar-c-abi-store-result-call-arg-ok?) : bool
@@ -10929,14 +11947,26 @@
     (compiler-reg-c-abi-store-result-arg-function))
     [(reg.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (live.compiler-live-set-contains? ineligible 0)
-        (not (live.compiler-live-set-contains? ineligible 1))
-        (not (live.compiler-live-set-contains? ineligible 2))
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          0)
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            1))
+        (not
+          (live.compiler-live-set-contains?
+            (reg.compiler-reg-global-shared-view ineligible)
+            2))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 1)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            1)
           cabi.compiler-reg-id-rsi)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 2)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            2)
           cabi.compiler-reg-id-rdx))]))
 
 (define (compiler-reg-scalar-win64-indirect-call-arg-cap-ok?) : bool
@@ -10945,11 +11975,21 @@
     (compiler-reg-indirect-call-arg4-function))
     [(reg.CompilerRegPlan.Plan _ ineligible _ _ _ _)
       (and
-        (live.compiler-live-set-contains? ineligible 0)
-        (live.compiler-live-set-contains? ineligible 1)
-        (live.compiler-live-set-contains? ineligible 2)
-        (live.compiler-live-set-contains? ineligible 3)
-        (live.compiler-live-set-contains? ineligible 4))]))
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          0)
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          1)
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          2)
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          3)
+        (live.compiler-live-set-contains?
+          (reg.compiler-reg-global-shared-view ineligible)
+          4))]))
 
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (reg.compiler-reg-plan-function-scalar
@@ -10973,9 +12013,21 @@
     [(reg.CompilerRegPlan.Plan _ _ intervals _ _ _)
       (and
         (= (reg.compiler-reg-interval-seq-count intervals) 3)
-        (reg.compiler-reg-interval-range? intervals 0 0 4)
-        (reg.compiler-reg-interval-range? intervals 1 4 6)
-        (reg.compiler-reg-interval-range? intervals 2 4 12))]))
+        (reg.compiler-reg-interval-range?
+          (reg.compiler-reg-global-shared-view intervals)
+          0
+          0
+          4)
+        (reg.compiler-reg-interval-range?
+          (reg.compiler-reg-global-shared-view intervals)
+          1
+          4
+          6)
+        (reg.compiler-reg-interval-range?
+          (reg.compiler-reg-global-shared-view intervals)
+          2
+          4
+          12))]))
 
 (define (compiler-reg-scalar-loop-backedge-ok?) : bool
   (match (reg.compiler-reg-plan-function-scalar
@@ -10983,10 +12035,17 @@
     [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
         (compiler-reg-location-any-register?
-          (reg.compiler-reg-assignment-lookup assignments 1))
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            1))
         (compiler-reg-location-any-register?
-          (reg.compiler-reg-assignment-lookup assignments 2))
-        (compiler-reg-same-location? assignments 1 2))]))
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            2))
+        (compiler-reg-same-location?
+          (reg.compiler-reg-global-shared-view assignments)
+          1
+          2))]))
 
 (define (compiler-reg-syscall-clobber-overlap-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -11226,21 +12285,33 @@
   (match (reg.compiler-reg-plan-function-scalar (compiler-reg-overlap-function))
     [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
-        (= (reg.compiler-reg-assignment-count assignments) 7)
-        (= (reg.compiler-reg-spill-count assignments) 0)
+        (=
+          (reg.compiler-reg-assignment-count
+            (reg.compiler-reg-global-shared-view assignments))
+          7)
+        (=
+          (reg.compiler-reg-spill-count
+            (reg.compiler-reg-global-shared-view assignments))
+          0)
         ;; #perf call-spanning-aware partitioning homes the non-call-spanning
         ;; values in the caller-saved pool in candidate order. With %rax/%rsi/%rdi
         ;; now pooled at the front, the leading vars land on %rax/%rsi/%rdi (was
         ;; %r9/%rcx/%rdx). Every value still gets a register (0 spills); sound here
         ;; because this is a zero-call function -- no clobber across a call.
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 0)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0)
           cabi.compiler-reg-id-rax)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 1)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            1)
           cabi.compiler-reg-id-rsi)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 2)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            2)
           cabi.compiler-reg-id-rdi))]))
 
 (define (compiler-reg-scalar-caller-saved-clobber-ok?) : bool
@@ -11248,9 +12319,14 @@
     (compiler-reg-syscall-clobber-overlap-function))
     [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
-        (= (reg.compiler-reg-spill-count assignments) 1)
+        (=
+          (reg.compiler-reg-spill-count
+            (reg.compiler-reg-global-shared-view assignments))
+          1)
         (compiler-reg-location-spill-offset?
-          (reg.compiler-reg-assignment-lookup assignments 5)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            5)
           (reg.compiler-reg-stack-slot-offset 5)))]))
 
 (define (compiler-reg-scalar-call-spanning-caller-saved-ok?) : bool
@@ -11268,26 +12344,37 @@
           ;; the stack and needs no save/restore rescue. (The old allocator spilled
           ;; var 5 then save/restored it; the unified greedy's weight ordering
           ;; avoids that round-trip -- a strict improvement.)
-          (= (reg.compiler-reg-spill-count assignments) 2)
+          (=
+            (reg.compiler-reg-spill-count
+              (reg.compiler-reg-global-shared-view assignments))
+            2)
           (compiler-reg-location-spill-offset?
-            (reg.compiler-reg-assignment-lookup assignments 6)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              6)
             (reg.compiler-reg-stack-slot-offset 6))
           (not
             (live.compiler-live-set-contains?
-              (reg.compiler-reg-call-split-shadows split-vars)
+              (reg.compiler-reg-call-split-shadows
+                (reg.compiler-reg-global-shared-view split-vars))
               5))
           (not
             (live.compiler-live-set-contains?
-              (reg.compiler-reg-call-split-shadows split-vars)
+              (reg.compiler-reg-call-split-shadows
+                (reg.compiler-reg-global-shared-view split-vars))
               6)))])))
 
 (define (compiler-reg-same-location?
   [assignments : reg.CompilerRegAssignmentTable]
   [left : i64]
   [right : i64]) : bool
-  (match (reg.compiler-reg-assignment-lookup assignments left)
+  (match (reg.compiler-reg-assignment-lookup
+    (reg.compiler-reg-global-shared-view assignments)
+    left)
     [(reg.CompilerRegMaybeLocation.Some left-location)
-      (match (reg.compiler-reg-assignment-lookup assignments right)
+      (match (reg.compiler-reg-assignment-lookup
+        (reg.compiler-reg-global-shared-view assignments)
+        right)
         [(reg.CompilerRegMaybeLocation.Some right-location)
           (reg.compiler-reg-location-eq? left-location right-location)]
         [(reg.CompilerRegMaybeLocation.No) false])]
@@ -11297,9 +12384,13 @@
   [assignments : reg.CompilerRegAssignmentTable]
   [left : i64]
   [right : i64]) : bool
-  (match (reg.compiler-reg-assignment-lookup assignments left)
+  (match (reg.compiler-reg-assignment-lookup
+    (reg.compiler-reg-global-shared-view assignments)
+    left)
     [(reg.CompilerRegMaybeLocation.Some left-location)
-      (match (reg.compiler-reg-assignment-lookup assignments right)
+      (match (reg.compiler-reg-assignment-lookup
+        (reg.compiler-reg-global-shared-view assignments)
+        right)
         [(reg.CompilerRegMaybeLocation.Some right-location)
           (not (reg.compiler-reg-location-eq? left-location right-location))]
         [(reg.CompilerRegMaybeLocation.No) false])]
@@ -11331,7 +12422,9 @@
               (reg.CompilerRegInterval 4 8 10)
               (reg.compiler-reg-interval-seq-empty)))))]
     [assignment-index : reg.CompilerRegAssignmentTable
-      (reg.compiler-reg-assignment-table-with-min-capacity assignments 5)]
+      (reg.compiler-reg-assignment-table-with-min-capacity
+        (reg.compiler-reg-global-shared-view assignments)
+        5)]
     [assignment-table : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-insert
         (reg.compiler-reg-assignment-table-insert
@@ -11347,8 +12440,10 @@
         (reg.CompilerRegLocation.Spill 24))]
     [interval-index : reg.CompilerRegIntervalIndex
       (reg.compiler-reg-interval-index-build intervals 5)]
-    [starts : (__tl_dyn-array i64) interval-index.starts]
-    [ends : (__tl_dyn-array i64) interval-index.ends]
+    [starts : (__tl_dyn-array i64)
+      (reg.compiler-reg-global-shared-view interval-index.starts)]
+    [ends : (__tl_dyn-array i64)
+      (reg.compiler-reg-global-shared-view interval-index.ends)]
     [assignment-hit-ok : bool
       (match (reg.compiler-reg-assignment-table-lookup assignment-index 1)
         [(reg.CompilerRegMaybeLocation.Some location)
@@ -11382,44 +12477,61 @@
     [table-direct-ok : bool
       (and
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignment-table 1)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignment-table)
+            1)
           cabi.compiler-reg-id-r12)
         (reg.compiler-reg-location-eq?
-          (match (reg.compiler-reg-assignment-lookup assignment-table 3)
+          (match (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignment-table)
+            3)
             [(reg.CompilerRegMaybeLocation.Some location) location]
             [(reg.CompilerRegMaybeLocation.No)
               (reg.CompilerRegLocation.Spill -1)])
           (reg.CompilerRegLocation.Spill 24)))]
     [interval-hit-ok : bool
-      (match (reg.compiler-reg-interval-index-lookup interval-index 3)
+      (match (reg.compiler-reg-interval-index-lookup
+        (reg.compiler-reg-global-shared-view interval-index)
+        3)
         [(reg.CompilerRegMaybeInterval.Some interval)
           (and (= interval.var 3) (= interval.start 5) (= interval.end 9))]
         [(reg.CompilerRegMaybeInterval.No) false])]
     [interval-miss-ok : bool
-      (match (reg.compiler-reg-interval-index-lookup interval-index 2)
+      (match (reg.compiler-reg-interval-index-lookup
+        (reg.compiler-reg-global-shared-view interval-index)
+        2)
         [(reg.CompilerRegMaybeInterval.Some _) false]
         [(reg.CompilerRegMaybeInterval.No) true])]
     [interval-first-ok : bool
-      (match (reg.compiler-reg-interval-index-lookup interval-index 4)
+      (match (reg.compiler-reg-interval-index-lookup
+        (reg.compiler-reg-global-shared-view interval-index)
+        4)
         [(reg.CompilerRegMaybeInterval.Some interval)
           (and (= interval.var 4) (= interval.start 1) (= interval.end 4))]
         [(reg.CompilerRegMaybeInterval.No) false])]
     [interference-ok : bool
       (and
-        (not (reg.compiler-reg-vars-interfere-index? interval-index 1 3))
-        (reg.compiler-reg-vars-interfere-index? interval-index 1 2))]
+        (not
+          (reg.compiler-reg-vars-interfere-index?
+            (reg.compiler-reg-global-shared-view interval-index)
+            1
+            3))
+        (reg.compiler-reg-vars-interfere-index?
+          (reg.compiler-reg-global-shared-view interval-index)
+          1
+          2))]
     [conflict-ok : bool
       (and
         (not
           (reg.compiler-reg-location-conflicts?
-            assignments
-            interval-index
+            (reg.compiler-reg-global-shared-view assignments)
+            (reg.compiler-reg-global-shared-view interval-index)
             3
             -1
             (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12)))
         (reg.compiler-reg-location-conflicts?
-          assignments
-          interval-index
+          (reg.compiler-reg-global-shared-view assignments)
+          (reg.compiler-reg-global-shared-view interval-index)
           2
           -1
           (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12)))]
@@ -11427,14 +12539,14 @@
       (and
         (not
           (reg.compiler-reg-assignment-table-location-conflicts?
-            assignment-table
-            interval-index
+            (reg.compiler-reg-global-shared-view assignment-table)
+            (reg.compiler-reg-global-shared-view interval-index)
             3
             -1
             (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12)))
         (reg.compiler-reg-assignment-table-location-conflicts?
-          assignment-table
-          interval-index
+          (reg.compiler-reg-global-shared-view assignment-table)
+          (reg.compiler-reg-global-shared-view interval-index)
           2
           -1
           (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12)))]
@@ -11465,11 +12577,11 @@
             4)
           cabi.compiler-reg-id-r13)
         (reg.compiler-reg-assignments-use-register?
-          assignments
+          (clone assignments)
           cabi.compiler-reg-id-r14)
         (not
           (reg.compiler-reg-assignments-use-register?
-            assignments
+            (clone assignments)
             cabi.compiler-reg-id-r15))
         (reg.compiler-reg-var-live-at-point? starts ends 1 3)
         (not (reg.compiler-reg-var-live-at-point? starts ends 1 6))
@@ -11477,16 +12589,16 @@
         (not (reg.compiler-reg-var-live-over-range? starts ends 1 6 7))
         (not
           (reg.compiler-reg-assignment-table-register-free-at-point?
-            starts
-            ends
-            assignment-index
+            (clone starts)
+            (clone ends)
+            (clone assignment-index)
             5
             3
             cabi.compiler-reg-id-r12))
         (reg.compiler-reg-assignment-table-register-free-at-point?
-          starts
-          ends
-          assignment-index
+          (clone starts)
+          (clone ends)
+          (clone assignment-index)
           5
           6
           cabi.compiler-reg-id-r12)
@@ -11523,6 +12635,19 @@
       table-conflict-ok
       shared-query-ok)))
 
+(define (compiler-reg-test-assignment-table-count
+  [assignments : (& assignments reg.CompilerRegAssignmentTable)]) : i64
+  (let
+    [present : (__tl_dyn-array i64) assignments.present]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index (array-length present))
+        (begin
+          (when (not (= (array-ref present index) 0)) (set! count (+ count 1)))
+          (set! index (+ index 1))))
+      count)))
+
 (define (compiler-reg-dense-assignment-snapshot-ok?) : bool
   (let
     [base : reg.CompilerRegAssignmentTable
@@ -11541,24 +12666,24 @@
         9
         (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r13))]
     (and
-      (= (reg.compiler-reg-assignment-count base) 1)
-      (= (reg.compiler-reg-assignment-count successor) 1)
-      (= (reg.compiler-reg-assignment-count expanded) 2)
+      (= (compiler-reg-test-assignment-table-count base) 1)
+      (= (compiler-reg-test-assignment-table-count successor) 1)
+      (= (compiler-reg-test-assignment-table-count expanded) 2)
       (>= (array-length expanded.present) 10)
       (reg.compiler-reg-location-register?
-        (reg.compiler-reg-assignment-lookup base 2)
+        (reg.compiler-reg-assignment-table-lookup base 2)
         cabi.compiler-reg-id-r12)
-      (match (reg.compiler-reg-assignment-lookup successor 2)
+      (match (reg.compiler-reg-assignment-table-lookup successor 2)
         [(reg.CompilerRegMaybeLocation.Some location)
           (reg.compiler-reg-location-eq?
             location
             (reg.CompilerRegLocation.Spill 40))]
         [(reg.CompilerRegMaybeLocation.No) false])
-      (match (reg.compiler-reg-assignment-lookup base 9)
+      (match (reg.compiler-reg-assignment-table-lookup base 9)
         [(reg.CompilerRegMaybeLocation.Some _) false]
         [(reg.CompilerRegMaybeLocation.No) true])
       (reg.compiler-reg-location-register?
-        (reg.compiler-reg-assignment-lookup expanded 9)
+        (reg.compiler-reg-assignment-table-lookup expanded 9)
         cabi.compiler-reg-id-r13))))
 
 (define (compiler-reg-segmented-interference-ok?) : bool
@@ -11568,10 +12693,17 @@
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
       (array.make-array reg.CompilerRegIntervalSeq 5)]
     [segment-index : reg.CompilerRegIntervalIndex
-      (reg.CompilerRegIntervalIndex starts ends segments)]
+      (reg.CompilerRegIntervalIndex
+        (reg.compiler-reg-global-shared-view starts)
+        (reg.compiler-reg-global-shared-view ends)
+        (reg.compiler-reg-global-shared-view segments))]
     (begin
-      (reg.compiler-reg-fill-i64-array starts -1)
-      (reg.compiler-reg-fill-i64-array ends -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view starts)
+        -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view ends)
+        -1)
       (set! (array-ref starts 0) 0)
       (set! (array-ref ends 0) 8)
       (set! (array-ref starts 1) 0)
@@ -11599,10 +12731,22 @@
           (reg.compiler-reg-interval-seq-empty)))
       (and
         (not
-          (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 3))
-        (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 4)
-        (reg.compiler-reg-vars-interfere-segmented-index? segment-index 0 3)
-        (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 2)))))
+          (reg.compiler-reg-vars-interfere-segmented-index?
+            (reg.compiler-reg-global-shared-view segment-index)
+            1
+            3))
+        (reg.compiler-reg-vars-interfere-segmented-index?
+          (reg.compiler-reg-global-shared-view segment-index)
+          1
+          4)
+        (reg.compiler-reg-vars-interfere-segmented-index?
+          (reg.compiler-reg-global-shared-view segment-index)
+          0
+          3)
+        (reg.compiler-reg-vars-interfere-segmented-index?
+          (reg.compiler-reg-global-shared-view segment-index)
+          1
+          2)))))
 
 (define (compiler-reg-hole-aware-register-reuse-ok?) : bool
   (let
@@ -11611,7 +12755,10 @@
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
       (array.make-array reg.CompilerRegIntervalSeq 5)]
     [segment-index : reg.CompilerRegIntervalIndex
-      (reg.CompilerRegIntervalIndex starts ends segments)]
+      (reg.CompilerRegIntervalIndex
+        (reg.compiler-reg-global-shared-view starts)
+        (reg.compiler-reg-global-shared-view ends)
+        (reg.compiler-reg-global-shared-view segments))]
     [one-reg : reg.CompilerRegIdSeq
       (reg.compiler-reg-id-seq-prepend
         cabi.compiler-reg-id-r12
@@ -11627,8 +12774,12 @@
     [hole-aware : live.CompilerLiveI64Set (live.compiler-live-set3 0 2 3)]
     [parents : (__tl_dyn-array i64) (array.make-array i64 5)]
     (begin
-      (reg.compiler-reg-fill-i64-array starts -1)
-      (reg.compiler-reg-fill-i64-array ends -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view starts)
+        -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view ends)
+        -1)
       (set! (array-ref starts 0) 0)
       (set! (array-ref ends 0) 10)
       (set! (array-ref starts 1) 4)
@@ -11679,64 +12830,64 @@
         ;; disjoint from the active root var 0's [0,2], so it reuses %r12.
         [var1-disjoint-reuses : bool
           (match (reg.compiler-reg-first-free-register-holes
-            one-reg
-            active-root
-            segment-index
+            (clone one-reg)
+            (clone active-root)
+            (clone segment-index)
             1
-            hole-aware)
+            (clone hole-aware))
             [(reg.CompilerRegMaybeId.Some reg) (= reg cabi.compiler-reg-id-r12)]
             [(reg.CompilerRegMaybeId.No) false])]
         [root-hole-reuses : bool
           (match (reg.compiler-reg-first-free-register-holes
-            one-reg
-            active-root
-            segment-index
+            (clone one-reg)
+            (clone active-root)
+            (clone segment-index)
             2
-            hole-aware)
+            (clone hole-aware))
             [(reg.CompilerRegMaybeId.Some reg) (= reg cabi.compiler-reg-id-r12)]
             [(reg.CompilerRegMaybeId.No) false])]
         ;; overlap still conflicts: var 3's segment [1,3] overlaps var 0's [0,2].
         [root-overlap-conflicts : bool
           (match (reg.compiler-reg-first-free-register-holes
-            one-reg
-            active-root
-            segment-index
+            (clone one-reg)
+            (clone active-root)
+            (clone segment-index)
             3
-            hole-aware)
+            (clone hole-aware))
             [(reg.CompilerRegMaybeId.No) true]
             [(reg.CompilerRegMaybeId.Some _) false])]
         ;; var 4's [8,9] is disjoint from the active ordinary var 1's [4,6].
         [var4-disjoint-reuses : bool
           (match (reg.compiler-reg-first-free-register-holes
-            one-reg
-            active-ordinary
-            segment-index
+            (clone one-reg)
+            (clone active-ordinary)
+            (clone segment-index)
             4
-            hole-aware)
+            (clone hole-aware))
             [(reg.CompilerRegMaybeId.Some reg) (= reg cabi.compiler-reg-id-r12)]
             [(reg.CompilerRegMaybeId.No) false])]
         [roots : live.CompilerLiveI64Set
           (reg.compiler-reg-coalesce-merged-root-set
-            (reg.CompilerRegCoalesceMap parents))]
+            (reg.CompilerRegCoalesceMap (clone parents)))]
         [mapped-blocked : live.CompilerLiveI64Set
           (reg.compiler-reg-coalesce-root-set-from-vars
-            (reg.CompilerRegCoalesceMap parents)
+            (reg.CompilerRegCoalesceMap (clone parents))
             (live.compiler-live-set2 1 4))]
         (and
           var1-disjoint-reuses
           root-hole-reuses
           root-overlap-conflicts
           var4-disjoint-reuses
-          (live.compiler-live-set-contains? roots 0)
-          (live.compiler-live-set-contains? roots 2)
-          (not (live.compiler-live-set-contains? roots 1))
-          (not (live.compiler-live-set-contains? roots 3))
-          (not (live.compiler-live-set-contains? roots 4))
-          (live.compiler-live-set-contains? mapped-blocked 0)
-          (live.compiler-live-set-contains? mapped-blocked 4)
-          (not (live.compiler-live-set-contains? mapped-blocked 1))
-          (not (live.compiler-live-set-contains? mapped-blocked 2))
-          (not (live.compiler-live-set-contains? mapped-blocked 3)))))))
+          (live.compiler-live-set-contains? (clone roots) 0)
+          (live.compiler-live-set-contains? (clone roots) 2)
+          (not (live.compiler-live-set-contains? (clone roots) 1))
+          (not (live.compiler-live-set-contains? (clone roots) 3))
+          (not (live.compiler-live-set-contains? (clone roots) 4))
+          (live.compiler-live-set-contains? (clone mapped-blocked) 0)
+          (live.compiler-live-set-contains? (clone mapped-blocked) 4)
+          (not (live.compiler-live-set-contains? (clone mapped-blocked) 1))
+          (not (live.compiler-live-set-contains? (clone mapped-blocked) 2))
+          (not (live.compiler-live-set-contains? (clone mapped-blocked) 3)))))))
 
 (define (compiler-reg-coalesce-test-i64-types [vars : i64]) : reg.CompilerRegVarTypes
   (let
@@ -11781,8 +12932,12 @@
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
       (array.make-array reg.CompilerRegIntervalSeq 2)]
     (begin
-      (reg.compiler-reg-fill-i64-array starts -1)
-      (reg.compiler-reg-fill-i64-array ends -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view starts)
+        -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view ends)
+        -1)
       (set! (array-ref starts 0) 0)
       (set! (array-ref ends 0) 10)
       (set! (array-ref starts 1) 0)
@@ -11819,7 +12974,7 @@
     [coalesce : reg.CompilerRegCoalesceMap
       (reg.compiler-reg-coalesce-map-build
         moves
-        index
+        (clone index)
         types
         (live.compiler-live-set-empty)
         3
@@ -11839,10 +12994,18 @@
         (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))]
     (and
       (reg.compiler-reg-location-register?
-        (reg.compiler-reg-coalesce-location coalesce assignments index 1)
+        (reg.compiler-reg-coalesce-location
+          (clone coalesce)
+          assignments
+          (clone index)
+          1)
         cabi.compiler-reg-id-r12)
       (reg.compiler-reg-location-register?
-        (reg.compiler-reg-coalesce-location coalesce tie-assignments index 1)
+        (reg.compiler-reg-coalesce-location
+          (clone coalesce)
+          tie-assignments
+          (clone index)
+          1)
         cabi.compiler-reg-id-r12))))
 
 (define (compiler-reg-coalesce-interference-reject-ok?) : bool
@@ -11860,7 +13023,7 @@
     [coalesce : reg.CompilerRegCoalesceMap
       (reg.compiler-reg-coalesce-map-build
         moves
-        index
+        (clone index)
         types
         (live.compiler-live-set-empty)
         2
@@ -11889,7 +13052,7 @@
     [coalesce : reg.CompilerRegCoalesceMap
       (reg.compiler-reg-coalesce-map-build
         moves
-        index
+        (clone index)
         types
         (live.compiler-live-set-empty)
         2
@@ -11918,7 +13081,7 @@
     [coalesce : reg.CompilerRegCoalesceMap
       (reg.compiler-reg-coalesce-map-build
         moves
-        index
+        (clone index)
         types
         (live.compiler-live-set-empty)
         2
@@ -11952,8 +13115,12 @@
       (array.make-array reg.CompilerRegIntervalSeq 3)]
     [parents : (__tl_dyn-array i64) (array.make-array i64 3)]
     (begin
-      (reg.compiler-reg-fill-i64-array starts -1)
-      (reg.compiler-reg-fill-i64-array ends -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view starts)
+        -1)
+      (reg.compiler-reg-fill-i64-array
+        (reg.compiler-reg-global-shared-view ends)
+        -1)
       (set! (array-ref segments 0) (reg.compiler-reg-interval-seq-empty))
       (set! (array-ref segments 1) (reg.compiler-reg-interval-seq-empty))
       (set! (array-ref segments 2) (reg.compiler-reg-interval-seq-empty))
@@ -11986,7 +13153,9 @@
           (= (array-ref merged.ends 0) 8)
           (< (array-ref merged.starts 1) 0)
           (compiler-reg-single-segment-range?
-            (array-ref merged.segments 0)
+            (reg.compiler-reg-global-array-element-shared-view
+              merged.segments
+              0)
             0
             0
             8))))))
@@ -12010,19 +13179,19 @@
     [func : ir.CompilerIrFunction (compiler-reg-same-value-clobber-function)]
     [selection : reg.CompilerRegIntervalSelection
       (reg.compiler-reg-live-interval-selection
-        func
-        (live.compiler-live-analyze-function func))]
+        (clone func)
+        (live.compiler-live-analyze-function (clone func)))]
     (match selection
       [(reg.CompilerRegIntervalSelection.Selection _ interval-index)
         (let
           [parents : (__tl_dyn-array i64)
             (reg.compiler-reg-function-same-value-parents-filtered
-              func
+              (clone func)
               (reg.compiler-reg-same-value-eligible-vars
                 interval-index
                 (reg.compiler-reg-clobber-kind-points
                   (ast.ast-node-pool-reader-type-segment-bases)
-                  func
+                  (clone func)
                   0)))]
           (not (reg.compiler-reg-same-value-class? parents 0 2)))])))
 
@@ -12031,18 +13200,18 @@
 (define (compiler-reg-sv-multi-parents-for [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
   (match (reg.compiler-reg-live-interval-selection
-    func
-    (live.compiler-live-analyze-function func))
+    (clone func)
+    (live.compiler-live-analyze-function (clone func)))
     [(reg.CompilerRegIntervalSelection.Selection _ interval-index)
       (reg.compiler-reg-function-same-value-parents-multi
-        func
+        (clone func)
         (reg.compiler-reg-same-value-eligible-vars
-          interval-index
+          (clone interval-index)
           (reg.compiler-reg-clobber-kind-points
             (ast.ast-node-pool-reader-type-segment-bases)
-            func
+            (clone func)
             0))
-        (reg.compiler-reg-function-var-types func)
+        (reg.compiler-reg-function-var-types (clone func))
         interval-index)]))
 
 (define (compiler-reg-sv-multi-ok?) : bool
@@ -12059,9 +13228,9 @@
     (and
       (reg.compiler-reg-same-value-class? safe 0 1)
       (not (reg.compiler-reg-same-value-class? reject 0 1))
-      (reg.compiler-reg-same-value-class? chain 2 3)
-      (not (reg.compiler-reg-same-value-class? chain 0 2))
-      (not (reg.compiler-reg-same-value-class? chain 0 3))
+      (reg.compiler-reg-same-value-class? (clone chain) 2 3)
+      (not (reg.compiler-reg-same-value-class? (clone chain) 0 2))
+      (not (reg.compiler-reg-same-value-class? (clone chain) 0 3))
       (reg.compiler-reg-same-value-class? cast 0 1))))
 
 (define (compiler-reg-coalesce-ok?) : bool
@@ -12080,8 +13249,14 @@
                     [(reg.CompilerRegPlan.Plan spill-assignments _ _ _ _ _)
                       (and
                         (reg.compiler-reg-move-list-parallel-decision-ok?)
-                        (compiler-reg-same-location? chain-assignments 0 1)
-                        (compiler-reg-same-location? chain-assignments 1 2)
+                        (compiler-reg-same-location?
+                          (clone chain-assignments)
+                          0
+                          1)
+                        (compiler-reg-same-location?
+                          (clone chain-assignments)
+                          1
+                          2)
                         (compiler-reg-same-location? phi-assignments 0 1)
                         (compiler-reg-different-location? loop-assignments 1 2)
                         (compiler-reg-different-location?
@@ -12291,19 +13466,19 @@
     (and
       (=
         (live.compiler-live-set-count
-          (reg.compiler-reg-clobber-kind-points bases pure-fn 0))
+          (reg.compiler-reg-clobber-kind-points bases (clone pure-fn) 0))
         2)
       (=
         (live.compiler-live-set-count
-          (reg.compiler-reg-clobber-kind-points bases pure-fn 6))
+          (reg.compiler-reg-clobber-kind-points bases (clone pure-fn) 6))
         0)
       (=
         (live.compiler-live-set-count
-          (reg.compiler-reg-clobber-kind-points bases real-fn 0))
+          (reg.compiler-reg-clobber-kind-points bases (clone real-fn) 0))
         2)
       (=
         (live.compiler-live-set-count
-          (reg.compiler-reg-clobber-kind-points bases real-fn 6))
+          (reg.compiler-reg-clobber-kind-points bases (clone real-fn) 6))
         1))))
 
 ;; The segment walk itself: one clobber point in the HOLE between two segments
@@ -12327,23 +13502,40 @@
     [at-later-segment-start : live.CompilerLiveI64Set
       (live.compiler-live-set-insert (live.compiler-live-set-empty) 12)]
     (and
-      (not (reg.compiler-reg-segments-span-clobber? segments in-hole 0 false))
-      (reg.compiler-reg-segments-span-clobber? segments in-segment 0 false)
+      (not
+        (reg.compiler-reg-segments-span-clobber?
+          (clone segments)
+          (clone in-hole)
+          0
+          false))
+      (reg.compiler-reg-segments-span-clobber?
+        (clone segments)
+        (clone in-segment)
+        0
+        false)
       ;; A clobber AT the hull start is the value's own defining instruction
       ;; for an ordinary value, and already inside the live range of a param.
       (not
-        (reg.compiler-reg-segments-span-clobber? segments at-hull-start 0 false))
-      (reg.compiler-reg-segments-span-clobber? segments at-hull-start 0 true)
+        (reg.compiler-reg-segments-span-clobber?
+          (clone segments)
+          (clone at-hull-start)
+          0
+          false))
+      (reg.compiler-reg-segments-span-clobber?
+        (clone segments)
+        (clone at-hull-start)
+        0
+        true)
       ;; A later segment opens where the value flows IN from a predecessor, so
       ;; its start is inclusive under BOTH conventions.
       (reg.compiler-reg-segments-span-clobber?
-        segments
-        at-later-segment-start
+        (clone segments)
+        (clone at-later-segment-start)
         0
         false)
       (reg.compiler-reg-segments-span-clobber?
-        segments
-        at-later-segment-start
+        (clone segments)
+        (clone at-later-segment-start)
         0
         true))))
 
@@ -12352,15 +13544,22 @@
     (compiler-reg-tail-dispatch-function))
     [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
-        (= (reg.compiler-reg-spill-count assignments) 0)
+        (=
+          (reg.compiler-reg-spill-count
+            (reg.compiler-reg-global-shared-view assignments))
+          0)
         ;; Both params keep their incoming (caller-saved) ABI registers: no
         ;; entry copy, and no callee-saved register enters the plan, so the
         ;; prologue emits no push and each tail-jump tail no pop.
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 0)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0)
           cabi.compiler-reg-id-rdi)
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 1)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            1)
           cabi.compiler-reg-id-rsi))]))
 
 (define (compiler-reg-tail-dispatch-real-call-pins-ok?) : bool
@@ -12372,11 +13571,15 @@
       (and
         (not
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 0)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              0)
             cabi.compiler-reg-id-rdi))
         (not
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             cabi.compiler-reg-id-rsi)))]))
 
 (define (compiler-reg-tail-dispatch-mixed-pins-ok?) : bool
@@ -12387,12 +13590,16 @@
         ;; `k` is dead across the real call (it lives in the hole between its
         ;; entry and tail-arm segments) -> keeps %rdi.
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignments 0)
+          (reg.compiler-reg-assignment-lookup
+            (reg.compiler-reg-global-shared-view assignments)
+            0)
           cabi.compiler-reg-id-rdi)
         ;; `v` really is live across the real call -> loses %rsi.
         (not
           (reg.compiler-reg-location-register?
-            (reg.compiler-reg-assignment-lookup assignments 1)
+            (reg.compiler-reg-assignment-lookup
+              (reg.compiler-reg-global-shared-view assignments)
+              1)
             cabi.compiler-reg-id-rsi)))]))
 
 (define (compiler-reg-tail-call-clobber-ok?) : bool
@@ -12420,62 +13627,62 @@
                       (and
                         (reg.compiler-reg-location-register?
                           (reg.compiler-reg-assignment-lookup
-                            vector-assignments
+                            (clone vector-assignments)
                             0)
                           (cabi.compiler-abi-vector-register-id 6))
                         (reg.compiler-reg-location-register?
                           (reg.compiler-reg-assignment-lookup
-                            vector-assignments
+                            (clone vector-assignments)
                             1)
                           (cabi.compiler-abi-vector-register-id 7))
                         (reg.compiler-reg-location-register?
                           (reg.compiler-reg-assignment-lookup
-                            vector-assignments
+                            (clone vector-assignments)
                             2)
                           (cabi.compiler-abi-vector-register-id 7))
                         (reg.compiler-reg-location-register?
                           (reg.compiler-reg-assignment-lookup
-                            vector-assignments
+                            (clone vector-assignments)
                             3)
                           (cabi.compiler-abi-vector-register-id 6)))]
                     [gp-clobber-ok : bool
                       (reg.compiler-reg-location-register?
                         (reg.compiler-reg-assignment-lookup
-                          gp-clobber-assignments
+                          (clone gp-clobber-assignments)
                           0)
                         (cabi.compiler-abi-vector-register-id 6))]
                     [select-ok : bool
                       (and
                         (reg.compiler-reg-location-register?
                           (reg.compiler-reg-assignment-lookup
-                            select-assignments
+                            (clone select-assignments)
                             1)
                           (cabi.compiler-abi-vector-register-id 7))
                         (reg.compiler-reg-location-register?
                           (reg.compiler-reg-assignment-lookup
-                            select-assignments
+                            (clone select-assignments)
                             2)
                           (cabi.compiler-abi-vector-register-id 8))
                         (reg.compiler-reg-location-register?
                           (reg.compiler-reg-assignment-lookup
-                            select-assignments
+                            (clone select-assignments)
                             4)
                           (cabi.compiler-abi-vector-register-id 7)))]
                     [mask-ok : bool
                       (and
                         (reg.compiler-reg-location-register?
                           (reg.compiler-reg-assignment-lookup
-                            mask-assignments
+                            (clone mask-assignments)
                             0)
                           (cabi.compiler-abi-mask-register-id 1))
                         (reg.compiler-reg-location-register?
                           (reg.compiler-reg-assignment-lookup
-                            mask-assignments
+                            (clone mask-assignments)
                             1)
                           (cabi.compiler-abi-mask-register-id 2))
                         (reg.compiler-reg-location-register?
                           (reg.compiler-reg-assignment-lookup
-                            mask-assignments
+                            (clone mask-assignments)
                             3)
                           (cabi.compiler-abi-mask-register-id 1)))]
                     (and vector-ok gp-clobber-ok select-ok mask-ok))])])])]))
@@ -12486,7 +13693,9 @@
       ;; Six architectural homes are allocatable (%k1..%k6); the seventh
       ;; simultaneously-live mask must stay unassigned for the backend's
       ;; stack-slot mask spill path.
-      (match (reg.compiler-reg-assignment-lookup assignments 6)
+      (match (reg.compiler-reg-assignment-lookup
+        (reg.compiler-reg-global-shared-view assignments)
+        6)
         [(reg.CompilerRegMaybeLocation.No) true]
         [_ false])]))
 
@@ -12517,14 +13726,20 @@
         (ir.CompilerIrValue.Var 1)
         (ast.AstType.I64))]
     (and
-      (reg.compiler-reg-id-seq-contains? sysv-callers cabi.compiler-reg-id-rdi)
+      (reg.compiler-reg-id-seq-contains?
+        (clone sysv-callers)
+        cabi.compiler-reg-id-rdi)
       (not
         (reg.compiler-reg-id-seq-contains?
-          sysv-callees
+          (clone sysv-callees)
           cabi.compiler-reg-id-rdi))
-      (reg.compiler-reg-id-seq-contains? win-callees cabi.compiler-reg-id-rdi)
+      (reg.compiler-reg-id-seq-contains?
+        (clone win-callees)
+        cabi.compiler-reg-id-rdi)
       (not
-        (reg.compiler-reg-id-seq-contains? win-callers cabi.compiler-reg-id-rdi))
+        (reg.compiler-reg-id-seq-contains?
+          (clone win-callers)
+          cabi.compiler-reg-id-rdi))
       (not
         (=
           (reg.compiler-reg-id-seq-count
@@ -12538,9 +13753,15 @@
       ;; The greedy pool owns the caller-saved backend temps behind the
       ;; clobber-point filter.
       (= (reg.compiler-reg-greedy-caller-saved-count) 9)
-      (reg.compiler-reg-id-seq-contains? greedy-pool cabi.compiler-reg-id-r8)
-      (reg.compiler-reg-id-seq-contains? greedy-pool cabi.compiler-reg-id-r10)
-      (reg.compiler-reg-id-seq-contains? greedy-pool cabi.compiler-reg-id-r11)
+      (reg.compiler-reg-id-seq-contains?
+        (clone greedy-pool)
+        cabi.compiler-reg-id-r8)
+      (reg.compiler-reg-id-seq-contains?
+        (clone greedy-pool)
+        cabi.compiler-reg-id-r10)
+      (reg.compiler-reg-id-seq-contains?
+        (clone greedy-pool)
+        cabi.compiler-reg-id-r11)
       ;; ABI-aware split: SysV caller-saved-count=9; Win64=7 (%rsi/%rdi are
       ;; nonvolatile on Win64 -> in the callee-saved suffix, not the prefix).
       (=
@@ -12568,37 +13789,49 @@
       ;; Keep ABI/result registers and Win64 callee-saved %rsi/%rdi out of it.
       (= (reg.compiler-reg-id-seq-count zero-call-callers) 3)
       (reg.compiler-reg-id-seq-contains?
-        zero-call-callers
+        (clone zero-call-callers)
         cabi.compiler-reg-id-r9)
       (reg.compiler-reg-id-seq-contains?
-        zero-call-callers
+        (clone zero-call-callers)
         cabi.compiler-reg-id-rcx)
       (reg.compiler-reg-id-seq-contains?
-        zero-call-callers
+        (clone zero-call-callers)
         cabi.compiler-reg-id-rdx)
       (not
         (reg.compiler-reg-backend-caller-clobber-instr-for-abi?
           cabi.CompilerRegTargetAbi.Linux
-          copy-instr))
+          (clone copy-instr)))
       (reg.compiler-reg-backend-caller-clobber-instr-for-abi?
         cabi.CompilerRegTargetAbi.Windows
-        copy-instr)
+        (clone copy-instr))
       (not
         (reg.compiler-reg-backend-caller-clobber-instr-for-abi?
           cabi.CompilerRegTargetAbi.Linux
-          add-instr))
+          (clone add-instr)))
       (reg.compiler-reg-backend-caller-clobber-instr-for-abi?
         cabi.CompilerRegTargetAbi.Windows
-        add-instr)
-      (reg.compiler-reg-id-seq-contains? sysv-callers cabi.compiler-reg-id-rcx)
-      (reg.compiler-reg-id-seq-contains? sysv-callers cabi.compiler-reg-id-rdx)
-      (reg.compiler-reg-id-seq-contains? sysv-callers cabi.compiler-reg-id-r9)
-      (reg.compiler-reg-id-seq-contains? win-callers cabi.compiler-reg-id-rcx)
-      (reg.compiler-reg-id-seq-contains? win-callers cabi.compiler-reg-id-rdx)
-      (reg.compiler-reg-id-seq-contains? win-callers cabi.compiler-reg-id-r9)
+        (clone add-instr))
+      (reg.compiler-reg-id-seq-contains?
+        (clone sysv-callers)
+        cabi.compiler-reg-id-rcx)
+      (reg.compiler-reg-id-seq-contains?
+        (clone sysv-callers)
+        cabi.compiler-reg-id-rdx)
+      (reg.compiler-reg-id-seq-contains?
+        (clone sysv-callers)
+        cabi.compiler-reg-id-r9)
+      (reg.compiler-reg-id-seq-contains?
+        (clone win-callers)
+        cabi.compiler-reg-id-rcx)
+      (reg.compiler-reg-id-seq-contains?
+        (clone win-callers)
+        cabi.compiler-reg-id-rdx)
+      (reg.compiler-reg-id-seq-contains?
+        (clone win-callers)
+        cabi.compiler-reg-id-r9)
       (not
         (reg.compiler-reg-id-seq-contains?
-          zero-call-callers
+          (clone zero-call-callers)
           cabi.compiler-reg-id-rax))
       ;; Win64 FPO appends %rbp to the nonvolatile suffix without moving the
       ;; seven-register volatile boundary or any existing pool member.
@@ -12621,23 +13854,23 @@
         ok)
       (not
         (reg.compiler-reg-id-seq-contains?
-          zero-call-callers
+          (clone zero-call-callers)
           cabi.compiler-reg-id-r8))
       (not
         (reg.compiler-reg-id-seq-contains?
-          zero-call-callers
+          (clone zero-call-callers)
           cabi.compiler-reg-id-r10))
       (not
         (reg.compiler-reg-id-seq-contains?
-          zero-call-callers
+          (clone zero-call-callers)
           cabi.compiler-reg-id-r11))
       (not
         (reg.compiler-reg-id-seq-contains?
-          zero-call-callers
+          (clone zero-call-callers)
           cabi.compiler-reg-id-rdi))
       (not
         (reg.compiler-reg-id-seq-contains?
-          zero-call-callers
+          (clone zero-call-callers)
           cabi.compiler-reg-id-rsi))
       (not
         (reg.compiler-reg-id-seq-contains?
@@ -12680,63 +13913,63 @@
           (cfg scratch-vreg 6 4))
         (=
           (reg.compiler-reg-id-seq-contains?
-            sysv-pool
+            (clone sysv-pool)
             (cabi.compiler-abi-xmm-register-id 0))
           (reg.compiler-reg-low-xmm-allocatable?))
         (=
           (reg.compiler-reg-id-seq-contains?
-            sysv-pool
+            (clone sysv-pool)
             (cabi.compiler-abi-xmm-register-id 1))
           (reg.compiler-reg-low-xmm-allocatable?))
         (reg.compiler-reg-id-seq-contains?
-          sysv-pool
+          (clone sysv-pool)
           (cabi.compiler-abi-xmm-register-id 2))
         (reg.compiler-reg-id-seq-contains?
-          sysv-pool
+          (clone sysv-pool)
           (cabi.compiler-abi-xmm-register-id 15))
         (reg.compiler-reg-id-seq-contains?
-          win-pool
+          (clone win-pool)
           (cabi.compiler-abi-xmm-register-id 2))
         (reg.compiler-reg-id-seq-contains?
-          win-pool
+          (clone win-pool)
           (cabi.compiler-abi-xmm-register-id 6))
         (reg.compiler-reg-id-seq-contains?
-          win-pool
+          (clone win-pool)
           (cabi.compiler-abi-xmm-register-id 15))
         (reg.compiler-reg-id-seq-contains?
-          win-vector-pool
+          (clone win-vector-pool)
           (cabi.compiler-abi-vector-register-id 2))
         (reg.compiler-reg-id-seq-contains?
-          win-vector-pool
+          (clone win-vector-pool)
           (cabi.compiler-abi-vector-register-id 15))
         (not
           (reg.compiler-reg-id-seq-contains?
-            win-vector-pool
+            (clone win-vector-pool)
             (cabi.compiler-abi-vector-register-id 0)))
         (not
           (reg.compiler-reg-id-seq-contains?
-            win-vector-pool
+            (clone win-vector-pool)
             (cabi.compiler-abi-vector-register-id 1))))]
     [sysv-ok : bool
       (and
         (reg.compiler-reg-id-seq-contains?
-          sysv-callers
+          (clone sysv-callers)
           (cabi.compiler-abi-xmm-register-id 14))
         (not
           (reg.compiler-reg-id-seq-contains?
-            sysv-callees
+            (clone sysv-callees)
             (cabi.compiler-abi-xmm-register-id 14))))]
     [win-ok : bool
       (and
         (reg.compiler-reg-id-seq-contains?
-          win-callers
+          (clone win-callers)
           (cabi.compiler-abi-xmm-register-id 5))
         (not
           (reg.compiler-reg-id-seq-contains?
-            win-callers
+            (clone win-callers)
             (cabi.compiler-abi-xmm-register-id 6)))
         (reg.compiler-reg-id-seq-contains?
-          win-callees
+          (clone win-callees)
           (cabi.compiler-abi-xmm-register-id 6)))]
     [counts-ok : bool
       (and
@@ -12761,7 +13994,7 @@
         (live.compiler-live-set-empty))]
     [state : reg.CompilerRegAssignState
       (reg.compiler-reg-greedy-state
-        intervals
+        (clone intervals)
         (if vector
           (reg.compiler-reg-vector-registers-for-abi target-abi)
           (reg.compiler-reg-xmm-registers-for-abi target-abi))
@@ -12845,7 +14078,7 @@
     [all-intervals : reg.CompilerRegIntervalSeq
       (reg.compiler-reg-interval-seq-prepend
         (reg.CompilerRegInterval 0 0 10)
-        vector-candidates)]
+        (clone vector-candidates))]
     [interval-index : reg.CompilerRegIntervalIndex
       (reg.compiler-reg-interval-index-build all-intervals 2)]
     [scalar-state : reg.CompilerRegAssignState
@@ -12855,7 +14088,7 @@
           (cabi.compiler-abi-xmm-register-id 6)
           (reg.compiler-reg-id-seq-empty))
         (reg.compiler-reg-assignment-table-make 2)
-        interval-index
+        (clone interval-index)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
         (array.make-array i64 0)
@@ -12891,10 +14124,10 @@
               [items : reg.CompilerRegAssignmentTable assignments]
               (and
                 (reg.compiler-reg-location-register?
-                  (reg.compiler-reg-assignment-lookup items 0)
+                  (reg.compiler-reg-assignment-lookup (clone items) 0)
                   (cabi.compiler-abi-xmm-register-id 6))
                 (reg.compiler-reg-location-register?
-                  (reg.compiler-reg-assignment-lookup items 1)
+                  (reg.compiler-reg-assignment-lookup (clone items) 1)
                   (cabi.compiler-abi-vector-register-id 7))))])])))
 
 (define (compiler-reg-xmm-vector-class-reset-ok?) : bool
@@ -12904,14 +14137,16 @@
         (reg.CompilerRegInterval 0 0 10)
         (reg.compiler-reg-interval-seq-empty))]
     [index : reg.CompilerRegIntervalIndex
-      (reg.compiler-reg-interval-index-build candidates 1)]
+      (reg.compiler-reg-interval-index-build (clone candidates) 1)]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-insert
         (reg.compiler-reg-assignment-table-make 1)
         0
         (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))]
     [_reset : unit
-      (reg.compiler-reg-unassign-special-candidates! assignments candidates)]
+      (reg.compiler-reg-unassign-special-candidates!
+        (reg.compiler-reg-global-shared-view assignments)
+        (reg.compiler-reg-global-shared-view candidates))]
     (match (reg.compiler-reg-greedy-state
       candidates
       (reg.compiler-reg-vector-registers-for-abi
@@ -12954,9 +14189,9 @@
         (ir.compiler-ir-block
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Alloc 0 big)
+            (ir.CompilerIrInstr.Alloc 0 (clone big))
             (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Alloc 1 big)
+              (ir.CompilerIrInstr.Alloc 1 (clone big))
               (ir.compiler-ir-instr-cons
                 (ir.CompilerIrInstr.AddrOf 2 1)
                 (ir.compiler-ir-instr-cons
@@ -12965,9 +14200,9 @@
                     (ir.CompilerIrValue.I64 11)
                     (ast.AstType.I64))
                   (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Alloc 3 big)
+                    (ir.CompilerIrInstr.Alloc 3 (clone big))
                     (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.Alloc 4 big)
+                      (ir.CompilerIrInstr.Alloc 4 (clone big))
                       (ir.compiler-ir-instr-cons
                         (ir.CompilerIrInstr.AddrOf 5 4)
                         (ir.compiler-ir-instr-cons
@@ -13203,7 +14438,7 @@
     (match (reg.compiler-reg-color-stack-slots
       (ast.ast-node-pool-reader-type-segment-bases)
       (reg.CompilerRegPlan.Plan
-        assignments
+        (clone assignments)
         (live.compiler-live-set-empty)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 1 0 1)
@@ -13215,7 +14450,7 @@
         (reg.compiler-reg-call-split-empty)
         (reg.compiler-reg-split-plan-empty))
       (live.compiler-live-set-empty)
-      params
+      (clone params)
       ir.CompilerIrBlockList.Nil
       3
       3
@@ -13226,7 +14461,10 @@
           [varying : i64 (array-ref remap 1)]
           [uniform : i64 (array-ref remap 2)]
           [rebuilt : reg.CompilerRegAssignmentTable
-            (reg.compiler-reg-color-rebuild-assignments remap 3 assignments)]
+            (reg.compiler-reg-color-rebuild-assignments
+              (clone remap)
+              3
+              (clone assignments))]
           [rebuilt-index : reg.CompilerRegAssignmentTable
             (reg.compiler-reg-assignment-table-with-min-capacity rebuilt 3)]
           (begin
@@ -13246,17 +14484,17 @@
             (compiler-regalloc-self-test-require!
               "AVX2 emitted parameter id remap"
               (match (ir.compiler-ir-param-list-force-cons
-                (reg.compiler-reg-remap-params remap params))
+                (reg.compiler-reg-remap-params (clone remap) (clone params)))
                 [(ir.CompilerIrParamList.Cons
                     (ir.CompilerIrParam.Param _ _ active-param)
                     rest1)
                   (match (ir.compiler-ir-param-list-force-cons
-                    (__tl-box-place rest1))
+                    (ir.compiler-ir-box-shared-view rest1))
                     [(ir.CompilerIrParamList.Cons
                         (ir.CompilerIrParam.Param _ _ varying-param)
                         rest2)
                       (match (ir.compiler-ir-param-list-force-cons
-                        (__tl-box-place rest2))
+                        (ir.compiler-ir-box-shared-view rest2))
                         [(ir.CompilerIrParamList.Cons
                             (ir.CompilerIrParam.Param _ _ uniform-param)
                             _)
@@ -13402,7 +14640,7 @@
           (ir.CompilerIrValue.I64 0)
           8
           (ast.AstType.I32))
-        words)
+        (reg.compiler-reg-global-shared-view words))
       (reg.compiler-reg-vector-stack-words-instr!
         (ir.CompilerIrInstr.MaskBinOp
           1
@@ -13410,17 +14648,17 @@
           (ir.CompilerIrValue.Var 0)
           (ir.CompilerIrValue.Var 0)
           8)
-        words)
+        (reg.compiler-reg-global-shared-view words))
       (reg.compiler-reg-vector-stack-words-instr!
         (ir.CompilerIrInstr.MaskNot 2 (ir.CompilerIrValue.Var 1) 8)
-        words)
+        (reg.compiler-reg-global-shared-view words))
       (reg.compiler-reg-vector-stack-words-instr!
         (ir.CompilerIrInstr.TailMask
           3
           (ir.CompilerIrValue.I64 0)
           (ir.CompilerIrValue.I64 1)
           8)
-        words)
+        (reg.compiler-reg-global-shared-view words))
       (reg.compiler-reg-vector-stack-words-instr!
         (ir.ir-instr-predicated-load
           4
@@ -13429,7 +14667,7 @@
           (ir.CompilerIrValue.Var 3)
           8
           (ast.AstType.Bool))
-        words)
+        (reg.compiler-reg-global-shared-view words))
       (reg.compiler-reg-vector-stack-words-instr!
         (ir.ir-instr-select
           5
@@ -13438,7 +14676,7 @@
           (ir.CompilerIrValue.Var 4)
           8
           (ast.AstType.Bool))
-        words)
+        (reg.compiler-reg-global-shared-view words))
       (and
         (= (array-ref words 0) 4)
         (= (array-ref words 1) 4)

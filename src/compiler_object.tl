@@ -1,4 +1,5 @@
 ;; compiler_object.tl - Structured object-image records for backend object emitters.
+(import compiler_owned_view as owned_view)
 (import stdlib.string)
 
 (defenum CompilerObjectSectionKind
@@ -249,7 +250,10 @@
     [bigger : (__tl_dyn-array CompilerObjectDataRecord)
       (__tl_make-array CompilerObjectDataRecord (* (array-length slots) 2))]
     (begin
-      (compiler-object-data-record-builder-copy-range! bigger slots count)
+      (compiler-object-data-record-builder-copy-range!
+        (owned_view.compiler-owned-shared-view bigger)
+        slots
+        count)
       (CompilerObjectDataRecordBuilder bigger count))))
 
 (define (compiler-object-instr-builder-grow
@@ -260,7 +264,10 @@
     [bigger : (__tl_dyn-array CompilerObjectX64Instr)
       (__tl_make-array CompilerObjectX64Instr (* (array-length slots) 2))]
     (begin
-      (compiler-object-instr-builder-copy-range! bigger slots count)
+      (compiler-object-instr-builder-copy-range!
+        (owned_view.compiler-owned-shared-view bigger)
+        slots
+        count)
       (CompilerObjectX64InstrBuilder bigger count))))
 
 (define (compiler-object-symbol-builder-grow
@@ -271,7 +278,10 @@
     [bigger : (__tl_dyn-array CompilerObjectSymbol)
       (__tl_make-array CompilerObjectSymbol (* (array-length slots) 2))]
     (begin
-      (compiler-object-symbol-builder-copy-range! bigger slots count)
+      (compiler-object-symbol-builder-copy-range!
+        (owned_view.compiler-owned-shared-view bigger)
+        slots
+        count)
       (CompilerObjectSymbolBuilder bigger count))))
 
 (define (compiler-object-relocation-builder-grow
@@ -282,7 +292,10 @@
     [bigger : (__tl_dyn-array CompilerObjectRelocation)
       (__tl_make-array CompilerObjectRelocation (* (array-length slots) 2))]
     (begin
-      (compiler-object-relocation-builder-copy-range! bigger slots count)
+      (compiler-object-relocation-builder-copy-range!
+        (owned_view.compiler-owned-shared-view bigger)
+        slots
+        count)
       (CompilerObjectRelocationBuilder bigger count))))
 
 (define (compiler-object-section-builder-grow
@@ -293,7 +306,10 @@
     [bigger : (__tl_dyn-array CompilerObjectSection)
       (__tl_make-array CompilerObjectSection (* (array-length slots) 2))]
     (begin
-      (compiler-object-section-builder-copy-range! bigger slots count)
+      (compiler-object-section-builder-copy-range!
+        (owned_view.compiler-owned-shared-view bigger)
+        slots
+        count)
       (CompilerObjectSectionBuilder bigger count))))
 
 (define (compiler-object-data-record-builder-push
@@ -579,7 +595,9 @@
   [sections : CompilerObjectSectionList]
   [kind : CompilerObjectSectionKind]) : CompilerObjectSection
   (let
-    [count : i64 (compiler-object-section-list-count sections)]
+    [count : i64
+      (compiler-object-section-list-count
+        (owned_view.compiler-owned-shared-view sections))]
     [index : i64 0]
     [result : CompilerObjectSection
       (CompilerObjectSection.Section
@@ -595,8 +613,10 @@
       (while (and (not found) (< index count))
         (let
           [section : CompilerObjectSection
-            (compiler-object-section-list-ref sections index)]
-          (match section
+            (compiler-object-section-list-ref
+              (owned_view.compiler-owned-shared-view sections)
+              index)]
+          (match (owned_view.compiler-owned-shared-view section)
             [(CompilerObjectSection.Section found-kind _ _)
               (if (compiler-object-section-kind-eq? found-kind kind)
                 (begin
@@ -625,12 +645,16 @@
   [binding : CompilerObjectSymbolBinding]
   [kind : CompilerObjectSymbolKind]) : bool
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64
+      (compiler-object-symbol-list-count
+        (owned_view.compiler-owned-shared-view symbols))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-symbol-list-ref symbols index)
+        (match (compiler-object-symbol-list-ref
+          (owned_view.compiler-owned-shared-view symbols)
+          index)
           [(CompilerObjectSymbol.Symbol found-name found-binding found-kind _)
             (if (and
               (string.eq found-name name)
@@ -645,12 +669,16 @@
   [kind : CompilerObjectRelocationKind]
   [target : String]) : bool
   (let
-    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [count : i64
+      (compiler-object-relocation-list-count
+        (owned_view.compiler-owned-shared-view relocs))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-relocation-list-ref relocs index)
+        (match (compiler-object-relocation-list-ref
+          (owned_view.compiler-owned-shared-view relocs)
+          index)
           [(CompilerObjectRelocation.Relocation _ _ found-kind found-target)
             (if (and
               (compiler-object-relocation-kind-eq? found-kind kind)
@@ -663,12 +691,16 @@
   [records : CompilerObjectDataRecordList]
   [text : String]) : bool
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64
+      (compiler-object-data-record-list-count
+        (owned_view.compiler-owned-shared-view records))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
+        (match (compiler-object-data-record-list-ref
+          (owned_view.compiler-owned-shared-view records)
+          index)
           [(CompilerObjectDataRecord.String value)
             (if (string.eq value text)
               (set! found true)
@@ -680,12 +712,16 @@
   [records : CompilerObjectDataRecordList]
   [bits : u64]) : bool
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64
+      (compiler-object-data-record-list-count
+        (owned_view.compiler-owned-shared-view records))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
+        (match (compiler-object-data-record-list-ref
+          (owned_view.compiler-owned-shared-view records)
+          index)
           [(CompilerObjectDataRecord.F64 value)
             (if (= value bits)
               (set! found true)
@@ -697,12 +733,16 @@
   [records : CompilerObjectDataRecordList]
   [bits : u64]) : bool
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64
+      (compiler-object-data-record-list-count
+        (owned_view.compiler-owned-shared-view records))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
+        (match (compiler-object-data-record-list-ref
+          (owned_view.compiler-owned-shared-view records)
+          index)
           [(CompilerObjectDataRecord.F32 value)
             (if (= value bits)
               (set! found true)
@@ -714,12 +754,16 @@
   [records : CompilerObjectDataRecordList]
   [label : String]) : bool
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64
+      (compiler-object-data-record-list-count
+        (owned_view.compiler-owned-shared-view records))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
+        (match (compiler-object-data-record-list-ref
+          (owned_view.compiler-owned-shared-view records)
+          index)
           [(CompilerObjectDataRecord.Label value)
             (if (string.eq value label)
               (set! found true)
@@ -731,12 +775,16 @@
   [records : CompilerObjectDataRecordList]
   [align : i64]) : bool
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64
+      (compiler-object-data-record-list-count
+        (owned_view.compiler-owned-shared-view records))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
+        (match (compiler-object-data-record-list-ref
+          (owned_view.compiler-owned-shared-view records)
+          index)
           [(CompilerObjectDataRecord.Align value)
             (if (= value align)
               (set! found true)
@@ -748,12 +796,16 @@
   [records : CompilerObjectDataRecordList]
   [value : i64]) : bool
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64
+      (compiler-object-data-record-list-count
+        (owned_view.compiler-owned-shared-view records))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
+        (match (compiler-object-data-record-list-ref
+          (owned_view.compiler-owned-shared-view records)
+          index)
           [(CompilerObjectDataRecord.I64 found-value)
             (if (= found-value value)
               (set! found true)
@@ -767,19 +819,25 @@
   [first : i64]
   [second : i64]) : bool
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64
+      (compiler-object-data-record-list-count
+        (owned_view.compiler-owned-shared-view records))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
+        (match (compiler-object-data-record-list-ref
+          (owned_view.compiler-owned-shared-view records)
+          index)
           [(CompilerObjectDataRecord.Label value)
             (if (and (string.eq value label) (< (+ index 2) count))
-              (match (compiler-object-data-record-list-ref records (+ index 1))
+              (match (compiler-object-data-record-list-ref
+                (owned_view.compiler-owned-shared-view records)
+                (+ index 1))
                 [(CompilerObjectDataRecord.I64 first-found)
                   (if (= first-found first)
                     (match (compiler-object-data-record-list-ref
-                      records
+                      (owned_view.compiler-owned-shared-view records)
                       (+ index 2))
                       [(CompilerObjectDataRecord.I64 second-found)
                         (if (= second-found second)
@@ -858,12 +916,16 @@
   [instrs : CompilerObjectX64InstrList]
   [target : String]) : bool
   (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
+    [count : i64
+      (compiler-object-instr-list-count
+        (owned_view.compiler-owned-shared-view instrs))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-instr-list-ref instrs index)
+        (match (compiler-object-instr-list-ref
+          (owned_view.compiler-owned-shared-view instrs)
+          index)
           [(CompilerObjectX64Instr.Call value)
             (if (string.eq value target)
               (set! found true)
@@ -902,25 +964,40 @@
     [(= (string.string-length needle) 0) true]
     [(> (+ start (string.string-length needle)) (string.string-length haystack))
       false]
-    [(compiler-object-string-prefix-at? haystack needle start 0) true]
+    [(compiler-object-string-prefix-at?
+        (owned_view.compiler-owned-shared-view haystack)
+        (owned_view.compiler-owned-shared-view needle)
+        start
+        0)
+      true]
     [else (compiler-object-string-contains? haystack needle (+ start 1))]))
 
 (define (compiler-object-instr-list-contains-bytes?
   [instrs : CompilerObjectX64InstrList]
   [bytes : String]) : bool
   (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
+    [count : i64
+      (compiler-object-instr-list-count
+        (owned_view.compiler-owned-shared-view instrs))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-instr-list-ref instrs index)
+        (match (compiler-object-instr-list-ref
+          (owned_view.compiler-owned-shared-view instrs)
+          index)
           [(CompilerObjectX64Instr.Bytes value)
-            (if (compiler-object-string-contains? value bytes 0)
+            (if (compiler-object-string-contains?
+              value
+              (owned_view.compiler-owned-shared-view bytes)
+              0)
               (set! found true)
               (set! index (+ index 1)))]
           [(CompilerObjectX64Instr.Raw value)
-            (if (compiler-object-string-contains? value bytes 0)
+            (if (compiler-object-string-contains?
+              value
+              (owned_view.compiler-owned-shared-view bytes)
+              0)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))
@@ -939,12 +1016,16 @@
   [instrs : CompilerObjectX64InstrList]
   [target : String]) : bool
   (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
+    [count : i64
+      (compiler-object-instr-list-count
+        (owned_view.compiler-owned-shared-view instrs))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-instr-list-ref instrs index)
+        (match (compiler-object-instr-list-ref
+          (owned_view.compiler-owned-shared-view instrs)
+          index)
           [(CompilerObjectX64Instr.XorpdRip value)
             (if (string.eq value target)
               (set! found true)

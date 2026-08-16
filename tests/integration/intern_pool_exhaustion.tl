@@ -13,7 +13,8 @@
         (compiler_intern.intern-generated-name "opaque")
         (set! i (+ i 1))))))
 
-(define (fill-state-generated [state : compiler_intern.InternCompatState]) : unit
+(define (fill-state-generated
+  [state : (&mut state compiler_intern.InternCompatState)]) : unit
   (let
     [i : i64 0]
     (while (< i (compiler_intern.intern-capacity))
@@ -38,17 +39,19 @@
     [state : compiler_intern.InternCompatState
       (compiler_intern.intern-compat-state-new)]
     (begin
-      (fill-state-generated state)
-      (compiler_intern.intern-compat-state-intern state "source-overflow"))))
+      (fill-state-generated (&mut state))
+      (compiler_intern.intern-compat-state-intern
+        (&mut state)
+        "source-overflow"))))
 
 (define (state-generated-exhaustion) : i64
   (let
     [state : compiler_intern.InternCompatState
       (compiler_intern.intern-compat-state-new)]
     (begin
-      (fill-state-generated state)
+      (fill-state-generated (&mut state))
       (compiler_intern.intern-compat-state-generated-name
-        state
+        (&mut state)
         "generated-overflow"))))
 
 (define (main) : i64

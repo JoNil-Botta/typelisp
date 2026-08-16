@@ -38,9 +38,9 @@
 
 (define (thread-api-thread-or [spawn : thread.ThreadSpawnResult]) : thread.Thread
   (thread.Thread
-    (thread.spawn-result-handle-or spawn 0)
-    (thread.spawn-result-clear-tid-addr-or spawn 0)
-    (thread.spawn-result-result-addr-or spawn 0)))
+    (thread.spawn-result-handle-or (& spawn) 0)
+    (thread.spawn-result-clear-tid-addr-or (& spawn) 0)
+    (thread.spawn-result-result-addr-or (& spawn) 0)))
 
 (define (thread-api-join-i64-code [result : thread_i64.JoinResult]) : i64
   (thread_i64.join-value-or result -1))
@@ -226,13 +226,13 @@
       (let
         [a-spawn : thread.ThreadSpawnResult
           (thread.spawn thread-api-worker (test-array-i64-addr ctx-a))]
-        (if (not (thread.spawn-result-ok? a-spawn))
+        (if (not (thread.spawn-result-ok? (& a-spawn)))
           2
           (let
             [a : thread.Thread (thread-api-thread-or a-spawn)]
             [b-spawn : thread.ThreadSpawnResult
               (thread.spawn thread-api-worker (test-array-i64-addr ctx-b))]
-            (if (not (thread.spawn-result-ok? b-spawn))
+            (if (not (thread.spawn-result-ok? (& b-spawn)))
               3
               (thread-api-finish-run
                 sem

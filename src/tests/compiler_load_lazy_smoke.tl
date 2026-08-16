@@ -514,7 +514,7 @@
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls))
       (compiler_load.compiler-load-structural-member-demand
-        (__tl-box-place decls)
+        (ast.ast-decl-list-box-shared-view decls)
         alias)]
     [(ResultAstProgramDiagnostic.Err _) (CompilerLoadStructuralFullDemand)]))
 
@@ -606,7 +606,7 @@
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls))
       (match (compiler_load.compiler-load-structural-member-demand
-        (__tl-box-place decls)
+        (ast.ast-decl-list-box-shared-view decls)
         cbi.compiler-builtin-id-fix-subject)
         [(CompilerLoadStructuralFullDemand) true]
         [_ false])]
@@ -631,33 +631,35 @@
         [pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         [_select-b : unit
-          (compiler_load.compiler-load-session-state-use! state-b)]
+          (compiler_load.compiler-load-session-state-use!
+            (compiler_load.compiler-load-session-state-shared-view
+              (& state-b)))]
         [_begin-a : unit
           (compiler_load.compiler-load-session-state-lazy-qualified-observer-begin-pair!
-            state-a
+            (& state-a)
             alias
             cbi.compiler-builtin-id-fix-empty)]
         [_begin-b : unit
           (compiler_load.compiler-load-session-state-lazy-qualified-observer-begin-pair!
-            state-b
+            (& state-b)
             alias
             cbi.compiler-builtin-id-fix-empty)]
         [demand : compiler_load.CompilerLoadLazyAliasDemand
           (compiler_load.compiler-load-session-state-lazy-import-preload-demand
-            state-a
+            (compiler_load.compiler-load-session-state-shared-view (& state-a))
             true
             (ast.AstMaybeImportAlias.Some alias)
-            (__tl-box-place decls)
+            (ast.ast-decl-list-box-shared-view decls)
             pools)]
         [observed-a : compiler_load.CompilerLoadLazyQualifiedObserverResult
           (compiler_load.compiler-load-session-state-lazy-qualified-observer-end-pair!
-            state-a)]
+            (& state-a))]
         [b-still-active : bool
           (compiler_load.compiler-load-session-state-lazy-qualified-observer-active?
-            state-b)]
+            (& state-b))]
         [observed-b : compiler_load.CompilerLoadLazyQualifiedObserverResult
           (compiler_load.compiler-load-session-state-lazy-qualified-observer-end-pair!
-            state-b)]
+            (& state-b))]
         [ok : bool
           (and
             demand.qualified

@@ -295,7 +295,7 @@
     [_ false]))
 
 (define (serialize-status-value-ok? [value : toy.Value]) : bool
-  (match value
+  (match (toy.toy-shared-view value)
     [(toy.Object fields)
       (and
         (serialize-enum-object-tag-and-payload-count-ok? value "Moved" 2)
@@ -304,7 +304,9 @@
           [(toy.Missing) false]))]
     [_ false]))
 
-(define (serialize-status-wide-item-ok? [items : toy.ValueList] [index : i64]) : bool
+(define (serialize-status-wide-item-ok?
+  [items : (& items toy.ValueList)]
+  [index : i64]) : bool
   (match (toy.value-list-get items index)
     [(toy.Found item)
       (match item
@@ -313,7 +315,7 @@
     [(toy.Missing) false]))
 
 (define (serialize-status-wide-value-ok? [value : toy.Value]) : bool
-  (match value
+  (match (toy.toy-shared-view value)
     [(toy.Object fields)
       (and
         (serialize-enum-object-tag-and-payload-count-ok? value "Wide" 9)
@@ -322,15 +324,15 @@
             (match payload
               [(toy.Sequence items)
                 (and
-                  (serialize-status-wide-item-ok? (__tl-box-place items) 0)
-                  (serialize-status-wide-item-ok? (__tl-box-place items) 1)
-                  (serialize-status-wide-item-ok? (__tl-box-place items) 2)
-                  (serialize-status-wide-item-ok? (__tl-box-place items) 3)
-                  (serialize-status-wide-item-ok? (__tl-box-place items) 4)
-                  (serialize-status-wide-item-ok? (__tl-box-place items) 5)
-                  (serialize-status-wide-item-ok? (__tl-box-place items) 6)
-                  (serialize-status-wide-item-ok? (__tl-box-place items) 7)
-                  (serialize-status-wide-item-ok? (__tl-box-place items) 8))]
+                  (serialize-status-wide-item-ok? (& (__tl-box-place items)) 0)
+                  (serialize-status-wide-item-ok? (& (__tl-box-place items)) 1)
+                  (serialize-status-wide-item-ok? (& (__tl-box-place items)) 2)
+                  (serialize-status-wide-item-ok? (& (__tl-box-place items)) 3)
+                  (serialize-status-wide-item-ok? (& (__tl-box-place items)) 4)
+                  (serialize-status-wide-item-ok? (& (__tl-box-place items)) 5)
+                  (serialize-status-wide-item-ok? (& (__tl-box-place items)) 6)
+                  (serialize-status-wide-item-ok? (& (__tl-box-place items)) 7)
+                  (serialize-status-wide-item-ok? (& (__tl-box-place items)) 8))]
               [_ false])]
           [(toy.Missing) false]))]
     [_ false]))
@@ -421,7 +423,7 @@
   (let
     [encoded : toy.Value (i64_ser.encode 42)]
     (and
-      (match encoded
+      (match (toy.toy-shared-view encoded)
         [(toy.Int found) (= found 42)]
         [_ false])
       (match (i64_ser.decode encoded)
@@ -433,7 +435,7 @@
     [scores : (Array i64 3) (array 4 5 6)]
     [encoded : toy.Value (fixed_i64_ser.encode scores)]
     (and
-      (serialize-scores-value-ok? encoded)
+      (serialize-scores-value-ok? (toy.toy-shared-view encoded))
       (match (fixed_i64_ser.decode encoded)
         [(fixed_i64_ser.Ok parsed) (serialize-scores-ok? parsed)]
         [(fixed_i64_ser.Err _) false]))))
@@ -443,7 +445,7 @@
     [samples : (__tl_dyn-array i64) (serialize-make-samples)]
     [encoded : toy.Value (dyn_i64_ser.encode samples)]
     (and
-      (serialize-samples-value-ok? encoded)
+      (serialize-samples-value-ok? (toy.toy-shared-view encoded))
       (match (dyn_i64_ser.decode encoded)
         [(dyn_i64_ser.Ok parsed) (serialize-samples-ok? parsed)]
         [(dyn_i64_ser.Err _) false]))))
@@ -453,7 +455,7 @@
     [previous : (Array Address 2) (serialize-previous-addresses)]
     [encoded : toy.Value (address_array_ser.encode previous)]
     (and
-      (serialize-previous-value-ok? encoded)
+      (serialize-previous-value-ok? (toy.toy-shared-view encoded))
       (match (address_array_ser.decode encoded)
         [(address_array_ser.Ok parsed) (serialize-previous-ok? parsed)]
         [(address_array_ser.Err _) false]))))
@@ -472,7 +474,7 @@
     [status : enum_fixture.Status (enum_fixture.moved)]
     [encoded : toy.Value (status_ser.encode status)]
     (and
-      (serialize-status-value-ok? encoded)
+      (serialize-status-value-ok? (toy.toy-shared-view encoded))
       (match (status_ser.decode encoded)
         [(status_ser.Ok parsed) (enum_fixture.moved? parsed)]
         [(status_ser.Err _) false]))))
@@ -482,7 +484,7 @@
     [status : enum_fixture.Status (enum_fixture.wide)]
     [encoded : toy.Value (status_ser.encode status)]
     (and
-      (serialize-status-wide-value-ok? encoded)
+      (serialize-status-wide-value-ok? (toy.toy-shared-view encoded))
       (match (status_ser.decode encoded)
         [(status_ser.Ok parsed) (enum_fixture.wide? parsed)]
         [(status_ser.Err _) false]))))

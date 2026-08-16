@@ -1,9 +1,9 @@
-;; A scalar-only struct remains an owned, mutable place after a consuming call
+;; A scalar-only struct remains an owned, mutable place after a by-value call
 ;; because its structural Copy classification leaves the source initialized.
 (defstruct Payload
   (value i64))
 
-(define (consume [payload : Payload (:consume)]) : i64
+(define (consume [payload : Payload]) : i64
   payload.value)
 
 (define (main) : i64

@@ -12,10 +12,13 @@
   (EAdd (box (ENum 1)) (box (ENum 2))))
 
 ; Recursively fold the tree to an integer.
-(define (eval [e : Expr]) : i64
+(define (eval [e : (& e Expr)]) : i64
   (match e
-    [(ENum n) n]
-    [(EAdd l r) (+ (eval (__tl-box-place l)) (eval (__tl-box-place r)))]))
+    [(ENum n) (deref n)]
+    [(EAdd l r)
+      (+ (eval (& (__tl-box-place l))) (eval (& (__tl-box-place r))))]))
 
 (define (main) : i64
-  (eval (mk)))
+  (let
+    [tree : Expr (mk)]
+    (eval (& tree))))

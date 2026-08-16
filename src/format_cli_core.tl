@@ -3,6 +3,7 @@
 ;; The formatter CLI logic, factored out of `format.tl` so both the retained
 ;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
 ;; can run the `fmt` command without duplicating a `main`.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -52,7 +53,9 @@
   [path : String]
   [err : tokens.FormatSourceError]) : String
   (let
-    [span : tokens.FormatSourceSpan (tokens.format-source-error-span err)]
+    [span : tokens.FormatSourceSpan
+      (tokens.format-source-error-span
+        (owned_view.compiler-owned-shared-view err))]
     (str_cat.str-cat
       path
       ":"
@@ -148,7 +151,7 @@
   [idx : i64]
   [count : i64]
   [check : bool]
-  [paths : fmt_svec.Vec (:consume)]
+  [paths : fmt_svec.Vec]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
   (if (>= idx count)
@@ -156,7 +159,7 @@
     (let
       [current : String (io.arg idx)]
       (match (cli_option.cli-common-option-parse
-        current
+        (owned_view.compiler-owned-shared-view current)
         idx
         count
         (bit-or
@@ -218,7 +221,7 @@
                     paths
                     (io.arg (+ idx 1))
                     true)))]
-            [(fmt-flag? current)
+            [(fmt-flag? (owned_view.compiler-owned-shared-view current))
               (ResultFmtConfig.Err
                 (str_cat.str-cat "fmt: unknown flag " current))]
             [else
@@ -256,7 +259,7 @@
 (define (fmt-split-lines-into
   [source : String]
   [start : i64]
-  [lines : fmt_svec.Vec (:consume)]) : fmt_svec.Vec
+  [lines : fmt_svec.Vec]) : fmt_svec.Vec
   (let
     [len : i64 (string.string-length source)]
     (if (> start len)
@@ -314,7 +317,9 @@
     [index : i64 from]
     (while (< index to)
       (begin
-        (fmt_buf.fmt-render-buf-append buf marker)
+        (fmt_buf.fmt-render-buf-append
+          buf
+          (owned_view.compiler-owned-shared-view marker))
         (fmt_buf.fmt-render-buf-append buf (fmt_svec.get (& lines) index ""))
         (fmt_buf.fmt-render-buf-append buf "\n")
         (set! index (+ index 1))))))
@@ -344,8 +349,17 @@
     [dst : fmt_svec.Vec (fmt-split-lines-into formatted 0 (fmt_svec.new))]
     [slen : i64 (fmt_svec.len (& src))]
     [dlen : i64 (fmt_svec.len (& dst))]
-    [prefix : i64 (fmt-common-prefix-lines src dst 0)]
-    [suffix : i64 (fmt-common-suffix-lines src dst prefix 0)]
+    [prefix : i64
+      (fmt-common-prefix-lines
+        (owned_view.compiler-owned-shared-view src)
+        (owned_view.compiler-owned-shared-view dst)
+        0)]
+    [suffix : i64
+      (fmt-common-suffix-lines
+        (owned_view.compiler-owned-shared-view src)
+        (owned_view.compiler-owned-shared-view dst)
+        prefix
+        0)]
     [ctx : i64 (fmt-diff-context)]
     [start : i64
       (if (> (- prefix ctx) 0)
@@ -364,7 +378,9 @@
     [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
     (begin
       (fmt_buf.fmt-render-buf-append (&mut buf) "--- a/")
-      (fmt_buf.fmt-render-buf-append (&mut buf) path)
+      (fmt_buf.fmt-render-buf-append
+        (&mut buf)
+        (owned_view.compiler-owned-shared-view path))
       (fmt_buf.fmt-render-buf-append (&mut buf) "\n+++ b/")
       (fmt_buf.fmt-render-buf-append (&mut buf) path)
       (fmt_buf.fmt-render-buf-append (&mut buf) "\n")
@@ -375,29 +391,50 @@
           (- src-ctx-end start)
           (+ start 1)
           (- dst-ctx-end start)))
-      (fmt-diff-emit-range-into! src " " start prefix (&mut buf))
-      (fmt-diff-emit-range-into! src "-" prefix src-end (&mut buf))
+      (fmt-diff-emit-range-into!
+        (owned_view.compiler-owned-shared-view src)
+        " "
+        start
+        prefix
+        (&mut buf))
+      (fmt-diff-emit-range-into!
+        (owned_view.compiler-owned-shared-view src)
+        "-"
+        prefix
+        src-end
+        (&mut buf))
       (fmt-diff-emit-range-into! dst "+" prefix dst-end (&mut buf))
       (fmt-diff-emit-range-into! src " " src-end src-ctx-end (&mut buf))
       (fmt_buf.fmt-render-buf-string buf))))
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
-    [source : String (byte_buf.to-string (io.read-file path))]
-    (match (format_rules.format-rules-render-source-width-result source 80)
+    [source : String
+      (byte_buf.to-string
+        (io.read-file (owned_view.compiler-owned-shared-view path)))]
+    (match (format_rules.format-rules-render-source-width-result
+      (owned_view.compiler-owned-shared-view source)
+      80)
       [(format_rules.ResultFormatString.Ok formatted)
         (if check
-          (if (string.eq source formatted)
+          (if (string.eq
+            (owned_view.compiler-owned-shared-view source)
+            formatted)
             0
             (begin
               (io.print-error
                 (str_cat.str-cat
                   "fmt: would reformat "
-                  path
+                  (owned_view.compiler-owned-shared-view path)
                   "\n"
-                  (fmt-unified-diff path source formatted)))
+                  (fmt-unified-diff
+                    (owned_view.compiler-owned-shared-view path)
+                    (owned_view.compiler-owned-shared-view source)
+                    formatted)))
               1))
-          (if (string.eq source formatted)
+          (if (string.eq
+            (owned_view.compiler-owned-shared-view source)
+            formatted)
             0
             (fmt-write-formatted-file path formatted)))]
       [(format_rules.ResultFormatString.Err err)

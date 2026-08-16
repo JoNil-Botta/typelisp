@@ -239,13 +239,17 @@
 ;; combines them with the matching arithmetic op (`/` is integer division). The
 ;; bound recursive payloads (`a`/`b`) are pointers to the child enums, passed
 ;; straight back into `eval`.
-(define (eval [e : Expr]) : i64
+(define (eval [e : (& e Expr)]) : i64
   (match e
-    [(Expr.Num n) n]
-    [(Expr.Add a b) (+ (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
-    [(Expr.Sub a b) (- (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
-    [(Expr.Mul a b) (* (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
-    [(Expr.Div a b) (/ (eval (__tl-box-place a)) (eval (__tl-box-place b)))]))
+    [(Expr.Num n) (deref n)]
+    [(Expr.Add a b)
+      (+ (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+    [(Expr.Sub a b)
+      (- (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+    [(Expr.Mul a b)
+      (* (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+    [(Expr.Div a b)
+      (/ (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]))
 
 ;; ---- Build the token stream for the sample "2 + 3 * 4" by hand. ----
 ;; (A lexer would produce this; here we construct the parallel vectors directly
@@ -287,4 +291,6 @@
     (begin
       (build-sample-tags (&mut tags))
       (build-sample-vals (&mut vals))
-      (eval (parse-expr (& tags) (& vals) (&mut cur))))))
+      (let
+        [expr : Expr (parse-expr (& tags) (& vals) (&mut cur))]
+        (eval (& expr))))))

@@ -3,6 +3,7 @@
 ;; The extractor exposes module docs and documented top-level items. It
 ;; does not expose undocumented declarations as separate records, so this
 ;; renderer emits exactly the declarations present in the extracted model.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import doc_extract)
@@ -32,15 +33,19 @@
   (if (>= index count)
     unit
     (begin
-      (doc_module_vec.push-ref! out (doc-module-list-ref src index))
+      (doc_module_vec.push
+        out
+        (doc-module-list-ref (owned_view.compiler-owned-shared-view src) index))
       (doc-module-list-append-from out src (+ index 1) count))))
 
 (define (doc-module-list-append
   [left : doc_module_vec.Vec]
   [right : doc_module_vec.Vec]) : doc_module_vec.Vec
   (let
-    [left-count : i64 (doc-module-list-count left)]
-    [right-count : i64 (doc-module-list-count right)]
+    [left-count : i64
+      (doc-module-list-count (owned_view.compiler-owned-shared-view left))]
+    [right-count : i64
+      (doc-module-list-count (owned_view.compiler-owned-shared-view right))]
     [out : doc_module_vec.Vec
       (doc_module_vec.with-capacity (+ left-count right-count))]
     (begin
@@ -114,7 +119,14 @@
     (begin
       (while (< i n)
         (begin
-          (set! out (str_cat.str-cat out (doc-render-escape-one text i) ""))
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (doc-render-escape-one
+                (owned_view.compiler-owned-shared-view text)
+                i)
+              ""))
           (set! i (+ i 1))))
       out)))
 
@@ -133,7 +145,8 @@
 
 (define (doc-render-item-heading [item : doc_extract.DocItem]) : String
   (let
-    [name : String (doc_extract.doc-item-name item)]
+    [name : String
+      (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
     [anchor : String (doc-render-anchor (doc_extract.doc-item-name item))]
     (str_cat.str-cat
       "<a id=\""
@@ -144,11 +157,14 @@
 
 (define (doc-render-item [item : doc_extract.DocItem]) : String
   (str_cat.str-cat
-    (doc-render-item-heading item)
+    (doc-render-item-heading (owned_view.compiler-owned-shared-view item))
     "Kind: "
-    (doc_extract.doc-kind-name (doc_extract.doc-item-kind item))
+    (doc_extract.doc-kind-name
+      (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))
     "\n\n"
-    (doc-render-code-block (doc_extract.doc-item-signature item))
+    (doc-render-code-block
+      (doc_extract.doc-item-signature
+        (owned_view.compiler-owned-shared-view item)))
     "\n"
     (doc-render-item-doc (doc_extract.doc-item-doc item))
     "\n"))
@@ -160,21 +176,32 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-render-item (doc_extract.doc-item-list-ref items index))
+      (doc-render-item
+        (doc_extract.doc-item-list-ref
+          (owned_view.compiler-owned-shared-view items)
+          index))
       (doc-render-item-list-from items (+ index 1) count))))
 
 (define (doc-render-item-list [items : doc_item_vec.Vec]) : String
-  (doc-render-item-list-from items 0 (doc_extract.doc-item-list-count items)))
+  (doc-render-item-list-from
+    (owned_view.compiler-owned-shared-view items)
+    0
+    (doc_extract.doc-item-list-count items)))
 
 (define (doc-render-items [items : doc_item_vec.Vec]) : String
-  (if (= (doc_extract.doc-item-list-count items) 0)
+  (if (=
+    (doc_extract.doc-item-list-count
+      (owned_view.compiler-owned-shared-view items))
+    0)
     "_No documented declarations._\n"
     (doc-render-item-list items)))
 
 (define (doc-render-markdown [docs : doc_extract.DocExtraction]) : String
   (str_cat.str-cat
     "# TypeLisp Documentation\n\n"
-    (doc-render-module-doc (doc_extract.doc-extraction-module-doc docs))
+    (doc-render-module-doc
+      (doc_extract.doc-extraction-module-doc
+        (owned_view.compiler-owned-shared-view docs)))
     "## Items\n\n"
     (doc-render-items (doc_extract.doc-extraction-items docs))))
 
@@ -183,7 +210,7 @@
     [path : String (doc-module-path module)]
     (str_cat.str-cat
       "- ["
-      (doc-render-escape-markdown path)
+      (doc-render-escape-markdown (owned_view.compiler-owned-shared-view path))
       "](#"
       (doc-render-anchor path)
       ")\n")))
@@ -195,25 +222,34 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-render-module-nav-item (doc-module-list-ref modules index))
+      (doc-render-module-nav-item
+        (doc-module-list-ref
+          (owned_view.compiler-owned-shared-view modules)
+          index))
       (doc-render-module-nav-from modules (+ index 1) count))))
 
 (define (doc-render-module-nav [modules : doc_module_vec.Vec]) : String
-  (doc-render-module-nav-from modules 0 (doc-module-list-count modules)))
+  (doc-render-module-nav-from
+    (owned_view.compiler-owned-shared-view modules)
+    0
+    (doc-module-list-count modules)))
 
 (define (doc-render-module-section [module : DocModule]) : String
   (let
-    [path : String (doc-module-path module)]
+    [path : String
+      (doc-module-path (owned_view.compiler-owned-shared-view module))]
     [docs : doc_extract.DocExtraction (doc-module-docs module)]
     (str_cat.str-cat
       "<a id=\""
-      (doc-render-anchor path)
+      (doc-render-anchor (owned_view.compiler-owned-shared-view path))
       "\"></a>\n\n## "
-      (doc-render-escape-markdown path)
+      (doc-render-escape-markdown (owned_view.compiler-owned-shared-view path))
       "\n\nSource: `"
       (doc-render-escape-markdown path)
       "`\n\n"
-      (doc-render-module-doc (doc_extract.doc-extraction-module-doc docs))
+      (doc-render-module-doc
+        (doc_extract.doc-extraction-module-doc
+          (owned_view.compiler-owned-shared-view docs)))
       (doc-render-items (doc_extract.doc-extraction-items docs)))))
 
 (define (doc-render-module-sections-from
@@ -223,17 +259,23 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-render-module-section (doc-module-list-ref modules index))
+      (doc-render-module-section
+        (doc-module-list-ref
+          (owned_view.compiler-owned-shared-view modules)
+          index))
       (doc-render-module-sections-from modules (+ index 1) count))))
 
 (define (doc-render-module-sections [modules : doc_module_vec.Vec]) : String
-  (doc-render-module-sections-from modules 0 (doc-module-list-count modules)))
+  (doc-render-module-sections-from
+    (owned_view.compiler-owned-shared-view modules)
+    0
+    (doc-module-list-count (owned_view.compiler-owned-shared-view modules))))
 
 (define (doc-render-module-graph-markdown [modules : doc_module_vec.Vec]) : String
   (str_cat.str-cat
     "# TypeLisp Documentation\n\n"
     "## Modules\n\n"
-    (doc-render-module-nav modules)
+    (doc-render-module-nav (owned_view.compiler-owned-shared-view modules))
     "\n"
     (doc-render-module-sections modules)))
 

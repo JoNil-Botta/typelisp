@@ -11,6 +11,7 @@
 ;; and resolves the compiled entries by the compact function-symbol contract.
 ;; Bodies outside the supported subset compile to ok-with-no-result shells so
 ;; the dispatch route keeps its counted interpreted fallback.
+(import compiler_owned_view as owned_view)
 (import compiler_ast_types)
 (import compiler_diagnostic)
 (import compiler_object as cobj)
@@ -340,7 +341,10 @@
   [item : String]) : i64
   (if (or
     (>= len embedded-native-full-blocker-cap)
-    (embedded-native-full-string-set-contains? (& items) len item))
+    (embedded-native-full-string-set-contains?
+      (& items)
+      len
+      (owned_view.compiler-owned-shared-view item)))
     len
     (begin
       (set! (array-ref items len) (string.copy (& item)))
@@ -365,7 +369,7 @@
             (embedded-native-full-string-set-contains?
               (& embedded-native-full-walked)
               embedded-native-full-walked-len
-              capability)))
+              (owned_view.compiler-owned-shared-view capability))))
         (set! embedded-native-full-walked-overflow true))
       (set!
         embedded-native-full-walked-len
@@ -392,7 +396,7 @@
             (embedded-native-full-string-set-contains?
               (& embedded-native-full-blockers)
               embedded-native-full-blocker-len
-              reason)))
+              (owned_view.compiler-owned-shared-view reason))))
         (set! embedded-native-full-blocker-overflow true))
       (set!
         embedded-native-full-blocker-len
@@ -602,11 +606,11 @@
     [sname : String (str_cat.str-cat "q" (string.int->string status-index))]
     (str_cat.str-cat
       "  (let ["
-      sname
+      (owned_view.compiler-owned-shared-view sname)
       " : i64 "
       call
       "] (if (not (= "
-      sname
+      (owned_view.compiler-owned-shared-view sname)
       " 0)) "
       sname
       "\n")))
@@ -647,8 +651,8 @@
           -1
           (begin
             (embedded-native-template-push!
-              ops
-              ops-count
+              (owned_view.compiler-owned-shared-view ops)
+              (owned_view.compiler-owned-shared-view ops-count)
               (tlci_core.tlci-host-callback-name-shared-view
                 tlci_core.tlci-host-callback-name-local-get)
               (string.int->string slot)
@@ -715,27 +719,30 @@
                 -1
                 (begin
                   (embedded-native-ops-push!
-                    ops
-                    ops-count
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count)
                     (embedded-native-op-call
                       (tlci_core.tlci-host-callback-name-shared-view
                         tlci_core.tlci-host-callback-name-expr-var)
-                      (embedded-native-name-arg missing-name)
+                      (embedded-native-name-arg
+                        (owned_view.compiler-owned-shared-view missing-name))
                       (string.int->string (string.string-length missing-name))
                       "0"))
                   (embedded-native-ops-push!
-                    ops
-                    ops-count
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count)
                     (embedded-native-op-call
                       (tlci_core.tlci-host-callback-name-shared-view
                         tlci_core.tlci-host-callback-name-expr-var)
-                      (embedded-native-name-arg else-not-final-name)
+                      (embedded-native-name-arg
+                        (owned_view.compiler-owned-shared-view
+                          else-not-final-name))
                       (string.int->string
                         (string.string-length else-not-final-name))
                       "0"))
                   (embedded-native-ops-push!
-                    ops
-                    ops-count
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count)
                     (embedded-native-op-call
                       (tlci_core.tlci-host-callback-name-shared-view
                         tlci_core.tlci-host-callback-name-expr-clause-list-fold-if)
@@ -772,8 +779,8 @@
                   -1
                   (begin
                     (embedded-native-ops-push!
-                      ops
-                      ops-count
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count)
                       (embedded-native-op-call
                         (tlci_core.tlci-host-callback-name-shared-view
                           tlci_core.tlci-host-callback-name-expr-bool-literal)
@@ -781,8 +788,8 @@
                         "0"
                         "0"))
                     (embedded-native-ops-push!
-                      ops
-                      ops-count
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count)
                       (embedded-native-op-call
                         (tlci_core.tlci-host-callback-name-shared-view
                           tlci_core.tlci-host-callback-name-expr-bool-literal)
@@ -809,7 +816,8 @@
                       ops-count
                       (tlci_core.tlci-host-callback-name-shared-view
                         tlci_core.tlci-host-callback-name-expr-var)
-                      (embedded-native-name-arg var-name)
+                      (embedded-native-name-arg
+                        (owned_view.compiler-owned-shared-view var-name))
                       (string.int->string (string.string-length var-name))
                       "0")
                     1)))))]
@@ -958,12 +966,20 @@
   [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [first-opened : i64
-      (embedded-native-template-ops params first-node ops ops-count)]
+      (embedded-native-template-ops
+        params
+        first-node
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (< first-opened 0)
       -1
       (let
         [second-opened : i64
-          (embedded-native-template-ops params second-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            second-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< second-opened 0)
           -1
           (begin
@@ -978,7 +994,11 @@
   [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [inner-opened : i64
-      (embedded-native-template-ops params inner-node ops ops-count)]
+      (embedded-native-template-ops
+        params
+        inner-node
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (< inner-opened 0)
       -1
       (begin
@@ -1019,7 +1039,11 @@
     [(compiler_ast_types.AstExpr.Spanned inner span)
       (let
         [inner-opened : i64
-          (embedded-native-template-spanned-ops params inner ops ops-count)]
+          (embedded-native-template-spanned-ops
+            params
+            inner
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< inner-opened 0)
           -1
           (begin
@@ -1094,7 +1118,9 @@
                 ops-count
                 (tlci_core.tlci-host-callback-name-shared-view
                   tlci_core.tlci-host-callback-name-expr-string)
-                (embedded-native-name-arg (embedded-native-escape-string text))
+                (embedded-native-name-arg
+                  (embedded-native-escape-string
+                    (owned_view.compiler-owned-shared-view text)))
                 (string.int->string (string.string-length text))
                 "0")
               1))]
@@ -1127,7 +1153,9 @@
               ops-count
               (tlci_core.tlci-host-callback-name-shared-view
                 tlci_core.tlci-host-callback-name-expr-float-literal)
-              (embedded-native-name-arg (embedded-native-escape-string text))
+              (embedded-native-name-arg
+                (embedded-native-escape-string
+                  (owned_view.compiler-owned-shared-view text)))
               (string.int->string (string.string-length text))
               "0")
             1)]
@@ -1141,7 +1169,8 @@
             ops-count
             (tlci_core.tlci-host-callback-name-shared-view
               tlci_core.tlci-host-callback-name-expr-var)
-            (embedded-native-name-arg name)
+            (embedded-native-name-arg
+              (owned_view.compiler-owned-shared-view name))
             (string.int->string (string.string-length name))
             "0")
           1))]
@@ -1151,12 +1180,20 @@
       ;; own span wrapper and expr-call needs no immediates of its own.
       (let
         [head-opened : i64
-          (embedded-native-template-ops params func-id ops ops-count)]
+          (embedded-native-template-ops
+            params
+            func-id
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< head-opened 0)
           -1
           (let
             [arg-opened : i64
-              (embedded-native-template-args-ops params (& args) ops ops-count)]
+              (embedded-native-template-args-ops
+                params
+                (& args)
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< arg-opened 0)
               -1
               (begin
@@ -1172,17 +1209,29 @@
     [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
       (let
         [cond-opened : i64
-          (embedded-native-template-ops params cond-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            cond-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< cond-opened 0)
           -1
           (let
             [then-opened : i64
-              (embedded-native-template-ops params then-node ops ops-count)]
+              (embedded-native-template-ops
+                params
+                then-node
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< then-opened 0)
               -1
               (let
                 [else-opened : i64
-                  (embedded-native-template-ops params else-node ops ops-count)]
+                  (embedded-native-template-ops
+                    params
+                    else-node
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count))]
                 (if (< else-opened 0)
                   -1
                   (begin
@@ -1198,7 +1247,11 @@
     [(compiler_ast_types.AstExpr.Begin exprs)
       (let
         [arg-opened : i64
-          (embedded-native-template-args-ops params (& exprs) ops ops-count)]
+          (embedded-native-template-args-ops
+            params
+            (& exprs)
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< arg-opened 0)
           -1
           (begin
@@ -1214,7 +1267,11 @@
     [(compiler_ast_types.AstExpr.Tuple items)
       (let
         [item-opened : i64
-          (embedded-native-template-args-ops params (& items) ops ops-count)]
+          (embedded-native-template-args-ops
+            params
+            (& items)
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< item-opened 0)
           -1
           (begin
@@ -1246,7 +1303,11 @@
     [(compiler_ast_types.AstExpr.BracketClause items)
       (let
         [arg-opened : i64
-          (embedded-native-template-args-ops params (& items) ops ops-count)]
+          (embedded-native-template-args-ops
+            params
+            (& items)
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< arg-opened 0)
           -1
           (begin
@@ -1264,7 +1325,11 @@
         [lifetime : compiler_ast_types.AstBorrowLifetime
           (compiler_ast_types.ast-borrow-lifetime-from-id lifetime-id)]
         [place-opened : i64
-          (embedded-native-template-ops params place ops ops-count)]
+          (embedded-native-template-ops
+            params
+            place
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< place-opened 0)
           -1
           (match lifetime
@@ -1293,7 +1358,8 @@
                     (if mutable
                       "1"
                       "0")
-                    (embedded-native-name-arg lifetime-name)
+                    (embedded-native-name-arg
+                      (owned_view.compiler-owned-shared-view lifetime-name))
                     (string.int->string (string.string-length lifetime-name)))
                   (+ place-opened 1)))]
             [_ -1])))]
@@ -1302,7 +1368,11 @@
         [(compiler_ast_types.AstMatch.Match scrutinee arms)
           (let
             [scrut-opened : i64
-              (embedded-native-template-ops params scrutinee ops ops-count)]
+              (embedded-native-template-ops
+                params
+                scrutinee
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< scrut-opened 0)
               -1
               (let
@@ -1310,14 +1380,14 @@
                   (embedded-native-template-match-arms-ops
                     params
                     (& arms)
-                    ops
-                    ops-count)]
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count))]
                 (if (< arms-opened 0)
                   -1
                   (begin
                     (embedded-native-template-push!
-                      ops
-                      ops-count
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count)
                       (tlci_core.tlci-host-callback-name-shared-view
                         tlci_core.tlci-host-callback-name-expr-match)
                       "0"
@@ -1327,7 +1397,11 @@
     [(compiler_ast_types.AstExpr.StructGet target field)
       (let
         [target-opened : i64
-          (embedded-native-template-ops params target ops ops-count)]
+          (embedded-native-template-ops
+            params
+            target
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< target-opened 0)
           -1
           (let
@@ -1338,29 +1412,42 @@
                 ops-count
                 (tlci_core.tlci-host-callback-name-shared-view
                   tlci_core.tlci-host-callback-name-expr-struct-get)
-                (embedded-native-name-arg field-name)
+                (embedded-native-name-arg
+                  (owned_view.compiler-owned-shared-view field-name))
                 (string.int->string (string.string-length field-name))
                 "0")
               (+ target-opened 1)))))]
     [(compiler_ast_types.AstExpr.ArraySet target index value)
       (let
         [target-opened : i64
-          (embedded-native-template-ops params target ops ops-count)]
+          (embedded-native-template-ops
+            params
+            target
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< target-opened 0)
           -1
           (let
             [index-opened : i64
-              (embedded-native-template-ops params index ops ops-count)]
+              (embedded-native-template-ops
+                params
+                index
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< index-opened 0)
               -1
               (let
                 [value-opened : i64
-                  (embedded-native-template-ops params value ops ops-count)]
+                  (embedded-native-template-ops
+                    params
+                    value
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count))]
                 (if (< value-opened 0)
                   -1
                   (begin
                     (embedded-native-template-push!
-                      ops
+                      (owned_view.compiler-owned-shared-view ops)
                       ops-count
                       (tlci_core.tlci-host-callback-name-shared-view
                         tlci_core.tlci-host-callback-name-expr-array-set)
@@ -1399,8 +1486,8 @@
         [(compiler_ast_types.AstLet.Let bindings body)
           (begin
             (embedded-native-template-push!
-              ops
-              ops-count
+              (owned_view.compiler-owned-shared-view ops)
+              (owned_view.compiler-owned-shared-view ops-count)
               (tlci_core.tlci-host-callback-name-shared-view
                 tlci_core.tlci-host-callback-name-let-binding-list-empty)
               "0"
@@ -1412,19 +1499,23 @@
                   params
                   (& bindings)
                   0
-                  ops
-                  ops-count)]
+                  (owned_view.compiler-owned-shared-view ops)
+                  (owned_view.compiler-owned-shared-view ops-count))]
               (if (< bindings-opened 0)
                 -1
                 (let
                   [body-opened : i64
-                    (embedded-native-template-ops params body ops ops-count)]
+                    (embedded-native-template-ops
+                      params
+                      body
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< body-opened 0)
                     -1
                     (begin
                       (embedded-native-template-push!
-                        ops
-                        ops-count
+                        (owned_view.compiler-owned-shared-view ops)
+                        (owned_view.compiler-owned-shared-view ops-count)
                         (tlci_core.tlci-host-callback-name-shared-view
                           tlci_core.tlci-host-callback-name-expr-let)
                         "0"
@@ -1434,12 +1525,20 @@
     [(compiler_ast_types.AstExpr.Binary op left-node right-node)
       (let
         [left-opened : i64
-          (embedded-native-template-ops params left-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            left-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< left-opened 0)
           -1
           (let
             [right-opened : i64
-              (embedded-native-template-ops params right-node ops ops-count)]
+              (embedded-native-template-ops
+                params
+                right-node
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< right-opened 0)
               -1
               (begin
@@ -1455,13 +1554,17 @@
     [(compiler_ast_types.AstExpr.Unary op inner-node)
       (let
         [inner-opened : i64
-          (embedded-native-template-ops params inner-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            inner-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< inner-opened 0)
           -1
           (begin
             (embedded-native-template-push!
-              ops
-              ops-count
+              (owned_view.compiler-owned-shared-view ops)
+              (owned_view.compiler-owned-shared-view ops-count)
               (tlci_core.tlci-host-callback-name-shared-view
                 tlci_core.tlci-host-callback-name-expr-unary-op)
               (string.int->string (embedded-native-unop-ordinal op))
@@ -1474,7 +1577,7 @@
         inner-node
         (tlci_core.tlci-host-callback-name-shared-view
           tlci_core.tlci-host-callback-name-expr-return)
-        ops
+        (owned_view.compiler-owned-shared-view ops)
         ops-count)]
     [(compiler_ast_types.AstExpr.Box inner-node)
       (embedded-native-template-unary-node-ops
@@ -1482,7 +1585,7 @@
         inner-node
         (tlci_core.tlci-host-callback-name-shared-view
           tlci_core.tlci-host-callback-name-expr-box)
-        ops
+        (owned_view.compiler-owned-shared-view ops)
         ops-count)]
     [(compiler_ast_types.AstExpr.BoxGet inner-node)
       (embedded-native-template-unary-node-ops
@@ -1549,7 +1652,11 @@
     [(compiler_ast_types.AstExpr.PtrCast ptr-node cast-type-id)
       (let
         [ptr-opened : i64
-          (embedded-native-template-ops params ptr-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            ptr-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< ptr-opened 0)
           -1
           (let
@@ -1557,8 +1664,8 @@
               (embedded-native-template-type-ops
                 params
                 (compiler_ast_types.ty-node-get cast-type-id)
-                ops
-                ops-count)]
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< type-opened 0)
               -1
               (begin
@@ -1594,14 +1701,14 @@
           (embedded-native-template-args-ops
             params
             (& body-exprs)
-            ops
-            ops-count)]
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< arg-opened 0)
           -1
           (begin
             (embedded-native-template-push!
-              ops
-              ops-count
+              (owned_view.compiler-owned-shared-view ops)
+              (owned_view.compiler-owned-shared-view ops-count)
               (tlci_core.tlci-host-callback-name-shared-view
                 tlci_core.tlci-host-callback-name-expr-unsafe)
               "0"
@@ -1637,12 +1744,20 @@
                   (+ target-opened value-opened 1))))))
         (let
           [target-opened : i64
-            (embedded-native-template-ops params target-node ops ops-count)]
+            (embedded-native-template-ops
+              params
+              target-node
+              (owned_view.compiler-owned-shared-view ops)
+              (owned_view.compiler-owned-shared-view ops-count))]
           (if (< target-opened 0)
             -1
             (let
               [value-opened : i64
-                (embedded-native-template-ops params value-node ops ops-count)]
+                (embedded-native-template-ops
+                  params
+                  value-node
+                  (owned_view.compiler-owned-shared-view ops)
+                  (owned_view.compiler-owned-shared-view ops-count))]
               (if (< value-opened 0)
                 -1
                 (let
@@ -1653,7 +1768,8 @@
                       ops-count
                       (tlci_core.tlci-host-callback-name-shared-view
                         tlci_core.tlci-host-callback-name-expr-struct-set)
-                      (embedded-native-name-arg field-name)
+                      (embedded-native-name-arg
+                        (owned_view.compiler-owned-shared-view field-name))
                       (string.int->string (string.string-length field-name))
                       "0")
                     (+ target-opened value-opened 1))))))))]
@@ -1662,7 +1778,11 @@
     [(compiler_ast_types.AstExpr.Cast value-node ty-id)
       (let
         [value-opened : i64
-          (embedded-native-template-ops params value-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            value-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< value-opened 0)
           -1
           (let
@@ -1670,8 +1790,8 @@
               (embedded-native-template-type-ops
                 params
                 (compiler_ast_types.ty-node-get ty-id)
-                ops
-                ops-count)]
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< type-opened 0)
               -1
               (begin
@@ -1689,7 +1809,11 @@
     [(compiler_ast_types.AstExpr.Ann value-node ty-id)
       (let
         [value-opened : i64
-          (embedded-native-template-ops params value-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            value-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< value-opened 0)
           -1
           (let
@@ -1697,8 +1821,8 @@
               (embedded-native-template-type-ops
                 params
                 (compiler_ast_types.ty-node-get ty-id)
-                ops
-                ops-count)]
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< type-opened 0)
               -1
               (begin
@@ -1719,7 +1843,11 @@
         [(compiler_ast_types.AstMaybeType.Some ty)
           (let
             [type-opened : i64
-              (embedded-native-template-type-ops params ty ops ops-count)]
+              (embedded-native-template-type-ops
+                params
+                ty
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< type-opened 0)
               -1
               (begin
@@ -1736,7 +1864,11 @@
     [(compiler_ast_types.AstExpr.Set name-id value-node)
       (let
         [value-opened : i64
-          (embedded-native-template-ops params value-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            value-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< value-opened 0)
           -1
           (let
@@ -1747,19 +1879,28 @@
                 ops-count
                 (tlci_core.tlci-host-callback-name-shared-view
                   tlci_core.tlci-host-callback-name-expr-set-var)
-                (embedded-native-name-arg name)
+                (embedded-native-name-arg
+                  (owned_view.compiler-owned-shared-view name))
                 (string.int->string (string.string-length name))
                 "0")
               (+ value-opened 1)))))]
     [(compiler_ast_types.AstExpr.While cond-node body-node)
       (let
         [cond-opened : i64
-          (embedded-native-template-ops params cond-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            cond-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< cond-opened 0)
           -1
           (let
             [body-opened : i64
-              (embedded-native-template-ops params body-node ops ops-count)]
+              (embedded-native-template-ops
+                params
+                body-node
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< body-opened 0)
               -1
               (begin
@@ -1775,12 +1916,20 @@
     [(compiler_ast_types.AstExpr.ArrayRef target-node index-node)
       (let
         [target-opened : i64
-          (embedded-native-template-ops params target-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            target-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< target-opened 0)
           -1
           (let
             [index-opened : i64
-              (embedded-native-template-ops params index-node ops ops-count)]
+              (embedded-native-template-ops
+                params
+                index-node
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< index-opened 0)
               -1
               (begin
@@ -1821,12 +1970,20 @@
     [(compiler_ast_types.AstExpr.ArrayPush target-node value-node)
       (let
         [target-opened : i64
-          (embedded-native-template-ops params target-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            target-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< target-opened 0)
           -1
           (let
             [value-opened : i64
-              (embedded-native-template-ops params value-node ops ops-count)]
+              (embedded-native-template-ops
+                params
+                value-node
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< value-opened 0)
               -1
               (begin
@@ -1845,13 +2002,17 @@
           (embedded-native-template-type-ops
             params
             (compiler_ast_types.ty-node-get elem-type-id)
-            ops
-            ops-count)]
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< type-opened 0)
           -1
           (let
             [size-opened : i64
-              (embedded-native-template-ops params size-node ops ops-count)]
+              (embedded-native-template-ops
+                params
+                size-node
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< size-opened 0)
               -1
               (begin
@@ -1888,8 +2049,8 @@
     [ok : bool true]
     (begin
       (embedded-native-template-push!
-        ops
-        ops-count
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count)
         (tlci_core.tlci-host-callback-name-shared-view
           tlci_core.tlci-host-callback-name-expr-list-empty)
         "0"
@@ -1913,8 +2074,8 @@
                       (set! ok false)
                       (begin
                         (embedded-native-template-push!
-                          ops
-                          ops-count
+                          (owned_view.compiler-owned-shared-view ops)
+                          (owned_view.compiler-owned-shared-view ops-count)
                           (if (< param 0)
                             (tlci_core.tlci-host-callback-name-shared-view
                               tlci_core.tlci-host-callback-name-local-get)
@@ -1927,8 +2088,8 @@
                           "0"
                           "0")
                         (embedded-native-template-push!
-                          ops
-                          ops-count
+                          (owned_view.compiler-owned-shared-view ops)
+                          (owned_view.compiler-owned-shared-view ops-count)
                           (tlci_core.tlci-host-callback-name-shared-view
                             tlci_core.tlci-host-callback-name-expr-splice)
                           "0"
@@ -1946,13 +2107,17 @@
             [_
               (let
                 [item-opened : i64
-                  (embedded-native-template-ops params item ops ops-count)]
+                  (embedded-native-template-ops
+                    params
+                    item
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count))]
                 (if (< item-opened 0)
                   (set! ok false)
                   (begin
                     (embedded-native-template-push!
-                      ops
-                      ops-count
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count)
                       (tlci_core.tlci-host-callback-name-shared-view
                         tlci_core.tlci-host-callback-name-expr-list-append)
                       "0"
@@ -1980,8 +2145,8 @@
     [ok : bool true]
     (begin
       (embedded-native-template-push!
-        ops
-        ops-count
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count)
         (tlci_core.tlci-host-callback-name-shared-view
           tlci_core.tlci-host-callback-name-match-arm-list-empty)
         "0"
@@ -1996,8 +2161,8 @@
                   [(compiler_ast_types.AstPattern.Wildcard)
                     (begin
                       (embedded-native-template-push!
-                        ops
-                        ops-count
+                        (owned_view.compiler-owned-shared-view ops)
+                        (owned_view.compiler-owned-shared-view ops-count)
                         (tlci_core.tlci-host-callback-name-shared-view
                           tlci_core.tlci-host-callback-name-pattern-wildcard)
                         "0"
@@ -2009,11 +2174,12 @@
                       [pat-name : String (ci.intern-str pat-name-id)]
                       (begin
                         (embedded-native-template-push!
-                          ops
-                          ops-count
+                          (owned_view.compiler-owned-shared-view ops)
+                          (owned_view.compiler-owned-shared-view ops-count)
                           (tlci_core.tlci-host-callback-name-shared-view
                             tlci_core.tlci-host-callback-name-pattern-binding)
-                          (embedded-native-name-arg pat-name)
+                          (embedded-native-name-arg
+                            (owned_view.compiler-owned-shared-view pat-name))
                           (string.int->string (string.string-length pat-name))
                           "0")
                         1))]
@@ -2024,11 +2190,12 @@
                           [pat-name : String (ci.intern-str pat-name-id)]
                           (begin
                             (embedded-native-template-push!
-                              ops
-                              ops-count
+                              (owned_view.compiler-owned-shared-view ops)
+                              (owned_view.compiler-owned-shared-view ops-count)
                               (tlci_core.tlci-host-callback-name-shared-view
                                 tlci_core.tlci-host-callback-name-pattern-var)
-                              (embedded-native-name-arg pat-name)
+                              (embedded-native-name-arg
+                                (owned_view.compiler-owned-shared-view pat-name))
                               (string.int->string
                                 (string.string-length pat-name))
                               "0")
@@ -2040,23 +2207,25 @@
                     (let
                       [pat-name : String (ci.intern-str pat-name-id)]
                       [pat-args : compiler_ast_types.AstPatternList
-                        (__tl-box-place pat-args-box)]
+                        (compiler_ast_types.ast-pattern-list-box-shared-view
+                          (owned_view.compiler-owned-shared-view pat-args-box))]
                       [pat-arg-opened : i64
                         (embedded-native-pattern-list-ops
                           (& pat-args)
                           0
-                          ops
-                          ops-count
+                          (owned_view.compiler-owned-shared-view ops)
+                          (owned_view.compiler-owned-shared-view ops-count)
                           0)]
                       (if (< pat-arg-opened 0)
                         -1
                         (begin
                           (embedded-native-template-push!
-                            ops
-                            ops-count
+                            (owned_view.compiler-owned-shared-view ops)
+                            (owned_view.compiler-owned-shared-view ops-count)
                             (tlci_core.tlci-host-callback-name-shared-view
                               tlci_core.tlci-host-callback-name-pattern-variant)
-                            (embedded-native-name-arg pat-name)
+                            (embedded-native-name-arg
+                              (owned_view.compiler-owned-shared-view pat-name))
                             (string.int->string (string.string-length pat-name))
                             (string.int->string pat-args.len))
                           (+ pat-arg-opened 1))))]
@@ -2070,22 +2239,22 @@
                     (embedded-native-template-ops
                       params
                       body-node
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< body-opened 0)
                     (set! ok false)
                     (begin
                       (embedded-native-template-push!
-                        ops
-                        ops-count
+                        (owned_view.compiler-owned-shared-view ops)
+                        (owned_view.compiler-owned-shared-view ops-count)
                         (tlci_core.tlci-host-callback-name-shared-view
                           tlci_core.tlci-host-callback-name-match-arm)
                         "0"
                         "0"
                         "0")
                       (embedded-native-template-push!
-                        ops
-                        ops-count
+                        (owned_view.compiler-owned-shared-view ops)
+                        (owned_view.compiler-owned-shared-view ops-count)
                         (tlci_core.tlci-host-callback-name-shared-view
                           tlci_core.tlci-host-callback-name-match-arm-list-cons)
                         "0"
@@ -2127,7 +2296,8 @@
             ops-count
             (tlci_core.tlci-host-callback-name-shared-view
               tlci_core.tlci-host-callback-name-pattern-binding)
-            (embedded-native-name-arg name)
+            (embedded-native-name-arg
+              (owned_view.compiler-owned-shared-view name))
             (string.int->string (string.string-length name))
             "0")
           1))]
@@ -2142,7 +2312,8 @@
                 ops-count
                 (tlci_core.tlci-host-callback-name-shared-view
                   tlci_core.tlci-host-callback-name-pattern-var)
-                (embedded-native-name-arg name)
+                (embedded-native-name-arg
+                  (owned_view.compiler-owned-shared-view name))
                 (string.int->string (string.string-length name))
                 "0")
               1))]
@@ -2150,9 +2321,16 @@
     [(compiler_ast_types.AstPattern.Variant name-id args-box)
       (let
         [name : String (ci.intern-str name-id)]
-        [args : compiler_ast_types.AstPatternList (__tl-box-place args-box)]
+        [args : compiler_ast_types.AstPatternList
+          (compiler_ast_types.ast-pattern-list-box-shared-view
+            (owned_view.compiler-owned-shared-view args-box))]
         [arg-opened : i64
-          (embedded-native-pattern-list-ops (& args) 0 ops ops-count 0)]
+          (embedded-native-pattern-list-ops
+            (& args)
+            0
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count)
+            0)]
         (if (< arg-opened 0)
           -1
           (begin
@@ -2161,7 +2339,8 @@
               ops-count
               (tlci_core.tlci-host-callback-name-shared-view
                 tlci_core.tlci-host-callback-name-pattern-variant)
-              (embedded-native-name-arg name)
+              (embedded-native-name-arg
+                (owned_view.compiler-owned-shared-view name))
               (string.int->string (string.string-length name))
               (string.int->string args.len))
             (+ arg-opened 1))))]
@@ -2182,8 +2361,8 @@
             args
             index
             (compiler_ast_types.ast-pattern-fallback))
-          ops
-          ops-count)]
+          (owned_view.compiler-owned-shared-view ops)
+          (owned_view.compiler-owned-shared-view ops-count))]
       (if (< item-opened 0)
         -1
         (embedded-native-pattern-list-ops
@@ -2240,8 +2419,8 @@
       (embedded-native-template-type-ops
         params
         (compiler_ast_types.ty-node-get elem-id)
-        ops
-        ops-count)]
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (< elem-opened 0)
       -1
       (begin
@@ -2263,8 +2442,8 @@
       (embedded-native-template-type-ops
         params
         (compiler_ast_types.ty-node-get inner-id)
-        ops
-        ops-count)]
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (< inner-opened 0)
       -1
       (begin
@@ -2274,7 +2453,8 @@
           (tlci_core.tlci-host-callback-name-shared-view
             tlci_core.tlci-host-callback-name-type-ref)
           (string.int->string mutable)
-          (embedded-native-name-arg region)
+          (embedded-native-name-arg
+            (owned_view.compiler-owned-shared-view region))
           (string.int->string (string.string-length region)))
         (+ inner-opened 1)))))
 
@@ -2310,7 +2490,7 @@
   [ty : compiler_ast_types.AstType]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
-  (match ty
+  (match (owned_view.compiler-owned-shared-view ty)
     ;; Composite annotations: the element/inner type is a *type-pool node id*,
     ;; read back through the global `ty-node-get` (the type-side twin of
     ;; `ast-node-get`), so no pool context has to be threaded here. Each arm
@@ -2415,64 +2595,44 @@
     [(compiler_ast_types.AstType.VarArgs name lifetimes-box)
       (let
         [lifetimes : compiler_ast_types.AstLifetimeList
-          (__tl-box-place lifetimes-box)]
-        (if (= name cbi.compiler-builtin-id-fix-unquote)
-          (let
-            [valid : bool
-              (= (compiler_ast_types.ast-lifetime-list-len (& lifetimes)) 1)]
-            [operand-name : i64
-              (if valid
-                (compiler_ast_types.ast-lifetime-list-get
-                  (& lifetimes)
-                  0
-                  (compiler_ast_types.ast-lifetime-fallback))
-                -1)]
-            [param : i64
-              (if valid
-                (embedded-stdlib-tlci-param-index params operand-name)
-                -1)]
-            [slot : i64
-              (if (and valid (< param 0))
-                (embedded-native-local-index (ci.intern-str operand-name))
-                -1)]
-            (if (and (< param 0) (< slot 0))
-              (embedded-native-fallback-opened "template-type:unquote")
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (if (>= param 0)
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-push-operand)
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-local-get))
-                  (string.int->string
-                    (if (>= param 0)
-                      param
-                      slot))
-                  "0"
-                  "0")
-                1)))
-          (let
-            [payload : String
-              (embedded-native-template-type-var-args-payload
-                name
-                (& lifetimes))]
-            [count : i64
-              (compiler_ast_types.ast-lifetime-list-len (& lifetimes))]
-            (if (= count 0)
-              (embedded-native-fallback-opened "template-type:var-args-empty")
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name-shared-view
-                    tlci_core.tlci-host-callback-name-type-var-args)
-                  (string.int->string count)
-                  (embedded-native-name-arg
-                    (embedded-native-escape-string payload))
-                  (string.int->string (string.string-length payload)))
-                1)))))]
+          (owned_view.compiler-owned-box-shared-view lifetimes-box)]
+        [valid : bool
+          (and
+            (= name cbi.compiler-builtin-id-fix-unquote)
+            (= (compiler_ast_types.ast-lifetime-list-len (& lifetimes)) 1))]
+        [operand-name : i64
+          (if valid
+            (compiler_ast_types.ast-lifetime-list-get
+              (& lifetimes)
+              0
+              (compiler_ast_types.ast-lifetime-fallback))
+            -1)]
+        [param : i64
+          (if valid
+            (embedded-stdlib-tlci-param-index params operand-name)
+            -1)]
+        [slot : i64
+          (if (and valid (< param 0))
+            (embedded-native-local-index (ci.intern-str operand-name))
+            -1)]
+        (if (and (< param 0) (< slot 0))
+          (embedded-native-fallback-opened "template-type:non-scalar")
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              (if (>= param 0)
+                (tlci_core.tlci-host-callback-name-shared-view
+                  tlci_core.tlci-host-callback-name-push-operand)
+                (tlci_core.tlci-host-callback-name-shared-view
+                  tlci_core.tlci-host-callback-name-local-get))
+              (string.int->string
+                (if (>= param 0)
+                  param
+                  slot))
+              "0"
+              "0")
+            1)))]
     [(compiler_ast_types.AstType.Var type-name-id)
       (let
         [type-name : String (ci.intern-str type-name-id)]
@@ -2482,7 +2642,8 @@
             ops-count
             (tlci_core.tlci-host-callback-name-shared-view
               tlci_core.tlci-host-callback-name-type-var)
-            (embedded-native-name-arg type-name)
+            (embedded-native-name-arg
+              (owned_view.compiler-owned-shared-view type-name))
             (string.int->string (string.string-length type-name))
             "0")
           1))]
@@ -2551,7 +2712,11 @@
         (let
           [name : String (ci.intern-str name-id)]
           [init-opened : i64
-            (embedded-native-template-ops params init ops ops-count)]
+            (embedded-native-template-ops
+              params
+              init
+              (owned_view.compiler-owned-shared-view ops)
+              (owned_view.compiler-owned-shared-view ops-count))]
           (if (< init-opened 0)
             -1
             (let
@@ -2560,11 +2725,12 @@
                   [(compiler_ast_types.AstMaybeType.No)
                     (begin
                       (embedded-native-template-push!
-                        ops
-                        ops-count
+                        (owned_view.compiler-owned-shared-view ops)
+                        (owned_view.compiler-owned-shared-view ops-count)
                         (tlci_core.tlci-host-callback-name-shared-view
                           tlci_core.tlci-host-callback-name-let-binding)
-                        (embedded-native-name-arg name)
+                        (embedded-native-name-arg
+                          (owned_view.compiler-owned-shared-view name))
                         (string.int->string (string.string-length name))
                         "0")
                       1)]
@@ -2574,17 +2740,18 @@
                         (embedded-native-template-type-ops
                           params
                           ty
-                          ops
-                          ops-count)]
+                          (owned_view.compiler-owned-shared-view ops)
+                          (owned_view.compiler-owned-shared-view ops-count))]
                       (if (< type-opened 0)
                         -1
                         (begin
                           (embedded-native-template-push!
-                            ops
-                            ops-count
+                            (owned_view.compiler-owned-shared-view ops)
+                            (owned_view.compiler-owned-shared-view ops-count)
                             (tlci_core.tlci-host-callback-name-shared-view
                               tlci_core.tlci-host-callback-name-let-binding-typed)
-                            (embedded-native-name-arg name)
+                            (embedded-native-name-arg
+                              (owned_view.compiler-owned-shared-view name))
                             (string.int->string (string.string-length name))
                             "0")
                           (+ type-opened 1))))]
@@ -2595,8 +2762,8 @@
                 -1
                 (begin
                   (embedded-native-template-push!
-                    ops
-                    ops-count
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count)
                     (tlci_core.tlci-host-callback-name-shared-view
                       tlci_core.tlci-host-callback-name-let-binding-list-cons)
                     "0"
@@ -2646,7 +2813,10 @@
               embedded-native-op-chunk-cap)]
           [chunk : String
             (str_cat.str-cat
-              (embedded-native-ops-open-text-range ops start chunk-count)
+              (embedded-native-ops-open-text-range
+                (owned_view.compiler-owned-shared-view ops)
+                start
+                chunk-count)
               "0\n"
               (embedded-native-closing-parens (* 2 chunk-count)))]
           (begin
@@ -2745,7 +2915,9 @@
                 ops-count
                 (tlci_core.tlci-host-callback-name-shared-view
                   tlci_core.tlci-host-callback-name-string-value)
-                (embedded-native-name-arg (embedded-native-escape-string text))
+                (embedded-native-name-arg
+                  (embedded-native-escape-string
+                    (owned_view.compiler-owned-shared-view text)))
                 (string.int->string (string.string-length text))
                 "0")
               1))]
@@ -2793,7 +2965,11 @@
           -1
           (let
             [then-opened : i64
-              (embedded-native-computed-expr-ops params then-node ops ops-count)]
+              (embedded-native-computed-expr-ops
+                params
+                then-node
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< then-opened 0)
               -1
               (let
@@ -2801,13 +2977,13 @@
                   (embedded-native-computed-expr-ops
                     params
                     else-node
-                    ops
-                    ops-count)]
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count))]
                 (if (< else-opened 0)
                   -1
                   (begin
                     (embedded-native-template-push!
-                      ops
+                      (owned_view.compiler-owned-shared-view ops)
                       ops-count
                       (tlci_core.tlci-host-callback-name-shared-view
                         tlci_core.tlci-host-callback-name-value-select)
@@ -2825,7 +3001,9 @@
             [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
             [_walked : unit
               (embedded-native-full-walked-note!
-                (str_cat.str-cat "computed-call:" head))]
+                (str_cat.str-cat
+                  "computed-call:"
+                  (owned_view.compiler-owned-shared-view head)))]
             (cond
               [(and
                   (or
@@ -2850,8 +3028,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< opened 0)
                     -1
                     (begin
@@ -2874,8 +3052,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< opened 0)
                     -1
                     (begin
@@ -2904,8 +3082,8 @@
                     ;; comptime i64 first, since only stack values reach 113.
                     (begin
                       (embedded-native-template-push!
-                        ops
-                        ops-count
+                        (owned_view.compiler-owned-shared-view ops)
+                        (owned_view.compiler-owned-shared-view ops-count)
                         (tlci_core.tlci-host-callback-name-shared-view
                           tlci_core.tlci-host-callback-name-value-i64)
                         data-text
@@ -2928,8 +3106,8 @@
                         (embedded-native-computed-expr-ops
                           params
                           (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                          ops
-                          ops-count)]
+                          (owned_view.compiler-owned-shared-view ops)
+                          (owned_view.compiler-owned-shared-view ops-count))]
                       (if (< opened 0)
                         -1
                         (begin
@@ -2956,7 +3134,8 @@
                         ops-count
                         (tlci_core.tlci-host-callback-name-shared-view
                           tlci_core.tlci-host-callback-name-expr-var)
-                        (embedded-native-name-arg lit-name)
+                        (embedded-native-name-arg
+                          (owned_view.compiler-owned-shared-view lit-name))
                         (string.int->string (string.string-length lit-name))
                         "0")
                       1)
@@ -2965,8 +3144,8 @@
                         (embedded-native-computed-expr-ops
                           params
                           (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                          ops
-                          ops-count)]
+                          (owned_view.compiler-owned-shared-view ops)
+                          (owned_view.compiler-owned-shared-view ops-count))]
                       (if (< inner-opened 0)
                         -1
                         (begin
@@ -2992,8 +3171,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< inner-opened 0)
                     -1
                     (begin
@@ -3062,8 +3241,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< opened 0)
                     -1
                     (begin
@@ -3132,8 +3311,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< inner-opened 0)
                     -1
                     (begin
@@ -3446,8 +3625,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< opened 0)
                     -1
                     (begin
@@ -3584,8 +3763,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< opened 0)
                     -1
                     (begin
@@ -3608,8 +3787,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< opened 0)
                     -1
                     (begin
@@ -3685,8 +3864,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (< opened 0)
                     -1
                     (begin
@@ -3906,8 +4085,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   [op : String
                     (cond
                       [(or
@@ -4115,7 +4294,7 @@
   [arg-b : String]) : String
   (str_cat.str-cat
     "  (let ["
-    name
+    (owned_view.compiler-owned-shared-view name)
     " : i64 (comptime-host-"
     op
     " host session "
@@ -4137,7 +4316,11 @@
   (let
     [name : String (embedded-native-temp-name!)]
     (EmbeddedNativeDataValue
-      (embedded-native-data-probe-open name op arg arg-b)
+      (embedded-native-data-probe-open
+        (owned_view.compiler-owned-shared-view name)
+        op
+        arg
+        arg-b)
       name
       1)))
 
@@ -4158,7 +4341,9 @@
             out
             (str_cat.str-cat
               out
-              (embedded-native-op-open-from-call index (array-ref ops index))))
+              (embedded-native-op-open-from-call
+                index
+                (owned_view.compiler-owned-array-element-shared-view ops index))))
           (set! index (+ index 1))))
       out)))
 
@@ -4180,7 +4365,11 @@
       (array.make-array String embedded-native-ops-cap)]
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [type-opened : i64
-      (embedded-native-computed-expr-ops params type-node ops ops-count)]
+      (embedded-native-computed-expr-ops
+        params
+        type-node
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (or
       (< type-opened 0)
       (>= type-opened embedded-native-ops-cap)
@@ -4191,7 +4380,11 @@
         (EmbeddedNativeDataValue
           (str_cat.str-cat
             (embedded-native-ops-open-text ops (array-ref ops-count 0))
-            (embedded-native-data-probe-open name op arg "0"))
+            (embedded-native-data-probe-open
+              (owned_view.compiler-owned-shared-view name)
+              op
+              arg
+              "0"))
           name
           (+ type-opened 1))))))
 
@@ -4209,12 +4402,20 @@
       (array.make-array String embedded-native-ops-cap)]
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [left-opened : i64
-      (embedded-native-computed-expr-ops params left-node ops ops-count)]
+      (embedded-native-computed-expr-ops
+        params
+        left-node
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (< left-opened 0)
       (embedded-native-data-value-none)
       (let
         [right-opened : i64
-          (embedded-native-computed-expr-ops params right-node ops ops-count)]
+          (embedded-native-computed-expr-ops
+            params
+            right-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (or
           (< right-opened 0)
           (>= (array-ref ops-count 0) embedded-native-ops-cap))
@@ -4224,7 +4425,11 @@
             (EmbeddedNativeDataValue
               (str_cat.str-cat
                 (embedded-native-ops-open-text ops (array-ref ops-count 0))
-                (embedded-native-data-probe-open name op "0" "0"))
+                (embedded-native-data-probe-open
+                  (owned_view.compiler-owned-shared-view name)
+                  op
+                  "0"
+                  "0"))
               name
               (+ left-opened right-opened 1))))))))
 
@@ -4481,78 +4686,35 @@
     (if (< scrutinee-opened 0)
       (embedded-native-data-value-none)
       (let
-        [literal : String (ci.intern-str sid)]
-        (begin
-          (embedded-native-template-push!
-            ops
-            ops-count
-            (tlci_core.tlci-host-callback-name-shared-view
-              tlci_core.tlci-host-callback-name-string-value)
-            (embedded-native-name-arg (embedded-native-escape-string literal))
-            (string.int->string (string.string-length literal))
-            "0")
-          (if (>= (array-ref ops-count 0) embedded-native-ops-cap)
-            (embedded-native-data-value-none)
-            (let
-              [result : String (embedded-native-temp-name!)]
-              (EmbeddedNativeDataValue
-                (str_cat.str-cat
-                  (embedded-native-ops-open-text ops (array-ref ops-count 0))
-                  (embedded-native-data-probe-open
-                    result
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-string-eq)
-                    "0"
-                    "0"))
-                result
-                (+ scrutinee-opened 2)))))))))
-
-;; Lower an ordered String-literal/wildcard match whose bodies are scalar data
-;; values. This is the compile-time shape used by stdlib.sort/vec and
-;; stdlib.serialize/serialize to classify reflected type keys. Unsupported
-;; patterns or bodies still fail closed to the registered fallback shell.
-(define (embedded-native-data-string-match-arms-value
-  [params : (& params compiler_ast_types.AstMacroParamList)]
-  [scrutinee : i64]
-  [arms : (& arms compiler_ast_types.AstMatchArmList)]
-  [index : i64]) : EmbeddedNativeDataValue
-  (if (>= index arms.len)
-    (embedded-native-data-value-none)
-    (match (array-ref arms.slots index)
-      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
-        (match pattern
-          [(compiler_ast_types.AstPattern.Literal
-              (compiler_ast_types.AstLiteral.String sid))
-            (embedded-native-data-if-values
-              (embedded-native-data-string-literal-eq-value
-                params
-                scrutinee
-                sid)
-              (embedded-native-data-value params body-node)
-              (embedded-native-data-string-match-arms-value
-                params
-                scrutinee
-                arms
-                (+ index 1)))]
-          [(compiler_ast_types.AstPattern.Wildcard)
-            (embedded-native-data-value params body-node)]
-          [_ (embedded-native-data-value-none)])])))
-
-(define (embedded-native-data-string-match-value
-  [params : (& params compiler_ast_types.AstMacroParamList)]
-  [scrutinee : i64]
-  [arms : (& arms compiler_ast_types.AstMatchArmList)]) : EmbeddedNativeDataValue
-  ;; Restrict the scrutinee to an operand or session local. This preserves the
-  ;; interpreted single-evaluation rule while still covering reflected
-  ;; type-key/type-kind values bound by the surrounding let.
-  (if (or
-    (>= (embedded-native-var-param-index params scrutinee) 0)
-    (match (embedded-stdlib-tlci-unwrap-expr scrutinee)
-      [(compiler_ast_types.AstExpr.Var name)
-        (>= (embedded-native-local-index (ci.intern-str name)) 0)]
-      [_ false]))
-    (embedded-native-data-string-match-arms-value params scrutinee arms 0)
-    (embedded-native-data-value-none)))
+        [result : String (embedded-native-temp-name!)]
+        [status : String (embedded-native-temp-name!)]
+        (EmbeddedNativeDataValue
+          (str_cat.str-cat
+            cond-value.open
+            "  (let ["
+            (owned_view.compiler-owned-shared-view result)
+            " : i64 0]\n"
+            "  (let ["
+            (owned_view.compiler-owned-shared-view status)
+            " : i64\n"
+            "  (if (= "
+            cond-value.text
+            " 1)\n"
+            (embedded-native-data-store-status-code
+              then-value
+              (owned_view.compiler-owned-shared-view result))
+            (embedded-native-data-store-status-code
+              else-value
+              (owned_view.compiler-owned-shared-view result))
+            ")]\n"
+            "  (if (not (= "
+            (owned_view.compiler-owned-shared-view status)
+            " 0)) "
+            status
+            "\n"
+            "  (begin\n")
+          result
+          (+ cond-value.opens 2))))))
 
 ;; The boolean Expr.Var match used by the scoped string concatenator is a pure
 ;; shape test. Lower it directly to the corresponding operand/local data probe
@@ -4602,14 +4764,47 @@
 (define (embedded-native-data-match-value
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [match-box : (Box compiler_ast_types.AstMatch)]) : EmbeddedNativeDataValue
-  (match (__tl-box-place match-box)
+  (match (owned_view.compiler-owned-box-shared-view match-box)
     [(compiler_ast_types.AstMatch.Match scrutinee arms)
-      (let
-        [var-match : EmbeddedNativeDataValue
-          (embedded-native-data-var-match-value params scrutinee (& arms))]
-        (if (string.eq var-match.text "")
-          (embedded-native-data-string-match-value params scrutinee (& arms))
-          var-match))]))
+      (if (not (= arms.len 2))
+        (embedded-native-data-value-none)
+        (match (array-ref arms.slots 0)
+          [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
+            (match (array-ref arms.slots 1)
+              [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
+                (match first-pattern
+                  [(compiler_ast_types.AstPattern.Variant name-id args-box)
+                    (let
+                      [args : compiler_ast_types.AstPatternList
+                        (compiler_ast_types.ast-pattern-list-box-shared-view
+                          (owned_view.compiler-owned-shared-view args-box))]
+                      (if (and
+                        (string.eq
+                          (embedded-native-expr-variant-name name-id)
+                          "Var")
+                        (= args.len 1)
+                        (match (compiler_ast_types.ast-pattern-list-get
+                          (& args)
+                          0
+                          (compiler_ast_types.ast-pattern-fallback))
+                          [(compiler_ast_types.AstPattern.Wildcard) true]
+                          [_ false])
+                        (match second-pattern
+                          [(compiler_ast_types.AstPattern.Wildcard) true]
+                          [_ false])
+                        (= (embedded-native-bool-literal-flag first-body) 1)
+                        (= (embedded-native-bool-literal-flag second-body) 0))
+                        (embedded-native-data-expr-probe-value
+                          params
+                          scrutinee
+                          (tlci_core.tlci-host-callback-name-shared-view
+                            tlci_core.tlci-host-callback-name-operand-expr-var?)
+                          (tlci_core.tlci-host-callback-name-shared-view
+                            tlci_core.tlci-host-callback-name-local-expr-var?))
+                        (embedded-native-data-value-none)))]
+                  [_ (embedded-native-data-value-none)])])]
+          [_ (embedded-native-data-value-none)]))]
+    [_ (embedded-native-data-value-none)]))
 
 ;; One reflection count over a type operand/session local, or no value.
 (define (embedded-native-reflection-count-value
@@ -4935,7 +5130,9 @@
             (cond
               [(< slot 0) (embedded-native-data-value-none)]
               [(and
-                  (embedded-native-stdlib-string-call? head "string-length")
+                  (embedded-native-stdlib-string-call?
+                    (owned_view.compiler-owned-shared-view head)
+                    "string-length")
                   (= argc 1))
                 (embedded-native-data-probe-value
                   (tlci_core.tlci-host-callback-name-shared-view
@@ -4944,7 +5141,9 @@
                   "0")]
               [(and
                   (or
-                    (embedded-native-stdlib-string-call? head "string-ref")
+                    (embedded-native-stdlib-string-call?
+                      (owned_view.compiler-owned-shared-view head)
+                      "string-ref")
                     (embedded-native-stdlib-string-call? head "char-at"))
                   (= argc 2))
                 (let
@@ -4989,13 +5188,37 @@
 ;: the stdlib one. Refs #5701.
 (define (embedded-native-stdlib-string-call? [head : String] [base : String]) : bool
   (or
-    (string.eq head (str_cat.str-cat "string." base))
-    (string.eq head (str_cat.str-cat "string/" base))
-    (string.eq head (str_cat.str-cat "stdlib.string." base))
-    (string.eq head (str_cat.str-cat "stdlib.string/" base))
-    (string.eq head (str_cat.str-cat "stdlib/string." base))
-    (string.eq head (str_cat.str-cat "stdlib/string/" base))
-    (string.eq head (str_cat.str-cat "stdlib/string.tl." base))
+    (string.eq
+      head
+      (str_cat.str-cat "string." (owned_view.compiler-owned-shared-view base)))
+    (string.eq
+      head
+      (str_cat.str-cat "string/" (owned_view.compiler-owned-shared-view base)))
+    (string.eq
+      head
+      (str_cat.str-cat
+        "stdlib.string."
+        (owned_view.compiler-owned-shared-view base)))
+    (string.eq
+      head
+      (str_cat.str-cat
+        "stdlib.string/"
+        (owned_view.compiler-owned-shared-view base)))
+    (string.eq
+      head
+      (str_cat.str-cat
+        "stdlib/string."
+        (owned_view.compiler-owned-shared-view base)))
+    (string.eq
+      head
+      (str_cat.str-cat
+        "stdlib/string/"
+        (owned_view.compiler-owned-shared-view base)))
+    (string.eq
+      head
+      (str_cat.str-cat
+        "stdlib/string.tl."
+        (owned_view.compiler-owned-shared-view base)))
     (string.eq head (str_cat.str-cat "stdlib/string.tl/" base))))
 
 ;: The session-local slot of a `(comptime.expr-list-length <local>)` call, or
@@ -5085,12 +5308,20 @@
   [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [left-opened : i64
-      (embedded-native-computed-expr-ops params left-node ops ops-count)]
+      (embedded-native-computed-expr-ops
+        params
+        left-node
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (< left-opened 0)
       -1
       (let
         [right-opened : i64
-          (embedded-native-computed-expr-ops params right-node ops ops-count)]
+          (embedded-native-computed-expr-ops
+            params
+            right-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< right-opened 0)
           -1
           (begin
@@ -5107,12 +5338,20 @@
   [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [first-opened : i64
-      (embedded-native-computed-expr-ops params first-node ops ops-count)]
+      (embedded-native-computed-expr-ops
+        params
+        first-node
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (< first-opened 0)
       -1
       (let
         [second-opened : i64
-          (embedded-native-computed-expr-ops params second-node ops ops-count)]
+          (embedded-native-computed-expr-ops
+            params
+            second-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< second-opened 0)
           -1
           (let
@@ -5120,8 +5359,8 @@
               (embedded-native-computed-expr-ops
                 params
                 third-node
-                ops
-                ops-count)]
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< third-opened 0)
               -1
               (begin
@@ -5141,8 +5380,8 @@
         (embedded-native-computed-expr-ops
           params
           (compiler_ast_types.ast-expr-list-get args index 0)
-          ops
-          ops-count)]
+          (owned_view.compiler-owned-shared-view ops)
+          (owned_view.compiler-owned-shared-view ops-count))]
       (if (< opened 0)
         -1
         (let
@@ -5168,7 +5407,12 @@
     -1
     (let
       [opened : i64
-        (embedded-native-computed-call-args-ops params args 0 ops ops-count)]
+        (embedded-native-computed-call-args-ops
+          params
+          args
+          0
+          (owned_view.compiler-owned-shared-view ops)
+          (owned_view.compiler-owned-shared-view ops-count))]
       (if (< opened 0)
         -1
         (begin
@@ -5195,8 +5439,8 @@
       (embedded-native-computed-expr-ops
         params
         (compiler_ast_types.ast-expr-list-get args 0 0)
-        ops
-        ops-count)]
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (or (string.eq move-aware "") (< name-opened 0))
       -1
       (let
@@ -5204,8 +5448,8 @@
           (embedded-native-computed-expr-ops
             params
             (compiler_ast_types.ast-expr-list-get args 1 0)
-            ops
-            ops-count)]
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< init-opened 0)
           -1
           (let
@@ -5213,8 +5457,8 @@
               (embedded-native-computed-expr-ops
                 params
                 (compiler_ast_types.ast-expr-list-get args 2 0)
-                ops
-                ops-count)]
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< cleanup-opened 0)
               -1
               (let
@@ -5222,8 +5466,8 @@
                   (embedded-native-computed-expr-ops
                     params
                     (compiler_ast_types.ast-expr-list-get args 3 0)
-                    ops
-                    ops-count)]
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count))]
                 (if (< body-opened 0)
                   -1
                   (begin
@@ -5252,7 +5496,11 @@
       -1
       (let
         [value-opened : i64
-          (embedded-native-computed-expr-ops params value-node ops ops-count)]
+          (embedded-native-computed-expr-ops
+            params
+            value-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< value-opened 0)
           -1
           (begin
@@ -5272,7 +5520,11 @@
   [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [opened : i64
-      (embedded-native-computed-expr-ops params arg-node ops ops-count)]
+      (embedded-native-computed-expr-ops
+        params
+        arg-node
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (< opened 0)
       -1
       (begin
@@ -5296,7 +5548,11 @@
       -1
       (let
         [type-opened : i64
-          (embedded-native-computed-expr-ops params type-node ops ops-count)]
+          (embedded-native-computed-expr-ops
+            params
+            type-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< type-opened 0)
           -1
           (begin
@@ -5323,7 +5579,11 @@
       -1
       (let
         [type-opened : i64
-          (embedded-native-computed-expr-ops params type-node ops ops-count)]
+          (embedded-native-computed-expr-ops
+            params
+            type-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< type-opened 0)
           -1
           (begin
@@ -5352,7 +5612,11 @@
       -1
       (let
         [expr-opened : i64
-          (embedded-native-computed-expr-ops params expr-node ops ops-count)]
+          (embedded-native-computed-expr-ops
+            params
+            expr-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< expr-opened 0)
           -1
           (begin
@@ -5566,8 +5830,8 @@
                     (embedded-native-computed-expr-ops
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                      ops
-                      ops-count)]
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
                   (if (or
                     (< opened 0)
                     (>= (array-ref ops-count 0) embedded-native-ops-cap))
@@ -5595,8 +5859,16 @@
       (if (match (embedded-stdlib-tlci-unwrap-expr node)
         [(compiler_ast_types.AstExpr.Quasiquote _) true]
         [_ false])
-        (embedded-native-body-ops params node ops ops-count)
-        (embedded-native-computed-expr-ops params node ops ops-count))]
+        (embedded-native-body-ops
+          params
+          node
+          (owned_view.compiler-owned-shared-view ops)
+          (owned_view.compiler-owned-shared-view ops-count))
+        (embedded-native-computed-expr-ops
+          params
+          node
+          (owned_view.compiler-owned-shared-view ops)
+          (owned_view.compiler-owned-shared-view ops-count)))]
     (if (or (< opened 0) (>= (array-ref ops-count 0) embedded-native-ops-cap))
       ""
       (embedded-native-arm-block-with-final
@@ -5612,11 +5884,11 @@
     [status : String (embedded-native-temp-name!)]
     (str_cat.str-cat
       "  (let ["
-      status
+      (owned_view.compiler-owned-shared-view status)
       " : i64\n"
       head
       "] (if (not (= "
-      status
+      (owned_view.compiler-owned-shared-view status)
       " 0)) "
       status
       "\n"
@@ -5713,16 +5985,16 @@
               (str_cat.str-cat
                 condition.open
                 "  (let ["
-                status
+                (owned_view.compiler-owned-shared-view status)
                 " : i64 0]\n"
                 "  (begin\n"
                 "  (while (if (= "
                 condition.text
                 " 1) (= "
-                status
+                (owned_view.compiler-owned-shared-view status)
                 " 0) false)\n"
                 "  (set! "
-                status
+                (owned_view.compiler-owned-shared-view status)
                 "\n"
                 body-code
                 "))\n"
@@ -5822,7 +6094,11 @@
             [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
             [opens : (__tl_dyn-array i64) (__tl_make-array 0)]
             [open-code : String
-              (embedded-native-let-bindings-open params (& bindings) 0 opens)]
+              (embedded-native-let-bindings-open
+                params
+                (& bindings)
+                0
+                (owned_view.compiler-owned-shared-view opens))]
             (if (string.eq open-code "\x01")
               (begin
                 (embedded-native-fallback-reason-note! "statement-let:bindings")
@@ -5881,7 +6157,13 @@
       (array.make-array String embedded-native-ops-cap)]
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     (begin
-      (embedded-native-template-push! ops ops-count op arg-a arg-b arg-c)
+      (embedded-native-template-push!
+        (owned_view.compiler-owned-shared-view ops)
+        ops-count
+        op
+        arg-a
+        arg-b
+        arg-c)
       ops)))
 
 ;; `(if (string.eq A B) then else)` or `(if (cmp (expr-list-length p) lit)
@@ -5894,7 +6176,10 @@
   [final : String]) : String
   (let
     [then-code : String
-      (embedded-native-computed-expr-code params then-node final)]
+      (embedded-native-computed-expr-code
+        params
+        then-node
+        (owned_view.compiler-owned-shared-view final))]
     (if (string.eq then-code "")
       ""
       (let
@@ -5949,8 +6234,9 @@
                                     (& cond-args)
                                     0
                                     0)
-                                  ops
-                                  ops-count)]
+                                  (owned_view.compiler-owned-shared-view ops)
+                                  (owned_view.compiler-owned-shared-view
+                                    ops-count))]
                               (if (or
                                 (< opened 0)
                                 (>=
@@ -6046,7 +6332,10 @@
     [arm-code : String
       (if (= slot -1)
         ""
-        (embedded-native-computed-expr-code params body-node final))]
+        (embedded-native-computed-expr-code
+          params
+          body-node
+          (owned_view.compiler-owned-shared-view final)))]
     (begin
       (set! (array-ref embedded-native-local-len 0) saved)
       (let
@@ -6063,12 +6352,12 @@
             [probe : String (embedded-native-temp-name!)]
             (str_cat.str-cat
               "  (let ["
-              probe
+              (owned_view.compiler-owned-shared-view probe)
               " : i64 (comptime-host-operand-expr-var? host session "
               (string.int->string param)
               " 0 0)]\n"
               "  (if (< "
-              probe
+              (owned_view.compiler-owned-shared-view probe)
               " 0)\n  "
               (string.int->string
                 tlci_core.tlci-host-callback-status-bad-request)
@@ -6117,7 +6406,8 @@
           [(compiler_ast_types.AstPattern.Variant name-id args-box)
             (let
               [pat-args : compiler_ast_types.AstPatternList
-                (__tl-box-place args-box)]
+                (compiler_ast_types.ast-pattern-list-box-shared-view
+                  (owned_view.compiler-owned-shared-view args-box))]
               (if (and
                 (string.eq (embedded-native-expr-variant-name name-id) "Var")
                 (= pat-args.len 1))
@@ -6475,7 +6765,7 @@
               (& arms)
               0
               param
-              final))]
+              (owned_view.compiler-owned-shared-view final)))]
         (if (not (string.eq value-text ""))
           value-text
           (let
@@ -6569,7 +6859,10 @@
               [lit : String (ci.intern-str sid)]
               [blockers-before : i64 embedded-native-full-blocker-events]
               [arm-code : String
-                (embedded-native-computed-expr-code params body-node final)]
+                (embedded-native-computed-expr-code
+                  params
+                  body-node
+                  (owned_view.compiler-owned-shared-view final))]
               [rest-code : String
                 (embedded-native-computed-match-arms-code
                   params
@@ -6604,7 +6897,8 @@
                     (string.int->string index)
                     " : i64 (comptime-host-string-value host session "
                     (embedded-native-name-arg
-                      (embedded-native-escape-string lit))
+                      (embedded-native-escape-string
+                        (owned_view.compiler-owned-shared-view lit)))
                     " "
                     (string.int->string (string.string-length lit))
                     " 0)] (if (not (= u"
@@ -6699,7 +6993,11 @@
             [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
             [opens : (__tl_dyn-array i64) (__tl_make-array 0)]
             [open-code : String
-              (embedded-native-let-bindings-open params (& bindings) 0 opens)]
+              (embedded-native-let-bindings-open
+                params
+                (& bindings)
+                0
+                (owned_view.compiler-owned-shared-view opens))]
             (if (string.eq open-code "\x01")
               (begin
                 (set! (array-ref embedded-native-local-len 0) saved)
@@ -6741,7 +7039,11 @@
         (let
           [blockers-before : i64 embedded-native-full-blocker-events]
           [binding-code : String
-            (embedded-native-let-binding-open params name maybe-ty init opens)]
+            (embedded-native-let-binding-open
+              params
+              name
+              init
+              (owned_view.compiler-owned-shared-view opens))]
           (if (string.eq binding-code "\x01")
             (begin
               (when
@@ -6791,7 +7093,9 @@
         [generated : String (embedded-native-temp-name!)]
         (if (and
           (< (embedded-native-local-index (ci.intern-str name)) 0)
-          (embedded-native-data-local-push! (ci.intern-str name) generated))
+          (embedded-native-data-local-push!
+            (ci.intern-str name)
+            (owned_view.compiler-owned-shared-view generated)))
           (begin
             (set!
               (array-ref opens 0)
@@ -6883,7 +7187,7 @@
               [rest : String
                 (embedded-native-match-arms
                   params
-                  probe-op
+                  (owned_view.compiler-owned-shared-view probe-op)
                   type-index
                   arms
                   (+ index 1))]
@@ -6897,7 +7201,8 @@
                   " host session "
                   (string.int->string type-index)
                   " "
-                  (embedded-native-name-arg kind)
+                  (embedded-native-name-arg
+                    (owned_view.compiler-owned-shared-view kind))
                   " "
                   (string.int->string (string.string-length kind))
                   ")]\n"
@@ -7110,12 +7415,16 @@
               (let
                 [name : String (embedded-native-temp-name!)]
                 [arms-code : String
-                  (embedded-native-int-match-arms params (& arms) 0 name)]
+                  (embedded-native-int-match-arms
+                    params
+                    (& arms)
+                    0
+                    (owned_view.compiler-owned-shared-view name))]
                 (if (string.eq arms-code "")
                   ""
                   (str_cat.str-cat
                     "  (let ["
-                    name
+                    (owned_view.compiler-owned-shared-view name)
                     " : i64 (comptime-host-expr-list-length host session "
                     (string.int->string param)
                     " 0 0)]\n"
@@ -7183,7 +7492,9 @@
         (compiler_ast_types.ast-pattern-fallback))
         [(compiler_ast_types.AstPattern.Wildcard) true]
         [(compiler_ast_types.AstPattern.Binding bind-id)
-          (embedded-native-data-local-push! (ci.intern-str bind-id) value)]
+          (embedded-native-data-local-push!
+            (ci.intern-str bind-id)
+            (owned_view.compiler-owned-shared-view value))]
         [_ false])]
     [arm-code : String
       (if bound
@@ -7195,12 +7506,12 @@
         ""
         (str_cat.str-cat
           "  (let ["
-          probe
+          (owned_view.compiler-owned-shared-view probe)
           " : i64 (comptime-host-operand-expr-int? host session "
           (string.int->string param)
           " 0 0)]\n"
           "  (if (< "
-          probe
+          (owned_view.compiler-owned-shared-view probe)
           " 0)\n  "
           (string.int->string tlci_core.tlci-host-callback-status-bad-request)
           "\n  (if (= "
@@ -7250,13 +7561,13 @@
         ""
         (str_cat.str-cat
           "  (let ["
-          probe
+          (owned_view.compiler-owned-shared-view probe)
           " : i64 (comptime-host-operand-expr-var? host session "
           (string.int->string param)
           " 0 0)]
 "
           "  (if (< "
-          probe
+          (owned_view.compiler-owned-shared-view probe)
           " 0)
   "
           (string.int->string tlci_core.tlci-host-callback-status-bad-request)
@@ -7312,7 +7623,8 @@
           [(compiler_ast_types.AstPattern.Variant name-id args-box)
             (let
               [pat-args : compiler_ast_types.AstPatternList
-                (__tl-box-place args-box)]
+                (compiler_ast_types.ast-pattern-list-box-shared-view
+                  (owned_view.compiler-owned-shared-view args-box))]
               (embedded-native-value-match-variant-arm
                 params
                 arms
@@ -7388,13 +7700,13 @@
           ""
           (str_cat.str-cat
             "  (let ["
-            name
+            (owned_view.compiler-owned-shared-view name)
             " : i64 (comptime-host-operand-expr-call? host session "
             (string.int->string param)
             " 0 0)]
 "
             "  (if (< "
-            name
+            (owned_view.compiler-owned-shared-view name)
             " 0)
   "
             (string.int->string tlci_core.tlci-host-callback-status-bad-request)
@@ -7500,7 +7812,11 @@
               (let
                 [arm-code : String (embedded-native-body-code params body-node)]
                 [rest : String
-                  (embedded-native-int-match-arms params arms (+ index 1) name)]
+                  (embedded-native-int-match-arms
+                    params
+                    arms
+                    (+ index 1)
+                    (owned_view.compiler-owned-shared-view name))]
                 (if (or (string.eq arm-code "") (string.eq rest ""))
                   ""
                   (str_cat.str-cat
@@ -7551,8 +7867,13 @@
   (let
     [ops : (__tl_dyn-array String)
       (array.make-array String embedded-native-ops-cap)]
-    [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
-    [opened : i64 (embedded-native-body-ops params body-node ops ops-count)]
+    [ops-count : (__tl_dyn-array i64) (make-array 0)]
+    [opened : i64
+      (embedded-native-body-ops
+        params
+        body-node
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (or (< opened 0) (>= (array-ref ops-count 0) embedded-native-ops-cap))
       ""
       (embedded-native-arm-block ops (array-ref ops-count 0) opened))))
@@ -7714,11 +8035,14 @@
     [walked-index : i64 0]
     (begin
       (if (= embedded-native-full-blocker-len 0)
-        (embedded-native-full-report-append! identity "blocked" "unreported")
+        (embedded-native-full-report-append!
+          (owned_view.compiler-owned-shared-view identity)
+          "blocked"
+          "unreported")
         (while (< blocker-index embedded-native-full-blocker-len)
           (begin
             (embedded-native-full-report-append!
-              identity
+              (owned_view.compiler-owned-shared-view identity)
               "blocked"
               (string.copy
                 (& (array-ref embedded-native-full-blockers blocker-index))))
@@ -7726,7 +8050,7 @@
       (when
         embedded-native-full-blocker-overflow
         (embedded-native-full-report-append!
-          identity
+          (owned_view.compiler-owned-shared-view identity)
           "blocked"
           "diagnostic-capacity-exceeded"))
       (while (< walked-index embedded-native-full-walked-len)
@@ -7740,8 +8064,11 @@
                 (embedded-native-full-string-set-contains?
                   (& embedded-native-full-blockers)
                   embedded-native-full-blocker-len
-                  capability))
-              (embedded-native-full-report-append! identity "walked" capability))
+                  (owned_view.compiler-owned-shared-view capability)))
+              (embedded-native-full-report-append!
+                (owned_view.compiler-owned-shared-view identity)
+                "walked"
+                capability))
             (set! walked-index (+ walked-index 1)))))
       (when
         embedded-native-full-walked-overflow
@@ -7942,7 +8269,9 @@
       (while (< index count)
         (let
           [slot : i64
-            (tlci-native-macro-capture-slot captures (array-ref names index))]
+            (tlci-native-macro-capture-slot
+              captures
+              (owned_view.compiler-owned-array-element-shared-view names index))]
           [body-text : String
             (if (>= slot 0)
               (begin
@@ -7951,7 +8280,11 @@
                 (embedded-native-body-code
                   (&
                     (__tl-project-field (array-ref captures.slots slot) params))
-                  (__tl-project-field (array-ref captures.slots slot) body)))
+                  (__tl-project-field
+                    (owned_view.compiler-owned-array-element-shared-view
+                      captures.slots
+                      slot)
+                    body)))
               "")]
           (begin
             (set!
@@ -7970,7 +8303,9 @@
                     (string.copy
                       (&
                         (array-ref embedded-stdlib-tlci-native-report-reasons 0)))
-                    (array-ref names index)
+                    (owned_view.compiler-owned-array-element-shared-view
+                      names
+                      index)
                     "\t"
                     (if (=
                       (string.string-length
@@ -7990,11 +8325,15 @@
                             (array-ref captures.slots slot)
                             params))
                         (__tl-project-field
-                          (array-ref captures.slots slot)
+                          (owned_view.compiler-owned-array-element-shared-view
+                            captures.slots
+                            slot)
                           body))
                       (embedded-native-full-blocker-reset!))
                     (embedded-native-full-blocker-render!
-                      (array-ref names index))))
+                      (owned_view.compiler-owned-array-element-shared-view
+                        names
+                        index))))
                 (set!
                   out
                   (str_cat.str-cat
@@ -8005,7 +8344,7 @@
               (let
                 [arm-sites : i64
                   (embedded-native-count-occurrences
-                    body-text
+                    (owned_view.compiler-owned-shared-view body-text)
                     (string.copy (& embedded-native-interpreted-arm-marker)))]
                 (begin
                   (set! native-count (+ native-count 1))
@@ -8042,7 +8381,7 @@
         (let
           [offset : i64
             (compiler_tlci_native_image.compiler-tlci-native-entry-offset
-              image
+              (owned_view.compiler-owned-shared-view image)
               (str_cat.str-cat "_tl_f" (string.int->string index)))]
           (if (< offset 0)
             (set! ok false)
@@ -8064,7 +8403,10 @@
   [names : (__tl_dyn-array String)]
   [captures : (& captures TlciNativeMacroCaptures)]) : ResultProducerBytes
   (let
-    [source : String (embedded-native-source names captures)]
+    [source : String
+      (embedded-native-source
+        (owned_view.compiler-owned-shared-view names)
+        captures)]
     [target : compiler_backend.CompilerBackendTarget
       (if windows-target
         (compiler_backend.CompilerBackendTarget.Windows)
@@ -8077,7 +8419,7 @@
           (str_cat.str-cat
             "generated source rejected: "
             (compiler_diagnostic.compiler-diagnostic-render
-              (__tl-box-place diag))))]
+              (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))))]
       [(ResultCompilerLower.Ok program spans)
         (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
           program
@@ -8091,10 +8433,10 @@
               (str_cat.str-cat
                 "object emission failed: "
                 (compiler_diagnostic.compiler-diagnostic-render
-                  (__tl-box-place diag))))]
+                  (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))))]
           [(compiler_backend.ResultCompilerBackendObject.Ok image)
             (match (compiler_tlci_native_image.compiler-tlci-native-layout-image
-              image)
+              (owned_view.compiler-owned-shared-view image))
               [(compiler_tlci_native_image.ResultCompilerTlciNativeLayout.Err
                   message)
                 (ResultProducerBytes.Err message)]
@@ -8125,7 +8467,7 @@
                           imports
                           layout.fixup-offsets
                           layout.fixup-count
-                          names
+                          (owned_view.compiler-owned-shared-view names)
                           entry-offsets
                           (array-length names))
                           [(compiler_tlci_native_image.ResultCompilerTlciNativeBytes.Err

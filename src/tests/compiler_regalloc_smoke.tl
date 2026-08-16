@@ -71,21 +71,21 @@
   (let
     [func : ir.CompilerIrFunction (compiler-reg-smoke-spmd-call-function)]
     [blocks : ir.CompilerIrBlockList
-      (match func
+      (match (clone func)
         [(ir.CompilerIrFunction.Function _ _ _ _ inner) inner])]
     [call-args : live.CompilerLiveI64Set
       (reg.compiler-reg-call-arg-vars-blocks
-        blocks
+        (clone blocks)
         (live.compiler-live-set-empty))]
     [liveness : live.CompilerFunctionLiveness
-      (live.compiler-live-analyze-function func)]
+      (live.compiler-live-analyze-function (clone func))]
     [call-live : live.CompilerLiveI64Set
       (reg.compiler-reg-call-live-blocks
         blocks
         liveness
         (live.compiler-live-set-empty))]
     [direct-calls : live.CompilerLiveI64Set
-      (reg.compiler-reg-direct-call-points func)]
+      (reg.compiler-reg-direct-call-points (clone func))]
     (match (reg.compiler-reg-plan-function func)
       [(reg.CompilerRegPlan.Plan _ ineligible _ _ _ _)
         (and
@@ -94,9 +94,15 @@
           (live.compiler-live-set-contains? direct-calls 6)
           ;; Call operands retain ordinary spill eligibility; only hidden helper
           ;; parameters are admitted to the fixed private-register allocator.
-          (live.compiler-live-set-contains? ineligible 0)
-          (live.compiler-live-set-contains? ineligible 1)
-          (live.compiler-live-set-contains? ineligible 2))])))
+          (live.compiler-live-set-contains?
+            (live.compiler-live-shared-view ineligible)
+            0)
+          (live.compiler-live-set-contains?
+            (live.compiler-live-shared-view ineligible)
+            1)
+          (live.compiler-live-set-contains?
+            (live.compiler-live-shared-view ineligible)
+            2))])))
 
 (define (compiler-reg-smoke-descriptor-pair-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -178,12 +184,28 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           representations
           (ast.AstType.DynArray 1)))
-      (= (live.compiler-live-set-count groups) 2)
-      (not (live.compiler-live-set-contains? groups 0))
-      (live.compiler-live-set-contains? groups 4)
-      (live.compiler-live-set-contains? groups 5)
-      (not (live.compiler-live-set-contains? groups 6))
-      (not (live.compiler-live-set-contains? groups 7)))))
+      (=
+        (live.compiler-live-set-count
+          (live.compiler-live-shared-view groups))
+        2)
+      (not
+        (live.compiler-live-set-contains?
+          (live.compiler-live-shared-view groups)
+          0))
+      (live.compiler-live-set-contains?
+        (live.compiler-live-shared-view groups)
+        4)
+      (live.compiler-live-set-contains?
+        (live.compiler-live-shared-view groups)
+        5)
+      (not
+        (live.compiler-live-set-contains?
+          (live.compiler-live-shared-view groups)
+          6))
+      (not
+        (live.compiler-live-set-contains?
+          (live.compiler-live-shared-view groups)
+          7)))))
 
 (define (main) : i64
   (begin

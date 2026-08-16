@@ -106,6 +106,9 @@
   (OkArgsParseAdvance ArgsParseAdvance)
   (ErrArgsParseAdvance ArgsError))
 
+(define (args-string-shared-view [value : (& value str)]) : String
+  (__tl-compiler-owned-shared-view-dyn-ref-as value String))
+
 ;: Return an empty option spec list.
 (define (option-spec-empty) : ArgsOptionSpecList
   (ArgsOptionSpecList (array.make-array ArgsOptionSpec 0) 0))
@@ -134,20 +137,29 @@
   (ArgsOptionSpec name long short (ArgsValue)))
 
 ;: Return the canonical name for a spec.
-(define (option-spec-name [spec : ArgsOptionSpec]) : String
-  spec.name)
+(define (option-spec-name [spec : (& spec ArgsOptionSpec)]) : String
+  (args-string-shared-view spec.name))
 
 ;: Return the long spelling for a spec, without leading dashes.
-(define (option-spec-long [spec : ArgsOptionSpec]) : String
-  spec.long)
+(define (option-spec-long [spec : (& spec ArgsOptionSpec)]) : String
+  (args-string-shared-view spec.long))
 
 ;: Return the short spelling for a spec, without the leading dash.
-(define (option-spec-short [spec : ArgsOptionSpec]) : String
-  spec.short)
+(define (option-spec-short [spec : (& spec ArgsOptionSpec)]) : String
+  (args-string-shared-view spec.short))
 
 ;: Return the arity for a spec.
-(define (option-spec-arity [spec : ArgsOptionSpec]) : ArgsOptionArity
-  spec.arity)
+(define (option-spec-arity [spec : (& spec ArgsOptionSpec)]) : ArgsOptionArity
+  (match spec.arity
+    [(ArgsFlag) (ArgsFlag)]
+    [(ArgsValue) (ArgsValue)]))
+
+(define (option-spec-copy [spec : (& spec ArgsOptionSpec)]) : ArgsOptionSpec
+  (ArgsOptionSpec
+    (option-spec-name spec)
+    (option-spec-long spec)
+    (option-spec-short spec)
+    (option-spec-arity spec)))
 
 ;: Return true when an arity consumes a following value.
 (define (option-arity-value? [arity : ArgsOptionArity]) : bool
@@ -156,16 +168,24 @@
     [(ArgsValue) true]))
 
 ;: Return true when `spec` has the long spelling `name`.
-(define (option-spec-matches-long? [spec : ArgsOptionSpec] [name : String]) : bool
-  (if (not (string.eq (option-spec-long spec) ""))
-    (string.eq (option-spec-long spec) name)
-    false))
+(define (option-spec-matches-long?
+  [spec : (& spec ArgsOptionSpec)]
+  [name : (& name str)]) : bool
+  (let
+    [long : String (option-spec-long spec)]
+    (if (not (string.eq long ""))
+      (string.eq long name)
+      false)))
 
 ;: Return true when `spec` has the short spelling `name`.
-(define (option-spec-matches-short? [spec : ArgsOptionSpec] [name : String]) : bool
-  (if (not (string.eq (option-spec-short spec) ""))
-    (string.eq (option-spec-short spec) name)
-    false))
+(define (option-spec-matches-short?
+  [spec : (& spec ArgsOptionSpec)]
+  [name : (& name str)]) : bool
+  (let
+    [short : String (option-spec-short spec)]
+    (if (not (string.eq short ""))
+      (string.eq short name)
+      false)))
 
 ;: Copy `count` occurrences from `src` into `dst` starting at `offset`.
 (define (option-list-copy!
@@ -220,40 +240,44 @@
       (ArgsOptionList slots (+ len 1)))))
 
 ;: Return a parsed option occurrence's canonical name.
-(define (option-name [option : ArgsOption]) : String
-  option.name)
+(define (option-name [option : (& option ArgsOption)]) : String
+  (args-string-shared-view option.name))
 
 ;: Return a parsed option occurrence's value, or the empty string for flags.
-(define (option-value [option : ArgsOption]) : String
-  option.value)
+(define (option-value [option : (& option ArgsOption)]) : String
+  (args-string-shared-view option.value))
 
 ;: Return true when a parsed option occurrence carries a value.
-(define (option-has-value? [option : ArgsOption]) : bool
+(define (option-has-value? [option : (& option ArgsOption)]) : bool
   option.has-value)
 
 ;: Count parsed option occurrences with the canonical `name`.
-(define (option-list-count [items : ArgsOptionList] [name : String]) : i64
+(define (option-list-count
+  [items : (& items ArgsOptionList)]
+  [name : (& name str)]) : i64
   (let
     [index : i64 0]
     [count : i64 0]
     (begin
       (while (< index items.len)
         (begin
-          (if (string.eq (option-name (array-ref items.slots index)) name)
+          (if (string.eq (option-name (& (array-ref items.slots index))) name)
             (set! count (+ count 1))
             unit)
           (set! index (+ index 1))))
       count)))
 
 ;: Return true when `items` contains at least one option with `name`.
-(define (option-list-present? [items : ArgsOptionList] [name : String]) : bool
+(define (option-list-present?
+  [items : (& items ArgsOptionList)]
+  [name : (& name str)]) : bool
   (> (option-list-count items name) 0))
 
 ;: Return the last value carried by option `name`, or `fallback` when absent or
 ;: when only boolean flag occurrences are present.
 (define (option-list-value-or
-  [items : ArgsOptionList]
-  [name : String]
+  [items : (& items ArgsOptionList)]
+  [name : (& name str)]
   [fallback : String]) : String
   (let
     [index : i64 0]
@@ -261,7 +285,7 @@
     (begin
       (while (< index items.len)
         (let
-          [head : ArgsOption (array-ref items.slots index)]
+          [head : (& items ArgsOption) (& (array-ref items.slots index))]
           (begin
             (if (if (string.eq (option-name head) name)
               (option-has-value? head)
@@ -272,8 +296,10 @@
       result)))
 
 ;: Return the parsed option occurrence list.
-(define (parsed-options [parsed : ArgsParsed]) : ArgsOptionList
-  parsed.options)
+(define (parsed-options [parsed : (& parsed ArgsParsed)]) : (&
+    parsed
+    ArgsOptionList)
+  (& parsed.options))
 
 ;: Borrow the positional arguments in input order.
 (define (parsed-positionals [parsed : (& parsed ArgsParsed)]) : (&
@@ -282,17 +308,17 @@
   (& parsed.positionals))
 
 ;: Count option occurrences in a parsed result.
-(define (option-count [parsed : ArgsParsed] [name : String]) : i64
+(define (option-count [parsed : (& parsed ArgsParsed)] [name : (& name str)]) : i64
   (option-list-count (parsed-options parsed) name))
 
 ;: Return true when a parsed result contains option `name`.
-(define (option-present? [parsed : ArgsParsed] [name : String]) : bool
+(define (option-present? [parsed : (& parsed ArgsParsed)] [name : (& name str)]) : bool
   (option-list-present? (parsed-options parsed) name))
 
 ;: Return the last parsed value for option `name`, or `fallback`.
 (define (option-value-or
-  [parsed : ArgsParsed]
-  [name : String]
+  [parsed : (& parsed ArgsParsed)]
+  [name : (& name str)]
   [fallback : String]) : String
   (option-list-value-or (parsed-options parsed) name fallback))
 
@@ -305,77 +331,79 @@
       (str_cat.str-cat "args: missing value for " option)]))
 
 ;: Return true for unknown-option errors.
-(define (error-unknown-option? [error : ArgsError]) : bool
+(define (error-unknown-option? [error : (& error ArgsError)]) : bool
   (match error
     [(ArgsUnknownOption _) true]
     [(ArgsMissingValue _) false]))
 
 ;: Return true for missing-value errors.
-(define (error-missing-value? [error : ArgsError]) : bool
+(define (error-missing-value? [error : (& error ArgsError)]) : bool
   (match error
     [(ArgsUnknownOption _) false]
     [(ArgsMissingValue _) true]))
 
 ;: Return the original option token carried by an error.
-(define (error-option [error : ArgsError]) : String
+(define (error-option [error : (& error ArgsError)]) : String
   (match error
-    [(ArgsUnknownOption option) option]
-    [(ArgsMissingValue option) option]))
+    [(ArgsUnknownOption option) (args-string-shared-view option)]
+    [(ArgsMissingValue option) (args-string-shared-view option)]))
 
 ;: Return true when `token` is exactly `--`.
-(define (end-of-options-token? [token : String]) : bool
+(define (end-of-options-token? [token : (& token str)]) : bool
   (string.eq token "--"))
 
 ;: Return true when `token` looks like an option token rather than a positional.
-(define (option-looking-token? [token : String]) : bool
+(define (option-looking-token? [token : (& token str)]) : bool
   (and (> (string-length token) 1) (string.char-eq (string-ref token 0) '-')))
 
 ;: Return true when `token` has the supported long spelling `--name`.
-(define (long-token? [token : String]) : bool
+(define (long-token? [token : (& token str)]) : bool
   (and
     (> (string-length token) 2)
     (string.char-eq (string-ref token 0) '-')
     (string.char-eq (string-ref token 1) '-')))
 
 ;: Return true when `token` has the supported short spelling `-x`.
-(define (short-token? [token : String]) : bool
+(define (short-token? [token : (& token str)]) : bool
   (and (= (string-length token) 2) (string.char-eq (string-ref token 0) '-')))
 
 ;: Return the long name portion of a supported long token.
-(define (token-long-name [token : String]) : String
+(define (token-long-name [token : (& token str)]) : String
   (string.substring token 2 (- (string-length token) 2)))
 
 ;: Return the short name portion of a supported short token.
-(define (token-short-name [token : String]) : String
+(define (token-short-name [token : (& token str)]) : String
   (string.substring token 1 1))
 
 ;: Find the first spec from `index` matching `name`, comparing long spellings
 ;: when `long?` is true and short spellings otherwise.
 (define (find-spec-from
-  [specs : ArgsOptionSpecList]
-  [name : String]
+  [specs : (& specs ArgsOptionSpecList)]
+  [name : (& name str)]
   [long? : bool]
   [index : i64]) : ArgsMaybeOptionSpec
   (if (>= index specs.len)
     (ArgsNoOptionSpec)
     (let
-      [spec : ArgsOptionSpec (array-ref specs.slots index)]
+      [spec : (& specs ArgsOptionSpec) (& (array-ref specs.slots index))]
       (if (if long?
         (option-spec-matches-long? spec name)
         (option-spec-matches-short? spec name))
-        (ArgsSomeOptionSpec spec)
+        (ArgsSomeOptionSpec (option-spec-copy spec))
         (find-spec-from specs name long? (+ index 1))))))
 
 ;: Find a spec by long spelling.
-(define (find-spec-long [specs : ArgsOptionSpecList] [name : String]) : ArgsMaybeOptionSpec
+(define (find-spec-long [specs : (& specs ArgsOptionSpecList)] [name : String]) : ArgsMaybeOptionSpec
   (find-spec-from specs name true 0))
 
 ;: Find a spec by short spelling.
-(define (find-spec-short [specs : ArgsOptionSpecList] [name : String]) : ArgsMaybeOptionSpec
+(define (find-spec-short [specs : (& specs ArgsOptionSpecList)] [name : String]) : ArgsMaybeOptionSpec
   (find-spec-from specs name false 0))
 
 ;: Find a matching spec for a supported option token.
-(define (find-spec-token [specs : ArgsOptionSpecList] [token : String]) : ArgsMaybeOptionSpec
+(define (find-spec-token
+  [specs : (& specs ArgsOptionSpecList)]
+  [token : (& token str)]) : ArgsMaybeOptionSpec
   (if (long-token? token)
     (find-spec-long specs (token-long-name token))
     (if (short-token? token)
@@ -387,9 +415,7 @@
   (ArgsParseState (option-list-empty) (svec.new) false))
 
 ;: Add a positional token to a parse state.
-(define (parse-state-add-positional
-  [state : ArgsParseState (:consume)]
-  [value : String]) : ArgsParseState
+(define (parse-state-add-positional [state : ArgsParseState] [value : String]) : ArgsParseState
   (let
     [positionals : svec.Vec state.positionals]
     (begin
@@ -438,7 +464,7 @@
 ;: one.
 (define (advance-known-option
   [state : ArgsParseState]
-  [spec : ArgsOptionSpec]
+  [spec : (& spec ArgsOptionSpec)]
   [current : String]
   [next-value : String]
   [has-next : bool]
@@ -588,7 +614,7 @@
   [index : i64]
   [end : i64]
   [options : ArgsOptionList]
-  [positionals : svec.Vec (:consume)]
+  [positionals : svec.Vec]
   [stop-options : bool]) : ResultArgsParsed
   (if (>= index end)
     (OkArgsParsed (parse-finish-fields options positionals))
@@ -836,9 +862,7 @@
       items)))
 
 ;: Parse a consumed test fixture through the public borrowed-Vec API.
-(define (test-parse-vec
-  [specs : ArgsOptionSpecList]
-  [argv : svec.Vec (:consume)]) : ResultArgsParsed
+(define (test-parse-vec [specs : ArgsOptionSpecList] [argv : svec.Vec]) : ResultArgsParsed
   (parse-vec specs (& argv)))
 
 ;: Unwrap a successful argv parse result for inline tests.

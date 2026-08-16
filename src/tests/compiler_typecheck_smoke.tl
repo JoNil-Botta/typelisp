@@ -3000,9 +3000,9 @@
                         state)
                       (load.compiler-load-session-state-program-cache-store-count-value
                         state)
-                      (match first-seen
-                        [(sym_i64_env.SymI64Nil) false]
-                        [_ true])
+                      (match (sym_i64_env.sym-i64-view first-seen)
+                        [(sym_i64_env.SymI64ViewNil) false]
+                        [(sym_i64_env.SymI64ViewBind _ _ _) true])
                       (match (load.compiler-load-session-state-surface-summary-find-module
                         state
                         (ci.intern "tc_state_dep"))

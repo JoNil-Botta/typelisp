@@ -137,13 +137,23 @@
       (if (string.eq key-kind "string")
         `(& key str)
         K)]
+    [key-eq-left-type : comptime.Expr
+      (if (string.eq key-kind "string")
+        `(& left str)
+        K)]
     [owned-query-key : comptime.Expr
-      (if (string.eq key-kind "string")
-        `(& key)
-        `key)]
+      (match key-kind
+        ["string" `(& key)]
+        ["generated" `(clone key)]
+        [_ `key])]
     [query-owned-key : comptime.Expr
-      (if (string.eq key-kind "string")
-        `(string_mod.copy key)
+      (match key-kind
+        ["string" `(string_mod.copy key)]
+        ["generated" `(clone key)]
+        [_ `key])]
+    [reusable-query-key : comptime.Expr
+      (if (string.eq key-kind "generated")
+        `(clone key)
         `key)]
     [borrowed-value-type : comptime.Expr
       (if (string.eq value-kind "string")
@@ -171,9 +181,13 @@
         [_ `(key_hash.hash key)])]
     [key-eq-body : comptime.Expr
       (match key-kind
-        ["string" `(hash_mod.key-string-eq? (& left) right)]
+        ["string" `(hash_mod.key-string-eq? left right)]
         ["i64" `(= left right)]
         [_ `(key_eq.eq left right)])]
+    [probe-key-eq-body : comptime.Expr
+      (if (string.eq key-kind "generated")
+        `(key-eq? (clone (__tl-project-field-name slot "key")) (clone key))
+        `(key-eq? (__tl-project-field-name slot "key") key))]
     ;; Keep the generated i64 -> i64 hot path as lean as the former concrete
     ;; family. Its raw reads are bounded by the positive power-of-two capacity;
     ;; growth finishes before a pointer is captured, and no scan reallocates.
@@ -230,18 +244,22 @@
           (while (< scan old-count)
             (begin
               (let
-                [old-slot : GeneratedHashmapSlot (array-ref old-slots scan)]
-                (match (__tl-project-field-name old-slot "state")
+                [old-slot : GeneratedHashmapSlot
+                  (clone (array-ref old-slots scan))]
+                (match (clone (__tl-project-field-name old-slot "state"))
                   [GeneratedHashmapSlotState.Occupied
                     (let
-                      [key : ,K (__tl-project-field-name old-slot "key")]
-                      [value : ,V (__tl-project-field-name old-slot "value")]
+                      [key : ,K
+                        (clone (__tl-project-field-name old-slot "key"))]
+                      [value : ,V
+                        (clone (__tl-project-field-name old-slot "value"))]
                       [hash : i64 (__tl-project-field-name old-slot "hash")]
                       [index : i64 (bit-and hash mask)]
                       (begin
-                        (while (match (__tl-project-field-name
-                          (array-ref fresh index)
-                          "state")
+                        (while (match (clone
+                          (__tl-project-field-name
+                            (array-ref fresh index)
+                            "state"))
                           [GeneratedHashmapSlotState.Empty false]
                           [_ true])
                           (set! index (bit-and (+ index 1) mask)))
@@ -482,10 +500,11 @@
               (begin
                 (while (< walked capacity)
                   (let
-                    [slot : GeneratedHashmapSlot (array-ref slots cursor)]
-                    (match (__tl-project-field-name slot "state")
+                    [slot : (& slots GeneratedHashmapSlot)
+                      (& (array-ref slots cursor))]
+                    (match (clone (__tl-project-field-name slot "state"))
                       [GeneratedHashmapSlotState.Occupied
-                        (if (key-eq? (__tl-project-field-name slot "key") key)
+                        (if ,probe-key-eq-body
                           (return (GeneratedHashmapProbe.Found cursor))
                           (begin
                             (set! cursor (bit-and (+ cursor 1) mask))
@@ -521,8 +540,9 @@
               (begin
                 (while (< walked capacity)
                   (let
-                    [slot : GeneratedHashmapSlot (array-ref slots cursor)]
-                    (match (__tl-project-field-name slot "state")
+                    [slot : (& slots GeneratedHashmapSlot)
+                      (& (array-ref slots cursor))]
+                    (match (clone (__tl-project-field-name slot "state"))
                       [GeneratedHashmapSlotState.Empty
                         (return
                           (GeneratedHashmapProbe.Absent
@@ -538,7 +558,7 @@
                           (set! walked (+ walked 1)))]
                       [GeneratedHashmapSlotState.Occupied
                         (if (if (= (__tl-project-field-name slot "hash") hash)
-                          (key-eq? (__tl-project-field-name slot "key") key)
+                          ,probe-key-eq-body
                           false)
                           (return (GeneratedHashmapProbe.Found cursor))
                           (begin
@@ -590,7 +610,11 @@
                         unit)))
                   -1)))))
         `(define (find-index [map : (& map Map)] [key : ,query-key-type]) : i64
-          (match (probe (& map.slots) (capacity map) key (hash-key key))
+          (match (probe
+            (& map.slots)
+            (capacity map)
+            ,reusable-query-key
+            (hash-key ,reusable-query-key))
             [(GeneratedHashmapProbe.Found index) index]
             [_ -1])))]
     ;; Scalar lookup walks the probe itself rather than routing through
@@ -643,8 +667,9 @@
           (if (< index 0)
             (LookupMissing)
             (let
-              [slot : GeneratedHashmapSlot (array-ref map.slots index)]
-              (match (__tl-project-field-name slot "state")
+              [slot : (& map GeneratedHashmapSlot)
+                (& (array-ref map.slots index))]
+              (match (clone (__tl-project-field-name slot "state"))
                 [GeneratedHashmapSlotState.Occupied
                   (let
                     [value : ,V (__tl-project-field-name slot "value")]
@@ -663,7 +688,8 @@
         [index : i64 (find-index map key)]
         (if (< index 0)
           (borrowed-value-missing map)
-          (match (__tl-project-field-name (array-ref map.slots index) "state")
+          (match (clone
+            (__tl-project-field-name (array-ref map.slots index) "state"))
             [GeneratedHashmapSlotState.Occupied
               (borrowed-value-found (slot-value-borrowed map index))]
             [_ (borrowed-value-missing map)])))]
@@ -671,19 +697,21 @@
       (if scalar-family
         `(if entry.present
           (let
-            [slot : GeneratedHashmapSlot (array-ref entry.slots entry.index)]
-            (match (__tl-project-field-name slot "state")
+            [slot : GeneratedHashmapSlot
+              (clone (array-ref entry.slots entry.index))]
+            (match (clone (__tl-project-field-name slot "state"))
               [GeneratedHashmapSlotState.Occupied
                 (__tl-project-field-name slot "value")]
               [_ fallback]))
           fallback)
         `(if entry.present
           (let
-            [slot : GeneratedHashmapSlot (array-ref entry.slots entry.index)]
-            (match (__tl-project-field-name slot "state")
+            [slot : GeneratedHashmapSlot
+              (clone (array-ref entry.slots entry.index))]
+            (match (clone (__tl-project-field-name slot "state"))
               [GeneratedHashmapSlotState.Occupied
                 (let
-                  [value : ,V (__tl-project-field-name slot "value")]
+                  [value : ,V (clone (__tl-project-field-name slot "value"))]
                   ,value-copy)]
               [_ fallback]))
           fallback))]
@@ -726,9 +754,8 @@
           [found : bool false]
           (begin
             (while (and (not found) (< index cap))
-              (match (__tl-project-field-name
-                (array-ref map.slots index)
-                "state")
+              (match (clone
+                (__tl-project-field-name (array-ref map.slots index) "state"))
                 [GeneratedHashmapSlotState.Occupied (set! found true)]
                 [_ (set! index (+ index 1))]))
             index)))]
@@ -751,12 +778,12 @@
           (EntryNone))
         `(if (and (>= index 0) (< index (capacity map)))
           (let
-            [slot : GeneratedHashmapSlot (array-ref map.slots index)]
-            (match (__tl-project-field-name slot "state")
+            [slot : GeneratedHashmapSlot (clone (array-ref map.slots index))]
+            (match (clone (__tl-project-field-name slot "state"))
               [GeneratedHashmapSlotState.Occupied
                 (let
-                  [key : ,K (__tl-project-field-name slot "key")]
-                  [value : ,V (__tl-project-field-name slot "value")]
+                  [key : ,K (clone (__tl-project-field-name slot "key"))]
+                  [value : ,V (clone (__tl-project-field-name slot "value"))]
                   (EntrySome ,key-copy ,value-copy))]
               [_ (EntryNone)]))
           (EntryNone)))]
@@ -863,7 +890,7 @@
           (EntrySome ,K ,V))
         (define (hash-key [key : ,query-key-type]) : i64
           ,hash-key-body)
-        (define (key-eq? [left : ,K] [right : ,query-key-type]) : bool
+        (define (key-eq? [left : ,key-eq-left-type] [right : ,query-key-type]) : bool
           ,key-eq-body)
         ,publish-occupied-decl
         (define (set-occupied-value!
@@ -1041,7 +1068,7 @@
             [(LookupFound value) (EntryOrInsertFound value)]
             [(LookupMissing)
               (begin
-                (insert-ref! map key default-value)
+                (insert-ref! map key (clone default-value))
                 (EntryOrInsertInserted default-value))]))
         (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
           (match result
@@ -1057,11 +1084,15 @@
           [map : (&mut map Map)]
           [key : ,query-key-type]) : (MutEntry map)
           (let
-            [hash : i64 (hash-key key)]
+            [hash : i64 (hash-key ,reusable-query-key)]
             [slots : (&mut map (__tl_dyn-array GeneratedHashmapSlot))
               (&mut map.slots)]
             [result : GeneratedHashmapProbe
-              (probe (& slots) (array_ops.length slots) key hash)]
+              (probe
+                (& slots)
+                (array_ops.length slots)
+                ,reusable-query-key
+                hash)]
             (match result
               [(GeneratedHashmapProbe.Found index)
                 (MutEntry slots index true ,query-owned-key hash)]
@@ -1072,7 +1103,7 @@
         (define (get-mut-entry [map : (&mut map Map)] [key : ,K]) : (MutEntry
             map)
           (get-mut-entry-borrowed map ,owned-query-key))
-        (define (mut-entry-present? [entry : (MutEntry map)]) : bool
+        (define (mut-entry-present? [entry : (& entry (MutEntry map))]) : bool
           entry.present)
         (define (mut-entry-value-or [entry : (MutEntry map)] [fallback : ,V]) : ,V
           ,mut-entry-value-or-body)

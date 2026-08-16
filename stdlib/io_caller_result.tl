@@ -19,11 +19,13 @@
   (is-owned bool))
 
 ;: True when `result` carries the caller fallback borrow.
-(define (read-file-or-result-borrowed? [result : (ReadFileOrResult fallback)]) : bool
+(define (read-file-or-result-borrowed?
+  [result : (& result (ReadFileOrResult fallback))]) : bool
   (not result.is-owned))
 
 ;: True when `result` carries owned file contents from a successful read.
-(define (read-file-or-result-owned? [result : (ReadFileOrResult fallback)]) : bool
+(define (read-file-or-result-owned?
+  [result : (& result (ReadFileOrResult fallback))]) : bool
   result.is-owned)
 
 ;: Construct a borrowed fallback result.

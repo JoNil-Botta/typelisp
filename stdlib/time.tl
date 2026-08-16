@@ -51,12 +51,12 @@
   (ErrTimeUnit (TimeUnavailable message)))
 
 ;: Convert private `timespec {sec,nsec}` storage to milliseconds.
-(define (timespec-ms [timespec : (__tl_dyn-array i64)]) : i64
+(define (timespec-ms [timespec : (& timespec (__tl_dyn-array i64))]) : i64
   (+ (* (array-ref timespec 0) 1000) (/ (array-ref timespec 1) 1000000)))
 
 ;: Fill a Linux `timespec {sec,nsec}` without overflowing for any nonnegative i64 milliseconds.
 (define (timespec-from-ms!
-  [timespec : (__tl_dyn-array i64)]
+  [timespec : (&mut timespec (__tl_dyn-array i64))]
   [milliseconds : i64]) : unit
   (begin
     (set! (array-ref timespec 0) (/ milliseconds 1000))
@@ -65,9 +65,17 @@
 ;: Return the raw data address of private `i64` storage for Linux syscalls.
 (cfg
   (not windows)
-  (define (array-addr [items : (__tl_dyn-array i64)]) : i64
+  (define (array-addr [items : (& items (__tl_dyn-array i64))]) : i64
     (unsafe
-      (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64))))
+      (cast
+        (ptr->int
+          (ptr-cast
+            (array-data
+              (__tl-compiler-owned-shared-view-dyn-ref-as
+                items
+                (__tl_dyn-array i64)))
+            : (Ptr u8)))
+        : i64))))
 
 ;: Linux `clock_gettime(clock_id)` via raw syscall 228.
 (cfg
@@ -77,10 +85,10 @@
       [timespec : (__tl_dyn-array i64) (array.make-array i64 2)]
       [status : i64
         (unsafe
-          (syscall 228 clock-id (stdlib.time.array-addr timespec)))]
+          (syscall 228 clock-id (stdlib.time.array-addr (& timespec))))]
       (if (< status 0)
         (stdlib.time.unavailable "time: clock_gettime unavailable")
-        (OkTimeMs (stdlib.time.timespec-ms timespec))))))
+        (OkTimeMs (stdlib.time.timespec-ms (& timespec)))))))
 
 ;: True when a raw Linux syscall result requests a nanosleep restart.
 (cfg
@@ -98,15 +106,15 @@
       [done : bool false]
       [ok : bool false]
       (begin
-        (stdlib.time.timespec-from-ms! request milliseconds)
+        (stdlib.time.timespec-from-ms! (&mut request) milliseconds)
         (while (not done)
           (let
             [status : i64
               (unsafe
                 (syscall
                   35
-                  (stdlib.time.array-addr request)
-                  (stdlib.time.array-addr remaining)))]
+                  (stdlib.time.array-addr (& request))
+                  (stdlib.time.array-addr (& remaining))))]
             (if (= status 0)
               (begin
                 (set! ok true)
@@ -389,7 +397,7 @@
     (let
       [converted : (__tl_dyn-array i64) (array.make-array i64 2)]
       (begin
-        (stdlib.time.timespec-from-ms! converted 9223372036854775807)
+        (stdlib.time.timespec-from-ms! (&mut converted) 9223372036854775807)
         (stdlib.time.test-assert-i64-eq
           (array-ref converted 0)
           9223372036854775)

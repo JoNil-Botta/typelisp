@@ -1,4 +1,5 @@
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers.
+(import compiler_owned_view as owned_view)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import compiler_driver_core)
@@ -117,9 +118,7 @@
     (array-ref names.slots index)
     ""))
 
-(define (source-tool-cfg-names-add
-  [names : SourceToolCfgNames (:consume)]
-  [name : String]) : SourceToolCfgNames
+(define (source-tool-cfg-names-add [names : SourceToolCfgNames] [name : String]) : SourceToolCfgNames
   (let
     [next : SourceToolCfgNames names]
     (begin
@@ -319,11 +318,12 @@
 (define (source-tool-link-inputs-raw-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   inputs.raw-args)
 
-(define (source-tool-link-inputs-empty? [inputs : SourceToolLinkInputs]) : bool
+(define (source-tool-link-inputs-empty?
+  [inputs : (& inputs SourceToolLinkInputs)]) : bool
   (and
-    (= (process.args-count (source-tool-link-inputs-libs inputs)) 0)
-    (= (process.args-count (source-tool-link-inputs-search-dirs inputs)) 0)
-    (= (process.args-count (source-tool-link-inputs-raw-args inputs)) 0)))
+    (= inputs.libs.len 0)
+    (= inputs.search-dirs.len 0)
+    (= inputs.raw-args.len 0)))
 
 (define (source-tool-linux-crt-entry?
   [target : backend.CompilerBackendTarget]
@@ -337,24 +337,34 @@
   [inputs : SourceToolLinkInputs]
   [name : String]) : SourceToolLinkInputs
   (SourceToolLinkInputs
-    (source-tool-args-append (source-tool-link-inputs-libs inputs) name)
-    (source-tool-link-inputs-search-dirs inputs)
+    (source-tool-args-append
+      (source-tool-link-inputs-libs
+        (owned_view.compiler-owned-shared-view inputs))
+      name)
+    (source-tool-link-inputs-search-dirs
+      (owned_view.compiler-owned-shared-view inputs))
     (source-tool-link-inputs-raw-args inputs)))
 
 (define (source-tool-link-inputs-add-search-dir
   [inputs : SourceToolLinkInputs]
   [dir : String]) : SourceToolLinkInputs
   (SourceToolLinkInputs
-    (source-tool-link-inputs-libs inputs)
-    (source-tool-args-append (source-tool-link-inputs-search-dirs inputs) dir)
+    (source-tool-link-inputs-libs
+      (owned_view.compiler-owned-shared-view inputs))
+    (source-tool-args-append
+      (source-tool-link-inputs-search-dirs
+        (owned_view.compiler-owned-shared-view inputs))
+      dir)
     (source-tool-link-inputs-raw-args inputs)))
 
 (define (source-tool-link-inputs-add-raw-arg
   [inputs : SourceToolLinkInputs]
   [arg-value : String]) : SourceToolLinkInputs
   (SourceToolLinkInputs
-    (source-tool-link-inputs-libs inputs)
-    (source-tool-link-inputs-search-dirs inputs)
+    (source-tool-link-inputs-libs
+      (owned_view.compiler-owned-shared-view inputs))
+    (source-tool-link-inputs-search-dirs
+      (owned_view.compiler-owned-shared-view inputs))
     (source-tool-args-append
       (source-tool-link-inputs-raw-args inputs)
       arg-value)))
@@ -378,7 +388,9 @@
 (define (source-tool-args-append-unique
   [items : process.ProcessStringList]
   [value : String]) : process.ProcessStringList
-  (if (source-tool-string-list-contains? items value)
+  (if (source-tool-string-list-contains?
+    (owned_view.compiler-owned-shared-view items)
+    (owned_view.compiler-owned-shared-view value))
     items
     (source-tool-args-append items value)))
 
@@ -419,11 +431,15 @@
   [right : SourceToolLinkInputs]) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (source-tool-string-list-merge-unique
-      (source-tool-link-inputs-libs left)
-      (source-tool-link-inputs-libs right))
+      (source-tool-link-inputs-libs
+        (owned_view.compiler-owned-shared-view left))
+      (source-tool-link-inputs-libs
+        (owned_view.compiler-owned-shared-view right)))
     (source-tool-string-list-merge-unique
-      (source-tool-link-inputs-search-dirs left)
-      (source-tool-link-inputs-search-dirs right))
+      (source-tool-link-inputs-search-dirs
+        (owned_view.compiler-owned-shared-view left))
+      (source-tool-link-inputs-search-dirs
+        (owned_view.compiler-owned-shared-view right)))
     (source-tool-string-list-merge-unique
       (source-tool-link-inputs-raw-args left)
       (source-tool-link-inputs-raw-args right))))
@@ -435,21 +451,27 @@
     [(ast.AstExternLinkInput.Lib name)
       (SourceToolLinkInputs
         (source-tool-args-append-unique
-          (source-tool-link-inputs-libs inputs)
+          (source-tool-link-inputs-libs
+            (owned_view.compiler-owned-shared-view inputs))
           name)
-        (source-tool-link-inputs-search-dirs inputs)
+        (source-tool-link-inputs-search-dirs
+          (owned_view.compiler-owned-shared-view inputs))
         (source-tool-link-inputs-raw-args inputs))]
     [(ast.AstExternLinkInput.Search dir)
       (SourceToolLinkInputs
-        (source-tool-link-inputs-libs inputs)
+        (source-tool-link-inputs-libs
+          (owned_view.compiler-owned-shared-view inputs))
         (source-tool-args-append-unique
-          (source-tool-link-inputs-search-dirs inputs)
+          (source-tool-link-inputs-search-dirs
+            (owned_view.compiler-owned-shared-view inputs))
           dir)
         (source-tool-link-inputs-raw-args inputs))]
     [(ast.AstExternLinkInput.Arg arg-value)
       (SourceToolLinkInputs
-        (source-tool-link-inputs-libs inputs)
-        (source-tool-link-inputs-search-dirs inputs)
+        (source-tool-link-inputs-libs
+          (owned_view.compiler-owned-shared-view inputs))
+        (source-tool-link-inputs-search-dirs
+          (owned_view.compiler-owned-shared-view inputs))
         (source-tool-args-append-unique
           (source-tool-link-inputs-raw-args inputs)
           arg-value))]))
@@ -475,11 +497,15 @@
   [right : SourceToolLinkInputs]) : bool
   (and
     (source-tool-string-list-eq?
-      (source-tool-link-inputs-libs left)
-      (source-tool-link-inputs-libs right))
+      (source-tool-link-inputs-libs
+        (owned_view.compiler-owned-shared-view left))
+      (source-tool-link-inputs-libs
+        (owned_view.compiler-owned-shared-view right)))
     (source-tool-string-list-eq?
-      (source-tool-link-inputs-search-dirs left)
-      (source-tool-link-inputs-search-dirs right))
+      (source-tool-link-inputs-search-dirs
+        (owned_view.compiler-owned-shared-view left))
+      (source-tool-link-inputs-search-dirs
+        (owned_view.compiler-owned-shared-view right)))
     (source-tool-string-list-eq?
       (source-tool-link-inputs-raw-args left)
       (source-tool-link-inputs-raw-args right))))
@@ -545,7 +571,8 @@
           [(ast.AstDecl.Extern decl-meta _ _ metadata _)
             (let
               [metadata-items : ast.AstExternLinkInputList
-                (ast.ast-extern-metadata-link-inputs (__tl-box-place metadata))]
+                (ast.ast-extern-metadata-link-inputs
+                  (owned_view.compiler-owned-box-shared-view metadata))]
               (source-tool-link-inputs-from-decls
                 rest
                 (source-tool-link-inputs-add-ast-list
@@ -560,9 +587,9 @@
   [cfgs : sym_i64_env.SymI64Env]
   [explicit-inputs : SourceToolLinkInputs]) : ResultSourceToolLinkInputs
   (match (load.compiler-load-file-with-paths-and-roots-cfg
-    source
+    (owned_view.compiler-owned-shared-view source)
     (sym_i64_env.sym-i64-empty)
-    stdlib-roots
+    (owned_view.compiler-owned-shared-view stdlib-roots)
     cfgs)
     [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
       (ResultSourceToolLinkInputs.Ok
@@ -574,7 +601,7 @@
     [(load.ResultCompilerLoadWithPaths.Err diag)
       (ResultSourceToolLinkInputs.Err
         (compiler_driver_core.compiler-driver-render-source-diagnostic
-          (__tl-box-place diag)))]))
+          (owned_view.compiler-owned-box-shared-view diag)))]))
 
 (define (source-tool-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
@@ -645,14 +672,20 @@
     tool
     (let
       [candidate : String
-        (source-tool-path-entry-command (env.string-list-ref paths index) tool)]
-      (if (source-tool-path-command-exists? candidate)
+        (source-tool-path-entry-command
+          (env.string-list-ref paths index)
+          (owned_view.compiler-owned-shared-view tool))]
+      (if (source-tool-path-command-exists?
+        (owned_view.compiler-owned-shared-view candidate))
         candidate
         (let
-          [exe-candidate : String (source-tool-windows-exe-candidate candidate)]
+          [exe-candidate : String
+            (source-tool-windows-exe-candidate
+              (owned_view.compiler-owned-shared-view candidate))]
           (if (and
             (not (string.eq exe-candidate candidate))
-            (source-tool-path-command-exists? exe-candidate))
+            (source-tool-path-command-exists?
+              (owned_view.compiler-owned-shared-view exe-candidate)))
             exe-candidate
             (source-tool-find-command-on-path-from tool paths (+ index 1))))))))
 
@@ -662,7 +695,8 @@
   (source-tool-find-command-on-path-from tool paths 0))
 
 (define (source-tool-resolve-command [tool : String]) : String
-  (if (source-tool-has-path-separator? tool)
+  (if (source-tool-has-path-separator?
+    (owned_view.compiler-owned-shared-view tool))
     tool
     (let
       [name : String "PATH"]
@@ -791,7 +825,7 @@
   [error : io.IoError]) : String
   (str_cat.str-cat
     "Error: cannot read module '"
-    source
+    (owned_view.compiler-owned-shared-view source)
     "': "
     (io.error-message error)))
 
@@ -803,7 +837,8 @@
   [mode : backend.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
-  (match (source-tool-try-read-file source)
+  (match (source-tool-try-read-file
+    (owned_view.compiler-owned-shared-view source))
     [(io.ErrIoString error)
       (ResultSourceToolString.Err
         (source-tool-cannot-read-module-message source error))]
@@ -823,7 +858,7 @@
         [(compiler_driver_core.ResultCompilerDriver.Err diag)
           (ResultSourceToolString.Err
             (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (__tl-box-place diag)))])]))
+              (owned_view.compiler-owned-box-shared-view diag)))])]))
 
 (define (source-tool-linux-direct-object-env-name) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
@@ -834,27 +869,29 @@
 (define (source-tool-linux-direct-object-linkable?
   [image : cobj.CompilerObjectImage]) : bool
   (and
-    (compiler_object_elf.compiler-object-elf-image-supported? image)
+    (compiler_object_elf.compiler-object-elf-image-supported?
+      (owned_view.compiler-owned-shared-view image))
     (or
       (cobj.compiler-object-symbol-list-contains?
-        image.symbols
+        (owned_view.compiler-owned-shared-view image.symbols)
         "_tl_start"
         (cobj.CompilerObjectSymbolBinding.Export)
         (cobj.CompilerObjectSymbolKind.Function))
       (cobj.compiler-object-symbol-list-contains?
-        image.symbols
+        (owned_view.compiler-owned-shared-view image.symbols)
         "main"
         (cobj.CompilerObjectSymbolBinding.Export)
         (cobj.CompilerObjectSymbolKind.Function)))
     (>
       (compiler_object_elf.compiler-object-elf-section-raw-size
-        image
+        (owned_view.compiler-owned-shared-view image)
         (cobj.CompilerObjectSectionKind.Text))
       0)))
 
 (define (source-tool-linux-direct-object-archivable?
   [image : cobj.CompilerObjectImage]) : bool
-  (compiler_object_elf.compiler-object-elf-image-supported? image))
+  (compiler_object_elf.compiler-object-elf-image-supported?
+    (owned_view.compiler-owned-shared-view image)))
 
 (define (source-tool-linux-direct-object-unavailable-message) : String
   "linux direct object unavailable: object image lacks encoded .text or entry symbol")
@@ -864,8 +901,10 @@
 
 (define (source-tool-render-linkable-linux-elf-object
   [image : cobj.CompilerObjectImage]) : ResultSourceToolString
-  (if (source-tool-linux-direct-object-linkable? image)
-    (match (compiler_object_elf.compiler-object-elf-render image)
+  (if (source-tool-linux-direct-object-linkable?
+    (owned_view.compiler-owned-shared-view image))
+    (match (compiler_object_elf.compiler-object-elf-render
+      (owned_view.compiler-owned-shared-view image))
       [(compiler_object_elf.ResultCompilerObjectElf.Ok obj)
         (ResultSourceToolString.Ok obj)]
       [(compiler_object_elf.ResultCompilerObjectElf.Err message)
@@ -875,8 +914,10 @@
 
 (define (source-tool-render-archivable-linux-elf-object
   [image : cobj.CompilerObjectImage]) : ResultSourceToolString
-  (if (source-tool-linux-direct-object-archivable? image)
-    (match (compiler_object_elf.compiler-object-elf-render image)
+  (if (source-tool-linux-direct-object-archivable?
+    (owned_view.compiler-owned-shared-view image))
+    (match (compiler_object_elf.compiler-object-elf-render
+      (owned_view.compiler-owned-shared-view image))
       [(compiler_object_elf.ResultCompilerObjectElf.Ok obj)
         (ResultSourceToolString.Ok obj)]
       [(compiler_object_elf.ResultCompilerObjectElf.Err message)
@@ -894,13 +935,16 @@
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match target
     [(backend.CompilerBackendTarget.Linux)
-      (match (source-tool-try-read-file source)
+      (match (source-tool-try-read-file
+        (owned_view.compiler-owned-shared-view source))
         [(io.ErrIoString error)
           (ResultSourceToolString.Err
-            (source-tool-cannot-read-module-message source error))]
+            (source-tool-cannot-read-module-message
+              (owned_view.compiler-owned-shared-view source)
+              error))]
         [(io.OkIoString _)
           (match (compiler_driver_core.compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
-            source
+            (owned_view.compiler-owned-shared-view source)
             target
             true
             stdlib-roots
@@ -916,7 +960,7 @@
             [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
                 (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (__tl-box-place diag)))])])]
+                  (owned_view.compiler-owned-box-shared-view diag)))])])]
     [(backend.CompilerBackendTarget.Windows)
       (ResultSourceToolString.Err
         "direct ELF object emission is only available for linux-x86_64")]))
@@ -948,7 +992,7 @@
         [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
             (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (__tl-box-place diag)))])]
+              (owned_view.compiler-owned-box-shared-view diag)))])]
     [(backend.CompilerBackendTarget.Windows)
       (ResultSourceToolString.Err
         "direct ELF object emission is only available for linux-x86_64")]))
@@ -975,8 +1019,10 @@
 
 (define (source-tool-render-linkable-windows-coff-object
   [image : cobj.CompilerObjectImage]) : ResultSourceToolString
-  (if (source-tool-windows-direct-object-linkable? image)
-    (match (compiler_object_coff.compiler-object-coff-render image)
+  (if (source-tool-windows-direct-object-linkable?
+    (owned_view.compiler-owned-shared-view image))
+    (match (compiler_object_coff.compiler-object-coff-render
+      (owned_view.compiler-owned-shared-view image))
       [(compiler_object_coff.ResultCompilerObjectCoff.Ok obj)
         (ResultSourceToolString.Ok obj)]
       [(compiler_object_coff.ResultCompilerObjectCoff.Err message)
@@ -997,13 +1043,16 @@
       (ResultSourceToolString.Err
         "direct COFF object emission is only available for windows-x86_64")]
     [(backend.CompilerBackendTarget.Windows)
-      (match (source-tool-try-read-file source)
+      (match (source-tool-try-read-file
+        (owned_view.compiler-owned-shared-view source))
         [(io.ErrIoString error)
           (ResultSourceToolString.Err
-            (source-tool-cannot-read-module-message source error))]
+            (source-tool-cannot-read-module-message
+              (owned_view.compiler-owned-shared-view source)
+              error))]
         [(io.OkIoString _)
           (match (compiler_driver_core.compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
-            source
+            (owned_view.compiler-owned-shared-view source)
             target
             true
             stdlib-roots
@@ -1019,7 +1068,7 @@
             [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
                 (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (__tl-box-place diag)))])])]))
+                  (owned_view.compiler-owned-box-shared-view diag)))])])]))
 
 (define (source-tool-emit-lowered-windows-coff-object
   [source : String]
@@ -1050,7 +1099,7 @@
         [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
             (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (__tl-box-place diag)))])]))
+              (owned_view.compiler-owned-box-shared-view diag)))])]))
 
 (define (source-tool-noexecstack-note) : String
   "
@@ -1095,7 +1144,8 @@
     (match (process.output command-to-run)
       [(process.OkProcessOutput output)
         (begin
-          (source-tool-forward-output output)
+          (source-tool-forward-output
+            (owned_view.compiler-owned-shared-view output))
           (if (process.success? output)
             SourceToolCommandStatus.Ok
             (SourceToolCommandStatus.Err
@@ -1159,7 +1209,10 @@
   (if (>= index (process.args-count items))
     (process.args-empty)
     (process.args-cons
-      (str_cat.str-cat prefix (process.args-ref items index) suffix)
+      (str_cat.str-cat
+        (owned_view.compiler-owned-shared-view prefix)
+        (process.args-ref items index)
+        (owned_view.compiler-owned-shared-view suffix))
       (source-tool-decorated-args items prefix suffix (+ index 1)))))
 
 (define (source-tool-linux-link-search-args [dirs : process.ProcessStringList]) : process.ProcessStringList
@@ -1171,9 +1224,12 @@
 (define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   (process.args-append
     (source-tool-linux-link-search-args
-      (source-tool-link-inputs-search-dirs inputs))
+      (source-tool-link-inputs-search-dirs
+        (owned_view.compiler-owned-shared-view inputs)))
     (process.args-append
-      (source-tool-linux-link-lib-args (source-tool-link-inputs-libs inputs))
+      (source-tool-linux-link-lib-args
+        (source-tool-link-inputs-libs
+          (owned_view.compiler-owned-shared-view inputs)))
       (source-tool-link-inputs-raw-args inputs))))
 
 (define (source-tool-linker-command
@@ -1238,9 +1294,12 @@
 (define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   (process.args-append
     (source-tool-windows-link-search-args
-      (source-tool-link-inputs-search-dirs inputs))
+      (source-tool-link-inputs-search-dirs
+        (owned_view.compiler-owned-shared-view inputs)))
     (process.args-append
-      (source-tool-windows-link-lib-args (source-tool-link-inputs-libs inputs))
+      (source-tool-windows-link-lib-args
+        (source-tool-link-inputs-libs
+          (owned_view.compiler-owned-shared-view inputs)))
       (source-tool-link-inputs-raw-args inputs))))
 
 (define (source-tool-windows-linker-args
@@ -1304,8 +1363,10 @@
 (define (main) : i64 (inc answer))"
     (backend.CompilerBackendTarget.Linux))
     [(backend.ResultCompilerBackendObject.Ok image)
-      (if (source-tool-linux-direct-object-linkable? image)
-        (match (source-tool-render-linkable-linux-elf-object image)
+      (if (source-tool-linux-direct-object-linkable?
+        (owned_view.compiler-owned-shared-view image))
+        (match (source-tool-render-linkable-linux-elf-object
+          (owned_view.compiler-owned-shared-view image))
           [(ResultSourceToolString.Ok obj) (> (string.string-length obj) 0)]
           [(ResultSourceToolString.Err _) false])
         false)]
@@ -1320,8 +1381,10 @@
 (define (main) : i64 0)"
     (backend.CompilerBackendTarget.Windows))
     [(backend.ResultCompilerBackendObject.Ok image)
-      (if (source-tool-windows-direct-object-linkable? image)
-        (match (source-tool-render-linkable-windows-coff-object image)
+      (if (source-tool-windows-direct-object-linkable?
+        (owned_view.compiler-owned-shared-view image))
+        (match (source-tool-render-linkable-windows-coff-object
+          (owned_view.compiler-owned-shared-view image))
           [(ResultSourceToolString.Ok obj) (> (string.string-length obj) 0)]
           [(ResultSourceToolString.Err _) false])
         false)]
@@ -1382,10 +1445,10 @@
             "GetCurrentProcessId")))]
     (and
       (source-tool-windows-direct-object-relocations-linkable?
-        symbols
+        (owned_view.compiler-owned-shared-view symbols)
         empty-relocs)
       (source-tool-windows-direct-object-relocations-linkable?
-        symbols
+        (owned_view.compiler-owned-shared-view symbols)
         allowed-relocs)
       (not
         (source-tool-windows-direct-object-relocations-linkable?
@@ -1489,14 +1552,18 @@
   (let
     [basename : String (source-tool-fs-basename command)]
     (or
-      (source-tool-ascii-case-eq basename "llvm-ar")
+      (source-tool-ascii-case-eq
+        (owned_view.compiler-owned-shared-view basename)
+        "llvm-ar")
       (source-tool-ascii-case-eq basename "llvm-ar.exe"))))
 
 (define (source-tool-windows-msvc-archiver-name? [command : String]) : bool
   (let
     [basename : String (source-tool-fs-basename command)]
     (or
-      (source-tool-ascii-case-eq basename "lib")
+      (source-tool-ascii-case-eq
+        (owned_view.compiler-owned-shared-view basename)
+        "lib")
       (source-tool-ascii-case-eq basename "lib.exe"))))
 
 (define (source-tool-windows-llvm-archiver-command
@@ -1517,13 +1584,15 @@
         name
         (source-tool-resolve-command "llvm-ar"))]
     (cond
-      [(source-tool-windows-llvm-archiver-name? command)
+      [(source-tool-windows-llvm-archiver-name?
+          (owned_view.compiler-owned-shared-view command))
         (ResultSourceToolCommand.Ok
           (source-tool-windows-llvm-archiver-command
             command
             obj-path
             archive-path))]
-      [(source-tool-windows-msvc-archiver-name? command)
+      [(source-tool-windows-msvc-archiver-name?
+          (owned_view.compiler-owned-shared-view command))
         (ResultSourceToolCommand.Ok
           (process.command
             command
@@ -1627,7 +1696,10 @@
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
-  (match (source-tool-assemble target asm-path obj-path)
+  (match (source-tool-assemble
+    target
+    asm-path
+    (owned_view.compiler-owned-shared-view obj-path))
     [(SourceToolCommandStatus.Ok)
       (source-tool-link target obj-path bin-path link-inputs)]
     [(SourceToolCommandStatus.Err message)
@@ -1638,7 +1710,10 @@
   [asm-path : String]
   [obj-path : String]
   [archive-path : String]) : SourceToolCommandStatus
-  (match (source-tool-assemble target asm-path obj-path)
+  (match (source-tool-assemble
+    target
+    asm-path
+    (owned_view.compiler-owned-shared-view obj-path))
     [(SourceToolCommandStatus.Ok)
       (source-tool-archive target obj-path archive-path)]
     [(SourceToolCommandStatus.Err message)
@@ -1651,7 +1726,10 @@
   [link-inputs : SourceToolLinkInputs]
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
-  (match (source-tool-write-file obj-path obj context)
+  (match (source-tool-write-file
+    (owned_view.compiler-owned-shared-view obj-path)
+    obj
+    context)
     [(SourceToolCommandStatus.Err message)
       (SourceToolDirectObjectStatus.Err message)]
     [(SourceToolCommandStatus.Ok)
@@ -1666,7 +1744,10 @@
   [target : backend.CompilerBackendTarget]
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
-  (match (source-tool-write-file obj-path obj context)
+  (match (source-tool-write-file
+    (owned_view.compiler-owned-shared-view obj-path)
+    obj
+    context)
     [(SourceToolCommandStatus.Err message)
       (SourceToolDirectObjectStatus.Err message)]
     [(SourceToolCommandStatus.Ok)
@@ -1696,7 +1777,7 @@
       opt-level
       mode
       cfgs
-      link-inputs)
+      (owned_view.compiler-owned-shared-view link-inputs))
       [(ResultSourceToolString.Ok obj)
         (source-tool-write-direct-object-and-link
           obj-path
@@ -1730,7 +1811,7 @@
       opt-level
       mode
       cfgs
-      link-inputs)
+      (owned_view.compiler-owned-shared-view link-inputs))
       [(ResultSourceToolString.Ok obj)
         (source-tool-write-direct-object-and-link
           obj-path
@@ -1793,7 +1874,7 @@
       spans
       target
       opt-level
-      link-inputs)
+      (owned_view.compiler-owned-shared-view link-inputs))
       [(ResultSourceToolString.Ok obj)
         (source-tool-write-direct-object-and-link
           obj-path
@@ -1814,7 +1895,10 @@
   [link-inputs : SourceToolLinkInputs]
   [asm : String]
   [write-context : String]) : SourceToolCommandStatus
-  (match (source-tool-write-file asm-path asm write-context)
+  (match (source-tool-write-file
+    (owned_view.compiler-owned-shared-view asm-path)
+    asm
+    write-context)
     [(SourceToolCommandStatus.Err message)
       (SourceToolCommandStatus.Err message)]
     [(SourceToolCommandStatus.Ok)
@@ -1840,11 +1924,11 @@
   (match (source-tool-emit-assembly
     source
     target
-    stdlib-roots
+    (owned_view.compiler-owned-shared-view stdlib-roots)
     opt-level
     mode
     cfgs
-    link-inputs)
+    (owned_view.compiler-owned-shared-view link-inputs))
     [(ResultSourceToolString.Err message) (SourceToolCommandStatus.Err message)]
     [(ResultSourceToolString.Ok asm)
       (source-tool-write-assembly-and-link
@@ -1869,29 +1953,29 @@
   [bin-path : String]
   [write-context : String]) : SourceToolCommandStatus
   (match (source-tool-try-linux-direct-object-and-link
-    source
+    (owned_view.compiler-owned-shared-view source)
     target
-    stdlib-roots
+    (owned_view.compiler-owned-shared-view stdlib-roots)
     opt-level
     mode
-    cfgs
-    link-inputs
-    obj-path
-    bin-path)
+    (owned_view.compiler-owned-shared-view cfgs)
+    (owned_view.compiler-owned-shared-view link-inputs)
+    (owned_view.compiler-owned-shared-view obj-path)
+    (owned_view.compiler-owned-shared-view bin-path))
     [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
     [(SourceToolDirectObjectStatus.Err message)
       (SourceToolCommandStatus.Err message)]
     [(SourceToolDirectObjectStatus.Unavailable _)
       (match (source-tool-try-windows-direct-object-and-link
-        source
+        (owned_view.compiler-owned-shared-view source)
         target
-        stdlib-roots
+        (owned_view.compiler-owned-shared-view stdlib-roots)
         opt-level
         mode
-        cfgs
-        link-inputs
-        obj-path
-        bin-path)
+        (owned_view.compiler-owned-shared-view cfgs)
+        (owned_view.compiler-owned-shared-view link-inputs)
+        (owned_view.compiler-owned-shared-view obj-path)
+        (owned_view.compiler-owned-shared-view bin-path))
         [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
         [(SourceToolDirectObjectStatus.Err message)
           (SourceToolCommandStatus.Err message)]
@@ -1921,27 +2005,27 @@
   [bin-path : String]
   [write-context : String]) : SourceToolCommandStatus
   (match (source-tool-try-lowered-linux-direct-object-and-link
-    source
-    program
-    spans
+    (owned_view.compiler-owned-shared-view source)
+    (owned_view.compiler-owned-shared-view program)
+    (owned_view.compiler-owned-shared-view spans)
     target
     opt-level
-    link-inputs
-    obj-path
-    bin-path)
+    (owned_view.compiler-owned-shared-view link-inputs)
+    (owned_view.compiler-owned-shared-view obj-path)
+    (owned_view.compiler-owned-shared-view bin-path))
     [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
     [(SourceToolDirectObjectStatus.Err message)
       (SourceToolCommandStatus.Err message)]
     [(SourceToolDirectObjectStatus.Unavailable _)
       (match (source-tool-try-lowered-windows-direct-object-and-link
-        source
-        program
-        spans
+        (owned_view.compiler-owned-shared-view source)
+        (owned_view.compiler-owned-shared-view program)
+        (owned_view.compiler-owned-shared-view spans)
         target
         opt-level
-        link-inputs
-        obj-path
-        bin-path)
+        (owned_view.compiler-owned-shared-view link-inputs)
+        (owned_view.compiler-owned-shared-view obj-path)
+        (owned_view.compiler-owned-shared-view bin-path))
         [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
         [(SourceToolDirectObjectStatus.Err message)
           (SourceToolCommandStatus.Err message)]
@@ -1965,7 +2049,7 @@
             [(compiler_driver_core.ResultCompilerDriver.Err diag)
               (SourceToolCommandStatus.Err
                 (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (__tl-box-place diag)))])])]))
+                  (owned_view.compiler-owned-box-shared-view diag)))])])]))
 
 (define (source-tool-build-source-in-temp
   [source : String]
@@ -1978,19 +2062,28 @@
   [link-inputs : SourceToolLinkInputs]
   [temp-dir : String]) : i64
   (let
-    [asm-path : String (source-tool-asm-path temp-dir source)]
-    [obj-path : String (source-tool-obj-path temp-dir source target)]
+    [asm-path : String
+      (source-tool-asm-path
+        (owned_view.compiler-owned-shared-view temp-dir)
+        (owned_view.compiler-owned-shared-view source))]
+    [obj-path : String
+      (source-tool-obj-path
+        (owned_view.compiler-owned-shared-view temp-dir)
+        (owned_view.compiler-owned-shared-view source)
+        target)]
     [bin-path : String
       (if has-output
         output
-        (source-tool-default-output source target))]
+        (source-tool-default-output
+          (owned_view.compiler-owned-shared-view source)
+          target))]
     (match (source-tool-link-inputs-for-source
-      source
-      stdlib-roots
+      (owned_view.compiler-owned-shared-view source)
+      (owned_view.compiler-owned-shared-view stdlib-roots)
       (compiler_driver_core.compiler-driver-target-cfgs
         target
         (cfg_core.compiler-cfg-empty))
-      link-inputs)
+      (owned_view.compiler-owned-shared-view link-inputs))
       [(ResultSourceToolLinkInputs.Err message)
         (begin
           (io.print-error message)
@@ -2000,16 +2093,16 @@
         (begin
           (compiler_driver_core.compiler-driver-reset-file-state!)
           (match (source-tool-object-or-assembly-and-link
-            source
+            (owned_view.compiler-owned-shared-view source)
             target
-            stdlib-roots
+            (owned_view.compiler-owned-shared-view stdlib-roots)
             opt-level
             mode
             (cfg_core.compiler-cfg-empty)
-            effective-link-inputs
-            asm-path
-            obj-path
-            bin-path
+            (owned_view.compiler-owned-shared-view effective-link-inputs)
+            (owned_view.compiler-owned-shared-view asm-path)
+            (owned_view.compiler-owned-shared-view obj-path)
+            (owned_view.compiler-owned-shared-view bin-path)
             "build: failed to write assembly artifact")
             [(SourceToolCommandStatus.Err message)
               (begin
@@ -2091,15 +2184,28 @@
   [stream-output : bool]
   [temp-dir : String]) : i64
   (let
-    [asm-path : String (source-tool-asm-path temp-dir source)]
-    [obj-path : String (source-tool-obj-path temp-dir source target)]
-    [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
-    [link-cfgs : sym_i64_env.SymI64Env (source-tool-cfg-names-to-env cfg-names)]
+    [asm-path : String
+      (source-tool-asm-path
+        (owned_view.compiler-owned-shared-view temp-dir)
+        (owned_view.compiler-owned-shared-view source))]
+    [obj-path : String
+      (source-tool-obj-path
+        (owned_view.compiler-owned-shared-view temp-dir)
+        (owned_view.compiler-owned-shared-view source)
+        target)]
+    [bin-path : String
+      (source-tool-temp-bin-path
+        (owned_view.compiler-owned-shared-view temp-dir)
+        (owned_view.compiler-owned-shared-view source)
+        target)]
+    [link-cfgs : sym_i64_env.SymI64Env
+      (source-tool-cfg-names-to-env
+        (owned_view.compiler-owned-shared-view cfg-names))]
     (match (source-tool-link-inputs-for-source
-      source
-      stdlib-roots
+      (owned_view.compiler-owned-shared-view source)
+      (owned_view.compiler-owned-shared-view stdlib-roots)
       (compiler_driver_core.compiler-driver-target-cfgs target link-cfgs)
-      link-inputs)
+      (owned_view.compiler-owned-shared-view link-inputs))
       [(ResultSourceToolLinkInputs.Err message)
         (begin
           (io.print-error message)
@@ -2112,16 +2218,16 @@
             [emit-cfgs : sym_i64_env.SymI64Env
               (source-tool-cfg-names-to-env cfg-names)]
             (match (source-tool-object-or-assembly-and-link
-              source
+              (owned_view.compiler-owned-shared-view source)
               target
-              stdlib-roots
+              (owned_view.compiler-owned-shared-view stdlib-roots)
               opt-level
               mode
-              emit-cfgs
-              effective-link-inputs
-              asm-path
-              obj-path
-              bin-path
+              (owned_view.compiler-owned-shared-view emit-cfgs)
+              (owned_view.compiler-owned-shared-view effective-link-inputs)
+              (owned_view.compiler-owned-shared-view asm-path)
+              (owned_view.compiler-owned-shared-view obj-path)
+              (owned_view.compiler-owned-shared-view bin-path)
               "run: failed to write assembly artifact")
               [(SourceToolCommandStatus.Err message)
                 (begin
@@ -2130,16 +2236,19 @@
                     temp-dir
                     asm-path
                     obj-path
-                    bin-path
+                    (owned_view.compiler-owned-shared-view bin-path)
                     true)
                   1)]
               [(SourceToolCommandStatus.Ok)
                 (match (if stream-output
                   (source-tool-run-executable-inherit
-                    bin-path
+                    (owned_view.compiler-owned-shared-view bin-path)
                     target
                     runtime-args)
-                  (source-tool-run-executable bin-path target runtime-args))
+                  (source-tool-run-executable
+                    (owned_view.compiler-owned-shared-view bin-path)
+                    target
+                    runtime-args))
                   [(process.OkProcessOutput output)
                     (let
                       [status : i64 (process.output-status output)]
@@ -2151,7 +2260,7 @@
                           temp-dir
                           asm-path
                           obj-path
-                          bin-path
+                          (owned_view.compiler-owned-shared-view bin-path)
                           true)
                         status))]
                   [(process.ErrProcessOutput error)
@@ -2159,7 +2268,7 @@
                       (io.print-error
                         (str_cat.str-cat
                           "Error: failed to run executable '"
-                          bin-path
+                          (owned_view.compiler-owned-shared-view bin-path)
                           "' for target "
                           (source-tool-target-name target)
                           ": "

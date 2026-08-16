@@ -37,7 +37,10 @@
 (defstruct Thread
   (handle i64)
   (clear-tid-addr i64)
-  (result-addr i64))
+  (result-addr i64)
+  ;; TypeLisp has no standalone `!Copy` declaration yet. A static empty String
+  ;; gives the raw handle a non-cleanup-owning, structurally move-only field.
+  (ownership-marker String))
 
 ;: Result returned by `spawn`.
 (defenum ThreadSpawnResult
@@ -83,12 +86,7 @@
               [raw-result : thread.ThreadSpawnResult
                 (thread.handle-spawn-i64 task)]
               (match raw-result
-                [(thread.ThreadSpawnOk _)
-                  (I64SpawnOk
-                    (Handle
-                      (thread.spawn-result-thread-or
-                        raw-result
-                        (thread.Thread 0 0 0))))]
+                [(thread.ThreadSpawnOk raw) (I64SpawnOk (Handle raw))]
                 [(thread.ThreadSpawnErr message) (I64SpawnErr message)])))
           (define (wait-for [worker : (& worker Handle)] [timeout-ms : i64]) : thread.ThreadWaitResult
             (thread.wait-for (& worker.raw) timeout-ms))
@@ -117,12 +115,7 @@
               [raw-result : thread.ThreadSpawnResult
                 (thread.handle-spawn-bool task)]
               (match raw-result
-                [(thread.ThreadSpawnOk _)
-                  (BoolSpawnOk
-                    (Handle
-                      (thread.spawn-result-thread-or
-                        raw-result
-                        (thread.Thread 0 0 0))))]
+                [(thread.ThreadSpawnOk raw) (BoolSpawnOk (Handle raw))]
                 [(thread.ThreadSpawnErr message) (BoolSpawnErr message)])))
           (define (wait-for [worker : (& worker Handle)] [timeout-ms : i64]) : thread.ThreadWaitResult
             (thread.wait-for (& worker.raw) timeout-ms))
@@ -147,12 +140,7 @@
               [raw-result : thread.ThreadSpawnResult
                 (thread.handle-spawn-unit task)]
               (match raw-result
-                [(thread.ThreadSpawnOk _)
-                  (UnitSpawnOk
-                    (Handle
-                      (thread.spawn-result-thread-or
-                        raw-result
-                        (thread.Thread 0 0 0))))]
+                [(thread.ThreadSpawnOk raw) (UnitSpawnOk (Handle raw))]
                 [(thread.ThreadSpawnErr message) (UnitSpawnErr message)])))
           (define (wait-for [worker : (& worker Handle)] [timeout-ms : i64]) : thread.ThreadWaitResult
             (thread.wait-for (& worker.raw) timeout-ms))
@@ -220,20 +208,22 @@
   (ThreadSemaphoreErr String))
 
 ;: Return true when raw thread spawn succeeded.
-(define (spawn-result-ok? [result : ThreadSpawnResult]) : bool
+(define (spawn-result-ok? [result : (& result ThreadSpawnResult)]) : bool
   (match result
     [(ThreadSpawnOk _) true]
     [(ThreadSpawnErr _) false]))
 
 ;: Return the raw spawned thread handle, or `fallback` when spawn failed.
-(define (spawn-result-handle-or [result : ThreadSpawnResult] [fallback : i64]) : i64
+(define (spawn-result-handle-or
+  [result : (& result ThreadSpawnResult)]
+  [fallback : i64]) : i64
   (match result
     [(ThreadSpawnOk thread) thread.handle]
     [(ThreadSpawnErr _) fallback]))
 
 ;: Return the raw spawned thread clear-tid address, or `fallback`.
 (define (spawn-result-clear-tid-addr-or
-  [result : ThreadSpawnResult]
+  [result : (& result ThreadSpawnResult)]
   [fallback : i64]) : i64
   (match result
     [(ThreadSpawnOk thread) thread.clear-tid-addr]
@@ -241,7 +231,7 @@
 
 ;: Return the raw spawned thread result address, or `fallback`.
 (define (spawn-result-result-addr-or
-  [result : ThreadSpawnResult]
+  [result : (& result ThreadSpawnResult)]
   [fallback : i64]) : i64
   (match result
     [(ThreadSpawnOk thread) thread.result-addr]
@@ -344,29 +334,61 @@
   4294967294)
 
 ;: Return the integer address of an `Array u8` backing buffer.
-(define (array-u8-addr [buf : (Array u8)]) : i64
+(define (array-u8-addr [buf : (& buf (Array u8))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast
+      (ptr->int
+        (ptr-cast
+          (array-data
+            (__tl-compiler-owned-shared-view-dyn-ref-as buf (Array u8)))
+          : (Ptr u8)))
+      : i64)))
 
 ;: Return the integer address of an `Array u64` backing buffer.
-(define (array-u64-addr [buf : (Array u64)]) : i64
+(define (array-u64-addr [buf : (& buf (Array u64))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast
+      (ptr->int
+        (ptr-cast
+          (array-data
+            (__tl-compiler-owned-shared-view-dyn-ref-as buf (Array u64)))
+          : (Ptr u8)))
+      : i64)))
 
 ;: Return the integer address of a private dynamic i64 backing buffer.
-(define (array-i64-addr [buf : (__tl_dyn-array i64)]) : i64
+(define (array-i64-addr [buf : (& buf (__tl_dyn-array i64))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast
+      (ptr->int
+        (ptr-cast
+          (array-data
+            (__tl-compiler-owned-shared-view-dyn-ref-as
+              buf
+              (__tl_dyn-array i64)))
+          : (Ptr u8)))
+      : i64)))
 
 ;: Return the integer address of an `Array i32` backing buffer.
-(define (array-i32-addr [buf : (Array i32)]) : i64
+(define (array-i32-addr [buf : (& buf (Array i32))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast
+      (ptr->int
+        (ptr-cast
+          (array-data
+            (__tl-compiler-owned-shared-view-dyn-ref-as buf (Array i32)))
+          : (Ptr u8)))
+      : i64)))
 
 ;: Return the integer address of an `Array String` backing buffer.
-(define (array-string-addr [buf : (Array String)]) : i64
+(define (array-string-addr [buf : (& buf (Array String))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast
+      (ptr->int
+        (ptr-cast
+          (array-data
+            (__tl-compiler-owned-shared-view-dyn-ref-as buf (Array String)))
+          : (Ptr u8)))
+      : i64)))
 
 ;: Return the integer address of a private i64 Vec result cell.
 (define (array-i64-vec-addr [buf : (__tl_dyn-array thread-i64-vec.Vec)]) : i64
@@ -464,7 +486,7 @@
     (syscall 202 addr 0 expected timeout-addr 0 0)))
 
 ;: Read Linux CLOCK_MONOTONIC into caller-owned reusable timespec storage.
-(define (linux-monotonic-ms [timespec : (__tl_dyn-array i64)]) : i64
+(define (linux-monotonic-ms [timespec : (&mut timespec (__tl_dyn-array i64))]) : i64
   (let
     [status : i64
       (unsafe
@@ -515,10 +537,11 @@
     [clear-cell : (Array i32) (array.make-array i32 1)]
     [started-cell : (Array i32) (array.make-array i32 1)]
     [result-cell : (__tl_dyn-array i64) (make-array i64 1)]
-    [clear-addr : i64 (array-i32-addr clear-cell)]
-    [started-addr : i64 (array-i32-addr started-cell)]
-    [result-addr : i64 (array-i64-addr result-cell)]
-    [stack-top : i64 (bit-and (+ (array-u8-addr stack) default-stack-size) -16)]
+    [clear-addr : i64 (array-i32-addr (& clear-cell))]
+    [started-addr : i64 (array-i32-addr (& started-cell))]
+    [result-addr : i64 (array-i64-addr (& result-cell))]
+    [stack-top : i64
+      (bit-and (+ (array-u8-addr (& stack)) default-stack-size) -16)]
     (begin
       (set! (array-ref clear-cell 0) (cast 1 : i32))
       (let
@@ -531,7 +554,7 @@
             (linux-child-main entry arg result-addr started-addr)
             (begin
               (linux-wait-i32-change started-addr (cast 0 : i32))
-              (ThreadSpawnOk (Thread tid clear-addr result-addr)))))))))
+              (ThreadSpawnOk (Thread tid clear-addr result-addr "")))))))))
 
 ;: Windows spin-wait until the backend trampoline copies its start context.
 (cfg
@@ -550,9 +573,9 @@
       [context : (Array u64) (array.make-array u64 4)]
       [started-cell : (Array i32) (array.make-array i32 1)]
       [result-cell : (__tl_dyn-array i64) (make-array i64 1)]
-      [context-addr : i64 (array-u64-addr context)]
-      [started-addr : i64 (array-i32-addr started-cell)]
-      [result-addr : i64 (array-i64-addr result-cell)]
+      [context-addr : i64 (array-u64-addr (& context))]
+      [started-addr : i64 (array-i32-addr (& started-cell))]
+      [result-addr : i64 (array-i64-addr (& result-cell))]
       (begin
         (set!
           (array-ref context 0)
@@ -574,7 +597,7 @@
             (ThreadSpawnErr "thread: spawn failed")
             (begin
               (thread-windows-wait-started started-addr)
-              (ThreadSpawnOk (Thread handle 0 result-addr)))))))))
+              (ThreadSpawnOk (Thread handle 0 result-addr "")))))))))
 
 ;: Spawn `entry`, passing `arg`; the result can be joined exactly once.
 (define (spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
@@ -615,7 +638,7 @@
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [result : (Array String) (in-arena owner (array.make-array String 1))]
-    [result-addr : i64 (array-string-addr result)]
+    [result-addr : i64 (array-string-addr (& result))]
     (match (spawn
       (lambda ([_ignored : i64]) : i64
         (let
@@ -661,7 +684,7 @@
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [result : (__tl_dyn-array i64) (in-arena owner (make-array i64 1))]
-    [result-addr : i64 (array-i64-addr result)]
+    [result-addr : i64 (array-i64-addr (& result))]
     (match (spawn
       (lambda ([_ignored : i64]) : i64
         (let
@@ -689,7 +712,7 @@
         (let
           [clock : (__tl_dyn-array i64) (array.make-array i64 2)]
           [timeout : (__tl_dyn-array i64) (array.make-array i64 2)]
-          [start-ms : i64 (linux-monotonic-ms clock)]
+          [start-ms : i64 (linux-monotonic-ms (&mut clock))]
           (if (< start-ms 0)
             (ThreadWaitErr "thread: wait monotonic clock unavailable")
             (let
@@ -702,7 +725,7 @@
                       (set! result (ThreadWaitReady))
                       (set! done true))
                     (let
-                      [now-ms : i64 (linux-monotonic-ms clock)]
+                      [now-ms : i64 (linux-monotonic-ms (&mut clock))]
                       (if (< now-ms start-ms)
                         (begin
                           (set!
@@ -721,13 +744,15 @@
                             (let
                               [remaining-ms : i64 (- timeout-ms elapsed-ms)]
                               (begin
-                                (time.timespec-from-ms! timeout remaining-ms)
+                                (time.timespec-from-ms!
+                                  (&mut timeout)
+                                  remaining-ms)
                                 (let
                                   [status : i64
                                     (linux-futex-wait-for
                                       clear-addr
                                       1
-                                      (array-i64-addr timeout))]
+                                      (array-i64-addr (& timeout)))]
                                   (if (linux-wait-retry? status)
                                     unit
                                     (begin
@@ -867,7 +892,7 @@
     [mask : (Array u8) (array.make-array u8 128)]
     [rc : i64
       (unsafe
-        (syscall 204 0 128 (array-u8-addr mask)))]
+        (syscall 204 0 128 (array-u8-addr (& mask))))]
     (if (< rc 0)
       1
       (let
@@ -948,7 +973,7 @@
           (let
             [n : i64
               (unsafe
-                (syscall 0 sem.handle (array-u64-addr buf) 8))]
+                (syscall 0 sem.handle (array-u64-addr (& buf)) 8))]
             (if (= n 8)
               (begin
                 (set! ok true)
@@ -972,7 +997,7 @@
         (set! (array-ref buf 0) (cast 1 : u64))
         (=
           (unsafe
-            (syscall 1 sem.handle (array-u64-addr buf) 8))
+            (syscall 1 sem.handle (array-u64-addr (& buf)) 8))
           8)))))
 
 ;: Close a semaphore handle.

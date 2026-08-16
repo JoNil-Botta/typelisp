@@ -20,6 +20,11 @@
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as clone_id_map)
 (import stdlib.string)
+(import compiler_owned_view as owned_view)
+
+(defmacro (clone-shared-view [place : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defstruct CloneNameSet
   (map clone_id_map.Map)
@@ -146,14 +151,14 @@
 
 (define (clone-type-name-module [name : String]) : String
   (let
-    [last : i64 (clone-type-name-last-slash name)]
+    [last : i64 (clone-type-name-last-slash (clone-shared-view name))]
     (if (< last 0)
       ""
       (string.substring name 0 last))))
 
 (define (clone-type-name-base [name : String]) : String
   (let
-    [last : i64 (clone-type-name-last-slash name)]
+    [last : i64 (clone-type-name-last-slash (clone-shared-view name))]
     [n : i64 (string.string-length name)]
     (if (< last 0)
       name
@@ -163,7 +168,7 @@
   (clone-name-key-id-in-module module-id alias-id))
 
 (define (clone-type-name-resolve-id
-  [names : CloneNameSet]
+  [names : (& names CloneNameSet)]
   [module-id : i64]
   [name-id : i64]) : i64
   (if (and (ci.intern-renderable-id? name-id) (ci.intern-dotted? name-id))
@@ -185,7 +190,7 @@
 
 (define (clone-helper-name [type-name : String]) : String
   (let
-    [module : String (clone-type-name-module type-name)]
+    [module : String (clone-type-name-module (clone-shared-view type-name))]
     [local : String (clone-local-helper-name type-name)]
     (if (string.eq module "")
       local
@@ -207,15 +212,15 @@
     [aliases : clone_id_map.Map (clone_id_map.with-capacity 64)]
     [current-module-id : i64 (clone-root-module-id)]
     [index : i64 0]
-    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [count : i64 (ast.ast-decl-list-len decls)]
     (begin
       (while (< index count)
         (begin
           ;; Borrowed classification first: only module markers and imports
           ;; carry a payload this alias table reads.
-          (if (ast.ast-decl-list-unwrapped-module-or-import-at? (& decls) index)
+          (if (ast.ast-decl-list-unwrapped-module-or-import-at? decls index)
             (match (ast.ast-decl-unwrapped
-              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback)))
+              (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
               [(ast.AstDecl.Module next-module)
                 (set! current-module-id next-module)]
               [(ast.AstDecl.Import
@@ -246,44 +251,40 @@
   [aliases : clone_id_map.Map]) : CloneNameSet
   (CloneNameSet (clone_id_map.with-capacity capacity) aliases))
 
-(define (clone-name-set-map [names : CloneNameSet]) : clone_id_map.Map
-  names.map)
-
-(define (clone-name-set-aliases [names : CloneNameSet]) : clone_id_map.Map
-  names.aliases)
-
 (define (clone-name-set-insert-alias-id
   [names : CloneNameSet]
   [module-id : i64]
   [alias-id : i64]
   [target-module-id : i64]) : CloneNameSet
   (let
-    [aliases : clone_id_map.Map (clone-name-set-aliases names)]
+    [map : clone_id_map.Map (clone-shared-view names.map)]
+    [aliases : clone_id_map.Map (clone-shared-view names.aliases)]
     (begin
       (clone_id_map.insert-ref!
         (&mut aliases)
         (clone-import-alias-key-id module-id alias-id)
         target-module-id)
-      (CloneNameSet (clone-name-set-map names) aliases))))
+      (CloneNameSet map aliases))))
 
 (define (clone-name-set-insert-id [names : CloneNameSet] [key-id : i64]) : CloneNameSet
   (let
-    [map (clone-name-set-map names)]
+    [map : clone_id_map.Map (clone-shared-view names.map)]
+    [aliases : clone_id_map.Map (clone-shared-view names.aliases)]
     (begin
       (if (>= key-id 0)
         (clone_id_map.insert-ref! (&mut map) key-id 1)
         unit)
-      (CloneNameSet map (clone-name-set-aliases names)))))
+      (CloneNameSet map aliases))))
 
-(define (clone-name-set-contains-id? [names : CloneNameSet] [key-id : i64]) : bool
-  (let
-    [map (clone-name-set-map names)]
-    (if (< key-id 0)
-      false
-      (clone_id_map.contains? (& map) key-id))))
+(define (clone-name-set-contains-id?
+  [names : (& names CloneNameSet)]
+  [key-id : i64]) : bool
+  (if (< key-id 0)
+    false
+    (clone_id_map.contains? (& names.map) key-id)))
 
 (define (clone-name-set-contains-canonical-id?
-  [names : CloneNameSet]
+  [names : (& names CloneNameSet)]
   [module-id : i64]
   [name-id : i64]) : bool
   (clone-name-set-contains-id?
@@ -304,7 +305,7 @@
       (and (>= name-id 0) (ci.intern-dotted? name-id)))))
 
 (define (clone-name-set-contains-resolved-nominal-id?
-  [names : CloneNameSet]
+  [names : (& names CloneNameSet)]
   [module-id : i64]
   [name-id : i64]) : bool
   (if (clone-name-set-contains-id?
@@ -323,7 +324,7 @@
 ;; clone-able but never collected as a root, and lowering the generated helper's
 ;; element clone fails with `missing generated clone helper for <Element>`.
 (define (clone-root-nominal-key-id
-  [able : CloneNameSet]
+  [able : (& able CloneNameSet)]
   [module-id : i64]
   [name-id : i64]) : i64
   (let
@@ -516,11 +517,12 @@
     [result : i64 fallback]
     [found : bool false]
     [ambiguous : bool false]
-    [count : i64 (clone-root-entries-len roots)]
+    [count : i64 (clone-root-entries-len (clone-shared-view roots))]
     (begin
       (while (and (< index count) (not ambiguous))
         (let
-          [key-id : i64 (clone-root-entries-key-id-at-or roots index -1)]
+          [key-id : i64
+            (clone-root-entries-key-id-at-or (clone-shared-view roots) index -1)]
           (if (= (clone-name-key-base-id key-id) base-id)
             (if found
               (set! ambiguous true)
@@ -533,90 +535,109 @@
         fallback
         result))))
 
+(define (clone-root-entries-materialize-dense
+  [store : (& store CloneRootEntryStore)]
+  [start : i64]
+  [count : i64]) : CloneRootEntries
+  (let
+    [out-store : (Box CloneRootEntryStore) (clone-root-entries-store-new)]
+    [index : i64 (- count 1)]
+    (begin
+      ;; Iterate physical oldest -> newest so helper identity and map first
+      ;; indices are byte-for-byte preserved.
+      (while (>= index 0)
+        (let
+          [entry : CloneRootEntry
+            (clone-root-entries-store-entry-at
+              store
+              (+ start (- count (+ index 1))))]
+          ;; index is logical; physical materialization is easiest by writing
+          ;; in reverse logical order to physical 0..len-1.
+          (if (<
+            (__tl-project-field (__tl-box-place out-store) len)
+            (array-length
+              (__tl-project-field (__tl-box-place out-store) entries)))
+            unit
+            (clone-root-entries-store-grow! (&mut (__tl-box-place out-store))))
+          (let
+            [physical : i64 (__tl-project-field (__tl-box-place out-store) len)]
+            (set!
+              (array-ref
+                (__tl-project-field (__tl-box-place out-store) entries)
+                physical)
+              entry)
+            (__tl-project-set-field
+              (__tl-box-place out-store)
+              len
+              (+ physical 1))
+            (let
+              [key-id : i64 entry.key-id]
+              (if (not
+                (clone_id_map.contains?
+                  (& (__tl-project-field (__tl-box-place out-store) key-index))
+                  key-id))
+                (clone_id_map.insert-ref!
+                  (&mut
+                    (__tl-project-field (__tl-box-place out-store) key-index))
+                  key-id
+                  physical)
+                unit))))
+        (set! index (- index 1)))
+      (CloneRootEntries.Dense out-store 0 count))))
+
 (define (clone-root-entries-materialize [roots : CloneRootEntries]) : CloneRootEntries
   (match roots
     [(CloneRootEntries.Empty) CloneRootEntries.Empty]
-    [(CloneRootEntries.Dense _ _ len)
-      (let
-        [out-store : (Box CloneRootEntryStore) (clone-root-entries-store-new)]
-        [index : i64 (- len 1)]
-        (begin
-          ;; Iterate physical oldest -> newest so helper identity and map first
-          ;; indices are byte-for-byte preserved.
-          (while (>= index 0)
-            (let
-              [entry : CloneRootEntry
-                (clone-root-entries-entry-at-or
-                  roots
-                  index
-                  (CloneRootEntry -1 -1))]
-              ;; index is logical; physical materialization is easiest by
-              ;; writing in reverse logical order to physical 0..len-1.
-              (if (<
-                (__tl-project-field (__tl-box-place out-store) len)
-                (array-length
-                  (__tl-project-field (__tl-box-place out-store) entries)))
-                unit
-                (clone-root-entries-store-grow!
-                  (&mut (__tl-box-place out-store))))
-              (let
-                [physical : i64
-                  (__tl-project-field (__tl-box-place out-store) len)]
-                (set!
-                  (array-ref
-                    (__tl-project-field (__tl-box-place out-store) entries)
-                    physical)
-                  entry)
-                (__tl-project-set-field
-                  (__tl-box-place out-store)
-                  len
-                  (+ physical 1))
-                (let
-                  [key-id : i64 entry.key-id]
-                  [map
-                    (__tl-project-field (__tl-box-place out-store) key-index)]
-                  (if (not (clone_id_map.contains? (& map) key-id))
-                    (clone_id_map.insert-ref! (&mut map) key-id physical)
-                    unit)
-                  (__tl-project-set-field
-                    (__tl-box-place out-store)
-                    key-index
-                    map))))
-            (set! index (- index 1)))
-          (CloneRootEntries.Dense out-store 0 len)))]))
+    [(CloneRootEntries.Dense store start count)
+      (clone-root-entries-materialize-dense
+        (& (__tl-box-place store))
+        start
+        count)]))
 
 (define (clone-root-entries-copy [roots : CloneRootEntries]) : CloneRootEntries
   (clone-root-entries-materialize roots))
 
 (define (clone-root-entries-add-id [roots : CloneRootEntries] [key-id : i64]) : CloneRootEntries
-  (if (or (< key-id 0) (clone-root-entries-contains-id? roots key-id))
-    roots
-    (let
-      [helper-id : i64 (clone-helper-name-id-new-for-key key-id)]
-      (match roots
-        [(CloneRootEntries.Empty)
+  (match roots
+    [(CloneRootEntries.Empty)
+      (if (< key-id 0)
+        CloneRootEntries.Empty
+        (let
+          [helper-id : i64 (clone-helper-name-id-new-for-key key-id)]
+          [store : (Box CloneRootEntryStore) (clone-root-entries-store-new)]
+          (begin
+            (set!
+              (array-ref (__tl-project-field (__tl-box-place store) entries) 0)
+              (CloneRootEntry key-id helper-id))
+            (__tl-project-set-field (__tl-box-place store) len 1)
+            (clone_id_map.insert-ref!
+              (&mut (__tl-project-field (__tl-box-place store) key-index))
+              key-id
+              0)
+            (CloneRootEntries.Dense store 0 1))))]
+    [(CloneRootEntries.Dense store start len)
+      (let
+        [present? : bool
+          (and
+            (>= key-id 0)
+            (>=
+              (clone-root-entries-store-index-in-view-or
+                (& (__tl-box-place store))
+                start
+                len
+                key-id)
+              0))]
+        (if (or (< key-id 0) present?)
+          (CloneRootEntries.Dense (clone-shared-view store) start len)
           (let
-            [store : (Box CloneRootEntryStore) (clone-root-entries-store-new)]
-            (begin
-              (set!
-                (array-ref
-                  (__tl-project-field (__tl-box-place store) entries)
-                  0)
-                (CloneRootEntry key-id helper-id))
-              (__tl-project-set-field (__tl-box-place store) len 1)
-              (clone_id_map.insert-ref!
-                (&mut (__tl-project-field (__tl-box-place store) key-index))
-                key-id
-                0)
-              (CloneRootEntries.Dense store 0 1)))]
-        [(CloneRootEntries.Dense store start len)
-          (let
+            [helper-id : i64 (clone-helper-name-id-new-for-key key-id)]
             [store-len : i64 (__tl-project-field (__tl-box-place store) len)]
             [tail? : bool (and (= start 0) (= len store-len))]
             [target : CloneRootEntries
               (if tail?
-                roots
-                (clone-root-entries-materialize roots))]
+                (CloneRootEntries.Dense (clone-shared-view store) start len)
+                (clone-root-entries-materialize
+                  (CloneRootEntries.Dense (clone-shared-view store) start len)))]
             (match target
               [(CloneRootEntries.Dense target-store target-start target-len)
                 (let
@@ -665,7 +686,7 @@
   (if (<= count 0)
     CloneRootEntries.Empty
     (let
-      [len : i64 (clone-root-entries-len roots)]
+      [len : i64 (clone-root-entries-len (clone-shared-view roots))]
       (if (>= count len)
         roots
         (match roots
@@ -675,9 +696,9 @@
 
 (define (clone-root-entries-drop [roots : CloneRootEntries] [count : i64]) : CloneRootEntries
   (if (<= count 0)
-    roots
+    (clone-shared-view roots)
     (let
-      [len : i64 (clone-root-entries-len roots)]
+      [len : i64 (clone-root-entries-len (clone-shared-view roots))]
       (if (>= count len)
         CloneRootEntries.Empty
         (match roots
@@ -685,15 +706,11 @@
           [(CloneRootEntries.Dense store start _)
             (CloneRootEntries.Dense store start (- len count))])))))
 
-(define (clone-name-set-len [names : CloneNameSet]) : i64
-  (let
-    [map (clone-name-set-map names)]
-    (clone_id_map.len (& map))))
+(define (clone-name-set-len [names : (& names CloneNameSet)]) : i64
+  (clone_id_map.len (& names.map)))
 
-(define (clone-name-set-capacity [names : CloneNameSet]) : i64
-  (let
-    [map (clone-name-set-map names)]
-    (clone_id_map.capacity (& map))))
+(define (clone-name-set-capacity [names : (& names CloneNameSet)]) : i64
+  (clone_id_map.capacity (& names.map)))
 
 (define (clone-name-set-smoke-insert-count [names : CloneNameSet] [count : i64]) : CloneNameSet
   (if (<= count 0)
@@ -706,9 +723,10 @@
   (let
     [empty : CloneNameSet (clone-name-set-empty)]
     [one : CloneNameSet (clone-name-set-insert-id empty 1)]
-    [dupe : CloneNameSet (clone-name-set-insert-id one 1)]
+    [dupe : CloneNameSet (clone-name-set-insert-id (clone-shared-view one) 1)]
     [seed-capacity : i64 (clone-name-set-capacity dupe)]
-    [grown : CloneNameSet (clone-name-set-smoke-insert-count dupe 10)]
+    [grown : CloneNameSet
+      (clone-name-set-smoke-insert-count (clone-shared-view dupe) 10)]
     [base-id : i64 (ci.intern "CloneSmokeKey")]
     [first-key : i64
       (clone-name-pair-key-id (ci.intern "clone.smoke.first") base-id)]
@@ -716,14 +734,18 @@
       (clone-name-pair-key-id (ci.intern "clone.smoke.second") base-id)]
     [unique : CloneRootEntries
       (clone-root-entries-add-id (clone-root-entries-empty) first-key)]
-    [ambiguous : CloneRootEntries (clone-root-entries-add-id unique second-key)]
+    [ambiguous : CloneRootEntries
+      (clone-root-entries-add-id (clone-shared-view unique) second-key)]
     (and
       (not (clone-name-set-contains-id? one 2))
       (clone-name-set-contains-id? one 1)
       (= (clone-name-set-len dupe) 1)
       (= (clone-name-set-len grown) 11)
       (=
-        (clone-root-entries-unique-key-for-base-id-or unique base-id -1)
+        (clone-root-entries-unique-key-for-base-id-or
+          (clone-shared-view unique)
+          base-id
+          -1)
         first-key)
       (= (clone-root-entries-unique-key-for-base-id-or ambiguous base-id -1) -1)
       (clone-module-alias-import-kind? ast.AstImportKind.Module)
@@ -759,13 +781,13 @@
 (define (clone-root-entries-smoke-order-ok? [roots : CloneRootEntries]) : bool
   (let
     [index : i64 0]
-    [count : i64 (clone-root-entries-len roots)]
+    [count : i64 (clone-root-entries-len (clone-shared-view roots))]
     [ok : bool true]
     (begin
       (while (and (< index count) ok)
         (if (not
           (=
-            (clone-root-entries-key-id-at-or roots index -1)
+            (clone-root-entries-key-id-at-or (clone-shared-view roots) index -1)
             (clone-root-entries-smoke-key-id (- count (+ index 1)))))
           (set! ok false)
           unit)
@@ -777,17 +799,23 @@
   [right : CloneRootEntries]) : bool
   (let
     [index : i64 0]
-    [count : i64 (clone-root-entries-len left)]
-    [ok : bool (= count (clone-root-entries-len right))]
+    [count : i64 (clone-root-entries-len (clone-shared-view left))]
+    [ok : bool (= count (clone-root-entries-len (clone-shared-view right)))]
     (begin
       (while (and (< index count) ok)
         (if (and
           (=
-            (clone-root-entries-key-id-at-or left index -1)
-            (clone-root-entries-key-id-at-or right index -1))
+            (clone-root-entries-key-id-at-or (clone-shared-view left) index -1)
+            (clone-root-entries-key-id-at-or (clone-shared-view right) index -1))
           (=
-            (clone-root-entries-helper-id-at-or left index -1)
-            (clone-root-entries-helper-id-at-or right index -1)))
+            (clone-root-entries-helper-id-at-or
+              (clone-shared-view left)
+              index
+              -1)
+            (clone-root-entries-helper-id-at-or
+              (clone-shared-view right)
+              index
+              -1)))
           unit
           (set! ok false))
         (set! index (+ index 1)))
@@ -799,16 +827,24 @@
     [first-key : i64 (clone-root-entries-smoke-key-id 0)]
     [grown-key : i64 (ci.intern "CloneDenseSmokeGrown")]
     [branch-key : i64 (ci.intern "CloneDenseSmokeBranch")]
-    [first : CloneRootEntries (clone-root-entries-add-id empty first-key)]
-    [duplicate : CloneRootEntries (clone-root-entries-add-id first first-key)]
+    [first : CloneRootEntries
+      (clone-root-entries-add-id (clone-shared-view empty) first-key)]
+    [duplicate : CloneRootEntries
+      (clone-root-entries-add-id (clone-shared-view first) first-key)]
     [roots : CloneRootEntries
-      (clone-root-entries-smoke-add-sequential first 1 24)]
-    [prefix : CloneRootEntries (clone-root-entries-take roots 3)]
-    [first-helper : i64 (clone-root-entries-helper-id-or first first-key -1)]
-    [prefix-helper : i64 (clone-root-entries-helper-id-at-or prefix 0 -1)]
-    [grown : CloneRootEntries (clone-root-entries-add-id roots grown-key)]
-    [branch : CloneRootEntries (clone-root-entries-add-id prefix branch-key)]
-    [copy : CloneRootEntries (clone-root-entries-copy branch)]
+      (clone-root-entries-smoke-add-sequential (clone-shared-view first) 1 24)]
+    [prefix : CloneRootEntries
+      (clone-root-entries-take (clone-shared-view roots) 3)]
+    [first-helper : i64
+      (clone-root-entries-helper-id-or (clone-shared-view first) first-key -1)]
+    [prefix-helper : i64
+      (clone-root-entries-helper-id-at-or (clone-shared-view prefix) 0 -1)]
+    [grown : CloneRootEntries
+      (clone-root-entries-add-id (clone-shared-view roots) grown-key)]
+    [branch : CloneRootEntries
+      (clone-root-entries-add-id (clone-shared-view prefix) branch-key)]
+    [copy : CloneRootEntries
+      (clone-root-entries-copy (clone-shared-view branch))]
     [base-id : i64 (ci.intern "CloneDenseSmokeKey")]
     [first-qualified : i64
       (clone-name-pair-key-id (ci.intern "clone.dense.first") base-id)]
@@ -819,7 +855,7 @@
       (clone-name-pair-key-id (ci.intern "clone.dense.unique") unique-base)]
     [qualified : CloneRootEntries
       (clone-root-entries-add-id
-        (clone-root-entries-add-id empty first-qualified)
+        (clone-root-entries-add-id (clone-shared-view empty) first-qualified)
         second-qualified)]
     [first-qualified-helper : i64
       (clone-root-entries-helper-id-or qualified first-qualified -1)]
@@ -828,77 +864,108 @@
     [_materialize-qualified : unit
       (clone-root-entries-materialize-helper-names! qualified)]
     [unique-root : CloneRootEntries
-      (clone-root-entries-add-id empty unique-qualified)]
+      (clone-root-entries-add-id (clone-shared-view empty) unique-qualified)]
     (and
       ;; Empty is allocation-free and duplicate insertion is idempotent.
-      (clone-root-entries-empty? empty)
-      (= (clone-root-entries-physical-len empty) 0)
-      (= (clone-root-entries-capacity empty) 0)
-      (= (clone-root-entries-len duplicate) 1)
-      (= (clone-root-entries-helper-id-or duplicate first-key -1) first-helper)
+      (clone-root-entries-empty? (clone-shared-view empty))
+      (= (clone-root-entries-physical-len (clone-shared-view empty)) 0)
+      (= (clone-root-entries-capacity (clone-shared-view empty)) 0)
+      (= (clone-root-entries-len (clone-shared-view duplicate)) 1)
+      (=
+        (clone-root-entries-helper-id-or
+          (clone-shared-view duplicate)
+          first-key
+          -1)
+        first-helper)
       ;; 24 entries cross three geometric growth boundaries and remain ordered.
-      (= (clone-root-entries-len roots) 24)
-      (clone-root-entries-smoke-order-ok? roots)
+      (= (clone-root-entries-len (clone-shared-view roots)) 24)
+      (clone-root-entries-smoke-order-ok? (clone-shared-view roots))
       ;; The one-entry snapshot remains unchanged after 4->8->16->32 growth,
       ;; while its shared physical store and map observe later entries.
-      (= (clone-root-entries-len first) 1)
-      (= (clone-root-entries-key-id-at-or first 0 -1) first-key)
-      (= (clone-root-entries-helper-id-or first first-key -1) first-helper)
-      (not (clone-root-entries-contains-id? first grown-key))
-      (= (clone-root-entries-helper-id-or first grown-key -1) -1)
-      (= (clone-root-entries-physical-len first) 25)
-      (>= (clone-root-entries-capacity first) 25)
-      (= (clone-root-entries-len roots) 24)
-      (= (clone-root-entries-physical-len roots) 25)
-      (>= (clone-root-entries-capacity roots) 25)
-      (< (clone-root-entries-capacity roots) 50)
-      ;; A recent slice remains separate from the divergent COW branch.
-      (= (clone-root-entries-len prefix) 3)
-      (= (clone-root-entries-helper-id-at-or prefix 0 -1) prefix-helper)
+      (= (clone-root-entries-len (clone-shared-view first)) 1)
       (=
-        (clone-root-entries-key-id-at-or prefix 0 -1)
+        (clone-root-entries-key-id-at-or (clone-shared-view first) 0 -1)
+        first-key)
+      (=
+        (clone-root-entries-helper-id-or (clone-shared-view first) first-key -1)
+        first-helper)
+      (not
+        (clone-root-entries-contains-id? (clone-shared-view first) grown-key))
+      (=
+        (clone-root-entries-helper-id-or (clone-shared-view first) grown-key -1)
+        -1)
+      (= (clone-root-entries-physical-len (clone-shared-view first)) 25)
+      (>= (clone-root-entries-capacity (clone-shared-view first)) 25)
+      (= (clone-root-entries-len (clone-shared-view roots)) 24)
+      (= (clone-root-entries-physical-len (clone-shared-view roots)) 25)
+      (>= (clone-root-entries-capacity (clone-shared-view roots)) 25)
+      (< (clone-root-entries-capacity (clone-shared-view roots)) 50)
+      ;; A recent slice remains separate from the divergent COW branch.
+      (= (clone-root-entries-len (clone-shared-view prefix)) 3)
+      (=
+        (clone-root-entries-helper-id-at-or (clone-shared-view prefix) 0 -1)
+        prefix-helper)
+      (=
+        (clone-root-entries-key-id-at-or (clone-shared-view prefix) 0 -1)
         (clone-root-entries-smoke-key-id 23))
-      (not (clone-root-entries-contains-id? prefix grown-key))
-      (= (clone-root-entries-helper-id-or prefix grown-key -1) -1)
-      (= (clone-root-entries-key-id-at-or grown 0 -1) grown-key)
-      (= (clone-root-entries-len grown) 25)
+      (not
+        (clone-root-entries-contains-id? (clone-shared-view prefix) grown-key))
+      (=
+        (clone-root-entries-helper-id-or
+          (clone-shared-view prefix)
+          grown-key
+          -1)
+        -1)
+      (=
+        (clone-root-entries-key-id-at-or (clone-shared-view grown) 0 -1)
+        grown-key)
+      (= (clone-root-entries-len (clone-shared-view grown)) 25)
       ;; Divergent append materializes the stale prefix, leaving the original
       ;; descendant untouched.
-      (= (clone-root-entries-len branch) 4)
-      (= (clone-root-entries-physical-len branch) 4)
-      (>= (clone-root-entries-capacity branch) 4)
-      (< (clone-root-entries-capacity branch) 8)
-      (= (clone-root-entries-key-id-at-or branch 0 -1) branch-key)
+      (= (clone-root-entries-len (clone-shared-view branch)) 4)
+      (= (clone-root-entries-physical-len (clone-shared-view branch)) 4)
+      (>= (clone-root-entries-capacity (clone-shared-view branch)) 4)
+      (< (clone-root-entries-capacity (clone-shared-view branch)) 8)
       (=
-        (clone-root-entries-key-id-at-or roots 0 -1)
+        (clone-root-entries-key-id-at-or (clone-shared-view branch) 0 -1)
+        branch-key)
+      (=
+        (clone-root-entries-key-id-at-or (clone-shared-view roots) 0 -1)
         (clone-root-entries-smoke-key-id 23))
-      (= (clone-root-entries-len copy) 4)
-      (= (clone-root-entries-physical-len copy) 4)
-      (>= (clone-root-entries-capacity copy) 4)
-      (< (clone-root-entries-capacity copy) 8)
-      (clone-root-entries-smoke-copy-equal? branch copy)
-      (= (clone-root-entries-len (clone-root-entries-take roots 5)) 5)
-      (= (clone-root-entries-len (clone-root-entries-drop roots 5)) 19)
+      (= (clone-root-entries-len (clone-shared-view copy)) 4)
+      (= (clone-root-entries-physical-len (clone-shared-view copy)) 4)
+      (>= (clone-root-entries-capacity (clone-shared-view copy)) 4)
+      (< (clone-root-entries-capacity (clone-shared-view copy)) 8)
+      (clone-root-entries-smoke-copy-equal? (clone-shared-view branch) copy)
       (=
-        (clone-root-entries-key-id-at-or (clone-root-entries-drop roots 5) 0 -1)
+        (clone-root-entries-len
+          (clone-root-entries-take (clone-shared-view roots) 5))
+        5)
+      (=
+        (clone-root-entries-len
+          (clone-root-entries-drop (clone-shared-view roots) 5))
+        19)
+      (=
+        (clone-root-entries-key-id-at-or
+          (clone-root-entries-drop (clone-shared-view roots) 5)
+          0
+          -1)
         (clone-root-entries-smoke-key-id 18))
       ;; Qualified keys with one base stay ambiguous; a unique base resolves.
-      (= (clone-root-entries-unique-key-for-base-id-or qualified base-id -1) -1)
-      (not (= first-qualified-helper second-qualified-helper))
-      (string.eq
-        (ci.intern-str first-qualified-helper)
-        (ci.intern-str second-qualified-helper))
-      (string.eq
-        (ci.intern-str first-qualified-helper)
-        "clone$CloneDenseSmokeKey")
       (=
         (clone-root-entries-unique-key-for-base-id-or
-          unique-root
+          (clone-shared-view qualified)
+          base-id
+          -1)
+        -1)
+      (=
+        (clone-root-entries-unique-key-for-base-id-or
+          (clone-shared-view unique-root)
           unique-base
           -1)
         unique-qualified))))
 
-(define (clone-type-get [pools : ast.AstNodePoolContext] [id : i64]) : ast.AstType
+(define (clone-type-get [pools : (& pools ast.AstNodePoolContext)] [id : i64]) : ast.AstType
   (ast.ast-node-pool-context-type-get pools id))
 
 ;; A field type is clone-able given the current clone-able-name set: scalars,
@@ -906,9 +973,9 @@
 ;; named type (parsed as AstType.Var, or resolved to AstType.Enum/AstType.Struct) is
 ;; clone-able iff it is in `names`; everything else is not.
 (define (clone-field-type-able-id?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [ty : ast.AstType]
-  [names : CloneNameSet]
+  [names : (& names CloneNameSet)]
   [module-id : i64]) : bool
   (match ty
     [(ast.AstType.I64) true]
@@ -927,7 +994,11 @@
     [(ast.AstType.Never) true]
     [(ast.AstType.String) true]
     [(ast.AstType.Tuple elems)
-      (clone-field-type-list-able? pools (__tl-box-place elems) names module-id)]
+      (clone-field-type-list-able?
+        pools
+        (ast.ast-type-list-box-shared-view elems)
+        names
+        module-id)]
     [(ast.AstType.Array elem _)
       (clone-field-type-able-id?
         pools
@@ -969,16 +1040,16 @@
     [_ false]))
 
 (define (clone-field-type-list-able?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [types : ast.AstTypeList]
-  [names : CloneNameSet]
+  [names : (& names CloneNameSet)]
   [module-id : i64]) : bool
   (clone-field-type-list-able-at pools (& types) names module-id 0))
 
 (define (clone-field-type-list-able-at
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [types : (& types ast.AstTypeList)]
-  [names : CloneNameSet]
+  [names : (& names CloneNameSet)]
   [module-id : i64]
   [index : i64]) : bool
   (if (>= index (ast.ast-type-list-len types))
@@ -994,16 +1065,16 @@
       false)))
 
 (define (clone-variant-list-able?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [variants : ast.AstVariantDefList]
-  [names : CloneNameSet]
+  [names : (& names CloneNameSet)]
   [module-id : i64]) : bool
   (clone-variant-list-able-at pools (& variants) names module-id 0))
 
 (define (clone-variant-list-able-at
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [variants : (& variants ast.AstVariantDefList)]
-  [names : CloneNameSet]
+  [names : (& names CloneNameSet)]
   [module-id : i64]
   [index : i64]) : bool
   (if (>= index (ast.ast-variant-def-list-len variants))
@@ -1023,16 +1094,16 @@
           false)])))
 
 (define (clone-struct-fields-able?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [fields : ast.AstFieldDefList]
-  [names : CloneNameSet]
+  [names : (& names CloneNameSet)]
   [module-id : i64]) : bool
   (clone-struct-fields-able-at pools (& fields) names module-id 0))
 
 (define (clone-struct-fields-able-at
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [fields : (& fields ast.AstFieldDefList)]
-  [names : CloneNameSet]
+  [names : (& names CloneNameSet)]
   [module-id : i64]
   [index : i64]) : bool
   (if (>= index (ast.ast-field-def-list-len fields))
@@ -1050,16 +1121,16 @@
 ;; clone-able under the current `names` set. Repeats until the set stops
 ;; shrinking (monotone decreasing, so it terminates).
 (define (clone-fixpoint-step-in-module
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [names : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [names : (& names CloneNameSet)]
   [acc : CloneNameSet]
   [module-id : i64]) : CloneNameSet
   (let
     [out : CloneNameSet acc]
     [current-module-id : i64 module-id]
     [index : i64 0]
-    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [count : i64 (ast.ast-decl-list-len decls)]
     [decl-offset : i64 decls.offset]
     (begin
       (while (< index count)
@@ -1069,10 +1140,10 @@
           ;; other declaration is skipped without materialising a 104 B row and
           ;; copying it twice more through `ast-decl-unwrapped`.
           (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-            (& decls)
+            decls
             index)
             (match (ast.ast-decl-unwrapped
-              (array-ref decls.slots (+ decl-offset index)))
+              (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
               [(ast.AstDecl.Module next-module)
                 (set! current-module-id next-module)]
               [(ast.AstDecl.DefEnum decl-meta name _ variants)
@@ -1105,32 +1176,32 @@
       out)))
 
 (define (clone-fixpoint-step
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [names : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [names : (& names CloneNameSet)]
   [acc : CloneNameSet]) : CloneNameSet
   (clone-fixpoint-step-in-module pools decls names acc (clone-root-module-id)))
 
 ;; Initial over-approximation: every enum/struct name is assumed clone-able.
 (define (clone-all-type-names-in-module
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [acc : CloneNameSet]
   [module-id : i64]) : CloneNameSet
   (let
     [out : CloneNameSet acc]
     [current-module-id : i64 module-id]
     [index : i64 0]
-    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [count : i64 (ast.ast-decl-list-len decls)]
     [decl-offset : i64 decls.offset]
     (begin
       (while (< index count)
         (begin
           ;; Same borrowed classification as the fixpoint step above.
           (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-            (& decls)
+            decls
             index)
             (match (ast.ast-decl-unwrapped
-              (array-ref decls.slots (+ decl-offset index)))
+              (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
               [(ast.AstDecl.Module next-module)
                 (set! current-module-id next-module)]
               [(ast.AstDecl.DefEnum decl-meta name _ _)
@@ -1150,13 +1221,15 @@
           (set! index (+ index 1))))
       out)))
 
-(define (clone-all-type-names [decls : ast.AstDeclList] [acc : CloneNameSet]) : CloneNameSet
+(define (clone-all-type-names
+  [decls : (& decls ast.AstDeclList)]
+  [acc : CloneNameSet]) : CloneNameSet
   (clone-all-type-names-in-module decls acc (clone-root-module-id)))
 
 (define (clone-fixpoint
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [names : CloneNameSet]) : CloneNameSet
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [names : (& names CloneNameSet)]) : CloneNameSet
   (let
     [next : CloneNameSet
       (clone-fixpoint-step
@@ -1165,7 +1238,7 @@
         names
         (clone-name-set-with-capacity
           (clone-name-set-capacity names)
-          (clone-name-set-aliases names)))]
+          (clone names.aliases)))]
     (if (= (clone-name-set-len next) (clone-name-set-len names))
       next
       (clone-fixpoint pools decls next))))
@@ -1183,18 +1256,18 @@
       out)))
 
 (define (clone-root-add-type-list
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [types : ast.AstTypeList]
   [module-id : i64]) : CloneRootEntries
   (clone-root-add-type-list-at pools decls able roots (& types) module-id 0))
 
 (define (clone-root-add-type-list-at
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [types : (& types ast.AstTypeList)]
   [module-id : i64]
@@ -1219,18 +1292,18 @@
       (+ index 1))))
 
 (define (clone-root-add-fields
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [fields : ast.AstFieldDefList]
   [module-id : i64]) : CloneRootEntries
   (clone-root-add-fields-at pools decls able roots (& fields) module-id 0))
 
 (define (clone-root-add-fields-at
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [fields : (& fields ast.AstFieldDefList)]
   [module-id : i64]
@@ -1252,18 +1325,18 @@
           (+ index 1))])))
 
 (define (clone-root-add-variants
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [variants : ast.AstVariantDefList]
   [module-id : i64]) : CloneRootEntries
   (clone-root-add-variants-at pools decls able roots (& variants) module-id 0))
 
 (define (clone-root-add-variants-at
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [variants : (& variants ast.AstVariantDefList)]
   [module-id : i64]
@@ -1285,10 +1358,10 @@
           (+ index 1))])))
 
 (define (clone-root-add-name-deps-in-module
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [cursor : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [cursor : (& cursor ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [name-key-id : i64]
   [module-id : i64]) : CloneRootEntries
@@ -1299,7 +1372,7 @@
   ;; type-definition kinds carry a payload the search reads; the rest are
   ;; skipped through the borrowed tag test.
   (let
-    [count : i64 (ast.ast-decl-list-len (& cursor))]
+    [count : i64 (ast.ast-decl-list-len cursor)]
     [index : i64 0]
     [out : CloneRootEntries roots]
     [current-module-id : i64 module-id]
@@ -1308,10 +1381,10 @@
       (while (and (not done) (< index count))
         (begin
           (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-            (& cursor)
+            cursor
             index)
             (match (ast.ast-decl-unwrapped
-              (ast.ast-decl-list-get (& cursor) index (ast.ast-decl-fallback)))
+              (ast.ast-decl-list-get cursor index (ast.ast-decl-fallback)))
               [(ast.AstDecl.Module next-module)
                 (set! current-module-id next-module)]
               [(ast.AstDecl.DefEnum decl-meta decl-name _ variants)
@@ -1352,10 +1425,10 @@
       out)))
 
 (define (clone-root-add-name-deps
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [cursor : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [cursor : (& cursor ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [name-key-id : i64]) : CloneRootEntries
   (clone-root-add-name-deps-in-module
@@ -1368,24 +1441,26 @@
     (clone-root-module-id)))
 
 (define (clone-root-add-name
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [name-key-id : i64]) : CloneRootEntries
   (if (clone-name-set-contains-id? able name-key-id)
     (let
       [with-name : CloneRootEntries
-        (clone-root-entries-add-id roots name-key-id)]
-      (if (= (clone-root-entries-len with-name) (clone-root-entries-len roots))
-        roots
+        (clone-root-entries-add-id (clone-shared-view roots) name-key-id)]
+      (if (=
+        (clone-root-entries-len (clone-shared-view with-name))
+        (clone-root-entries-len (clone-shared-view roots)))
+        (clone-shared-view roots)
         (clone-root-add-name-deps pools decls decls able with-name name-key-id)))
     roots))
 
 (define (clone-root-add-type
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [ty : ast.AstType]
   [module-id : i64]) : CloneRootEntries
@@ -1396,7 +1471,7 @@
         decls
         able
         roots
-        (__tl-box-place elems)
+        (ast.ast-type-list-box-shared-view elems)
         module-id)]
     [(ast.AstType.Array elem _)
       (clone-root-add-type
@@ -1462,19 +1537,23 @@
     [_ roots]))
 
 (define (clone-root-expand
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]
   [cursor : CloneRootEntries]) : CloneRootEntries
   (let
     [out : CloneRootEntries roots]
     [index : i64 0]
-    [count : i64 (clone-root-entries-len cursor)]
+    [count : i64 (clone-root-entries-len (clone-shared-view cursor))]
     (begin
       (while (< index count)
         (let
-          [name-key-id : i64 (clone-root-entries-key-id-at-or cursor index -1)]
+          [name-key-id : i64
+            (clone-root-entries-key-id-at-or
+              (clone-shared-view cursor)
+              index
+              -1)]
           (begin
             (set!
               out
@@ -1483,17 +1562,22 @@
                 decls
                 decls
                 able
-                (clone-root-add-name pools decls able out name-key-id)
+                (clone-root-add-name
+                  pools
+                  decls
+                  able
+                  (clone-shared-view out)
+                  name-key-id)
                 name-key-id))
             (set! index (+ index 1)))))
       out)))
 
 (define (clone-stdlib-handoff-roots
-  [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [able : CloneNameSet]
+  [pools : (& pools ast.AstNodePoolContext)]
+  [decls : (& decls ast.AstDeclList)]
+  [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]) : CloneRootEntries
-  (clone-root-expand pools decls able roots roots))
+  (clone-root-expand pools decls able (clone-shared-view roots) roots))
 
 (define (clone-helper-decl-count-in-module
   [decls : ast.AstDeclList]
@@ -1552,7 +1636,7 @@
   [acc : CloneNameSet]) : CloneNameSet
   (let
     [index : i64 0]
-    [count : i64 (clone-root-entries-len names)]
+    [count : i64 (clone-root-entries-len (clone-shared-view names))]
     [out : CloneNameSet acc]
     (begin
       (while (< index count)
@@ -1561,6 +1645,9 @@
             out
             (clone-name-set-insert-id
               out
-              (clone-root-entries-key-id-at-or names index -1)))
+              (clone-root-entries-key-id-at-or
+                (clone-shared-view names)
+                index
+                -1)))
           (set! index (+ index 1))))
       out)))

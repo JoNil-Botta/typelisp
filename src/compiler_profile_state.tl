@@ -64,6 +64,18 @@
   (defstruct CompilerProfileState
     (disabled i64)))
 
+(defmacro (compiler-profile-state-shared-view [place : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
+
+(defmacro (compiler-profile-state-storage-field-shared-view
+  [state : Expr]
+  [field : Expr]) : Expr
+  `(let
+    [storage : CompilerProfileStateStorage
+      (compiler-profile-state-storage ,state)]
+    (compiler-profile-state-shared-view (__tl-project-field storage ,field))))
+
 (define (compiler-profile-state-new) : CompilerProfileState
   (cfg
     (any compile-profile compile-profile-summary test)
@@ -109,13 +121,17 @@
 (cfg
   (any compile-profile compile-profile-summary test)
   (define (compiler-profile-state-storage [state : CompilerProfileState]) : CompilerProfileStateStorage
-    (array-ref state.storage 0)))
+    (let
+      [items : (__tl_dyn-array CompilerProfileStateStorage)
+        (compiler-profile-state-shared-view state.storage)]
+      (unsafe
+        (ptr-read (ptr-offset (array-data items) 0))))))
 
 (define (compiler-profile-state-metrics [_state : CompilerProfileState]) : CompilerProfileMetrics
   (cfg
     (any compile-profile test)
     (CompilerProfileMetrics
-      (__tl-project-field (compiler-profile-state-storage _state) metrics))
+      (compiler-profile-state-storage-field-shared-view _state metrics))
     (CompilerProfileMetrics 0)))
 
 (cfg
@@ -139,10 +155,14 @@
     [metrics : CompilerProfileMetrics]
     [metric : i64]
     [value : i64]) : unit
-    (compiler-profile-metrics-set!
-      metrics
-      metric
-      (+ (compiler-profile-metrics-value metrics metric) value))))
+    (let
+      [next : i64
+        (+
+          (compiler-profile-metrics-value
+            (compiler-profile-state-shared-view metrics)
+            metric)
+          value)]
+      (compiler-profile-metrics-set! metrics metric next))))
 
 (cfg
   (any compile-profile test)
@@ -154,7 +174,10 @@
       [metric : i64 start]
       (while (< metric end)
         (begin
-          (compiler-profile-metrics-set! metrics metric 0)
+          (compiler-profile-metrics-set!
+            (compiler-profile-state-shared-view metrics)
+            metric
+            0)
           (set! metric (+ metric 1)))))))
 
 (cfg
@@ -203,103 +226,91 @@
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-keys [state : CompilerProfileState]) : (__tl_dyn-array
       i64)
-    (__tl-project-field (compiler-profile-state-storage state) summary-keys)))
+    (compiler-profile-state-storage-field-shared-view state summary-keys)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-names [state : CompilerProfileState]) : (__tl_dyn-array
       String)
-    (__tl-project-field (compiler-profile-state-storage state) summary-names)))
+    (compiler-profile-state-storage-field-shared-view state summary-names)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-elapsed
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (__tl-project-field (compiler-profile-state-storage state) summary-elapsed)))
+    (compiler-profile-state-storage-field-shared-view state summary-elapsed)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-calls [state : CompilerProfileState]) : (__tl_dyn-array
       i64)
-    (__tl-project-field (compiler-profile-state-storage state) summary-calls)))
+    (compiler-profile-state-storage-field-shared-view state summary-calls)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-counts [state : CompilerProfileState]) : (__tl_dyn-array
       i64)
-    (__tl-project-field (compiler-profile-state-storage state) summary-counts)))
+    (compiler-profile-state-storage-field-shared-view state summary-counts)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-total-elapsed
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (__tl-project-field
-      (compiler-profile-state-storage state)
+    (compiler-profile-state-storage-field-shared-view
+      state
       summary-total-elapsed)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-total-calls
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (__tl-project-field
-      (compiler-profile-state-storage state)
-      summary-total-calls)))
+    (compiler-profile-state-storage-field-shared-view state summary-total-calls)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-slots
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (__tl-project-field
-      (compiler-profile-state-storage state)
-      summary-exact-slots)))
+    (compiler-profile-state-storage-field-shared-view state summary-exact-slots)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-counts
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (__tl-project-field
-      (compiler-profile-state-storage state)
+    (compiler-profile-state-storage-field-shared-view
+      state
       summary-exact-counts)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-names
     [state : CompilerProfileState]) : (__tl_dyn-array String)
-    (__tl-project-field
-      (compiler-profile-state-storage state)
-      summary-exact-names)))
+    (compiler-profile-state-storage-field-shared-view state summary-exact-names)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-keys
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (__tl-project-field
-      (compiler-profile-state-storage state)
-      summary-exact-keys)))
+    (compiler-profile-state-storage-field-shared-view state summary-exact-keys)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-elapsed
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (__tl-project-field
-      (compiler-profile-state-storage state)
+    (compiler-profile-state-storage-field-shared-view
+      state
       summary-exact-elapsed)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-calls
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (__tl-project-field
-      (compiler-profile-state-storage state)
-      summary-exact-calls)))
+    (compiler-profile-state-storage-field-shared-view state summary-exact-calls)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-top
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (__tl-project-field
-      (compiler-profile-state-storage state)
-      summary-exact-top)))
+    (compiler-profile-state-storage-field-shared-view state summary-exact-top)))
 
 (cfg
   test
@@ -309,25 +320,51 @@
       [left : CompilerProfileState (compiler-profile-state-new)]
       [right : CompilerProfileState (compiler-profile-state-new)]
       (begin
-        (compiler-profile-state-metric-set! left 3 11)
-        (compiler-profile-state-metric-set! right 3 29)
-        (compiler-profile-state-metric-add! left 3 7)
-        (compiler-profile-state-metric-set! left 4 41)
-        (compiler-profile-state-metric-set! right 4 43)
-        (compiler-profile-state-metric-reset-range! right 3 5)
+        (compiler-profile-state-metric-set!
+          (compiler-profile-state-shared-view left)
+          3
+          11)
+        (compiler-profile-state-metric-set!
+          (compiler-profile-state-shared-view right)
+          3
+          29)
+        (compiler-profile-state-metric-add!
+          (compiler-profile-state-shared-view left)
+          3
+          7)
+        (compiler-profile-state-metric-set!
+          (compiler-profile-state-shared-view left)
+          4
+          41)
+        (compiler-profile-state-metric-set!
+          (compiler-profile-state-shared-view right)
+          4
+          43)
+        (compiler-profile-state-metric-reset-range!
+          (compiler-profile-state-shared-view right)
+          3
+          5)
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value left 3)
+          (compiler-profile-state-metric-value
+            (compiler-profile-state-shared-view left)
+            3)
           18
           "left job keeps interleaved metric")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value left 4)
+          (compiler-profile-state-metric-value
+            (compiler-profile-state-shared-view left)
+            4)
           41
           "right reset does not erase left range")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value right 3)
+          (compiler-profile-state-metric-value
+            (compiler-profile-state-shared-view right)
+            3)
           0
           "right reset clears its first metric")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value right 4)
+          (compiler-profile-state-metric-value
+            (compiler-profile-state-shared-view right)
+            4)
           0
           "right reset clears its second metric")))))

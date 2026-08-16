@@ -151,7 +151,7 @@
 ;: argc, argv[0..], a NULL, then envp[0..]; later mutations publish a replacement
 ;: array. Returns a pointer to the value of `name`, or null when missing.
 (unsafe
-  (define (getenv-ptr-linux [name : String]) : (Ptr u8)
+  (define (getenv-ptr-linux [name : (& name str)]) : (Ptr u8)
     (let
       [envp : (Ptr (Ptr u8))
         (unsafe
@@ -184,7 +184,7 @@
 (cfg
   windows
   (unsafe
-    (define (env-getenv-ptr-windows [name : String]) : (Ptr u8)
+    (define (env-getenv-ptr-windows [name : (& name str)]) : (Ptr u8)
       (let
         [p : (Ptr u8)
           (unsafe
@@ -222,7 +222,7 @@
 ;: this avoids depending on another stdlib module: it uses only builtins, its own
 ;: helpers, and (on Windows) a direct kernel32 binding.
 (unsafe
-  (define (getenv-ptr [name : String]) : (Ptr u8)
+  (define (getenv-ptr [name : (& name str)]) : (Ptr u8)
     (cfg
       windows
       (unsafe
@@ -231,14 +231,14 @@
         (getenv-ptr-linux name)))))
 
 ;: Return true when `name` is present in the process environment.
-(define (var-exists? [name : String]) : bool
+(define (var-exists? [name : (& name str)]) : bool
   (not
     (ptr-null?
       (unsafe
         (getenv-ptr name)))))
 
 ;: Return the value of `name`, or an empty string when the variable is missing.
-(define (var-value [name : String]) : String
+(define (var-value [name : (& name str)]) : String
   (let
     [value : (Ptr u8)
       (unsafe
@@ -522,13 +522,13 @@
   (EnvStringList (array.make-array String 0) 0))
 
 ;: Return the number of entries in `items`.
-(define (string-list-count [items : EnvStringList]) : i64
+(define (string-list-count [items : (& items EnvStringList)]) : i64
   items.len)
 
 ;: Return the entry at `index`, or the empty string when `index` is out of range.
-(define (string-list-ref [items : EnvStringList] [index : i64]) : String
+(define (string-list-ref [items : (& items EnvStringList)] [index : i64]) : String
   (if (and (>= index 0) (< index items.len))
-    (array-ref items.slots index)
+    (clone (array-ref items.slots index))
     ""))
 
 ;: Prepend an owned string to an environment string list.
@@ -560,18 +560,18 @@
 
 ;: Copy `items` into `out`, preserving list order.
 (define (string-list-to-vec-into
-  [items : EnvStringList]
+  [items : (& items EnvStringList)]
   [out : (&mut out svec.Vec)]) : unit
   (let
     [n : i64 items.len]
     [i : i64 0]
     (while (< i n)
       (begin
-        (svec.push-ref! out (array-ref items.slots i))
+        (svec.push out (clone (array-ref items.slots i)))
         (set! i (+ i 1))))))
 
 ;: Copy `items` into a fresh generated string vector, preserving list order.
-(define (string-list-to-vec [items : EnvStringList]) : svec.Vec
+(define (string-list-to-vec [items : (& items EnvStringList)]) : svec.Vec
   (let
     [out : svec.Vec (svec.new)]
     (begin
@@ -586,7 +586,7 @@
 (define (get [name : (& name str)]) : EnvMaybeString
   (let
     [owned-name : String (string.copy name)]
-    (if (var-exists? owned-name)
+    (if (var-exists? (clone owned-name))
       (some-string (var-value owned-name))
       EnvNoString)))
 
@@ -774,9 +774,15 @@
   [third : String]
   [message : String]) : unit
   (begin
-    (test-assert-i64-eq (string-list-count items) 3 message)
-    (test-assert-owned-string-eq (string-list-ref items 0) first message)
-    (test-assert-owned-string-eq (string-list-ref items 1) second message)
+    (test-assert-i64-eq (string-list-count items) 3 (clone message))
+    (test-assert-owned-string-eq
+      (string-list-ref items 0)
+      first
+      (clone message))
+    (test-assert-owned-string-eq
+      (string-list-ref items 1)
+      second
+      (clone message))
     (test-assert-owned-string-eq (string-list-ref items 2) third message)))
 
 ;: Assert that an environment string list contains exactly five strings.
@@ -789,11 +795,23 @@
   [fifth : String]
   [message : String]) : unit
   (begin
-    (test-assert-i64-eq (string-list-count items) 5 message)
-    (test-assert-owned-string-eq (string-list-ref items 0) first message)
-    (test-assert-owned-string-eq (string-list-ref items 1) second message)
-    (test-assert-owned-string-eq (string-list-ref items 2) third message)
-    (test-assert-owned-string-eq (string-list-ref items 3) fourth message)
+    (test-assert-i64-eq (string-list-count items) 5 (clone message))
+    (test-assert-owned-string-eq
+      (string-list-ref items 0)
+      first
+      (clone message))
+    (test-assert-owned-string-eq
+      (string-list-ref items 1)
+      second
+      (clone message))
+    (test-assert-owned-string-eq
+      (string-list-ref items 2)
+      third
+      (clone message))
+    (test-assert-owned-string-eq
+      (string-list-ref items 3)
+      fourth
+      (clone message))
     (test-assert-owned-string-eq (string-list-ref items 4) fifth message)))
 
 ;: Assert that a string vector contains exactly three strings.
@@ -804,12 +822,15 @@
   [third : String]
   [message : String]) : unit
   (begin
-    (test-assert-i64-eq (svec.len (& items)) 3 message)
-    (test-assert-owned-string-eq (svec.get (& items) 0 "missing") first message)
+    (test-assert-i64-eq (svec.len (& items)) 3 (clone message))
+    (test-assert-owned-string-eq
+      (svec.get (& items) 0 "missing")
+      first
+      (clone message))
     (test-assert-owned-string-eq
       (svec.get (& items) 1 "missing")
       second
-      message)
+      (clone message))
     (test-assert-owned-string-eq (svec.get (& items) 2 "missing") third message)))
 
 ;: Assert that a string vector contains exactly five strings.
@@ -822,17 +843,23 @@
   [fifth : String]
   [message : String]) : unit
   (begin
-    (test-assert-i64-eq (svec.len (& items)) 5 message)
-    (test-assert-owned-string-eq (svec.get (& items) 0 "missing") first message)
+    (test-assert-i64-eq (svec.len (& items)) 5 (clone message))
+    (test-assert-owned-string-eq
+      (svec.get (& items) 0 "missing")
+      first
+      (clone message))
     (test-assert-owned-string-eq
       (svec.get (& items) 1 "missing")
       second
-      message)
-    (test-assert-owned-string-eq (svec.get (& items) 2 "missing") third message)
+      (clone message))
+    (test-assert-owned-string-eq
+      (svec.get (& items) 2 "missing")
+      third
+      (clone message))
     (test-assert-owned-string-eq
       (svec.get (& items) 3 "missing")
       fourth
-      message)
+      (clone message))
     (test-assert-owned-string-eq (svec.get (& items) 4 "missing") fifth message)))
 
 ;: Assert that a present path-list lookup contains exactly three strings.

@@ -82,7 +82,7 @@
 ;; Return the end index (exclusive) of the digit run that starts at `start`.
 ;; Keep the bounds check outside the `string-ref`; boolean `and` is not a
 ;; short-circuit guard in lowered TypeLisp code.
-(define (scan-int-end [src : String] [start : i64] [n : i64]) : i64
+(define (scan-int-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
     [keep : bool true]
@@ -129,7 +129,7 @@
             (if (is-digit c)
               ;; Accumulate a run of digits into one `Token.Int` token.
               (let
-                [end : i64 (scan-int-end src i n)]
+                [end : i64 (scan-int-end (& src) i n)]
                 [acc : i64 0]
                 (begin
                   (while (< i end)
@@ -273,13 +273,17 @@
 ;; each binary node recurses into both children and combines them with the
 ;; matching arithmetic op (`/` is integer division). The bound recursive payloads
 ;; (`a`/`b`) are pointers to the child enums, passed straight back into `eval`.
-(define (eval [e : Expr]) : i64
+(define (eval [e : (& e Expr)]) : i64
   (match e
-    [(Expr.Num n) n]
-    [(Expr.Add a b) (+ (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
-    [(Expr.Sub a b) (- (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
-    [(Expr.Mul a b) (* (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
-    [(Expr.Div a b) (/ (eval (__tl-box-place a)) (eval (__tl-box-place b)))]))
+    [(Expr.Num n) (deref n)]
+    [(Expr.Add a b)
+      (+ (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+    [(Expr.Sub a b)
+      (- (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+    [(Expr.Mul a b)
+      (* (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+    [(Expr.Div a b)
+      (/ (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]))
 
 ;; ============================ End to end ==================================
 ;; Run the full front-end on "2 + 3 * 4":
@@ -299,4 +303,6 @@
     [toks : tokvec.Vec (tokvec.with-capacity 16)]
     (begin
       (lex "2 + 3 * 4" (&mut toks))
-      (eval (parse (& toks))))))
+      (let
+        [expr : Expr (parse (& toks))]
+        (eval (& expr))))))

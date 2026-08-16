@@ -120,9 +120,9 @@
 
 (define (arena-atomic-thread-or [spawn : thread.ThreadSpawnResult]) : thread.Thread
   (thread.Thread
-    (thread.spawn-result-handle-or spawn 0)
-    (thread.spawn-result-clear-tid-addr-or spawn 0)
-    (thread.spawn-result-result-addr-or spawn 0)))
+    (thread.spawn-result-handle-or (& spawn) 0)
+    (thread.spawn-result-clear-tid-addr-or (& spawn) 0)
+    (thread.spawn-result-result-addr-or (& spawn) 0)))
 
 (define (arena-atomic-join [worker : thread.Thread]) : i64
   (thread.join-result-value-or (thread.join worker) 8))
@@ -213,7 +213,7 @@
       (arena-atomic-context owner 3 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
       (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
-    (if (not (thread.spawn-result-ok? spawn))
+    (if (not (thread.spawn-result-ok? (& spawn)))
       5
       (let
         [fourth : thread.Thread (arena-atomic-thread-or spawn)]
@@ -242,7 +242,7 @@
       (arena-atomic-context owner 2 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
       (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
-    (if (not (thread.spawn-result-ok? spawn))
+    (if (not (thread.spawn-result-ok? (& spawn)))
       4
       (arena-atomic-spawn-fourth
         owner
@@ -264,7 +264,7 @@
       (arena-atomic-context owner 1 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
       (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
-    (if (not (thread.spawn-result-ok? spawn))
+    (if (not (thread.spawn-result-ok? (& spawn)))
       3
       (arena-atomic-spawn-third
         owner
@@ -284,7 +284,7 @@
       (arena-atomic-context owner 0 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
       (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
-    (if (not (thread.spawn-result-ok? spawn))
+    (if (not (thread.spawn-result-ok? (& spawn)))
       2
       (arena-atomic-spawn-second
         owner

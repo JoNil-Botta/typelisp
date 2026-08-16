@@ -398,24 +398,17 @@ not a public source type in either form.
   function values, `String` handles, array handles, and tuples of scalars
   (see §5.14).
 
-Function parameters may opt into consuming ownership semantics. A named
-function or lambda parameter spells the effect after its type:
+Every non-reference runtime parameter is an ordinary by-value parameter. At a
+call boundary, a `Copy` argument is copied and remains usable; a non-`Copy`
+argument is moved into an owned callee-local value and its source place becomes
+invalid. This rule is identical for named, qualified, generated, lambda, and
+function-value calls. Callable identity uses the ordinary parameter type, for
+example `(-> String i64)`.
 
-```lisp test=ignore name=consume-parameter-syntax reason="illustrative declaration"
-(define (into-length [source : String (:consume)]) : i64
-  (string-length source))
-```
-
-The corresponding callable parameter type is `(:consume T)`, for example
-`(-> (:consume String) i64)`. The marker is part of static callable identity:
-a `(-> String i64)` value is not interchangeable with a
-`(-> (:consume String) i64)` value. It does not change argument layout,
-calling convention, or generated ABI.
-
-`:consume` is valid only on runtime, non-reference function parameters. It is
-rejected on `comptime` parameters, extern parameters, `(& lifetime T)`, and
-`(&mut lifetime T)`. It may appear in direct, qualified, generated, lambda,
-and function-value signatures; all preserve the same static effect.
+The removed `:consume` parameter metadata and `(:consume T)` callable-type form
+are rejected. Borrowed APIs instead declare `(& lifetime T)` or
+`(&mut lifetime T)` parameters. Foreign `extern` declarations retain the FFI
+boundary rules in §5.5; they do not acquire a TypeLisp ownership effect.
 
 ### 3.4 Raw pointer types
 
@@ -1708,8 +1701,9 @@ str)` items under this convention. Scalar `for` selects this protocol for a
 mutable source.
 
 **Consuming collection iterators.** A generated collection module may expose
-`into-iterator` with a `(:consume)` collection parameter and `into-next` over
-mutable iterator state. Construction moves the source exactly once. Each
+`into-iterator` with an ordinary by-value collection parameter and `into-next`
+over mutable iterator state. Construction moves a non-`Copy` source exactly
+once and copies a structurally `Copy` source. Each
 `IntoNext.Item` owns its `T` payload; `Done` is explicit and remains stable on
 repeated calls. Generated vectors keep an internal live-slot map and extract each
 item through checked private `__tl_array-take!`, never through `array-ref`,
@@ -3652,8 +3646,8 @@ not merely its plain `AstType.Func` shape. Capture lifetime, Copy, and call
 capability facts remain checker-only as described in section 3.10.4; a flow
 that would erase a required non-Copy fact rejects.
 
-Region wrappers `(in r T)` and `Consume` wrappers preserve the underlying
-copy/move class; the region tag only constrains where the value may escape.
+Region wrappers `(in r T)` preserve the underlying copy/move class; the region
+tag only constrains where the value may escape.
 TypeLisp has no explicit source type-alias declarations (section 3.6), but
 any internal or name-resolution aliasing is resolved before classification and
 therefore preserves the resolved underlying class. The classifier's recursive
@@ -3665,7 +3659,7 @@ global remains the permanent owner of that value in a static-lifetime place;
 it is not a shared handle and safe code cannot move ownership out of it. A
 Copy global, or a Copy projection from any global, may be read by value
 normally. Every by-value use of a non-Copy global or non-Copy projection is
-rejected, including a `let` initializer, ordinary or consuming call argument,
+rejected, including a `let` initializer, call argument,
 constructor operand, match scrutinee, function/lambda result, and a use inside
 a task-thread or SPMD body. The rule is based on the resolved declaration, so
 qualified, aliased, and macro-generated global names behave identically.
@@ -3685,16 +3679,13 @@ move-only values and as copies for copyable values:
   move-only; `a` is unusable afterward.
 - A variable or place used as a by-value expression result, including a
   block's final expression.
-- Function-call arguments whose parameter is marked `(:consume)`. A marked
-  move-only argument is consumed through the same whole-place and tracked-path
-  move rules as other moves; a marked copyable argument remains a copy and
+- Function-call arguments for ordinary non-reference runtime parameters. A
+  move-only argument moves through the same whole-place and tracked-path rules
+  as every other by-value position; a copyable argument remains a copy and
   creates no moved state. Arguments are evaluated left-to-right, so earlier
   moves are visible while checking later arguments and the remaining
-  expression. Unmarked parameters retain their established compatibility
-  behavior. During that compatibility transition, an unmarked by-value `Box`,
-  thread-safe runtime handle, or cleanup-owning struct parameter consumes a
-  move-only argument. This is a closed, type-driven set; the callee's name,
-  module, qualification, or generated identity does not affect consumption.
+  expression. The rule depends only on the resolved parameter type, never on
+  the callee's name, module, qualification, or generated identity.
 - Function returns. Returning a move-only local or parameter moves it to the
   caller. Returning from a `with` owner scope is still rejected when it would
   bypass required cleanup.
@@ -3707,10 +3698,8 @@ move-only values and as copies for copyable values:
   Cleanup-owning global replacement remains rejected without explicit cleanup
   transfer. In every case, the right-hand side is checked independently and
   cannot move a non-Copy value out of another global.
-- Tuple, fixed-array, struct, and enum constructors. Constructor operands are
-  by-value positions, but the compatibility transition is not yet uniform for
-  every move-only type. Fixed-array literals follow the current-state matrix
-  below.
+- Tuple, fixed-array, struct, and enum constructors. Every constructor operand
+  is a by-value position and follows the same structural copy/move rule.
 - Fixed-array element stores. `(set! (array-ref place index) value)` follows
   the current-state matrix below.
 - `array-take!` fixed-array elements. `(array-take! items index)` transfers the
@@ -3752,30 +3741,22 @@ move-only values and as copies for copyable values:
   3.10.4. Capturing a mutable reference moves the unique reference and keeps
   its referent exclusively borrowed through the closure's last direct use.
 
-**Fixed-array element ownership transition.** Fixed arrays whose element type
-is not `Copyable` are accepted. The following table describes the behavior
-implemented during the compatibility transition; it is not the uniform target
-ownership model:
+**Array element ownership.** Fixed arrays whose element type is not `Copyable`
+are accepted. Their elements follow the same uniform by-value rule:
 
-| Operation | Current behavior |
+| Operation | Behavior |
 | --- | --- |
-| Fixed-array literal `(array value ...)` | A `Copyable` initializer is copied. A move-only initializer is consumed only when the closed transition predicate recognizes its type: `Box`, a recognized thread-safe runtime handle, or a cleanup-owning struct. An ordinary move-only handle such as `String` is still copied at the representation level, so its source remains usable. |
-| Ordinary `(array-ref items index)` value use | A `Copyable` element is copied. In a non-consuming compatibility context, a move-only element is also representation-copied and its slot remains initialized. This can create an owning-handle alias; it is transitional behavior, not an implicit deep `clone`. The separate rule for non-Copy global places still rejects a by-value read from a global array. |
-| Consuming `(array-ref items literal-index)` use | A consuming context, including a `(:consume)` parameter or a type in the closed transition set, moves the exact literal-index path. Reusing that element is rejected, while disjoint literal elements remain usable. A later literal-index store reinitializes that exact path after its receiver, index, and value have been checked. |
-| Consuming `(array-ref items computed-index)` use | Rejected because the checker cannot identify one exact moved path. Consuming a compatibility dynamic-array element is likewise rejected. Use the checked fixed-array `array-take!` operation when immediate `init` replacement is suitable. |
-| `(set! (array-ref items index) value)` | Non-`Copyable` elements are accepted, but the current store compatibility-copies its right-hand-side representation instead of consuming it. This includes cleanup-owning values, so the source can remain usable and alias the stored owner. Literal-index stores still update exact-path reinitialization facts. |
+| Fixed-array literal `(array value ...)` | A `Copyable` initializer is copied. A move-only initializer moves, invalidating its source place. |
+| Ordinary `(array-ref items literal-index)` value use | A `Copyable` element is copied. A move-only element moves the exact literal-index path. Reusing that element is rejected, while disjoint literal elements remain usable. A later literal-index store reinitializes that exact path after its receiver, index, and value have been checked. |
+| Ordinary `(array-ref items computed-index)` value use | A `Copyable` element is copied. Moving a non-`Copy` element is rejected because the checker cannot identify one exact moved path. Moving a compatibility dynamic-array element is likewise rejected; generated consuming collections use checked private `__tl_array-take!`. |
+| `(set! (array-ref items index) value)` | A `Copyable` right-hand side is copied and a move-only right-hand side moves. Literal-index stores update exact-path reinitialization facts. Overwriting a live cleanup-owning element remains rejected without an explicit cleanup transfer. |
 
-The target semantics are intentionally stricter. #6215 makes structural
-`Copyable`/`MoveOnly` classification apply uniformly and removes compatibility
-sharing plus `(:consume)`. #6240 owns the normalized public place/`set!`
-surface, consume-on-assignment behavior, and rejection of overwriting a live
-cleanup-owning element. Without a Drop system, overwriting another live
-move-only element may leave its old arena-owned storage unreachable until the
-arena is reclaimed; overwriting a cleanup owner must not silently lose its
-cleanup obligation. Fixed-array destructuring is available through
-`(array p1 ... pn)`, the checked `array-take!` operation described above, and
-general caller-supplied `replace!` are available. Uniform structural movement
-outside these explicitly checked operations remains tracked by #6215.
+Without a Drop system, overwriting another live move-only element may leave its
+old arena-owned storage unreachable until the arena is reclaimed; overwriting a
+cleanup owner must not silently lose its cleanup obligation. Fixed-array
+destructuring is available through
+`(array p1 ... pn)`, #6235 supplied the checked `array-take!` operation
+described above, and #6241 owns general caller-supplied replacement.
 
 **Concrete closure calls.** Lambda literals and their direct local bindings
 retain the checker-only shared, mutable, or consuming capability described in
@@ -3805,8 +3786,8 @@ is not propagated as a zero-trip substitute. Owners created inside the body
 remain available for moves confined to that iteration. These scalar rules do
 not relax the SPMD early-exit restrictions in section 5.15.
 
-**Non-consuming use sites.** A non-consuming use may inspect a move-only value
-without moving it. In v1 these are limited to:
+**Borrowing use sites.** A borrowing use may inspect a move-only value without
+moving it. These are limited to:
 
 - Immutable and mutable borrow expressions `(& place)` / `(&mut place)` and
   their explicit-lifetime forms.
@@ -3832,33 +3813,16 @@ without moving it. In v1 these are limited to:
   or borrow the boxed storage and do not move the box handle.
 
 Ordinary user-defined function parameters are by-value unless their type is a
-reference type, but an unmarked parameter does not opt a broad move-only value
-into call-site consumption. Use `(:consume)` when the callee takes ownership.
-This opt-in preserves compatibility for existing unmarked APIs. The closed
-type-driven transition set above is the only additional call-site consumption
-rule; there is no intrinsic or inspection rule selected by a function name.
+reference type. The callee owns every non-reference parameter: `Copy` arguments
+are copied and non-`Copy` arguments move. There is no marker, intrinsic, or
+inspection rule selected by a function name.
 
-The internal ABI may pass a nominal `Struct` or `Enum` that is too large for
-the register-value representation by address. An unmarked by-value parameter
-of that memory class is read-only through that storage path: the checker
-rejects field assignment and mutable borrowing of the parameter. The
-restriction follows same-storage aliases introduced by local binding and match
-patterns. Reassigning the whole parameter binding establishes an independent
-local value and is permitted. Projections that produce shallow handle values,
-such as a dynamic array, `Box`, or reference field, are not storage aliases
-for this rule; their own mutation and borrowing rules still apply. Tuples and
-fixed arrays remain inline storage, so provenance continues through an
-embedded tuple/`tuple-ref` and then through nested fixed-array projections.
-
-Tuple and fixed-array by-value parameters always expose private callee storage,
-including when the target transport is indirect/by-reference. Ordinary type
-rules therefore permit callee-local mutation of their elements; caller storage
-is neither aliased nor mutated. Declare a nominal `Struct`/`Enum` parameter as
-a mutable reference and pass an explicit mutable borrow when mutation of the
-caller's nominal aggregate place is intended.
-A `(:consume)` parameter is excluded from this restriction and explicitly
-opts the callee into ownership-style access to the whole value under the
-existing consume and move rules.
+The internal ABI may transport a memory-class `Struct`, `Enum`, tuple, or fixed
+array indirectly, but every by-value parameter still exposes semantically
+private callee storage. Ordinary type rules permit callee-local mutation of its
+fields or elements; caller storage is neither aliased nor mutated. Declare a
+mutable-reference parameter and pass an explicit `&mut` borrow when mutation of
+the caller's aggregate place is intended.
 
 **Whole-place and path moves.** The v1 checker accepts whole-place moves for
 locals, parameters, and whole constructor temporaries. It also tracks
@@ -3881,10 +3845,9 @@ Box-place assignment updates boxed storage but does not reinitialize a moved
 box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
 Dotted field projection and `tuple-ref` may copy out only copyable fields or
 slots, and may move out move-only fields/slots only where this tracked-path
-policy accepts the path. Fixed-array reads follow the compatibility matrix
-above: a consuming
-literal-index read moves a tracked path, while a non-consuming move-only read
-still representation-copies the handle. A consuming enum `match` is an
+policy accepts the path. Fixed-array reads follow the matrix above: a non-`Copy`
+literal-index read moves a tracked path, while a `Copy` read copies. A by-value
+enum `match` is an
 exception: it moves the whole scrutinee first, then binds payload values owned
 by the selected arm. Constructor-shaped tuple destructuring likewise consumes
 the whole owned tuple and transfers every bound slot; direct partial move-out
@@ -3931,10 +3894,10 @@ The `let` binding moves `s` into `taken`; the later `string.string-length`
 inspection is a use-after-move even though the helper itself is
 non-consuming.
 
-```lisp test=ignore name=move-reject-consumed-function-arg reason="negative move-only call argument example"
+```lisp test=ignore name=move-reject-by-value-function-arg reason="negative move-only call argument example"
 (import stdlib.string)
 
-(define (take-string [s : String (:consume)]) : i64
+(define (take-string [s : String]) : i64
   (string.string-length s))
 
 (define (bad-call-reuse [s : String]) : i64
@@ -3943,8 +3906,8 @@ non-consuming.
     (string.string-length s)))
 ```
 
-The call to `take-string` consumes `s` because its parameter opts into
-consumption; the later read is rejected.
+The call to `take-string` moves `s` because `String` is non-`Copy` and the
+parameter is by value; the later read is rejected.
 
 ```lisp test=check name=move-copyable-struct-field-projection
 (defstruct Counter
@@ -7272,20 +7235,18 @@ and not a general manual memory management feature.
   source-level copy or mutation permission. The source checker first applies
   the structural Copyable/MoveOnly rules in section 4.7.2 (including every
   array element, tuple slot, struct field, and enum payload), then applies the
-  ownership rules to non-copyable values. The checker therefore treats
-  storage reached through a memory-class struct, enum, or fixed-array by-value
-  parameter as read-only, including through same-storage local and match
-  aliases. Register-class aggregates are transported as values. Shallow handle
-  projections retain the aliasing behavior of their own types. Explicit
-  reference parameters express borrowed access to the caller's aggregate
-  storage.
-- Non-consuming aggregate inspection is expressed by a reference-typed
-  parameter or receiver. Typed place operations such as projections carry the
-  same read/borrow distinction in their semantic type. A function parameter
-  marked `(:consume)` transfers a move-only argument; the closed unmarked
-  compatibility transition in section 4.7.2 is type-driven, while
-  reference-typed parameters provide checked borrowed access (sections 3.3
-  and 3.11).
+  ownership rules to non-copyable values. Every by-value parameter is owned by
+  the callee, including memory-class structs, enums, tuples, and fixed arrays
+  transported indirectly; callee mutation uses private storage rather than a
+  mutable alias of the caller's moved place. Shallow handle projections retain
+  the ownership behavior of their own types. Explicit reference parameters
+  express borrowed access to the caller's aggregate storage.
+- Aggregate inspection without ownership transfer is expressed by a
+  reference-typed parameter or receiver. Typed place operations such as
+  projections carry the same read/borrow distinction in their semantic type.
+  Ordinary by-value parameters copy `Copy` arguments and move non-`Copy`
+  arguments, while reference-typed parameters provide checked borrowed access
+  (sections 3.3 and 3.11).
 - `String` values are immutable at the source level. String literals may
   share `.rodata`; `substring`, `string-slice`, `str-cat`, low-level concat
   primitives, `read-file`, `arg`, and `int->string` return fresh
@@ -7374,9 +7335,10 @@ in documentation passes.
   two-phase mutable call borrows; conservative non-lexical last-use
   shortening (straight-line sequences, path-sensitive joins, conservative
   loop facts).
-- Opt-in `(:consume)` runtime function parameters, including static function
-  type identity, direct/qualified/generated/lambda/function-value calls,
-  copyable no-op semantics, and unchanged native ABI.
+- Uniform ordinary by-value runtime parameters: structural `Copy` arguments
+  copy, non-`Copy` arguments move, memory-class aggregates receive private
+  callee storage, and removed `:consume` syntax is rejected without changing
+  the native ABI.
 - Arenas: scoped `(with-arena ...)` with static escape checking,
   `with-escape`, `with-scratch`, `in-arena`, typed first-class `Arena`
   handles, and checker-proven phase-token rewind/destroy. `(with ...)`

@@ -11,6 +11,7 @@
 (import stdlib.string)
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 ;: Flat-AST test helpers: the self-test builds exprs with i64-returning
@@ -44,21 +45,50 @@
 (define (lint-name-set-smoke-ok?) : bool
   (let
     [empty : lint_core.LintNameSet (lint_core.lint-name-set-empty)]
-    [one : lint_core.LintNameSet (lint_core.lint-name-set-add empty "one")]
-    [duplicate : lint_core.LintNameSet (lint_core.lint-name-set-add one "one")]
-    [two : lint_core.LintNameSet (lint_core.lint-name-set-add duplicate "two")]
-    [many0 : lint_core.LintNameSet (lint_core.lint-name-set-add two "three")]
-    [many1 : lint_core.LintNameSet (lint_core.lint-name-set-add many0 "four")]
+    [one : lint_core.LintNameSet
+      (lint_core.lint-name-set-add
+        (owned_view.compiler-owned-shared-view empty)
+        "one")]
+    [duplicate : lint_core.LintNameSet
+      (lint_core.lint-name-set-add
+        (owned_view.compiler-owned-shared-view one)
+        "one")]
+    [two : lint_core.LintNameSet
+      (lint_core.lint-name-set-add
+        (owned_view.compiler-owned-shared-view duplicate)
+        "two")]
+    [many0 : lint_core.LintNameSet
+      (lint_core.lint-name-set-add
+        (owned_view.compiler-owned-shared-view two)
+        "three")]
+    [many1 : lint_core.LintNameSet
+      (lint_core.lint-name-set-add
+        (owned_view.compiler-owned-shared-view many0)
+        "four")]
     [many : lint_core.LintNameSet (lint_core.lint-name-set-add many1 "five")]
     (and
       (= (lint_core.lint-name-set-count empty) 0)
       (= (lint_core.lint-name-set-count one) 1)
       (= (lint_core.lint-name-set-count duplicate) 1)
-      (= (lint_core.lint-name-set-count many) 5)
-      (lint_core.lint-name-set-contains? many "one")
-      (lint_core.lint-name-set-contains? many "five")
-      (not (lint_core.lint-name-set-contains? many "missing"))
-      (string.eq (lint_core.lint-name-set-get many 0) "one")
+      (=
+        (lint_core.lint-name-set-count
+          (owned_view.compiler-owned-shared-view many))
+        5)
+      (lint_core.lint-name-set-contains?
+        (owned_view.compiler-owned-shared-view many)
+        "one")
+      (lint_core.lint-name-set-contains?
+        (owned_view.compiler-owned-shared-view many)
+        "five")
+      (not
+        (lint_core.lint-name-set-contains?
+          (owned_view.compiler-owned-shared-view many)
+          "missing"))
+      (string.eq
+        (lint_core.lint-name-set-get
+          (owned_view.compiler-owned-shared-view many)
+          0)
+        "one")
       (string.eq (lint_core.lint-name-set-get many 4) "five"))))
 
 (define (lint-test-expect-registry-text

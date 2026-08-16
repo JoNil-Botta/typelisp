@@ -16,18 +16,19 @@
 (define (str-cat-pack-new [count : i64]) : StrCatPack
   (StrCatPack (stdlib.array.make-array String count)))
 
-;: Store one String in a compiler-private pack and return the pack.
-(define (str-cat-pack-part [pack : StrCatPack] [index : i64] [value : String]) : StrCatPack
-  (begin
-    (set! (array-ref pack.parts index) value)
-    pack))
+;: Store one String in a compiler-private pack.
+(define (str-cat-pack-part!
+  [pack : (&mut pack StrCatPack)]
+  [index : i64]
+  [value : String]) : unit
+  (set! (array-ref pack.parts index) value))
 
 ;: Internal pack step used by `str-cat` expansion for six or more operands.
 ;:
 ;: `carrier` wraps all operands in a marker call so each step reads the next
-;: operand by index (`expr-list-nth`) instead of copying a shrinking tail;
-;: `pack` threads the filled domain wrapper and `idx` is the next literal slot.
-;: When every slot is filled it returns `pack`.
+;: operand by index (`expr-list-nth`) instead of copying a shrinking tail.
+;: Emit a flat `begin` of in-place stores rather than a left-nested call chain;
+;: this keeps typechecking and lowering stack-bounded for very long calls.
 (defmacro (str-cat-pack
   [carrier : comptime.Expr]
   [pack : StrCatPack]
@@ -36,15 +37,26 @@
     [(comptime.Expr.Int i)
       (match carrier
         [(comptime.Expr.Call _ elems)
-          (if (>= i (comptime.expr-list-length elems))
-            pack
-            `(str-cat-pack
-              ,carrier
-              (stdlib.str_cat_runtime.str-cat-pack-part
-                ,pack
-                ,(comptime.expr-int i)
-                ,(comptime.expr-list-nth elems i))
-              ,(comptime.expr-int (+ i 1))))]
+          (let
+            [index : i64 (comptime.expr-list-length elems)]
+            [stores : comptime.ExprList (comptime.expr-list-empty)]
+            (begin
+              (while (> index i)
+                (begin
+                  (set! index (- index 1))
+                  (set!
+                    stores
+                    (comptime.expr-list-cons
+                      `(stdlib.str_cat_runtime.str-cat-pack-part!
+                        (&mut __tl_str_cat_pack)
+                        ,(comptime.expr-int index)
+                        ,(comptime.expr-list-nth elems index))
+                      stores))))
+              `(let
+                [__tl_str_cat_pack : stdlib.str_cat_runtime/StrCatPack ,pack]
+                (begin
+                  ,@stores
+                  __tl_str_cat_pack))))]
         [_ pack])]
     [_ pack]))
 

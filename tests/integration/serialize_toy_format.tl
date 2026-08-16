@@ -1,6 +1,10 @@
 (import stdlib.array)
 (import stdlib.string)
 
+(defmacro (toy-shared-view [place : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
+
 (defenum Value
   (Bool bool)
   (Int i64)
@@ -27,13 +31,15 @@
   (FieldList (array.make-array Field 0)))
 
 (define (field-list-copy-from
-  [source : (__tl_dyn-array Field)]
-  [target : (__tl_dyn-array Field)]
+  [source : (& source (__tl_dyn-array Field))]
+  [target : (&mut target (__tl_dyn-array Field))]
   [index : i64]) : unit
   (if (= index (array-length source))
     unit
     (begin
-      (set! (array-ref target (+ index 1)) (array-ref source index))
+      (set!
+        (array-ref target (+ index 1))
+        (clone (array-ref source index)))
       (field-list-copy-from source target (+ index 1)))))
 
 (define (field-list-prepend [name : String] [value : Value] [rest : FieldList]) : FieldList
@@ -43,43 +49,45 @@
       (array.make-array Field (+ (array-length source) 1))]
     (begin
       (set! (array-ref target 0) (Field name value))
-      (field-list-copy-from source target 0)
+      (field-list-copy-from (& source) (&mut target) 0)
       (FieldList target))))
 
 (define (field-list-get-from
-  [items : (__tl_dyn-array Field)]
-  [name : String]
+  [items : (& items (__tl_dyn-array Field))]
+  [name : (& name str)]
   [index : i64]) : Lookup
   (if (= index (array-length items))
     (Missing)
     (let
-      [field : Field (array-ref items index)]
+      [field : Field (clone (array-ref items index))]
       (if (string.eq field.name name)
-        (Found field.value)
+        (Found (toy-shared-view field.value))
         (field-list-get-from items name (+ index 1))))))
 
-(define (field-list-get [fields : FieldList] [name : String]) : Lookup
-  (field-list-get-from fields.items name 0))
+(define (field-list-get [fields : (& fields FieldList)] [name : (& name str)]) : Lookup
+  (field-list-get-from (& fields.items) name 0))
 
-(define (value-list-count [items : ValueList]) : i64
+(define (value-list-count [items : (& items ValueList)]) : i64
   (array-length items.items))
 
-(define (value-list-get [items : ValueList] [index : i64]) : Lookup
+(define (value-list-get [items : (& items ValueList)] [index : i64]) : Lookup
   (if (or (< index 0) (>= index (value-list-count items)))
     (Missing)
-    (Found (array-ref items.items index))))
+    (Found (clone (array-ref items.items index)))))
 
 (define (value-list-empty) : ValueList
   (ValueList (array.make-array Value 0)))
 
 (define (value-list-copy-from
-  [source : (__tl_dyn-array Value)]
-  [target : (__tl_dyn-array Value)]
+  [source : (& source (__tl_dyn-array Value))]
+  [target : (&mut target (__tl_dyn-array Value))]
   [index : i64]) : unit
   (if (= index (array-length source))
     unit
     (begin
-      (set! (array-ref target (+ index 1)) (array-ref source index))
+      (set!
+        (array-ref target (+ index 1))
+        (clone (array-ref source index)))
       (value-list-copy-from source target (+ index 1)))))
 
 (define (value-list-prepend [value : Value] [rest : ValueList]) : ValueList
@@ -89,7 +97,7 @@
       (array.make-array Value (+ (array-length source) 1))]
     (begin
       (set! (array-ref target 0) value)
-      (value-list-copy-from source target 0)
+      (value-list-copy-from (& source) (&mut target) 0)
       (ValueList target))))
 
 (defmacro (encode-bool [value : bool]) : Value
@@ -141,7 +149,10 @@
 (defmacro (field-value [object : Expr] [name : Expr] [err-ctor : Expr]) : Expr
   `(match ,object
     [(serialize_toy_format.Object fields)
-      (match (serialize_toy_format.field-list-get (__tl-box-place fields) ,name)
+      (match
+        (serialize_toy_format.field-list-get
+          (& (__tl-box-place fields))
+          ,name)
         [(serialize_toy_format.Found found) found]
         [(serialize_toy_format.Missing)
           (return (,err-ctor "toy format: missing field"))])]
@@ -159,7 +170,7 @@
 (defmacro (sequence-length [value : Expr] [err-ctor : Expr]) : i64
   `(match ,value
     [(serialize_toy_format.Sequence items)
-      (serialize_toy_format.value-list-count (__tl-box-place items))]
+      (serialize_toy_format.value-list-count (& (__tl-box-place items)))]
     [_ (return (,err-ctor "toy format: expected sequence"))]))
 
 (defmacro (sequence-element-value
@@ -168,7 +179,10 @@
   [err-ctor : Expr]) : Expr
   `(match ,value
     [(serialize_toy_format.Sequence items)
-      (match (serialize_toy_format.value-list-get (__tl-box-place items) ,index)
+      (match
+        (serialize_toy_format.value-list-get
+          (& (__tl-box-place items))
+          ,index)
         [(serialize_toy_format.Found found) found]
         [(serialize_toy_format.Missing)
           (return (,err-ctor "toy format: missing sequence element"))])]

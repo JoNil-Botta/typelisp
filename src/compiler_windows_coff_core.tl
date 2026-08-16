@@ -1,5 +1,6 @@
 ;; compiler_windows_coff_core.tl - Shared Windows COFF linkability and
 ;; one-optimization object-or-assembly emission.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.text_buf)
 (import stdlib.string)
@@ -50,13 +51,17 @@
   [symbols : cobj.CompilerObjectSymbolList]
   [target : String]) : bool
   (let
-    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
+    [count : i64
+      (cobj.compiler-object-symbol-list-count
+        (owned_view.compiler-owned-shared-view symbols))]
     [index : i64 0]
     [ok : bool true]
     [done : bool false]
     (begin
       (while (and (not done) (< index count))
-        (match (cobj.compiler-object-symbol-list-ref symbols index)
+        (match (cobj.compiler-object-symbol-list-ref
+          (owned_view.compiler-owned-shared-view symbols)
+          index)
           [(cobj.CompilerObjectSymbol.Symbol name binding kind _)
             (if (string.eq name target)
               (begin
@@ -72,15 +77,19 @@
   [symbols : cobj.CompilerObjectSymbolList]
   [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
+    [count : i64
+      (cobj.compiler-object-relocation-list-count
+        (owned_view.compiler-owned-shared-view relocs))]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (cobj.compiler-object-relocation-list-ref relocs index)
+        (match (cobj.compiler-object-relocation-list-ref
+          (owned_view.compiler-owned-shared-view relocs)
+          index)
           [(cobj.CompilerObjectRelocation.Relocation _ _ _ target)
             (if (compiler-windows-coff-relocation-target-linkable?
-              symbols
+              (owned_view.compiler-owned-shared-view symbols)
               target)
               (set! index (+ index 1))
               (set! ok false))]))
@@ -88,31 +97,33 @@
 
 (define (compiler-windows-coff-linkability [image : cobj.CompilerObjectImage]) : CompilerWindowsCoffLinkability
   (cond
-    [(not (compiler_object_coff.compiler-object-coff-image-supported? image))
+    [(not
+        (compiler_object_coff.compiler-object-coff-image-supported?
+          (owned_view.compiler-owned-shared-view image)))
       (CompilerWindowsCoffLinkability.Unavailable "unsupported-coff-image")]
     [(not
         (compiler-windows-coff-relocations-linkable?
-          image.symbols
-          image.relocations))
+          (owned_view.compiler-owned-shared-view image.symbols)
+          (owned_view.compiler-owned-shared-view image.relocations)))
       (CompilerWindowsCoffLinkability.Unavailable
         "unsupported-external-relocation")]
     [(not
         (cobj.compiler-object-symbol-list-contains?
-          image.symbols
+          (owned_view.compiler-owned-shared-view image.symbols)
           "_tl_start"
           (cobj.CompilerObjectSymbolBinding.Export)
           (cobj.CompilerObjectSymbolKind.Function)))
       (CompilerWindowsCoffLinkability.Unavailable "missing-entry-symbol")]
     [(<
         (compiler_object_coff.compiler-object-coff-section-label-offset
-          image
+          (owned_view.compiler-owned-shared-view image)
           (cobj.CompilerObjectSectionKind.Text)
           "tl_setup_argv")
         0)
       (CompilerWindowsCoffLinkability.Unavailable "missing-runtime-entry")]
     [(<=
         (compiler_object_coff.compiler-object-coff-section-raw-size
-          image
+          (owned_view.compiler-owned-shared-view image)
           (cobj.CompilerObjectSectionKind.Text))
         0)
       (CompilerWindowsCoffLinkability.Unavailable "empty-text-section")]
@@ -134,7 +145,7 @@
     compiler_diagnostic.CompilerDiagnostic)
   (box
     (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-      (__tl-box-place diag)
+      (owned_view.compiler-owned-box-shared-view diag)
       input-path)))
 
 (define (compiler-windows-batch-emit-assembly
@@ -212,7 +223,9 @@
       "forced-assembly"
       profile-state)
     (if (not
-      (compiler-windows-coff-object-program-supported? backend-state program))
+      (compiler-windows-coff-object-program-supported?
+        (owned_view.compiler-owned-shared-view backend-state)
+        (owned_view.compiler-owned-shared-view program)))
       (compiler-windows-batch-emit-assembly
         backend-state
         pools
@@ -229,11 +242,11 @@
             profile-state))
         (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
           backend-state
-          pools
-          program
+          (owned_view.compiler-owned-shared-view pools)
+          (owned_view.compiler-owned-shared-view program)
           (compiler_backend.CompilerBackendTarget.Windows)
           mode
-          spans
+          (owned_view.compiler-owned-shared-view spans)
           true
           false
           profile-state)
@@ -246,7 +259,8 @@
                   "backend.object-image"))
               (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
                 "backend.object-image")
-              (match (compiler-windows-coff-linkability image)
+              (match (compiler-windows-coff-linkability
+                (owned_view.compiler-owned-shared-view image))
                 [(CompilerWindowsCoffLinkability.Linkable)
                   (begin
                     (cfg
@@ -254,7 +268,7 @@
                       (compiler_driver_core.compiler-driver-profile-start-phase
                         profile-state))
                     (match (compiler_object_coff.compiler-object-coff-render
-                      image)
+                      (owned_view.compiler-owned-shared-view image))
                       [(compiler_object_coff.ResultCompilerObjectCoff.Ok object)
                         (begin
                           (cfg
@@ -344,9 +358,9 @@
         compile-profile
         (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
-        pools
-        program
-        spans
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view program)
+        (owned_view.compiler-owned-shared-view spans)
         opt-level
         profile-state)
         [(compiler_optimize.CompilerOptimizedProgram.Program
@@ -400,8 +414,10 @@
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
             opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
-            program)]
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              (owned_view.compiler-owned-shared-view pools)
+              (owned_view.compiler-owned-shared-view program))
+            (owned_view.compiler-owned-shared-view program))]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
             opt-level)
@@ -409,7 +425,8 @@
             spans)]
         [out : ResultCompilerWindowsBatchArtifact
           (begin
-            (compiler_ast_types.ast-node-pool-reader-use! pools)
+            (compiler_ast_types.ast-node-pool-reader-use!
+              (owned_view.compiler-owned-shared-view pools))
             (if (>= opt-level 1)
               (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
               unit)
@@ -455,13 +472,13 @@
         (compiler_backend.CompilerBackendTarget.Windows)]
       [lowered : compiler_driver_core.ResultCompilerDriverLowered
         (compiler_driver_core.compiler-driver-load-and-lower-escaping-with-state-and-retirement
-          state
-          input-path
+          (owned_view.compiler-owned-shared-view state)
+          (owned_view.compiler-owned-shared-view input-path)
           target
           stdlib-roots
           mode
           (compiler_driver_core.compiler-driver-state-target-cfgs
-            state
+            (owned_view.compiler-owned-shared-view state)
             target
             cfgs)
           (>= opt-level 1))]

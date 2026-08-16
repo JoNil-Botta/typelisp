@@ -41,15 +41,16 @@
   [edit : cdiag.CompilerDiagnosticTextEdit]) : cdiag.CompilerDiagnosticMaybeString
   (let
     [span : cdiag.CompilerDiagnosticSpan
-      (cdiag.compiler-diagnostic-text-edit-span edit)]
+      (cdiag.compiler-diagnostic-text-edit-span
+        (cdiag.compiler-diagnostic-place-shared-view edit))]
     [start : i64
       (compiler-check-fix-test-position-index
-        source
+        (tc_core.tc-global-shared-view source)
         (cdiag.compiler-diagnostic-span-start-line span)
         (cdiag.compiler-diagnostic-span-start-col span))]
     [end : i64
       (compiler-check-fix-test-position-index
-        source
+        (tc_core.tc-global-shared-view source)
         (cdiag.compiler-diagnostic-span-end-line span)
         (cdiag.compiler-diagnostic-span-end-col span))]
     [source-len : i64 (string.string-length source)]
@@ -79,33 +80,41 @@
   (let
     [path : String "tests/near_miss_fix.tl"]
     [source : String (compiler-check-near-miss-fix-source)]
-    (match (compiler_check_core.compiler-check-source path source)
+    (match (compiler_check_core.compiler-check-source
+      (tc_core.tc-global-shared-view path)
+      (tc_core.tc-global-shared-view source))
       [(compiler_check_core.ResultCompilerCheck.Ok _) false]
       [(compiler_check_core.ResultCompilerCheck.Err diag-box)
         (let
           [diag : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag-box))]
+            (cdiag.compiler-diagnostic-list-first
+              (cdiag.compiler-diagnostic-list-box-shared-view diag-box))]
           [fixes : cdiag.CompilerDiagnosticFixSeq
             (cdiag.compiler-diagnostic-fixes diag)]
           (and
             (= fixes.len 1)
             (let
-              [fix : cdiag.CompilerDiagnosticFix (array-ref fixes.slots 0)]
+              [fix : cdiag.CompilerDiagnosticFix
+                (tc_core.tc-global-array-element-shared-view fixes.slots 0)]
               [edits : cdiag.CompilerDiagnosticTextEditSeq
-                (cdiag.compiler-diagnostic-fix-edits fix)]
+                (cdiag.compiler-diagnostic-fix-edits
+                  (cdiag.compiler-diagnostic-place-shared-view fix))]
               (and
                 (string.eq
-                  (cdiag.compiler-diagnostic-fix-title fix)
+                  (cdiag.compiler-diagnostic-fix-title
+                    (cdiag.compiler-diagnostic-place-shared-view fix))
                   "Replace misspelled name")
-                (match (cdiag.compiler-diagnostic-fix-applicability fix)
+                (match (cdiag.compiler-diagnostic-fix-applicability
+                  (cdiag.compiler-diagnostic-place-shared-view fix))
                   [cdiag.CompilerDiagnosticMachineApplicable true]
                   [_ false])
                 (= edits.len 1)
                 (let
                   [edit : cdiag.CompilerDiagnosticTextEdit
-                    (array-ref edits.slots 0)]
+                    (tc_core.tc-global-array-element-shared-view edits.slots 0)]
                   [span : cdiag.CompilerDiagnosticSpan
-                    (cdiag.compiler-diagnostic-text-edit-span edit)]
+                    (cdiag.compiler-diagnostic-text-edit-span
+                      (cdiag.compiler-diagnostic-place-shared-view edit))]
                   (and
                     (string.eq (cdiag.compiler-diagnostic-span-path span) path)
                     (= (cdiag.compiler-diagnostic-span-start-line span) 5)
@@ -113,9 +122,12 @@
                     (= (cdiag.compiler-diagnostic-span-end-line span) 5)
                     (= (cdiag.compiler-diagnostic-span-end-col span) 16)
                     (string.eq
-                      (cdiag.compiler-diagnostic-text-edit-replacement edit)
+                      (cdiag.compiler-diagnostic-text-edit-replacement
+                        (cdiag.compiler-diagnostic-place-shared-view edit))
                       "render-value")
-                    (match (compiler-check-fix-test-apply source edit)
+                    (match (compiler-check-fix-test-apply
+                      source
+                      (cdiag.compiler-diagnostic-place-shared-view edit))
                       [(cdiag.CompilerDiagnosticSomeString updated)
                         (and
                           (string.eq
@@ -132,12 +144,16 @@
     "(define (main) : i64 (begin (println \"value\") 0))")
     [(compiler_check_core.ResultCompilerCheck.Ok _) false]
     [(compiler_check_core.ResultCompilerCheck.Err diag)
-      (=
-        (__tl-project-field
-          (cdiag.compiler-diagnostic-fixes
-            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
-          len)
-        0)]))
+      (let
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first
+            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+        (=
+          (__tl-project-field
+            (cdiag.compiler-diagnostic-fixes
+              first)
+            len)
+          0))]))
 
 (define (compiler-check-first-diagnostic-exact?
   [path : String]
@@ -147,16 +163,22 @@
   [col : i64]
   [end-line : i64]
   [end-col : i64]) : bool
-  (match (check_core.compiler-check-source path source)
+  (match (check_core.compiler-check-source
+    (tc_core.tc-global-shared-view path)
+    source)
     [(check_core.ResultCompilerCheck.Ok _) false]
     [(check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
-          (__tl-box-place diagnostics-box)]
+          (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first diagnostics)]
+          (cdiag.compiler-diagnostic-list-first
+            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
         (and
-          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
+          (=
+            (cdiag.compiler-diagnostic-list-count
+              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
+            1)
           (string.eq (cdiag.compiler-diagnostic-message diagnostic) message)
           (string.eq (cdiag.compiler-diagnostic-path diagnostic) path)
           (= (cdiag.compiler-diagnostic-line diagnostic) line)
@@ -238,24 +260,31 @@
     [(tc_core.ResultCompilerTypecheck.Err diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
-          (__tl-box-place diagnostics-box)]
+          (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first diagnostics)]
+          (cdiag.compiler-diagnostic-list-first
+            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
         [fixes : cdiag.CompilerDiagnosticFixSeq
           (cdiag.compiler-diagnostic-fixes diagnostic)]
         (and
-          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
+          (=
+            (cdiag.compiler-diagnostic-list-count
+              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
+            1)
           (string.eq
             (cdiag.compiler-diagnostic-message diagnostic)
             "typecheck: unbound name io.emti")
           (= fixes.len 1)
           (let
-            [fix : cdiag.CompilerDiagnosticFix (array-ref fixes.slots 0)]
+            [fix : cdiag.CompilerDiagnosticFix
+              (tc_core.tc-global-array-element-shared-view fixes.slots 0)]
             [edits : cdiag.CompilerDiagnosticTextEditSeq
-              (cdiag.compiler-diagnostic-fix-edits fix)]
+              (cdiag.compiler-diagnostic-fix-edits
+                (cdiag.compiler-diagnostic-place-shared-view fix))]
             (and
               (string.eq
-                (cdiag.compiler-diagnostic-fix-title fix)
+                (cdiag.compiler-diagnostic-fix-title
+                  (cdiag.compiler-diagnostic-place-shared-view fix))
                 "Replace misspelled name")
               (= edits.len 1)
               (string.eq
@@ -277,11 +306,15 @@
     [(tc_core.ResultCompilerTypecheck.Err diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
-          (__tl-box-place diagnostics-box)]
+          (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first diagnostics)]
+          (cdiag.compiler-diagnostic-list-first
+            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
         (and
-          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
+          (=
+            (cdiag.compiler-diagnostic-list-count
+              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
+            1)
           (string.eq
             (cdiag.compiler-diagnostic-message diagnostic)
             "typecheck: unbound name io.missing")
@@ -292,25 +325,26 @@
             0)))]))
 
 (define (compiler-check-duplicate-type-location-ok?) : bool
-  (let
-    [path : String "tests/duplicate_type_location.tl"]
-    [source : String
+  (match (compiler_check_core.compiler-check-source
+    "tests/duplicate_type_location.tl"
       "(defstruct Point (x i64))
 (defstruct Point (y i64))
-(define (main) : i64 0)"]
-    (match (compiler_check_core.compiler-check-source path source)
-      [(compiler_check_core.ResultCompilerCheck.Ok _) false]
-      [(compiler_check_core.ResultCompilerCheck.Err diag-box)
-        (let
-          [diag : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag-box))]
-          (and
-            (string.eq
-              (cdiag.compiler-diagnostic-message diag)
-              "symbols: duplicate type declaration Point")
-            (string.eq (cdiag.compiler-diagnostic-path diag) path)
-            (= (cdiag.compiler-diagnostic-line diag) 2)
-            (= (cdiag.compiler-diagnostic-col diag) 1)))])))
+(define (main) : i64 0)")
+    [(compiler_check_core.ResultCompilerCheck.Ok _) false]
+    [(compiler_check_core.ResultCompilerCheck.Err diag-box)
+      (let
+        [diag : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first
+            (cdiag.compiler-diagnostic-list-box-shared-view diag-box))]
+        [message : String (cdiag.compiler-diagnostic-message diag)]
+        [diag-path : String (cdiag.compiler-diagnostic-path diag)]
+        (and
+          (string.eq
+            message
+            "symbols: duplicate type declaration Point")
+          (string.eq diag-path "tests/duplicate_type_location.tl")
+          (= (cdiag.compiler-diagnostic-line diag) 2)
+          (= (cdiag.compiler-diagnostic-col diag) 1)))]))
 
 (define (compiler-check-independent-diagnostics-ok?) : bool
   (match (compiler_check_core.compiler-check-source
@@ -323,15 +357,24 @@
     [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
-          (__tl-box-place diagnostics-box)]
+          (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
+          (cdiag.compiler-diagnostic-list-get
+            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
+            0)]
         [second : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
+          (cdiag.compiler-diagnostic-list-get
+            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
+            1)]
         [third : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get diagnostics 2)]
+          (cdiag.compiler-diagnostic-list-get
+            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
+            2)]
         (and
-          (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
+          (=
+            (cdiag.compiler-diagnostic-list-count
+              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
+            3)
           (string.eq
             (cdiag.compiler-diagnostic-message first)
             "typecheck: unbound name unknown-one")
@@ -352,15 +395,24 @@
     [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
-          (__tl-box-place diagnostics-box)]
+          (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
+          (cdiag.compiler-diagnostic-list-get
+            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
+            0)]
         [second : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
+          (cdiag.compiler-diagnostic-list-get
+            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
+            1)]
         [third : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get diagnostics 2)]
+          (cdiag.compiler-diagnostic-list-get
+            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
+            2)]
         (and
-          (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
+          (=
+            (cdiag.compiler-diagnostic-list-count
+              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
+            3)
           (string.eq
             (cdiag.compiler-diagnostic-message first)
             "parse: malformed define")
@@ -387,10 +439,12 @@
 (define (main) : i64 0)"]
     (and
       (compiler-check-parser-recovery-result-ok?
-        (compiler_check_core.compiler-check-source path source))
+        (compiler_check_core.compiler-check-source
+          (tc_core.tc-global-shared-view path)
+          (tc_core.tc-global-shared-view source)))
       (compiler-check-parser-recovery-result-ok?
         (compiler_check_core.compiler-check-package-source-with-roots-and-cfg
-          path
+          (tc_core.tc-global-shared-view path)
           source
           (svec.new)
           "."
@@ -409,12 +463,17 @@
     [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
-          (__tl-box-place diagnostics-box)]
+          (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first
+            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
         (and
-          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
+          (=
+            (cdiag.compiler-diagnostic-list-count
+              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
+            1)
           (string.eq
-            (cdiag.compiler-diagnostic-message
-              (cdiag.compiler-diagnostic-list-first diagnostics))
+            (cdiag.compiler-diagnostic-message first)
             "typecheck: unbound name unknown-origin")))]))
 
 (define (compiler-check-semantic-access-code
@@ -701,9 +760,11 @@
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
+    (unless
+      (compiler-check-core-self-test-ok?)
+      (return 1))
     (cond
       [(and
-          (= (compiler_check_core.compiler-check-self-test) 42)
           (compiler-check-near-miss-fix-ok?)
           (compiler-check-stdlib-import-help-not-machine-fix-ok?)
           (compiler-check-duplicate-type-location-ok?)

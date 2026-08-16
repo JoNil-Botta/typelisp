@@ -1,4 +1,5 @@
 ;; inspect_cli_core.tl - Public tlci inspection command.
+(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -206,7 +207,8 @@ Summary:
       (string.int->string host-platform)
       ")\n"
       "image-classification: "
-      (tlci-inspect-classification-name image)
+      (tlci-inspect-classification-name
+        (owned_view.compiler-owned-shared-view image))
       "\n"
       "callback-abi-version: "
       (string.int->string image.callback-abi-version)
@@ -231,9 +233,10 @@ Summary:
       metadata.package-name
       "\n"
       "package-version: "
-      metadata.package-version
+      (owned_view.compiler-owned-shared-view metadata.package-version)
       "\n"
-      (tlci-inspect-spmd-section metadata)
+      (tlci-inspect-spmd-section
+        (owned_view.compiler-owned-shared-view metadata))
       "sections:\n"
       (tlci-inspect-section-line
         "compiler-build-hash"
@@ -279,7 +282,8 @@ Summary:
 (define (tlci-inspect-render-bytes
   [path : String]
   [bytes : (__tl_dyn-array u8)]) : i64
-  (match (tlci_core.tlci-parse-image bytes)
+  (match (tlci_core.tlci-parse-image
+    (owned_view.compiler-owned-shared-view bytes))
     [(tlci_core.ResultTlciImage.Err message)
       (begin
         (io.print-error (tlci-inspect-error path message))
@@ -457,7 +461,8 @@ Summary:
         (match (tlci_core.tlci-emit-image (tlci_core.tlci-test-imports-image))
           [(tlci_core.ResultTlciBytes.Err _) false]
           [(tlci_core.ResultTlciBytes.Ok bytes)
-            (match (tlci_core.tlci-parse-image bytes)
+            (match (tlci_core.tlci-parse-image
+              (owned_view.compiler-owned-shared-view bytes))
               [(tlci_core.ResultTlciImage.Err _) false]
               [(tlci_core.ResultTlciImage.Ok parsed)
                 (let
@@ -504,7 +509,8 @@ Summary:
         (match (tlci_core.tlci-emit-image image)
           [(tlci_core.ResultTlciBytes.Err _) false]
           [(tlci_core.ResultTlciBytes.Ok bytes)
-            (match (tlci_core.tlci-parse-image bytes)
+            (match (tlci_core.tlci-parse-image
+              (owned_view.compiler-owned-shared-view bytes))
               [(tlci_core.ResultTlciImage.Err _) false]
               [(tlci_core.ResultTlciImage.Ok parsed)
                 (let

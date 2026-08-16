@@ -3,6 +3,7 @@
 ;; Factored out of `check.tl` so the unified `cli.tl` dispatcher and the
 ;; retained check compatibility/coverage driver share the command without a
 ;; duplicate `main`.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.vector)
@@ -62,10 +63,10 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : cli_svec.Vec (:consume)]
+  [stdlib-roots : cli_svec.Vec]
   [target : target_cfg.CompilerTargetCfg]
   [has-target : bool]
-  [cfg-names : cli_svec.Vec (:consume)]) : ResultSelfhostCheckConfig
+  [cfg-names : cli_svec.Vec]) : ResultSelfhostCheckConfig
   (if (>= idx count)
     (selfhost-check-config-finish
       input-path
@@ -78,7 +79,7 @@
     (let
       [current : String (io.arg idx)]
       (match (cli_option.cli-common-option-parse
-        current
+        (owned_view.compiler-owned-shared-view current)
         idx
         count
         (bit-or
@@ -166,7 +167,8 @@
                     target
                     has-target
                     cfg-names)))]
-            [(selfhost-check-flag? current)
+            [(selfhost-check-flag?
+                (owned_view.compiler-owned-shared-view current))
               (ResultSelfhostCheckConfig.Err
                 (str_cat.str-cat "selfhost-check: unknown flag " current))]
             [has-input
@@ -201,7 +203,8 @@
     (cli_svec.new)))
 
 (define (selfhost-check-doctest-report [report : doc_test.DocTestRunReport]) : i64
-  (if (doc_test.doc-test-run-report-ok? report)
+  (if (doc_test.doc-test-run-report-ok?
+    (owned_view.compiler-owned-shared-view report))
     0
     (begin
       (io.print-error (doc_test.doc-test-run-report-render report))
@@ -239,13 +242,17 @@
 (define (selfhost-check-report-diagnostics
   [diagnostics : cdiag.CompilerDiagnosticList]) : unit
   (let
-    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
+    [count : i64
+      (cdiag.compiler-diagnostic-list-count
+        (owned_view.compiler-owned-shared-view diagnostics))]
     [index : i64 0]
     (while (< index count)
       (begin
         (io.print-error
           (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (cdiag.compiler-diagnostic-list-get diagnostics index)))
+            (cdiag.compiler-diagnostic-list-get
+              (owned_view.compiler-owned-shared-view diagnostics)
+              index)))
         (set! index (+ index 1))))))
 
 (define (selfhost-check-file
@@ -253,33 +260,41 @@
   [stdlib-roots : cli_svec.Vec]
   [target : target_cfg.CompilerTargetCfg]
   [cfg-names : cli_svec.Vec]) : i64
-  (match (compiler_check_core.compiler-check-file-with-roots-and-cfg
-    input-path
-    stdlib-roots
-    (target_cfg.compiler-target-cfgs-with-names target cfg-names))
-    [(compiler_check_core.ResultCompilerCheck.Ok _)
-      (let
-        [inline-test-status : i64
-          (test_cli_core.tltest-inline-typecheck-file-with-cfg
-            input-path
-            stdlib-roots
-            (target_cfg.compiler-target-cfgs-with-names target cfg-names)
-            "typecheck-prefix-inline-check")]
-        (if (= inline-test-status 0)
-          (let
-            [doctest-status : i64
-              (selfhost-check-file-doctests
-                input-path
-                stdlib-roots
-                (target_cfg.compiler-target-cfgs-with-names target cfg-names))]
-            (if (= doctest-status 0)
-              (selfhost-check-print-passed)
-              doctest-status))
-          inline-test-status))]
-    [(compiler_check_core.ResultCompilerCheck.Err diag)
-      (begin
-        (selfhost-check-report-diagnostics (__tl-box-place diag))
-        1)]))
+  (let
+    [check-cfgs : sym_i64_env.SymI64Env
+      (target_cfg.compiler-target-cfgs-with-names
+        (owned_view.compiler-owned-shared-view target)
+        (owned_view.compiler-owned-shared-view cfg-names))]
+    (match (compiler_check_core.compiler-check-file-with-roots-and-cfg
+      (owned_view.compiler-owned-shared-view input-path)
+      (owned_view.compiler-owned-shared-view stdlib-roots)
+      check-cfgs)
+      [(compiler_check_core.ResultCompilerCheck.Ok _)
+        (let
+          [inline-test-status : i64
+            (test_cli_core.tltest-inline-typecheck-file-with-cfg
+              (owned_view.compiler-owned-shared-view input-path)
+              (owned_view.compiler-owned-shared-view stdlib-roots)
+              (target_cfg.compiler-target-cfgs-with-names
+                (owned_view.compiler-owned-shared-view target)
+                (owned_view.compiler-owned-shared-view cfg-names))
+              "typecheck-prefix-inline-check")]
+          (if (= inline-test-status 0)
+            (let
+              [doctest-status : i64
+                (selfhost-check-file-doctests
+                  input-path
+                  stdlib-roots
+                  (target_cfg.compiler-target-cfgs-with-names target cfg-names))]
+              (if (= doctest-status 0)
+                (selfhost-check-print-passed)
+                doctest-status))
+            inline-test-status))]
+      [(compiler_check_core.ResultCompilerCheck.Err diag)
+        (begin
+          (selfhost-check-report-diagnostics
+            (owned_view.compiler-owned-box-shared-view diag))
+          1)])))
 
 (define (selfhost-check-package-kind-entry?
   [kind : compiler_load.CompilerPkgKind]) : bool
@@ -335,19 +350,23 @@
       (let
         [manifest : compiler_load.CompilerPkgManifest source-set.manifest]
         [manifest-dir : String source-set.manifest-dir]
-        [name : String manifest.name]
+        [name : String (owned_view.compiler-owned-shared-view manifest.name)]
         [entry-path : String
-          (selfhost-check-package-entry-path manifest-dir manifest)]
+          (selfhost-check-package-entry-path
+            (owned_view.compiler-owned-shared-view manifest-dir)
+            (owned_view.compiler-owned-shared-view manifest))]
         [emit-entry : bool (selfhost-check-package-kind-entry? manifest.kind)]
         [_reset-file-state : unit
           (compiler_driver_core.compiler-driver-reset-file-state!)]
         (match (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
-          entry-path
-          stdlib-roots
-          manifest-dir
-          manifest.deps
+          (owned_view.compiler-owned-shared-view entry-path)
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view manifest.deps)
           emit-entry
-          (target_cfg.compiler-target-cfgs-with-names target cfg-names))
+          (target_cfg.compiler-target-cfgs-with-names
+            target
+            (owned_view.compiler-owned-shared-view cfg-names)))
           [(compiler_check_core.ResultCompilerCheckWithPaths.Ok _ paths)
             (let
               ;; Doctests run after the compiler and intern arenas are reset.
@@ -363,12 +382,14 @@
                   (ci.intern-persistent-arena-reset!))]
               [inline-test-status : i64
                 (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
-                  source-set.sources
-                  stdlib-roots
-                  manifest-dir
+                  (owned_view.compiler-owned-shared-view source-set.sources)
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (owned_view.compiler-owned-shared-view manifest-dir)
                   name
-                  manifest.deps
-                  (target_cfg.compiler-target-cfgs-with-names target cfg-names)
+                  (owned_view.compiler-owned-shared-view manifest.deps)
+                  (target_cfg.compiler-target-cfgs-with-names
+                    target
+                    (owned_view.compiler-owned-shared-view cfg-names))
                   "typecheck-prefix-inline-check-package")]
               (if (= inline-test-status 0)
                 (let
@@ -387,7 +408,8 @@
                 inline-test-status))]
           [(compiler_check_core.ResultCompilerCheckWithPaths.Err diag)
             (begin
-              (selfhost-check-report-diagnostics (__tl-box-place diag))
+              (selfhost-check-report-diagnostics
+                (cdiag.compiler-diagnostic-list-box-shared-view diag))
               1)]))]))
 
 ;; Run the `check` command over arguments starting at `start`.

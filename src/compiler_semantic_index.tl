@@ -1,4 +1,5 @@
 ;; compiler_semantic_index.tl - Owned semantic source index for compiler tooling.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.array)
@@ -698,11 +699,11 @@
           (&
             (__tl-project-field (__tl-box-place state.visibility-storage) paths))
           path-len
-          normalized)]
+          (owned_view.compiler-owned-shared-view normalized))]
       (if (>= found 0)
         (let
           [info : CompilerSemanticSourcePathInfo
-            (array-ref
+            (owned_view.compiler-owned-array-element-shared-view
               (__tl-project-field
                 (__tl-box-place state.visibility-storage)
                 paths)
@@ -816,9 +817,16 @@
   [child : CompilerSemanticBindingSnapshot]
   [node-id : i64]) : unit
   (let
-    [start-byte : i64 (compiler-semantic-expr-start-offset state node-id -1)]
+    [start-byte : i64
+      (compiler-semantic-expr-start-offset
+        (owned_view.compiler-owned-shared-view state)
+        node-id
+        -1)]
     [raw-end : i64
-      (compiler-semantic-expr-visibility-end-offset state node-id -1)]
+      (compiler-semantic-expr-visibility-end-offset
+        (owned_view.compiler-owned-shared-view state)
+        node-id
+        -1)]
     (compiler-semantic-scope-region-add! state parent child start-byte raw-end)))
 
 (define (compiler-semantic-record-vec-new [capacity : i64]) : CompilerSemanticRecordVec
@@ -1070,12 +1078,17 @@
             bytes
             (+
               bytes
-              (string.string-length (array-ref index.paths path-index).path)))
+              (string.string-length
+                (owned_view.compiler-owned-array-element-shared-view
+                  index.paths
+                  path-index).path)))
           (set! path-index (+ path-index 1))))
       (while (< binding-index index.binding-len)
         (let
           [binding : CompilerSemanticBinding
-            (array-ref index.bindings binding-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              index.bindings
+              binding-index)]
           (begin
             (set!
               bytes
@@ -1092,7 +1105,9 @@
             (+
               bytes
               (string.string-length
-                (array-ref index.top-labels candidate-index))))
+                (owned_view.compiler-owned-array-element-shared-view
+                  index.top-labels
+                  candidate-index))))
           (set! candidate-index (+ candidate-index 1))))
       bytes)))
 
@@ -1113,7 +1128,9 @@
         CompilerSemanticMaybeVisibleBindingQuery.None
         (let
           [info : CompilerSemanticSourcePathInfo
-            (array-ref index.paths path-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              index.paths
+              path-index)]
           (if (> byte-offset info.source-len)
             CompilerSemanticMaybeVisibleBindingQuery.None
             (let
@@ -1126,7 +1143,7 @@
                   (let
                     [mid : i64 (/ (+ scope-low scope-high) 2)]
                     [event : CompilerSemanticScopeEvent
-                      (array-ref
+                      (owned_view.compiler-owned-array-element-shared-view
                         index.scope-events
                         (+ info.scope-event-offset mid))]
                     (if (<= event.byte-offset byte-offset)
@@ -1136,7 +1153,7 @@
                   (let
                     [mid : i64 (/ (+ module-low module-high) 2)]
                     [event : CompilerSemanticModuleEvent
-                      (array-ref
+                      (owned_view.compiler-owned-array-element-shared-view
                         index.module-events
                         (+ info.module-event-offset mid))]
                     (if (<= event.byte-offset byte-offset)
@@ -1146,12 +1163,12 @@
                   (CompilerSemanticVisibleBindingQuery
                     path-index
                     (if (> module-low 0)
-                      (array-ref
+                      (owned_view.compiler-owned-array-element-shared-view
                         index.module-events
                         (+ info.module-event-offset (- module-low 1))).module-index
                       info.default-module-index)
                     (if (> scope-low 0)
-                      (array-ref
+                      (owned_view.compiler-owned-array-element-shared-view
                         index.scope-events
                         (+ info.scope-event-offset (- scope-low 1))).head
                       -1)))))))))))
@@ -1236,7 +1253,10 @@
     (begin
       (while (and (>= cursor 0) (!= cursor binding-index))
         (let
-          [binding : CompilerSemanticBinding (array-ref index.bindings cursor)]
+          [binding : CompilerSemanticBinding
+            (owned_view.compiler-owned-array-element-shared-view
+              index.bindings
+              cursor)]
           (if (= binding.name-id name-id)
             (return true)
             (set! cursor binding.parent))))
@@ -1265,7 +1285,10 @@
     (begin
       (while (>= cursor 0)
         (let
-          [binding : CompilerSemanticBinding (array-ref index.bindings cursor)]
+          [binding : CompilerSemanticBinding
+            (owned_view.compiler-owned-array-element-shared-view
+              index.bindings
+              cursor)]
           (if (= binding.name-id name-id)
             (return true)
             (set! cursor binding.parent))))
@@ -1316,7 +1339,9 @@
           cursor.top-cursor
           cursor.stage)]
       [module-info : CompilerSemanticModuleInfo
-        (array-ref index.modules cursor.query.module-index)]
+        (owned_view.compiler-owned-array-element-shared-view
+          index.modules
+          cursor.query.module-index)]
       [top-end : i64 (+ module-info.candidate-offset module-info.candidate-len)]
       (begin
         (cond
@@ -1340,7 +1365,9 @@
             (let
               [binding-index : i64 next.binding-cursor]
               [binding : CompilerSemanticBinding
-                (array-ref index.bindings binding-index)]
+                (owned_view.compiler-owned-array-element-shared-view
+                  index.bindings
+                  binding-index)]
               (begin
                 (set! next.binding-cursor binding.parent)
                 (cond
@@ -1364,7 +1391,9 @@
         (while (and (= next.stage 1) (< next.top-cursor top-end))
           (let
             [candidate : CompilerSemanticTopCandidateRef
-              (array-ref index.top-candidates next.top-cursor)]
+              (owned_view.compiler-owned-array-element-shared-view
+                index.top-candidates
+                next.top-cursor)]
             (begin
               (set! next.top-cursor (+ next.top-cursor 1))
               (cond
@@ -1436,7 +1465,8 @@
     [(ast.AstDecl.DefDispatch _ name _)
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Function)]
     [(ast.AstDecl.Unsafe inner)
-      (compiler-semantic-decl-symbol (__tl-box-place inner))]
+      (compiler-semantic-decl-symbol
+        (owned_view.compiler-owned-box-shared-view inner))]
     [_ CompilerSemanticMaybeDecl.None]))
 
 (define (compiler-semantic-source-offset
@@ -1467,10 +1497,13 @@
   [target-col : i64]) : i64
   (let
     [storage : CompilerSemanticVisibilityBuildStorage
-      (__tl-box-place state.visibility-storage)]
-    [anchor-offset : i64 (__tl-box-place storage.source-anchor-offset)]
-    [anchor-line : i64 (__tl-box-place storage.source-anchor-line)]
-    [anchor-col : i64 (__tl-box-place storage.source-anchor-col)]
+      (owned_view.compiler-owned-box-shared-view state.visibility-storage)]
+    [anchor-offset : i64
+      (owned_view.compiler-owned-box-shared-view storage.source-anchor-offset)]
+    [anchor-line : i64
+      (owned_view.compiler-owned-box-shared-view storage.source-anchor-line)]
+    [anchor-col : i64
+      (owned_view.compiler-owned-box-shared-view storage.source-anchor-col)]
     [source-len : i64 (string.string-length state.source)]
     [usable : bool
       (and
@@ -1604,7 +1637,9 @@
     start
     end
     source-span
-    (compiler-semantic-source-utf16-col-at-offset source start)
+    (compiler-semantic-source-utf16-col-at-offset
+      (owned_view.compiler-owned-shared-view source)
+      start)
     (compiler-semantic-source-utf16-col-at-offset source end)))
 
 (define (compiler-semantic-delimiter? [c : char]) : bool
@@ -1719,20 +1754,23 @@
             [(= current '"')
               (set!
                 cursor
-                (compiler-semantic-double-quote-end source cursor bounded-limit))]
+                (compiler-semantic-double-quote-end
+                  (owned_view.compiler-owned-shared-view source)
+                  cursor
+                  bounded-limit))]
             [(= current '\'')
               (let
                 [char-end : i64
                   (compiler-semantic-single-quote-end
-                    source
+                    (owned_view.compiler-owned-shared-view source)
                     cursor
                     (- bounded-limit 1))]
                 (if (>= char-end 0)
                   (set! cursor (+ char-end 1))
                   (set! cursor (+ cursor 1))))]
             [(compiler-semantic-source-name-at?
-                source
-                name
+                (owned_view.compiler-owned-shared-view source)
+                (owned_view.compiler-owned-shared-view name)
                 cursor
                 bounded-limit)
               (set! found cursor)]
@@ -1772,11 +1810,17 @@
             [(= current '"')
               (set!
                 cursor
-                (compiler-semantic-double-quote-end source cursor (+ limit 1)))]
+                (compiler-semantic-double-quote-end
+                  (owned_view.compiler-owned-shared-view source)
+                  cursor
+                  (+ limit 1)))]
             [(= current '\'')
               (let
                 [char-end : i64
-                  (compiler-semantic-single-quote-end source cursor limit)]
+                  (compiler-semantic-single-quote-end
+                    (owned_view.compiler-owned-shared-view source)
+                    cursor
+                    limit)]
                 (if (>= char-end 0)
                   (set! cursor (+ char-end 1))
                   (set! cursor (+ cursor 1))))]
@@ -1809,10 +1853,15 @@
         0)]
     [end : i64
       (compiler-semantic-source-offset
-        source
+        (owned_view.compiler-owned-shared-view source)
         (ast.ast-source-span-end-line origin)
         (ast.ast-source-span-end-col origin))]
-    [found : i64 (compiler-semantic-name-offset-in-range source name start end)]
+    [found : i64
+      (compiler-semantic-name-offset-in-range
+        (owned_view.compiler-owned-shared-view source)
+        (owned_view.compiler-owned-shared-view name)
+        start
+        end)]
     (if (< found 0)
       ;; Keep the owning form for diagnostics, but mark the name coordinates as
       ;; inexact so navigation never returns a plausible-looking whole form.
@@ -1820,7 +1869,9 @@
       (let
         [name-len : i64 (string.string-length name)]
         [position : ast.AstSourceSpan
-          (compiler-semantic-source-position source found)]
+          (compiler-semantic-source-position
+            (owned_view.compiler-owned-shared-view source)
+            found)]
         [line : i64 (ast.ast-source-span-start-line position)]
         [col : i64 (ast.ast-source-span-start-col position)]
         (compiler-semantic-span-from-byte-range
@@ -1849,7 +1900,7 @@
               (match (compiler-semantic-decl-origin
                 decls
                 index
-                (__tl-box-place inner))
+                (owned_view.compiler-owned-box-shared-view inner))
                 [(parse_core.CompilerParseMaybeDeclSpan.Some span)
                   (tc.TcMaybeAstSourceSpan.Some span)]
                 [(parse_core.CompilerParseMaybeDeclSpan.None)
@@ -1876,19 +1927,24 @@
         [(ast.AstDecl.DefMacro _ _ params ret _)
           (tc.tc-type-render
             (ast.ast-ty-func
-              (tc.tc-macro-param-type-list ctx params)
+              (tc.tc-macro-param-type-list
+                (owned_view.compiler-owned-shared-view ctx)
+                params)
               (tc.tc-resolve-type ctx ret)))]
         [(ast.AstDecl.Unsafe inner)
           (compiler-semantic-decl-type
             ctx
             env
-            (__tl-box-place inner)
+            (owned_view.compiler-owned-box-shared-view inner)
             kind
             name-id
             name)]
         [_ "macro"])]
     [_
-      (match (tc.tc-lookup-visible-id ctx env name-id)
+      (match (tc.tc-lookup-visible-id
+        (owned_view.compiler-owned-shared-view ctx)
+        env
+        name-id)
         [(tc.ResultTcType.Ok ty) (tc.tc-type-render ty)]
         [(tc.ResultTcType.Err _)
           (match (tc.tc-top-decl-type ctx decl)
@@ -1911,7 +1967,7 @@
   (let
     [start : i64
       (compiler-semantic-source-offset
-        source
+        (owned_view.compiler-owned-shared-view source)
         (ast.ast-source-span-start-line origin)
         (ast.ast-source-span-start-col origin))]
     [end : i64 start]
@@ -1923,9 +1979,13 @@
         (set! end (+ end 1)))
       (let
         [start-position : ast.AstSourceSpan
-          (compiler-semantic-source-position source start)]
+          (compiler-semantic-source-position
+            (owned_view.compiler-owned-shared-view source)
+            start)]
         [end-position : ast.AstSourceSpan
-          (compiler-semantic-source-position source end)]
+          (compiler-semantic-source-position
+            (owned_view.compiler-owned-shared-view source)
+            end)]
         (compiler-semantic-span-from-byte-range
           path
           source
@@ -1949,7 +2009,11 @@
         (string.string-length source)
         limit)]
     [found : i64
-      (compiler-semantic-name-offset-in-range source name start bounded-limit)]
+      (compiler-semantic-name-offset-in-range
+        (owned_view.compiler-owned-shared-view source)
+        (owned_view.compiler-owned-shared-view name)
+        start
+        bounded-limit)]
     (if (< found 0)
       (CompilerSemanticSpan
         (string.copy (& path))
@@ -1961,7 +2025,9 @@
       (let
         [name-len : i64 (string.string-length name)]
         [position : ast.AstSourceSpan
-          (compiler-semantic-source-position source found)]
+          (compiler-semantic-source-position
+            (owned_view.compiler-owned-shared-view source)
+            found)]
         [line : i64 (ast.ast-source-span-start-line position)]
         [col : i64 (ast.ast-source-span-start-col position)]
         (compiler-semantic-span-from-byte-range
@@ -2073,22 +2139,33 @@
   [source : String]
   [form-start : i64]) : String
   (let
-    [line-start : i64 (compiler-semantic-line-start-before source form-start)]
+    [line-start : i64
+      (compiler-semantic-line-start-before
+        (owned_view.compiler-owned-shared-view source)
+        form-start)]
     [documentation : String ""]
     [done : bool false]
     (begin
       (while (and (> line-start 0) (not done))
         (let
           [previous : i64
-            (compiler-semantic-line-start-before source (- line-start 1))]
-          (if (compiler-semantic-doc-comment-line? source previous)
+            (compiler-semantic-line-start-before
+              (owned_view.compiler-owned-shared-view source)
+              (- line-start 1))]
+          (if (compiler-semantic-doc-comment-line?
+            (owned_view.compiler-owned-shared-view source)
+            previous)
             (begin
               (set!
                 documentation
                 (if (string.eq documentation "")
-                  (compiler-semantic-doc-comment-text source previous)
+                  (compiler-semantic-doc-comment-text
+                    (owned_view.compiler-owned-shared-view source)
+                    previous)
                   (str_cat.str-cat
-                    (compiler-semantic-doc-comment-text source previous)
+                    (compiler-semantic-doc-comment-text
+                      (owned_view.compiler-owned-shared-view source)
+                      previous)
                     "\n"
                     documentation)))
               (set! line-start previous))
@@ -2101,7 +2178,7 @@
   [name-id : i64]
   [kind : CompilerSemanticSymbolKind]) : CompilerSemanticMaybeHandle
   (let
-    [symbols : csym.CompilerSymbols (tc.tc-context-symbols ctx)]
+    [symbols : (& ctx csym.CompilerSymbols) (tc.tc-context-symbols ctx)]
     (match kind
       [(CompilerSemanticSymbolKind.Struct)
         (match (csym.compiler-symbols-lookup-type-in-module-id
@@ -2134,7 +2211,7 @@
 
 (define (compiler-semantic-use-handle [ctx : tc.TcContext] [lookup-id : i64]) : CompilerSemanticMaybeHandle
   (let
-    [symbols : csym.CompilerSymbols (tc.tc-context-symbols ctx)]
+    [symbols : (& ctx csym.CompilerSymbols) (tc.tc-context-symbols ctx)]
     (match (csym.compiler-symbols-lookup-value-id symbols lookup-id)
       [(option_i64.Some handle) (CompilerSemanticMaybeHandle.Some handle)]
       [(option_i64.None)
@@ -2170,7 +2247,11 @@
   [fallback-ordinal : i64]
   [name-id : i64]
   [kind : CompilerSemanticSymbolKind]) : CompilerSemanticSymbolId
-  (match (compiler-semantic-decl-handle ctx module-id name-id kind)
+  (match (compiler-semantic-decl-handle
+    (owned_view.compiler-owned-shared-view ctx)
+    module-id
+    name-id
+    kind)
     [(CompilerSemanticMaybeHandle.Some handle)
       (CompilerSemanticSymbolId
         (compiler-semantic-handle-module-id ctx handle)
@@ -2426,12 +2507,15 @@
   [name-id : i64]) : CompilerSemanticMaybeBinding
   (let
     [cursor : i64 scope.head]
+    [bindings : CompilerSemanticBindingVec
+      (owned_view.compiler-owned-box-shared-view state.bindings)]
     [items : (__tl_dyn-array CompilerSemanticBinding)
-      (__tl-project-field (__tl-box-place state.bindings) items)]
+      (owned_view.compiler-owned-shared-view bindings.items)]
     (begin
       (while (>= cursor 0)
         (let
-          [binding : CompilerSemanticBinding (array-ref items cursor)]
+          [binding : CompilerSemanticBinding
+            (owned_view.compiler-owned-array-element-shared-view items cursor)]
           (if (= binding.name-id name-id)
             (return (CompilerSemanticMaybeBinding.Some binding))
             (set! cursor binding.parent))))
@@ -2456,9 +2540,9 @@
       (string.copy (& binding.resolved-type))
       ""
       binding.symbol.module-id
-      span
+      (owned_view.compiler-owned-shared-view span)
       (and (not state.generated) (>= span.start-byte 0))
-      state.provenance)))
+      (owned_view.compiler-owned-shared-view state.provenance))))
 
 (define (compiler-semantic-record-top-use!
   [state : CompilerSemanticWalkState]
@@ -2470,35 +2554,46 @@
     [env : tc.TcTypeEnv state.top-env]
     [name : String (tc.tc-hygiene-name-text-id name-id)]
     (match (tc.tc-source-name-lookup-key-with-field-check-lookup
-      ctx
+      (owned_view.compiler-owned-shared-view ctx)
       env
       name
       name-id
       true)
       [(tc.TcNameLookup.Ok _ lookup-id)
-        (match (compiler-semantic-use-handle ctx lookup-id)
+        (match (compiler-semantic-use-handle
+          (owned_view.compiler-owned-shared-view ctx)
+          lookup-id)
           [(CompilerSemanticMaybeHandle.Some handle)
             (let
-              [decl : ast.AstDecl (compiler-semantic-handle-decl ctx handle)]
-              (match (compiler-semantic-decl-symbol decl)
+              [decl : ast.AstDecl
+                (compiler-semantic-handle-decl
+                  (owned_view.compiler-owned-shared-view ctx)
+                  handle)]
+              (match (compiler-semantic-decl-symbol
+                (owned_view.compiler-owned-shared-view decl))
                 [(CompilerSemanticMaybeDecl.Some decl-name-id kind)
                   (let
                     [module-id : i64
-                      (compiler-semantic-handle-module-id ctx handle)]
+                      (compiler-semantic-handle-module-id
+                        (owned_view.compiler-owned-shared-view ctx)
+                        handle)]
                     [decl-ctx : tc.TcContext
                       (if (= module-id cbi.compiler-builtin-id-fix-empty)
                         (tc.tc-context-with-module-id
-                          ctx
+                          (owned_view.compiler-owned-shared-view ctx)
                           ""
                           cbi.compiler-builtin-id-fix-empty)
                         (tc.tc-context-with-module-id
-                          ctx
+                          (owned_view.compiler-owned-shared-view ctx)
                           (tc.macro-decl-module-display module-id)
                           module-id))]
                     [display-name : String
                       (tc.tc-env-key-name-text decl-name-id)]
                     [type-text : String
-                      (match (tc.tc-lookup-visible-id ctx env lookup-id)
+                      (match (tc.tc-lookup-visible-id
+                        (owned_view.compiler-owned-shared-view ctx)
+                        env
+                        lookup-id)
                         [(tc.ResultTcType.Ok ty) (tc.tc-type-render ty)]
                         [(tc.ResultTcType.Err _)
                           (compiler-semantic-decl-type
@@ -2507,7 +2602,7 @@
                             decl
                             kind
                             decl-name-id
-                            display-name)])]
+                            (owned_view.compiler-owned-shared-view display-name))])]
                     (compiler-semantic-record-vec-push!
                       (&mut (__tl-box-place state.records))
                       (CompilerSemanticRecord
@@ -2525,9 +2620,9 @@
                         (string.copy (& type-text))
                         ""
                         module-id
-                        span
+                        (owned_view.compiler-owned-shared-view span)
                         (and (not state.generated) (>= span.start-byte 0))
-                        state.provenance)))]
+                        (owned_view.compiler-owned-shared-view state.provenance))))]
                 [(CompilerSemanticMaybeDecl.None) unit]))]
           [(CompilerSemanticMaybeHandle.None) unit])]
       [(tc.TcNameLookup.Err _) unit])))
@@ -2550,8 +2645,8 @@
               -1
               -1)
             (compiler-semantic-use-span-from-origin
-              state.path
-              state.source
+              (owned_view.compiler-owned-shared-view state.path)
+              (owned_view.compiler-owned-shared-view state.source)
               origin))]
         [(CompilerSemanticMaybeSpan.None)
           (CompilerSemanticSpan
@@ -2561,7 +2656,10 @@
             (ast.ast-source-span 1 1 1 1)
             -1
             -1)])]
-    (match (compiler-semantic-binding-lookup state scope name-id)
+    (match (compiler-semantic-binding-lookup
+      (owned_view.compiler-owned-shared-view state)
+      scope
+      name-id)
       [(CompilerSemanticMaybeBinding.Some binding)
         (compiler-semantic-record-use-with-binding!
           state
@@ -2580,7 +2678,10 @@
   [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]
   [span : CompilerSemanticSpan]) : unit
-  (match (compiler-semantic-binding-lookup state scope name-id)
+  (match (compiler-semantic-binding-lookup
+    (owned_view.compiler-owned-shared-view state)
+    scope
+    name-id)
     [(CompilerSemanticMaybeBinding.Some binding)
       (compiler-semantic-record-use-with-binding!
         state
@@ -2606,7 +2707,7 @@
   (let
     [name : String (tc.tc-env-key-name-text name-id)]
     [binding-ty : ast.AstType
-      (match maybe-ty
+      (match (owned_view.compiler-owned-shared-view maybe-ty)
         [(ast.AstMaybeType.Some ty) ty]
         [(ast.AstMaybeType.No) (ast.AstType.Unit)])]
     [type-text : String
@@ -2631,7 +2732,7 @@
         (compiler-semantic-name-span-in-range
           state.path
           state.source
-          name
+          (owned_view.compiler-owned-shared-view name)
           search-start
           search-limit))]
     (begin
@@ -2650,9 +2751,9 @@
               (string.copy (& type-text))
               ""
               state.module-id
-              span
+              (owned_view.compiler-owned-shared-view span)
               (and (not state.generated) (>= span.start-byte 0))
-              state.provenance))]
+              (owned_view.compiler-owned-shared-view state.provenance)))]
         [binding : CompilerSemanticBinding
           (CompilerSemanticBinding
             name-id
@@ -2693,15 +2794,16 @@
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
-    [ctx : tc.TcContext state.ctx]
-    [expr-bases : i64 (tc.tc-context-expr-bases ctx)]
+    [ctx : tc.TcContext (owned_view.compiler-owned-shared-view state.ctx)]
+    [expr-bases : i64
+      (tc.tc-context-expr-bases (owned_view.compiler-owned-shared-view ctx))]
     [init : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases init-id)]
     [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
     (match (tc.tc-let-binding-init-type-at
-      ctx
+      (owned_view.compiler-owned-shared-view ctx)
       env
       (tc.tc-env-key-name-text name-id)
-      maybe-ty
+      (owned_view.compiler-owned-shared-view maybe-ty)
       init-id
       bindings
       (+ binding-index 1)
@@ -2709,14 +2811,22 @@
       [(tc.ResultTcType.Ok init-ty)
         (let
           [resolved-maybe-ty : ast.AstMaybeType
-            (tc.tc-let-binding-resolve-maybe-type ctx maybe-ty)]
+            (tc.tc-let-binding-resolve-maybe-type
+              (owned_view.compiler-owned-shared-view ctx)
+              maybe-ty)]
           [binding-ty : ast.AstType
-            (tc.tc-let-binding-plain-bind-type ctx resolved-maybe-ty init-ty)]
+            (tc.tc-let-binding-plain-bind-type
+              (owned_view.compiler-owned-shared-view ctx)
+              (owned_view.compiler-owned-shared-view resolved-maybe-ty)
+              init-ty)]
           [recorded-maybe-ty : ast.AstMaybeType
             (match resolved-maybe-ty
               [(ast.AstMaybeType.Some ty) (ast.AstMaybeType.Some ty)]
               [(ast.AstMaybeType.No)
-                (ast.AstMaybeType.Some (tc.tc-resolve-type ctx binding-ty))])]
+                (ast.AstMaybeType.Some
+                  (tc.tc-resolve-type
+                    (owned_view.compiler-owned-shared-view ctx)
+                    (owned_view.compiler-owned-shared-view binding-ty)))])]
           [bound : CompilerSemanticBindResult
             (compiler-semantic-bind-local!
               state
@@ -2743,7 +2853,7 @@
         ;; A complete check reached this walk successfully, so this is only a
         ;; fail-closed fallback for facts the replay cannot reproduce.
         (compiler-semantic-bind-local!
-          state
+          (owned_view.compiler-owned-shared-view state)
           scope
           env
           name-id
@@ -2781,8 +2891,16 @@
   [expr-id : i64]
   [fallback : i64]) : i64
   (let
-    [start : i64 (compiler-semantic-expr-start-offset state expr-id fallback)]
-    [raw-end : i64 (compiler-semantic-expr-end-offset state expr-id fallback)]
+    [start : i64
+      (compiler-semantic-expr-start-offset
+        (owned_view.compiler-owned-shared-view state)
+        expr-id
+        fallback)]
+    [raw-end : i64
+      (compiler-semantic-expr-end-offset
+        (owned_view.compiler-owned-shared-view state)
+        expr-id
+        fallback)]
     [source-len : i64 (string.string-length state.source)]
     [cursor : i64
       (cond
@@ -2842,11 +2960,11 @@
             (& params)
             index
             (ast.ast-param-fallback))
-            [(ast.AstParam.Param name ty _ _)
+            [(ast.AstParam.Param name ty _)
               (let
                 [bound : CompilerSemanticBindResult
                   (compiler-semantic-bind-local!
-                    state
+                    (owned_view.compiler-owned-shared-view state)
                     next-scope
                     next-env
                     name
@@ -2889,7 +3007,7 @@
               (let
                 [bound : CompilerSemanticBindResult
                   (compiler-semantic-bind-local!
-                    state
+                    (owned_view.compiler-owned-shared-view state)
                     next-scope
                     next-env
                     name
@@ -2919,7 +3037,7 @@
     (while (< index (ast.ast-expr-list-len (& items)))
       (begin
         (compiler-semantic-walk-node!
-          state
+          (owned_view.compiler-owned-shared-view state)
           scope
           env
           (ast.ast-expr-list-get (& items) index 0))
@@ -2935,7 +3053,7 @@
     (while (< index (ast.ast-expr-list-len (& items)))
       (begin
         (compiler-semantic-walk-quasiquote-node!
-          state
+          (owned_view.compiler-owned-shared-view state)
           scope
           env
           (ast.ast-expr-list-get (& items) index 0))
@@ -2955,7 +3073,11 @@
           index
           (ast.ast-let-binding-fallback))
           [(ast.AstLetBinding.Binding _ _ init)
-            (compiler-semantic-walk-quasiquote-node! state scope env init)])
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              init)])
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-walk-quasiquote-match-arms!
@@ -2972,7 +3094,11 @@
           index
           (ast.ast-match-arm-fallback))
           [(ast.AstMatchArm.Arm _ body)
-            (compiler-semantic-walk-quasiquote-node! state scope env body)])
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              body)])
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-walk-quasiquote-resource-bindings!
@@ -2990,8 +3116,16 @@
           (ast.ast-resource-binding-fallback))
           [(ast.AstResourceBinding.Binding _ init cleanup _)
             (begin
-              (compiler-semantic-walk-quasiquote-node! state scope env init)
-              (compiler-semantic-walk-quasiquote-node! state scope env cleanup))])
+              (compiler-semantic-walk-quasiquote-node!
+                (owned_view.compiler-owned-shared-view state)
+                scope
+                env
+                init)
+              (compiler-semantic-walk-quasiquote-node!
+                (owned_view.compiler-owned-shared-view state)
+                scope
+                env
+                cleanup))])
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-walk-quasiquote-node!
@@ -3001,230 +3135,634 @@
   [node-id : i64]) : unit
   (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Spanned inner _)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.MacroExpansion inner _ _)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Unquote inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.UnquoteSplicing inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Binary _ left right)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env left)
-        (compiler-semantic-walk-quasiquote-node! state scope env right))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          left)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          right))]
     [(ast.AstExpr.Unary _ inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Call callee args)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env callee)
-        (compiler-semantic-walk-quasiquote-list! state scope env args))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          callee)
+        (compiler-semantic-walk-quasiquote-list!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          args))]
     [(ast.AstExpr.BracketClause items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+      (compiler-semantic-walk-quasiquote-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.If condition then-expr else-expr)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env condition)
-        (compiler-semantic-walk-quasiquote-node! state scope env then-expr)
-        (compiler-semantic-walk-quasiquote-node! state scope env else-expr))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          condition)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          then-expr)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          else-expr))]
     [(ast.AstExpr.Let payload)
       (match (__tl-box-place payload)
         [(ast.AstLet.Let bindings body)
           (begin
             (compiler-semantic-walk-quasiquote-let-bindings!
-              state
+              (owned_view.compiler-owned-shared-view state)
               scope
               env
               bindings)
-            (compiler-semantic-walk-quasiquote-node! state scope env body))])]
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              body))])]
     [(ast.AstExpr.Lambda payload)
       (match (__tl-box-place payload)
         [(ast.AstLambda.Lambda _ _ body)
-          (compiler-semantic-walk-quasiquote-node! state scope env body)])]
+          (compiler-semantic-walk-quasiquote-node!
+            (owned_view.compiler-owned-shared-view state)
+            scope
+            env
+            body)])]
     [(ast.AstExpr.Tuple items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+      (compiler-semantic-walk-quasiquote-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.TupleRef target _)
-      (compiler-semantic-walk-quasiquote-node! state scope env target)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        target)]
     [(ast.AstExpr.Array items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+      (compiler-semantic-walk-quasiquote-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.DynArray items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+      (compiler-semantic-walk-quasiquote-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.MakeArray _ size)
-      (compiler-semantic-walk-quasiquote-node! state scope env size)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        size)]
     [(ast.AstExpr.ArrayRef target index)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env target)
-        (compiler-semantic-walk-quasiquote-node! state scope env index))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          index))]
     [(ast.AstExpr.ArraySet target index value)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env target)
-        (compiler-semantic-walk-quasiquote-node! state scope env index)
-        (compiler-semantic-walk-quasiquote-node! state scope env value))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          index)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value))]
     [(ast.AstExpr.ArrayTake target live index)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env target)
-        (compiler-semantic-walk-quasiquote-node! state scope env live)
-        (compiler-semantic-walk-quasiquote-node! state scope env index))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          live)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          index))]
     [(ast.AstExpr.FixedArrayTake target index)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env target)
-        (compiler-semantic-walk-quasiquote-node! state scope env index))]
-    [(ast.AstExpr.Replace place replacement)
-      (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env place)
-        (compiler-semantic-walk-quasiquote-node! state scope env replacement))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          index))]
     [(ast.AstExpr.ArrayPush target value)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env target)
-        (compiler-semantic-walk-quasiquote-node! state scope env value))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value))]
     [(ast.AstExpr.StringRef target index)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env target)
-        (compiler-semantic-walk-quasiquote-node! state scope env index))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          index))]
     [(ast.AstExpr.While condition body)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env condition)
-        (compiler-semantic-walk-quasiquote-node! state scope env body))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          condition)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          body))]
     [(ast.AstExpr.Begin items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+      (compiler-semantic-walk-quasiquote-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.Unsafe items)
-      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+      (compiler-semantic-walk-quasiquote-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.Set _ value)
-      (compiler-semantic-walk-quasiquote-node! state scope env value)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        value)]
     [(ast.AstExpr.Ann inner _)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Cast inner _)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Borrow _ _ inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Match payload)
       (match (__tl-box-place payload)
         [(ast.AstMatch.Match scrutinee arms)
           (begin
-            (compiler-semantic-walk-quasiquote-node! state scope env scrutinee)
-            (compiler-semantic-walk-quasiquote-match-arms! state scope env arms))])]
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              scrutinee)
+            (compiler-semantic-walk-quasiquote-match-arms!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              arms))])]
     [(ast.AstExpr.Foreach payload)
       (match (__tl-box-place payload)
         [(ast.AstForeach.Foreach _ _ start end body)
           (begin
-            (compiler-semantic-walk-quasiquote-node! state scope env start)
-            (compiler-semantic-walk-quasiquote-node! state scope env end)
-            (compiler-semantic-walk-quasiquote-node! state scope env body))])]
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              start)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              end)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              body))])]
     [(ast.AstExpr.SpmdReduce payload)
       (match (__tl-box-place payload)
         [(ast.AstSpmdReduce.Reduce _ _ _ start end init value)
           (begin
-            (compiler-semantic-walk-quasiquote-node! state scope env start)
-            (compiler-semantic-walk-quasiquote-node! state scope env end)
-            (compiler-semantic-walk-quasiquote-node! state scope env init)
-            (compiler-semantic-walk-quasiquote-node! state scope env value))])]
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              start)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              end)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              init)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              value))])]
     [(ast.AstExpr.SpmdScan payload)
       (match (__tl-box-place payload)
         [(ast.AstSpmdScan.Scan _ _ _ start end _ _ init value body)
           (begin
-            (compiler-semantic-walk-quasiquote-node! state scope env start)
-            (compiler-semantic-walk-quasiquote-node! state scope env end)
-            (compiler-semantic-walk-quasiquote-node! state scope env init)
-            (compiler-semantic-walk-quasiquote-node! state scope env value)
-            (compiler-semantic-walk-quasiquote-node! state scope env body))])]
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              start)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              end)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              init)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              value)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              body))])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env value)
-        (compiler-semantic-walk-quasiquote-node! state scope env lane))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          lane))]
     [(ast.AstExpr.SpmdShuffle value lane)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env value)
-        (compiler-semantic-walk-quasiquote-node! state scope env lane))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          lane))]
     [(ast.AstExpr.StructGet target _)
-      (compiler-semantic-walk-quasiquote-node! state scope env target)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        target)]
     [(ast.AstExpr.StructSet target _ value)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env target)
-        (compiler-semantic-walk-quasiquote-node! state scope env value))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value))]
     [(ast.AstExpr.WithRegion _ body)
-      (compiler-semantic-walk-quasiquote-list! state scope env body)]
+      (compiler-semantic-walk-quasiquote-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        body)]
     [(ast.AstExpr.WithEscape scratch body)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env scratch)
-        (compiler-semantic-walk-quasiquote-list! state scope env body))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          scratch)
+        (compiler-semantic-walk-quasiquote-list!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          body))]
     [(ast.AstExpr.WithScratch body)
-      (compiler-semantic-walk-quasiquote-list! state scope env body)]
+      (compiler-semantic-walk-quasiquote-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        body)]
     [(ast.AstExpr.InArena arena body)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env arena)
-        (compiler-semantic-walk-quasiquote-list! state scope env body))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          arena)
+        (compiler-semantic-walk-quasiquote-list!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          body))]
     [(ast.AstExpr.WithResource payload)
       (match (__tl-box-place payload)
         [(ast.AstWithResource.WithResource bindings body)
           (begin
             (compiler-semantic-walk-quasiquote-resource-bindings!
-              state
+              (owned_view.compiler-owned-shared-view state)
               scope
               env
               bindings)
-            (compiler-semantic-walk-quasiquote-list! state scope env body))])]
+            (compiler-semantic-walk-quasiquote-list!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              body))])]
     [(ast.AstExpr.Box inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.BoxGet inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.BoxTake inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.BoxSet target value)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env target)
-        (compiler-semantic-walk-quasiquote-node! state scope env value))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value))]
     [(ast.AstExpr.Comptime inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Try inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Return inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.PtrNullCheck inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.PtrAddrOf inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.PtrRead inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.PtrWrite ptr value)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env ptr)
-        (compiler-semantic-walk-quasiquote-node! state scope env value))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          ptr)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value))]
     [(ast.AstExpr.PtrOffset ptr offset)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env ptr)
-        (compiler-semantic-walk-quasiquote-node! state scope env offset))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          ptr)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          offset))]
     [(ast.AstExpr.PtrCast ptr _)
-      (compiler-semantic-walk-quasiquote-node! state scope env ptr)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        ptr)]
     [(ast.AstExpr.PtrToInt ptr)
-      (compiler-semantic-walk-quasiquote-node! state scope env ptr)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        ptr)]
     [(ast.AstExpr.IntToPtr value _)
-      (compiler-semantic-walk-quasiquote-node! state scope env value)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        value)]
     [(ast.AstExpr.StringData value)
-      (compiler-semantic-walk-quasiquote-node! state scope env value)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        value)]
     [(ast.AstExpr.StringFromBytes data len)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env data)
-        (compiler-semantic-walk-quasiquote-node! state scope env len))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          data)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          len))]
     [(ast.AstExpr.ArrayData value)
-      (compiler-semantic-walk-quasiquote-node! state scope env value)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        value)]
     [(ast.AstExpr.CpuIdEax leaf subleaf)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env leaf)
-        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          leaf)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          subleaf))]
     [(ast.AstExpr.CpuIdEbx leaf subleaf)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env leaf)
-        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          leaf)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          subleaf))]
     [(ast.AstExpr.CpuIdEcx leaf subleaf)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env leaf)
-        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          leaf)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          subleaf))]
     [(ast.AstExpr.CpuIdEdx leaf subleaf)
       (begin
-        (compiler-semantic-walk-quasiquote-node! state scope env leaf)
-        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          leaf)
+        (compiler-semantic-walk-quasiquote-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          subleaf))]
     [(ast.AstExpr.Xgetbv index)
-      (compiler-semantic-walk-quasiquote-node! state scope env index)]
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        index)]
     [(ast.AstExpr.Syscall args)
-      (compiler-semantic-walk-quasiquote-list! state scope env args)]
+      (compiler-semantic-walk-quasiquote-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        args)]
     [(ast.AstExpr.Quote _) unit]
     ;; CTFE preserves a nested quasiquote wholesale. Its unquotes belong to
     ;; the future quasiquote evaluation rather than the surrounding macro.
@@ -3241,18 +3779,28 @@
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : tc.TcTypeEnv env]
-    [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
-    [cursor : i64 (compiler-semantic-form-head-end state.source form-start)]
+    [form-start : i64
+      (compiler-semantic-maybe-span-start
+        (owned_view.compiler-owned-shared-view state)
+        maybe-span
+        0)]
+    [cursor : i64
+      (compiler-semantic-form-head-end
+        (owned_view.compiler-owned-shared-view state.source)
+        form-start)]
     [body-start : i64
       (compiler-semantic-expr-start-offset
-        state
+        (owned_view.compiler-owned-shared-view state)
         body-id
         (string.string-length state.source))]
     [form-end : i64
       (compiler-semantic-maybe-span-end
-        state
+        (owned_view.compiler-owned-shared-view state)
         maybe-span
-        (compiler-semantic-expr-end-offset state body-id body-start))]
+        (compiler-semantic-expr-end-offset
+          (owned_view.compiler-owned-shared-view state)
+          body-id
+          body-start))]
     [index : i64 0]
     (begin
       (while (< index (ast.ast-let-binding-list-len (& bindings)))
@@ -3264,17 +3812,20 @@
             [(ast.AstLetBinding.Binding name maybe-ty init-id)
               (let
                 [init-start : i64
-                  (compiler-semantic-expr-start-offset state init-id body-start)]
+                  (compiler-semantic-expr-start-offset
+                    (owned_view.compiler-owned-shared-view state)
+                    init-id
+                    body-start)]
                 (begin
                   (compiler-semantic-walk-node!
-                    state
+                    (owned_view.compiler-owned-shared-view state)
                     next-scope
                     next-env
                     init-id)
                   (let
                     [bound : CompilerSemanticBindResult
                       (compiler-semantic-bind-checked-let!
-                        state
+                        (owned_view.compiler-owned-shared-view state)
                         next-scope
                         next-env
                         (& bindings)
@@ -3287,11 +3838,11 @@
                         init-start)]
                     (begin
                       (compiler-semantic-scope-region-add!
-                        state
+                        (owned_view.compiler-owned-shared-view state)
                         next-scope
                         bound.scope
                         (compiler-semantic-expr-visibility-end-offset
-                          state
+                          (owned_view.compiler-owned-shared-view state)
                           init-id
                           bound.next-search)
                         form-end)
@@ -3300,11 +3851,15 @@
                       (set!
                         cursor
                         (compiler-semantic-expr-visibility-end-offset
-                          state
+                          (owned_view.compiler-owned-shared-view state)
                           init-id
                           bound.next-search))))))])
           (set! index (+ index 1))))
-      (compiler-semantic-walk-node! state next-scope next-env body-id))))
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        next-scope
+        next-env
+        body-id))))
 
 (define (compiler-semantic-walk-lambda!
   [state : CompilerSemanticWalkState]
@@ -3314,23 +3869,37 @@
   [body-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
-    [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
+    [form-start : i64
+      (compiler-semantic-maybe-span-start
+        (owned_view.compiler-owned-shared-view state)
+        maybe-span
+        0)]
     [body-start : i64
       (compiler-semantic-expr-start-offset
-        state
+        (owned_view.compiler-owned-shared-view state)
         body-id
         (string.string-length state.source))]
     [bound : CompilerSemanticBindResult
       (compiler-semantic-bind-params!
-        state
+        (owned_view.compiler-owned-shared-view state)
         scope
         env
         params
-        (compiler-semantic-form-head-end state.source form-start)
+        (compiler-semantic-form-head-end
+          (owned_view.compiler-owned-shared-view state.source)
+          form-start)
         body-start)]
     (begin
-      (compiler-semantic-scope-node-region-add! state scope bound.scope body-id)
-      (compiler-semantic-walk-node! state bound.scope bound.env body-id))))
+      (compiler-semantic-scope-node-region-add!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        bound.scope
+        body-id)
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        bound.scope
+        bound.env
+        body-id))))
 
 (define (compiler-semantic-walk-foreach!
   [state : CompilerSemanticWalkState]
@@ -3343,35 +3912,56 @@
   [body-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (begin
-    (compiler-semantic-walk-node! state scope env start-id)
-    (compiler-semantic-walk-node! state scope env end-id)
+    (compiler-semantic-walk-node!
+      (owned_view.compiler-owned-shared-view state)
+      scope
+      env
+      start-id)
+    (compiler-semantic-walk-node!
+      (owned_view.compiler-owned-shared-view state)
+      scope
+      env
+      end-id)
     (let
-      [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
+      [form-start : i64
+        (compiler-semantic-maybe-span-start
+          (owned_view.compiler-owned-shared-view state)
+          maybe-span
+          0)]
       [first-expr-start : i64
         (compiler-semantic-expr-start-offset
-          state
+          (owned_view.compiler-owned-shared-view state)
           start-id
           (compiler-semantic-expr-start-offset
-            state
+            (owned_view.compiler-owned-shared-view state)
             body-id
             (string.string-length state.source)))]
       [bound : CompilerSemanticBindResult
         (compiler-semantic-bind-local!
-          state
+          (owned_view.compiler-owned-shared-view state)
           scope
           env
           name
           CompilerSemanticSymbolKind.Local
-          (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx index-ty))
-          (compiler-semantic-form-head-end state.source form-start)
+          (ast.AstMaybeType.Some
+            (tc.tc-resolve-type
+              (owned_view.compiler-owned-shared-view state.ctx)
+              index-ty))
+          (compiler-semantic-form-head-end
+            (owned_view.compiler-owned-shared-view state.source)
+            form-start)
           first-expr-start)]
       (begin
         (compiler-semantic-scope-node-region-add!
-          state
+          (owned_view.compiler-owned-shared-view state)
           scope
           bound.scope
           body-id)
-        (compiler-semantic-walk-node! state bound.scope bound.env body-id)))))
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          bound.scope
+          bound.env
+          body-id)))))
 
 (define (compiler-semantic-walk-spmd-reduce!
   [state : CompilerSemanticWalkState]
@@ -3385,32 +3975,57 @@
   [value-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
-    [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
+    [form-start : i64
+      (compiler-semantic-maybe-span-start
+        (owned_view.compiler-owned-shared-view state)
+        maybe-span
+        0)]
     [first-expr-start : i64
       (compiler-semantic-expr-start-offset
-        state
+        (owned_view.compiler-owned-shared-view state)
         start-id
         (string.string-length state.source))]
     [bound : CompilerSemanticBindResult
       (compiler-semantic-bind-local!
-        state
+        (owned_view.compiler-owned-shared-view state)
         scope
         env
         index-name
         CompilerSemanticSymbolKind.Local
-        (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx index-ty))
-        (compiler-semantic-form-head-end state.source form-start)
+        (ast.AstMaybeType.Some
+          (tc.tc-resolve-type
+            (owned_view.compiler-owned-shared-view state.ctx)
+            index-ty))
+        (compiler-semantic-form-head-end
+          (owned_view.compiler-owned-shared-view state.source)
+          form-start)
         first-expr-start)]
     (begin
-      (compiler-semantic-walk-node! state scope env start-id)
-      (compiler-semantic-walk-node! state scope env end-id)
-      (compiler-semantic-walk-node! state scope env init-id)
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        start-id)
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        end-id)
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        init-id)
       (compiler-semantic-scope-node-region-add!
-        state
+        (owned_view.compiler-owned-shared-view state)
         scope
         bound.scope
         value-id)
-      (compiler-semantic-walk-node! state bound.scope bound.env value-id))))
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        bound.scope
+        bound.env
+        value-id))))
 
 (define (compiler-semantic-walk-spmd-scan!
   [state : CompilerSemanticWalkState]
@@ -3427,65 +4042,95 @@
   [body-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
-    [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
+    [form-start : i64
+      (compiler-semantic-maybe-span-start
+        (owned_view.compiler-owned-shared-view state)
+        maybe-span
+        0)]
     [start-offset : i64
       (compiler-semantic-expr-start-offset
-        state
+        (owned_view.compiler-owned-shared-view state)
         start-id
         (string.string-length state.source))]
     [index-bound : CompilerSemanticBindResult
       (compiler-semantic-bind-local!
-        state
+        (owned_view.compiler-owned-shared-view state)
         scope
         env
         index-name
         CompilerSemanticSymbolKind.Local
-        (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx index-ty))
-        (compiler-semantic-form-head-end state.source form-start)
+        (ast.AstMaybeType.Some
+          (tc.tc-resolve-type
+            (owned_view.compiler-owned-shared-view state.ctx)
+            index-ty))
+        (compiler-semantic-form-head-end
+          (owned_view.compiler-owned-shared-view state.source)
+          form-start)
         start-offset)]
     [init-offset : i64
       (compiler-semantic-expr-start-offset
-        state
+        (owned_view.compiler-owned-shared-view state)
         init-id
         (string.string-length state.source))]
     [prefix-bound : CompilerSemanticBindResult
       (compiler-semantic-bind-local!
-        state
+        (owned_view.compiler-owned-shared-view state)
         index-bound.scope
         index-bound.env
         prefix-name
         CompilerSemanticSymbolKind.Local
-        (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx prefix-ty))
-        (compiler-semantic-expr-end-offset state end-id index-bound.next-search)
+        (ast.AstMaybeType.Some
+          (tc.tc-resolve-type
+            (owned_view.compiler-owned-shared-view state.ctx)
+            prefix-ty))
+        (compiler-semantic-expr-end-offset
+          (owned_view.compiler-owned-shared-view state)
+          end-id
+          index-bound.next-search)
         init-offset)]
     (begin
-      (compiler-semantic-walk-node! state scope env start-id)
-      (compiler-semantic-walk-node! state scope env end-id)
-      (compiler-semantic-walk-node! state scope env init-id)
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        start-id)
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        end-id)
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        init-id)
       ;; The index remains active through both the scan value and body. The
       ;; prefix is a nested body-only extension, so its exit restores the
       ;; index before the enclosing index region restores the outer scope.
       (compiler-semantic-scope-region-add!
-        state
+        (owned_view.compiler-owned-shared-view state)
         scope
         index-bound.scope
-        (compiler-semantic-expr-start-offset state value-id -1)
+        (compiler-semantic-expr-start-offset
+          (owned_view.compiler-owned-shared-view state)
+          value-id
+          -1)
         (compiler-semantic-expr-end-offset
-          state
+          (owned_view.compiler-owned-shared-view state)
           body-id
           (string.string-length state.source)))
       (compiler-semantic-walk-node!
-        state
+        (owned_view.compiler-owned-shared-view state)
         index-bound.scope
         index-bound.env
         value-id)
       (compiler-semantic-scope-node-region-add!
-        state
+        (owned_view.compiler-owned-shared-view state)
         index-bound.scope
         prefix-bound.scope
         body-id)
       (compiler-semantic-walk-node!
-        state
+        (owned_view.compiler-owned-shared-view state)
         prefix-bound.scope
         prefix-bound.env
         body-id))))
@@ -3498,19 +4143,25 @@
   [value-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
-    [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
+    [form-start : i64
+      (compiler-semantic-maybe-span-start
+        (owned_view.compiler-owned-shared-view state)
+        maybe-span
+        0)]
     [value-start : i64
       (compiler-semantic-expr-start-offset
-        state
+        (owned_view.compiler-owned-shared-view state)
         value-id
         (string.string-length state.source))]
     [name : String (tc.tc-env-key-name-text name-id)]
     [span : CompilerSemanticSpan
       (compiler-semantic-name-span-in-range
-        state.path
-        state.source
+        (owned_view.compiler-owned-shared-view state.path)
+        (owned_view.compiler-owned-shared-view state.source)
         name
-        (compiler-semantic-form-head-end state.source form-start)
+        (compiler-semantic-form-head-end
+          (owned_view.compiler-owned-shared-view state.source)
+          form-start)
         value-start)]
     (begin
       (compiler-semantic-record-name-write-span! state scope name-id span)
@@ -3526,11 +4177,11 @@
   [pattern : ast.AstPattern]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
-  (match pattern
+  (match (owned_view.compiler-owned-shared-view pattern)
     [(ast.AstPattern.Var name maybe-ty)
       (if (tc.tc-name-id-list-contains bound-names name)
         (compiler-semantic-bind-local!
-          state
+          (owned_view.compiler-owned-shared-view state)
           scope
           env
           name
@@ -3542,7 +4193,10 @@
               (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))]
             [(ast.AstMaybeType.No)
               (if facts-available
-                (match (tc.tc-lookup-visible-id state.ctx fact-env name)
+                (match (tc.tc-lookup-visible-id
+                  (owned_view.compiler-owned-shared-view state.ctx)
+                  fact-env
+                  name)
                   [(tc.ResultTcType.Ok ty)
                     (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))]
                   [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
@@ -3553,13 +4207,16 @@
     [(ast.AstPattern.Binding name)
       (if (tc.tc-name-id-list-contains bound-names name)
         (compiler-semantic-bind-local!
-          state
+          (owned_view.compiler-owned-shared-view state)
           scope
           env
           name
           CompilerSemanticSymbolKind.Local
           (if facts-available
-            (match (tc.tc-lookup-visible-id state.ctx fact-env name)
+            (match (tc.tc-lookup-visible-id
+              (owned_view.compiler-owned-shared-view state.ctx)
+              fact-env
+              name)
               [(tc.ResultTcType.Ok ty)
                 (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))]
               [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
@@ -3575,7 +4232,7 @@
         fact-env
         facts-available
         bound-names
-        (__tl-box-place items)
+        (ast.ast-pattern-list-box-shared-view items)
         search-start
         search-limit)]
     [(ast.AstPattern.Array items)
@@ -3586,7 +4243,7 @@
         fact-env
         facts-available
         bound-names
-        (__tl-box-place items)
+        (ast.ast-pattern-list-box-shared-view items)
         search-start
         search-limit)]
     [(ast.AstPattern.Variant _ items)
@@ -3597,7 +4254,7 @@
         fact-env
         facts-available
         bound-names
-        (__tl-box-place items)
+        (ast.ast-pattern-list-box-shared-view items)
         search-start
         search-limit)]
     [_ (CompilerSemanticBindResult scope env search-start)]))
@@ -3622,7 +4279,7 @@
         (let
           [bound : CompilerSemanticBindResult
             (compiler-semantic-bind-pattern!
-              state
+              (owned_view.compiler-owned-shared-view state)
               next-scope
               next-env
               fact-env
@@ -3647,7 +4304,7 @@
   [pattern : ast.AstPattern]) : tc.TcNameIdList
   ;; An explicitly typed pattern variable is always a binder, including when
   ;; the scrutinee is an enum. Bare enum variant names, by contrast, are not.
-  (match pattern
+  (match (owned_view.compiler-owned-shared-view pattern)
     [(ast.AstPattern.Var name _)
       (tc.tc-name-id-list-add tc.TcNameIdList.Nil name)]
     [_ (tc.tc-borrow-check-pattern-bound-names ctx scrutinee-ty pattern)]))
@@ -3680,7 +4337,7 @@
             (let
               [body-start : i64
                 (compiler-semantic-expr-start-offset
-                  state
+                  (owned_view.compiler-owned-shared-view state)
                   (compiler-semantic-match-body-source-expr-id body)
                   (string.string-length state.source))]
               [saved : tc.TcTypeEnvScopedRuntimeSave
@@ -3688,31 +4345,36 @@
               (begin
                 (match scrutinee-ty
                   [(ast.AstMaybeType.Some ty)
-                    (match (tc.tc-bind-match-pattern state.ctx env ty pattern)
+                    (match (tc.tc-bind-match-pattern
+                      (owned_view.compiler-owned-shared-view state.ctx)
+                      env
+                      (owned_view.compiler-owned-shared-view ty)
+                      (owned_view.compiler-owned-shared-view pattern))
                       [(tc.ResultTcEnv.Ok fact-env)
                         (let
                           [bound : CompilerSemanticBindResult
                             (compiler-semantic-bind-pattern!
-                              state
+                              (owned_view.compiler-owned-shared-view state)
                               scope
                               env
                               fact-env
                               true
                               (compiler-semantic-pattern-bound-names
-                                state.ctx
-                                ty
-                                pattern)
-                              pattern
+                                (owned_view.compiler-owned-shared-view
+                                  state.ctx)
+                                (owned_view.compiler-owned-shared-view ty)
+                                (owned_view.compiler-owned-shared-view pattern))
+                              (owned_view.compiler-owned-shared-view pattern)
                               cursor
                               body-start)]
                           (begin
                             (compiler-semantic-scope-node-region-add!
-                              state
+                              (owned_view.compiler-owned-shared-view state)
                               scope
                               bound.scope
                               (compiler-semantic-match-body-source-expr-id body))
                             (compiler-semantic-walk-node!
-                              state
+                              (owned_view.compiler-owned-shared-view state)
                               bound.scope
                               fact-env
                               body)))]
@@ -3720,25 +4382,25 @@
                         (let
                           [bound : CompilerSemanticBindResult
                             (compiler-semantic-bind-pattern!
-                              state
+                              (owned_view.compiler-owned-shared-view state)
                               scope
                               env
                               env
                               false
                               (tc.tc-pattern-add-bound-name-ids
-                                pattern
+                                (owned_view.compiler-owned-shared-view pattern)
                                 tc.TcNameIdList.Nil)
-                              pattern
+                              (owned_view.compiler-owned-shared-view pattern)
                               cursor
                               body-start)]
                           (begin
                             (compiler-semantic-scope-node-region-add!
-                              state
+                              (owned_view.compiler-owned-shared-view state)
                               scope
                               bound.scope
                               (compiler-semantic-match-body-source-expr-id body))
                             (compiler-semantic-walk-node!
-                              state
+                              (owned_view.compiler-owned-shared-view state)
                               bound.scope
                               bound.env
                               body)))])]
@@ -3746,25 +4408,25 @@
                     (let
                       [bound : CompilerSemanticBindResult
                         (compiler-semantic-bind-pattern!
-                          state
+                          (owned_view.compiler-owned-shared-view state)
                           scope
                           env
                           env
                           false
                           (tc.tc-pattern-add-bound-name-ids
-                            pattern
+                            (owned_view.compiler-owned-shared-view pattern)
                             tc.TcNameIdList.Nil)
-                          pattern
+                          (owned_view.compiler-owned-shared-view pattern)
                           cursor
                           body-start)]
                       (begin
                         (compiler-semantic-scope-node-region-add!
-                          state
+                          (owned_view.compiler-owned-shared-view state)
                           scope
                           bound.scope
                           (compiler-semantic-match-body-source-expr-id body))
                         (compiler-semantic-walk-node!
-                          state
+                          (owned_view.compiler-owned-shared-view state)
                           bound.scope
                           bound.env
                           body)))])
@@ -3772,7 +4434,7 @@
                 (set!
                   cursor
                   (compiler-semantic-expr-end-offset
-                    state
+                    (owned_view.compiler-owned-shared-view state)
                     (compiler-semantic-match-body-source-expr-id body)
                     body-start))))])
         (set! index (+ index 1))))))
@@ -3787,13 +4449,20 @@
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : tc.TcTypeEnv env]
-    [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
+    [form-start : i64
+      (compiler-semantic-maybe-span-start
+        (owned_view.compiler-owned-shared-view state)
+        maybe-span
+        0)]
     [form-end : i64
       (compiler-semantic-maybe-span-end
-        state
+        (owned_view.compiler-owned-shared-view state)
         maybe-span
         (string.string-length state.source))]
-    [cursor : i64 (compiler-semantic-form-head-end state.source form-start)]
+    [cursor : i64
+      (compiler-semantic-form-head-end
+        (owned_view.compiler-owned-shared-view state.source)
+        form-start)]
     [index : i64 0]
     (begin
       (while (< index (ast.ast-resource-binding-list-len (& bindings)))
@@ -3806,30 +4475,37 @@
               (let
                 [init-start : i64
                   (compiler-semantic-expr-start-offset
-                    state
+                    (owned_view.compiler-owned-shared-view state)
                     init
                     (string.string-length state.source))]
                 (begin
                   (compiler-semantic-walk-node!
-                    state
+                    (owned_view.compiler-owned-shared-view state)
                     next-scope
                     next-env
                     cleanup)
-                  (compiler-semantic-walk-node! state next-scope next-env init)
+                  (compiler-semantic-walk-node!
+                    (owned_view.compiler-owned-shared-view state)
+                    next-scope
+                    next-env
+                    init)
                   (let
                     [bound : CompilerSemanticBindResult
                       (let
-                        [ctx : tc.TcContext state.ctx]
-                        [expr-bases : i64 (tc.tc-context-expr-bases ctx)]
+                        [ctx : tc.TcContext
+                          (owned_view.compiler-owned-shared-view state.ctx)]
+                        [expr-bases : i64
+                          (tc.tc-context-expr-bases
+                            (owned_view.compiler-owned-shared-view ctx))]
                         [cleanup-expr : ast.AstExpr
                           (ast.ast-expr-segment-bases-get expr-bases cleanup)]
                         (match (tc.tc-resource-cleanup-resource-type
-                          ctx
+                          (owned_view.compiler-owned-shared-view ctx)
                           next-env
                           cleanup-expr)
                           [(tc.ResultTcType.Ok expected-init-ty)
                             (match (tc.tc-expr-with-expected-or-actual-id
-                              ctx
+                              (owned_view.compiler-owned-shared-view ctx)
                               next-env
                               init
                               expected-init-ty)
@@ -3839,13 +4515,18 @@
                                     (tc.tc-type-without-regions init-ty)]
                                   [recorded : CompilerSemanticBindResult
                                     (compiler-semantic-bind-local!
-                                      state
+                                      (owned_view.compiler-owned-shared-view
+                                        state)
                                       next-scope
                                       next-env
                                       name
                                       CompilerSemanticSymbolKind.Local
                                       (ast.AstMaybeType.Some
-                                        (tc.tc-resolve-type ctx binding-ty))
+                                        (tc.tc-resolve-type
+                                          (owned_view.compiler-owned-shared-view
+                                            ctx)
+                                          (owned_view.compiler-owned-shared-view
+                                            binding-ty)))
                                       cursor
                                       init-start)]
                                   (CompilerSemanticBindResult
@@ -3856,11 +4537,12 @@
                                         (tc.tc-cleanup-owner-marker-id)
                                         (ast.AstType.Var name))
                                       name
-                                      binding-ty)
+                                      (owned_view.compiler-owned-shared-view
+                                        binding-ty))
                                     recorded.next-search))]
                               [(tc.ResultTcType.Err _)
                                 (compiler-semantic-bind-local!
-                                  state
+                                  (owned_view.compiler-owned-shared-view state)
                                   next-scope
                                   next-env
                                   name
@@ -3870,7 +4552,7 @@
                                   init-start)])]
                           [(tc.ResultTcType.Err _)
                             (compiler-semantic-bind-local!
-                              state
+                              (owned_view.compiler-owned-shared-view state)
                               next-scope
                               next-env
                               name
@@ -3882,14 +4564,14 @@
                       (let
                         [visible-start : i64
                           (compiler-semantic-expr-visibility-end-offset
-                            state
+                            (owned_view.compiler-owned-shared-view state)
                             cleanup
                             (compiler-semantic-expr-visibility-end-offset
-                              state
+                              (owned_view.compiler-owned-shared-view state)
                               init
                               bound.next-search))]
                         (compiler-semantic-scope-region-add!
-                          state
+                          (owned_view.compiler-owned-shared-view state)
                           next-scope
                           bound.scope
                           visible-start
@@ -3899,14 +4581,18 @@
                       (set!
                         cursor
                         (compiler-semantic-expr-visibility-end-offset
-                          state
+                          (owned_view.compiler-owned-shared-view state)
                           cleanup
                           (compiler-semantic-expr-visibility-end-offset
-                            state
+                            (owned_view.compiler-owned-shared-view state)
                             init
                             bound.next-search)))))))])
           (set! index (+ index 1))))
-      (compiler-semantic-walk-expr-list! state next-scope next-env body))))
+      (compiler-semantic-walk-expr-list!
+        (owned_view.compiler-owned-shared-view state)
+        next-scope
+        next-env
+        body))))
 
 (define (compiler-semantic-walk-node-with-span!
   [state : CompilerSemanticWalkState]
@@ -3915,7 +4601,8 @@
   [node-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
-    [visited : (__tl_dyn-array i64) state.visited-expr-ids]
+    [visited : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-shared-view state.visited-expr-ids)]
     (if (or
       (< node-id 0)
       (>= node-id (array-length visited))
@@ -3925,17 +4612,17 @@
         (set! (array-ref visited node-id) 1)
         (let
           [expr : ast.AstExpr (ast.ast-node-get node-id)]
-          (match expr
+          (match (owned_view.compiler-owned-shared-view expr)
             [(ast.AstExpr.Spanned inner-id span)
               (compiler-semantic-walk-node-with-span!
-                state
+                (owned_view.compiler-owned-shared-view state)
                 scope
                 env
                 inner-id
                 (CompilerSemanticMaybeSpan.Some span))]
             [(ast.AstExpr.MacroExpansion inner-id _ _)
               (compiler-semantic-walk-node-with-span!
-                state
+                (owned_view.compiler-owned-shared-view state)
                 scope
                 env
                 inner-id
@@ -3976,22 +4663,58 @@
         inner-id
         maybe-span)]
     [(ast.AstExpr.Var name)
-      (compiler-semantic-record-name-use! state scope name maybe-span)]
+      (compiler-semantic-record-name-use!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        name
+        maybe-span)]
     [(ast.AstExpr.Binary _ left right)
       (begin
-        (compiler-semantic-walk-node! state scope env left)
-        (compiler-semantic-walk-node! state scope env right))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          left)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          right))]
     [(ast.AstExpr.Unary _ inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Call callee args)
       (begin
-        (compiler-semantic-walk-node! state scope env callee)
-        (compiler-semantic-walk-expr-list! state scope env args))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          callee)
+        (compiler-semantic-walk-expr-list!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          args))]
     [(ast.AstExpr.If condition then-expr else-expr)
       (begin
-        (compiler-semantic-walk-node! state scope env condition)
-        (compiler-semantic-walk-node! state scope env then-expr)
-        (compiler-semantic-walk-node! state scope env else-expr))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          condition)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          then-expr)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          else-expr))]
     [(ast.AstExpr.Let payload)
       (match (__tl-box-place payload)
         [(ast.AstLet.Let bindings body)
@@ -4000,90 +4723,200 @@
       (match (__tl-box-place payload)
         [(ast.AstLambda.Lambda params _ body)
           (compiler-semantic-walk-lambda!
-            state
+            (owned_view.compiler-owned-shared-view state)
             scope
             env
             params
             body
             maybe-span)])]
     [(ast.AstExpr.Tuple items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
+      (compiler-semantic-walk-expr-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.TupleRef target _)
-      (compiler-semantic-walk-node! state scope env target)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        target)]
     [(ast.AstExpr.Array items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
+      (compiler-semantic-walk-expr-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.DynArray items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
+      (compiler-semantic-walk-expr-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.MakeArray _ size)
-      (compiler-semantic-walk-node! state scope env size)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        size)]
     [(ast.AstExpr.ArrayRef target index)
       (begin
-        (compiler-semantic-walk-node! state scope env target)
-        (compiler-semantic-walk-node! state scope env index))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          index))]
     [(ast.AstExpr.ArraySet target index value)
       (begin
-        (compiler-semantic-walk-node! state scope env target)
-        (compiler-semantic-walk-node! state scope env index)
-        (compiler-semantic-walk-node! state scope env value))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          index)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value))]
     [(ast.AstExpr.ArrayTake target live index)
       (begin
-        (compiler-semantic-walk-node! state scope env target)
-        (compiler-semantic-walk-node! state scope env live)
-        (compiler-semantic-walk-node! state scope env index))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          live)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          index))]
     [(ast.AstExpr.FixedArrayTake target index)
       (begin
-        (compiler-semantic-walk-node! state scope env target)
-        (compiler-semantic-walk-node! state scope env index))]
-    [(ast.AstExpr.Replace place replacement)
-      (begin
-        (compiler-semantic-walk-node! state scope env place)
-        (compiler-semantic-walk-node! state scope env replacement))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          index))]
     [(ast.AstExpr.ArrayPush target value)
       (begin
-        (compiler-semantic-walk-node! state scope env target)
-        (compiler-semantic-walk-node! state scope env value))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value))]
     [(ast.AstExpr.StringRef target index)
       (begin
-        (compiler-semantic-walk-node! state scope env target)
-        (compiler-semantic-walk-node! state scope env index))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          index))]
     [(ast.AstExpr.While condition body)
       (begin
-        (compiler-semantic-walk-node! state scope env condition)
-        (compiler-semantic-walk-node! state scope env body))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          condition)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          body))]
     [(ast.AstExpr.Begin items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
+      (compiler-semantic-walk-expr-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.Unsafe items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
+      (compiler-semantic-walk-expr-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.Set name value)
       (compiler-semantic-walk-set! state scope env name value maybe-span)]
     [(ast.AstExpr.Ann inner _)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Cast inner _)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Borrow _ _ inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Match payload)
       (match (__tl-box-place payload)
         [(ast.AstMatch.Match scrutinee arms)
           (begin
-            (compiler-semantic-walk-node! state scope env scrutinee)
-            (compiler-semantic-walk-match-arms!
-              state
+            (compiler-semantic-walk-node!
+              (owned_view.compiler-owned-shared-view state)
               scope
               env
-              (match (tc.tc-expr-id state.ctx env scrutinee)
+              scrutinee)
+            (compiler-semantic-walk-match-arms!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              (match (tc.tc-expr-id
+                (owned_view.compiler-owned-shared-view state.ctx)
+                env
+                scrutinee)
                 [(tc.ResultTcType.Ok ty) (ast.AstMaybeType.Some ty)]
                 [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
               arms
               (compiler-semantic-expr-end-offset
-                state
+                (owned_view.compiler-owned-shared-view state)
                 scrutinee
-                (compiler-semantic-maybe-span-start state maybe-span 0))))])]
+                (compiler-semantic-maybe-span-start
+                  (owned_view.compiler-owned-shared-view state)
+                  maybe-span
+                  0))))])]
     [(ast.AstExpr.Foreach payload)
       (match (__tl-box-place payload)
         [(ast.AstForeach.Foreach name index-ty start end body)
           (compiler-semantic-walk-foreach!
-            state
+            (owned_view.compiler-owned-shared-view state)
             scope
             env
             name
@@ -4135,30 +4968,82 @@
             maybe-span)])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (begin
-        (compiler-semantic-walk-node! state scope env value)
-        (compiler-semantic-walk-node! state scope env lane))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          lane))]
     [(ast.AstExpr.SpmdShuffle value lane)
       (begin
-        (compiler-semantic-walk-node! state scope env value)
-        (compiler-semantic-walk-node! state scope env lane))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          lane))]
     [(ast.AstExpr.StructGet target _)
-      (compiler-semantic-walk-node! state scope env target)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        target)]
     [(ast.AstExpr.StructSet target _ value)
       (begin
-        (compiler-semantic-walk-node! state scope env target)
-        (compiler-semantic-walk-node! state scope env value))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value))]
     [(ast.AstExpr.WithRegion _ body)
-      (compiler-semantic-walk-expr-list! state scope env body)]
+      (compiler-semantic-walk-expr-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        body)]
     [(ast.AstExpr.WithEscape scratch body)
       (begin
-        (compiler-semantic-walk-node! state scope env scratch)
-        (compiler-semantic-walk-expr-list! state scope env body))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          scratch)
+        (compiler-semantic-walk-expr-list!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          body))]
     [(ast.AstExpr.WithScratch body)
-      (compiler-semantic-walk-expr-list! state scope env body)]
+      (compiler-semantic-walk-expr-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        body)]
     [(ast.AstExpr.InArena arena body)
       (begin
-        (compiler-semantic-walk-node! state scope env arena)
-        (compiler-semantic-walk-expr-list! state scope env body))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          arena)
+        (compiler-semantic-walk-expr-list!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          body))]
     [(ast.AstExpr.WithResource payload)
       (match (__tl-box-place payload)
         [(ast.AstWithResource.WithResource bindings body)
@@ -4170,78 +5055,218 @@
             body
             maybe-span)])]
     [(ast.AstExpr.Box value)
-      (compiler-semantic-walk-node! state scope env value)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        value)]
     [(ast.AstExpr.BoxGet value)
-      (compiler-semantic-walk-node! state scope env value)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        value)]
     [(ast.AstExpr.BoxTake value)
-      (compiler-semantic-walk-node! state scope env value)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        value)]
     [(ast.AstExpr.BoxSet target value)
       (begin
-        (compiler-semantic-walk-node! state scope env target)
-        (compiler-semantic-walk-node! state scope env value))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          target)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value))]
     [(ast.AstExpr.Comptime inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Quote _) unit]
     [(ast.AstExpr.Quasiquote inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
     [(ast.AstExpr.Unquote inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.UnquoteSplicing inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.BracketClause items)
-      (compiler-semantic-walk-expr-list! state scope env items)]
+      (compiler-semantic-walk-expr-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        items)]
     [(ast.AstExpr.Try inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.Return inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.PtrNullCheck inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.PtrAddrOf inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.PtrRead inner)
-      (compiler-semantic-walk-node! state scope env inner)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        inner)]
     [(ast.AstExpr.PtrWrite ptr value)
       (begin
-        (compiler-semantic-walk-node! state scope env ptr)
-        (compiler-semantic-walk-node! state scope env value))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          ptr)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          value))]
     [(ast.AstExpr.PtrOffset ptr offset)
       (begin
-        (compiler-semantic-walk-node! state scope env ptr)
-        (compiler-semantic-walk-node! state scope env offset))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          ptr)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          offset))]
     [(ast.AstExpr.PtrCast ptr _)
-      (compiler-semantic-walk-node! state scope env ptr)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        ptr)]
     [(ast.AstExpr.PtrToInt ptr)
-      (compiler-semantic-walk-node! state scope env ptr)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        ptr)]
     [(ast.AstExpr.IntToPtr value _)
-      (compiler-semantic-walk-node! state scope env value)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        value)]
     [(ast.AstExpr.StringData value)
-      (compiler-semantic-walk-node! state scope env value)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        value)]
     [(ast.AstExpr.StringFromBytes data len)
       (begin
-        (compiler-semantic-walk-node! state scope env data)
-        (compiler-semantic-walk-node! state scope env len))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          data)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          len))]
     [(ast.AstExpr.ArrayData value)
-      (compiler-semantic-walk-node! state scope env value)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        value)]
     [(ast.AstExpr.CpuIdEax leaf subleaf)
       (begin
-        (compiler-semantic-walk-node! state scope env leaf)
-        (compiler-semantic-walk-node! state scope env subleaf))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          leaf)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          subleaf))]
     [(ast.AstExpr.CpuIdEbx leaf subleaf)
       (begin
-        (compiler-semantic-walk-node! state scope env leaf)
-        (compiler-semantic-walk-node! state scope env subleaf))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          leaf)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          subleaf))]
     [(ast.AstExpr.CpuIdEcx leaf subleaf)
       (begin
-        (compiler-semantic-walk-node! state scope env leaf)
-        (compiler-semantic-walk-node! state scope env subleaf))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          leaf)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          subleaf))]
     [(ast.AstExpr.CpuIdEdx leaf subleaf)
       (begin
-        (compiler-semantic-walk-node! state scope env leaf)
-        (compiler-semantic-walk-node! state scope env subleaf))]
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          leaf)
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          subleaf))]
     [(ast.AstExpr.Xgetbv index)
-      (compiler-semantic-walk-node! state scope env index)]
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        index)]
     [(ast.AstExpr.Syscall args)
-      (compiler-semantic-walk-expr-list! state scope env args)]
+      (compiler-semantic-walk-expr-list!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        args)]
     [_ unit]))
 
 (define (compiler-semantic-decl-param-search-start
@@ -4251,7 +5276,7 @@
   (let
     [body-start : i64
       (compiler-semantic-expr-start-offset
-        state
+        (owned_view.compiler-owned-shared-view state)
         body-id
         (string.string-length state.source))]
     [form-start : i64
@@ -4261,9 +5286,11 @@
     [name-span : CompilerSemanticSpan
       (compiler-semantic-name-span-in-range
         state.path
-        state.source
+        (owned_view.compiler-owned-shared-view state.source)
         (tc.tc-env-key-name-text name-id)
-        (compiler-semantic-form-head-end state.source form-start)
+        (compiler-semantic-form-head-end
+          (owned_view.compiler-owned-shared-view state.source)
+          form-start)
         body-start)]
     (if (>= name-span.end-byte 0)
       name-span.end-byte
@@ -4275,7 +5302,7 @@
   (match decl
     [(ast.AstDecl.Def _ _ _ value)
       (compiler-semantic-walk-node!
-        state
+        (owned_view.compiler-owned-shared-view state)
         (compiler-semantic-binding-snapshot-empty)
         state.top-env
         value)]
@@ -4283,54 +5310,70 @@
       (let
         [body-start : i64
           (compiler-semantic-expr-start-offset
-            state
+            (owned_view.compiler-owned-shared-view state)
             body
             (string.string-length state.source))]
         [bound : CompilerSemanticBindResult
           (compiler-semantic-bind-params!
-            state
+            (owned_view.compiler-owned-shared-view state)
             (compiler-semantic-binding-snapshot-empty)
             state.top-env
             params
-            (compiler-semantic-decl-param-search-start state name body)
+            (compiler-semantic-decl-param-search-start
+              (owned_view.compiler-owned-shared-view state)
+              name
+              body)
             body-start)]
         (begin
           (compiler-semantic-scope-node-region-add!
-            state
+            (owned_view.compiler-owned-shared-view state)
             (compiler-semantic-binding-snapshot-empty)
             bound.scope
             body)
-          (compiler-semantic-walk-node! state bound.scope bound.env body)))]
+          (compiler-semantic-walk-node!
+            (owned_view.compiler-owned-shared-view state)
+            bound.scope
+            bound.env
+            body)))]
     [(ast.AstDecl.DefMacro _ name params _ body)
       (let
         [body-start : i64
           (compiler-semantic-expr-start-offset
-            state
+            (owned_view.compiler-owned-shared-view state)
             body
             (string.string-length state.source))]
         [bound : CompilerSemanticBindResult
           (compiler-semantic-bind-macro-params!
-            state
+            (owned_view.compiler-owned-shared-view state)
             (compiler-semantic-binding-snapshot-empty)
             state.top-env
             params
-            (compiler-semantic-decl-param-search-start state name body)
+            (compiler-semantic-decl-param-search-start
+              (owned_view.compiler-owned-shared-view state)
+              name
+              body)
             body-start)]
         (begin
           (compiler-semantic-scope-node-region-add!
-            state
+            (owned_view.compiler-owned-shared-view state)
             (compiler-semantic-binding-snapshot-empty)
             bound.scope
             body)
-          (compiler-semantic-walk-node! state bound.scope bound.env body)))]
+          (compiler-semantic-walk-node!
+            (owned_view.compiler-owned-shared-view state)
+            bound.scope
+            bound.env
+            body)))]
     [(ast.AstDecl.Test _ body _)
       (compiler-semantic-walk-node!
-        state
+        (owned_view.compiler-owned-shared-view state)
         (compiler-semantic-binding-snapshot-empty)
-        state.top-env
+        (owned_view.compiler-owned-shared-view state.top-env)
         body)]
     [(ast.AstDecl.Unsafe inner)
-      (compiler-semantic-walk-decl! state (__tl-box-place inner))]
+      (compiler-semantic-walk-decl!
+        (owned_view.compiler-owned-shared-view state)
+        (ast.ast-decl-box-shared-view inner))]
     [_ unit]))
 
 (define (compiler-semantic-source-for-path
@@ -4339,7 +5382,9 @@
   [entry-source : String]) : String
   (cond
     [(string.eq path entry-path) (string.copy (& entry-source))]
-    [(and (not (string.eq path "")) (io.file-exists? path))
+    [(and
+        (not (string.eq (owned_view.compiler-owned-shared-view path) ""))
+        (io.file-exists? (owned_view.compiler-owned-shared-view path)))
       (byte_buf.to-string (io.read-file path))]
     [else ""]))
 
@@ -4371,25 +5416,25 @@
           definition-module-id))]
     [symbol : CompilerSemanticSymbolId
       (compiler-semantic-symbol-for-decl
-        decl-ctx
+        (owned_view.compiler-owned-shared-view decl-ctx)
         definition-module-id
         declaration-id
         name-id
         CompilerSemanticSymbolKind.Macro)]
     [resolved-type : String
       (match (compiler-semantic-decl-handle
-        decl-ctx
+        (owned_view.compiler-owned-shared-view decl-ctx)
         definition-module-id
         name-id
         CompilerSemanticSymbolKind.Macro)
         [(CompilerSemanticMaybeHandle.Some handle)
           (compiler-semantic-decl-type
-            decl-ctx
+            (owned_view.compiler-owned-shared-view decl-ctx)
             env
             (compiler-semantic-handle-decl decl-ctx handle)
             CompilerSemanticSymbolKind.Macro
             name-id
-            display-name)]
+            (owned_view.compiler-owned-shared-view display-name))]
         [(CompilerSemanticMaybeHandle.None) "macro"])]
     [path : String (tc.tc-macro-call-site-path-for-state sites site-index)]
     [span : CompilerSemanticSpan
@@ -4432,7 +5477,9 @@
   [entry-source : String]) : unit
   (let
     [sites : tc.TcMacroCallSiteState
-      (tc.tc-job-state-macro-call-sites (tc.tc-context-job-state state.ctx))]
+      (tc.tc-job-state-macro-call-sites
+        (tc.tc-context-job-state
+          (owned_view.compiler-owned-shared-view state.ctx)))]
     [count : i64 (tc.tc-macro-call-site-count-for-state sites)]
     [index : i64 0]
     [cached : bool false]
@@ -4451,11 +5498,14 @@
               (set! cached-path (string.copy (& path)))
               (set!
                 cached-source
-                (compiler-semantic-source-for-path path entry-path entry-source))
+                (compiler-semantic-source-for-path
+                  path
+                  (owned_view.compiler-owned-shared-view entry-path)
+                  (owned_view.compiler-owned-shared-view entry-source)))
               (set! cached true))
             unit)
           (compiler-semantic-record-macro-call-site!
-            state
+            (owned_view.compiler-owned-shared-view state)
             sites
             index
             (if editable
@@ -4609,19 +5659,30 @@
     (begin
       (while (< index raw-len)
         (let
-          [event : CompilerSemanticScopeEvent (array-ref raw index)]
+          [event : CompilerSemanticScopeEvent
+            (owned_view.compiler-owned-array-element-shared-view raw index)]
           (begin
             (set!
               (array-ref counts event.path-index)
-              (+ (array-ref counts event.path-index) 1))
+              (+
+                (owned_view.compiler-owned-array-element-shared-view
+                  counts
+                  event.path-index)
+                1))
             (set! index (+ index 1)))))
       (let
         [path-index : i64 0]
         [offset : i64 0]
         (while (< path-index path-len)
           (let
-            [info : CompilerSemanticSourcePathInfo (array-ref paths path-index)]
-            [count : i64 (array-ref counts path-index)]
+            [info : CompilerSemanticSourcePathInfo
+              (owned_view.compiler-owned-array-element-shared-view
+                paths
+                path-index)]
+            [count : i64
+              (owned_view.compiler-owned-array-element-shared-view
+                counts
+                path-index)]
             (begin
               (set! info.scope-event-offset offset)
               (set! info.scope-event-len count)
@@ -4631,10 +5692,16 @@
       (set! index 0)
       (while (< index raw-len)
         (let
-          [event : CompilerSemanticScopeEvent (array-ref raw index)]
+          [event : CompilerSemanticScopeEvent
+            (owned_view.compiler-owned-array-element-shared-view raw index)]
           [info : CompilerSemanticSourcePathInfo
-            (array-ref paths event.path-index)]
-          [cursor : i64 (array-ref cursors event.path-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              paths
+              event.path-index)]
+          [cursor : i64
+            (owned_view.compiler-owned-array-element-shared-view
+              cursors
+              event.path-index)]
           (begin
             (set! (array-ref out (+ info.scope-event-offset cursor)) event)
             (set! (array-ref cursors event.path-index) (+ cursor 1))
@@ -4643,10 +5710,13 @@
         [path-index : i64 0]
         (while (< path-index path-len)
           (let
-            [info : CompilerSemanticSourcePathInfo (array-ref paths path-index)]
+            [info : CompilerSemanticSourcePathInfo
+              (owned_view.compiler-owned-array-element-shared-view
+                paths
+                path-index)]
             (begin
               (compiler-semantic-scope-events-sort-segment!
-                out
+                (owned_view.compiler-owned-shared-view out)
                 info.scope-event-offset
                 info.scope-event-len)
               (set! path-index (+ path-index 1)))))))))
@@ -4664,19 +5734,30 @@
     (begin
       (while (< index raw-len)
         (let
-          [event : CompilerSemanticModuleEvent (array-ref raw index)]
+          [event : CompilerSemanticModuleEvent
+            (owned_view.compiler-owned-array-element-shared-view raw index)]
           (begin
             (set!
               (array-ref counts event.path-index)
-              (+ (array-ref counts event.path-index) 1))
+              (+
+                (owned_view.compiler-owned-array-element-shared-view
+                  counts
+                  event.path-index)
+                1))
             (set! index (+ index 1)))))
       (let
         [path-index : i64 0]
         [offset : i64 0]
         (while (< path-index path-len)
           (let
-            [info : CompilerSemanticSourcePathInfo (array-ref paths path-index)]
-            [count : i64 (array-ref counts path-index)]
+            [info : CompilerSemanticSourcePathInfo
+              (owned_view.compiler-owned-array-element-shared-view
+                paths
+                path-index)]
+            [count : i64
+              (owned_view.compiler-owned-array-element-shared-view
+                counts
+                path-index)]
             (begin
               (set! info.module-event-offset offset)
               (set! info.module-event-len count)
@@ -4686,10 +5767,16 @@
       (set! index 0)
       (while (< index raw-len)
         (let
-          [event : CompilerSemanticModuleEvent (array-ref raw index)]
+          [event : CompilerSemanticModuleEvent
+            (owned_view.compiler-owned-array-element-shared-view raw index)]
           [info : CompilerSemanticSourcePathInfo
-            (array-ref paths event.path-index)]
-          [cursor : i64 (array-ref cursors event.path-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              paths
+              event.path-index)]
+          [cursor : i64
+            (owned_view.compiler-owned-array-element-shared-view
+              cursors
+              event.path-index)]
           (begin
             (set! (array-ref out (+ info.module-event-offset cursor)) event)
             (set! (array-ref cursors event.path-index) (+ cursor 1))
@@ -4698,10 +5785,13 @@
         [path-index : i64 0]
         (while (< path-index path-len)
           (let
-            [info : CompilerSemanticSourcePathInfo (array-ref paths path-index)]
+            [info : CompilerSemanticSourcePathInfo
+              (owned_view.compiler-owned-array-element-shared-view
+                paths
+                path-index)]
             (begin
               (compiler-semantic-module-events-sort-segment!
-                out
+                (owned_view.compiler-owned-shared-view out)
                 info.module-event-offset
                 info.module-event-len)
               (set! path-index (+ path-index 1)))))))))
@@ -4736,7 +5826,7 @@
     [else (= kind (csym.compiler-symbol-kind-defmacro))]))
 
 (define (compiler-semantic-map-has-module-macro?
-  [map : csym.CompilerSymbolMap]
+  [map : (& map csym.CompilerSymbolMap)]
   [module-id : i64]) : bool
   (let
     [slot : i64 0]
@@ -4764,19 +5854,32 @@
   [labels : (__tl_dyn-array String)]
   [records : (__tl_dyn-array CompilerSemanticRecord)]) : bool
   (let
-    [left-label : String (array-ref labels left.label-index)]
-    [right-label : String (array-ref labels right.label-index)]
+    [left-label : String
+      (owned_view.compiler-owned-array-element-shared-view
+        labels
+        left.label-index)]
+    [right-label : String
+      (owned_view.compiler-owned-array-element-shared-view
+        labels
+        right.label-index)]
     (cond
       [(< left.namespace-tag right.namespace-tag) true]
       [(> left.namespace-tag right.namespace-tag) false]
-      [(sort.string-less? left-label right-label) true]
+      [(sort.string-less?
+          (owned_view.compiler-owned-shared-view left-label)
+          (owned_view.compiler-owned-shared-view right-label))
+        true]
       [(sort.string-less? right-label left-label) false]
       [else
         (let
           [left-symbol : CompilerSemanticSymbolId
-            (array-ref records left.record-index).symbol]
+            (owned_view.compiler-owned-array-element-shared-view
+              records
+              left.record-index).symbol]
           [right-symbol : CompilerSemanticSymbolId
-            (array-ref records right.record-index).symbol]
+            (owned_view.compiler-owned-array-element-shared-view
+              records
+              right.record-index).symbol]
           (cond
             [(<
                 left-symbol.declaration-ordinal
@@ -4821,8 +5924,8 @@
                           (compiler-semantic-top-candidate-before?
                             (array-ref items (+ offset right))
                             (array-ref items (+ offset left))
-                            labels
-                            records))))
+                            (owned_view.compiler-owned-shared-view labels)
+                            (owned_view.compiler-owned-shared-view records)))))
                       (begin
                         (set!
                           (array-ref scratch out)
@@ -4846,8 +5949,8 @@
             (set! width (* width 2))))))))
 
 (define (compiler-semantic-top-map-walk!
-  [symbols : csym.CompilerSymbols]
-  [map : csym.CompilerSymbolMap]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [map : (& map csym.CompilerSymbolMap)]
   [namespace-tag : i64]
   [modules : (__tl_dyn-array CompilerSemanticModuleInfo)]
   [module-len : i64]
@@ -4925,8 +6028,8 @@
           (set! slot (+ slot 1)))))))
 
 (define (compiler-semantic-module-shadows-core-macro?
-  [symbols : csym.CompilerSymbols]
-  [macros : csym.CompilerSymbolMap]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [macros : (& macros csym.CompilerSymbolMap)]
   [module-id : i64]
   [name-id : i64]) : bool
   (let
@@ -4945,8 +6048,8 @@
         true))))
 
 (define (compiler-semantic-core-macro-walk!
-  [symbols : csym.CompilerSymbols]
-  [macros : csym.CompilerSymbolMap]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [macros : (& macros csym.CompilerSymbolMap)]
   [core-module-id : i64]
   [modules : (__tl_dyn-array CompilerSemanticModuleInfo)]
   [module-len : i64]
@@ -5031,7 +6134,7 @@
   (match (tc.tc-context-symbols ctx)
     [(csym.CompilerSymbols values types macros _ _ _)
       (let
-        [symbols : csym.CompilerSymbols (tc.tc-context-symbols ctx)]
+        [symbols : (& ctx csym.CompilerSymbols) (tc.tc-context-symbols ctx)]
         [core-module-id : i64
           (if (compiler-semantic-map-has-module-macro?
             macros
@@ -5047,45 +6150,45 @@
             symbols
             values
             1
-            modules
+            (owned_view.compiler-owned-shared-view modules)
             module-len
-            decl-record-indices
-            counts
-            out
-            labels
+            (owned_view.compiler-owned-shared-view decl-record-indices)
+            (owned_view.compiler-owned-shared-view counts)
+            (owned_view.compiler-owned-shared-view out)
+            (owned_view.compiler-owned-shared-view labels)
             true)
           (compiler-semantic-top-map-walk!
             symbols
             types
             2
-            modules
+            (owned_view.compiler-owned-shared-view modules)
             module-len
-            decl-record-indices
-            counts
-            out
-            labels
+            (owned_view.compiler-owned-shared-view decl-record-indices)
+            (owned_view.compiler-owned-shared-view counts)
+            (owned_view.compiler-owned-shared-view out)
+            (owned_view.compiler-owned-shared-view labels)
             true)
           (compiler-semantic-top-map-walk!
             symbols
             macros
             4
-            modules
+            (owned_view.compiler-owned-shared-view modules)
             module-len
-            decl-record-indices
-            counts
-            out
-            labels
+            (owned_view.compiler-owned-shared-view decl-record-indices)
+            (owned_view.compiler-owned-shared-view counts)
+            (owned_view.compiler-owned-shared-view out)
+            (owned_view.compiler-owned-shared-view labels)
             true)
           (compiler-semantic-core-macro-walk!
             symbols
             macros
             core-module-id
-            modules
+            (owned_view.compiler-owned-shared-view modules)
             module-len
-            decl-record-indices
-            counts
-            out
-            labels
+            (owned_view.compiler-owned-shared-view decl-record-indices)
+            (owned_view.compiler-owned-shared-view counts)
+            (owned_view.compiler-owned-shared-view out)
+            (owned_view.compiler-owned-shared-view labels)
             true)
           (while (< module-index module-len)
             (let
@@ -5102,45 +6205,45 @@
             symbols
             values
             1
-            modules
+            (owned_view.compiler-owned-shared-view modules)
             module-len
-            decl-record-indices
-            cursors
-            out
-            labels
+            (owned_view.compiler-owned-shared-view decl-record-indices)
+            (owned_view.compiler-owned-shared-view cursors)
+            (owned_view.compiler-owned-shared-view out)
+            (owned_view.compiler-owned-shared-view labels)
             false)
           (compiler-semantic-top-map-walk!
             symbols
             types
             2
-            modules
+            (owned_view.compiler-owned-shared-view modules)
             module-len
-            decl-record-indices
-            cursors
-            out
-            labels
+            (owned_view.compiler-owned-shared-view decl-record-indices)
+            (owned_view.compiler-owned-shared-view cursors)
+            (owned_view.compiler-owned-shared-view out)
+            (owned_view.compiler-owned-shared-view labels)
             false)
           (compiler-semantic-top-map-walk!
             symbols
             macros
             4
-            modules
+            (owned_view.compiler-owned-shared-view modules)
             module-len
-            decl-record-indices
-            cursors
-            out
-            labels
+            (owned_view.compiler-owned-shared-view decl-record-indices)
+            (owned_view.compiler-owned-shared-view cursors)
+            (owned_view.compiler-owned-shared-view out)
+            (owned_view.compiler-owned-shared-view labels)
             false)
           (compiler-semantic-core-macro-walk!
             symbols
             macros
             core-module-id
-            modules
+            (owned_view.compiler-owned-shared-view modules)
             module-len
-            decl-record-indices
-            cursors
-            out
-            labels
+            (owned_view.compiler-owned-shared-view decl-record-indices)
+            (owned_view.compiler-owned-shared-view cursors)
+            (owned_view.compiler-owned-shared-view out)
+            (owned_view.compiler-owned-shared-view labels)
             false)
           (set! module-index 0)
           (while (< module-index module-len)
@@ -5149,9 +6252,9 @@
                 (array-ref modules module-index)]
               (begin
                 (compiler-semantic-top-candidates-sort-segment!
-                  out
-                  labels
-                  records
+                  (owned_view.compiler-owned-shared-view out)
+                  (owned_view.compiler-owned-shared-view labels)
+                  (owned_view.compiler-owned-shared-view records)
                   info.candidate-offset
                   info.candidate-len)
                 (set! module-index (+ module-index 1)))))
@@ -5184,22 +6287,61 @@
       (set!
         compiler-semantic-source-index-live-owners
         (+ compiler-semantic-source-index-live-owners 1))
-      (in-arena
-        (arena.Arena owner)
-        (let
-          [decls : ast.AstDeclList
-            (match (tc.tc-context-program ctx)
-              [(ast.AstProgram.Program decls-box) (__tl-box-place decls-box)])]
-          [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-          [symbol-count : i64
-            (csym.compiler-symbols-decl-count (tc.tc-context-symbols ctx))]
-          [path-capacity : i64 (+ decl-count 4)]
-          [module-capacity : i64 (+ decl-count 4)]
-          [paths-out : (__tl_dyn-array CompilerSemanticSourcePathInfo)
-            (array.make-array CompilerSemanticSourcePathInfo path-capacity)]
-          [modules-out : (__tl_dyn-array CompilerSemanticModuleInfo)
-            (array.make-array CompilerSemanticModuleInfo module-capacity)]
-          [module-events-out : (__tl_dyn-array CompilerSemanticModuleEvent)
+      (unsafe
+        (arena.tl_arena_set owner))
+      (let
+        [decls : ast.AstDeclList
+          (match (tc.tc-context-program
+            (owned_view.compiler-owned-shared-view ctx))
+            [(ast.AstProgram.Program decls-box)
+              (ast.ast-decl-list-box-shared-view decls-box)])]
+        [decl-count : i64 (ast.ast-decl-list-len (& decls))]
+        [symbol-count : i64
+          (csym.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
+        [path-capacity : i64 (+ decl-count 4)]
+        [module-capacity : i64 (+ decl-count 4)]
+        [paths-out : (__tl_dyn-array CompilerSemanticSourcePathInfo)
+          (array.make-array CompilerSemanticSourcePathInfo path-capacity)]
+        [modules-out : (__tl_dyn-array CompilerSemanticModuleInfo)
+          (array.make-array CompilerSemanticModuleInfo module-capacity)]
+        [module-events-out : (__tl_dyn-array CompilerSemanticModuleEvent)
+          (array.make-array CompilerSemanticModuleEvent (+ (* decl-count 2) 8))]
+        [decl-record-indices : (__tl_dyn-array i64)
+          (array.make-array i64 symbol-count)]
+        [walk-state : CompilerSemanticWalkState
+          (CompilerSemanticWalkState
+            (owned_view.compiler-owned-shared-view ctx)
+            (owned_view.compiler-owned-shared-view env)
+            ""
+            ""
+            -1
+            cbi.compiler-builtin-id-fix-empty
+            -1
+            false
+            CompilerSemanticProvenance.EditableSource
+            (box
+              (compiler-semantic-record-vec-new
+                (* (ast.ast-decl-list-len (& decls)) 2)))
+            (box
+              (compiler-semantic-binding-vec-new
+                (* (ast.ast-decl-list-len (& decls)) 2)))
+            complete
+            -1
+            -1
+            (box
+              (CompilerSemanticVisibilityBuildStorage
+                (owned_view.compiler-owned-shared-view paths-out)
+                (box 0)
+                (owned_view.compiler-owned-shared-view modules-out)
+                (box 0)
+                (owned_view.compiler-owned-shared-view module-events-out)
+                (box 0)
+                (box
+                  (compiler-semantic-scope-event-vec-new (+ (* decl-count 2) 8)))
+                (box 0)
+                (box 0)
+                (box 1)
+                (box 1)))
             (array.make-array
               CompilerSemanticModuleEvent
               (+ (* decl-count 2) 8))]
@@ -5520,123 +6662,412 @@
               entry-path
               entry-source)
             (let
-              [canonical-build : CompilerSemanticCanonicalBuildResult
-                (compiler-semantic-canonical-build
-                  (__tl-project-field (__tl-box-place walk-state.records) items)
-                  (__tl-project-field (__tl-box-place walk-state.records) len))]
-              [visibility-storage : CompilerSemanticVisibilityBuildStorage
-                (__tl-box-place walk-state.visibility-storage)]
-              [path-count : i64 (__tl-box-place visibility-storage.path-len)]
-              [module-count : i64
-                (__tl-box-place visibility-storage.module-len)]
-              [top-capacity : i64
-                (if complete
-                  (compiler-semantic-top-candidate-capacity ctx module-count)
-                  0)]
-              [top-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
-                (array.make-array CompilerSemanticTopCandidateRef top-capacity)]
-              [top-labels : (__tl_dyn-array String)
-                (array.make-array String top-capacity)]
-              [raw-scope-events : CompilerSemanticScopeEventVec
-                (__tl-box-place visibility-storage.scope-events)]
-              [scope-event-count : i64
-                (if complete
-                  raw-scope-events.len
-                  0)]
-              [module-event-count : i64
-                (if complete
-                  (__tl-box-place visibility-storage.module-event-len)
-                  0)]
-              [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
-                (array.make-array CompilerSemanticScopeEvent scope-event-count)]
-              [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
-                (array.make-array
-                  CompilerSemanticModuleEvent
-                  module-event-count)]
-              [top-candidate-count : i64 0]
+              [decl : ast.AstDecl
+                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
+              [path : String
+                (ast.ast-decl-path-list-get
+                  (& paths)
+                  index
+                  (owned_view.compiler-owned-shared-view entry-path))]
+              [module-id : i64
+                (ast.ast-decl-path-list-owner-id
+                  (& paths)
+                  index
+                  cbi.compiler-builtin-id-fix-empty)]
+              [decl-ctx : tc.TcContext
+                (if (= module-id cbi.compiler-builtin-id-fix-empty)
+                  (tc.tc-context-with-module-id
+                    (owned_view.compiler-owned-shared-view ctx)
+                    ""
+                    cbi.compiler-builtin-id-fix-empty)
+                  (tc.tc-context-with-module-id
+                    (owned_view.compiler-owned-shared-view ctx)
+                    (tc.macro-decl-module-display module-id)
+                    module-id))]
+              [generated : bool
+                (match (ast.ast-decl-generated-meta
+                  (owned_view.compiler-owned-shared-view decl))
+                  [(ast.AstGeneratedDeclMeta.No) false]
+                  [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true])]
+              [provenance : CompilerSemanticProvenance
+                (compiler-semantic-decl-provenance
+                  (owned_view.compiler-owned-shared-view decl))]
+              [path-changed : bool (not (string.eq path cached-path))]
+              [module-changed : bool
+                (or path-changed (!= module-id walk-state.module-id))]
               (begin
-                (if complete
+                (if path-changed
                   (begin
-                    (compiler-semantic-bucket-scope-events!
-                      paths-out
-                      path-count
-                      raw-scope-events.items
-                      scope-event-count
-                      scope-events)
-                    (compiler-semantic-bucket-module-events!
-                      paths-out
-                      path-count
-                      module-events-out
-                      module-event-count
-                      module-events)
+                    (set! cached-path (string.copy (& path)))
+                    (set! form-search-start 0)
                     (set!
+                      cached-source
+                      (cond
+                        [(string.eq path entry-path)
+                          (string.copy (& entry-source))]
+                        [(and
+                            (not (string.eq path ""))
+                            (io.file-exists?
+                              (owned_view.compiler-owned-shared-view path)))
+                          (byte_buf.to-string
+                            (io.read-file
+                              (owned_view.compiler-owned-shared-view path)))]
+                        [else ""]))
+                    (set! walk-state.path (string.copy (& path)))
+                    (set! walk-state.source (string.copy (& cached-source))))
+                  unit)
+                (set!
+                  walk-state.ctx
+                  (owned_view.compiler-owned-shared-view decl-ctx))
+                (set!
+                  walk-state.top-env
+                  (owned_view.compiler-owned-shared-view env))
+                (set! walk-state.form-start -1)
+                (set! walk-state.module-id module-id)
+                (if module-changed
+                  (set!
+                    walk-state.module-index
+                    (if complete
+                      (compiler-semantic-module-index-ensure!
+                        (owned_view.compiler-owned-shared-view walk-state)
+                        module-id)
+                      -1))
+                  unit)
+                (if path-changed
+                  (set!
+                    walk-state.path-index
+                    (compiler-semantic-path-index-ensure!
+                      (owned_view.compiler-owned-shared-view walk-state)
+                      (owned_view.compiler-owned-shared-view path)
+                      (string.string-length cached-source)
+                      walk-state.module-index))
+                  unit)
+                (set! walk-state.declaration-ordinal index)
+                (set! walk-state.generated generated)
+                (set! walk-state.provenance provenance)
+                (set! (deref walk-state.next-local-ordinal) 0)
+                (compiler-semantic-source-anchor-set!
+                  (owned_view.compiler-owned-shared-view walk-state)
+                  0
+                  1
+                  1)
+                ;; Imports and module markers have no semantic definition row,
+                ;; but their checked path owner still changes the module that
+                ;; a cursor at that form observes.
+                (match (compiler-semantic-decl-symbol
+                  (owned_view.compiler-owned-shared-view decl))
+                  [(CompilerSemanticMaybeDecl.Some _ _) unit]
+                  [(CompilerSemanticMaybeDecl.None)
+                    (match (compiler-semantic-decl-origin
+                      (& decls)
+                      index
+                      (owned_view.compiler-owned-shared-view decl))
+                      [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
+                        (let
+                          [form-start : i64
+                            (if (or generated (string.eq cached-source ""))
+                              -1
+                              (compiler-semantic-top-level-form-start
+                                (owned_view.compiler-owned-shared-view
+                                  cached-source)
+                                (compiler-semantic-source-offset
+                                  (owned_view.compiler-owned-shared-view
+                                    cached-source)
+                                  (ast.ast-source-span-start-line origin)
+                                  (ast.ast-source-span-start-col origin))
+                                form-search-start))]
+                          (begin
+                            (compiler-semantic-module-event-push!
+                              (owned_view.compiler-owned-shared-view walk-state)
+                              walk-state.path-index
+                              form-start
+                              walk-state.module-index)
+                            (if (>= form-start 0)
+                              (set! form-search-start form-start)
+                              unit)))]
+                      [(parse_core.CompilerParseMaybeDeclSpan.None) unit])])
+                (match (compiler-semantic-decl-symbol
+                  (owned_view.compiler-owned-shared-view decl))
+                  [(CompilerSemanticMaybeDecl.Some name-id kind)
+                    (let
+                      [name : String (tc.tc-env-key-name-text name-id)]
+                      [maybe-origin : parse_core.CompilerParseMaybeDeclSpan
+                        (compiler-semantic-decl-origin
+                          (& decls)
+                          index
+                          (owned_view.compiler-owned-shared-view decl))]
+                      [form-start : i64
+                        (match maybe-origin
+                          [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
+                            (if (or generated (string.eq cached-source ""))
+                              -1
+                              (compiler-semantic-top-level-form-start
+                                (owned_view.compiler-owned-shared-view
+                                  cached-source)
+                                (compiler-semantic-source-offset
+                                  (owned_view.compiler-owned-shared-view
+                                    cached-source)
+                                  (ast.ast-source-span-start-line origin)
+                                  (ast.ast-source-span-start-col origin))
+                                form-search-start))]
+                          [(parse_core.CompilerParseMaybeDeclSpan.None)
+                            (if (and
+                              (not generated)
+                              (not (string.eq cached-source "")))
+                              0
+                              -1)])]
+                      [has-origin : bool
+                        (match maybe-origin
+                          [(parse_core.CompilerParseMaybeDeclSpan.Some _) true]
+                          [(parse_core.CompilerParseMaybeDeclSpan.None)
+                            (and
+                              (not generated)
+                              (not (string.eq cached-source "")))])]
+                      [span : CompilerSemanticSpan
+                        (match maybe-origin
+                          [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
+                            (if (string.eq cached-source "")
+                              (CompilerSemanticSpan
+                                (string.copy (& path))
+                                -1
+                                -1
+                                origin
+                                -1
+                                -1)
+                              (compiler-semantic-definition-span
+                                (owned_view.compiler-owned-shared-view path)
+                                (owned_view.compiler-owned-shared-view
+                                  cached-source)
+                                (owned_view.compiler-owned-shared-view name)
+                                origin
+                                form-start))]
+                          [(parse_core.CompilerParseMaybeDeclSpan.None)
+                            (if (and
+                              (not generated)
+                              (not (string.eq cached-source "")))
+                              (let
+                                [end-position : ast.AstSourceSpan
+                                  (compiler-semantic-source-position
+                                    (owned_view.compiler-owned-shared-view
+                                      cached-source)
+                                    (string.string-length cached-source))]
+                                (compiler-semantic-definition-span
+                                  (owned_view.compiler-owned-shared-view path)
+                                  (owned_view.compiler-owned-shared-view
+                                    cached-source)
+                                  (owned_view.compiler-owned-shared-view name)
+                                  (ast.ast-source-span
+                                    1
+                                    1
+                                    (ast.ast-source-span-start-line
+                                      end-position)
+                                    (ast.ast-source-span-start-col end-position))
+                                  form-start))
+                              (CompilerSemanticSpan
+                                (string.copy (& path))
+                                -1
+                                -1
+                                (ast.ast-source-span 1 1 1 1)
+                                -1
+                                -1))])]
+                      [symbol : CompilerSemanticSymbolId
+                        (compiler-semantic-symbol-for-decl
+                          (owned_view.compiler-owned-shared-view decl-ctx)
+                          module-id
+                          index
+                          name-id
+                          kind)]
+                      [type-text : String
+                        (compiler-semantic-decl-type
+                          decl-ctx
+                          env
+                          (owned_view.compiler-owned-shared-view decl)
+                          kind
+                          name-id
+                          (owned_view.compiler-owned-shared-view name))]
+                      [documentation : String
+                        (if (and
+                          (not generated)
+                          (not (string.eq cached-source ""))
+                          (>= span.start-byte 0))
+                          (compiler-semantic-documentation-above
+                            (owned_view.compiler-owned-shared-view
+                              cached-source)
+                            form-start)
+                          "")]
+                      (begin
+                        (if (>= span.start-byte 0)
+                          (compiler-semantic-source-anchor-set!
+                            (owned_view.compiler-owned-shared-view walk-state)
+                            span.start-byte
+                            (ast.ast-source-span-start-line span.source)
+                            (ast.ast-source-span-start-col span.source))
+                          unit)
+                        (set! walk-state.form-start form-start)
+                        (compiler-semantic-module-event-push!
+                          (owned_view.compiler-owned-shared-view walk-state)
+                          walk-state.path-index
+                          form-start
+                          walk-state.module-index)
+                        (if (>= form-start 0)
+                          (set! form-search-start form-start)
+                          unit)
+                        ;; Local identities are anchored to the resolved
+                        ;; declaration handle, not the flattened AST position.
+                        (set! walk-state.module-id symbol.module-id)
+                        (set!
+                          walk-state.declaration-ordinal
+                          symbol.declaration-ordinal)
+                        (let
+                          [record-index : i64
+                            (compiler-semantic-record-vec-push-index!
+                              (&mut (__tl-box-place walk-state.records))
+                              (CompilerSemanticRecord
+                                symbol
+                                CompilerSemanticRecordRole.Definition
+                                kind
+                                (string.copy (& name))
+                                (string.copy (& type-text))
+                                (string.copy (& documentation))
+                                symbol.module-id
+                                (owned_view.compiler-owned-shared-view span)
+                                (and
+                                  (not generated)
+                                  has-origin
+                                  (>= span.start-byte 0))
+                                provenance))]
+                          (if (and
+                            (>= symbol.declaration-ordinal 0)
+                            (< symbol.declaration-ordinal symbol-count))
+                            (set!
+                              (array-ref
+                                decl-record-indices
+                                symbol.declaration-ordinal)
+                              (+ record-index 1))
+                            unit))))]
+                  [(CompilerSemanticMaybeDecl.None) unit])
+                (compiler-semantic-walk-decl!
+                  (owned_view.compiler-owned-shared-view walk-state)
+                  decl)
+                (set! index (+ index 1)))))
+          (compiler-semantic-record-macro-call-sites!
+            (owned_view.compiler-owned-shared-view walk-state)
+            entry-path
+            entry-source)
+          (let
+            [visibility-storage : CompilerSemanticVisibilityBuildStorage
+              (owned_view.compiler-owned-box-shared-view
+                walk-state.visibility-storage)]
+            [path-count : i64 (__tl-box-place visibility-storage.path-len)]
+            [module-count : i64 (__tl-box-place visibility-storage.module-len)]
+            [top-capacity : i64
+              (if complete
+                (compiler-semantic-top-candidate-capacity
+                  (owned_view.compiler-owned-shared-view ctx)
+                  module-count)
+                0)]
+            [top-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
+              (array.make-array CompilerSemanticTopCandidateRef top-capacity)]
+            [top-labels : (__tl_dyn-array String)
+              (array.make-array String top-capacity)]
+            [raw-scope-events : CompilerSemanticScopeEventVec
+              (owned_view.compiler-owned-box-shared-view
+                visibility-storage.scope-events)]
+            [scope-event-count : i64
+              (if complete
+                raw-scope-events.len
+                0)]
+            [module-event-count : i64
+              (if complete
+                (__tl-box-place visibility-storage.module-event-len)
+                0)]
+            [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
+              (array.make-array CompilerSemanticScopeEvent scope-event-count)]
+            [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
+              (array.make-array CompilerSemanticModuleEvent module-event-count)]
+            [records : CompilerSemanticRecordVec
+              (owned_view.compiler-owned-box-shared-view walk-state.records)]
+            [record-items : (__tl_dyn-array CompilerSemanticRecord)
+              (owned_view.compiler-owned-shared-view records.items)]
+            [record-count : i64 records.len]
+            [bindings : CompilerSemanticBindingVec
+              (owned_view.compiler-owned-box-shared-view walk-state.bindings)]
+            [binding-items : (__tl_dyn-array CompilerSemanticBinding)
+              (owned_view.compiler-owned-shared-view bindings.items)]
+            [binding-count : i64
+              (if complete
+                bindings.len
+                0)]
+            [top-candidate-count : i64 0]
+            (begin
+              (if complete
+                (begin
+                  (compiler-semantic-bucket-scope-events!
+                    (owned_view.compiler-owned-shared-view paths-out)
+                    path-count
+                    raw-scope-events.items
+                    scope-event-count
+                    (owned_view.compiler-owned-shared-view scope-events))
+                  (compiler-semantic-bucket-module-events!
+                    (owned_view.compiler-owned-shared-view paths-out)
+                    path-count
+                    (owned_view.compiler-owned-shared-view module-events-out)
+                    module-event-count
+                    (owned_view.compiler-owned-shared-view module-events))
+                  (set!
+                    top-candidate-count
+                    (compiler-semantic-build-top-candidates!
+                      ctx
+                      (owned_view.compiler-owned-shared-view modules-out)
+                      module-count
+                      decl-record-indices
+                      (owned_view.compiler-owned-shared-view record-items)
+                      (owned_view.compiler-owned-shared-view top-candidates)
+                      (owned_view.compiler-owned-shared-view top-labels))))
+                unit)
+              (let
+                [top-visible-bindings : (__tl_dyn-array
+                  CompilerSemanticVisibleBinding)
+                  (array.make-array
+                    CompilerSemanticVisibleBinding
+                    top-candidate-count)]
+                (begin
+                  (if complete
+                    (compiler-semantic-top-visible-bindings-fill!
+                      (& record-items)
+                      (& top-candidates)
+                      (& top-labels)
                       top-candidate-count
-                      (compiler-semantic-build-top-candidates!
-                        ctx
+                      (owned_view.compiler-owned-shared-view
+                        top-visible-bindings))
+                    unit)
+                  (let
+                    [result : CompilerSemanticSourceIndex
+                      (CompilerSemanticSourceIndex
+                        owner
+                        record-items
+                        record-count
+                        complete
+                        paths-out
+                        path-count
                         modules-out
                         module-count
-                        decl-record-indices
-                        (__tl-project-field
-                          (__tl-box-place walk-state.records)
-                          items)
+                        module-events
+                        module-event-count
+                        scope-events
+                        scope-event-count
+                        (if complete
+                          (__tl-box-place visibility-storage.scope-region-count)
+                          0)
+                        binding-items
+                        binding-count
                         top-candidates
-                        top-labels)))
-                  unit)
-                (let
-                  [top-visible-bindings : (__tl_dyn-array
-                    CompilerSemanticVisibleBinding)
-                    (array.make-array
-                      CompilerSemanticVisibleBinding
-                      top-candidate-count)]
-                  (begin
-                    (if complete
-                      (compiler-semantic-top-visible-bindings-fill!
-                        (&
-                          (__tl-project-field
-                            (__tl-box-place walk-state.records)
-                            items))
-                        (& top-candidates)
-                        (& top-labels)
-                        top-candidate-count
-                        top-visible-bindings)
-                      unit)
-                    (let
-                      [result : CompilerSemanticSourceIndex
-                        (CompilerSemanticSourceIndex
-                          owner
-                          (__tl-project-field
-                            (__tl-box-place walk-state.records)
-                            items)
-                          (__tl-project-field
-                            (__tl-box-place walk-state.records)
-                            len)
-                          canonical-build.symbols
-                          canonical-build.len
-                          complete
-                          paths-out
-                          path-count
-                          modules-out
-                          module-count
-                          module-events
-                          module-event-count
-                          scope-events
-                          scope-event-count
-                          (if complete
-                            (__tl-box-place
-                              visibility-storage.scope-region-count)
-                            0)
-                          (__tl-project-field
-                            (__tl-box-place walk-state.bindings)
-                            items)
-                          (if complete
-                            (__tl-project-field
-                              (__tl-box-place walk-state.bindings)
-                              len)
-                            0)
-                          top-candidates
-                          top-labels
-                          top-visible-bindings
-                          top-candidate-count)]
+                        top-labels
+                        top-visible-bindings
+                        top-candidate-count)]
+                    (begin
+                      (unsafe
+                        (arena.tl_arena_set previous))
                       result)))))))))))
 
 (define (compiler-check-program-with-paths-index-cache
@@ -5664,7 +7095,7 @@
                 ctx
                 env
                 checked-paths
-                path
+                (owned_view.compiler-owned-shared-view path)
                 source
                 true)]
             (begin
@@ -5680,7 +7111,7 @@
                 ctx
                 env
                 checked-paths
-                path
+                (owned_view.compiler-owned-shared-view path)
                 source
                 false)]
             (begin
@@ -5691,7 +7122,7 @@
               (ResultCompilerCheckWithSemanticIndex.Partial
                 (box
                   (check_core.compiler-check-diagnostics-with-fallback-path
-                    (deref diag)
+                    (owned_view.compiler-owned-box-shared-view diag)
                     path))
                 index)))]
         [(tc.ResultCompilerTypecheckChecked.Err diag)
@@ -5703,7 +7134,7 @@
             (ResultCompilerCheckWithSemanticIndex.Err
               (box
                 (check_core.compiler-check-diagnostics-with-fallback-path
-                  (__tl-box-place diag)
+                  (owned_view.compiler-owned-box-shared-view diag)
                   path))))]))))
 
 (define (compiler-check-loaded-with-prelude-index-cache
@@ -5741,10 +7172,15 @@
 (define (compiler-semantic-index-result-with-parse-diagnostics
   [parse-diagnostics : cdiag.CompilerDiagnosticList]
   [result : ResultCompilerCheckWithSemanticIndex]) : ResultCompilerCheckWithSemanticIndex
-  (if (= (cdiag.compiler-diagnostic-list-count parse-diagnostics) 0)
+  (if (=
+    (cdiag.compiler-diagnostic-list-count
+      (owned_view.compiler-owned-shared-view parse-diagnostics))
+    0)
     result
     (let
-      [count : i64 (cdiag.compiler-diagnostic-list-count parse-diagnostics)]
+      [count : i64
+        (cdiag.compiler-diagnostic-list-count
+          (owned_view.compiler-owned-shared-view parse-diagnostics))]
       [index : i64 0]
       [owned-parse : cdiag.CompilerDiagnosticList
         (cdiag.compiler-diagnostic-list-with-capacity count)]
@@ -5753,7 +7189,9 @@
           (begin
             (cdiag.compiler-diagnostic-list-push!
               (&mut owned-parse)
-              (cdiag.compiler-diagnostic-list-get parse-diagnostics index))
+              (cdiag.compiler-diagnostic-list-get
+                (owned_view.compiler-owned-shared-view parse-diagnostics)
+                index))
             (set! index (+ index 1))))
         (match result
           [(ResultCompilerCheckWithSemanticIndex.Ok _ source-index)
@@ -5808,9 +7246,9 @@
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
   (match (parse_core.parse-ast-source-recovery-diagnostic-with-cfg
-    path
-    source
-    cfgs)
+    (owned_view.compiler-owned-shared-view path)
+    (owned_view.compiler-owned-shared-view source)
+    (owned_view.compiler-owned-shared-view cfgs))
     [(parse_core.ResultAstProgramRecovery.Fatal diagnostics)
       (begin
         (cfg compile-profile (check_core.compiler-check-profile-finish "load"))
@@ -5819,20 +7257,21 @@
       (let
         [parse-identity : cload.CompilerLoadParseIdentity
           (cload.compiler-load-parse-identity
-            path
-            (cload.compiler-load-canonical-module-id-from-path path)
+            (owned_view.compiler-owned-shared-view path)
+            (cload.compiler-load-canonical-module-id-from-path
+              (owned_view.compiler-owned-shared-view path))
             ast.AstMaybeModuleName.No)]
         [loaded : cload.ResultCompilerLoadWithPaths
           (cload.compiler-load-program-with-paths-and-roots-expect-cfg
-            path
-            program
-            prelude-seen
-            stdlib-roots
+            (owned_view.compiler-owned-shared-view path)
+            (owned_view.compiler-owned-shared-view program)
+            (owned_view.compiler-owned-shared-view prelude-seen)
+            (owned_view.compiler-owned-shared-view stdlib-roots)
             ast.AstMaybeModuleName.No
-            cfgs
+            (owned_view.compiler-owned-shared-view cfgs)
             parse-identity)]
         (compiler-semantic-index-result-with-parse-diagnostics
-          (deref diagnostics)
+          (owned_view.compiler-owned-box-shared-view diagnostics)
           (compiler-check-loaded-with-prelude-index-cache
             path
             source
@@ -5864,8 +7303,8 @@
     (cfg compile-profile (check_core.compiler-check-profile-start))
     (match (cload.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      stdlib-roots
-      cfgs)
+      (owned_view.compiler-owned-shared-view stdlib-roots)
+      (owned_view.compiler-owned-shared-view cfgs))
       [(cload.ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
@@ -5877,8 +7316,8 @@
           prelude-decls
           (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
           prelude-seen
-          stdlib-roots
-          cfgs
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view cfgs)
           (tc_api.compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-semantic-index"
             stdlib-roots
@@ -5889,7 +7328,8 @@
             compile-profile
             (check_core.compiler-check-profile-finish "load"))
           (ResultCompilerCheckWithSemanticIndex.Err
-            (cdiag.compiler-diagnostic-list-box-single diag)))])))
+            (cdiag.compiler-diagnostic-list-box-single
+              (owned_view.compiler-owned-shared-view diag))))])))
 
 (define (compiler-semantic-source-index-find-definition
   [index : (& index CompilerSemanticSourceIndex)]
@@ -5902,7 +7342,9 @@
       (while (and (< found 0) (< record-index index.len))
         (let
           [record : CompilerSemanticRecord
-            (array-ref index.records record-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              index.records
+              record-index)]
           (begin
             (if (and
               (match record.role
@@ -5928,7 +7370,9 @@
       (while (< record-index index.len)
         (let
           [record : CompilerSemanticRecord
-            (array-ref index.records record-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              index.records
+              record-index)]
           [span : CompilerSemanticSpan record.span]
           [start : i64 span.start-byte]
           [end : i64 span.end-byte]
@@ -6004,7 +7448,9 @@
       (while (and (< found 0) (< record-index index.len))
         (let
           [record : CompilerSemanticRecord
-            (array-ref index.records record-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              index.records
+              record-index)]
           [symbol : CompilerSemanticSymbolId record.symbol]
           (begin
             (if (and
@@ -6039,7 +7485,9 @@
       (while (and (< found 0) (< record-index index.len))
         (let
           [record : CompilerSemanticRecord
-            (array-ref index.records record-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              index.records
+              record-index)]
           (begin
             (if (and
               (string.eq record.display-name name)
@@ -6071,7 +7519,9 @@
       (while (and (< found 0) (< record-index index.len))
         (let
           [record : CompilerSemanticRecord
-            (array-ref index.records record-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              index.records
+              record-index)]
           [record-symbol : CompilerSemanticSymbolId record.symbol]
           (begin
             (if (and
@@ -6102,8 +7552,8 @@
     [definition-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        path
-        name
+        (owned_view.compiler-owned-shared-view path)
+        (owned_view.compiler-owned-shared-view name)
         CompilerSemanticRecordRole.Definition
         definition-occurrence)]
     [use-index : i64
@@ -6150,7 +7600,9 @@
       (while (and (< found 0) (< record-index index.len))
         (let
           [record : CompilerSemanticRecord
-            (array-ref index.records record-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              index.records
+              record-index)]
           (begin
             (if (and
               (match record.role
@@ -6179,7 +7631,9 @@
       (while (< record-index index.len)
         (let
           [record : CompilerSemanticRecord
-            (array-ref index.records record-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              index.records
+              record-index)]
           (begin
             (if (and
               (match record.role
@@ -6333,29 +7787,38 @@
   [source : String]) : bool
   (let
     [init-offset : i64
-      (compiler-semantic-test-source-find-from source "dep.imported-value" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "dep.imported-value"
+        0)]
     [body-marker : i64
-      (compiler-semantic-test-source-find-from source "\n    answer))" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "\n    answer))"
+        0)]
     [after-offset : i64
-      (compiler-semantic-test-source-find-from source "(define (call-use" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "(define (call-use"
+        0)]
     [top-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        path
+        (owned_view.compiler-owned-shared-view path)
         "answer"
         CompilerSemanticRecordRole.Definition
         0)]
     [parameter-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        path
+        (owned_view.compiler-owned-shared-view path)
         "answer"
         CompilerSemanticRecordRole.Definition
         1)]
     [local-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        path
+        (owned_view.compiler-owned-shared-view path)
         "answer"
         CompilerSemanticRecordRole.Definition
         2)]
@@ -6369,16 +7832,25 @@
       false
       (let
         [init-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path init-offset)]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            init-offset)]
         [bound-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path (+ body-marker 5))]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            (+ body-marker 5))]
         [boundary-query : CompilerSemanticVisibleBindingQuery
           (compiler-semantic-test-query-at
             index
-            path
+            (owned_view.compiler-owned-shared-view path)
             (+ init-offset (string.string-length "dep.imported-value")))]
         [after-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path after-offset)]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            after-offset)]
         [top-record : CompilerSemanticRecord
           (compiler-semantic-source-index-get index top-index)]
         [parameter-record : CompilerSemanticRecord
@@ -6499,7 +7971,7 @@
               0)
             (match (compiler-semantic-source-index-query
               index
-              path
+              (owned_view.compiler-owned-shared-view path)
               (+ (string.string-length source) 1))
               [(CompilerSemanticMaybeVisibleBindingQuery.None) true]
               [_ false])))))))
@@ -6536,63 +8008,66 @@
     [bound bound]))
 (defmacro (nested-template [hidden : Expr]) : Expr
   `(quasiquote (begin (unquote hidden))))"]
-    (match (compiler-check-source-index-with-roots path source (svec.new))
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
         (let
           [answer-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "answer")]
           [use-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "use")]
           [pair-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "Pair")]
           [param-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "answer"
               CompilerSemanticRecordRole.Definition
               0)]
           [param-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "answer"
               CompilerSemanticRecordRole.Use
               0)]
           [local-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "answer"
               CompilerSemanticRecordRole.Definition
               1)]
           [local-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "answer"
               CompilerSemanticRecordRole.Use
               1)]
           [macro-param-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "value"
               CompilerSemanticRecordRole.Definition
               0)]
           [macro-param-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "value"
               CompilerSemanticRecordRole.Use
               0)]
@@ -6606,21 +8081,21 @@
           [import-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "imported-value"
               CompilerSemanticRecordRole.Use
               -1)]
           [answer-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "answer"
               CompilerSemanticRecordRole.Use
               -1)]
           [function-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "use"
               CompilerSemanticRecordRole.Use
               -1)]
@@ -6634,28 +8109,28 @@
           [pattern-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "bound"
               CompilerSemanticRecordRole.Definition
               1)]
           [pattern-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "bound"
               CompilerSemanticRecordRole.Use
               1)]
           [nested-param-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "hidden"
               CompilerSemanticRecordRole.Definition
               0)]
           [nested-param-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "hidden"
               CompilerSemanticRecordRole.Use
               0)]
@@ -6732,15 +8207,15 @@
               [answer-symbol : CompilerSemanticSymbolId answer.symbol]
               [answer-start : i64 answer.span.start-byte]
               (match (compiler-check-source-index-with-roots
-                path
-                source
+                (owned_view.compiler-owned-shared-view path)
+                (owned_view.compiler-owned-shared-view source)
                 (svec.new))
                 [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
                   (let
                     [second-answer-index : i64
                       (compiler-semantic-source-index-find-definition
                         (& second)
-                        path
+                        (owned_view.compiler-owned-shared-view path)
                         "answer")]
                     [second-answer : CompilerSemanticRecord
                       (compiler-semantic-source-index-get
@@ -6749,7 +8224,7 @@
                     [second-param-index : i64
                       (compiler-semantic-source-index-find-record
                         (& second)
-                        path
+                        (owned_view.compiler-owned-shared-view path)
                         "answer"
                         CompilerSemanticRecordRole.Definition
                         0)]
@@ -6772,7 +8247,7 @@
                       second-answer.symbol]
                     [invalid-keeps-first : bool
                       (match (compiler-check-source-index-with-roots
-                        path
+                        (owned_view.compiler-owned-shared-view path)
                         "(define broken : i64 true)"
                         (svec.new))
                         [(ResultCompilerCheckWithSemanticIndex.Ok _ replacement)
@@ -6796,7 +8271,7 @@
                                 (>=
                                   (compiler-semantic-source-index-find-definition
                                     (& replacement)
-                                    path
+                                    (owned_view.compiler-owned-shared-view path)
                                     "broken")
                                   0))]
                             (begin
@@ -6809,8 +8284,8 @@
                         (compiler-semantic-record-vec-growth-ok?)
                         (compiler-semantic-source-index-complete? (& first))
                         (compiler-check-semantic-index-record-ok?
-                          source
-                          answer
+                          (owned_view.compiler-owned-shared-view source)
+                          (owned_view.compiler-owned-shared-view answer)
                           "answer"
                           CompilerSemanticSymbolKind.Value)
                         (=
@@ -6820,13 +8295,13 @@
                           (ast.ast-source-span-start-col answer.span.source)
                           11)
                         (compiler-check-semantic-index-record-ok?
-                          source
-                          use
+                          (owned_view.compiler-owned-shared-view source)
+                          (owned_view.compiler-owned-shared-view use)
                           "use"
                           CompilerSemanticSymbolKind.Function)
                         (compiler-check-semantic-index-record-ok?
-                          source
-                          pair
+                          (owned_view.compiler-owned-shared-view source)
+                          (owned_view.compiler-owned-shared-view pair)
                           "Pair"
                           CompilerSemanticSymbolKind.Struct)
                         (string.eq
@@ -6856,8 +8331,9 @@
                             param-definition.symbol
                             local-definition.symbol))
                         (compiler-semantic-record-span-text-eq?
-                          source
-                          param-definition
+                          (owned_view.compiler-owned-shared-view source)
+                          (owned_view.compiler-owned-shared-view
+                            param-definition)
                           "answer")
                         (=
                           (ast.ast-source-span-start-line
@@ -6868,12 +8344,13 @@
                             param-definition.span.source)
                           4)
                         (compiler-semantic-record-span-text-eq?
-                          source
+                          (owned_view.compiler-owned-shared-view source)
                           param-use
                           "answer")
                         (compiler-semantic-record-span-text-eq?
-                          source
-                          local-definition
+                          (owned_view.compiler-owned-shared-view source)
+                          (owned_view.compiler-owned-shared-view
+                            local-definition)
                           "answer")
                         (=
                           (ast.ast-source-span-start-line
@@ -6884,22 +8361,22 @@
                             local-definition.span.source)
                           6)
                         (compiler-semantic-record-span-text-eq?
-                          source
+                          (owned_view.compiler-owned-shared-view source)
                           local-use
                           "answer")
                         (compiler-semantic-record-span-text-eq?
-                          source
+                          (owned_view.compiler-owned-shared-view source)
                           macro-param-definition
                           "value")
                         (compiler-semantic-record-span-text-eq?
-                          source
+                          (owned_view.compiler-owned-shared-view source)
                           macro-param-use
                           "value")
                         (string.eq param-definition.resolved-type "i64")
                         (string.eq local-definition.resolved-type "i64")
                         (compiler-semantic-record-span-text-eq?
-                          source
-                          import-use
+                          (owned_view.compiler-owned-shared-view source)
+                          (owned_view.compiler-owned-shared-view import-use)
                           "dep.imported-value")
                         (compiler-semantic-symbol-id-eq?
                           import-definition.symbol
@@ -6911,11 +8388,11 @@
                           use.symbol
                           function-use.symbol)
                         (compiler-semantic-record-span-text-eq?
-                          source
+                          (owned_view.compiler-owned-shared-view source)
                           answer-use
                           "answer")
                         (compiler-semantic-record-span-text-eq?
-                          source
+                          (owned_view.compiler-owned-shared-view source)
                           function-use
                           "use")
                         (not generated.editable)
@@ -6931,11 +8408,12 @@
                           (& first)
                           (& pattern-use))
                         (compiler-semantic-record-span-text-eq?
-                          source
-                          pattern-definition
+                          (owned_view.compiler-owned-shared-view source)
+                          (owned_view.compiler-owned-shared-view
+                            pattern-definition)
                           "bound")
                         (compiler-semantic-record-span-text-eq?
-                          source
+                          (owned_view.compiler-owned-shared-view source)
                           pattern-use
                           "bound")
                         (string.eq pattern-definition.resolved-type "i64")
@@ -7028,9 +8506,15 @@
   [source : String]) : bool
   (let
     [local-definition-index : i64
-      (compiler-semantic-source-index-find-definition index path "local-wrap")]
+      (compiler-semantic-source-index-find-definition
+        index
+        (owned_view.compiler-owned-shared-view path)
+        "local-wrap")]
     [outer-definition-index : i64
-      (compiler-semantic-source-index-find-definition index path "outer-wrap")]
+      (compiler-semantic-source-index-find-definition
+        index
+        (owned_view.compiler-owned-shared-view path)
+        "outer-wrap")]
     [import-definition-index : i64
       (compiler-semantic-source-index-find-definition
         index
@@ -7182,31 +8666,37 @@
               import-definition.symbol
               shadow-use.symbol))
           (compiler-semantic-record-span-text-eq?
-            source
-            local-use-zero
+            (owned_view.compiler-owned-shared-view source)
+            (owned_view.compiler-owned-shared-view local-use-zero)
             "local-wrap")
           (compiler-semantic-record-span-text-eq?
-            source
+            (owned_view.compiler-owned-shared-view source)
             local-use-one
             "local-wrap")
           (compiler-semantic-record-span-text-eq?
-            source
+            (owned_view.compiler-owned-shared-view source)
             local-use-two
             "local-wrap")
           (compiler-semantic-record-span-text-eq?
-            source
-            import-use
+            (owned_view.compiler-owned-shared-view source)
+            (owned_view.compiler-owned-shared-view import-use)
             "dep.imported-wrap")
           (compiler-semantic-record-span-text-eq?
-            source
+            (owned_view.compiler-owned-shared-view source)
             shadow-use
             "imported-wrap")
-          (compiler-semantic-record-span-text-eq? source emit-use "emit-one")
           (compiler-semantic-record-span-text-eq?
-            source
+            (owned_view.compiler-owned-shared-view source)
+            emit-use
+            "emit-one")
+          (compiler-semantic-record-span-text-eq?
+            (owned_view.compiler-owned-shared-view source)
             module-use
             "make-module")
-          (compiler-semantic-record-span-text-eq? source outer-use "outer-wrap")
+          (compiler-semantic-record-span-text-eq?
+            (owned_view.compiler-owned-shared-view source)
+            outer-use
+            "outer-wrap")
           (string.eq
             local-definition.documentation
             "Local macro documentation.")
@@ -7227,14 +8717,17 @@
     [path : String "src/tests/semantic_macro_entry.tl"]
     [source : String (compiler-check-semantic-index-macro-source)]
     [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
-    (match (compiler-check-source-index-with-roots path source (svec.new))
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
         (let
           [first-ok : bool
             (compiler-check-semantic-index-macro-records-ok?
               (& first)
-              path
-              source)]
+              (owned_view.compiler-owned-shared-view path)
+              (owned_view.compiler-owned-shared-view source))]
           [first-local-index : i64
             (compiler-semantic-source-index-find-macro-use
               (& first)
@@ -7243,7 +8736,10 @@
               0)]
           [first-local : CompilerSemanticRecord
             (compiler-semantic-source-index-get (& first) first-local-index)]
-          (match (compiler-check-source-index-with-roots path source (svec.new))
+          (match (compiler-check-source-index-with-roots
+            (owned_view.compiler-owned-shared-view path)
+            (owned_view.compiler-owned-shared-view source)
+            (svec.new))
             [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
               (let
                 [second-local-index : i64
@@ -7258,7 +8754,7 @@
                     second-local-index)]
                 [reset-ok : bool
                   (match (compiler-check-source-index-with-roots
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "(module semantic.macro.entry)
 (define plain : i64 1)"
                     (svec.new))
@@ -7340,24 +8836,33 @@
   [source : String]) : bool
   (let
     [lambda-body-offset : i64
-      (compiler-semantic-test-source-find-from source "(if scalar x x)" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "(if scalar x x)"
+        0)]
     [alias-init-offset : i64
-      (compiler-semantic-test-source-find-from source "[alias closure]" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "[alias closure]"
+        0)]
     [inner-lambda-offset : i64
-      (compiler-semantic-test-source-find-from source ") : bool flag)" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        ") : bool flag)"
+        0)]
     [inner-call-offset : i64
       (compiler-semantic-test-source-find-from source "(callback scalar))]" 0)]
     [outer-callback-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        path
+        (owned_view.compiler-owned-shared-view path)
         "callback"
         CompilerSemanticRecordRole.Definition
         0)]
     [inner-callback-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        path
+        (owned_view.compiler-owned-shared-view path)
         "callback"
         CompilerSemanticRecordRole.Definition
         1)]
@@ -7371,19 +8876,25 @@
       false
       (let
         [lambda-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path lambda-body-offset)]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            lambda-body-offset)]
         [alias-init-query : CompilerSemanticVisibleBindingQuery
           (compiler-semantic-test-query-at
             index
-            path
+            (owned_view.compiler-owned-shared-view path)
             (+ alias-init-offset (string.string-length "[alias ")))]
         [inner-lambda-query : CompilerSemanticVisibleBindingQuery
           (compiler-semantic-test-query-at
             index
-            path
+            (owned_view.compiler-owned-shared-view path)
             (+ inner-lambda-offset (string.string-length ") : bool ")))]
         [inner-call-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path inner-call-offset)]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            inner-call-offset)]
         [outer-callback : CompilerSemanticRecord
           (compiler-semantic-source-index-get index outer-callback-index)]
         [inner-callback : CompilerSemanticRecord
@@ -7482,62 +8993,65 @@
         [callback (lambda ([flag : bool]) : bool flag)]
         (callback scalar))]
     (if nested (alias (callback 0)) 0)))"]
-    (match (compiler-check-source-index-with-roots path source (svec.new))
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
         (let
           [scalar-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "scalar"
               CompilerSemanticRecordRole.Definition
               0)]
           [closure-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "closure"
               CompilerSemanticRecordRole.Definition
               0)]
           [alias-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "alias"
               CompilerSemanticRecordRole.Definition
               0)]
           [outer-callback-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "callback"
               CompilerSemanticRecordRole.Definition
               0)]
           [inner-callback-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "callback"
               CompilerSemanticRecordRole.Definition
               1)]
           [resource-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "resource"
               CompilerSemanticRecordRole.Definition
               0)]
           [enum-variant-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "SemanticEmpty"
               CompilerSemanticRecordRole.Definition
               0)]
           [enum-item-definition-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "item"
               CompilerSemanticRecordRole.Definition
               0)]
@@ -7633,15 +9147,15 @@
                   (& first)
                   enum-item-use-index)]
               (match (compiler-check-source-index-with-roots
-                path
-                source
+                (owned_view.compiler-owned-shared-view path)
+                (owned_view.compiler-owned-shared-view source)
                 (svec.new))
                 [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
                   (let
                     [second-alias-index : i64
                       (compiler-semantic-source-index-find-name-occurrence
                         (& second)
-                        path
+                        (owned_view.compiler-owned-shared-view path)
                         "alias"
                         CompilerSemanticRecordRole.Definition
                         0)]
@@ -7724,33 +9238,54 @@
   [source : String]) : bool
   (let
     [resource-body : i64
-      (compiler-semantic-test-source-find-from source "(+ item resource)" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "(+ item resource)"
+        0)]
     [resource-init : i64
-      (compiler-semantic-test-source-find-from source "[resource item" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "[resource item"
+        0)]
     [resource-sibling : i64
-      (compiler-semantic-test-source-find-from source "[ScopeNone 0]" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "[ScopeNone 0]"
+        0)]
     [foreach-body : i64
-      (compiler-semantic-test-source-find-from source "[i : i64 0 n]" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "[i : i64 0 n]"
+        0)]
     [scan-value : i64
-      (compiler-semantic-test-source-find-from source "\n      k\n" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "\n      k\n"
+        0)]
     [scan-body : i64
-      (compiler-semantic-test-source-find-from source "_seen-prefix" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        "_seen-prefix"
+        0)]
     [reduce-value : i64
-      (compiler-semantic-test-source-find-from source " 0 j)))" 0)]
+      (compiler-semantic-test-source-find-from
+        (owned_view.compiler-owned-shared-view source)
+        " 0 j)))"
+        0)]
     [inner-shadow : i64
       (compiler-semantic-test-source-find-from
-        source
+        (owned_view.compiler-owned-shared-view source)
         "                        shadow))))"
         0)]
     [sibling-shadow : i64
       (compiler-semantic-test-source-find-from
-        source
+        (owned_view.compiler-owned-shared-view source)
         "[shadow : i64 (+ shadow 20)] shadow"
         0)]
     [shadow-definition-index : i64
       (compiler-semantic-source-index-find-name-occurrence
         index
-        path
+        (owned_view.compiler-owned-shared-view path)
         "shadow"
         CompilerSemanticRecordRole.Definition
         10)]
@@ -7768,33 +9303,51 @@
       false
       (let
         [resource-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path resource-body)]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            resource-body)]
         [resource-init-query : CompilerSemanticVisibleBindingQuery
           (compiler-semantic-test-query-at
             index
-            path
+            (owned_view.compiler-owned-shared-view path)
             (+ resource-init (string.string-length "[resource ")))]
         [resource-sibling-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path resource-sibling)]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            resource-sibling)]
         [foreach-query : CompilerSemanticVisibleBindingQuery
           (compiler-semantic-test-query-at
             index
-            path
+            (owned_view.compiler-owned-shared-view path)
             (+
               foreach-body
               (string.string-length "[i : i64 0 n]) (let [_seen : i64 ")))]
         [scan-value-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path (+ scan-value 7))]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            (+ scan-value 7))]
         [scan-body-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path scan-body)]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            scan-body)]
         [reduce-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path (+ reduce-value 3))]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            (+ reduce-value 3))]
         [inner-query : CompilerSemanticVisibleBindingQuery
-          (compiler-semantic-test-query-at index path (+ inner-shadow 24))]
+          (compiler-semantic-test-query-at
+            index
+            (owned_view.compiler-owned-shared-view path)
+            (+ inner-shadow 24))]
         [sibling-init-query : CompilerSemanticVisibleBindingQuery
           (compiler-semantic-test-query-at
             index
-            path
+            (owned_view.compiler-owned-shared-view path)
             (+ sibling-shadow (string.string-length "[shadow : i64 (+ ")))]
         [sibling-body-query : CompilerSemanticVisibleBindingQuery
           (compiler-semantic-test-query-at
@@ -7962,7 +9515,10 @@
 
 (define (main) : i64
   (+ (deep 1) (pattern-resource (ScopeSome 2)) (macro-use 3) (spmd-scope 4)))"]
-    (match (compiler-check-source-index-with-roots path source (svec.new))
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
         (let
           [shadow-chain-ok : bool true]
@@ -7972,7 +9528,7 @@
               (begin
                 (if (compiler-semantic-source-index-name-symbol-match?
                   (& index)
-                  path
+                  (owned_view.compiler-owned-shared-view path)
                   "shadow"
                   shadow-occurrence
                   shadow-occurrence)
@@ -7988,19 +9544,19 @@
                   ;; both siblings have completed.
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "shadow"
                     0
                     11)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "shadow"
                     11
                     12)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "shadow"
                     0
                     13)
@@ -8008,20 +9564,20 @@
                   ;; stable local identities.
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "value"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "value"
                     1
                     1)
                   (>=
                     (compiler-semantic-source-index-find-name-occurrence
                       (& index)
-                      path
+                      (owned_view.compiler-owned-shared-view path)
                       "macro-local"
                       CompilerSemanticRecordRole.Definition
                       0)
@@ -8030,37 +9586,37 @@
                   ;; indices all extend only their lexical child snapshots.
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "item"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "resource"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "i"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "j"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "k"
                     0
                     0)
                   (compiler-semantic-source-index-name-symbol-match?
                     (& index)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "prefix"
                     0
                     0)
@@ -8092,25 +9648,25 @@
 (define (later [same : i64]) : i64 (+ same good))"]
     [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
     (match (compiler-check-source-index-with-roots
-      path
-      invalid-source
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view invalid-source)
       (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Partial diagnostics partial)
         (let
           [partial-good-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "good")]
           [partial-broken-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "broken")]
           [partial-later-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "later")]
           [partial-good : CompilerSemanticRecord
             (compiler-semantic-source-index-get (& partial) partial-good-index)]
@@ -8123,14 +9679,14 @@
           [partial-same-param-index : i64
             (compiler-semantic-source-index-find-record
               (& partial)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "same"
               CompilerSemanticRecordRole.Definition
               0)]
           [partial-same-local-index : i64
             (compiler-semantic-source-index-find-record
               (& partial)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "same"
               CompilerSemanticRecordRole.Definition
               1)]
@@ -8143,7 +9699,7 @@
               (& partial)
               partial-same-local-index)]
           (match (compiler-check-source-index-with-roots
-            path
+            (owned_view.compiler-owned-shared-view path)
             valid-source
             (svec.new))
             [(ResultCompilerCheckWithSemanticIndex.Ok _ complete)
@@ -8151,17 +9707,17 @@
                 [complete-good-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& complete)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "good")]
                 [complete-broken-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& complete)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "broken")]
                 [complete-later-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& complete)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "later")]
                 [complete-good : CompilerSemanticRecord
                   (compiler-semantic-source-index-get
@@ -8184,7 +9740,7 @@
                     (compiler-semantic-source-index-complete? (& complete))
                     (match (compiler-semantic-source-index-query
                       (& partial)
-                      path
+                      (owned_view.compiler-owned-shared-view path)
                       0)
                       [(CompilerSemanticMaybeVisibleBindingQuery.None) true]
                       [_ false])
@@ -8194,16 +9750,16 @@
                     (>= partial-same-param-index 0)
                     (>= partial-same-local-index 0)
                     (compiler-semantic-record-span-text-eq?
-                      invalid-source
-                      partial-good
+                      (owned_view.compiler-owned-shared-view invalid-source)
+                      (owned_view.compiler-owned-shared-view partial-good)
                       "good")
                     (compiler-semantic-record-span-text-eq?
-                      invalid-source
-                      partial-broken
+                      (owned_view.compiler-owned-shared-view invalid-source)
+                      (owned_view.compiler-owned-shared-view partial-broken)
                       "broken")
                     (compiler-semantic-record-span-text-eq?
                       invalid-source
-                      partial-later
+                      (owned_view.compiler-owned-shared-view partial-later)
                       "later")
                     (not
                       (compiler-semantic-symbol-id-eq?
@@ -8211,13 +9767,13 @@
                         partial-same-local.symbol))
                     (compiler-semantic-source-index-name-symbol-match?
                       (& partial)
-                      path
+                      (owned_view.compiler-owned-shared-view path)
                       "same"
                       0
                       0)
                     (compiler-semantic-source-index-name-symbol-match?
                       (& partial)
-                      path
+                      (owned_view.compiler-owned-shared-view path)
                       "same"
                       1
                       1)
@@ -8265,34 +9821,34 @@
 (define (uses-anchor) : i64 (+ partial-anchor 1))
 (define unfinished : i64 (+ partial-anchor 2))"]
     (match (compiler-check-source-index-with-roots
-      path
-      invalid-source
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view invalid-source)
       (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Partial diagnostics partial)
         (let
           [partial-first-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "partial-anchor")]
           [partial-use-index : i64
             (compiler-semantic-source-index-find-record
               (& partial)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "partial-anchor"
               CompilerSemanticRecordRole.Use
               -1)]
           [partial-unfinished-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "unfinished")]
           [partial-first : CompilerSemanticRecord
             (compiler-semantic-source-index-get (& partial) partial-first-index)]
           [partial-use : CompilerSemanticRecord
             (compiler-semantic-source-index-get (& partial) partial-use-index)]
           (match (compiler-check-source-index-with-roots
-            path
+            (owned_view.compiler-owned-shared-view path)
             valid-source
             (svec.new))
             [(ResultCompilerCheckWithSemanticIndex.Ok _ complete)
@@ -8316,12 +9872,12 @@
                     (>= partial-use-index 0)
                     (< partial-unfinished-index 0)
                     (compiler-semantic-record-span-text-eq?
-                      invalid-source
-                      partial-first
+                      (owned_view.compiler-owned-shared-view invalid-source)
+                      (owned_view.compiler-owned-shared-view partial-first)
                       "partial-anchor")
                     (compiler-semantic-record-span-text-eq?
-                      invalid-source
-                      partial-use
+                      (owned_view.compiler-owned-shared-view invalid-source)
+                      (owned_view.compiler-owned-shared-view partial-use)
                       "partial-anchor")
                     (compiler-semantic-symbol-id-eq?
                       partial-first.symbol
@@ -8353,14 +9909,17 @@
     [path : String "src/tests/semantic_index_partial_diagnostics.tl"]
     [source : String "(define)
 (define later : i64 missing-value)"]
-    (match (compiler-check-source-index-with-roots path source (svec.new))
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Partial diagnostics partial)
         (let
           [diagnostic-list : cdiag.CompilerDiagnosticList (deref diagnostics)]
           [later-index : i64
             (compiler-semantic-source-index-find-definition
               (& partial)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "later")]
           [missing-index : i64
             (compiler-semantic-source-index-find-record
@@ -8373,14 +9932,14 @@
             (compiler-semantic-source-index-get (& partial) later-index)]
           [ok : bool
             (and
-              (= (cdiag.compiler-diagnostic-list-count diagnostic-list) 2)
+              (= diagnostic-list.len 2)
               (string.eq
                 (cdiag.compiler-diagnostic-message
-                  (cdiag.compiler-diagnostic-list-get diagnostic-list 0))
+                  (cdiag.compiler-diagnostic-list-ref (& diagnostic-list) 0))
                 "parse: malformed define")
               (string.eq
                 (cdiag.compiler-diagnostic-message
-                  (cdiag.compiler-diagnostic-list-get diagnostic-list 1))
+                  (cdiag.compiler-diagnostic-list-ref (& diagnostic-list) 1))
                 "typecheck: unbound name missing-value")
               (>= later-index 0)
               (< missing-index 0)
@@ -8399,7 +9958,10 @@
   [source : String]
   [expected-name : String]
   [expected-present : bool]) : bool
-  (match (compiler-check-source-index-with-roots path source (svec.new))
+  (match (compiler-check-source-index-with-roots
+    (owned_view.compiler-owned-shared-view path)
+    source
+    (svec.new))
     [(ResultCompilerCheckWithSemanticIndex.Partial diagnostics partial)
       (let
         [record-index : i64
@@ -8429,13 +9991,13 @@
     [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
     [before-first : bool
       (compiler-check-semantic-index-partial-edge-result-ok?
-        path
+        (owned_view.compiler-owned-shared-view path)
         ")\n(define later : i64 1)"
         "later"
         true)]
     [bad-import : bool
       (compiler-check-semantic-index-partial-edge-result-ok?
-        path
+        (owned_view.compiler-owned-shared-view path)
         "(import semantic.index.definitely_missing as missing)\n(define local : i64 1)"
         "local"
         false)]
@@ -8445,7 +10007,7 @@
       (while (< iteration 8)
         (begin
           (if (compiler-check-semantic-index-partial-edge-result-ok?
-            path
+            (owned_view.compiler-owned-shared-view path)
             "(define current : i64 true)"
             "current"
             true)

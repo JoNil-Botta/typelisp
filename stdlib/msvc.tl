@@ -16,6 +16,7 @@
 ;#   (msvc.find-tool (& target) (& tool)))
 ;# ```
 (import stdlib.env)
+(import stdlib.comptime)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.fs)
@@ -23,6 +24,27 @@
 (import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.vector)
+
+;; Internal shallow reads used while ordinary by-value parameters own values.
+(defmacro (msvc-shared-view [place : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
+
+(defmacro (msvc-array-element-shared-view [items : Expr] [index : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-offset (array-data ,items) ,index))))
+
+(defmacro (msvc-box-shared-view [value : Expr]) : Expr
+  (let
+    [inner-ty : comptime.Expr
+      (comptime.box-element-type (comptime.expr-type value))]
+    `(let
+      [address : i64
+        (unsafe
+          (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))))]
+      (unsafe
+        (ptr-read (int->ptr (cast address : u64) : (Ptr ,inner-ty)))))))
+
 (import (vector.vector String) as svec)
 
 ;: Resolved MSVC tool: executable path plus the command-environment overrides.
@@ -74,24 +96,27 @@
   (MsvcNoSdk)
   (MsvcSomeSdk MsvcSdk))
 
+(define (msvc-string-shared-view [value : (& value str)]) : String
+  (__tl-compiler-owned-shared-view-dyn-ref-as value String))
+
 ;: Return the resolved tool executable path.
-(define (tool-executable [tool : MsvcTool]) : String
-  tool.executable)
+(define (tool-executable [tool : (& tool MsvcTool)]) : String
+  (msvc-string-shared-view tool.executable))
 
 ;: Return the PATH override for invoking the tool.
-(define (tool-path [tool : MsvcTool]) : String
-  tool.path)
+(define (tool-path [tool : (& tool MsvcTool)]) : String
+  (msvc-string-shared-view tool.path))
 
 ;: Return the LIB override for invoking the tool.
-(define (tool-lib [tool : MsvcTool]) : String
-  tool.lib)
+(define (tool-lib [tool : (& tool MsvcTool)]) : String
+  (msvc-string-shared-view tool.lib))
 
 ;: Return the INCLUDE override for invoking the tool.
-(define (tool-include [tool : MsvcTool]) : String
-  tool.include)
+(define (tool-include [tool : (& tool MsvcTool)]) : String
+  (msvc-string-shared-view tool.include))
 
 ;: Return process environment overrides for invoking the tool.
-(define (tool-process-env [tool : MsvcTool]) : process.ProcessEnvList
+(define (tool-process-env [tool : (& tool MsvcTool)]) : process.ProcessEnvList
   (process.env-cons
     "PATH"
     (tool-path tool)
@@ -101,7 +126,7 @@
       (process.env-cons "INCLUDE" (tool-include tool) (process.env-empty)))))
 
 ;: Return vector-backed process environment overrides for invoking the tool.
-(define (tool-process-env-vec [tool : MsvcTool]) : process.ProcessEnvVec
+(define (tool-process-env-vec [tool : (& tool MsvcTool)]) : process.ProcessEnvVec
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
     (begin
@@ -183,9 +208,13 @@
         (or (< left-index left-len) (< right-index right-len)))
         (let
           [left-segment : MsvcVersionCursor
-            (stdlib.msvc.version-read-segment left left-index)]
+            (stdlib.msvc.version-read-segment
+              (msvc-shared-view left)
+              left-index)]
           [right-segment : MsvcVersionCursor
-            (stdlib.msvc.version-read-segment right right-index)]
+            (stdlib.msvc.version-read-segment
+              (msvc-shared-view right)
+              right-index)]
           [left-value : i64 left-segment.value]
           [right-value : i64 right-segment.value]
           (if (> left-value right-value)
@@ -195,8 +224,14 @@
             (if (< left-value right-value)
               (set! done true)
               (begin
-                (set! left-index (version-next-index left left-segment.next))
-                (set! right-index (version-next-index right right-segment.next)))))))
+                (set!
+                  left-index
+                  (version-next-index (msvc-shared-view left) left-segment.next))
+                (set!
+                  right-index
+                  (version-next-index
+                    (msvc-shared-view right)
+                    right-segment.next)))))))
       greater)))
 
 ;: Return true when `left` is a newer dotted numeric version than `right`.
@@ -259,8 +294,9 @@
   (if (>= index (svec.len dirs))
     (MsvcNoString)
     (let
-      [candidate : String (path-join (svec.get dirs index "") tool)]
-      (if (path-exists-owned? candidate)
+      [candidate : String
+        (path-join (svec.get dirs index "") (msvc-shared-view tool))]
+      (if (path-exists-owned? (msvc-shared-view candidate))
         (MsvcSomeString candidate)
         (search-dirs-vec-owned-from dirs (+ index 1) tool)))))
 
@@ -493,14 +529,26 @@
     [pfx : String (program-files-x86)]
     [items : svec.Vec (svec.with-capacity 8)]
     (begin
-      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2022" "Enterprise"))
-      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2022" "Professional"))
-      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2022" "Community"))
-      (svec.push-ref! (&mut items) (vs-toolset-parent pfx "2022" "BuildTools"))
-      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2019" "Enterprise"))
-      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2019" "Professional"))
-      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2019" "Community"))
-      (svec.push-ref! (&mut items) (vs-toolset-parent pfx "2019" "BuildTools"))
+      (svec.push
+        (&mut items)
+        (vs-toolset-parent (msvc-shared-view pf) "2022" "Enterprise"))
+      (svec.push
+        (&mut items)
+        (vs-toolset-parent (msvc-shared-view pf) "2022" "Professional"))
+      (svec.push
+        (&mut items)
+        (vs-toolset-parent (msvc-shared-view pf) "2022" "Community"))
+      (svec.push
+        (&mut items)
+        (vs-toolset-parent (msvc-shared-view pfx) "2022" "BuildTools"))
+      (svec.push
+        (&mut items)
+        (vs-toolset-parent (msvc-shared-view pf) "2019" "Enterprise"))
+      (svec.push
+        (&mut items)
+        (vs-toolset-parent (msvc-shared-view pf) "2019" "Professional"))
+      (svec.push (&mut items) (vs-toolset-parent pf "2019" "Community"))
+      (svec.push (&mut items) (vs-toolset-parent pfx "2019" "BuildTools"))
       items)))
 
 ;: Return the bin directory for host x64 -> target x64 tools.
@@ -526,12 +574,18 @@
       (MsvcNoToolset))
     (let
       [version : String (fs.string-vector-get (& entries) index "")]
-      [toolset-root : String (path-join parent version)]
-      [tool-path : String (toolset-tool-path toolset-root tool)]
+      [toolset-root : String
+        (path-join (msvc-shared-view parent) (msvc-shared-view version))]
+      [tool-path : String
+        (toolset-tool-path
+          (msvc-shared-view toolset-root)
+          (msvc-shared-view tool))]
       [usable : bool (path-exists-owned? tool-path)]
       (if (if usable
         (if has-best
-          (version-greater-owned? version best-version)
+          (version-greater-owned?
+            (msvc-shared-view version)
+            (msvc-shared-view best-version))
           true)
         false)
         (toolset-scan-entries
@@ -582,21 +636,24 @@
   [has-best : bool]) : MsvcMaybeToolset
   (if (>= index (svec.len parents))
     (if has-best
-      (MsvcSomeToolset (MsvcToolset best-root best-version))
+      (MsvcSomeToolset (MsvcToolset best-root (msvc-shared-view best-version)))
       (MsvcNoToolset))
     (let
       [parent : String (svec.get parents index "")]
-      (match (find-toolset-in-parent parent tool)
+      (match (find-toolset-in-parent parent (msvc-shared-view tool))
         [(MsvcNoToolset)
           (find-toolset-parents
             parents
             (+ index 1)
             tool
             best-root
-            best-version
+            (msvc-shared-view best-version)
             has-best)]
         [(MsvcSomeToolset candidate)
-          (if (toolset-candidate-newer? candidate best-version has-best)
+          (if (toolset-candidate-newer?
+            (msvc-shared-view candidate)
+            (msvc-shared-view best-version)
+            has-best)
             (find-toolset-parents
               parents
               (+ index 1)
@@ -609,7 +666,7 @@
               (+ index 1)
               tool
               best-root
-              best-version
+              (msvc-shared-view best-version)
               has-best))]))))
 
 ;: Find the newest installed VC toolset containing `tool`.
@@ -652,9 +709,15 @@
 ;: Return true when a Windows SDK version has the pieces needed by link.exe.
 (define (sdk-version-usable? [sdk-root : String] [version : String]) : bool
   (let
-    [lib-root : String (stdlib.msvc.sdk-version-root sdk-root version)]
+    [lib-root : String
+      (stdlib.msvc.sdk-version-root
+        (msvc-shared-view sdk-root)
+        (msvc-shared-view version))]
     [kernel32 : String
-      (stdlib.msvc.path-join3 lib-root "um/x64" "kernel32.lib")]
+      (stdlib.msvc.path-join3
+        (msvc-shared-view lib-root)
+        "um/x64"
+        "kernel32.lib")]
     [ucrt : String (stdlib.msvc.path-join3 lib-root "ucrt/x64" "ucrt.lib")]
     [include-root : String
       (stdlib.msvc.path-join (stdlib.msvc.path-join sdk-root "Include") version)]
@@ -662,8 +725,9 @@
       (stdlib.msvc.path-exists-owned? kernel32)
       (stdlib.msvc.path-exists-owned? ucrt)
       (stdlib.msvc.dir-exists-owned?
-        (stdlib.msvc.path-join include-root "shared"))
-      (stdlib.msvc.dir-exists-owned? (stdlib.msvc.path-join include-root "um"))
+        (stdlib.msvc.path-join (msvc-shared-view include-root) "shared"))
+      (stdlib.msvc.dir-exists-owned?
+        (stdlib.msvc.path-join (msvc-shared-view include-root) "um"))
       (stdlib.msvc.dir-exists-owned?
         (stdlib.msvc.path-join include-root "ucrt")))))
 
@@ -680,10 +744,15 @@
       (MsvcNoSdk))
     (let
       [version : String (fs.string-vector-get (& entries) index "")]
-      [usable : bool (sdk-version-usable? sdk-root version)]
+      [usable : bool
+        (sdk-version-usable?
+          (msvc-shared-view sdk-root)
+          (msvc-shared-view version))]
       (if (if usable
         (if has-best
-          (version-greater-owned? version best-version)
+          (version-greater-owned?
+            (msvc-shared-view version)
+            (msvc-shared-view best-version))
           true)
         false)
         (sdk-scan-entries entries (+ index 1) sdk-root version true)
@@ -692,7 +761,7 @@
 ;: Return the newest usable SDK under one root, if any.
 (define (find-sdk-in-root [sdk-root : String]) : MsvcMaybeSdk
   (let
-    [lib-dir : String (path-join sdk-root "Lib")]
+    [lib-dir : String (path-join (msvc-shared-view sdk-root) "Lib")]
     (match (fs.try-read-dir-vec (& lib-dir))
       [(fs.OkIoStringVector entries)
         (sdk-scan-entries entries 0 sdk-root "" false)]
@@ -724,7 +793,10 @@
         [(MsvcNoSdk)
           (find-sdk-roots roots (+ index 1) best-root best-version has-best)]
         [(MsvcSomeSdk candidate)
-          (if (sdk-candidate-newer? candidate best-version has-best)
+          (if (sdk-candidate-newer?
+            (msvc-shared-view candidate)
+            (msvc-shared-view best-version)
+            has-best)
             (find-sdk-roots
               roots
               (+ index 1)
@@ -743,13 +815,16 @@
 (define (auto-result [toolset : MsvcToolset] [sdk : MsvcSdk] [tool : String]) : MsvcTool
   (let
     [toolset-root : String toolset.root]
-    [bin-dir : String (toolset-bin-dir toolset-root)]
-    [toolset-lib : String (path-join3 toolset-root "lib" "x64")]
-    [toolset-include : String (path-join toolset-root "include")]
-    [sdk-um-lib : String (sdk-um-lib-dir sdk)]
-    [sdk-ucrt-lib : String (sdk-ucrt-lib-dir sdk)]
-    [sdk-shared-include : String (sdk-include-dir sdk "shared")]
-    [sdk-um-include : String (sdk-include-dir sdk "um")]
+    [bin-dir : String (toolset-bin-dir (msvc-shared-view toolset-root))]
+    [toolset-lib : String
+      (path-join3 (msvc-shared-view toolset-root) "lib" "x64")]
+    [toolset-include : String
+      (path-join (msvc-shared-view toolset-root) "include")]
+    [sdk-um-lib : String (sdk-um-lib-dir (msvc-shared-view sdk))]
+    [sdk-ucrt-lib : String (sdk-ucrt-lib-dir (msvc-shared-view sdk))]
+    [sdk-shared-include : String
+      (sdk-include-dir (msvc-shared-view sdk) "shared")]
+    [sdk-um-include : String (sdk-include-dir (msvc-shared-view sdk) "um")]
     [sdk-ucrt-include : String (sdk-include-dir sdk "ucrt")]
     (MsvcTool
       (toolset-tool-path toolset-root tool)
@@ -770,7 +845,7 @@
 (define (find-tool-auto [tool : (& tool str)]) : ResultMsvcTool
   (let
     [tool-text : String (string.copy tool)]
-    (match (find-toolset tool-text)
+    (match (find-toolset (msvc-shared-view tool-text))
       [(MsvcNoToolset)
         (ErrMsvcTool
           (MsvcToolNotFound
@@ -850,12 +925,12 @@
 (define (test-mkdir-toolset-bin [toolset-root : String]) : String
   (let
     [bin-root : String (path-join toolset-root "bin")]
-    [host-root : String (path-join bin-root "Hostx64")]
-    [target-root : String (path-join host-root "x64")]
+    [host-root : String (path-join (msvc-shared-view bin-root) "Hostx64")]
+    [target-root : String (path-join (msvc-shared-view host-root) "x64")]
     (begin
       (test-mkdir bin-root)
       (test-mkdir host-root)
-      (test-mkdir target-root)
+      (test-mkdir (msvc-shared-view target-root))
       target-root)))
 
 ;: Inline test helper to create one fake MSVC toolset version.
@@ -866,9 +941,10 @@
   (let
     [toolset-root : String (path-join parent version)]
     (begin
-      (test-mkdir toolset-root)
+      (test-mkdir (msvc-shared-view toolset-root))
       (let
-        [target-root : String (test-mkdir-toolset-bin toolset-root)]
+        [target-root : String
+          (test-mkdir-toolset-bin (msvc-shared-view toolset-root))]
         (if with-tool
           (test-write (path-join target-root "link.exe") "fake")
           unit))
@@ -877,37 +953,42 @@
 ;: Inline test assertion for fake toolset scanning.
 (define (test-assert-toolset-scan [parent : String]) : unit
   (let
-    [old-root : String (test-make-toolset-version parent "14.10.0" true)]
-    [new-root : String (test-make-toolset-version parent "14.20.0" true)]
-    [_ignored-root : String (test-make-toolset-version parent "14.99.0" false)]
-    (match (find-toolset-in-parent parent "link.exe")
+    [old-root : String
+      (test-make-toolset-version (msvc-shared-view parent) "14.10.0" true)]
+    [new-root : String
+      (test-make-toolset-version (msvc-shared-view parent) "14.20.0" true)]
+    [_ignored-root : String
+      (test-make-toolset-version (msvc-shared-view parent) "14.99.0" false)]
+    (match (find-toolset-in-parent (msvc-shared-view parent) "link.exe")
       [(MsvcSomeToolset toolset)
         (begin
           (test-assert-string-eq toolset.version "14.20.0")
-          (test-assert-string-eq toolset.root new-root)
+          (test-assert-string-eq toolset.root (msvc-shared-view new-root))
           (test-assert (not (string.eq old-root new-root))))]
       [(MsvcNoToolset) (test-fail)])))
 
 ;: Inline test helper to create fake SDK directory roots.
 (define (test-mkdir-sdk-version-roots [sdk-root : String] [version : String]) : unit
   (let
-    [lib-root : String (path-join sdk-root "Lib")]
+    [lib-root : String (path-join (msvc-shared-view sdk-root) "Lib")]
     [include-root : String (path-join sdk-root "Include")]
-    [lib-version : String (path-join lib-root version)]
-    [include-version : String (path-join include-root version)]
-    [um-root : String (path-join lib-version "um")]
-    [ucrt-root : String (path-join lib-version "ucrt")]
+    [lib-version : String
+      (path-join (msvc-shared-view lib-root) (msvc-shared-view version))]
+    [include-version : String
+      (path-join (msvc-shared-view include-root) version)]
+    [um-root : String (path-join (msvc-shared-view lib-version) "um")]
+    [ucrt-root : String (path-join (msvc-shared-view lib-version) "ucrt")]
     (begin
       (test-mkdir lib-root)
       (test-mkdir include-root)
       (test-mkdir lib-version)
-      (test-mkdir include-version)
-      (test-mkdir um-root)
+      (test-mkdir (msvc-shared-view include-version))
+      (test-mkdir (msvc-shared-view um-root))
       (test-mkdir (path-join um-root "x64"))
-      (test-mkdir ucrt-root)
+      (test-mkdir (msvc-shared-view ucrt-root))
       (test-mkdir (path-join ucrt-root "x64"))
-      (test-mkdir (path-join include-version "shared"))
-      (test-mkdir (path-join include-version "um"))
+      (test-mkdir (path-join (msvc-shared-view include-version) "shared"))
+      (test-mkdir (path-join (msvc-shared-view include-version) "um"))
       (test-mkdir (path-join include-version "ucrt")))))
 
 ;: Inline test helper to create one fake SDK version.
@@ -916,13 +997,18 @@
   [version : String]
   [usable : bool]) : unit
   (begin
-    (test-mkdir-sdk-version-roots sdk-root version)
+    (test-mkdir-sdk-version-roots
+      (msvc-shared-view sdk-root)
+      (msvc-shared-view version))
     (if usable
       (let
-        [lib-version : String (path-join (path-join sdk-root "Lib") version)]
+        [lib-version : String
+          (path-join (path-join sdk-root "Lib") (msvc-shared-view version))]
         (begin
           (test-write
-            (path-join (path-join lib-version "um/x64") "kernel32.lib")
+            (path-join
+              (path-join (msvc-shared-view lib-version) "um/x64")
+              "kernel32.lib")
             "kernel32")
           (test-write
             (path-join (path-join lib-version "ucrt/x64") "ucrt.lib")
@@ -932,10 +1018,10 @@
 ;: Inline test assertion for fake SDK scanning.
 (define (test-assert-sdk-scan [sdk-root : String]) : unit
   (begin
-    (test-make-sdk-version sdk-root "10.0.1" true)
-    (test-make-sdk-version sdk-root "10.0.2" true)
-    (test-make-sdk-version sdk-root "10.0.9" false)
-    (match (find-sdk-in-root sdk-root)
+    (test-make-sdk-version (msvc-shared-view sdk-root) "10.0.1" true)
+    (test-make-sdk-version (msvc-shared-view sdk-root) "10.0.2" true)
+    (test-make-sdk-version (msvc-shared-view sdk-root) "10.0.9" false)
+    (match (find-sdk-in-root (msvc-shared-view sdk-root))
       [(MsvcSomeSdk sdk)
         (begin
           (test-assert-string-eq sdk.root sdk-root)
@@ -955,7 +1041,7 @@
     [root : String (test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
     [toolset-parent : String (path-join root "ToolsMSVC")]
     (begin
-      (test-mkdir toolset-parent)
+      (test-mkdir (msvc-shared-view toolset-parent))
       (test-assert-toolset-scan toolset-parent))))
 
 ;: Inline test fixture: create fake toolset versions without scanning them.
@@ -965,9 +1051,15 @@
     [root : String (test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
     [toolset-parent : String (path-join root "ToolsMSVC")]
     (begin
-      (test-mkdir toolset-parent)
-      (test-make-toolset-version toolset-parent "14.10.0" true)
-      (test-make-toolset-version toolset-parent "14.20.0" true)
+      (test-mkdir (msvc-shared-view toolset-parent))
+      (test-make-toolset-version
+        (msvc-shared-view toolset-parent)
+        "14.10.0"
+        true)
+      (test-make-toolset-version
+        (msvc-shared-view toolset-parent)
+        "14.20.0"
+        true)
       (test-make-toolset-version toolset-parent "14.99.0" false)
       unit)))
 
@@ -978,19 +1070,30 @@
     [root : String (test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
     [toolset-parent : String (path-join root "ToolsMSVC")]
     (begin
-      (test-mkdir toolset-parent)
+      (test-mkdir (msvc-shared-view toolset-parent))
       (let
         [old-root : String
-          (test-make-toolset-version toolset-parent "14.10.0" true)]
+          (test-make-toolset-version
+            (msvc-shared-view toolset-parent)
+            "14.10.0"
+            true)]
         [new-root : String
-          (test-make-toolset-version toolset-parent "14.20.0" true)]
+          (test-make-toolset-version
+            (msvc-shared-view toolset-parent)
+            "14.20.0"
+            true)]
         [_ignored-root : String
-          (test-make-toolset-version toolset-parent "14.99.0" false)]
-        (match (find-toolset-in-parent toolset-parent "link.exe")
+          (test-make-toolset-version
+            (msvc-shared-view toolset-parent)
+            "14.99.0"
+            false)]
+        (match (find-toolset-in-parent
+          (msvc-shared-view toolset-parent)
+          "link.exe")
           [(MsvcSomeToolset toolset)
             (begin
               (test-assert-string-eq toolset.version "14.20.0")
-              (test-assert-string-eq toolset.root new-root)
+              (test-assert-string-eq toolset.root (msvc-shared-view new-root))
               (test-assert (not (string.eq old-root new-root))))]
           [(MsvcNoToolset) (test-fail)])))))
 
@@ -1001,10 +1104,19 @@
     [root : String (test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
     [toolset-parent : String (path-join root "ToolsMSVC")]
     (begin
-      (test-mkdir toolset-parent)
-      (test-make-toolset-version toolset-parent "14.10.0" true)
-      (test-make-toolset-version toolset-parent "14.20.0" true)
-      (test-make-toolset-version toolset-parent "14.99.0" false)
+      (test-mkdir (msvc-shared-view toolset-parent))
+      (test-make-toolset-version
+        (msvc-shared-view toolset-parent)
+        "14.10.0"
+        true)
+      (test-make-toolset-version
+        (msvc-shared-view toolset-parent)
+        "14.20.0"
+        true)
+      (test-make-toolset-version
+        (msvc-shared-view toolset-parent)
+        "14.99.0"
+        false)
       (match (fs.try-read-dir-vec (& toolset-parent))
         [(fs.OkIoStringVector entries)
           (begin
@@ -1020,20 +1132,29 @@
     [root : String (test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
     [toolset-parent : String (path-join root "ToolsMSVC")]
     (begin
-      (test-mkdir toolset-parent)
+      (test-mkdir (msvc-shared-view toolset-parent))
       (let
         [old-root : String
-          (test-make-toolset-version toolset-parent "14.10.0" true)]
+          (test-make-toolset-version
+            (msvc-shared-view toolset-parent)
+            "14.10.0"
+            true)]
         [new-root : String
-          (test-make-toolset-version toolset-parent "14.20.0" true)]
+          (test-make-toolset-version
+            (msvc-shared-view toolset-parent)
+            "14.20.0"
+            true)]
         [_ignored-root : String
-          (test-make-toolset-version toolset-parent "14.99.0" false)]
+          (test-make-toolset-version
+            (msvc-shared-view toolset-parent)
+            "14.99.0"
+            false)]
         (match (fs.try-read-dir-vec (& toolset-parent))
           [(fs.OkIoStringVector entries)
             (match (toolset-scan-entries
               entries
               0
-              toolset-parent
+              (msvc-shared-view toolset-parent)
               "link.exe"
               ""
               ""
@@ -1041,7 +1162,9 @@
               [(MsvcSomeToolset toolset)
                 (begin
                   (test-assert-string-eq toolset.version "14.20.0")
-                  (test-assert-string-eq toolset.root new-root)
+                  (test-assert-string-eq
+                    toolset.root
+                    (msvc-shared-view new-root))
                   (test-assert (not (string.eq old-root new-root))))]
               [(MsvcNoToolset) (test-fail)])]
           [(fs.ErrIoStringVector _) (test-fail)])))))
@@ -1053,7 +1176,7 @@
     [root : String (test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
     [sdk-root : String (path-join root "WindowsKits10")]
     (begin
-      (test-mkdir sdk-root)
+      (test-mkdir (msvc-shared-view sdk-root))
       (test-assert-sdk-scan sdk-root))))
 
 ;: Inline test entry point for the MSVC discovery API.

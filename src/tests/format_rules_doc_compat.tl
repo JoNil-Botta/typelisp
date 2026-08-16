@@ -5,6 +5,7 @@
 (import format_rules as rules)
 (import format_doc as fmt_doc)
 (import stdlib.string)
+(import compiler_owned_view as owned_view)
 
 (define (format-rules-gap) : fmt_doc.Doc
   (fmt_doc.doc-append (fmt_doc.doc-hard-line) (fmt_doc.doc-hard-line)))
@@ -12,7 +13,8 @@
 (define (format-rules-forms-separator
   [previous : cst.FormatCst]
   [node : cst.FormatCst]) : fmt_doc.Doc
-  (if (rules.format-rules-node-comment? previous)
+  (if (rules.format-rules-node-comment?
+    (owned_view.compiler-owned-shared-view previous))
     (fmt_doc.doc-hard-line)
     (if (rules.format-rules-adjacent-top-forms? previous node)
       (fmt_doc.doc-hard-line)
@@ -42,7 +44,8 @@
       (format-rules-colon-pair-doc colon typ))))
 
 (define (format-rules-inline-tail-doc [items : cst.FormatCstList]) : fmt_doc.Doc
-  (match (cst.fmt-cst-list-step items)
+  (match (cst.fmt-cst-list-step
+    (owned_view.compiler-owned-shared-view items))
     [(cst.FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(cst.FormatCstListStep.Item node rest)
       (fmt_doc.doc-append
@@ -53,10 +56,13 @@
   (match (cst.fmt-cst-list-step items)
     [(cst.FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(cst.FormatCstListStep.Item node tail)
-      (if (rules.format-rules-node-colon? node)
-        (match (cst.fmt-cst-list-step tail)
+      (if (rules.format-rules-node-colon?
+        (owned_view.compiler-owned-shared-view node))
+        (match (cst.fmt-cst-list-step
+          (owned_view.compiler-owned-shared-view tail))
           [(cst.FormatCstListStep.Item next after-next)
-            (if (rules.format-rules-node-comment? next)
+            (if (rules.format-rules-node-comment?
+              (owned_view.compiler-owned-shared-view next))
               (fmt_doc.doc-append
                 (fmt_doc.doc-hard-line)
                 (fmt_doc.doc-append
@@ -66,7 +72,8 @@
                 (fmt_doc.doc-hard-line)
                 (fmt_doc.doc-append
                   (format-rules-colon-pair-doc node next)
-                  (if (cst.fmt-cst-list-empty? after-next)
+                  (if (cst.fmt-cst-list-empty?
+                    (owned_view.compiler-owned-shared-view after-next))
                     (fmt_doc.doc-empty)
                     (format-rules-hard-tail-doc after-next)))))]
           [_
@@ -76,8 +83,10 @@
         (fmt_doc.doc-append
           (fmt_doc.doc-hard-line)
           (fmt_doc.doc-append
-            (format-rules-cst-doc node)
-            (if (cst.fmt-cst-list-empty? tail)
+            (format-rules-cst-doc
+              (owned_view.compiler-owned-shared-view node))
+            (if (cst.fmt-cst-list-empty?
+              (owned_view.compiler-owned-shared-view tail))
               (if (rules.format-rules-node-comment? node)
                 (fmt_doc.doc-hard-line)
                 (fmt_doc.doc-empty))
@@ -96,33 +105,49 @@
   (match (cst.fmt-cst-list-step items)
     [(cst.FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(cst.FormatCstListStep.Item node tail)
-      (if (rules.format-rules-node-colon? node)
-        (match (cst.fmt-cst-list-step tail)
+      (if (rules.format-rules-node-colon?
+        (owned_view.compiler-owned-shared-view node))
+        (match (cst.fmt-cst-list-step
+          (owned_view.compiler-owned-shared-view tail))
           [(cst.FormatCstListStep.Item next after-next)
-            (if (rules.format-rules-node-comment? next)
+            (if (rules.format-rules-node-comment?
+              (owned_view.compiler-owned-shared-view next))
               (fmt_doc.doc-append
-                (format-rules-tail-separator previous-comment node)
+                (format-rules-tail-separator
+                  previous-comment
+                  (owned_view.compiler-owned-shared-view node))
                 (fmt_doc.doc-append
                   (format-rules-cst-doc node)
                   (format-rules-list-tail-doc false tail)))
               (fmt_doc.doc-append
-                (format-rules-tail-separator previous-comment node)
+                (format-rules-tail-separator
+                  previous-comment
+                  (owned_view.compiler-owned-shared-view node))
                 (fmt_doc.doc-append
-                  (format-rules-colon-pair-doc node next)
-                  (if (cst.fmt-cst-list-empty? after-next)
+                  (format-rules-colon-pair-doc
+                    node
+                    (owned_view.compiler-owned-shared-view next))
+                  (if (cst.fmt-cst-list-empty?
+                    (owned_view.compiler-owned-shared-view after-next))
                     (fmt_doc.doc-empty)
                     (format-rules-list-tail-doc
                       (rules.format-rules-node-comment? next)
                       after-next)))))]
           [_
             (fmt_doc.doc-append
-              (format-rules-tail-separator previous-comment node)
+              (format-rules-tail-separator
+                previous-comment
+                (owned_view.compiler-owned-shared-view node))
               (format-rules-cst-doc node))])
         (fmt_doc.doc-append
-          (format-rules-tail-separator previous-comment node)
+          (format-rules-tail-separator
+            previous-comment
+            (owned_view.compiler-owned-shared-view node))
           (fmt_doc.doc-append
-            (format-rules-cst-doc node)
-            (if (cst.fmt-cst-list-empty? tail)
+            (format-rules-cst-doc
+              (owned_view.compiler-owned-shared-view node))
+            (if (cst.fmt-cst-list-empty?
+              (owned_view.compiler-owned-shared-view tail))
               (if (rules.format-rules-node-comment? node)
                 (fmt_doc.doc-hard-line)
                 (fmt_doc.doc-empty))
@@ -135,8 +160,10 @@
     [(cst.FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(cst.FormatCstListStep.Item node tail)
       (fmt_doc.doc-append
-        (format-rules-cst-doc node)
-        (if (cst.fmt-cst-list-empty? tail)
+        (format-rules-cst-doc
+          (owned_view.compiler-owned-shared-view node))
+        (if (cst.fmt-cst-list-empty?
+          (owned_view.compiler-owned-shared-view tail))
           (if (rules.format-rules-node-comment? node)
             (fmt_doc.doc-hard-line)
             (fmt_doc.doc-empty))
@@ -193,7 +220,8 @@
 (define (format-rules-first-or-line-form-doc
   [head : String]
   [rest : cst.FormatCstList]) : fmt_doc.Doc
-  (match (cst.fmt-cst-list-step rest)
+  (match (cst.fmt-cst-list-step
+    (owned_view.compiler-owned-shared-view rest))
     [(cst.FormatCstListStep.Empty) (format-rules-inline-form-doc head rest)]
     [(cst.FormatCstListStep.Item first tail)
       (format-rules-first-line-form-doc head first tail)]))
@@ -237,7 +265,8 @@
           (fmt_doc.doc-text "]"))))))
 
 (define (format-rules-let-item-list-doc [items : cst.FormatCstList]) : fmt_doc.Doc
-  (match (cst.fmt-cst-list-step items)
+  (match (cst.fmt-cst-list-step
+    (owned_view.compiler-owned-shared-view items))
     [(cst.FormatCstListStep.Item name after-name)
       (match (cst.fmt-cst-list-step after-name)
         [(cst.FormatCstListStep.Item second after-second)
@@ -248,7 +277,8 @@
               (match (cst.fmt-cst-list-step after-typ)
                 [(cst.FormatCstListStep.Item init after-init)
                   (if (cst.fmt-cst-list-empty? after-init)
-                    (if (rules.format-rules-node-colon? second)
+                    (if (rules.format-rules-node-colon?
+                      (owned_view.compiler-owned-shared-view second))
                       (format-rules-let-binding-annotated-doc
                         name
                         second
@@ -262,9 +292,10 @@
     [_ (format-rules-delimited-doc "[" items "]")]))
 
 (define (format-rules-let-item-doc [node : cst.FormatCst]) : fmt_doc.Doc
-  (match node
+  (match (owned_view.compiler-owned-shared-view node)
     [(cst.FormatCst.BracketList items)
-      (format-rules-let-item-list-doc (__tl-box-place items))]
+      (format-rules-let-item-list-doc
+        (owned_view.compiler-owned-box-shared-view items))]
     [_ (format-rules-cst-doc node)]))
 
 (define (format-rules-let-tail-doc [items : cst.FormatCstList]) : fmt_doc.Doc
@@ -274,8 +305,10 @@
       (fmt_doc.doc-append
         (fmt_doc.doc-hard-line)
         (fmt_doc.doc-append
-          (format-rules-let-item-doc node)
-          (if (cst.fmt-cst-list-empty? tail)
+          (format-rules-let-item-doc
+            (owned_view.compiler-owned-shared-view node))
+          (if (cst.fmt-cst-list-empty?
+            (owned_view.compiler-owned-shared-view tail))
             (if (rules.format-rules-node-comment? node)
               (fmt_doc.doc-hard-line)
               (fmt_doc.doc-empty))
@@ -348,14 +381,18 @@
           (fmt_doc.doc-text ")"))))))
 
 (define (format-rules-define-doc [rest : cst.FormatCstList]) : fmt_doc.Doc
-  (match (cst.fmt-cst-list-step rest)
+  (match (cst.fmt-cst-list-step
+    (owned_view.compiler-owned-shared-view rest))
     [(cst.FormatCstListStep.Item target after-target)
-      (match (cst.fmt-cst-list-step after-target)
+      (match (cst.fmt-cst-list-step
+        (owned_view.compiler-owned-shared-view after-target))
         [(cst.FormatCstListStep.Item second after-second)
-          (if (rules.format-rules-node-colon? second)
+          (if (rules.format-rules-node-colon?
+            (owned_view.compiler-owned-shared-view second))
             (match (cst.fmt-cst-list-step after-second)
               [(cst.FormatCstListStep.Item typ body)
-                (if (cst.fmt-cst-list-empty? body)
+                (if (cst.fmt-cst-list-empty?
+                  (owned_view.compiler-owned-shared-view body))
                   (format-rules-first-or-line-form-doc "define" rest)
                   (format-rules-signature-annotated-doc
                     "define"
@@ -364,13 +401,16 @@
                     typ
                     body))]
               [_ (format-rules-first-or-line-form-doc "define" rest)])
-            (if (rules.format-rules-node-colon-list? second)
+            (if (rules.format-rules-node-colon-list?
+              (owned_view.compiler-owned-shared-view second))
               (match (cst.fmt-cst-list-step after-second)
                 [(cst.FormatCstListStep.Item colon after-colon)
-                  (if (rules.format-rules-node-colon? colon)
+                  (if (rules.format-rules-node-colon?
+                    (owned_view.compiler-owned-shared-view colon))
                     (match (cst.fmt-cst-list-step after-colon)
                       [(cst.FormatCstListStep.Item typ body)
-                        (if (cst.fmt-cst-list-empty? body)
+                        (if (cst.fmt-cst-list-empty?
+                          (owned_view.compiler-owned-shared-view body))
                           (format-rules-first-or-line-form-doc "define" rest)
                           (format-rules-define-metadata-annotated-doc
                             target
@@ -386,14 +426,17 @@
     [_ (format-rules-first-or-line-form-doc "define" rest)]))
 
 (define (format-rules-defmacro-doc [rest : cst.FormatCstList]) : fmt_doc.Doc
-  (match (cst.fmt-cst-list-step rest)
+  (match (cst.fmt-cst-list-step
+    (owned_view.compiler-owned-shared-view rest))
     [(cst.FormatCstListStep.Item target after-target)
       (match (cst.fmt-cst-list-step after-target)
         [(cst.FormatCstListStep.Item colon after-colon)
-          (if (rules.format-rules-node-colon? colon)
+          (if (rules.format-rules-node-colon?
+            (owned_view.compiler-owned-shared-view colon))
             (match (cst.fmt-cst-list-step after-colon)
               [(cst.FormatCstListStep.Item typ body)
-                (if (cst.fmt-cst-list-empty? body)
+                (if (cst.fmt-cst-list-empty?
+                  (owned_view.compiler-owned-shared-view body))
                   (format-rules-first-or-line-form-doc "defmacro" rest)
                   (format-rules-signature-annotated-doc
                     "defmacro"
@@ -407,14 +450,17 @@
     [_ (format-rules-first-or-line-form-doc "defmacro" rest)]))
 
 (define (format-rules-lambda-doc [rest : cst.FormatCstList]) : fmt_doc.Doc
-  (match (cst.fmt-cst-list-step rest)
+  (match (cst.fmt-cst-list-step
+    (owned_view.compiler-owned-shared-view rest))
     [(cst.FormatCstListStep.Item target after-target)
       (match (cst.fmt-cst-list-step after-target)
         [(cst.FormatCstListStep.Item colon after-colon)
-          (if (rules.format-rules-node-colon? colon)
+          (if (rules.format-rules-node-colon?
+            (owned_view.compiler-owned-shared-view colon))
             (match (cst.fmt-cst-list-step after-colon)
               [(cst.FormatCstListStep.Item typ body)
-                (if (cst.fmt-cst-list-empty? body)
+                (if (cst.fmt-cst-list-empty?
+                  (owned_view.compiler-owned-shared-view body))
                   (format-rules-first-or-line-form-doc "lambda" rest)
                   (format-rules-signature-annotated-doc
                     "lambda"
@@ -472,10 +518,12 @@
     [_ (format-rules-delimited-doc "(" items ")")]))
 
 (define (format-rules-list-doc [items : cst.FormatCstList]) : fmt_doc.Doc
-  (match (cst.fmt-cst-list-step items)
+  (match (cst.fmt-cst-list-step
+    (owned_view.compiler-owned-shared-view items))
     [(cst.FormatCstListStep.Empty) (format-rules-delimited-doc "(" items ")")]
     [(cst.FormatCstListStep.Item head rest)
-      (if (rules.format-rules-node-colon? head)
+      (if (rules.format-rules-node-colon?
+        (owned_view.compiler-owned-shared-view head))
         (format-rules-colon-list-doc rest items)
         (format-rules-special-list-doc head rest items))]))
 
@@ -486,9 +534,12 @@
     [(cst.FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(cst.FormatCstListStep.Item node rest)
       (fmt_doc.doc-append
-        (format-rules-forms-separator previous node)
+        (format-rules-forms-separator
+          (owned_view.compiler-owned-shared-view previous)
+          (owned_view.compiler-owned-shared-view node))
         (fmt_doc.doc-append
-          (format-rules-cst-doc node)
+          (format-rules-cst-doc
+            (owned_view.compiler-owned-shared-view node))
           (format-rules-forms-tail-doc node rest)))]))
 
 (define (format-rules-forms-doc [items : cst.FormatCstList]) : fmt_doc.Doc
@@ -496,33 +547,47 @@
     [(cst.FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(cst.FormatCstListStep.Item node rest)
       (fmt_doc.doc-append
-        (format-rules-cst-doc node)
+        (format-rules-cst-doc
+          (owned_view.compiler-owned-shared-view node))
         (format-rules-forms-tail-doc node rest))]))
 
 (define (format-rules-cst-doc [node : cst.FormatCst]) : fmt_doc.Doc
-  (match node
+  (match (owned_view.compiler-owned-shared-view node)
     [(cst.FormatCst.Atom tok) (fmt_doc.doc-text (tokens.format-token-text tok))]
     [(cst.FormatCst.Comment text) (fmt_doc.doc-text text)]
     [(cst.FormatCst.Prefix tok child)
       (fmt_doc.doc-append
         (fmt_doc.doc-text (tokens.format-token-text tok))
-        (format-rules-cst-doc (__tl-box-place child)))]
+        (format-rules-cst-doc
+          (owned_view.compiler-owned-box-shared-view child)))]
     [(cst.FormatCst.Projection child field)
       (fmt_doc.doc-append
-        (format-rules-cst-doc (__tl-box-place child))
+        (format-rules-cst-doc
+          (owned_view.compiler-owned-box-shared-view child))
         (fmt_doc.doc-text (str_cat.str-cat "." field)))]
-    [(cst.FormatCst.List items) (format-rules-list-doc (__tl-box-place items))]
+    [(cst.FormatCst.List items)
+      (format-rules-list-doc
+        (owned_view.compiler-owned-box-shared-view items))]
     [(cst.FormatCst.BracketList items)
-      (format-rules-delimited-doc "[" (__tl-box-place items) "]")]
+      (format-rules-delimited-doc
+        "["
+        (owned_view.compiler-owned-box-shared-view items)
+        "]")]
     [(cst.FormatCst.Forms items)
-      (format-rules-forms-doc (__tl-box-place items))]))
+      (format-rules-forms-doc
+        (owned_view.compiler-owned-box-shared-view items))]))
 
 (define (format-rules-streaming-matches-doc? [src : String] [width : i64]) : bool
   (let
     [tree : cst.FormatCst (cst.parse-format-source src)]
+    [doc : fmt_doc.Doc
+      (format-rules-cst-doc
+        (owned_view.compiler-owned-shared-view tree))]
     (string.eq
-      (rules.format-rules-render-cst-width tree width)
-      (fmt_doc.render-doc-width (format-rules-cst-doc tree) width))))
+      (rules.format-rules-render-cst-width
+        (owned_view.compiler-owned-shared-view tree)
+        width)
+      (fmt_doc.render-doc-width doc width))))
 
 (define (format-rules-streaming-doc-fixtures-ok?) : bool
   (and

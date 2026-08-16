@@ -8,6 +8,7 @@
 (import compiler_diagnostic_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-parse-test-decl-origin-start-ok?
   [origin : compiler_parse_core.CompilerParseMaybeDeclSpan]
@@ -32,9 +33,14 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
-            [tail1 : ast.AstDeclList (ast.ast-decl-list-tail decls)]
-            [tail2 : ast.AstDeclList (ast.ast-decl-list-tail tail1)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
+            [tail1 : ast.AstDeclList
+              (ast.ast-decl-list-tail
+                (owned_view.compiler-owned-shared-view decls))]
+            [tail2 : ast.AstDeclList
+              (ast.ast-decl-list-tail
+                (owned_view.compiler-owned-shared-view tail1))]
             [replacement : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias1 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias2 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
@@ -56,7 +62,7 @@
               (compiler_parse_core.compiler-parse-decl-origin-register-list-aliases!
                 (& alias1)
                 0
-                replacement)
+                (owned_view.compiler-owned-shared-view replacement))
               (ast.ast-decl-list-append-from (&mut alias2) (& alias1) 0)
               (compiler_parse_core.compiler-parse-decl-origin-register-list-aliases!
                 (& alias2)
@@ -139,7 +145,8 @@
     [(compiler_parse_core.ResultAstProgram.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        [decls : ast.AstDeclList
+          (ast.ast-decl-list-box-shared-view decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
           [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
             (let
@@ -173,7 +180,8 @@
     [(compiler_parse_core.ResultAstProgram.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        [decls : ast.AstDeclList
+          (ast.ast-decl-list-box-shared-view decls-box)]
         (and
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
             [(ast.AstDecl.Module name)
@@ -198,7 +206,7 @@
                   (& params)
                   0
                   (ast.ast-param-fallback))
-                  [(ast.AstParam.Param param ty _ _)
+                  [(ast.AstParam.Param param ty _)
                     (and
                       (compiler-parse-test-name-id? param "parsed-param")
                       (match ty
@@ -261,23 +269,23 @@
   [edit : diagnostic.CompilerDiagnosticTextEdit]) : diagnostic.CompilerDiagnosticMaybeString
   (let
     [span : diagnostic.CompilerDiagnosticSpan
-      (diagnostic.compiler-diagnostic-text-edit-span edit)]
+      (diagnostic.compiler-diagnostic-text-edit-span (clone edit))]
     [start : i64
       (compiler-diagnostic-test-source-position-index
-        source
+        (clone source)
         (diagnostic.compiler-diagnostic-span-start-line span)
         (diagnostic.compiler-diagnostic-span-start-col span))]
     [end : i64
       (compiler-diagnostic-test-source-position-index
-        source
+        (clone source)
         (diagnostic.compiler-diagnostic-span-end-line span)
         (diagnostic.compiler-diagnostic-span-end-col span))]
-    [source-len : i64 (string.string-length source)]
+    [source-len : i64 (string.string-length (clone source))]
     (if (or (< start 0) (< end start))
       CompilerDiagnosticNoString
       (CompilerDiagnosticSomeString
         (str_cat.str-cat
-          (string.substring source 0 start)
+          (string.substring (clone source) 0 start)
           (diagnostic.compiler-diagnostic-text-edit-replacement edit)
           (string.substring source end (- source-len end)))))))
 
@@ -310,7 +318,7 @@
             (diagnostic.CompilerDiagnosticSpan "other.tl" 2 3 2 5)
             "λ")))]
     [diag : diagnostic.CompilerDiagnostic
-      (diagnostic.compiler-diagnostic-with-fix plain fix)]
+      (diagnostic.compiler-diagnostic-with-fix (clone plain) fix)]
     [copied : diagnostic.CompilerDiagnostic
       (diagnostic.compiler-diagnostic-copy diag)]
     [moved : diagnostic.CompilerDiagnostic
@@ -326,12 +334,14 @@
       (= fixes.len 1)
       (let
         [copied-fix : diagnostic.CompilerDiagnosticFix
-          (array-ref fixes.slots 0)]
+          (owned_view.compiler-owned-array-element-shared-view fixes.slots 0)]
         [edits : diagnostic.CompilerDiagnosticTextEditSeq
-          (diagnostic.compiler-diagnostic-fix-edits copied-fix)]
+          (diagnostic.compiler-diagnostic-fix-edits
+            (owned_view.compiler-owned-shared-view copied-fix))]
         (and
           (string.eq
-            (diagnostic.compiler-diagnostic-fix-title copied-fix)
+            (diagnostic.compiler-diagnostic-fix-title
+              (owned_view.compiler-owned-shared-view copied-fix))
             "Apply both edits")
           (match (diagnostic.compiler-diagnostic-fix-applicability copied-fix)
             [CompilerDiagnosticMachineApplicable true]
@@ -339,13 +349,13 @@
           (= edits.len 2)
           (let
             [first : diagnostic.CompilerDiagnosticTextEdit
-              (array-ref edits.slots 0)]
+              (owned_view.compiler-owned-array-element-shared-view edits.slots 0)]
             [second : diagnostic.CompilerDiagnosticTextEdit
-              (array-ref edits.slots 1)]
+              (owned_view.compiler-owned-array-element-shared-view edits.slots 1)]
             [first-span : diagnostic.CompilerDiagnosticSpan
-              (diagnostic.compiler-diagnostic-text-edit-span first)]
+              (diagnostic.compiler-diagnostic-text-edit-span (clone first))]
             [second-span : diagnostic.CompilerDiagnosticSpan
-              (diagnostic.compiler-diagnostic-text-edit-span second)]
+              (diagnostic.compiler-diagnostic-text-edit-span (clone second))]
             (and
               (string.eq
                 (diagnostic.compiler-diagnostic-span-path first-span)
@@ -368,7 +378,7 @@
       (diagnostic.compiler-diagnostic-simple "invalid.tl" 1 1 "invalid")]
     [unknown : diagnostic.CompilerDiagnostic
       (diagnostic.compiler-diagnostic-with-fix
-        base
+        (clone base)
         (diagnostic.compiler-diagnostic-fix-new
           "Unknown span"
           CompilerDiagnosticMachineApplicable

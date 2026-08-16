@@ -20,6 +20,16 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 
+;; Process values are persistent arena-backed records. These shallow reads make
+;; an explicit shared view when a builder or accessor retains owner storage.
+(defmacro (process-place-shared-view [place : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
+
+(defmacro (process-array-shared-view [items : Expr] [index : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-offset (array-data ,items) ,index))))
+
 ;: Immutable sequence of process argument strings in argv order. `slots` holds
 ;: the `len` live entries. Sequences are shared persistently, so helpers that
 ;: extend one copy into a right-sized array instead of mutating storage another
@@ -118,6 +128,53 @@
   (OkProcessChild ProcessChild)
   (ErrProcessChild ProcessError))
 
+(defstruct ProcessStringRef
+  (:lifetimes value)
+  (value (& value str)))
+
+(defstruct ProcessStringListRef
+  (:lifetimes value)
+  (value (& value ProcessStringList)))
+
+(defstruct ProcessEnvListRef
+  (:lifetimes value)
+  (value (& value ProcessEnvList)))
+
+(defstruct ProcessMaybeStringRef
+  (:lifetimes value)
+  (value (& value ProcessMaybeString)))
+
+(define (process-string-shared-view [value : (& value str)]) : String
+  (__tl-compiler-owned-shared-view-dyn-ref-as value String))
+
+(define (process-string-list-shared-view [value : (& value ProcessStringList)]) : ProcessStringList
+  (let
+    [cell : (ProcessStringListRef value) (ProcessStringListRef value)]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
+    (unsafe
+      (ptr-read (int->ptr address : (Ptr ProcessStringList))))))
+
+(define (process-env-list-shared-view [value : (& value ProcessEnvList)]) : ProcessEnvList
+  (let
+    [cell : (ProcessEnvListRef value) (ProcessEnvListRef value)]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
+    (unsafe
+      (ptr-read (int->ptr address : (Ptr ProcessEnvList))))))
+
+(define (process-maybe-string-shared-view
+  [value : (& value ProcessMaybeString)]) : ProcessMaybeString
+  (let
+    [cell : (ProcessMaybeStringRef value) (ProcessMaybeStringRef value)]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
+    (unsafe
+      (ptr-read (int->ptr address : (Ptr ProcessMaybeString))))))
+
 ;: Return a destructured step from an argv list. The tail is copied into a
 ;: right-sized array so the stepped-over sequence keeps its own storage.
 (define (string-step [args : ProcessStringList]) : ProcessStringStep
@@ -131,35 +188,37 @@
         (begin
           (while (< i n)
             (begin
-              (set! (array-ref slots i) (array-ref args.slots (+ i 1)))
+              (set!
+                (array-ref slots i)
+                (process-array-shared-view args.slots (+ i 1)))
               (set! i (+ i 1))))
           (ProcessStringStep
             true
-            (array-ref args.slots 0)
+            (process-array-shared-view args.slots 0)
             (ProcessStringList slots n)))))))
 
 ;: Return whether a destructured argv step contains an item.
-(define (string-step-present? [step : ProcessStringStep]) : bool
+(define (string-step-present? [step : (& step ProcessStringStep)]) : bool
   step.present)
 
 ;: Return the argv value from a destructured step, or the empty string.
-(define (string-step-value [step : ProcessStringStep]) : String
-  step.value)
+(define (string-step-value [step : (& step ProcessStringStep)]) : String
+  (process-string-shared-view step.value))
 
 ;: Return the argv tail from a destructured step.
-(define (string-step-rest [step : ProcessStringStep]) : ProcessStringList
-  step.rest)
+(define (string-step-rest [step : (& step ProcessStringStep)]) : ProcessStringList
+  (process-string-list-shared-view step.rest))
 
 ;: Return the environment name at `index`, or the empty string out of range.
-(define (env-name-ref [env : ProcessEnvList] [index : i64]) : String
+(define (env-name-ref [env : (& env ProcessEnvList)] [index : i64]) : String
   (if (and (>= index 0) (< index env.len))
-    (array-ref env.names index)
+    (process-array-shared-view env.names index)
     ""))
 
 ;: Return the environment value at `index`, or the empty string out of range.
-(define (env-value-ref [env : ProcessEnvList] [index : i64]) : String
+(define (env-value-ref [env : (& env ProcessEnvList)] [index : i64]) : String
   (if (and (>= index 0) (< index env.len))
-    (array-ref env.values index)
+    (process-array-shared-view env.values index)
     ""))
 
 ;: Copy a live environment range into parallel destination buffers, preserving
@@ -167,7 +226,7 @@
 (define (env-copy-into
   [dst-names : (&mut dst-names (__tl_dyn-array String))]
   [dst-values : (&mut dst-values (__tl_dyn-array String))]
-  [env : ProcessEnvList]
+  [env : (& env ProcessEnvList)]
   [offset : i64]
   [start : i64]) : unit
   (let
@@ -207,20 +266,20 @@
             (ProcessEnvList tail-names tail-values tail-n)))))))
 
 ;: Return whether a destructured env step contains an item.
-(define (env-step-present? [step : ProcessEnvStep]) : bool
+(define (env-step-present? [step : (& step ProcessEnvStep)]) : bool
   step.present)
 
 ;: Return the env name from a destructured step, or the empty string.
-(define (env-step-name [step : ProcessEnvStep]) : String
-  step.name)
+(define (env-step-name [step : (& step ProcessEnvStep)]) : String
+  (process-string-shared-view step.name))
 
 ;: Return the env value from a destructured step, or the empty string.
-(define (env-step-value [step : ProcessEnvStep]) : String
-  step.value)
+(define (env-step-value [step : (& step ProcessEnvStep)]) : String
+  (process-string-shared-view step.value))
 
 ;: Return the env tail from a destructured step.
-(define (env-step-rest [step : ProcessEnvStep]) : ProcessEnvList
-  step.rest)
+(define (env-step-rest [step : (& step ProcessEnvStep)]) : ProcessEnvList
+  (process-env-list-shared-view step.rest))
 
 ;: Return a destructured optional string.
 (define (maybe-string-info [value : ProcessMaybeString]) : ProcessMaybeStringInfo
@@ -229,38 +288,40 @@
     [(ProcessSomeString text) (ProcessMaybeStringInfo true text)]))
 
 ;: Return whether a destructured optional string is present.
-(define (maybe-string-info-present? [info : ProcessMaybeStringInfo]) : bool
+(define (maybe-string-info-present? [info : (& info ProcessMaybeStringInfo)]) : bool
   info.present)
 
 ;: Return the string from a destructured optional string, or the empty string.
-(define (maybe-string-info-value [info : ProcessMaybeStringInfo]) : String
-  info.value)
+(define (maybe-string-info-value [info : (& info ProcessMaybeStringInfo)]) : String
+  (process-string-shared-view info.value))
 
 ;: Return an empty argument list.
 (define (args-empty) : ProcessStringList
   (ProcessStringList (array.make-array String 0) 0))
 
 ;: Return the number of argv entries in `args`.
-(define (args-count [args : ProcessStringList]) : i64
+(define (args-count [args : (& args ProcessStringList)]) : i64
   args.len)
 
 ;: Return the argv entry at `index`, or the empty string when out of range.
-(define (args-ref [args : ProcessStringList] [index : i64]) : String
+(define (args-ref [args : (& args ProcessStringList)] [index : i64]) : String
   (if (and (>= index 0) (< index args.len))
-    (array-ref args.slots index)
+    (process-array-shared-view args.slots index)
     ""))
 
 ;: Copy the `len` live entries of `args` into `dst` starting at `offset`.
 (define (args-copy-into
   [dst : (&mut dst (__tl_dyn-array String))]
-  [args : ProcessStringList]
+  [args : (& args ProcessStringList)]
   [offset : i64]) : unit
   (let
     [n : i64 args.len]
     [i : i64 0]
     (while (< i n)
       (begin
-        (set! (array-ref dst (+ offset i)) (array-ref args.slots i))
+        (set!
+          (array-ref dst (+ offset i))
+          (process-array-shared-view args.slots i))
         (set! i (+ i 1))))))
 
 ;: Prepend an owned argument string to an argv list.
@@ -311,7 +372,7 @@
   (ProcessEnvList (array.make-array String 0) (array.make-array String 0) 0))
 
 ;: Return the number of env overrides in `env`.
-(define (env-count [env : ProcessEnvList]) : i64
+(define (env-count [env : (& env ProcessEnvList)]) : i64
   env.len)
 
 ;: Prepend owned environment override strings to an env list. The retained
@@ -564,24 +625,24 @@
     (ProcessSomeString stdin)))
 
 ;: Return the executable path from `command`.
-(define (command-executable [command : ProcessCommand]) : String
-  command.executable)
+(define (command-executable [command : (& command ProcessCommand)]) : String
+  (process-string-shared-view command.executable))
 
 ;: Return the argv list from `command`.
-(define (command-argv [command : ProcessCommand]) : ProcessStringList
-  command.argv)
+(define (command-argv [command : (& command ProcessCommand)]) : ProcessStringList
+  (process-string-list-shared-view command.argv))
 
 ;: Return the cwd setting from `command`.
-(define (command-cwd [command : ProcessCommand]) : ProcessMaybeString
-  command.cwd)
+(define (command-cwd [command : (& command ProcessCommand)]) : ProcessMaybeString
+  (process-maybe-string-shared-view command.cwd))
 
 ;: Return the env override list from `command`.
-(define (command-env [command : ProcessCommand]) : ProcessEnvList
-  command.env)
+(define (command-env [command : (& command ProcessCommand)]) : ProcessEnvList
+  (process-env-list-shared-view command.env))
 
 ;: Return the stdin setting from `command`.
-(define (command-stdin [command : ProcessCommand]) : ProcessMaybeString
-  command.stdin)
+(define (command-stdin [command : (& command ProcessCommand)]) : ProcessMaybeString
+  (process-maybe-string-shared-view command.stdin))
 
 ;: Return the process exit status.
 ;:
@@ -590,19 +651,19 @@
 ;: non-negative status in 0..0xFFFFFFFF, including high-bit NTSTATUS
 ;: terminations such as 0xC0000005 (reported as 3221225477). Spawn and wait
 ;: failures are never encoded in this field; they are `ProcessError` values.
-(define (output-status [output : ProcessOutput]) : i64
+(define (output-status [output : (& output ProcessOutput)]) : i64
   output.status)
 
 ;: Return captured stdout from `output`.
-(define (output-stdout [output : ProcessOutput]) : String
-  output.stdout)
+(define (output-stdout [output : (& output ProcessOutput)]) : String
+  (process-string-shared-view output.stdout))
 
 ;: Return captured stderr from `output`.
-(define (output-stderr [output : ProcessOutput]) : String
-  output.stderr)
+(define (output-stderr [output : (& output ProcessOutput)]) : String
+  (process-string-shared-view output.stderr))
 
 ;: Return true when the process exit status is zero.
-(define (success? [output : ProcessOutput]) : bool
+(define (success? [output : (& output ProcessOutput)]) : bool
   (= (output-status output) 0))
 
 ;: Return `result` through the aggregate return path so stage0 can match it in
@@ -635,19 +696,19 @@
     [(ErrProcessChild _) (ProcessChildInfo false (- 0 1) (- 0 1) (- 0 1))]))
 
 ;: Return true when `info` describes a started child.
-(define (child-info-ok? [info : ProcessChildInfo]) : bool
+(define (child-info-ok? [info : (& info ProcessChildInfo)]) : bool
   info.ok)
 
 ;: Return the child pid from `info`, or -1 when it is not ok.
-(define (child-info-pid [info : ProcessChildInfo]) : i64
+(define (child-info-pid [info : (& info ProcessChildInfo)]) : i64
   info.pid)
 
 ;: Return the child stdout handle from `info`, or -1 when it is not ok.
-(define (child-info-stdout-handle [info : ProcessChildInfo]) : i64
+(define (child-info-stdout-handle [info : (& info ProcessChildInfo)]) : i64
   info.stdout-handle)
 
 ;: Return the child stderr handle from `info`, or -1 when it is not ok.
-(define (child-info-stderr-handle [info : ProcessChildInfo]) : i64
+(define (child-info-stderr-handle [info : (& info ProcessChildInfo)]) : i64
   info.stderr-handle)
 
 ;: Return the output status, or `fallback` when `result` is an error.
@@ -756,7 +817,7 @@
     [_ false]))
 
 ;: Return the first env validation error, or `ProcessNoString`.
-(define (env-validation-error-from [env : ProcessEnvList] [index : i64]) : ProcessMaybeString
+(define (env-validation-error-from [env : (& env ProcessEnvList)] [index : i64]) : ProcessMaybeString
   (if (>= index env.len)
     (ProcessNoString)
     (let
@@ -768,22 +829,24 @@
           (env-validation-error-from env (+ index 1)))))))
 
 ;: Return the first environment override validation error, or `ProcessNoString`.
-(define (env-validation-error [env : ProcessEnvList]) : ProcessMaybeString
+(define (env-validation-error [env : (& env ProcessEnvList)]) : ProcessMaybeString
   (env-validation-error-from env 0))
 
 ;: Return the first command validation error, or `ProcessNoString`.
-(define (command-validation-error [command : ProcessCommand]) : ProcessMaybeString
-  (if (string.eq (command-executable command) "")
-    (ProcessSomeString "process: executable path is empty")
-    (match (command-cwd command)
-      [(ProcessSomeString cwd)
-        (if (string.eq cwd "")
-          (ProcessSomeString "process: cwd path is empty")
-          (env-validation-error (command-env command)))]
-      [(ProcessNoString) (env-validation-error (command-env command))])))
+(define (command-validation-error [command : (& command ProcessCommand)]) : ProcessMaybeString
+  (let
+    [env : ProcessEnvList (command-env command)]
+    (if (string.eq (command-executable command) "")
+      (ProcessSomeString "process: executable path is empty")
+      (match (command-cwd command)
+        [(ProcessSomeString cwd)
+          (if (string.eq cwd "")
+            (ProcessSomeString "process: cwd path is empty")
+            (env-validation-error env))]
+        [(ProcessNoString) (env-validation-error env)]))))
 
 ;: Return true when `command` passes stdlib validation.
-(define (command-valid? [command : ProcessCommand]) : bool
+(define (command-valid? [command : (& command ProcessCommand)]) : bool
   (match (command-validation-error command)
     [(ProcessNoString) true]
     [(ProcessSomeString _) false]))
@@ -826,7 +889,7 @@
 ;: Convert public argv storage to the runtime module's no-cycle representation,
 ;: walking backwards so the emitted list keeps argv order.
 (define (runtime-args-from
-  [args : ProcessStringList]
+  [args : (& args ProcessStringList)]
   [index : i64]
   [out : process_runtime.ProcessRuntimeStringList]) : process_runtime.ProcessRuntimeStringList
   (if (< index 0)
@@ -837,12 +900,12 @@
       (process_runtime.args-cons (args-ref args index) out))))
 
 ;: Convert public argv storage to the runtime module's no-cycle representation.
-(define (runtime-args [args : ProcessStringList]) : process_runtime.ProcessRuntimeStringList
+(define (runtime-args [args : (& args ProcessStringList)]) : process_runtime.ProcessRuntimeStringList
   (runtime-args-from args (- (args-count args) 1) (process_runtime.args-empty)))
 
 ;: Convert public env storage to the runtime module's no-cycle representation.
 (define (runtime-env-from
-  [env : ProcessEnvList]
+  [env : (& env ProcessEnvList)]
   [index : i64]
   [out : process_runtime.ProcessRuntimeEnvList]) : process_runtime.ProcessRuntimeEnvList
   (if (< index 0)
@@ -856,7 +919,7 @@
         out))))
 
 ;: Convert the public dense environment representation to the runtime module's no-cycle representation.
-(define (runtime-env [env : ProcessEnvList]) : process_runtime.ProcessRuntimeEnvList
+(define (runtime-env [env : (& env ProcessEnvList)]) : process_runtime.ProcessRuntimeEnvList
   (runtime-env-from env (- (env-count env) 1) (process_runtime.env-empty)))
 
 ;: Convert a public optional string to the runtime module's no-cycle representation.
@@ -868,13 +931,16 @@
       (process_runtime.no-string))))
 
 ;: Convert a public command to the runtime module's no-cycle representation.
-(define (runtime-command [command : ProcessCommand]) : process_runtime.ProcessRuntimeCommand
-  (process_runtime.command-full
-    (command-executable command)
-    (runtime-args (command-argv command))
-    (runtime-maybe-string (command-cwd command))
-    (runtime-env (command-env command))
-    (runtime-maybe-string (command-stdin command))))
+(define (runtime-command [command : (& command ProcessCommand)]) : process_runtime.ProcessRuntimeCommand
+  (let
+    [argv : ProcessStringList (command-argv command)]
+    [env : ProcessEnvList (command-env command)]
+    (process_runtime.command-full
+      (command-executable command)
+      (runtime-args argv)
+      (runtime-maybe-string (command-cwd command))
+      (runtime-env env)
+      (runtime-maybe-string (command-stdin command)))))
 
 ;: Convert a public child handle to the runtime module's no-cycle representation.
 (define (runtime-child [child : ProcessChild]) : process_runtime.ProcessRuntimeChild
@@ -1042,12 +1108,17 @@
 (define (test-env-dense-api) : unit
   (let
     [empty : ProcessEnvList (env-empty)]
-    [parent : ProcessEnvList (env-cons "PARENT" "one" empty)]
-    [child : ProcessEnvList (env-cons "CHILD" "two" parent)]
+    [parent : ProcessEnvList
+      (env-cons "PARENT" "one" (process-place-shared-view empty))]
+    [child : ProcessEnvList
+      (env-cons "CHILD" "two" (process-place-shared-view parent))]
     [duplicate : ProcessEnvList
-      (env-cons "DUP" "second" (env-cons "DUP" "first" empty))]
-    [empty-step : ProcessEnvStep (env-step empty)]
-    [child-step : ProcessEnvStep (env-step child)]
+      (env-cons
+        "DUP"
+        "second"
+        (env-cons "DUP" "first" (process-place-shared-view empty)))]
+    [empty-step : ProcessEnvStep (env-step (process-place-shared-view empty))]
+    [child-step : ProcessEnvStep (env-step (process-place-shared-view child))]
     [tail-step : ProcessEnvStep (env-step (env-step-rest child-step))]
     (begin
       (test-assert-i64-eq (env-count empty) 0)
@@ -1142,7 +1213,9 @@
       (command-with-arg
         (command-with-env
           (command-with-stdin
-            (command-with-cwd (command "echo" args) "target")
+            (command-with-cwd
+              (command "echo" (process-place-shared-view args))
+              "target")
             "stdin")
           "TL_TEST"
           "1")
@@ -1150,9 +1223,14 @@
     (begin
       (test-env-dense-api)
       (test-assert-string-eq (command-executable cmd) "echo")
-      (test-assert-string-list2 args "hello" "world")
+      (test-assert-string-list2
+        (process-place-shared-view args)
+        "hello"
+        "world")
       (test-assert-string-list3 (command-argv cmd) "hello" "world" "!")
-      (test-assert-i64-eq (args-count (command-argv cmd)) 3)
+      (let
+        [cmd-argv : ProcessStringList (command-argv cmd)]
+        (test-assert-i64-eq (args-count cmd-argv) 3))
       (test-assert-string-list3
         (args-append args (args-single "again"))
         "hello"
@@ -1164,6 +1242,20 @@
         [multi-argv : svec.Vec (test-string-vec3 "hello" "world" "!")]
         [replace-argv : svec.Vec (test-string-vec3 "vec" "replace" "argv")]
         [tail-argv : svec.Vec (test-string-vec2 "vec" "tail")]
+        [empty-command : ProcessCommand
+          (command-from-argv-vec "echo" (& empty-argv))]
+        [solo-command : ProcessCommand
+          (command-from-argv-vec "echo" (& solo-argv))]
+        [multi-command : ProcessCommand
+          (command-from-argv-vec "echo" (& multi-argv))]
+        [replace-command : ProcessCommand
+          (command-with-argv-vec
+            (process-place-shared-view cmd)
+            (& replace-argv))]
+        [tail-command : ProcessCommand
+          (command-with-args-vec
+            (command "echo" (args-single "base"))
+            (& tail-argv))]
         (begin
           (test-assert-string-empty (args-from-string-vec (& empty-argv)))
           (test-assert-string-list1 (args-from-string-vec (& solo-argv)) "solo")
@@ -1172,39 +1264,41 @@
             "hello"
             "world"
             "!")
-          (test-assert-string-empty
-            (command-argv (command-from-argv-vec "echo" (& empty-argv))))
-          (test-assert-string-list1
-            (command-argv (command-from-argv-vec "echo" (& solo-argv)))
-            "solo")
+          (test-assert-string-empty (command-argv empty-command))
+          (test-assert-string-list1 (command-argv solo-command) "solo")
           (test-assert-string-list3
-            (command-argv (command-from-argv-vec "echo" (& multi-argv)))
+            (command-argv multi-command)
             "hello"
             "world"
             "!")
           (test-assert-string-list3
-            (command-argv (command-with-argv-vec cmd (& replace-argv)))
+            (command-argv replace-command)
             "vec"
             "replace"
             "argv")
           (test-assert-string-list3
-            (command-argv
-              (command-with-args-vec
-                (command "echo" (args-single "base"))
-                (& tail-argv)))
+            (command-argv tail-command)
             "base"
             "vec"
             "tail")))
       (test-assert-some-string (command-cwd cmd) "target")
       (test-assert-some-string (command-stdin cmd) "stdin")
       (test-assert-env-head (command-env cmd) "TL_TEST" "1")
-      (test-assert-i64-eq (env-count (command-env cmd)) 1)
-      (test-assert-env-head
-        (command-env
-          (command-with-env-list cmd (env-cons "TL_REPLACED" "yes" (env-empty))))
-        "TL_REPLACED"
-        "yes")
-      (test-assert-no-string (command-cwd (command "echo" (args-empty)))))))
+      (let
+        [cmd-env : ProcessEnvList (command-env cmd)]
+        (test-assert-i64-eq (env-count cmd-env) 1))
+      (let
+        [replaced-command : ProcessCommand
+          (command-with-env-list
+            (process-place-shared-view cmd)
+            (env-cons "TL_REPLACED" "yes" (env-empty)))]
+        (test-assert-env-head
+          (command-env replaced-command)
+          "TL_REPLACED"
+          "yes"))
+      (let
+        [default-command : ProcessCommand (command "echo" (args-empty))]
+        (test-assert-no-string (command-cwd default-command))))))
 
 ;: Inline test body for vector-backed environment helpers.
 (define (test-env-vec-api [cmd : ProcessCommand]) : unit
@@ -1226,12 +1320,15 @@
         "one"
         "TL_SECOND"
         "two")
-      (test-assert-env-list2
-        (command-env (command-with-env-vec cmd (& env-vec)))
-        "TL_FIRST"
-        "one"
-        "TL_SECOND"
-        "two")
+      (let
+        [command-with-env : ProcessCommand
+          (command-with-env-vec cmd (& env-vec))]
+        (test-assert-env-list2
+          (command-env command-with-env)
+          "TL_FIRST"
+          "one"
+          "TL_SECOND"
+          "two"))
       (test-assert-env-list2
         (env-vec-to-list (& env-dup))
         "TL_DUP"
@@ -1256,22 +1353,29 @@
         (command-with-cwd (command "echo" (args-empty)) "target")
         "TL_TEST"
         "1")]
+    [invalid-executable : ProcessCommand (command "" (args-empty))]
+    [invalid-cwd : ProcessCommand
+      (command-with-cwd (process-place-shared-view cmd) "")]
+    [invalid-env-name : ProcessCommand
+      (command-with-env (process-place-shared-view cmd) "" "1")]
+    [invalid-env-equals : ProcessCommand
+      (command-with-env (process-place-shared-view cmd) "BAD=NAME" "1")]
     (begin
-      (test-env-vec-api cmd)
+      (test-env-vec-api (process-place-shared-view cmd))
       (test-assert-validation
-        (command-validation-error (command "" (args-empty)))
+        (command-validation-error invalid-executable)
         "process: executable path is empty")
       (test-assert-validation
-        (command-validation-error (command-with-cwd cmd ""))
+        (command-validation-error invalid-cwd)
         "process: cwd path is empty")
       (test-assert-validation
-        (command-validation-error (command-with-env cmd "" "1"))
+        (command-validation-error invalid-env-name)
         "process: environment variable name is empty")
       (test-assert-validation
-        (command-validation-error (command-with-env cmd "BAD=NAME" "1"))
+        (command-validation-error invalid-env-equals)
         "process: environment variable name contains '='")
       (test-assert (command-valid? cmd))
-      (test-assert (not (command-valid? (command "" (args-empty)))))
+      (test-assert (not (command-valid? invalid-executable)))
       (test-assert (result-success? (OkProcessOutput (ProcessOutput 0 "" ""))))
       (test-assert
         (not (result-success? (OkProcessOutput (ProcessOutput 7 "" "")))))

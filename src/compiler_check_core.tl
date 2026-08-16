@@ -1,4 +1,5 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers.
+(import compiler_owned_view as owned_view)
 (cfg compile-profile (import stdlib.str_cat_runtime as str_cat))
 (import stdlib.io)
 (import stdlib.string)
@@ -61,7 +62,9 @@
   [diagnostics : cdiag.CompilerDiagnosticList]
   [path : String]) : cdiag.CompilerDiagnosticList
   (let
-    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
+    [count : i64
+      (cdiag.compiler-diagnostic-list-count
+        (owned_view.compiler-owned-shared-view diagnostics))]
     [index : i64 0]
     [out : cdiag.CompilerDiagnosticList
       (cdiag.compiler-diagnostic-list-with-capacity count)]
@@ -71,8 +74,10 @@
           (cdiag.compiler-diagnostic-list-push!
             (&mut out)
             (compiler-check-diagnostic-with-fallback-path
-              (cdiag.compiler-diagnostic-list-get diagnostics index)
-              path))
+              (cdiag.compiler-diagnostic-list-get
+                (owned_view.compiler-owned-shared-view diagnostics)
+                index)
+              (owned_view.compiler-owned-shared-view path)))
           (set! index (+ index 1))))
       out)))
 
@@ -113,22 +118,31 @@
   [incoming : cdiag.CompilerDiagnosticList]
   [sorted : (&mut sorted cdiag.CompilerDiagnosticList)]) : unit
   (let
-    [count : i64 (cdiag.compiler-diagnostic-list-count incoming)]
+    [count : i64
+      (cdiag.compiler-diagnostic-list-count
+        (owned_view.compiler-owned-shared-view incoming))]
     [index : i64 0]
     (while (< index count)
       (begin
         (compiler-check-diagnostic-list-insert-source-order
-          (cdiag.compiler-diagnostic-list-get incoming index)
+          (cdiag.compiler-diagnostic-list-get
+            (owned_view.compiler-owned-shared-view incoming)
+            index)
           sorted)
         (set! index (+ index 1))))))
 
 (define (compiler-check-result-with-parse-diagnostics
   [parse-diagnostics : cdiag.CompilerDiagnosticList]
   [result : ResultCompilerCheck]) : ResultCompilerCheck
-  (if (= (cdiag.compiler-diagnostic-list-count parse-diagnostics) 0)
+  (if (=
+    (cdiag.compiler-diagnostic-list-count
+      (owned_view.compiler-owned-shared-view parse-diagnostics))
+    0)
     result
     (let
-      [count : i64 (cdiag.compiler-diagnostic-list-count parse-diagnostics)]
+      [count : i64
+        (cdiag.compiler-diagnostic-list-count
+          (owned_view.compiler-owned-shared-view parse-diagnostics))]
       [index : i64 0]
       [owned-parse : cdiag.CompilerDiagnosticList
         (cdiag.compiler-diagnostic-list-with-capacity count)]
@@ -137,7 +151,9 @@
           (begin
             (cdiag.compiler-diagnostic-list-push!
               (&mut owned-parse)
-              (cdiag.compiler-diagnostic-list-get parse-diagnostics index))
+              (cdiag.compiler-diagnostic-list-get
+                (owned_view.compiler-owned-shared-view parse-diagnostics)
+                index))
             (set! index (+ index 1))))
         (match result
           [(ResultCompilerCheck.Ok _)
@@ -145,7 +161,7 @@
           [(ResultCompilerCheck.Err semantic-diagnostics)
             (begin
               (compiler-check-diagnostic-list-insert-all-source-order
-                (__tl-box-place semantic-diagnostics)
+                (owned_view.compiler-owned-box-shared-view semantic-diagnostics)
                 (&mut owned-parse))
               (ResultCompilerCheck.Err (box owned-parse)))])))))
 
@@ -169,11 +185,11 @@
     (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
       (compiler_load.compiler-load-serial-test-session-state)
       (tc.tc-prefix-snapshot-serial-test-cache-state-shared-view)
-      job-state
-      (ast.ast-program decls)
-      paths
-      stdlib-roots
-      cache-scope
+      (owned_view.compiler-owned-shared-view job-state)
+      (ast.ast-program (owned_view.compiler-owned-shared-view decls))
+      (owned_view.compiler-owned-shared-view paths)
+      (owned_view.compiler-owned-shared-view stdlib-roots)
+      (owned_view.compiler-owned-shared-view cache-scope)
       (ast.ast-node-pool-context-capture-active))
       [(tc.ResultCompilerTypecheck.Ok summary)
         (begin
@@ -185,7 +201,7 @@
           (ResultCompilerCheck.Err
             (box
               (compiler-check-diagnostics-with-fallback-path
-                (__tl-box-place diag)
+                (owned_view.compiler-owned-box-shared-view diag)
                 path))))])))
 
 (define (compiler-check-program-with-paths-cache
@@ -195,7 +211,7 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheck
   (compiler-check-program-with-paths-cache-and-job-state
-    path
+    (owned_view.compiler-owned-shared-view path)
     decls
     paths
     stdlib-roots
@@ -261,7 +277,10 @@
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [job-state : tc.TcJobState]) : ResultCompilerCheck
-  (match (parser.parse-ast-source-recovery-diagnostic-with-cfg path source cfgs)
+  (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
+    (owned_view.compiler-owned-shared-view path)
+    (owned_view.compiler-owned-shared-view source)
+    (owned_view.compiler-owned-shared-view cfgs))
     [(parser.ResultAstProgramRecovery.Fatal diagnostics)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -270,26 +289,27 @@
       (let
         [parse-identity : compiler_load.CompilerLoadParseIdentity
           (compiler_load.compiler-load-parse-identity
-            path
-            (compiler_load.compiler-load-canonical-module-id-from-path path)
+            (owned_view.compiler-owned-shared-view path)
+            (compiler_load.compiler-load-canonical-module-id-from-path
+              (owned_view.compiler-owned-shared-view path))
             ast.AstMaybeModuleName.No)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
           (compiler_load.compiler-load-program-with-paths-and-roots-expect-cfg
-            path
+            (owned_view.compiler-owned-shared-view path)
             program
             prelude-seen
-            stdlib-roots
+            (owned_view.compiler-owned-shared-view stdlib-roots)
             ast.AstMaybeModuleName.No
             cfgs
             parse-identity)]
         (compiler-check-result-with-parse-diagnostics
-          (__tl-box-place diagnostics)
+          (owned_view.compiler-owned-box-shared-view diagnostics)
           (compiler-check-loaded-with-prelude-cache-and-job-state
             path
             prelude-decls
             prelude-paths
             loaded
-            stdlib-roots
+            (owned_view.compiler-owned-shared-view stdlib-roots)
             cache-scope
             job-state)))]))
 
@@ -308,8 +328,8 @@
           (match (compiler-check-program-with-paths-cache
             path
             decls
-            owned-paths
-            stdlib-roots
+            (owned_view.compiler-owned-shared-view owned-paths)
+            (owned_view.compiler-owned-shared-view stdlib-roots)
             cache-scope)
             [(ResultCompilerCheck.Ok summary)
               (ResultCompilerCheckWithPaths.Ok summary owned-paths)]
@@ -334,7 +354,7 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (compiler-check-source-with-roots-and-cfg
-    path
+    (owned_view.compiler-owned-shared-view path)
     (compiler_load.compiler-load-read-file-text path)
     stdlib-roots
     cfgs))
@@ -349,7 +369,10 @@
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
-  (match (parser.parse-ast-source-recovery-diagnostic-with-cfg path source cfgs)
+  (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
+    (owned_view.compiler-owned-shared-view path)
+    (owned_view.compiler-owned-shared-view source)
+    (owned_view.compiler-owned-shared-view cfgs))
     [(parser.ResultAstProgramRecovery.Fatal diagnostics)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -358,31 +381,32 @@
       (let
         [parse-identity : compiler_load.CompilerLoadParseIdentity
           (compiler_load.compiler-load-parse-identity
-            path
-            (compiler_load.compiler-load-canonical-module-id-from-path path)
+            (owned_view.compiler-owned-shared-view path)
+            (compiler_load.compiler-load-canonical-module-id-from-path
+              (owned_view.compiler-owned-shared-view path))
             ast.AstMaybeModuleName.No)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
           (compiler_load.compiler-load-package-program-with-paths-and-roots-expect
-            path
+            (owned_view.compiler-owned-shared-view path)
             program
             prelude-seen
-            stdlib-roots
+            (owned_view.compiler-owned-shared-view stdlib-roots)
             ast.AstMaybeModuleName.No
             manifest-dir
             deps
-            cfgs
+            (owned_view.compiler-owned-shared-view cfgs)
             parse-identity)]
         (compiler-check-result-with-parse-diagnostics
-          (__tl-box-place diagnostics)
+          (owned_view.compiler-owned-box-shared-view diagnostics)
           (compiler-check-loaded-with-prelude-cache
             path
             prelude-decls
             prelude-paths
             loaded
-            stdlib-roots
+            (owned_view.compiler-owned-shared-view stdlib-roots)
             (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
               "typecheck-prefix-check"
-              stdlib-roots
+              (owned_view.compiler-owned-shared-view stdlib-roots)
               cfgs))))]))
 
 (define (compiler-check-package-source-with-roots-and-cfg
@@ -397,10 +421,10 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler_load.compiler-load-package-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      stdlib-roots
-      manifest-dir
-      deps
-      cfgs)
+      (owned_view.compiler-owned-shared-view stdlib-roots)
+      (owned_view.compiler-owned-shared-view manifest-dir)
+      (owned_view.compiler-owned-shared-view deps)
+      (owned_view.compiler-owned-shared-view cfgs))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
@@ -433,18 +457,18 @@
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (compiler-check-loaded-cache-with-paths
-      path
+      (owned_view.compiler-owned-shared-view path)
       (compiler_load.compiler-load-package-file-with-runtime-cfg
-        path
-        stdlib-roots
-        manifest-dir
-        deps
+        (owned_view.compiler-owned-shared-view path)
+        (owned_view.compiler-owned-shared-view stdlib-roots)
+        (owned_view.compiler-owned-shared-view manifest-dir)
+        (owned_view.compiler-owned-shared-view deps)
         emit-entry
-        cfgs)
-      stdlib-roots
+        (owned_view.compiler-owned-shared-view cfgs))
+      (owned_view.compiler-owned-shared-view stdlib-roots)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-check"
-        stdlib-roots
+        (owned_view.compiler-owned-shared-view stdlib-roots)
         cfgs))))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
@@ -465,8 +489,8 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      stdlib-roots
-      cfgs)
+      (owned_view.compiler-owned-shared-view stdlib-roots)
+      (owned_view.compiler-owned-shared-view cfgs))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
@@ -478,11 +502,11 @@
           prelude-decls
           (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
           prelude-seen
-          stdlib-roots
-          cfgs
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view cfgs)
           (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
-            stdlib-roots
+            (owned_view.compiler-owned-shared-view stdlib-roots)
             cfgs)
           job-state)]
       [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
@@ -515,10 +539,12 @@
   (match (compiler-check-source path source)
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
-      (string.eq
-        (cdiag.compiler-diagnostic-message
-          (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
-        want)]))
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (cdiag.compiler-diagnostic-list-box-shared-view diag)]
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
+        (string.eq (cdiag.compiler-diagnostic-message first) want))]))
 
 (define (compiler-check-virtual-import-source) : String
   "(import compiler_ast_types as ast)
@@ -539,17 +565,17 @@
   (begin
     (compiler-check-reset-pools!)
     (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
-      path
-      source
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
       (compiler-check-language-cfgs))
       [(parser.ResultAstProgramRecovery.Parsed program diagnostics)
         (compiler-check-result-with-parse-diagnostics
-          (__tl-box-place diagnostics)
-          (match program
+          (owned_view.compiler-owned-box-shared-view diagnostics)
+          (match (owned_view.compiler-owned-shared-view program)
             [(ast.AstProgram.Program decls-box)
               (compiler-check-program-with-paths-cache
-                path
-                (__tl-box-place decls-box)
+                (owned_view.compiler-owned-shared-view path)
+                (ast.ast-decl-list-box-shared-view decls-box)
                 (ast.ast-decl-path-list-new)
                 (svec.new)
                 (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
@@ -602,8 +628,8 @@
   (begin
     (io.print-format \"{}\" \"\")
     (io.flush-stdout)
-    (+ (byte_buf.len (io.read-file path))
-       (io.file-open-status path 0))))")
+    (+ (byte_buf.len data)
+       (io.file-open-status path 0)))))")
 
 (define (compiler-check-runtime-stdlib-boundary-env-source) : String
   "(import stdlib.env)
@@ -662,10 +688,12 @@
 (define (compiler-check-inline-layout-name-ok?
   [ctx : tc.TcContext]
   [name : String]) : bool
-  (match (compiler_typecheck_api.compiler-typecheck-context-program ctx)
+  (match (compiler_typecheck_api.compiler-typecheck-context-program
+    (owned_view.compiler-owned-shared-view ctx))
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        [decls : ast.AstDeclList
+          (owned_view.compiler-owned-box-shared-view decls-box)]
         [index : i64 0]
         [name-id : i64 -1]
         (begin
@@ -721,13 +749,23 @@
                       cbi.compiler-builtin-id-fix-empty
                       (ast.ast-node-pool-context-capture-active))]
                   (and
-                    (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstExprList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstPatternList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstDeclList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstParamList")
                     (compiler-check-inline-layout-name-ok?
-                      ctx
+                      (owned_view.compiler-owned-shared-view ctx)
+                      "AstTypeList")
+                    (compiler-check-inline-layout-name-ok?
+                      (owned_view.compiler-owned-shared-view ctx)
+                      "AstExprList")
+                    (compiler-check-inline-layout-name-ok?
+                      (owned_view.compiler-owned-shared-view ctx)
+                      "AstPatternList")
+                    (compiler-check-inline-layout-name-ok?
+                      (owned_view.compiler-owned-shared-view ctx)
+                      "AstDeclList")
+                    (compiler-check-inline-layout-name-ok?
+                      (owned_view.compiler-owned-shared-view ctx)
+                      "AstParamList")
+                    (compiler-check-inline-layout-name-ok?
+                      (owned_view.compiler-owned-shared-view ctx)
                       "AstVariantDefList")))]
               [(csym.ResultCompilerRegistries.Err _) false])]
           [(csym.ResultCompilerSymbols.Err _) false]))]
@@ -758,20 +796,20 @@
     "(define (main) : i64 true)")
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
-      (if (string.eq
-        (cdiag.compiler-diagnostic-path
-          (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
-        "docs/examples/bad_type.tl")
-        (if (=
-          (cdiag.compiler-diagnostic-line
-            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
-          1)
-          (string.eq
-            (cdiag.compiler-diagnostic-message
-              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
-            "typecheck: return type mismatch: expected i64, found bool")
-          false)
-        false)]))
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (cdiag.compiler-diagnostic-list-box-shared-view diag)]
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
+        (if (string.eq
+          (cdiag.compiler-diagnostic-path first)
+          "docs/examples/bad_type.tl")
+          (if (= (cdiag.compiler-diagnostic-line first) 1)
+            (string.eq
+              (cdiag.compiler-diagnostic-message first)
+              "typecheck: return type mismatch: expected i64, found bool")
+            false)
+          false))]))
 
 (define (compiler-check-runtime-stdlib-boundary-no-import-ok?) : bool
   (let
@@ -860,8 +898,8 @@
     [path : String "src/already_loaded.tl"]
     [source : String "(define answer : i64 1)"]
     (match (compiler_load.compiler-load-source
-      path
-      source
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
       (sym_i64_env.sym-i64-empty))
       [(compiler_load.ResultCompilerLoad.Ok _ seen)
         (match (compiler_load.compiler-load-source path source seen)
@@ -877,7 +915,9 @@
     [source : String "(define (main) : i64 0)"]
     (begin
       (ast.ty-node-pool-reset!)
-      (match (compiler-check-source "tests/pool_reset_a.tl" source)
+      (match (compiler-check-source
+        "tests/pool_reset_a.tl"
+        (owned_view.compiler-owned-shared-view source))
         [(ResultCompilerCheck.Ok _)
           (let
             [first-len : i64 (ast.ty-node-pool-len)]
@@ -902,11 +942,11 @@
       (and
         (match (compiler-check-source-with-roots-and-cfg
           "tests/check_cfg_linux.tl"
-          source
+          (owned_view.compiler-owned-shared-view source)
           (svec.new)
           (target_cfg.compiler-target-cfgs-with-names
             target_cfg.CompilerTargetCfg.Linux
-            names))
+            (owned_view.compiler-owned-shared-view names)))
           [(ResultCompilerCheck.Ok _) true]
           [(ResultCompilerCheck.Err _) false])
         (match (compiler-check-source-with-roots-and-cfg
@@ -942,9 +982,35 @@
       (compiler-check-virtual-error-ok?)
       (return (io.panic "compiler-check: virtual diagnostic smoke mismatch")))
     (unless
-      (compiler-check-runtime-stdlib-boundary-ok?)
+      (compiler-check-runtime-stdlib-boundary-no-import-ok?)
       (return
-        (io.panic "compiler-check: runtime stdlib boundary smoke mismatch")))
+        (io.panic
+          "compiler-check: runtime stdlib boundary no-import smoke mismatch")))
+    (unless
+      (compiler-check-source-ok?
+        "tests/runtime_boundary_tl"
+        (compiler-check-runtime-stdlib-boundary-io-source))
+      (return
+        (io.panic "compiler-check: runtime stdlib io boundary smoke mismatch")))
+    (unless
+      (compiler-check-source-ok?
+        "tests/runtime_boundary_env.tl"
+        (compiler-check-runtime-stdlib-boundary-env-source))
+      (return
+        (io.panic "compiler-check: runtime stdlib env boundary smoke mismatch")))
+    (unless
+      (compiler-check-source-ok?
+        "tests/runtime_boundary_fs.tl"
+        (compiler-check-runtime-stdlib-boundary-fs-source))
+      (return
+        (io.panic "compiler-check: runtime stdlib fs boundary smoke mismatch")))
+    (unless
+      (compiler-check-source-ok?
+        "tests/runtime_boundary_profile.tl"
+        (compiler-check-runtime-stdlib-boundary-profile-source))
+      (return
+        (io.panic
+          "compiler-check: runtime stdlib profile boundary smoke mismatch")))
     (unless
       (compiler-check-private-dynamic-buffer-vector-ok?)
       (return

@@ -55,11 +55,33 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-WORKDIR="$ROOT/target/embedded-stdlib-tlci"
+SOURCE_ROOT=${TYPELISP_EMBEDDED_STDLIB_SOURCE_ROOT:-$ROOT}
+case "$SOURCE_ROOT" in
+    /* | [A-Za-z]:[\\/]*) ;;
+    *) SOURCE_ROOT="$ROOT/$SOURCE_ROOT" ;;
+esac
+if [ ! -d "$SOURCE_ROOT/src" ] || [ ! -d "$SOURCE_ROOT/stdlib" ]; then
+    echo "embedded stdlib tlci source root must contain src/ and stdlib/: $SOURCE_ROOT" >&2
+    exit 2
+fi
+
+WORKDIR=${TYPELISP_EMBEDDED_STDLIB_WORKDIR:-$ROOT/target/embedded-stdlib-tlci}
+case "$WORKDIR" in
+    /* | [A-Za-z]:[\\/]*) ;;
+    *) WORKDIR="$ROOT/$WORKDIR" ;;
+esac
+case "$WORKDIR" in
+    "$ROOT"/target/*) ;;
+    *)
+        echo "TYPELISP_EMBEDDED_STDLIB_WORKDIR must stay below $ROOT/target" >&2
+        exit 2
+        ;;
+esac
 MANIFEST="$WORKDIR/modules.txt"
 SURFACE="$WORKDIR/prelude-surface-$HOST_TARGET.rodata"
 SOURCE_HASH_FILE="$WORKDIR/source-hash.txt"
-mkdir -p "$WORKDIR" "$(dirname -- "$OUTPUT")"
+BUILD_CWD="$WORKDIR/cwd"
+mkdir -p "$WORKDIR" "$BUILD_CWD" "$(dirname -- "$OUTPUT")"
 
 awk '
 function emit_input() {
@@ -80,7 +102,7 @@ collecting {
     declaration = declaration " " $0
     if ($0 ~ /\)[ \t]*$/) emit_input()
 }
-' src/compiler_embedded_stdlib_payload.tl > "$MANIFEST"
+' "$SOURCE_ROOT/src/compiler_embedded_stdlib_payload.tl" > "$MANIFEST"
 
 if PRODUCER_IDENTITY=$($COMPILER --producer-identity 2>/dev/null); then
     :
@@ -100,7 +122,7 @@ if ! printf '%s\n' "$PRODUCER_IDENTITY" | grep -Eq '^[0-9a-f]{40}$'; then
 fi
 SOURCE_HASH=$(
     while IFS= read -r MODULE_PATH; do
-        SOURCE_PATH="$ROOT/stdlib/$MODULE_PATH"
+        SOURCE_PATH="$SOURCE_ROOT/stdlib/$MODULE_PATH"
         [ -f "$SOURCE_PATH" ] || {
             echo "embedded stdlib module is missing: $SOURCE_PATH" >&2
             exit 1
@@ -111,13 +133,18 @@ SOURCE_HASH=$(
     done < "$MANIFEST" | git hash-object --stdin
 )
 printf '%s' "$SOURCE_HASH" > "$SOURCE_HASH_FILE"
-"$COMPILER" run tools/embedded-stdlib-tlci/build-surface.tl \
-    --stdlib-root stdlib --stdlib-root src \
-    --cfg compiler-surface-producer -- \
-    stdlib "$SURFACE" "$HOST_TARGET" "$PRODUCER_IDENTITY" "$SOURCE_HASH"
-"$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
-    "$MANIFEST" stdlib "$OUTPUT" "$HOST_TARGET" "$PRODUCER_IDENTITY" "$SURFACE"
+(
+    cd "$BUILD_CWD"
+    "$COMPILER" run "$ROOT/tools/embedded-stdlib-tlci/build-surface.tl" \
+        --stdlib-root "$SOURCE_ROOT/stdlib" --stdlib-root "$SOURCE_ROOT/src" \
+        --cfg compiler-surface-producer -- \
+        "$SOURCE_ROOT/stdlib" "$SURFACE" "$HOST_TARGET" \
+        "$PRODUCER_IDENTITY" "$SOURCE_HASH"
+    "$COMPILER" run "$ROOT/tools/embedded-stdlib-tlci/build.tl" \
+        --stdlib-root "$SOURCE_ROOT/stdlib" --stdlib-root "$SOURCE_ROOT/src" -- \
+        "$MANIFEST" "$SOURCE_ROOT/stdlib" "$OUTPUT" "$HOST_TARGET" \
+        "$PRODUCER_IDENTITY" "$SURFACE"
+)
 
 [ -s "$OUTPUT" ] || {
     echo "embedded stdlib tlci builder emitted no image: $OUTPUT" >&2
@@ -125,9 +152,12 @@ printf '%s' "$SOURCE_HASH" > "$SOURCE_HASH_FILE"
 }
 
 ENVELOPE="$OUTPUT.tlch"
-"$COMPILER" run tools/embedded-stdlib-tlci/encode-envelope.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
-    "$OUTPUT" "$ENVELOPE" >/dev/null
+(
+    cd "$BUILD_CWD"
+    "$COMPILER" run "$ROOT/tools/embedded-stdlib-tlci/encode-envelope.tl" \
+        --stdlib-root "$SOURCE_ROOT/stdlib" --stdlib-root "$SOURCE_ROOT/src" -- \
+        "$OUTPUT" "$ENVELOPE" >/dev/null
+)
 [ -s "$ENVELOPE" ] || {
     echo "embedded stdlib tlci encoder emitted no envelope: $ENVELOPE" >&2
     exit 1

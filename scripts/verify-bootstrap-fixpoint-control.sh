@@ -59,4 +59,41 @@ if [ ! -e "$STAGE4_BUILD_MARKER" ] || ! cmp -s "$STAGE3_ASM" "$STAGE4_ASM"; then
     exit 1
 fi
 
+ROUTE_LOG="$WORKDIR/tlci-mutation-route.log"
+IDENTITY=stdlib.core_macros/when
+printf '%s\n' \
+    "tlci-bootstrap-mutation-route|identity=$IDENTITY|route=native|result=value" \
+    > "$ROUTE_LOG"
+bootstrap_tlci_require_route "$ROUTE_LOG" "$IDENTITY" native value
+if bootstrap_tlci_require_route "$ROUTE_LOG" "$IDENTITY" source interpreted \
+    2>/dev/null; then
+    echo "tlci mutation route control accepted the wrong route" >&2
+    exit 1
+fi
+printf '%s\n' \
+    "tlci-bootstrap-mutation-route|identity=$IDENTITY|route=source|result=interpreted" \
+    >> "$ROUTE_LOG"
+if bootstrap_tlci_require_route "$ROUTE_LOG" "$IDENTITY" native value \
+    2>/dev/null; then
+    echo "tlci mutation route control accepted contradictory routes" >&2
+    exit 1
+fi
+
+printf 'payload-a\n' > "$WORKDIR/payload-a"
+cp "$WORKDIR/payload-a" "$WORKDIR/payload-b"
+bootstrap_tlci_require_same_artifact \
+    "$WORKDIR/payload-a" "$WORKDIR/payload-b" payload
+printf 'payload-b\n' > "$WORKDIR/payload-b"
+if bootstrap_tlci_require_same_artifact \
+    "$WORKDIR/payload-a" "$WORKDIR/payload-b" payload 2>/dev/null; then
+    echo "tlci mutation payload control accepted different artifacts" >&2
+    exit 1
+fi
+
+bootstrap_tlci_require_identity abc abc producer
+if bootstrap_tlci_require_identity stale current producer 2>/dev/null; then
+    echo "tlci mutation provenance control accepted a stale identity" >&2
+    exit 1
+fi
+
 echo "bootstrap adaptive fixpoint control-flow tests passed"

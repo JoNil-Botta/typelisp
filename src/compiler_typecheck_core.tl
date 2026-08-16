@@ -34,6 +34,9 @@
 (cfg embedded-stdlib-tlci (import tlci_core as tlci))
 (cfg embedded-stdlib-tlci (import tlci_loader as tlci_loader_support))
 (cfg tlci-native-route-stress (import stdlib.env as stress_env))
+(cfg
+  tlci-bootstrap-mutation-witness
+  (import stdlib.env as mutation_witness_env))
 (cfg test (import stdlib.test))
 (import sym_i64_env)
 
@@ -101136,6 +101139,35 @@
           MacroTlciCatalogSelection.None)]
       [_ MacroTlciCatalogSelection.Dependency])))
 
+(cfg
+  tlci-bootstrap-mutation-witness
+  (define (macro-tlci-bootstrap-mutation-witness-requested?) : bool
+    (let
+      [name : String "TYPELISP_TLCI_MUTATION_WITNESS"]
+      (match (mutation_witness_env.get (& name))
+        [(mutation_witness_env.EnvSomeString value) (string.eq value "1")]
+        [(mutation_witness_env.EnvNoString) false]))))
+
+(cfg
+  tlci-bootstrap-mutation-witness
+  (define (macro-tlci-bootstrap-mutation-witness-emit!
+    [identity : String]
+    [route : String]
+    [result : String]) : unit
+    (if (and
+      (string.eq identity "stdlib.core_macros/when")
+      (macro-tlci-bootstrap-mutation-witness-requested?))
+      (io.print-error
+        (str_cat.str-cat
+          "tlci-bootstrap-mutation-route|identity="
+          identity
+          "|route="
+          route
+          "|result="
+          result
+          "\n"))
+      unit)))
+
 (define (macro-note-stdlib-tlci-route
   [state : TcMacroState]
   [definition-module : String]
@@ -101144,57 +101176,66 @@
   (if (or
     (ctfe_support.ctfe-string-prefix? definition-module "stdlib.")
     (ctfe_support.ctfe-string-prefix? macro-name "stdlib."))
-    (if (and
-      (tc-macro-walk-field state macro-expand-stdlib-tlci-route-active)
-      (cload.compiler-load-embedded-stdlib-module-id? definition-module))
-      (begin
-        (cfg
-          embedded-stdlib-tlci
-          (match (macro-expand-stdlib-tlci-catalog-lookup-cached
-            (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
-              macro-name
-              (str_cat.str-cat definition-module "/" macro-name)))
-            [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved _)
-              (cfg
-                compile-profile
-                (set!
-                  compiler-tc-macro-stdlib-tlci-catalog-hits
-                  (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1)))]
-            [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
-              (cfg
-                compile-profile
-                (set!
-                  compiler-tc-macro-stdlib-tlci-catalog-hits
-                  (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1)))]
-            [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
-              (cfg
-                compile-profile
-                (set!
-                  compiler-tc-macro-stdlib-tlci-catalog-misses
-                  (+ compiler-tc-macro-stdlib-tlci-catalog-misses 1)))]
-            [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
-              (cfg
-                compile-profile
-                (set!
-                  compiler-tc-macro-stdlib-tlci-load-failures
-                  (+ compiler-tc-macro-stdlib-tlci-load-failures 1)))]))
-        (cfg
-          (not embedded-stdlib-tlci)
+    (begin
+      (cfg
+        tlci-bootstrap-mutation-witness
+        (macro-tlci-bootstrap-mutation-witness-emit!
+          (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
+            macro-name
+            (str_cat.str-cat definition-module "/" macro-name))
+          "source"
+          "interpreted"))
+      (if (and
+        (tc-macro-walk-field state macro-expand-stdlib-tlci-route-active)
+        (cload.compiler-load-embedded-stdlib-module-id? definition-module))
+        (begin
+          (cfg
+            embedded-stdlib-tlci
+            (match (macro-expand-stdlib-tlci-catalog-lookup-cached
+              (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
+                macro-name
+                (str_cat.str-cat definition-module "/" macro-name)))
+              [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved _)
+                (cfg
+                  compile-profile
+                  (set!
+                    compiler-tc-macro-stdlib-tlci-catalog-hits
+                    (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1)))]
+              [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
+                (cfg
+                  compile-profile
+                  (set!
+                    compiler-tc-macro-stdlib-tlci-catalog-hits
+                    (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1)))]
+              [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
+                (cfg
+                  compile-profile
+                  (set!
+                    compiler-tc-macro-stdlib-tlci-catalog-misses
+                    (+ compiler-tc-macro-stdlib-tlci-catalog-misses 1)))]
+              [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
+                (cfg
+                  compile-profile
+                  (set!
+                    compiler-tc-macro-stdlib-tlci-load-failures
+                    (+ compiler-tc-macro-stdlib-tlci-load-failures 1)))]))
+          (cfg
+            (not embedded-stdlib-tlci)
+            (cfg
+              compile-profile
+              (set!
+                compiler-tc-macro-stdlib-tlci-load-failures
+                (+ compiler-tc-macro-stdlib-tlci-load-failures 1))))
           (cfg
             compile-profile
             (set!
-              compiler-tc-macro-stdlib-tlci-load-failures
-              (+ compiler-tc-macro-stdlib-tlci-load-failures 1))))
+              compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+              (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1))))
         (cfg
           compile-profile
           (set!
-            compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
-            (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1))))
-      (cfg
-        compile-profile
-        (set!
-          compiler-tc-macro-stdlib-source-interpreted
-          (+ compiler-tc-macro-stdlib-source-interpreted 1))))
+            compiler-tc-macro-stdlib-source-interpreted
+            (+ compiler-tc-macro-stdlib-source-interpreted 1)))))
     unit))
 
 (defenum MacroNativeStdlibTlciResult
@@ -101510,6 +101551,12 @@
                               [value : ctfe_support.CompilerCtfeValue
                                 (embedded_tlci.compiler-comptime-host-result-value)]
                               (begin
+                                (cfg
+                                  tlci-bootstrap-mutation-witness
+                                  (macro-tlci-bootstrap-mutation-witness-emit!
+                                    identity
+                                    "native"
+                                    "value"))
                                 (cfg
                                   (all
                                     embedded-stdlib-tlci

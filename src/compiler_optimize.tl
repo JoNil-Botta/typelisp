@@ -80356,20 +80356,20 @@
 
 ;; The plan is read STANDALONE: this tier runs the allocator on one IR function
 ;; from inside the optimizer, and the backend of this compile has not run yet.
-;; The allocator's program maps -- aggregate group word counts, their SSE class
-;; masks, and the private-memory C call names -- are facts about the IMAGE the
-;; backend is emitting, installed from its program index and owned by that
-;; image's arena. A standalone plan has no image, so those queries must answer
-;; the way they answer in a fresh process: missing.
+;; Nominal representation facts now arrive as an explicit job-owned capability,
+;; but this plumbing packet deliberately leaves the checked-inline census
+;; unchanged. The remaining image-scoped compatibility table contains only
+;; private-memory C call names. A standalone plan has no image, so that query
+;; must answer the way it answers in a fresh process: missing.
 ;;
 ;; That is not merely tidy. `compile --batch` reuses one process across entries,
 ;; so on the second entry onward those globals still name the PREVIOUS entry's
 ;; arena, which has been torn down -- and this tier is the first reader in the
 ;; compile that reaches them, arriving before the backend re-installs. Reading
-;; them there dereferences freed storage: it segfaulted the build-invariance
+;; it there dereferences freed storage: it segfaulted the build-invariance
 ;; corpus on generated_hashmap_global_mutation, the third entry of its first
-;; opt2 chunk, inside compiler-reg-type-register-group?. Suppressing the maps
-;; for the duration of the measurement gives every entry the answers the first
+;; opt2 chunk. Suppressing the table for the duration of the measurement gives
+;; every entry the answers the first
 ;; entry already gets, so the verdict stops depending on batch position as well.
 (define (opt-inline-checked-alloc-cost [func : ir.CompilerIrFunction]) : i64
   (let
@@ -89911,13 +89911,14 @@
               (ir.compiler-source-spans-clear-instrs source-spans)
               functions)])])))
 
-(define (optimize-program-with-spans-and-reader-context-and-level-and-profile-state
+(define (optimize-program-with-spans-and-reader-context-and-level-and-profile-state-and-representations
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [program : ir.CompilerIrProgram]
   [spans : ir.CompilerSourceSpans]
   [level : i64]
-  [profile-state : profile_state.CompilerProfileState]) : CompilerOptimizedProgram
+  [profile-state : profile_state.CompilerProfileState]
+  [_representations : ir.CompilerIrRepresentationIndex]) : CompilerOptimizedProgram
   (match program
     [(ir.CompilerIrProgram.Program globals functions externs)
       (if (= level 0)
@@ -90098,6 +90099,22 @@
                             (compiler-opt-debug-finish-program optimized)
                             (opt-remap-spans-program inline-spans optimized)))))))]))))]))
 
+(define (optimize-program-with-spans-and-reader-context-and-level-and-profile-state
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]
+  [level : i64]
+  [profile-state : profile_state.CompilerProfileState]) : CompilerOptimizedProgram
+  (optimize-program-with-spans-and-reader-context-and-level-and-profile-state-and-representations
+    pools
+    type-segment-bases
+    program
+    spans
+    level
+    profile-state
+    (ir.compiler-ir-representation-index-build type-segment-bases program)))
+
 (define (optimize-program-with-spans-and-reader-context-and-level
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -90150,6 +90167,22 @@
     spans
     level
     profile-state))
+
+(define (optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
+  [pools : ast.AstNodePoolContext]
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]
+  [level : i64]
+  [profile-state : profile_state.CompilerProfileState]
+  [representations : ir.CompilerIrRepresentationIndex]) : CompilerOptimizedProgram
+  (optimize-program-with-spans-and-reader-context-and-level-and-profile-state-and-representations
+    pools
+    (ast.ast-node-pool-context-type-segment-bases pools)
+    program
+    spans
+    level
+    profile-state
+    representations))
 
 (define (optimize-program-with-spans
   [program : ir.CompilerIrProgram]

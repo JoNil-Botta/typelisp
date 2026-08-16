@@ -1,8 +1,6 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
 (import stdlib.array)
 (import stdlib.io)
-(import stdlib.hashmap)
-(import (hashmap.hashmap i64 i64) as backend_test_i64_i64_map)
 (import compiler_object as cobj)
 (import compiler_object_coff as coff)
 (import compiler_object_elf as elf)
@@ -7349,18 +7347,40 @@
     [source-memory : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Struct (ci.intern source-memory-name))]
     (and
-      (= (compiler_backend.compiler-backend-abi-group-mask bases group0) 0)
-      (= (compiler_backend.compiler-backend-abi-group-mask bases group1) 1)
-      (= (compiler_backend.compiler-backend-abi-group-mask bases group2) 2)
-      (= (compiler_backend.compiler-backend-abi-group-mask bases group3) 3)
-      (= (compiler_backend.compiler-backend-abi-group-mask bases bad-group) -1)
       (=
-        (compiler_backend.compiler-backend-abi-group-mask
+        (compiler_ir_types.compiler-ir-representation-abi-group-mask
+          bases
+          group0)
+        0)
+      (=
+        (compiler_ir_types.compiler-ir-representation-abi-group-mask
+          bases
+          group1)
+        1)
+      (=
+        (compiler_ir_types.compiler-ir-representation-abi-group-mask
+          bases
+          group2)
+        2)
+      (=
+        (compiler_ir_types.compiler-ir-representation-abi-group-mask
+          bases
+          group3)
+        3)
+      (=
+        (compiler_ir_types.compiler-ir-representation-abi-group-mask
+          bases
+          bad-group)
+        -1)
+      (=
+        (compiler_ir_types.compiler-ir-representation-abi-group-mask
           bases
           double-mask-group)
         -1)
       (=
-        (compiler_backend.compiler-backend-abi-group-mask bases empty-group-key)
+        (compiler_ir_types.compiler-ir-representation-abi-group-mask
+          bases
+          empty-group-key)
         -1)
       (= (compiler_backend.compiler-backend-abi-memory-size bases memory24) 24)
       (= (compiler_backend.compiler-backend-abi-memory-size bases memory9) 9)
@@ -7387,7 +7407,9 @@
           negative-memory)
         0)
       (=
-        (compiler_backend.compiler-backend-abi-group-mask bases source-group)
+        (compiler_ir_types.compiler-ir-representation-abi-group-mask
+          bases
+          source-group)
         -1)
       (=
         (compiler_backend.compiler-backend-abi-memory-size bases source-memory)
@@ -7485,8 +7507,16 @@
       (string.eq
         (compiler_backend.compiler-backend-aggregate-type-name bases memory24)
         memory24-name)
-      (= (compiler_backend.compiler-backend-abi-group-mask bases group0) 0)
-      (= (compiler_backend.compiler-backend-abi-group-mask bases group2) 2)
+      (=
+        (compiler_ir_types.compiler-ir-representation-abi-group-mask
+          bases
+          group0)
+        0)
+      (=
+        (compiler_ir_types.compiler-ir-representation-abi-group-mask
+          bases
+          group2)
+        2)
       (= (compiler_backend.compiler-backend-abi-memory-size bases memory24) 24)
       (compiler_backend.compiler-backend-group-type? bases index group0)
       (compiler_backend.compiler-backend-group-type? bases index group2)
@@ -8093,22 +8123,39 @@
           index
           mut-ref)
         0)
-      (compiler_regalloc.compiler-reg-type-register-group? bases ref)
-      (compiler_regalloc.compiler-reg-type-register-group? bases mut-ref)
+      (compiler_regalloc.compiler-reg-type-register-group?
+        bases
+        index.representations
+        ref)
+      (compiler_regalloc.compiler-reg-type-register-group?
+        bases
+        index.representations
+        mut-ref)
       (not
-        (compiler_regalloc.compiler-reg-type-register-group? bases ordinary-ref))
+        (compiler_regalloc.compiler-reg-type-register-group?
+          bases
+          index.representations
+          ordinary-ref))
       (not
-        (compiler_regalloc.compiler-reg-type-register-group? bases bare-slice))
+        (compiler_regalloc.compiler-reg-type-register-group?
+          bases
+          index.representations
+          bare-slice))
       (not
-        (compiler_regalloc.compiler-reg-type-register-group-has-sse? bases ref))
+        (compiler_regalloc.compiler-reg-type-register-group-has-sse?
+          bases
+          index.representations
+          ref))
       (not
         (compiler_regalloc.compiler-reg-type-register-group-word-sse?
           bases
+          index.representations
           ref
           0))
       (not
         (compiler_regalloc.compiler-reg-type-register-group-word-sse?
           bases
+          index.representations
           ref
           1)))))
 
@@ -9326,7 +9373,6 @@
             (compiler_ir_types.CompilerIrValue.String "global-string"))]
         [collections : compiler_backend.CompilerBackendProgramCollections
           (compiler_backend.compiler-backend-collect-program-collections
-            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (compiler_ir_types.CompilerIrProgram.Program
               globals
               functions
@@ -9453,26 +9499,11 @@
               5
               blocks)
             compiler_ir_types.CompilerIrFunctionList.Nil)))]
-    [counts : backend_test_i64_i64_map.Map
-      (compiler_backend.compiler-backend-collect-group-counts-functions
-        bases
-        (backend_test_i64_i64_map.with-capacity 8)
-        functions)]
-    [masks : backend_test_i64_i64_map.Map
-      (compiler_backend.compiler-backend-collect-group-class-masks-functions
-        bases
-        (backend_test_i64_i64_map.with-capacity 8)
-        functions)]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         bases
         functions
         compiler_ir_types.CompilerIrExternList.Nil)]
-    [_install-counts : unit
-      (compiler_regalloc.compiler-reg-set-group-counts! index.group-word-counts)]
-    [_install-masks : unit
-      (compiler_regalloc.compiler-reg-set-group-class-masks!
-        index.group-word-class-masks)]
     (and
       (= plain-key root-key)
       (not (= qualified-key opaque-key))
@@ -9505,21 +9536,27 @@
         (compiler_ast_types.AstType.I64))
         [(compiler_ast_types.AstMaybeNominalKey.Some _) false]
         [(compiler_ast_types.AstMaybeNominalKey.None) true])
-      (match (backend_test_i64_i64_map.get (& counts) plain-key)
-        [(backend_test_i64_i64_map.LookupFound count) (= count 2)]
-        [(backend_test_i64_i64_map.LookupMissing) false])
-      (match (backend_test_i64_i64_map.get (& counts) qualified-key)
-        [(backend_test_i64_i64_map.LookupFound count) (= count 2)]
-        [(backend_test_i64_i64_map.LookupMissing) false])
-      (match (backend_test_i64_i64_map.get (& counts) opaque-key)
-        [(backend_test_i64_i64_map.LookupFound count) (= count 1)]
-        [(backend_test_i64_i64_map.LookupMissing) false])
-      (match (backend_test_i64_i64_map.get (& masks) qualified-key)
-        [(backend_test_i64_i64_map.LookupFound mask) (= mask 2)]
-        [(backend_test_i64_i64_map.LookupMissing) false])
-      (match (backend_test_i64_i64_map.get (& masks) opaque-key)
-        [(backend_test_i64_i64_map.LookupFound mask) (= mask 1)]
-        [(backend_test_i64_i64_map.LookupMissing) false])
+      (match (compiler_ir_types.compiler-ir-representation-index-kind-for-key
+        index.representations
+        plain-key)
+        [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup
+            count
+            mask)
+          (and (= count 2) (= mask 2))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-representation-index-kind-for-key
+        index.representations
+        qualified-key)
+        [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup
+            count
+            mask)
+          (and (= count 2) (= mask 2))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-representation-index-kind-for-key
+        index.representations
+        opaque-key)
+        [(compiler_ir_types.CompilerIrRepresentationKind.Unknown) true]
+        [_ false])
       (=
         (compiler_backend.compiler-backend-group-word-count
           bases
@@ -9597,46 +9634,63 @@
           bases
           index
           opaque-struct)
-        1)
-      (compiler_regalloc.compiler-reg-type-register-group? bases struct-plain)
+        0)
       (compiler_regalloc.compiler-reg-type-register-group?
         bases
+        index.representations
+        struct-plain)
+      (compiler_regalloc.compiler-reg-type-register-group?
+        bases
+        index.representations
         struct-args-root)
-      (compiler_regalloc.compiler-reg-type-register-group? bases enum-qualified)
       (compiler_regalloc.compiler-reg-type-register-group?
         bases
+        index.representations
+        enum-qualified)
+      (compiler_regalloc.compiler-reg-type-register-group?
+        bases
+        index.representations
         enum-args-qualified)
       (compiler_regalloc.compiler-reg-type-register-group?
         bases
+        index.representations
         region-qualified)
       (not
         (compiler_regalloc.compiler-reg-type-register-group?
           bases
+          index.representations
           opaque-struct))
       (compiler_regalloc.compiler-reg-type-register-group-word-sse?
         bases
+        index.representations
         struct-plain
         1)
       (compiler_regalloc.compiler-reg-type-register-group-word-sse?
         bases
+        index.representations
         struct-args-root
         1)
       (compiler_regalloc.compiler-reg-type-register-group-word-sse?
         bases
+        index.representations
         enum-qualified
         1)
       (not
         (compiler_regalloc.compiler-reg-type-register-group-word-sse?
           bases
+          index.representations
           enum-qualified
           0))
-      (compiler_regalloc.compiler-reg-type-register-group-word-sse?
-        bases
-        opaque-struct
-        0)
       (not
         (compiler_regalloc.compiler-reg-type-register-group-word-sse?
           bases
+          index.representations
+          opaque-struct
+          0))
+      (not
+        (compiler_regalloc.compiler-reg-type-register-group-word-sse?
+          bases
+          index.representations
           opaque-struct
           1)))))
 
@@ -15383,6 +15437,43 @@
       hit-ok
       (= owner-capacity 16)
       (= owner-count 0)
+      (arena.mark-eq? owner-mark-before owner-mark-after)
+      (arena.eq? (arena.current) caller))))
+
+;; Representation facts are per compile entry even when the explicit backend
+;; state is reused by a batch. Rebuilding them must rewind their dedicated
+;; arena rather than extending the persistent state owner on every entry.
+(define (compiler-backend-representation-arena-reuse-ok?) : bool
+  (let
+    [caller : arena.Arena (arena.current)]
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [owner-mark-before : arena.ArenaMark (arena.mark)]
+    [first-owner : arena.Arena
+      (compiler_backend.compiler-backend-state-prepare-representation-arena!
+        backend-state)]
+    [first-index : compiler_ir_types.CompilerIrRepresentationIndex
+      (in-arena
+        first-owner
+        (compiler_ir_types.compiler-ir-representation-index-empty))]
+    [_install-first : unit
+      (compiler_backend.compiler-backend-state-set-representations!
+        backend-state
+        first-index)]
+    [second-owner : arena.Arena
+      (compiler_backend.compiler-backend-state-prepare-representation-arena!
+        backend-state)]
+    [second-index : compiler_ir_types.CompilerIrRepresentationIndex
+      (in-arena
+        second-owner
+        (compiler_ir_types.compiler-ir-representation-index-empty))]
+    [_install-second : unit
+      (compiler_backend.compiler-backend-state-set-representations!
+        backend-state
+        second-index)]
+    [owner-mark-after : arena.ArenaMark (arena.mark)]
+    (and
+      (arena.eq? first-owner second-owner)
       (arena.mark-eq? owner-mark-before owner-mark-after)
       (arena.eq? (arena.current) caller))))
 
@@ -39912,6 +40003,28 @@
     vars
     assignments))
 
+(define (compiler-backend-scratch-test-result-with-representations
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [vars : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [representations : compiler_ir_types.CompilerIrRepresentationIndex]) : compiler_regalloc.CompilerRegScratchPlanResult
+  (compiler_regalloc.compiler-reg-plan-with-scratch-vreg-result
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_abi.CompilerRegTargetAbi.Linux)
+    (compiler_ir_types.CompilerIrFunction.Function
+      (ci.intern name)
+      compiler_ir_types.CompilerIrParamList.Nil
+      (compiler_ast_types.AstType.I64)
+      vars
+      blocks)
+    (compiler-backend-scratch-test-base-plan-with-types
+      (compiler_regalloc.compiler-reg-var-types-with-representations
+        (compiler-backend-scratch-test-types-from 0 vars)
+        representations)
+      assignments)
+    vars))
+
 (define (compiler-backend-scratch-float-types
   [result : compiler_ast_types.AstType]
   [operand : compiler_ast_types.AstType]
@@ -40112,24 +40225,20 @@
     (let
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler-backend-scratch-vreg-aggregate-test-index)]
-      [_counts : unit
-        (compiler_regalloc.compiler-reg-set-group-counts!
-          index.group-word-counts)]
-      [_masks : unit
-        (compiler_regalloc.compiler-reg-set-group-class-masks!
-          index.group-word-class-masks)]
       [result : compiler_regalloc.CompilerRegScratchPlanResult
-        (compiler-backend-scratch-test-result
+        (compiler-backend-scratch-test-result-with-representations
           "scratch_vreg_aggregate"
           (compiler-backend-scratch-vreg-aggregate-test-blocks)
           3
-          (compiler-backend-scratch-vreg-aggregate-test-assignments))]
+          (compiler-backend-scratch-vreg-aggregate-test-assignments)
+          index.representations)]
       [gp-result : compiler_regalloc.CompilerRegScratchPlanResult
-        (compiler-backend-scratch-test-result
+        (compiler-backend-scratch-test-result-with-representations
           "scratch_vreg_aggregate_gp"
           (compiler-backend-scratch-vreg-aggregate-gp-test-blocks)
           3
-          (compiler-backend-scratch-vreg-aggregate-test-assignments))]
+          (compiler-backend-scratch-vreg-aggregate-test-assignments)
+          index.representations)]
       [reg0 : String (compiler-backend-scratch-test-register result 0)]
       [reg1 : String (compiler-backend-scratch-test-register result 1)]
       [gp0 : String (compiler-backend-scratch-test-register gp-result 0)]
@@ -46893,6 +47002,7 @@ b_keep:
         (compiler-backend-debug-disabled-sparse-paths-ok?)
         (compiler-backend-debug-file-index-emission-arena-ok?)
         (compiler-backend-user-symbol-cache-emission-arena-ok?)
+        (compiler-backend-representation-arena-reuse-ok?)
         (compiler-backend-register-group-fail-closed-ok?)
         (compiler-backend-reg-part-pools-ok?)
         (compiler-backend-scavenge-emergency-reg-support-ok?)

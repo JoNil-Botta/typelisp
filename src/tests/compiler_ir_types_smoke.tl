@@ -963,6 +963,199 @@
                   (= (ast.ast-source-span-start-line span) 130))]
               [_ false]))]))))
 
+(define (compiler-ir-smoke-representation-kind-group?
+  [kind : compiler_ir_types.CompilerIrRepresentationKind]
+  [count : i64]
+  [mask : i64]) : bool
+  (match kind
+    [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup
+        found-count
+        found-mask)
+      (and (= found-count count) (= found-mask mask))]
+    [_ false]))
+
+(define (compiler-ir-smoke-representation-kind-one?
+  [kind : compiler_ir_types.CompilerIrRepresentationKind]) : bool
+  (match kind
+    [(compiler_ir_types.CompilerIrRepresentationKind.KnownOneWord) true]
+    [_ false]))
+
+(define (compiler-ir-smoke-representation-kind-unknown?
+  [kind : compiler_ir_types.CompilerIrRepresentationKind]) : bool
+  (match kind
+    [(compiler_ir_types.CompilerIrRepresentationKind.Unknown) true]
+    [_ false]))
+
+(define (compiler-ir-smoke-representation-index-failure) : i64
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [group-name : i64 (ci.intern "RepresentationGroup")]
+    [one-name : i64 (ci.intern "RepresentationOne")]
+    [conflict-name : i64 (ci.intern "RepresentationConflict")]
+    [signature-name : i64
+      (compiler_ir_types.compiler-ir-symbol
+        "__tl_internal_abi_group_m2__RepresentationSignature")]
+    [private-name : i64
+      (compiler_ir_types.compiler-ir-symbol
+        "__tl_internal_abi_mem_s16__RepresentationPrivate")]
+    [malformed-name : i64
+      (compiler_ir_types.compiler-ir-symbol
+        "__tl_internal_abi_group_m9__RepresentationMalformed")]
+    [group-ty : ast.AstType (ast.AstType.Struct group-name)]
+    [one-ty : ast.AstType (ast.AstType.Enum one-name)]
+    [conflict-ty : ast.AstType (ast.AstType.Struct conflict-name)]
+    [signature-ty : ast.AstType (ast.AstType.Struct signature-name)]
+    [private-ty : ast.AstType (ast.AstType.Struct private-name)]
+    [malformed-ty : ast.AstType (ast.AstType.Struct malformed-name)]
+    [group-id : i64 (ast.ast-node-pool-context-type-push pools group-ty)]
+    [region-ty : ast.AstType (ast.AstType.Region 77 group-id)]
+    [words-gp-sse : compiler_ir_types.CompilerIrValueList
+      (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.CompilerIrValue.F64 0)
+          compiler_ir_types.CompilerIrValueList.Nil))]
+    [words-gp-gp : compiler_ir_types.CompilerIrValueList
+      (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.CompilerIrValue.I64 2)
+          compiler_ir_types.CompilerIrValueList.Nil))]
+    [words-sse-gp : compiler_ir_types.CompilerIrValueList
+      (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.CompilerIrValue.F64 0)
+        (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.CompilerIrValue.I64 2)
+          compiler_ir_types.CompilerIrValueList.Nil))]
+    [instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-from-list
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Pack 1 words-gp-sse group-ty)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              2
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              one-ty)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Pack 3 words-gp-gp conflict-ty)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Pack
+                  4
+                  words-sse-gp
+                  conflict-ty)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    5
+                    (compiler_ir_types.CompilerIrValue.I64 0)
+                    private-ty)
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Mov
+                      6
+                      (compiler_ir_types.CompilerIrValue.I64 0)
+                      malformed-ty)
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.ir-instr-descriptor-pair-pack
+                        7
+                        (compiler_ir_types.CompilerIrValue.I64 0)
+                        (compiler_ir_types.CompilerIrValue.I64 0)
+                        (compiler_ir_types.CompilerIrDescriptorPairKind.OwnedString))
+                      compiler_ir_types.CompilerIrInstrList.Nil))))))))]
+    [params : compiler_ir_types.CompilerIrParamList
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param "group" signature-ty 0)
+        compiler_ir_types.CompilerIrParamList.Nil)]
+    [program : compiler_ir_types.CompilerIrProgram
+      (compiler_ir_types.CompilerIrProgram.Program
+        (compiler_ir_types.compiler-ir-global-seq-empty)
+        (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.CompilerIrFunction.Function
+            (ci.intern "representation_index")
+            params
+            one-ty
+            8
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "entry")
+                instrs)
+              compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrFunctionList.Nil)
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    [index : compiler_ir_types.CompilerIrRepresentationIndex
+      (compiler_ir_types.compiler-ir-representation-index-build bases program)]
+    (begin
+      (unless
+        (compiler-ir-smoke-representation-kind-group?
+          (compiler_ir_types.compiler-ir-representation-index-kind
+            bases
+            index
+            group-ty)
+          2
+          2)
+        (return 1))
+      (unless
+        (compiler-ir-smoke-representation-kind-group?
+          (compiler_ir_types.compiler-ir-representation-index-kind
+            bases
+            index
+            region-ty)
+          2
+          2)
+        (return 2))
+      (unless
+        (compiler-ir-smoke-representation-kind-group?
+          (compiler_ir_types.compiler-ir-representation-index-kind
+            bases
+            index
+            signature-ty)
+          2
+          2)
+        (return 3))
+      (unless
+        (compiler-ir-smoke-representation-kind-one?
+          (compiler_ir_types.compiler-ir-representation-index-kind
+            bases
+            index
+            one-ty))
+        (return 4))
+      (unless
+        (compiler-ir-smoke-representation-kind-unknown?
+          (compiler_ir_types.compiler-ir-representation-index-kind
+            bases
+            index
+            conflict-ty))
+        (return 5))
+      (unless
+        (compiler-ir-smoke-representation-kind-unknown?
+          (compiler_ir_types.compiler-ir-representation-index-kind
+            bases
+            index
+            private-ty))
+        (return 6))
+      (unless
+        (compiler-ir-smoke-representation-kind-unknown?
+          (compiler_ir_types.compiler-ir-representation-index-kind
+            bases
+            index
+            malformed-ty))
+        (return 7))
+      (unless
+        (compiler-ir-smoke-representation-kind-unknown?
+          (compiler_ir_types.compiler-ir-representation-index-kind
+            bases
+            index
+            (ast.AstType.Var 99)))
+        (return 8))
+      (unless
+        (compiler-ir-smoke-representation-kind-unknown?
+          (compiler_ir_types.compiler-ir-representation-index-kind
+            bases
+            index
+            (ast.AstType.String)))
+        (return 9))
+      0)))
+
 (define (main) : i64
   (begin
     (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
@@ -976,4 +1169,10 @@
     (unless (compiler-ir-smoke-derived-symbol-table-ok?) (return 9))
     (unless (compiler-ir-smoke-structural-lifetime-render-ok?) (return 10))
     (unless (compiler-ir-smoke-source-spans-escape-ok?) (return 11))
+    (let
+      [representation-failure : i64
+        (compiler-ir-smoke-representation-index-failure)]
+      (unless
+        (= representation-failure 0)
+        (return (+ 11 representation-failure))))
     (compiler_ir_types.compiler-ir-effect-self-test)))

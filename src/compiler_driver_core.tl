@@ -1867,6 +1867,26 @@
 (define (compiler-driver-release-lower-arenas-after-emit!) : unit
   (compiler_lower.lower-arenas-release!))
 
+(define (compiler-driver-representation-index-for-backend
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [backend-state : compiler_backend.CompilerBackendState]) : compiler_ir_types.CompilerIrRepresentationIndex
+  (let
+    [owner : arena.Arena
+      (compiler_backend.compiler-backend-state-prepare-representation-arena!
+        backend-state)]
+    [representations : compiler_ir_types.CompilerIrRepresentationIndex
+      (in-arena
+        owner
+        (compiler_ir_types.compiler-ir-representation-index-build
+          (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
+          program))]
+    (begin
+      (compiler_backend.compiler-backend-state-set-representations!
+        backend-state
+        representations)
+      representations)))
+
 (define (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
@@ -1889,12 +1909,16 @@
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
+      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
         pools
         program
         spans
         opt-level
-        profile-state)
+        profile-state
+        (compiler-driver-representation-index-for-backend
+          pools
+          program
+          backend-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -1978,12 +2002,16 @@
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
+      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
         pools
         program
         spans
         opt-level
-        profile-state)
+        profile-state
+        (compiler-driver-representation-index-for-backend
+          pools
+          program
+          backend-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -2074,12 +2102,16 @@
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
+      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
         pools
         program
         spans
         opt-level
-        profile-state)
+        profile-state
+        (compiler-driver-representation-index-for-backend
+          pools
+          program
+          backend-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -2207,12 +2239,16 @@
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
+      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
         pools
         program
         spans
         opt-level
-        profile-state)
+        profile-state
+        (compiler-driver-representation-index-for-backend
+          pools
+          program
+          backend-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -2377,12 +2413,16 @@
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
+      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
         pools
         program
         spans
         opt-level
-        profile-state)
+        profile-state
+        (compiler-driver-representation-index-for-backend
+          pools
+          program
+          backend-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)

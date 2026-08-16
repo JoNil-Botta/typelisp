@@ -1599,7 +1599,7 @@
 ;;
 ;; so each lowered function's source span is recorded alongside the IR.
 (defstruct LowerDeclsSuccess
-  (globals ir.CompilerIrGlobalList)
+  (globals ir.CompilerIrGlobalSeq)
   (functions ir.CompilerIrFunctionList)
   (externs ir.CompilerIrExternList)
   (spans ir.CompilerSourceSpans))
@@ -15047,37 +15047,36 @@
   [enum-name : String]
   [variants : ast.AstVariantDefList]
   [tag : i64]
-  [globals : ir.CompilerIrGlobalList]) : ir.CompilerIrGlobalList
+  [globals : (&mut globals ir.CompilerIrGlobalBuilder)]) : unit
   (if (>= tag variants.len)
-    globals
+    unit
     (match (ast.ast-variant-def-list-get
       (& variants)
       tag
       (ast.ast-variant-def-fallback))
       [(ast.AstVariantDef.Def variant-name fields _)
-        (let
-          [next : ir.CompilerIrGlobalList
-            (if (ast.ast-type-list-empty? (& fields))
-              (let
-                [object-name : i64
-                  (lower-nullary-variant-object-symbol
-                    intern-state
-                    enum-name-id
-                    variant-name)]
-                (ir.compiler-ir-global-cons
-                  (ir.CompilerIrGlobal.Global
-                    object-name
-                    (ast.AstType.I64)
-                    (ir.CompilerIrValue.I64 tag))
-                  globals))
-              globals)]
+        (begin
+          (when
+            (ast.ast-type-list-empty? (& fields))
+            (let
+              [object-name : i64
+                (lower-nullary-variant-object-symbol
+                  intern-state
+                  enum-name-id
+                  variant-name)]
+              (ir.compiler-ir-global-builder-push!
+                globals
+                (ir.CompilerIrGlobal.Global
+                  object-name
+                  (ast.AstType.I64)
+                  (ir.CompilerIrValue.I64 tag)))))
           (lower-nullary-variant-globals
             intern-state
             enum-name-id
             enum-name
             variants
             (+ tag 1)
-            next))])))
+            globals))])))
 
 (define (lower-enum-variants-storage-size
   [ctx : tc_core.TcContext]
@@ -66803,7 +66802,7 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [entry-path : String]
-  [globals : ir.CompilerIrGlobalList]
+  [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]
   [externs : ir.CompilerIrExternList]
   [spans : ir.CompilerSourceSpans]
@@ -66926,7 +66925,7 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [entry-path : String]
-  [globals : ir.CompilerIrGlobalList]
+  [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]
   [externs : ir.CompilerIrExternList]
   [spans : ir.CompilerSourceSpans]
@@ -66943,7 +66942,8 @@
     [cur-decls : ast.AstDeclList decls]
     [cur-paths : ast.AstDeclPathList paths]
     [cur-local-top-env : tc_core.TcTypeEnv local-top-env]
-    [cur-globals : ir.CompilerIrGlobalList globals]
+    [cur-globals : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-from-seq globals)]
     [cur-functions : ir.CompilerIrFunctionBuilder
       (ir.compiler-ir-function-builder-from-list functions)]
     [cur-externs : ir.CompilerIrExternList externs]
@@ -66966,7 +66966,8 @@
                 (ResultLowerDecls.Ok
                   (box
                     (LowerDeclsSuccess
-                      (ir.compiler-ir-global-list-compact-reversed cur-globals)
+                      (ir.compiler-ir-global-builder-snapshot-seq
+                        (& cur-globals))
                       (ir.compiler-ir-function-builder-snapshot-list
                         (& cur-functions))
                       (ir.compiler-ir-extern-list-compact-reversed cur-externs)
@@ -67057,14 +67058,12 @@
                             global-ty)
                             [(ResultLowerValue.Ok value)
                               (begin
-                                (set!
-                                  cur-globals
-                                  (ir.compiler-ir-global-cons
-                                    (ir.CompilerIrGlobal.Global
-                                      global-symbol
-                                      global-ty
-                                      value)
-                                    cur-globals))
+                                (ir.compiler-ir-global-builder-push!
+                                  (&mut cur-globals)
+                                  (ir.CompilerIrGlobal.Global
+                                    global-symbol
+                                    global-ty
+                                    value))
                                 (set! cur-decls rest))]
                             ;; A global whose initializer is not a compile-time
                             ;; constant is evaluated at startup by a hidden
@@ -67095,15 +67094,13 @@
                                       init-funcs
                                       init-spans)
                                     (begin
-                                      (set!
-                                        cur-globals
-                                        (ir.compiler-ir-global-cons
-                                          (ir.CompilerIrGlobal.Global
-                                            global-symbol
-                                            global-ty
-                                            (ir.CompilerIrValue.RuntimeGlobal
-                                              init-symbol))
-                                          cur-globals))
+                                      (ir.compiler-ir-global-builder-push!
+                                        (&mut cur-globals)
+                                        (ir.CompilerIrGlobal.Global
+                                          global-symbol
+                                          global-ty
+                                          (ir.CompilerIrValue.RuntimeGlobal
+                                            init-symbol)))
                                       (ir.compiler-ir-function-builder-append-list!
                                         (&mut cur-functions)
                                         init-funcs)
@@ -67342,11 +67339,9 @@
                             lowered-functions
                             function-spans)
                           (begin
-                            (set!
-                              cur-globals
-                              (ir.compiler-ir-global-cons
-                                cache-global
-                                cur-globals))
+                            (ir.compiler-ir-global-builder-push!
+                              (&mut cur-globals)
+                              cache-global)
                             (ir.compiler-ir-function-builder-append-list!
                               (&mut cur-functions)
                               lowered-functions)
@@ -67435,26 +67430,24 @@
                     (begin
                       (if (lower-comptime-runtime-skip-module? cur-module)
                         unit
-                        (set!
-                          cur-globals
-                          (lower-nullary-variant-globals
-                            (compiler-lower-state-interns lower-state)
-                            (lower-name-cache-lookup-logical-id
-                              (& decl-name-cache)
-                              (lower-module-name-key-id-by-id
-                                logical-module-id
-                                name)
-                              (lower-module-name-key-id-by-id
-                                logical-module-id
-                                name))
-                            (lower-current-decl-logical-name-cache-id
-                              decl-name-cache
-                              logical-module
-                              (tc_core.tc-env-key-name-text name)
+                        (lower-nullary-variant-globals
+                          (compiler-lower-state-interns lower-state)
+                          (lower-name-cache-lookup-logical-id
+                            (& decl-name-cache)
+                            (lower-module-name-key-id-by-id
+                              logical-module-id
                               name)
-                            variants
-                            0
-                            cur-globals)))
+                            (lower-module-name-key-id-by-id
+                              logical-module-id
+                              name))
+                          (lower-current-decl-logical-name-cache-id
+                            decl-name-cache
+                            logical-module
+                            (tc_core.tc-env-key-name-text name)
+                            name)
+                          variants
+                          0
+                          (&mut cur-globals)))
                       (match (lower-enum-cleanup-decl
                         decl-ctx
                         cur-local-top-env
@@ -67519,26 +67512,24 @@
                     (begin
                       (if (lower-comptime-runtime-skip-module? cur-module)
                         unit
-                        (set!
-                          cur-globals
-                          (lower-nullary-variant-globals
-                            (compiler-lower-state-interns lower-state)
-                            (lower-name-cache-lookup-logical-id
-                              (& decl-name-cache)
-                              (lower-module-name-key-id-by-id
-                                logical-module-id
-                                name)
-                              (lower-module-name-key-id-by-id
-                                logical-module-id
-                                name))
-                            (lower-current-decl-logical-name-cache-id
-                              decl-name-cache
-                              logical-module
-                              (tc_core.tc-env-key-name-text name)
+                        (lower-nullary-variant-globals
+                          (compiler-lower-state-interns lower-state)
+                          (lower-name-cache-lookup-logical-id
+                            (& decl-name-cache)
+                            (lower-module-name-key-id-by-id
+                              logical-module-id
                               name)
-                            variants
-                            0
-                            cur-globals)))
+                            (lower-module-name-key-id-by-id
+                              logical-module-id
+                              name))
+                          (lower-current-decl-logical-name-cache-id
+                            decl-name-cache
+                            logical-module
+                            (tc_core.tc-env-key-name-text name)
+                            name)
+                          variants
+                          0
+                          (&mut cur-globals)))
                       (match (lower-enum-cleanup-decl
                         decl-ctx
                         cur-local-top-env
@@ -67710,7 +67701,7 @@
             decls
             paths
             entry-path
-            ir.CompilerIrGlobalList.Nil
+            (ir.compiler-ir-global-seq-empty)
             ir.CompilerIrFunctionList.Nil
             ir.CompilerIrExternList.Nil
             (ir.compiler-source-spans-empty)

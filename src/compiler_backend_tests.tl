@@ -1447,16 +1447,21 @@
         (ci.intern-compat-state-capture-active))]
     [empty-program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
-        compiler_ir_types.CompilerIrGlobalList.Nil
+        (compiler_ir_types.compiler-ir-global-seq-empty)
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
-    [runtime-globals : compiler_ir_types.CompilerIrGlobalList
-      (compiler_ir_types.CompilerIrGlobalList.Cons
-        (compiler_ir_types.CompilerIrGlobal.Global
-          1
-          (compiler_ast_types.AstType.I64)
-          (compiler_ir_types.CompilerIrValue.RuntimeGlobal 2))
-        (box compiler_ir_types.CompilerIrGlobalList.Nil))]
+    [runtime-globals : compiler_ir_types.CompilerIrGlobalSeq
+      (let
+        [builder : compiler_ir_types.CompilerIrGlobalBuilder
+          (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
+        (begin
+          (compiler_ir_types.compiler-ir-global-builder-push!
+            (&mut builder)
+            (compiler_ir_types.CompilerIrGlobal.Global
+              1
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.CompilerIrValue.RuntimeGlobal 2)))
+          (compiler_ir_types.compiler-ir-global-builder-to-seq builder)))]
     [runtime-global-program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
         runtime-globals
@@ -4976,84 +4981,98 @@
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm3")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-call-save-test-globals) : compiler_ir_types.CompilerIrGlobalList
+(define (compiler-backend-test-global-builder-push!
+  [builder : (&mut builder compiler_ir_types.CompilerIrGlobalBuilder)]
+  [name : String]
+  [ty : compiler_ast_types.AstType]
+  [value : compiler_ir_types.CompilerIrValue]) : unit
+  (compiler_ir_types.compiler-ir-global-builder-push!
+    builder
+    (compiler_ir_types.CompilerIrGlobal.Global (ci.intern name) ty value)))
+
+(define (compiler-backend-test-global-seq-single
+  [name : String]
+  [ty : compiler_ast_types.AstType]
+  [value : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrGlobalSeq
   (let
-    [globals : compiler_ir_types.CompilerIrGlobalList
-      compiler_ir_types.CompilerIrGlobalList.Nil]
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
     (begin
-      (set!
-        globals
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            (ci.intern "g5c")
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 0))
-          globals))
-      (set!
-        globals
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            (ci.intern "g5b")
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 0))
-          globals))
-      (set!
-        globals
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            (ci.intern "g6")
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 0))
-          globals))
-      (set!
-        globals
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            (ci.intern "g5")
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 0))
-          globals))
-      (set!
-        globals
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            (ci.intern "g4")
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 0))
-          globals))
-      (set!
-        globals
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            (ci.intern "g3")
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 0))
-          globals))
-      (set!
-        globals
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            (ci.intern "g2")
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 0))
-          globals))
-      (set!
-        globals
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            (ci.intern "g1")
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 0))
-          globals))
-      (set!
-        globals
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            (ci.intern "g0")
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 0))
-          globals))
-      globals)))
+      (compiler-backend-test-global-builder-push! (&mut builder) name ty value)
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (compiler-backend-test-two-i64-globals
+  [first-name : String]
+  [first-value : i64]
+  [second-name : String]
+  [second-value : i64]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 2)]
+    (begin
+      (compiler-backend-test-global-builder-push!
+        (&mut builder)
+        first-name
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 first-value))
+      (compiler-backend-test-global-builder-push!
+        (&mut builder)
+        second-name
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 second-value))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (compiler-backend-call-save-test-globals) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [globals : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 9)]
+    (begin
+      (compiler-backend-test-global-builder-push!
+        (&mut globals)
+        "g0"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler-backend-test-global-builder-push!
+        (&mut globals)
+        "g1"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler-backend-test-global-builder-push!
+        (&mut globals)
+        "g2"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler-backend-test-global-builder-push!
+        (&mut globals)
+        "g3"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler-backend-test-global-builder-push!
+        (&mut globals)
+        "g4"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler-backend-test-global-builder-push!
+        (&mut globals)
+        "g5"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler-backend-test-global-builder-push!
+        (&mut globals)
+        "g6"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler-backend-test-global-builder-push!
+        (&mut globals)
+        "g5b"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler-backend-test-global-builder-push!
+        (&mut globals)
+        "g5c"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq globals))))
 
 (define (compiler-backend-call-save-main-instrs) : compiler_ir_types.CompilerIrInstrList
   (let
@@ -8511,7 +8530,7 @@
 
 (define (compiler-backend-descriptor-pair-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler-backend-descriptor-pair-main)
       (compiler_ir_types.compiler-ir-function-cons
@@ -8806,7 +8825,7 @@
 
 (define (compiler-backend-descriptor-pair-object-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler-backend-descriptor-pair-object-main)
       compiler_ir_types.CompilerIrFunctionList.Nil)
@@ -9300,13 +9319,11 @@
                   3
                   blocks)
                 compiler_ir_types.CompilerIrFunctionList.Nil)))]
-        [globals : compiler_ir_types.CompilerIrGlobalList
-          (compiler_ir_types.compiler-ir-global-cons
-            (compiler_ir_types.CompilerIrGlobal.Global
-              (ci.intern "global_text")
-              (compiler_ast_types.AstType.String)
-              (compiler_ir_types.CompilerIrValue.String "global-string"))
-            compiler_ir_types.CompilerIrGlobalList.Nil)]
+        [globals : compiler_ir_types.CompilerIrGlobalSeq
+          (compiler-backend-test-global-seq-single
+            "global_text"
+            (compiler_ast_types.AstType.String)
+            (compiler_ir_types.CompilerIrValue.String "global-string"))]
         [collections : compiler_backend.CompilerBackendProgramCollections
           (compiler_backend.compiler-backend-collect-program-collections
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -9690,7 +9707,7 @@
 (define (compiler-backend-ir-walker-object-refs-ok?) : bool
   (match (compiler_backend.compiler-backend-runtime-plan
     (compiler_ir_types.CompilerIrProgram.Program
-      compiler_ir_types.CompilerIrGlobalList.Nil
+      (compiler_ir_types.compiler-ir-global-seq-empty)
       compiler_ir_types.CompilerIrFunctionList.Nil
       compiler_ir_types.CompilerIrExternList.Nil))
     [(compiler_backend.ResultBackendRuntimePlan.Ok plan)
@@ -12085,7 +12102,7 @@
 
 (define (compiler-backend-fallthrough-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
@@ -12452,7 +12469,7 @@
 
 (define (compiler-backend-call-return-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "callee")
@@ -15461,7 +15478,7 @@
 ;; numeric id, but each id renders to a different user symbol.
 (define (compiler-backend-explicit-state-minimal-program [name-id : i64]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         name-id
@@ -15483,7 +15500,7 @@
 (define (compiler-backend-explicit-state-duplicate-function-program
   [name-id : i64]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         name-id
@@ -15907,7 +15924,7 @@
   (let
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
-        compiler_ir_types.CompilerIrGlobalList.Nil
+        (compiler_ir_types.compiler-ir-global-seq-empty)
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [spans : compiler_ir_types.CompilerSourceSpans
@@ -16110,7 +16127,7 @@
         (compiler-backend-test-span want-line want-col))]
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
-        compiler_ir_types.CompilerIrGlobalList.Nil
+        (compiler_ir_types.compiler-ir-global-seq-empty)
         (compiler_ir_types.compiler-ir-function-cons
           (compiler_ir_types.CompilerIrFunction.Function
             (ci.intern "main")
@@ -16161,7 +16178,7 @@
 
 (define (compiler-backend-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
@@ -16302,7 +16319,7 @@
 
 (define (compiler-backend-total-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
@@ -16367,7 +16384,7 @@
 
 (define (compiler-backend-forwarded-total-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
@@ -16380,7 +16397,7 @@
 
 (define (compiler-backend-spoofed-total-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
@@ -16604,7 +16621,7 @@
 
 (define (compiler-backend-switch-base-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
@@ -16691,7 +16708,7 @@
 
 (define (compiler-backend-switch-bad-shape-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
@@ -16729,7 +16746,7 @@
 
 (define (compiler-backend-switch-phi-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
@@ -19926,7 +19943,7 @@
 (define (compiler-backend-vector-home-program
   [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       func
       compiler_ir_types.CompilerIrFunctionList.Nil)
@@ -21468,7 +21485,7 @@
         (compiler_ast_types.AstType.I64))]
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
-        compiler_ir_types.CompilerIrGlobalList.Nil
+        (compiler_ir_types.compiler-ir-global-seq-empty)
         (compiler_ir_types.compiler-ir-function-cons
           (compiler_ir_types.CompilerIrFunction.Function
             (ci.intern "main")
@@ -33291,17 +33308,7 @@
 
 (define (compiler-backend-global-compare-types) : compiler_backend.CompilerBackendGlobalTypeTable
   (compiler_backend.compiler-backend-global-types
-    (compiler_ir_types.compiler-ir-global-cons
-      (compiler_ir_types.CompilerIrGlobal.Global
-        (ci.intern "g_next")
-        (compiler_ast_types.AstType.I64)
-        (compiler_ir_types.CompilerIrValue.I64 0))
-      (compiler_ir_types.compiler-ir-global-cons
-        (compiler_ir_types.CompilerIrGlobal.Global
-          (ci.intern "g_cap")
-          (compiler_ast_types.AstType.I64)
-          (compiler_ir_types.CompilerIrValue.I64 0))
-        compiler_ir_types.CompilerIrGlobalList.Nil))))
+    (compiler-backend-test-two-i64-globals "g_next" 0 "g_cap" 0)))
 
 (define (compiler-backend-global-compare-binop-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-binop
@@ -33331,17 +33338,7 @@
 
 (define (compiler-backend-global-compare-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    (compiler_ir_types.compiler-ir-global-cons
-      (compiler_ir_types.CompilerIrGlobal.Global
-        (ci.intern "g_next")
-        (compiler_ast_types.AstType.I64)
-        (compiler_ir_types.CompilerIrValue.I64 1))
-      (compiler_ir_types.compiler-ir-global-cons
-        (compiler_ir_types.CompilerIrGlobal.Global
-          (ci.intern "g_cap")
-          (compiler_ast_types.AstType.I64)
-          (compiler_ir_types.CompilerIrValue.I64 1024))
-        compiler_ir_types.CompilerIrGlobalList.Nil))
+    (compiler-backend-test-two-i64-globals "g_next" 1 "g_cap" 1024)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
@@ -36011,7 +36008,7 @@
 
 (define (compiler-backend-clean-module-symbol-collision-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "pkg/a.tl::helper")

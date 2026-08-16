@@ -6651,40 +6651,25 @@
             (opt-type-eq type-segment-bases aty bty)
             (opt-value-eq avalue bvalue))])]))
 
-(define (opt-global-list-eq
+(define (opt-global-seq-eq-at
   [type-segment-bases : i64]
-  [a : ir.CompilerIrGlobalList]
-  [b : ir.CompilerIrGlobalList]) : bool
-  (match a
-    [(ir.CompilerIrGlobalList.Nil)
-      (match b
-        [(ir.CompilerIrGlobalList.Nil) true]
-        [(ir.CompilerIrGlobalList.Array bseq)
-          (opt-global-list-eq
-            type-segment-bases
-            ir.CompilerIrGlobalList.Nil
-            (ir.compiler-ir-global-seq-to-list bseq))]
-        [_ false])]
-    [(ir.CompilerIrGlobalList.Cons ah at)
-      (match b
-        [(ir.CompilerIrGlobalList.Cons bh bt)
-          (and
-            (opt-global-eq type-segment-bases ah bh)
-            (opt-global-list-eq
-              type-segment-bases
-              (__tl-box-place at)
-              (__tl-box-place bt)))]
-        [(ir.CompilerIrGlobalList.Array bseq)
-          (opt-global-list-eq
-            type-segment-bases
-            a
-            (ir.compiler-ir-global-seq-to-list bseq))]
-        [_ false])]
-    [(ir.CompilerIrGlobalList.Array aseq)
-      (opt-global-list-eq
+  [a : ir.CompilerIrGlobalSeq]
+  [b : ir.CompilerIrGlobalSeq]
+  [index : i64]) : bool
+  (if (>= index a.len)
+    true
+    (and
+      (opt-global-eq
         type-segment-bases
-        (ir.compiler-ir-global-seq-to-list aseq)
-        b)]))
+        (ir.compiler-ir-global-seq-ref a index)
+        (ir.compiler-ir-global-seq-ref b index))
+      (opt-global-seq-eq-at type-segment-bases a b (+ index 1)))))
+
+(define (opt-global-seq-eq
+  [type-segment-bases : i64]
+  [a : ir.CompilerIrGlobalSeq]
+  [b : ir.CompilerIrGlobalSeq]) : bool
+  (and (= a.len b.len) (opt-global-seq-eq-at type-segment-bases a b 0)))
 
 (define (opt-extern-eq
   [type-segment-bases : i64]
@@ -6764,7 +6749,7 @@
       (match b
         [(ir.CompilerIrProgram.Program bglobals bfunctions bexterns)
           (and
-            (opt-global-list-eq type-segment-bases aglobals bglobals)
+            (opt-global-seq-eq type-segment-bases aglobals bglobals)
             (opt-function-list-eq type-segment-bases afunctions bfunctions)
             (opt-extern-list-eq type-segment-bases aexterns bexterns))])]))
 
@@ -74629,9 +74614,9 @@
   (Some String i64))
 
 (defenum OptPrunedProgram
-  (Program ir.CompilerIrGlobalList ir.CompilerIrFunctionList))
+  (Program ir.CompilerIrGlobalSeq ir.CompilerIrFunctionList))
 
-(define (opt-pruned-program-globals [pruned : OptPrunedProgram]) : ir.CompilerIrGlobalList
+(define (opt-pruned-program-globals [pruned : OptPrunedProgram]) : ir.CompilerIrGlobalSeq
   (match pruned
     [(OptPrunedProgram.Program globals _) globals]))
 
@@ -84571,16 +84556,8 @@
 (define (opt-reach-globals
   [index : OptFunctionIndex]
   [state : OptReachState (:consume)]
-  [globals : ir.CompilerIrGlobalList]) : OptReachState
-  (match globals
-    [(ir.CompilerIrGlobalList.Nil) state]
-    [(ir.CompilerIrGlobalList.Cons global rest)
-      (opt-reach-globals
-        index
-        (opt-reach-global index state global)
-        (__tl-box-place rest))]
-    [(ir.CompilerIrGlobalList.Array seq)
-      (opt-reach-global-seq index state seq 0)]))
+  [globals : ir.CompilerIrGlobalSeq]) : OptReachState
+  (opt-reach-global-seq index state globals 0))
 
 (define (opt-reach-global-seq
   [index : OptFunctionIndex]
@@ -84644,29 +84621,29 @@
     [_ false]))
 
 (define (opt-filter-reachable-globals
-  [globals : ir.CompilerIrGlobalList]
-  [reachable : opt_i64_i64_map.Map]) : ir.CompilerIrGlobalList
-  (match globals
-    [(ir.CompilerIrGlobalList.Nil) (ir.CompilerIrGlobalList.Nil)]
-    [(ir.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(ir.CompilerIrGlobal.Global name ty value)
-          (if (or
-            (opt-runtime-global? ty value)
-            (opt_i64_i64_map.contains?
-              (& reachable)
-              (ir.compiler-ir-symbol-id name)))
-            (ir.compiler-ir-global-cons
-              global
-              (opt-filter-reachable-globals (__tl-box-place rest) reachable))
-            (opt-filter-reachable-globals (__tl-box-place rest) reachable))])]
-    [(ir.CompilerIrGlobalList.Array seq)
-      (ir.compiler-ir-global-list-compact-reversed
-        (ir.compiler-ir-global-list-reverse-onto
-          (opt-filter-reachable-globals
-            (ir.compiler-ir-global-seq-to-list seq)
-            reachable)
-          ir.CompilerIrGlobalList.Nil))]))
+  [globals : ir.CompilerIrGlobalSeq]
+  [reachable : opt_i64_i64_map.Map]) : ir.CompilerIrGlobalSeq
+  (let
+    [builder : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity globals.len)]
+    [index : i64 0]
+    (begin
+      (while (< index globals.len)
+        (begin
+          (let
+            [global : ir.CompilerIrGlobal
+              (ir.compiler-ir-global-seq-ref globals index)]
+            (match global
+              [(ir.CompilerIrGlobal.Global name ty value)
+                (when
+                  (or
+                    (opt-runtime-global? ty value)
+                    (opt_i64_i64_map.contains?
+                      (& reachable)
+                      (ir.compiler-ir-symbol-id name)))
+                  (ir.compiler-ir-global-builder-push! (&mut builder) global))]))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-global-builder-snapshot-seq (& builder)))))
 
 ;; Exported functions are lowered to a `provided` CompilerIrExtern.Extern whose name
 ;; is the function's logical name. Such functions may be called only from outside
@@ -84783,7 +84760,7 @@
 ;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf) for
 ;; standalone callers that do not already have a classified start.
 (define (opt-prune-unreachable-program
-  [globals : ir.CompilerIrGlobalList]
+  [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]
   [externs : ir.CompilerIrExternList]) : OptPrunedProgram
   (if (opt-function-list-defines? functions "main")
@@ -84795,7 +84772,7 @@
       [reachable-globals : opt_i64_i64_map.Map
         (opt_i64_i64_map.with-capacity
           (opt-function-index-capacity
-            (ir.compiler-ir-global-list-count globals)))]
+            (ir.compiler-ir-global-seq-count globals)))]
       (match (opt-reach-process
         index
         (opt-reach-globals
@@ -87020,35 +86997,10 @@
 ;; backend's magic-multiply path assumes a nonzero divisor; an actual `% 0` keeps
 ;; its original trapping global-load form).
 (define (opt-const-globals-from-globals
-  [globals : ir.CompilerIrGlobalList]
+  [globals : ir.CompilerIrGlobalSeq]
   [disq : opt_i64_i64_map.Map]
   [map : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
-  (match globals
-    [(ir.CompilerIrGlobalList.Nil) map]
-    [(ir.CompilerIrGlobalList.Cons global rest)
-      (opt-const-globals-from-globals
-        (__tl-box-place rest)
-        disq
-        (match global
-          [(ir.CompilerIrGlobal.Global name _ value)
-            (match value
-              [(ir.CompilerIrValue.I64 n)
-                (if (or
-                  (= n 0)
-                  (not (opt-const-globals-imm32-fits? n))
-                  (opt_i64_i64_map.contains?
-                    (& disq)
-                    (ir.compiler-ir-symbol-id name)))
-                  map
-                  (begin
-                    (opt_i64_i64_map.insert-ref!
-                      (&mut map)
-                      (ir.compiler-ir-symbol-id name)
-                      n)
-                    map))]
-              [_ map])]))]
-    [(ir.CompilerIrGlobalList.Array seq)
-      (opt-const-globals-from-global-seq seq 0 disq map)]))
+  (opt-const-globals-from-global-seq globals 0 disq map))
 
 (define (opt-const-globals-from-global-seq
   [globals : ir.CompilerIrGlobalSeq]
@@ -87081,11 +87033,11 @@
             [_ map])]))))
 
 (define (opt-const-divisors-build
-  [globals : ir.CompilerIrGlobalList]
+  [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]) : opt_i64_i64_map.Map
   (let
     [capacity : i64
-      (opt-function-index-capacity (ir.compiler-ir-global-list-count globals))]
+      (opt-function-index-capacity (ir.compiler-ir-global-seq-count globals))]
     [disq : opt_i64_i64_map.Map
       (opt-const-globals-disqualified
         (opt_i64_i64_map.with-capacity capacity)
@@ -87321,7 +87273,7 @@
 ;; gate: only the level-2 pipeline runs the global_cell pass.
 (define (opt-build-program-summaries
   [type-segment-bases : i64]
-  [globals : ir.CompilerIrGlobalList]
+  [globals : ir.CompilerIrGlobalSeq]
   [reachable-functions : ir.CompilerIrFunctionList]
   [level : i64]) : OptLoopBceSummaries
   (opt-loop-bce-summaries-set-global-cell
@@ -88153,32 +88105,21 @@
     [_ false]))
 
 (define (opt-global-cell-types-fill
-  [globals : ir.CompilerIrGlobalList]
+  [globals : ir.CompilerIrGlobalSeq]
   [type-index : opt_i64_i64_map.Map (:consume)]
   [types : (__tl_dyn-array ast.AstType)]
   [index : i64]) : opt_i64_i64_map.Map
-  (match globals
-    [(ir.CompilerIrGlobalList.Nil) type-index]
-    [(ir.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(ir.CompilerIrGlobal.Global name ty _)
-          (begin
-            (set! (array-ref types index) ty)
-            (opt_i64_i64_map.insert-ref!
-              (&mut type-index)
-              (ir.compiler-ir-symbol-id name)
-              index)
-            (opt-global-cell-types-fill
-              (__tl-box-place rest)
-              type-index
-              types
-              (+ index 1)))])]
-    [(ir.CompilerIrGlobalList.Array seq)
-      (opt-global-cell-types-fill
-        (ir.compiler-ir-global-seq-to-list seq)
-        type-index
-        types
-        index)]))
+  (if (>= index globals.len)
+    type-index
+    (match (ir.compiler-ir-global-seq-ref globals index)
+      [(ir.CompilerIrGlobal.Global name ty _)
+        (begin
+          (set! (array-ref types index) ty)
+          (opt_i64_i64_map.insert-ref!
+            (&mut type-index)
+            (ir.compiler-ir-symbol-id name)
+            index)
+          (opt-global-cell-types-fill globals type-index types (+ index 1)))])))
 
 (define (opt-global-cell-type-lookup [cell : OptGlobalCellSummary] [name : i64]) : OptMaybeAstType
   (match (opt_i64_i64_map.get
@@ -88195,75 +88136,64 @@
 ;; walks are total matches over the IR, so the derivation cannot drift when the
 ;; IR grows an instruction variant.
 (define (opt-global-cell-addr-taken-fill
-  [globals : ir.CompilerIrGlobalList]
+  [globals : ir.CompilerIrGlobalSeq]
   [disq : opt_i64_i64_map.Map]
   [stores : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
-  (match globals
-    [(ir.CompilerIrGlobalList.Nil) out]
-    [(ir.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(ir.CompilerIrGlobal.Global name _ _)
-          (opt-global-cell-addr-taken-fill
-            (__tl-box-place rest)
-            disq
-            stores
-            (if (and
+  [out : opt_i64_i64_map.Map (:consume)]
+  [index : i64]) : opt_i64_i64_map.Map
+  (if (>= index globals.len)
+    out
+    (match (ir.compiler-ir-global-seq-ref globals index)
+      [(ir.CompilerIrGlobal.Global name _ _)
+        (opt-global-cell-addr-taken-fill
+          globals
+          disq
+          stores
+          (if (and
+            (opt_i64_i64_map.contains? (& disq) (ir.compiler-ir-symbol-id name))
+            (not
               (opt_i64_i64_map.contains?
-                (& disq)
-                (ir.compiler-ir-symbol-id name))
-              (not
-                (opt_i64_i64_map.contains?
-                  (& stores)
-                  (ir.compiler-ir-symbol-id name))))
-              (begin
-                (opt_i64_i64_map.insert-ref!
-                  (&mut out)
-                  (ir.compiler-ir-symbol-id name)
-                  1)
-                out)
-              out))])]
-    [(ir.CompilerIrGlobalList.Array seq)
-      (opt-global-cell-addr-taken-fill
-        (ir.compiler-ir-global-seq-to-list seq)
-        disq
-        stores
-        out)]))
+                (& stores)
+                (ir.compiler-ir-symbol-id name))))
+            (begin
+              (opt_i64_i64_map.insert-ref!
+                (&mut out)
+                (ir.compiler-ir-symbol-id name)
+                1)
+              out)
+            out)
+          (+ index 1))])))
 
 (define (opt-global-cell-word-count
-  [globals : ir.CompilerIrGlobalList]
+  [globals : ir.CompilerIrGlobalSeq]
   [addr-taken : opt_i64_i64_map.Map]
+  [index : i64]
   [count : i64]) : i64
-  (match globals
-    [(ir.CompilerIrGlobalList.Nil) count]
-    [(ir.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(ir.CompilerIrGlobal.Global name ty _)
-          (opt-global-cell-word-count
-            (__tl-box-place rest)
-            addr-taken
-            (if (and
-              (opt-global-cell-word-type? ty)
-              (not
-                (opt_i64_i64_map.contains?
-                  (& addr-taken)
-                  (ir.compiler-ir-symbol-id name))))
-              (+ count 1)
-              count))])]
-    [(ir.CompilerIrGlobalList.Array seq)
-      (opt-global-cell-word-count
-        (ir.compiler-ir-global-seq-to-list seq)
-        addr-taken
-        count)]))
+  (if (>= index globals.len)
+    count
+    (match (ir.compiler-ir-global-seq-ref globals index)
+      [(ir.CompilerIrGlobal.Global name ty _)
+        (opt-global-cell-word-count
+          globals
+          addr-taken
+          (+ index 1)
+          (if (and
+            (opt-global-cell-word-type? ty)
+            (not
+              (opt_i64_i64_map.contains?
+                (& addr-taken)
+                (ir.compiler-ir-symbol-id name))))
+            (+ count 1)
+            count))])))
 
 ;; Build the per-program global-cell summary: the declared-type table, the
 ;; address-taken set, and the count of globals that survive both filters (the
 ;; per-function pass skips its scan when that count is zero).
 (define (opt-global-cell-summary-build
-  [globals : ir.CompilerIrGlobalList]
+  [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]) : OptGlobalCellSummary
   (let
-    [count : i64 (ir.compiler-ir-global-list-count globals)]
+    [count : i64 (ir.compiler-ir-global-seq-count globals)]
     (if (= count 0)
       (opt-global-cell-summary-empty)
       (let
@@ -88287,12 +88217,13 @@
             globals
             disq
             scan.stores
-            (opt_i64_i64_map.with-capacity capacity))]
+            (opt_i64_i64_map.with-capacity capacity)
+            0)]
         (OptGlobalCellSummary
           addr-taken
           type-index
           types
-          (opt-global-cell-word-count globals addr-taken 0))))))
+          (opt-global-cell-word-count globals addr-taken 0 0))))))
 
 ;; --- condition (a): stores a later read can OBSERVE ---------------------------
 ;;
@@ -89588,7 +89519,7 @@
                     globals
                     reachable-functions
                     externs)]
-                [pruned-globals : ir.CompilerIrGlobalList
+                [pruned-globals : ir.CompilerIrGlobalSeq
                   (opt-pruned-program-globals pruned)]
                 [pruned-functions : ir.CompilerIrFunctionList
                   (opt-pruned-program-functions pruned)]
@@ -89636,7 +89567,7 @@
                         globals
                         optimized-functions
                         externs)]
-                    [final-globals : ir.CompilerIrGlobalList
+                    [final-globals : ir.CompilerIrGlobalSeq
                       (opt-pruned-program-globals final-pruned)]
                     [final-functions : ir.CompilerIrFunctionList
                       (opt-pruned-program-functions final-pruned)]
@@ -90056,7 +89987,7 @@
                         globals
                         reachable-functions
                         externs)]
-                    [pruned-globals : ir.CompilerIrGlobalList
+                    [pruned-globals : ir.CompilerIrGlobalSeq
                       (opt-pruned-program-globals pruned)]
                     [pruned-functions : ir.CompilerIrFunctionList
                       (opt-pruned-program-functions pruned)]
@@ -90141,7 +90072,7 @@
                             globals
                             optimized-functions
                             externs)]
-                        [final-globals : ir.CompilerIrGlobalList
+                        [final-globals : ir.CompilerIrGlobalSeq
                           (opt-pruned-program-globals final-pruned)]
                         [final-functions : ir.CompilerIrFunctionList
                           (opt-pruned-program-functions final-pruned)]

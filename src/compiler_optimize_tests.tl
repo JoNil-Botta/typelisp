@@ -1352,6 +1352,15 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (compiler_ir_types.compiler-ir-test-symbol name)))
 
+(define (opt-test-global-builder-push!
+  [builder : (&mut builder compiler_ir_types.CompilerIrGlobalBuilder)]
+  [name : i64]
+  [ty : compiler_ast_types.AstType]
+  [value : compiler_ir_types.CompilerIrValue]) : unit
+  (compiler_ir_types.compiler-ir-global-builder-push!
+    builder
+    (compiler_ir_types.CompilerIrGlobal.Global name ty value)))
+
 (define (compiler-optimize-runtime-call-identity-self-test) : i64
   (let
     [generated-alloc : i64 (opt-test-symbol "tl_alloc")]
@@ -1483,7 +1492,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrList]
   [frame : i64]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (opt-spans-function-with-frame instrs frame)
       compiler_ir_types.CompilerIrFunctionList.Nil)
@@ -1769,7 +1778,7 @@
 
 (define (opt-inline-span-program [symbols : OptInlineSpanTestSymbols]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (opt-inline-span-caller symbols)
       (compiler_ir_types.compiler-ir-function-cons
@@ -2453,7 +2462,7 @@
       (compiler_optimize.opt-aggregate-allocation-candidates
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_ir_types.CompilerIrProgram.Program
-          compiler_ir_types.CompilerIrGlobalList.Nil
+          (compiler_ir_types.compiler-ir-global-seq-empty)
           (compiler_ir_types.compiler-ir-function-cons
             (compiler_ir_types.CompilerIrFunction.Function
               (opt-test-symbol "main")
@@ -3147,7 +3156,7 @@
   (let
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
-        compiler_ir_types.CompilerIrGlobalList.Nil
+        (compiler_ir_types.compiler-ir-global-seq-empty)
         (compiler_ir_types.compiler-ir-function-cons
           (compiler_ir_types.CompilerIrFunction.Function
             (opt-test-symbol "main")
@@ -3888,7 +3897,7 @@
         compiler_ir_types.CompilerIrBlockList.Nil)]
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
-        compiler_ir_types.CompilerIrGlobalList.Nil
+        (compiler_ir_types.compiler-ir-global-seq-empty)
         (compiler_ir_types.compiler-ir-function-cons
           (compiler_ir_types.CompilerIrFunction.Function
             name
@@ -6071,38 +6080,42 @@
     (opt-test-symbol "zero")
     (opt-test-symbol "big")))
 
-(define (opt-const-divisor-test-globals [symbols : OptConstDivisorTestSymbols]) : compiler_ir_types.CompilerIrGlobalList
-  (compiler_ir_types.compiler-ir-global-cons
-    (compiler_ir_types.CompilerIrGlobal.Global
-      symbols.konst
-      (compiler_ast_types.AstType.I64)
-      (compiler_ir_types.CompilerIrValue.I64 1000000007))
-    (compiler_ir_types.compiler-ir-global-cons
-      (compiler_ir_types.CompilerIrGlobal.Global
+(define (opt-const-divisor-test-globals [symbols : OptConstDivisorTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 6)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.konst
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 1000000007))
+      (opt-test-global-builder-push!
+        (&mut builder)
         symbols.mutable
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrValue.I64 7))
-      (compiler_ir_types.compiler-ir-global-cons
-        (compiler_ir_types.CompilerIrGlobal.Global
-          symbols.uninit
-          (compiler_ast_types.AstType.I64)
-          (compiler_ir_types.CompilerIrValue.Unit))
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            symbols.borrowed
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 99))
-          (compiler_ir_types.compiler-ir-global-cons
-            (compiler_ir_types.CompilerIrGlobal.Global
-              symbols.zero
-              (compiler_ast_types.AstType.I64)
-              (compiler_ir_types.CompilerIrValue.I64 0))
-            (compiler_ir_types.compiler-ir-global-cons
-              (compiler_ir_types.CompilerIrGlobal.Global
-                symbols.big
-                (compiler_ast_types.AstType.I64)
-                (compiler_ir_types.CompilerIrValue.I64 4294967295))
-              compiler_ir_types.CompilerIrGlobalList.Nil)))))))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.uninit
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.Unit))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.borrowed
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 99))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.zero
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.big
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 4294967295))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
 
 (define (opt-const-divisor-test-blocks [symbols : OptConstDivisorTestSymbols]) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -6297,7 +6310,7 @@
 (define (compiler-optimize-const-divisor-self-test) : i64
   (let
     [symbols : OptConstDivisorTestSymbols (opt-const-divisor-test-symbols)]
-    [globals : compiler_ir_types.CompilerIrGlobalList
+    [globals : compiler_ir_types.CompilerIrGlobalSeq
       (opt-const-divisor-test-globals symbols)]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (opt-const-divisor-test-blocks symbols)]
@@ -11564,7 +11577,7 @@
 
 (define (opt-test-program [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    (compiler_ir_types.CompilerIrGlobalList.Nil)
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (opt-test-function instrs)
       (compiler_ir_types.CompilerIrFunctionList.Nil))
@@ -11605,25 +11618,14 @@
   (match program
     [(compiler_ir_types.CompilerIrProgram.Program _ funcs _) funcs]))
 
-(define (opt-program-globals [program : compiler_ir_types.CompilerIrProgram]) : compiler_ir_types.CompilerIrGlobalList
+(define (opt-program-globals [program : compiler_ir_types.CompilerIrProgram]) : compiler_ir_types.CompilerIrGlobalSeq
   (match program
     [(compiler_ir_types.CompilerIrProgram.Program globals _ _) globals]))
 
 (define (opt-global-list-defines?
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [name : String]) : bool
-  (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Nil) false]
-    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(compiler_ir_types.CompilerIrGlobal.Global global-name _ _)
-          (if (string.eq
-            (compiler_ir_types.compiler-ir-symbol-text global-name)
-            name)
-            true
-            (opt-global-list-defines? (__tl-box-place rest) name))])]
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (opt-global-seq-defines? seq name 0)]))
+  (opt-global-seq-defines? globals name 0))
 
 (define (opt-global-seq-defines?
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
@@ -11874,34 +11876,41 @@
         (opt-global-dce-large-return-step 0 value))
       (compiler_ir_types.CompilerIrBlockList.Nil))))
 
-(define (opt-global-dce-program [symbols : OptGlobalDceTestSymbols]) : compiler_ir_types.CompilerIrProgram
-  (compiler_ir_types.CompilerIrProgram.Program
-    (compiler_ir_types.compiler-ir-global-cons
-      (compiler_ir_types.CompilerIrGlobal.Global
+(define (opt-global-dce-globals [symbols : OptGlobalDceTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 5)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
         symbols.callback
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrValue.Global symbols.callback-target))
-      (compiler_ir_types.compiler-ir-global-cons
-        (compiler_ir_types.CompilerIrGlobal.Global
-          symbols.used-global
-          (compiler_ast_types.AstType.I64)
-          (compiler_ir_types.CompilerIrValue.I64 3))
-        (compiler_ir_types.compiler-ir-global-cons
-          (compiler_ir_types.CompilerIrGlobal.Global
-            symbols.stored-global
-            (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.CompilerIrValue.I64 0))
-          (compiler_ir_types.compiler-ir-global-cons
-            (compiler_ir_types.CompilerIrGlobal.Global
-              symbols.runtime-global
-              (compiler_ast_types.AstType.I64)
-              (compiler_ir_types.CompilerIrValue.Unit))
-            (compiler_ir_types.compiler-ir-global-cons
-              (compiler_ir_types.CompilerIrGlobal.Global
-                symbols.dead-global
-                (compiler_ast_types.AstType.I64)
-                (compiler_ir_types.CompilerIrValue.I64 5))
-              (compiler_ir_types.CompilerIrGlobalList.Nil))))))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.used-global
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 3))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.stored-global
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.runtime-global
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.Unit))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.dead-global
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 5))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-global-dce-program [symbols : OptGlobalDceTestSymbols]) : compiler_ir_types.CompilerIrProgram
+  (compiler_ir_types.CompilerIrProgram.Program
+    (opt-global-dce-globals symbols)
     (compiler_ir_types.compiler-ir-function-cons
       (opt-test-function-symbol
         symbols.main
@@ -11929,7 +11938,7 @@
 
 (define (opt-global-dce-no-main-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    (compiler_ir_types.CompilerIrGlobalList.Nil)
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (opt-test-function-named "helper" (opt-global-dce-return-instrs 7))
       (compiler_ir_types.compiler-ir-function-cons
@@ -11958,15 +11967,15 @@
       (opt-program-functions level1)]
     [no-main-functions : compiler_ir_types.CompilerIrFunctionList
       (opt-program-functions no-main)]
-    [level0-globals : compiler_ir_types.CompilerIrGlobalList
+    [level0-globals : compiler_ir_types.CompilerIrGlobalSeq
       (opt-program-globals level0)]
-    [level1-globals : compiler_ir_types.CompilerIrGlobalList
+    [level1-globals : compiler_ir_types.CompilerIrGlobalSeq
       (opt-program-globals level1)]
     (and
       (= (compiler_ir_types.compiler-ir-function-list-count level0-functions) 6)
       (= (compiler_ir_types.compiler-ir-function-list-count level1-functions) 4)
-      (= (compiler_ir_types.compiler-ir-global-list-count level0-globals) 5)
-      (= (compiler_ir_types.compiler-ir-global-list-count level1-globals) 3)
+      (= (compiler_ir_types.compiler-ir-global-seq-count level0-globals) 5)
+      (= (compiler_ir_types.compiler-ir-global-seq-count level1-globals) 3)
       (compiler_optimize.opt-function-list-defines? level1-functions "main")
       (compiler_optimize.opt-function-list-defines? level1-functions "helper")
       (compiler_optimize.opt-function-list-defines?
@@ -13553,7 +13562,7 @@
 
 (define (opt-devirt-reach-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (opt-devirt-reach-main)
       (compiler_ir_types.compiler-ir-function-cons
@@ -46224,7 +46233,7 @@
 
 (define (opt-scratch-reset-level-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    (compiler_ir_types.CompilerIrGlobalList.Nil)
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (opt-scratch-reset-level-function)
       (compiler_ir_types.CompilerIrFunctionList.Nil))
@@ -51833,7 +51842,7 @@
 (define (compiler-optimize-const-global-early-self-test) : i64
   (let
     [symbols : OptConstDivisorTestSymbols (opt-const-divisor-test-symbols)]
-    [globals : compiler_ir_types.CompilerIrGlobalList
+    [globals : compiler_ir_types.CompilerIrGlobalSeq
       (opt-const-divisor-test-globals symbols)]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (opt-const-global-early-test-blocks symbols)]
@@ -51903,25 +51912,28 @@
     (opt-test-symbol "gc_other")
     (opt-test-symbol "gc_writer")))
 
-(define (opt-gc-test-globals [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrGlobalList
-  (compiler_ir_types.compiler-ir-global-cons
-    (compiler_ir_types.CompilerIrGlobal.Global
-      symbols.arr
-      (compiler_ast_types.AstType.DynArray 0)
-      (compiler_ir_types.CompilerIrValue.Unit))
-    (compiler_ir_types.compiler-ir-global-cons
-      (compiler_ir_types.CompilerIrGlobal.Global
+(define (opt-gc-test-globals [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 3)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.arr
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.Unit))
+      (opt-test-global-builder-push!
+        (&mut builder)
         symbols.k
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrValue.I64 5))
-      (compiler_ir_types.compiler-ir-global-cons
-        ;; non-word-cell global: register-resident aggregates are never
-        ;; hoisted (the entry Mov would load only the cell's first word)
-        (compiler_ir_types.CompilerIrGlobal.Global
-          symbols.agg
-          (compiler_ast_types.AstType.Struct symbols.agg)
-          (compiler_ir_types.CompilerIrValue.Unit))
-        compiler_ir_types.CompilerIrGlobalList.Nil))))
+      ;; Non-word-cell globals are never register-hoisted.
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.agg
+        (compiler_ast_types.AstType.Struct symbols.agg)
+        (compiler_ir_types.CompilerIrValue.Unit))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
 
 ;; `call-mode`: 0 no call, 1 an ordinary RETURNING call (condition (c) rejects
 ;; the function), 2 a call to the NON-RETURNING oob-abort helper (condition (c)
@@ -54136,23 +54148,27 @@
     (opt-test-symbol "lp_writer")
     (opt-test-symbol "lp_callee")))
 
-(define (opt-lp-test-globals [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrGlobalList
-  (compiler_ir_types.compiler-ir-global-cons
-    (compiler_ir_types.CompilerIrGlobal.Global
-      symbols.g1
-      (compiler_ast_types.AstType.I64)
-      (compiler_ir_types.CompilerIrValue.I64 7))
-    (compiler_ir_types.compiler-ir-global-cons
-      (compiler_ir_types.CompilerIrGlobal.Global
+(define (opt-lp-test-globals [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 3)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.g1
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 7))
+      (opt-test-global-builder-push!
+        (&mut builder)
         symbols.g2
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrValue.I64 9))
-      (compiler_ir_types.compiler-ir-global-cons
-        (compiler_ir_types.CompilerIrGlobal.Global
-          symbols.agg
-          (compiler_ast_types.AstType.Struct symbols.agg)
-          (compiler_ir_types.CompilerIrValue.Unit))
-        compiler_ir_types.CompilerIrGlobalList.Nil))))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.agg
+        (compiler_ast_types.AstType.Struct symbols.agg)
+        (compiler_ir_types.CompilerIrValue.Unit))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
 
 (define (opt-lp-test-cells [symbols : OptLpTestSymbols]) : compiler_optimize.OptGlobalCellSummary
   (compiler_optimize.opt-global-cell-summary-build

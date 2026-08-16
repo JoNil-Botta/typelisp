@@ -974,11 +974,6 @@
   (slots (__tl_dyn-array CompilerIrGlobal))
   (len i64))
 
-(defenum CompilerIrGlobalList
-  (Nil)
-  (Cons CompilerIrGlobal (Box CompilerIrGlobalList))
-  (Array CompilerIrGlobalSeq))
-
 (defenum CompilerIrExtern
   ;; `name-id` is the resolved language-level identity and `source-name-id` is
   ;; its parser identity. `symbol-id` is the exact ABI/linker spelling interned
@@ -1003,7 +998,7 @@
   (Array CompilerIrExternSeq))
 
 (defenum CompilerIrProgram
-  (Program CompilerIrGlobalList CompilerIrFunctionList CompilerIrExternList))
+  (Program CompilerIrGlobalSeq CompilerIrFunctionList CompilerIrExternList))
 
 (define (compiler-ir-value-cons-linked
   [value : CompilerIrValue]
@@ -1896,6 +1891,10 @@
   (slots (__tl_dyn-array CompilerIrFunction))
   (len i64))
 
+(defstruct CompilerIrGlobalBuilder
+  (slots (__tl_dyn-array CompilerIrGlobal))
+  (len i64))
+
 (define (compiler-ir-builder-capacity [capacity : i64]) : i64
   (if (< capacity 1)
     1
@@ -2153,52 +2152,86 @@
       (compiler-ir-function-builder-push! (&mut builder) func)
       (compiler-ir-function-builder-to-list builder))))
 
-(define (compiler-ir-global-cons
-  [global : CompilerIrGlobal]
-  [rest : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (CompilerIrGlobalList.Cons global (box rest)))
+(define (compiler-ir-global-seq-empty) : CompilerIrGlobalSeq
+  (CompilerIrGlobalSeq (make-array CompilerIrGlobal 0) 0))
+
+(define (compiler-ir-global-builder-with-capacity [capacity : i64]) : CompilerIrGlobalBuilder
+  (let
+    [cap : i64 (compiler-ir-builder-capacity capacity)]
+    (CompilerIrGlobalBuilder (make-array CompilerIrGlobal cap) 0)))
+
+(define (compiler-ir-global-builder-copy-range!
+  [dst : (&mut dst (__tl_dyn-array CompilerIrGlobal))]
+  [src : (& src (__tl_dyn-array CompilerIrGlobal))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (set! (array-ref dst index) (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-global-builder-grow!
+  [builder : (&mut builder CompilerIrGlobalBuilder)]) : unit
+  (let
+    [old-cap : i64 (array-length builder.slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array CompilerIrGlobal)
+      (make-array CompilerIrGlobal new-cap)]
+    (begin
+      (compiler-ir-global-builder-copy-range!
+        (&mut bigger)
+        (& builder.slots)
+        builder.len)
+      (set! builder.slots bigger))))
+
+(define (compiler-ir-global-builder-push!
+  [builder : (&mut builder CompilerIrGlobalBuilder)]
+  [global : CompilerIrGlobal]) : unit
+  (begin
+    (if (< builder.len (array-length builder.slots))
+      unit
+      (compiler-ir-global-builder-grow! builder))
+    (let
+      [index : i64 builder.len]
+      (begin
+        (set! (array-ref builder.slots index) global)
+        (set! builder.len (+ index 1))))))
+
+(define (compiler-ir-global-builder-from-seq [globals : CompilerIrGlobalSeq]) : CompilerIrGlobalBuilder
+  (let
+    [builder : CompilerIrGlobalBuilder
+      (compiler-ir-global-builder-with-capacity globals.len)]
+    (begin
+      (compiler-ir-global-builder-copy-range!
+        (&mut builder.slots)
+        (& globals.slots)
+        globals.len)
+      (set! builder.len globals.len)
+      builder)))
+
+(define (compiler-ir-global-builder-to-seq [builder : CompilerIrGlobalBuilder]) : CompilerIrGlobalSeq
+  (CompilerIrGlobalSeq builder.slots builder.len))
+
+(define (compiler-ir-global-builder-snapshot-seq
+  [builder : (& builder CompilerIrGlobalBuilder)]) : CompilerIrGlobalSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrGlobal)
+      (make-array CompilerIrGlobal builder.len)]
+    (begin
+      (compiler-ir-global-builder-copy-range!
+        (&mut slots)
+        (& builder.slots)
+        builder.len)
+      (CompilerIrGlobalSeq slots builder.len))))
 
 (define (compiler-ir-extern-cons
   [extern : CompilerIrExtern]
   [rest : CompilerIrExternList]) : CompilerIrExternList
   (CompilerIrExternList.Cons extern (box rest)))
-
-(define (compiler-ir-global-list-fill-array-reversed
-  [globals : CompilerIrGlobalList]
-  [slots : (__tl_dyn-array CompilerIrGlobal)]
-  [index : i64]) : unit
-  (match globals
-    [(CompilerIrGlobalList.Nil) unit]
-    [(CompilerIrGlobalList.Cons global rest)
-      (begin
-        (set! (array-ref slots index) global)
-        (compiler-ir-global-list-fill-array-reversed
-          (__tl-box-place rest)
-          slots
-          (- index 1)))]
-    [(CompilerIrGlobalList.Array seq)
-      (let
-        [i : i64 0]
-        [n : i64 seq.len]
-        [write : i64 index]
-        [src : (__tl_dyn-array CompilerIrGlobal) seq.slots]
-        (while (< i n)
-          (begin
-            (set! (array-ref slots write) (array-ref src i))
-            (set! write (- write 1))
-            (set! i (+ i 1)))))]))
-
-(define (compiler-ir-global-seq-to-list [globals : CompilerIrGlobalSeq]) : CompilerIrGlobalList
-  (let
-    [slots : (__tl_dyn-array CompilerIrGlobal) globals.slots]
-    [cursor : i64 (- globals.len 1)]
-    [out : CompilerIrGlobalList CompilerIrGlobalList.Nil]
-    (begin
-      (while (>= cursor 0)
-        (begin
-          (set! out (compiler-ir-global-cons (array-ref slots cursor) out))
-          (set! cursor (- cursor 1))))
-      out)))
 
 (define (compiler-ir-global-seq-count [globals : CompilerIrGlobalSeq]) : i64
   globals.len)
@@ -2207,16 +2240,6 @@
   [globals : CompilerIrGlobalSeq]
   [index : i64]) : CompilerIrGlobal
   (array-ref globals.slots index))
-
-(define (compiler-ir-global-list-compact-reversed
-  [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (let
-    [count : i64 (compiler-ir-global-list-count globals)]
-    [slots : (__tl_dyn-array CompilerIrGlobal)
-      (array.make-array CompilerIrGlobal count)]
-    (begin
-      (compiler-ir-global-list-fill-array-reversed globals slots (- count 1))
-      (CompilerIrGlobalList.Array (CompilerIrGlobalSeq slots count)))))
 
 (define (compiler-ir-extern-list-fill-array-reversed
   [externs : CompilerIrExternList]
@@ -3262,43 +3285,23 @@
         (compiler-ir-clone-type pools ty)
         (compiler-ir-clone-value value))]))
 
-(define (compiler-ir-clone-global-list-acc
+(define (compiler-ir-clone-global-seq
   [pools : ast.AstNodePoolContext]
-  [globals : CompilerIrGlobalList]
-  [acc : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (match globals
-    [(CompilerIrGlobalList.Nil) acc]
-    [(CompilerIrGlobalList.Cons global rest)
-      (compiler-ir-clone-global-list-acc
-        pools
-        (__tl-box-place rest)
-        (compiler-ir-global-cons (compiler-ir-clone-global pools global) acc))]
-    [(CompilerIrGlobalList.Array seq)
-      (compiler-ir-clone-global-list-acc
-        pools
-        (compiler-ir-global-seq-to-list seq)
-        acc)]))
-
-(define (compiler-ir-global-list-reverse-onto
-  [globals : CompilerIrGlobalList]
-  [acc : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (match globals
-    [(CompilerIrGlobalList.Nil) acc]
-    [(CompilerIrGlobalList.Cons global rest)
-      (compiler-ir-global-list-reverse-onto
-        (__tl-box-place rest)
-        (compiler-ir-global-cons global acc))]
-    [(CompilerIrGlobalList.Array seq)
-      (compiler-ir-global-list-reverse-onto
-        (compiler-ir-global-seq-to-list seq)
-        acc)]))
-
-(define (compiler-ir-clone-global-list
-  [pools : ast.AstNodePoolContext]
-  [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (compiler-ir-global-list-reverse-onto
-    (compiler-ir-clone-global-list-acc pools globals CompilerIrGlobalList.Nil)
-    CompilerIrGlobalList.Nil))
+  [globals : CompilerIrGlobalSeq]) : CompilerIrGlobalSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrGlobal)
+      (make-array CompilerIrGlobal globals.len)]
+    [index : i64 0]
+    (begin
+      (while (< index globals.len)
+        (begin
+          (set!
+            (array-ref slots index)
+            (compiler-ir-clone-global
+              pools
+              (compiler-ir-global-seq-ref globals index)))
+          (set! index (+ index 1))))
+      (CompilerIrGlobalSeq slots globals.len))))
 
 (define (compiler-ir-clone-extern
   [pools : ast.AstNodePoolContext]
@@ -3398,7 +3401,7 @@
   (match program
     [(CompilerIrProgram.Program globals functions externs)
       (CompilerIrProgram.Program
-        (compiler-ir-clone-global-list pools globals)
+        (compiler-ir-clone-global-seq pools globals)
         (compiler-ir-clone-function-list-shell functions)
         (compiler-ir-clone-extern-list pools externs))]))
 
@@ -4749,24 +4752,25 @@
         (compiler-ir-value-render value)
         "\n")]))
 
-(define (compiler-ir-global-list-render-into
+(define (compiler-ir-global-seq-render-into
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
-  [globals : CompilerIrGlobalList]) : text_buf.TextBuf
-  (match globals
-    [(CompilerIrGlobalList.Nil) buf]
-    [(CompilerIrGlobalList.Array seq)
-      (compiler-ir-global-list-render-into
-        type-segment-bases
-        buf
-        (compiler-ir-global-seq-to-list seq))]
-    [(CompilerIrGlobalList.Cons global rest)
-      (compiler-ir-global-list-render-into
-        type-segment-bases
-        (text_buf.append
-          buf
-          (compiler-ir-global-render type-segment-bases global))
-        (__tl-box-place rest))]))
+  [globals : CompilerIrGlobalSeq]) : text_buf.TextBuf
+  (let
+    [index : i64 0]
+    [out : text_buf.TextBuf buf]
+    (begin
+      (while (< index globals.len)
+        (begin
+          (set!
+            out
+            (text_buf.append
+              out
+              (compiler-ir-global-render
+                type-segment-bases
+                (compiler-ir-global-seq-ref globals index))))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-ir-extern-abi-render
   [type-segment-bases : i64]
@@ -4824,12 +4828,12 @@
     [(CompilerIrProgram.Program globals functions externs)
       (let
         [globals-buf : text_buf.TextBuf
-          (compiler-ir-global-list-render-into
+          (compiler-ir-global-seq-render-into
             type-segment-bases
             (text_buf.append (text_buf.empty) "typelisp-ir v1\n")
             globals)]
         [globals-sep-buf : text_buf.TextBuf
-          (if (= (compiler-ir-global-list-count globals) 0)
+          (if (= (compiler-ir-global-seq-count globals) 0)
             globals-buf
             (text_buf.append globals-buf "\n"))]
         [externs-buf : text_buf.TextBuf
@@ -6112,13 +6116,6 @@
             (* externs 100)
             (+ (* blocks 1000) (+ (* instructions 10000) (* vars 100000))))))]))
 
-(define (compiler-ir-global-list-count [globals : CompilerIrGlobalList]) : i64
-  (match globals
-    [(CompilerIrGlobalList.Nil) 0]
-    [(CompilerIrGlobalList.Cons _ rest)
-      (+ 1 (compiler-ir-global-list-count (__tl-box-place rest)))]
-    [(CompilerIrGlobalList.Array seq) (compiler-ir-global-seq-count seq)]))
-
 (define (compiler-ir-extern-list-count [externs : CompilerIrExternList]) : i64
   (match externs
     [(CompilerIrExternList.Nil) 0]
@@ -6560,7 +6557,7 @@
   (match program
     [(CompilerIrProgram.Program globals functions externs)
       (CompilerIrSummary.Summary
-        (compiler-ir-global-list-count globals)
+        (compiler-ir-global-seq-count globals)
         (compiler-ir-function-list-count functions)
         (compiler-ir-extern-list-count externs)
         (compiler-ir-function-list-block-count functions)

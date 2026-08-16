@@ -2,6 +2,9 @@
 
 (import stdlib.array)
 (import fixture.src.lib as fixture)
+(import (fixture.package-module) as fixture-generated)
+
+(fixture.package-decls)
 
 (define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (fixture.helper i 3))))
@@ -134,6 +137,11 @@
       (fill-f32 f32-input f32-out n)
       (if (and
         (= (fixture.package-answer) 42)
+        (= (fixture.package-increment 41) 42)
+        (= (fixture.package-unsupported 42) 42)
+        (= (fixture.package-unsupported 41) 41)
+        (= (fixture-generated.answer) 41)
+        (= (package-decl-answer) 40)
         (= (fixture.helper 2 3) 5)
         (= (array-ref out 0) 3)
         (= (array-ref out 12) 15)

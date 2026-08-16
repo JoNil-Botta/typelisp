@@ -3291,9 +3291,17 @@ Example:
   admission, retain the result in a job-owned registry, and select the owning
   catalog by physical defining-source provenance. Metadata-only catalogs are
   admitted without native mapping; code-bearing catalogs are mapped only for
-  the compiler's build host. A selected dependency catalog currently stands
-  down to interpreted source fallback; native dependency execution and result
-  commit remain staged. The tlci image follows the build host in v2: it always
+  the compiler's build host. Selection retains the registry handle, slot,
+  package/image key, registry generation, and mapped-entry generation as one
+  lifetime-bound capability; dispatch revalidates all of them immediately
+  before entering mapped code. Expression transformers consume the already
+  checked direct operand capture without rebinding, while `Module` and `Decls`
+  transformers consume the exact bound environment and use the ordinary
+  transactional generated-syntax commit path. A first no-result native entry
+  becomes a shell for that mapping generation and reuses prepared operands for
+  source fallback; known shells, missing entries, metadata-only catalogs, and
+  unavailable catalogs never set up native dispatch. The tlci image follows
+  the build host in v2: it always
   executes on the host platform that produced it and stays separate from the
   selected runtime target's artifacts; it is not portable code across host
   operating systems.
@@ -7308,7 +7316,7 @@ in documentation passes.
 | Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
-| Compiled comptime execution from embedded/package `tlci` images | Partially implemented: published Linux and Windows compilers use the trusted embedded-stdlib image by default. Exact embedded or byte-identical source provenance admits a stdlib module to its native registration catalog; modified, unavailable, or untrusted source fails closed to CTFE. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally, while registration shells and uncataloged identities retain counted CTFE fallback. Two-host differential, sustained reset/remap stress, and bootstrap fixpoint gates require route activity plus byte-identical assembly and equivalent diagnostics. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Dependency-package catalog discovery, exact-source and host admission, job-owned lifetime, and defining-provenance selection are implemented; metadata-only catalogs remain zero-entry/no-map and cross-host portable. Selected dependency entries currently stand down to deterministic source CTFE, while native dependency execution/commit and stale-rebuild verification remain staged. |
+| Compiled comptime execution from embedded/package `tlci` images | Partially implemented: published Linux and Windows compilers use trusted embedded-stdlib and dependency-package images. Exact embedded or byte-identical source provenance admits a stdlib module to its native registration catalog; dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Two-host differential, sustained reset/remap stress, bootstrap fixpoint, and focused package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable; broad dependency graph and stale-rebuild verification remain staged. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
 | Richer LSP/IDE features | The immutable workspace source/declaration index and overlay/event plumbing are implemented. Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, and references/rename through standard methods remain pending. |
 

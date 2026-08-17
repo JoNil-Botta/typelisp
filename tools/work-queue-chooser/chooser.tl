@@ -1044,11 +1044,11 @@
         1)]
     [(ChooserResult.Wait message)
       (begin
-        (io.print-string message)
-        (io.print-newline)
+        (io.print-format "{}" message)
+        (io.println "")
         0)]
     [(ChooserResult.Ok cand)
       (begin
-        (io.print-string (candidate-line cand))
-        (io.print-newline)
+        (io.print-format "{}" (candidate-line cand))
+        (io.println "")
         0)]))

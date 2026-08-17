@@ -43,7 +43,7 @@
     "\"))\n"))
 
 (define (scaffold-bin-source) : String
-  "(import stdlib.io)\n(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n\n(define (main) : i64\n  (begin\n    (io.print-string \"Hello, TypeLisp!\\n\")\n    0))\n")
+  "(import stdlib.io)\n(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n\n(define (main) : i64\n  (begin\n    (io.print-format \"{}\" \"Hello, TypeLisp!\\n\")\n    0))\n")
 
 (define (scaffold-lib-source) : String
   "(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n")
@@ -53,7 +53,7 @@
   (let
     [bin-source : String (scaffold-bin-source)]
     [lib-source : String (scaffold-lib-source)]
-    [greeting : String "(io.print-string \"Hello, TypeLisp!\\n\")"]
+    [greeting : String "(io.print-format \"{}\" \"Hello, TypeLisp!\\n\")"]
     [test-import : String "(cfg test (import stdlib.test))"]
     [test-item : String "(test\n  answer-is-42"]
     (unless
@@ -148,7 +148,8 @@
                     (scaffold-write-gitignore gitignore-path)]
                   (if (= gitignore-code 0)
                     (begin
-                      (io.print-string
+                      (io.print-format
+                        "{}"
                         (str_cat.str-cat
                           "scaffold: created "
                           kind

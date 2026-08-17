@@ -400,7 +400,7 @@
 (define (format-cst-fixture) : String
   "(import std)
 ; header comment
-(extern (io.print [arg0 : i64]) : unit)
+(extern (io.emit [arg0 : i64]) : unit)
 (defenum Maybe (Some i64) (None))
 (defstruct Point (x i64) (y i64))
 (define (main [xs : (__tl_dyn-array i64)] [p : Point]) : i64

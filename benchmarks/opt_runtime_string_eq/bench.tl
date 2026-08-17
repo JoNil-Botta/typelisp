@@ -57,5 +57,5 @@
     [short : String (io.arg 2)]
     [rounds : i64 (string.>int (io.arg 3))]
     (begin
-      (io.print (string-eq-repeat text short rounds))
+      (io.println "{}" (string-eq-repeat text short rounds))
       0)))

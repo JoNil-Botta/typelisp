@@ -276,5 +276,5 @@
     [n : i64 (string.>int (io.arg 1))]
     [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (io.print (nb-bench n rounds))
+      (io.println "{}" (nb-bench n rounds))
       0)))

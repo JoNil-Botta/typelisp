@@ -112,5 +112,5 @@
     [n : i64 (string.>int (io.arg 1))]
     [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (io.print (cast (qs-bench n rounds) : i64))
+      (io.println "{}" (cast (qs-bench n rounds) : i64))
       0)))

@@ -2,6 +2,6 @@
 
 (define (main) : i64
   (begin
-    (io.print 42)
-    (io.print-bool false)
+    (io.println "{}" (cast 42 : i64))
+    (io.println "{}" false)
     0))

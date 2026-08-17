@@ -19,5 +19,5 @@
   (let
     [n : i64 (string.>int (io.arg 1))]
     (begin
-      (io.print (bench n))
+      (io.println "{}" (bench n))
       0)))

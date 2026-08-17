@@ -1,7 +1,7 @@
 (import stdlib.io)
 
-;; print_float.tl - write an f64 through the stdlib platform FFI binding.
+;; print_float.tl - format and write an f64 through the stdlib I/O API.
 (define (main) : i64
   (begin
-    (io.print-float 1.5)
+    (io.println "{}" 1.5)
     0))

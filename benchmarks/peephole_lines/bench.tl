@@ -1742,5 +1742,5 @@
         (string.>int (io.arg 2))
         0)]
     (begin
-      (io.print (pl-bench path rounds))
+      (io.println "{}" (pl-bench path rounds))
       0)))

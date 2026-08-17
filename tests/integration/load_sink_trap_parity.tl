@@ -52,5 +52,5 @@
           (set! (array-ref b i) -1)
           (set! i (+ i 1))))
       (io.println "rows")
-      (io.print (fold-row a b c 8))
+      (io.println "{}" (fold-row a b c 8))
       42)))

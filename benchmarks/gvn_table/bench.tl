@@ -1681,5 +1681,5 @@
     [path : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (io.print (gvn-bench path rounds))
+      (io.println "{}" (gvn-bench path rounds))
       0)))

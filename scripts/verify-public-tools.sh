@@ -1090,7 +1090,7 @@ for target_alias in windows-x86_64 windows_x86_64; do
 
 (define (main) : i64
   (begin
-    (io.print 3)
+    (io.print-format "{}" (cast 3 : i64))
     42))
 EOF
     # cli-gate-expand compile-target-{target} wrapper run_cmd target=windows-x86-64,windows-underscore-x86-64

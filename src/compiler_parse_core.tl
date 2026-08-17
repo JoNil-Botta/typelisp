@@ -11500,7 +11500,7 @@
   "(import stdlib.test)
 (defstruct Point (x i64) (y i64))
 (defenum Maybe (None) (Some i64))
-(extern (io.print-string [arg0 : String]) : unit)
+(extern (io.emit-string [arg0 : String]) : unit)
 (define answer : i64 42)
 (define (main [argc : i64] [name : String]) : i64
   (let

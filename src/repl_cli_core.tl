@@ -346,8 +346,8 @@
 
 (define (__tl_repl_print_char [c : char]) : unit
   (begin
-    (io.print-string (__tl_repl_char_string c))
-    (io.print-newline)))
+    (io.print-format \"{}\" (__tl_repl_char_string c))
+    (io.println \"\")))
 
 ")
 
@@ -366,7 +366,7 @@
   (if (= divisor 0)
     unit
     (begin
-      (io.print-string (string.int->string (/ value divisor)))
+      (io.print-format \"{}\" (string.int->string (/ value divisor)))
       (__tl_repl_print_fraction_digits (% value divisor) (/ divisor 10)))))
 
 (define (__tl_repl_print_f64_positive [x : f64]) : unit
@@ -378,21 +378,21 @@
     [shown-whole : i64 (if carry (+ whole 1) whole)]
     [scaled : i64 (if carry 0 raw-scaled)]
     (begin
-      (io.print-string (string.int->string shown-whole))
+      (io.print-format \"{}\" (string.int->string shown-whole))
       (if (= scaled 0)
         unit
         (let
           [trimmed : i64 (__tl_repl_trim_fraction_value scaled)]
           [divisor : i64 (__tl_repl_trim_fraction_divisor scaled 100000)]
           (begin
-            (io.print-string \".\")
+            (io.print-format \"{}\" \".\")
             (__tl_repl_print_fraction_digits trimmed divisor))))
-      (io.print-newline))))
+      (io.println \"\"))))
 
 (define (__tl_repl_print_f64 [x : f64]) : unit
   (if (< x 0.0)
     (begin
-      (io.print-string \"-\")
+      (io.print-format \"{}\" \"-\")
       (__tl_repl_print_f64_positive (- 0.0 x)))
     (__tl_repl_print_f64_positive x)))
 
@@ -409,20 +409,24 @@
   (str_cat.str-cat
     "(begin\n  "
     expr-source
-    "\n  (io.print-string \"<value: "
+    "\n  (io.print-format \"{}\" \"<value: "
     (repl-type-render ty)
-    ">\")\n  (io.print-newline))"))
+    ">\")\n  (io.println \"\"))"))
 
 (define (repl-display-body [ty : ast.AstType] [expr-source : String]) : ResultReplString
   (match ty
     [(ast.AstType.I64)
-      (ResultReplString.Ok (str_cat.str-cat "(io.print\n" expr-source "\n)"))]
+      (ResultReplString.Ok
+        (str_cat.str-cat "(io.println \"{}\"\n" expr-source "\n)"))]
     [(ast.AstType.I32)
       (ResultReplString.Ok
-        (str_cat.str-cat "(io.print\n(cast\n" expr-source "\n: i64)\n)"))]
+        (str_cat.str-cat
+          "(io.println \"{}\"\n(cast\n"
+          expr-source
+          "\n: i64)\n)"))]
     [(ast.AstType.Bool)
       (ResultReplString.Ok
-        (str_cat.str-cat "(io.print-bool\n" expr-source "\n)"))]
+        (str_cat.str-cat "(io.println \"{}\"\n" expr-source "\n)"))]
     [(ast.AstType.F64)
       (ResultReplString.Ok
         (str_cat.str-cat "(__tl_repl_print_f64\n" expr-source "\n)"))]
@@ -438,9 +442,9 @@
     [(ast.AstType.String)
       (ResultReplString.Ok
         (str_cat.str-cat
-          "(begin\n  (io.print-string\n"
+          "(begin\n  (io.print-format \"{}\"\n"
           expr-source
-          "\n  )\n  (io.print-newline))"))]
+          "\n  )\n  (io.println \"\"))"))]
     [(ast.AstType.Unit) (ResultReplString.Ok expr-source)]
     [(ast.AstType.Tuple _)
       (ResultReplString.Ok (repl-aggregate-display-body ty expr-source))]
@@ -931,14 +935,14 @@
       1)
     (repl-run)))
 
-(define (repl-scratch-source-no-unqualified-print-newline?
+(define (repl-scratch-source-canonical-output-ok?
   [expr-source : String]
   [ty : ast.AstType]) : bool
   (let
-    [legacy-newline-call : String "(print-newline"]
+    [canonical-newline-call : String "(io.println"]
     (match (repl-scratch-source "" expr-source ty)
       [(ResultReplString.Ok source)
-        (not (string.contains (& source) (& legacy-newline-call)))]
+        (string.contains (& source) (& canonical-newline-call))]
       [(ResultReplString.Err _) false])))
 
 (define (repl-scratch-source-stdlib-imports-ok?) : bool
@@ -954,13 +958,9 @@
           (string.contains (& source) (& string-import))
           (not (string.contains (& source) (& legacy-tl-import)))
           (not (string.contains (& source) (& legacy-io-import)))
-          (repl-scratch-source-no-unqualified-print-newline?
-            "3.5"
-            (ast.AstType.F64))
-          (repl-scratch-source-no-unqualified-print-newline?
-            "'Z'"
-            (ast.AstType.Char))
-          (repl-scratch-source-no-unqualified-print-newline?
+          (repl-scratch-source-canonical-output-ok? "3.5" (ast.AstType.F64))
+          (repl-scratch-source-canonical-output-ok? "'Z'" (ast.AstType.Char))
+          (repl-scratch-source-canonical-output-ok?
             "\"hi\""
             (ast.AstType.String)))]
       [(ResultReplString.Err _) false])))

@@ -108,5 +108,5 @@
     [leaf : String (io.arg 2)]
     [rounds : i64 (string.>int (io.arg 3))]
     (begin
-      (io.print (path-helper-repeat root leaf rounds))
+      (io.println "{}" (path-helper-repeat root leaf rounds))
       0)))

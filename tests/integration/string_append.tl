@@ -8,18 +8,19 @@
 
 (define (main) : i64
   (begin
-    (io.print-string "[")
-    (io.print-string (string.append "" ""))
-    (io.print-string "]\n")
-    (io.print-string (string.append "" "right"))
-    (io.print-string "\n")
-    (io.print-string (string.append "left" ""))
-    (io.print-string "\n")
-    (io.print-string (string.append "foo" "bar"))
-    (io.print-string "\n")
-    (io.print-string
+    (io.print-format "{}" "[")
+    (io.print-format "{}" (string.append "" ""))
+    (io.print-format "{}" "]\n")
+    (io.print-format "{}" (string.append "" "right"))
+    (io.print-format "{}" "\n")
+    (io.print-format "{}" (string.append "left" ""))
+    (io.print-format "{}" "\n")
+    (io.print-format "{}" (string.append "foo" "bar"))
+    (io.print-format "{}" "\n")
+    (io.print-format
+      "{}"
       (string.concat
         "abcdefghijklmnopqrstuvwxyz"
         "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
-    (io.print-string "\n")
+    (io.print-format "{}" "\n")
     0))

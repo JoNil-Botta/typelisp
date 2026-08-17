@@ -576,7 +576,7 @@
 
 ;# later module
 ;: external doc
-(extern (io.print [arg0 : String]) : unit)
+(extern (io.emit [arg0 : String]) : unit)
 ;: struct doc
 (defstruct Point (x i64) (y i64))
 ;: macro doc
@@ -643,9 +643,9 @@
       (doc-item-ok?
         (doc-item-list-ref items 3)
         3
-        "io.print"
+        "io.emit"
         "external doc"
-        "(extern (io.print")
+        "(extern (io.emit")
       (return false))
     (unless
       (doc-item-ok?

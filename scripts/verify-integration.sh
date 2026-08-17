@@ -1786,7 +1786,6 @@ run_linux_backend_fixtures() {
         ".extern tl_string_to_int" \
         ".extern tl_hash_string" \
         "tl_print_err:" \
-        "tl_print_string:" \
         ".L_tl_arg_count:" \
         ".L_tl_arg:" \
         ".L_tl_read_file:" \
@@ -2151,7 +2150,6 @@ run_windows_backend_fixtures() {
         "tl_int_to_string:" \
         ".extern tl_int_to_string" \
         "tl_print_err:" \
-        "tl_print_string:" \
         ".L_tl_arg_count:" \
         ".L_tl_arg:" \
         ".L_tl_read_file:" \

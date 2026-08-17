@@ -237,7 +237,8 @@
         [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
         (begin
           (io.write-file output (byte_buf.as-bytes (& contents)))
-          (io.print-string
+          (io.print-format
+            "{}"
             (str_cat.str-cat
               "embedded stdlib tlci: wrote "
               (string.int->string bytes-len)
@@ -265,7 +266,8 @@
               (array-ref
                 compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
                 0)))
-          (io.print-string
+          (io.print-format
+            "{}"
             (str_cat.str-cat
               "embedded stdlib tlci: coverage native-entries="
               (string.int->string

@@ -9,4 +9,4 @@
 
 (begin
   ; keep
-  (print-string "x"))
+  (emit-string "x"))

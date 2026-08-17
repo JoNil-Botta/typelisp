@@ -413,7 +413,7 @@ generate_failure_source() {
 (define two : i64 2)
 (define (main) : i64
   (begin
-    (io.print-string (format.format $template$arguments))
+    (io.print-format "{}" (format.format $template$arguments))
     0))
 EOF
 }

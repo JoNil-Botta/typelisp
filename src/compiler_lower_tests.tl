@@ -13795,8 +13795,294 @@
 (define (compiler-lower-checked-pools-state-isolation-ok?) : bool
   (compiler_lower.compiler-lower-checked-pools-state-isolation-ok?))
 
+(define (compiler-lower-function-memo-test-write!
+  [function-state : compiler_lower.CompilerLowerFunctionState]
+  [slot : i64]
+  [key : i64]
+  [ty : compiler_ast_types.AstType]
+  [outcome : compiler_lower.LowerVariantArmResolution]) : unit
+  (let
+    [storage : compiler_lower.CompilerLowerFunctionMemoStorage
+      (compiler_lower.compiler-lower-function-memo-storage
+        (compiler_lower.compiler-lower-function-state-owner function-state))]
+    (begin
+      (set!
+        (array-ref storage.rtf-generations slot)
+        (compiler_lower.compiler-lower-function-state-rtf-generation
+          function-state))
+      (set! (array-ref storage.rtf-ids slot) key)
+      (set! (array-ref storage.rtf-types slot) ty)
+      (set!
+        (array-ref storage.variant-stamps slot)
+        (compiler_lower.compiler-lower-function-state-variant-generation
+          function-state))
+      (set! (array-ref storage.variant-keys slot) key)
+      (set! (array-ref storage.variant-scrutinee-types slot) ty)
+      (set! (array-ref storage.variant-outcomes slot) outcome))))
+
+(define (compiler-lower-function-memo-test-hit?
+  [function-state : compiler_lower.CompilerLowerFunctionState]
+  [slot : i64]
+  [key : i64]
+  [ty : compiler_ast_types.AstType]
+  [outcome-name : String]) : bool
+  (let
+    [storage : compiler_lower.CompilerLowerFunctionMemoStorage
+      (compiler_lower.compiler-lower-function-memo-storage
+        (compiler_lower.compiler-lower-function-state-owner function-state))]
+    (and
+      (=
+        (array-ref storage.rtf-generations slot)
+        (compiler_lower.compiler-lower-function-state-rtf-generation
+          function-state))
+      (= (array-ref storage.rtf-ids slot) key)
+      (compiler_ast_types.ast-type-eq? (array-ref storage.rtf-types slot) ty)
+      (=
+        (array-ref storage.variant-stamps slot)
+        (compiler_lower.compiler-lower-function-state-variant-generation
+          function-state))
+      (= (array-ref storage.variant-keys slot) key)
+      (compiler_ast_types.ast-type-eq?
+        (array-ref storage.variant-scrutinee-types slot)
+        ty)
+      (match (array-ref storage.variant-outcomes slot)
+        [(compiler_lower.LowerVariantArmResolution.Missing name)
+          (string.eq name outcome-name)]
+        [_ false]))))
+
+;; A and B deliberately reuse the same numeric memo slot/key/generation and
+;; fresh-local source ID. The backing arrays are owner-private, while sibling
+;; functions in A share backing but use distinct generations so interleaving is
+;; an eviction/miss rather than a stale read.
 (define (compiler-lower-spmd-function-state-isolation-ok?) : bool
-  (compiler_lower.compiler-lower-spmd-function-state-isolation-ok?))
+  (let
+    [owner-a : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
+    [owner-b : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
+    [idle-a : i64
+      (compiler_lower.compiler-lower-state-function-memo-retained-bytes owner-a)]
+    [idle-b : i64
+      (compiler_lower.compiler-lower-state-function-memo-retained-bytes owner-b)]
+    (begin
+      (compiler_lower.compiler-lower-state-set-spmd-package!
+        owner-a
+        "package-a")
+      (compiler_lower.compiler-lower-state-set-spmd-package!
+        owner-b
+        "package-b")
+      (let
+        [function-a : compiler_lower.CompilerLowerFunctionState
+          (compiler_lower.compiler-lower-function-state-new owner-a)]
+        [retained-a : i64
+          (compiler_lower.compiler-lower-state-function-memo-retained-bytes
+            owner-a)]
+        [still-idle-b : i64
+          (compiler_lower.compiler-lower-state-function-memo-retained-bytes
+            owner-b)]
+        [function-a-nested : compiler_lower.CompilerLowerFunctionState
+          (compiler_lower.compiler-lower-function-state-new owner-a)]
+        [function-b : compiler_lower.CompilerLowerFunctionState
+          (compiler_lower.compiler-lower-function-state-new owner-b)]
+        [retained-b : i64
+          (compiler_lower.compiler-lower-state-function-memo-retained-bytes
+            owner-b)]
+        [source-id : i64
+          (ci.intern-generated-name "lower-function-state-isolation-temp")]
+        [symbol : i64 81173]
+        [registered-a : compiler_lower.LowerSpmdPackageSymbolRegistration
+          (compiler_lower.lower-spmd-package-symbol-register
+            owner-a
+            symbol
+            "identity-a")]
+        [registered-b : compiler_lower.LowerSpmdPackageSymbolRegistration
+          (compiler_lower.lower-spmd-package-symbol-register
+            owner-b
+            symbol
+            "identity-b")]
+        [repeated-b : compiler_lower.LowerSpmdPackageSymbolRegistration
+          (compiler_lower.lower-spmd-package-symbol-register
+            owner-b
+            symbol
+            "identity-b")]
+        (begin
+          (compiler_lower.compiler-lower-function-state-inline-helper-stack-set!
+            function-a
+            (compiler_lower.lower-id-set-insert
+              (compiler_lower.lower-id-set-empty)
+              4242))
+          (compiler_lower.compiler-lower-function-state-recursion-detected-set!
+            function-a
+            true)
+          (compiler_lower.compiler-lower-function-state-scalar-call-context-set!
+            function-a
+            (compiler_lower.LowerSpmdScalarCallContext.Some "lane-a"))
+          (let
+            [temp-a-0 : i64
+              (compiler_lower.compiler-lower-function-state-fresh-local-id!
+                function-a
+                source-id)]
+            [temp-a-1 : i64
+              (compiler_lower.compiler-lower-function-state-fresh-local-id!
+                function-a
+                source-id)]
+            [temp-a-nested-0 : i64
+              (compiler_lower.compiler-lower-function-state-fresh-local-id!
+                function-a-nested
+                source-id)]
+            [temp-b-0 : i64
+              (compiler_lower.compiler-lower-function-state-fresh-local-id!
+                function-b
+                source-id)]
+            [slot : i64 17]
+            [key : i64 17017]
+            (begin
+              (compiler-lower-function-memo-test-write!
+                function-a
+                slot
+                key
+                (compiler_ast_types.AstType.I64)
+                (compiler_lower.LowerVariantArmResolution.Missing "memo-a"))
+              (compiler-lower-function-memo-test-write!
+                function-b
+                slot
+                key
+                (compiler_ast_types.AstType.Bool)
+                (compiler_lower.LowerVariantArmResolution.Missing "memo-b"))
+              (let
+                [owners-hit : bool
+                  (and
+                    (compiler-lower-function-memo-test-hit?
+                      function-a
+                      slot
+                      key
+                      (compiler_ast_types.AstType.I64)
+                      "memo-a")
+                    (compiler-lower-function-memo-test-hit?
+                      function-b
+                      slot
+                      key
+                      (compiler_ast_types.AstType.Bool)
+                      "memo-b"))]
+                (begin
+                  (compiler-lower-function-memo-test-write!
+                    function-a-nested
+                    slot
+                    key
+                    (compiler_ast_types.AstType.Bool)
+                    (compiler_lower.LowerVariantArmResolution.Missing
+                      "memo-a-nested"))
+                  (let
+                    [nested-hit : bool
+                      (compiler-lower-function-memo-test-hit?
+                        function-a-nested
+                        slot
+                        key
+                        (compiler_ast_types.AstType.Bool)
+                        "memo-a-nested")]
+                    [outer-evicted : bool
+                      (not
+                        (compiler-lower-function-memo-test-hit?
+                          function-a
+                          slot
+                          key
+                          (compiler_ast_types.AstType.I64)
+                          "memo-a"))]
+                    [b-still-hit : bool
+                      (compiler-lower-function-memo-test-hit?
+                        function-b
+                        slot
+                        key
+                        (compiler_ast_types.AstType.Bool)
+                        "memo-b")]
+                    (begin
+                      (compiler_lower.compiler-lower-state-reset! owner-a)
+                      (and
+                        (= idle-a 0)
+                        (= idle-b 0)
+                        (> retained-a 0)
+                        (= still-idle-b 0)
+                        (> retained-b 0)
+                        (not (= owner-a.address owner-b.address))
+                        (not (= function-a.address function-a-nested.address))
+                        (not (= function-a.address function-b.address))
+                        (=
+                          (compiler_lower.compiler-lower-function-state-rtf-generation
+                            function-a)
+                          (compiler_lower.compiler-lower-function-state-rtf-generation
+                            function-b))
+                        (not
+                          (=
+                            (compiler_lower.compiler-lower-function-state-rtf-generation
+                              function-a)
+                            (compiler_lower.compiler-lower-function-state-rtf-generation
+                              function-a-nested)))
+                        (compiler_lower.lower-id-set-contains?
+                          (compiler_lower.compiler-lower-function-state-inline-helper-stack
+                            function-a)
+                          4242)
+                        (not
+                          (compiler_lower.lower-id-set-contains?
+                            (compiler_lower.compiler-lower-function-state-inline-helper-stack
+                              function-a-nested)
+                            4242))
+                        (not
+                          (compiler_lower.lower-id-set-contains?
+                            (compiler_lower.compiler-lower-function-state-inline-helper-stack
+                              function-b)
+                            4242))
+                        (compiler_lower.compiler-lower-function-state-recursion-detected?
+                          function-a)
+                        (not
+                          (compiler_lower.compiler-lower-function-state-recursion-detected?
+                            function-a-nested))
+                        (not
+                          (compiler_lower.compiler-lower-function-state-recursion-detected?
+                            function-b))
+                        (match (compiler_lower.compiler-lower-function-state-scalar-call-context
+                          function-a)
+                          [(compiler_lower.LowerSpmdScalarCallContext.Some lane)
+                            (string.eq lane "lane-a")]
+                          [_ false])
+                        (match (compiler_lower.compiler-lower-function-state-scalar-call-context
+                          function-b)
+                          [(compiler_lower.LowerSpmdScalarCallContext.No) true]
+                          [_ false])
+                        (= temp-a-0 temp-a-nested-0)
+                        (= temp-a-0 temp-b-0)
+                        (not (= temp-a-0 temp-a-1))
+                        owners-hit
+                        nested-hit
+                        outer-evicted
+                        b-still-hit
+                        (match registered-a
+                          [(compiler_lower.LowerSpmdPackageSymbolRegistration.New)
+                            true]
+                          [_ false])
+                        (match registered-b
+                          [(compiler_lower.LowerSpmdPackageSymbolRegistration.New)
+                            true]
+                          [_ false])
+                        (match repeated-b
+                          [(compiler_lower.LowerSpmdPackageSymbolRegistration.Existing)
+                            true]
+                          [_ false])
+                        (string.eq
+                          (compiler_lower.compiler-lower-state-spmd-package-name
+                            owner-a)
+                          "")
+                        (string.eq
+                          (compiler_lower.compiler-lower-state-spmd-package-name
+                            owner-b)
+                          "package-b")
+                        (match (compiler_lower.lower-spmd-package-symbol-register
+                          owner-b
+                          symbol
+                          "identity-b")
+                          [(compiler_lower.LowerSpmdPackageSymbolRegistration.Existing)
+                            true]
+                          [_ false])
+                        (compiler_lower.compiler-lower-state-reset? owner-a)))))))))))))
 
 (define (compiler-lower-checked-pools-abort-lifecycle-ok?) : bool
   (compiler_lower.compiler-lower-checked-pools-abort-lifecycle-ok?))

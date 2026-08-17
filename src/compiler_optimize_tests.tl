@@ -24269,21 +24269,23 @@
             (compiler_ir_types.CompilerIrInstrList.Nil))
           (compiler_ir_types.CompilerIrInstrList.Nil)))]
     [entry-tail : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-licm-unswitch-instrs-onto
-        after-first
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.BinOp
-            7
-            (compiler_ir_types.CompilerIrBinOp.And)
-            (compiler_ir_types.CompilerIrValue.Var 6)
-            (compiler_ir_types.CompilerIrValue.Var 5)
-            (compiler_ast_types.AstType.Bool))
-          (compiler_ir_types.compiler-ir-instr-cons
-            (compiler_ir_types.CompilerIrInstr.Branch
-              (compiler_ir_types.CompilerIrValue.Var 7)
-              (compiler_ir_types.compiler-ir-label "yes")
-              (compiler_ir_types.compiler-ir-label "no"))
-            (compiler_ir_types.CompilerIrInstrList.Nil))))]
+      (compiler_ir_types.compiler-ir-instr-seq-to-list
+        (compiler_optimize.opt-licm-unswitch-instrs-onto
+          (compiler_ir_types.compiler-ir-instr-seq-from-list after-first)
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                7
+                (compiler_ir_types.CompilerIrBinOp.And)
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 7)
+                  (compiler_ir_types.compiler-ir-label "yes")
+                  (compiler_ir_types.compiler-ir-label "no"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))))]
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.compiler-ir-block
         (compiler_ir_types.compiler-ir-label "entry")
@@ -27646,9 +27648,12 @@
                       (compiler_ir_types.CompilerIrValue.Var 10)
                       (compiler_ir_types.CompilerIrValue.I64 9)
                       (compiler_ast_types.AstType.I64))
-                    (compiler_optimize.opt-licm-unswitch-instrs-onto
-                      (opt-licm-checked-root-barrier barrier-mode)
-                      (opt-licm-checked-root-loop-tail))))))))
+                    (compiler_ir_types.compiler-ir-instr-seq-to-list
+                      (compiler_optimize.opt-licm-unswitch-instrs-onto
+                        (compiler_ir_types.compiler-ir-instr-seq-from-list
+                          (opt-licm-checked-root-barrier barrier-mode))
+                        (compiler_ir_types.compiler-ir-instr-seq-from-list
+                          (opt-licm-checked-root-loop-tail))))))))))
         (compiler_ir_types.compiler-ir-block-cons
           (compiler_ir_types.compiler-ir-block
             (compiler_ir_types.compiler-ir-label "body")
@@ -30950,41 +30955,45 @@
   [compare-lhs : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.compiler-ir-block
     (compiler_ir_types.compiler-ir-label "body")
-    (compiler_optimize.opt-licm-unswitch-instrs-onto
-      prefix
-      (compiler_ir_types.compiler-ir-instr-cons
-        (compiler_ir_types.CompilerIrInstr.BinOp
-          6
-          (compiler_ir_types.CompilerIrBinOp.Add)
-          (compiler_ir_types.CompilerIrValue.Var 3)
-          (compiler_ir_types.CompilerIrValue.I64 1)
-          (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Mov
-            7
-            (compiler_ir_types.CompilerIrValue.Var 6)
-            (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-seq-to-list
+      (compiler_optimize.opt-licm-unswitch-instrs-onto
+        (compiler_ir_types.compiler-ir-instr-seq-from-list prefix)
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
           (compiler_ir_types.compiler-ir-instr-cons
-            (compiler_ir_types.CompilerIrInstr.Gep
-              8
-              (compiler_ir_types.CompilerIrValue.Var 9)
-              stride
-              (compiler_ast_types.AstType.U8))
-            (compiler_optimize.opt-licm-unswitch-instrs-onto
-              extra
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              6
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Mov
+                7
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ast_types.AstType.I64))
               (compiler_ir_types.compiler-ir-instr-cons
-                (compiler_ir_types.CompilerIrInstr.BinOp
-                  11
-                  (compiler_ir_types.CompilerIrBinOp.Lt)
-                  compare-lhs
-                  (compiler_ir_types.CompilerIrValue.Var 1)
-                  (compiler_ast_types.AstType.I64))
-                (compiler_ir_types.compiler-ir-instr-cons
-                  (compiler_ir_types.CompilerIrInstr.Branch
-                    (compiler_ir_types.CompilerIrValue.Var 11)
-                    (compiler_ir_types.compiler-ir-label "loop")
-                    (compiler_ir_types.compiler-ir-label "exit"))
-                  (compiler_ir_types.CompilerIrInstrList.Nil))))))))))
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  8
+                  (compiler_ir_types.CompilerIrValue.Var 9)
+                  stride
+                  (compiler_ast_types.AstType.U8))
+                (compiler_ir_types.compiler-ir-instr-seq-to-list
+                  (compiler_optimize.opt-licm-unswitch-instrs-onto
+                    (compiler_ir_types.compiler-ir-instr-seq-from-list extra)
+                    (compiler_ir_types.compiler-ir-instr-seq-from-list
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.BinOp
+                          11
+                          (compiler_ir_types.CompilerIrBinOp.Lt)
+                          compare-lhs
+                          (compiler_ir_types.CompilerIrValue.Var 1)
+                          (compiler_ast_types.AstType.I64))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Branch
+                            (compiler_ir_types.CompilerIrValue.Var 11)
+                            (compiler_ir_types.compiler-ir-label "loop")
+                            (compiler_ir_types.compiler-ir-label "exit"))
+                          (compiler_ir_types.CompilerIrInstrList.Nil))))))))))))))
 
 (define (opt-lftr-exit-block [result : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.compiler-ir-block
@@ -55663,7 +55672,8 @@
         (opt-dense-insertion-test-licm-original-with-term term-label))]
     [inserted : compiler_ir_types.CompilerIrInstrSeq
       (compiler_optimize.opt-licm-insert-before-terminator-seq
-        (opt-dense-insertion-test-licm-hoisted 20 21)
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-dense-insertion-test-licm-hoisted 20 21))
         with-term)]
     [no-term : compiler_ir_types.CompilerIrInstrSeq
       (compiler_ir_types.compiler-ir-instr-seq-from-list
@@ -55674,7 +55684,8 @@
             compiler_ir_types.CompilerIrInstrList.Nil)))]
     [appended : compiler_ir_types.CompilerIrInstrSeq
       (compiler_optimize.opt-licm-insert-before-terminator-seq
-        (opt-dense-insertion-test-licm-hoisted 40 41)
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-dense-insertion-test-licm-hoisted 40 41))
         no-term)]
     [expected-inserted : (__tl_dyn-array i64) (array.make-array i64 6)]
     [expected-appended : (__tl_dyn-array i64) (array.make-array i64 4)]

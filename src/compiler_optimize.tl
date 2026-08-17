@@ -18910,18 +18910,10 @@
 ;; allocations, bounds checks, phis, vector memory ops, and trapping arithmetic
 ;; are left in place.
 (defenum OptLicmInstrsResult
-  (Result
-    ir.CompilerIrInstrList
-    ir.CompilerIrInstrList
-    opt_i64_i64_map.Map
-    bool))
+  (Result ir.CompilerIrInstrSeq ir.CompilerIrInstrSeq opt_i64_i64_map.Map bool))
 
 (defenum OptLicmBlocksResult
-  (Result
-    ir.CompilerIrBlockList
-    ir.CompilerIrInstrList
-    opt_i64_i64_map.Map
-    bool))
+  (Result ir.CompilerIrBlockList ir.CompilerIrInstrSeq opt_i64_i64_map.Map bool))
 
 ;; Result of applying LICM to a block list: the rewritten blocks plus whether
 ;; any loop actually hoisted. When nothing changed the caller can skip the
@@ -20597,6 +20589,32 @@
     [(option_i64.Some var) (opt-used-add hoisted var)]
     [(option_i64.None) hoisted]))
 
+(define (opt-instr-seq-concat
+  [prefix : ir.CompilerIrInstrSeq]
+  [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (cond
+    [(ir.compiler-ir-instr-seq-empty? prefix) tail]
+    [(ir.compiler-ir-instr-seq-empty? tail) prefix]
+    [else
+      (let
+        [prefix-count : i64 (ir.compiler-ir-instr-seq-count prefix)]
+        [tail-count : i64 (ir.compiler-ir-instr-seq-count tail)]
+        [builder : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity
+            (+ prefix-count tail-count))]
+        (begin
+          (ir.compiler-ir-instr-builder-append-seq-range!
+            (&mut builder)
+            prefix
+            0
+            prefix-count)
+          (ir.compiler-ir-instr-builder-append-seq-range!
+            (&mut builder)
+            tail
+            0
+            tail-count)
+          (ir.compiler-ir-instr-builder-to-seq builder)))]))
+
 (define (opt-licm-filter-instr-seq-from
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
@@ -20614,76 +20632,50 @@
   [descriptor-header-hoist? : bool]
   [globals-clean? : bool]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (OptLicmInstrsResult.Result
-      (ir.CompilerIrInstrList.Nil)
-      (ir.CompilerIrInstrList.Nil)
-      hoisted
-      false)
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (if (opt-licm-candidate?
-        type-segment-bases
-        loop-defs
-        hoisted
-        sources
-        types
-        store-summary
-        legacy-store-summary
-        ptrs
-        roots
-        store-roots
-        any-call?
-        licm-mode
-        descriptor-header-hoist?
-        globals-clean?
-        instr)
-        (match (opt-licm-filter-instr-seq-from
-          type-segment-bases
-          loop-defs
-          instrs
-          (+ index 1)
-          sources
-          types
-          store-summary
-          legacy-store-summary
-          ptrs
-          roots
-          store-roots
-          any-call?
-          licm-mode
-          descriptor-header-hoist?
-          globals-clean?
-          (opt-licm-add-hoisted-def hoisted instr))
-          [(OptLicmInstrsResult.Result kept moved next-hoisted _)
-            (OptLicmInstrsResult.Result
-              kept
-              (ir.compiler-ir-instr-cons instr moved)
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 index]
+    [kept : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    [moved : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    [next-hoisted : opt_i64_i64_map.Map hoisted]
+    [changed : bool false]
+    (begin
+      (while (< cursor count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          (begin
+            (if (opt-licm-candidate?
+              type-segment-bases
+              loop-defs
               next-hoisted
-              true)])
-        (match (opt-licm-filter-instr-seq-from
-          type-segment-bases
-          loop-defs
-          instrs
-          (+ index 1)
-          sources
-          types
-          store-summary
-          legacy-store-summary
-          ptrs
-          roots
-          store-roots
-          any-call?
-          licm-mode
-          descriptor-header-hoist?
-          globals-clean?
-          hoisted)
-          [(OptLicmInstrsResult.Result kept moved next-hoisted changed)
-            (OptLicmInstrsResult.Result
-              (ir.compiler-ir-instr-cons instr kept)
-              moved
-              next-hoisted
-              changed)])))))
+              sources
+              types
+              store-summary
+              legacy-store-summary
+              ptrs
+              roots
+              store-roots
+              any-call?
+              licm-mode
+              descriptor-header-hoist?
+              globals-clean?
+              instr)
+              (begin
+                (ir.compiler-ir-instr-builder-push! (&mut moved) instr)
+                (set!
+                  next-hoisted
+                  (opt-licm-add-hoisted-def (clone next-hoisted) instr))
+                (set! changed true))
+              (ir.compiler-ir-instr-builder-push! (&mut kept) instr))
+            (set! cursor (+ cursor 1)))))
+      (OptLicmInstrsResult.Result
+        (ir.compiler-ir-instr-builder-to-seq kept)
+        (ir.compiler-ir-instr-builder-to-seq moved)
+        next-hoisted
+        changed))))
 
 (define (opt-licm-filter-instr-seq
   [type-segment-bases : i64]
@@ -20739,7 +20731,7 @@
     [(ir.CompilerIrBlockList.Nil)
       (OptLicmBlocksResult.Result
         (ir.CompilerIrBlockList.Nil)
-        (ir.CompilerIrInstrList.Nil)
+        (ir.compiler-ir-instr-seq-empty)
         hoisted
         false)]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -20785,9 +20777,9 @@
                     rest-changed)
                   (OptLicmBlocksResult.Result
                     (ir.compiler-ir-block-cons
-                      (ir.compiler-ir-block label kept)
+                      (ir.CompilerIrBlock.Block label kept)
                       rest-blocks)
-                    (opt-licm-unswitch-instrs-onto moved rest-moved)
+                    (opt-instr-seq-concat moved rest-moved)
                     final-hoisted
                     (or block-changed rest-changed))])])])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -20842,29 +20834,35 @@
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-licm-insert-before-terminator
-  [hoisted : ir.CompilerIrInstrList]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match hoisted
-    [(ir.CompilerIrInstrList.Nil) instrs]
-    [_
-      (match instrs
-        [(ir.CompilerIrInstrList.Nil) hoisted]
-        [(ir.CompilerIrInstrList.Cons instr rest)
-          (if (opt-cfg-terminator-instr? instr)
-            (opt-licm-unswitch-instrs-onto hoisted instrs)
-            (ir.compiler-ir-instr-cons
-              instr
-              (opt-licm-insert-before-terminator hoisted (__tl-box-place rest))))])]))
-
-(define (opt-instr-builder-append-list!
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
-  [instrs : ir.CompilerIrInstrList]) : unit
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) unit]
-    [(ir.CompilerIrInstrList.Cons instr rest)
+  [hoisted : ir.CompilerIrInstrSeq]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (if (ir.compiler-ir-instr-seq-empty? hoisted)
+    instrs
+    (let
+      [original-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+      [inserted-count : i64 (ir.compiler-ir-instr-seq-count hoisted)]
+      [terminator-index : i64
+        (opt-licm-first-terminator-index instrs 0 original-count)]
+      [builder : ir.CompilerIrInstrBuilder
+        (ir.compiler-ir-instr-builder-with-capacity
+          (+ original-count inserted-count))]
       (begin
-        (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
-        (opt-instr-builder-append-list! (&mut builder) (__tl-box-place rest)))]))
+        (ir.compiler-ir-instr-builder-append-seq-range!
+          (&mut builder)
+          instrs
+          0
+          terminator-index)
+        (ir.compiler-ir-instr-builder-append-seq-range!
+          (&mut builder)
+          hoisted
+          0
+          inserted-count)
+        (ir.compiler-ir-instr-builder-append-seq-range!
+          (&mut builder)
+          instrs
+          terminator-index
+          original-count)
+        (ir.compiler-ir-instr-builder-to-seq builder)))))
 
 (define (opt-licm-first-terminator-index
   [instrs : ir.CompilerIrInstrSeq]
@@ -20877,36 +20875,13 @@
       (opt-licm-first-terminator-index instrs (+ index 1) count))))
 
 (define (opt-licm-insert-before-terminator-seq
-  [hoisted : ir.CompilerIrInstrList]
+  [hoisted : ir.CompilerIrInstrSeq]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (match hoisted
-    [(ir.CompilerIrInstrList.Nil) instrs]
-    [_
-      (let
-        [original-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-        [inserted-count : i64 (ir.compiler-ir-instr-list-count hoisted)]
-        [terminator-index : i64
-          (opt-licm-first-terminator-index instrs 0 original-count)]
-        [builder : ir.CompilerIrInstrBuilder
-          (ir.compiler-ir-instr-builder-with-capacity
-            (+ original-count inserted-count))]
-        (begin
-          (ir.compiler-ir-instr-builder-append-seq-range!
-            (&mut builder)
-            instrs
-            0
-            terminator-index)
-          (opt-instr-builder-append-list! (&mut builder) hoisted)
-          (ir.compiler-ir-instr-builder-append-seq-range!
-            (&mut builder)
-            instrs
-            terminator-index
-            original-count)
-          (ir.compiler-ir-instr-builder-to-seq builder)))]))
+  (opt-licm-insert-before-terminator hoisted instrs))
 
 (define (opt-licm-insert-preheader-blocks
   [preheader : i64]
-  [hoisted : ir.CompilerIrInstrList]
+  [hoisted : ir.CompilerIrInstrSeq]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
@@ -20953,11 +20928,13 @@
 ;; on source value + type, geps on base + offset + element type.
 (define (opt-licm-dup-of
   [type-segment-bases : i64]
-  [selected : ir.CompilerIrInstrList]
+  [selected : ir.CompilerIrInstrSeq]
+  [index : i64]
   [instr : ir.CompilerIrInstr]) : OptLicmDup
-  (match selected
-    [(ir.CompilerIrInstrList.Nil) (OptLicmDupNone)]
-    [(ir.CompilerIrInstrList.Cons prev rest)
+  (if (< index 0)
+    (OptLicmDupNone)
+    (let
+      [prev : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref selected index)]
       (match prev
         [(ir.CompilerIrInstr.Load pdst psrc pty)
           (match instr
@@ -20966,8 +20943,8 @@
                 (opt-value-eq psrc src)
                 (opt-type-eq type-segment-bases pty ty))
                 (OptLicmDupVar pdst)
-                (opt-licm-dup-of type-segment-bases (__tl-box-place rest) instr))]
-            [_ (opt-licm-dup-of type-segment-bases (__tl-box-place rest) instr)])]
+                (opt-licm-dup-of type-segment-bases selected (- index 1) instr))]
+            [_ (opt-licm-dup-of type-segment-bases selected (- index 1) instr)])]
         [(ir.CompilerIrInstr.Gep pdst pbase poffset pty)
           (match instr
             [(ir.CompilerIrInstr.Gep _ base offset ty)
@@ -20976,9 +20953,9 @@
                 (opt-value-eq poffset offset)
                 (opt-type-eq type-segment-bases pty ty))
                 (OptLicmDupVar pdst)
-                (opt-licm-dup-of type-segment-bases (__tl-box-place rest) instr))]
-            [_ (opt-licm-dup-of type-segment-bases (__tl-box-place rest) instr)])]
-        [_ (opt-licm-dup-of type-segment-bases (__tl-box-place rest) instr)])]))
+                (opt-licm-dup-of type-segment-bases selected (- index 1) instr))]
+            [_ (opt-licm-dup-of type-segment-bases selected (- index 1) instr)])]
+        [_ (opt-licm-dup-of type-segment-bases selected (- index 1) instr)]))))
 
 ;; Walk the hoisted list in program order, accumulating dup-dst -> canonical
 ;; var bindings. Each instruction is operand-substituted through the env built
@@ -20986,69 +20963,59 @@
 ;; canonical load (its source resolves to the canonical gep dst).
 (define (opt-licm-dedup-env
   [type-segment-bases : i64]
-  [moved : ir.CompilerIrInstrList]
-  [selected : ir.CompilerIrInstrList]
+  [moved : ir.CompilerIrInstrSeq]
   [env : OptCopyEnv]) : OptCopyEnv
-  (match moved
-    [(ir.CompilerIrInstrList.Nil) env]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (let
-        [subst : ir.CompilerIrInstr (opt-copy-subst-instr env instr)]
-        (match (opt-licm-dup-of type-segment-bases selected subst)
-          [(OptLicmDupVar canon)
-            (match (opt-instr-def-var instr)
-              [(option_i64.Some dst)
-                (opt-licm-dedup-env
-                  type-segment-bases
-                  (__tl-box-place rest)
-                  selected
-                  (OptCopyEnv.Cons dst (ir.CompilerIrValue.Var canon) (box env)))]
-              [(option_i64.None)
-                (opt-licm-dedup-env
-                  type-segment-bases
-                  (__tl-box-place rest)
-                  selected
-                  env)])]
-          [(OptLicmDupNone)
-            (opt-licm-dedup-env
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count moved)]
+    [index : i64 0]
+    [selected : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [next-env : OptCopyEnv env]
+    (begin
+      (while (< index count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref moved index)]
+          [subst : ir.CompilerIrInstr (opt-copy-subst-instr next-env instr)]
+          (begin
+            (match (opt-licm-dup-of
               type-segment-bases
-              (__tl-box-place rest)
-              (ir.compiler-ir-instr-cons subst selected)
-              env)]))]))
-
-(define (opt-licm-subst-instr-list
-  [env : OptCopyEnv]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (ir.compiler-ir-instr-cons
-        (opt-copy-subst-instr env instr)
-        (opt-licm-subst-instr-list env (__tl-box-place rest)))]))
-
-(define (opt-licm-subst-instr-seq-from
-  [env : OptCopyEnv]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [acc : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (if (< index 0)
-    acc
-    (opt-licm-subst-instr-seq-from
-      env
-      instrs
-      (- index 1)
-      (ir.compiler-ir-instr-cons
-        (opt-copy-subst-instr env (ir.compiler-ir-instr-seq-ref instrs index))
-        acc))))
+              (ir.CompilerIrInstrSeq selected.slots selected.len)
+              (- selected.len 1)
+              subst)
+              [(OptLicmDupVar canon)
+                (match (opt-instr-def-var instr)
+                  [(option_i64.Some dst)
+                    (set!
+                      next-env
+                      (OptCopyEnv.Cons
+                        dst
+                        (ir.CompilerIrValue.Var canon)
+                        (box next-env)))]
+                  [(option_i64.None) unit])]
+              [(OptLicmDupNone)
+                (ir.compiler-ir-instr-builder-push! (&mut selected) subst)])
+            (set! index (+ index 1)))))
+      next-env)))
 
 (define (opt-licm-subst-instr-seq
   [env : OptCopyEnv]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
-  (opt-licm-subst-instr-seq-from
-    env
-    instrs
-    (- (ir.compiler-ir-instr-seq-count instrs) 1)
-    ir.CompilerIrInstrList.Nil))
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [index : i64 0]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    (begin
+      (while (< index count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (opt-copy-subst-instr
+              env
+              (ir.compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-licm-subst-body-blocks
   [env : OptCopyEnv]
@@ -21059,7 +21026,9 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (ir.compiler-ir-block-cons
-            (ir.compiler-ir-block label (opt-licm-subst-instr-seq env instrs))
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-licm-subst-instr-seq env instrs))
             (opt-licm-subst-body-blocks env (__tl-box-place rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-subst-body-blocks env (ir.compiler-ir-block-seq-to-list seq))]))
@@ -21353,7 +21322,7 @@
 ;; the next round.
 (defstruct OptLicmGlobalPromotion
   (blocks ir.CompilerIrBlockList)
-  (loads ir.CompilerIrInstrList)
+  (loads ir.CompilerIrInstrSeq)
   (changed? bool))
 
 ;; Live-in budget for the memory-clean call tier's promotions (see
@@ -21452,27 +21421,52 @@
 
 ;; Emit the preheader cell loads in the same ref-list order the plan allocated
 ;; their fresh vars.
-(define (opt-licm-global-promote-loads
+(define (opt-licm-global-promote-loads-into!
   [plan : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
-  [refs : OptI64List]) : ir.CompilerIrInstrList
+  [refs : OptI64List]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (match refs
-    [(OptI64List.Nil) (ir.CompilerIrInstrList.Nil)]
+    [(OptI64List.Nil) unit]
     [(OptI64List.Cons name rest)
       (match (opt_i64_i64_map.get (& plan) name)
         [(opt_i64_i64_map.LookupMissing)
-          (opt-licm-global-promote-loads plan cells (__tl-box-place rest))]
+          (opt-licm-global-promote-loads-into!
+            plan
+            cells
+            (__tl-box-place rest)
+            builder)]
         [(opt_i64_i64_map.LookupFound fresh)
           (match (opt-global-cell-type-lookup cells name)
             [(OptMaybeAstType.No)
-              (opt-licm-global-promote-loads plan cells (__tl-box-place rest))]
+              (opt-licm-global-promote-loads-into!
+                plan
+                cells
+                (__tl-box-place rest)
+                builder)]
             [(OptMaybeAstType.Some ty)
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Mov
-                  fresh
-                  (ir.CompilerIrValue.Global name)
-                  ty)
-                (opt-licm-global-promote-loads plan cells (__tl-box-place rest)))])])]))
+              (begin
+                (ir.compiler-ir-instr-builder-push!
+                  builder
+                  (ir.CompilerIrInstr.Mov
+                    fresh
+                    (ir.CompilerIrValue.Global name)
+                    ty))
+                (opt-licm-global-promote-loads-into!
+                  plan
+                  cells
+                  (__tl-box-place rest)
+                  builder))])])]))
+
+(define (opt-licm-global-promote-loads
+  [plan : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [refs : OptI64List]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder (ir.compiler-ir-instr-builder-new)]
+    (begin
+      (opt-licm-global-promote-loads-into! plan cells refs (&mut builder))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 ;; Promote every `Global` operand of a globals-clean loop body to a preheader
 ;; load. `blocks` are the loop's body blocks AFTER the ordinary hoist filter
@@ -21483,14 +21477,14 @@
   [frame-cell : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]) : OptLicmGlobalPromotion
   (if (= cells.word-cell 0)
-    (OptLicmGlobalPromotion blocks (ir.CompilerIrInstrList.Nil) false)
+    (OptLicmGlobalPromotion blocks (ir.compiler-ir-instr-seq-empty) false)
     (let
       [scan : OptGlobalCellScan
         (opt-global-cell-scan-blocks (opt-global-cell-scan-new) blocks false)]
       [refs : OptI64List scan.ref-list]
       (match refs
         [(OptI64List.Nil)
-          (OptLicmGlobalPromotion blocks (ir.CompilerIrInstrList.Nil) false)]
+          (OptLicmGlobalPromotion blocks (ir.compiler-ir-instr-seq-empty) false)]
         [_
           (let
             [planned : OptGlobalCellPlan
@@ -21501,7 +21495,10 @@
                 (opt_i64_i64_map.with-capacity 8)
                 0)]
             (if (= planned.count 0)
-              (OptLicmGlobalPromotion blocks (ir.CompilerIrInstrList.Nil) false)
+              (OptLicmGlobalPromotion
+                blocks
+                (ir.compiler-ir-instr-seq-empty)
+                false)
               (OptLicmGlobalPromotion
                 (opt-global-cell-rewrite-nonentry-blocks planned.map blocks)
                 (opt-licm-global-promote-loads planned.map cells refs)
@@ -21512,11 +21509,9 @@
 ;; unchanged rather than copied, keeping the no-promotion path allocation- and
 ;; byte-identical.
 (define (opt-licm-preheader-instrs
-  [hoisted : ir.CompilerIrInstrList]
-  [loads : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match loads
-    [(ir.CompilerIrInstrList.Nil) hoisted]
-    [_ (opt-licm-unswitch-instrs-onto hoisted loads)]))
+  [hoisted : ir.CompilerIrInstrSeq]
+  [loads : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (opt-instr-seq-concat hoisted loads))
 
 (define (opt-licm-apply-loop
   [type-segment-bases : i64]
@@ -21666,10 +21661,10 @@
                     filtered-body)
                   (OptLicmGlobalPromotion
                     filtered-body
-                    (ir.CompilerIrInstrList.Nil)
+                    (ir.compiler-ir-instr-seq-empty)
                     false))]
               [promoted-body : ir.CompilerIrBlockList promotion.blocks]
-              [preheader-loads : ir.CompilerIrInstrList promotion.loads]
+              [preheader-loads : ir.CompilerIrInstrSeq promotion.loads]
               (if (or changed promotion.changed?)
                 ;; M-G (B1): fold duplicate hoisted loads/geps onto their first
                 ;; occurrence (see opt-licm-dedup-env). An empty env means no
@@ -21679,7 +21674,6 @@
                     (opt-licm-dedup-env
                       type-segment-bases
                       hoisted
-                      (ir.CompilerIrInstrList.Nil)
                       (OptCopyEnv.Nil))]
                   (match dedup-env
                     [(OptCopyEnv.Nil)
@@ -21694,7 +21688,7 @@
                         (opt-licm-insert-preheader-blocks
                           preheader
                           (opt-licm-preheader-instrs
-                            (opt-licm-subst-instr-list dedup-env hoisted)
+                            (opt-licm-subst-instr-seq dedup-env hoisted)
                             preheader-loads)
                           (opt-licm-replace-body-blocks
                             blocks
@@ -21923,7 +21917,7 @@
 
 ;; The conjunction the preheader tests, and the And instructions that build it.
 (defenum OptLicmUnswitchFused
-  (Fused ir.CompilerIrInstrList ir.CompilerIrValue))
+  (Fused ir.CompilerIrInstrSeq ir.CompilerIrValue))
 
 (define (opt-licm-unswitch-suffix) : String
   "__licm_false")
@@ -22229,30 +22223,35 @@
   [index : i64]
   [cond : ir.CompilerIrValue]
   [cell : (__tl_dyn-array i64)]) : OptLicmUnswitchFused
-  (if (>= index (opt-label-count labels))
-    (OptLicmUnswitchFused.Fused ir.CompilerIrInstrList.Nil cond)
-    (let
-      [next : ir.CompilerIrValue
-        (opt-licm-unswitch-dispatch-cond blocks (opt-label-ref labels index))]
-      [fresh : i64 (array-ref cell 0)]
-      [_bump : unit (set! (array-ref cell 0) (+ fresh 1))]
-      (match (opt-licm-unswitch-fuse-conds
-        blocks
-        labels
-        (+ index 1)
-        (ir.CompilerIrValue.Var fresh)
-        cell)
-        [(OptLicmUnswitchFused.Fused instrs result)
-          (OptLicmUnswitchFused.Fused
-            (ir.compiler-ir-instr-cons
+  (let
+    [count : i64 (opt-label-count labels)]
+    [cursor : i64 index]
+    [result : ir.CompilerIrValue cond]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    (begin
+      (while (< cursor count)
+        (let
+          [next : ir.CompilerIrValue
+            (opt-licm-unswitch-dispatch-cond
+              blocks
+              (opt-label-ref labels cursor))]
+          [fresh : i64 (array-ref cell 0)]
+          (begin
+            (set! (array-ref cell 0) (+ fresh 1))
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
               (ir.CompilerIrInstr.BinOp
                 fresh
                 (ir.CompilerIrBinOp.And)
-                cond
+                result
                 next
-                (ast.AstType.Bool))
-              instrs)
-            result)]))))
+                (ast.AstType.Bool)))
+            (set! result (ir.CompilerIrValue.Var fresh))
+            (set! cursor (+ cursor 1)))))
+      (OptLicmUnswitchFused.Fused
+        (ir.compiler-ir-instr-builder-to-seq builder)
+        result))))
 
 (define (opt-licm-unswitch-find-instrs
   [loops : OptNaturalLoopList]
@@ -22609,30 +22608,34 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [all-labels : OptLabelSet]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    ir.CompilerIrInstrList.Nil
-    (ir.compiler-ir-instr-cons
-      ;; A negated conjunction is only a verdict on ONE conjunct, so the clone
-      ;; resolves its branch exactly when the chain is empty.
-      (if (and
-        (= label shape.branch-label)
-        (= index shape.branch-index)
-        (= (opt-label-count shape.chain-labels) 0))
-        (ir.CompilerIrInstr.Jump
-          (opt-licm-unswitch-clone-label shape.body-labels shape.false-label))
-        (opt-licm-unswitch-clone-instr
-          (ir.compiler-ir-instr-seq-ref instrs index)
-          remap
-          shape.body-labels
-          all-labels))
-      (opt-licm-unswitch-clone-instrs
-        shape
-        label
-        instrs
-        (+ index 1)
-        remap
-        all-labels))))
+  [all-labels : OptLabelSet]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 index]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    (begin
+      (while (< cursor count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            ;; A negated conjunction is only a verdict on ONE conjunct, so the
+            ;; clone resolves its branch exactly when the chain is empty.
+            (if (and
+              (= label shape.branch-label)
+              (= cursor shape.branch-index)
+              (= (opt-label-count shape.chain-labels) 0))
+              (ir.CompilerIrInstr.Jump
+                (opt-licm-unswitch-clone-label
+                  shape.body-labels
+                  shape.false-label))
+              (opt-licm-unswitch-clone-instr
+                (ir.compiler-ir-instr-seq-ref instrs cursor)
+                remap
+                shape.body-labels
+                all-labels)))
+          (set! cursor (+ cursor 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-licm-unswitch-clone-blocks
   [shape : OptLicmUnswitchShape]
@@ -22645,7 +22648,7 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (ir.compiler-ir-block-cons
-            (ir.compiler-ir-block
+            (ir.CompilerIrBlock.Block
               (opt-licm-unswitch-clone-label shape.body-labels label)
               (opt-licm-unswitch-clone-instrs
                 shape
@@ -22666,17 +22669,19 @@
         remap
         all-labels)]))
 
-(define (opt-licm-unswitch-clone-param-moves!
+(define (opt-licm-unswitch-clone-param-moves-into!
   [params : ir.CompilerIrParamList]
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [cell : (__tl_dyn-array i64)]) : ir.CompilerIrInstrList
+  [cell : (__tl_dyn-array i64)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) ir.CompilerIrInstrList.Nil]
+    [(ir.CompilerIrParamList.Nil) unit]
     [(ir.CompilerIrParamList.Array seq)
-      (opt-licm-unswitch-clone-param-moves!
+      (opt-licm-unswitch-clone-param-moves-into!
         (ir.compiler-ir-param-seq-to-list seq)
         remap
-        cell)]
+        cell
+        builder)]
     [(ir.CompilerIrParamList.Cons param rest)
       (match param
         [(ir.CompilerIrParam.Param _ ty var)
@@ -22685,74 +22690,105 @@
             (begin
               (set! (array-ref cell 0) (+ fresh 1))
               (set! (array-ref remap var) (ir.CompilerIrValue.Var fresh))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Mov fresh (ir.CompilerIrValue.Var var) ty)
-                (opt-licm-unswitch-clone-param-moves!
-                  (__tl-box-place rest)
-                  remap
-                  cell))))])]))
+              (ir.compiler-ir-instr-builder-push!
+                builder
+                (ir.CompilerIrInstr.Mov fresh (ir.CompilerIrValue.Var var) ty))
+              (opt-licm-unswitch-clone-param-moves-into!
+                (__tl-box-place rest)
+                remap
+                cell
+                builder)))])]))
+
+(define (opt-licm-unswitch-clone-param-moves!
+  [params : ir.CompilerIrParamList]
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [cell : (__tl_dyn-array i64)]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder (ir.compiler-ir-instr-builder-new)]
+    (begin
+      (opt-licm-unswitch-clone-param-moves-into!
+        params
+        remap
+        cell
+        (&mut builder))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-licm-unswitch-instrs-onto
-  [prefix : ir.CompilerIrInstrList]
-  [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match prefix
-    [(ir.CompilerIrInstrList.Nil) tail]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (ir.compiler-ir-instr-cons
-        instr
-        (opt-licm-unswitch-instrs-onto (__tl-box-place rest) tail))]))
+  [prefix : ir.CompilerIrInstrSeq]
+  [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (opt-instr-seq-concat prefix tail))
 
 (define (opt-licm-unswitch-original-instrs
   [shape : OptLicmUnswitchShape]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    ir.CompilerIrInstrList.Nil
-    (ir.compiler-ir-instr-cons
-      (if (and (= label shape.branch-label) (= index shape.branch-index))
-        (ir.CompilerIrInstr.Jump shape.true-label)
-        ;; Every collected conjunct holds on this side, so each chain block's
-        ;; Branch is the Jump it always takes here.
-        (if (opt-label-contains shape.chain-labels label)
-          (match (ir.compiler-ir-instr-seq-ref instrs index)
-            [(ir.CompilerIrInstr.Branch _ true-label _)
-              (ir.CompilerIrInstr.Jump true-label)]
-            [_ (ir.compiler-ir-instr-seq-ref instrs index)])
-          (ir.compiler-ir-instr-seq-ref instrs index)))
-      (opt-licm-unswitch-original-instrs shape label instrs (+ index 1)))))
+  [index : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 index]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    (begin
+      (while (< cursor count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (if (and (= label shape.branch-label) (= cursor shape.branch-index))
+              (ir.CompilerIrInstr.Jump shape.true-label)
+              ;; Every collected conjunct holds on this side, so each chain
+              ;; block's Branch is the Jump it always takes here.
+              (if (opt-label-contains shape.chain-labels label)
+                (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+                  [(ir.CompilerIrInstr.Branch _ true-label _)
+                    (ir.CompilerIrInstr.Jump true-label)]
+                  [_ (ir.compiler-ir-instr-seq-ref instrs cursor)])
+                (ir.compiler-ir-instr-seq-ref instrs cursor))))
+          (set! cursor (+ cursor 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-licm-unswitch-preheader-instrs
   [shape : OptLicmUnswitchShape]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
-  [fuse-instrs : ir.CompilerIrInstrList]
+  [fuse-instrs : ir.CompilerIrInstrSeq]
   [fused-cond : ir.CompilerIrValue]
-  [clone-param-moves : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+  [clone-param-moves : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (if (>= index count)
-      ir.CompilerIrInstrList.Nil
-      (if (= index (- count 1))
-        (opt-licm-unswitch-instrs-onto
-          fuse-instrs
-          (opt-licm-unswitch-instrs-onto
-            clone-param-moves
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Branch
-                fused-cond
-                shape.header
-                (opt-licm-unswitch-clone-label shape.body-labels shape.header))
-              ir.CompilerIrInstrList.Nil)))
-        (ir.compiler-ir-instr-cons
-          (ir.compiler-ir-instr-seq-ref instrs index)
-          (opt-licm-unswitch-preheader-instrs
-            shape
-            instrs
-            (+ index 1)
-            fuse-instrs
-            fused-cond
-            clone-param-moves))))))
+    [prefix-end : i64
+      (if (> count index)
+        (- count 1)
+        index)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (+
+          (- prefix-end index)
+          (ir.compiler-ir-instr-seq-count fuse-instrs)
+          (ir.compiler-ir-instr-seq-count clone-param-moves)
+          1))]
+    (begin
+      (ir.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        instrs
+        index
+        prefix-end)
+      (ir.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        fuse-instrs
+        0
+        (ir.compiler-ir-instr-seq-count fuse-instrs))
+      (ir.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        clone-param-moves
+        0
+        (ir.compiler-ir-instr-seq-count clone-param-moves))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Branch
+          fused-cond
+          shape.header
+          (opt-licm-unswitch-clone-label shape.body-labels shape.header)))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-licm-unswitch-extend-phi-inputs
   [inputs : ir.CompilerIrPhiInputList]
@@ -22786,31 +22822,35 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [body-labels : OptLabelSet]
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    ir.CompilerIrInstrList.Nil
-    (ir.compiler-ir-instr-cons
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
-        [(ir.CompilerIrInstr.Phi dst inputs ty)
-          (ir.CompilerIrInstr.Phi
-            dst
-            (opt-licm-unswitch-extend-phi-inputs inputs body-labels remap)
-            ty)]
-        [_ (ir.compiler-ir-instr-seq-ref instrs index)])
-      (opt-licm-unswitch-extend-exit-instrs
-        instrs
-        (+ index 1)
-        body-labels
-        remap))))
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 index]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    (begin
+      (while (< cursor count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+              [(ir.CompilerIrInstr.Phi dst inputs ty)
+                (ir.CompilerIrInstr.Phi
+                  dst
+                  (opt-licm-unswitch-extend-phi-inputs inputs body-labels remap)
+                  ty)]
+              [_ (ir.compiler-ir-instr-seq-ref instrs cursor)]))
+          (set! cursor (+ cursor 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-licm-unswitch-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
   [shape : OptLicmUnswitchShape]
   [cloned : ir.CompilerIrBlockList]
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [fuse-instrs : ir.CompilerIrInstrList]
+  [fuse-instrs : ir.CompilerIrInstrSeq]
   [fused-cond : ir.CompilerIrValue]
-  [clone-param-moves : ir.CompilerIrInstrList]) : ir.CompilerIrBlockList
+  [clone-param-moves : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -22829,7 +22869,7 @@
             (cond
               [(= label shape.preheader)
                 (ir.compiler-ir-block-cons
-                  (ir.compiler-ir-block
+                  (ir.CompilerIrBlock.Block
                     label
                     (opt-licm-unswitch-preheader-instrs
                       shape
@@ -22843,19 +22883,19 @@
                 (opt-bce-mb-blocks-cons-onto
                   cloned
                   (ir.compiler-ir-block-cons
-                    (ir.compiler-ir-block
+                    (ir.CompilerIrBlock.Block
                       label
                       (opt-licm-unswitch-original-instrs shape label instrs 0))
                     tail))]
               [(opt-label-contains shape.body-labels label)
                 (ir.compiler-ir-block-cons
-                  (ir.compiler-ir-block
+                  (ir.CompilerIrBlock.Block
                     label
                     (opt-licm-unswitch-original-instrs shape label instrs 0))
                   tail)]
               [else
                 (ir.compiler-ir-block-cons
-                  (ir.compiler-ir-block
+                  (ir.CompilerIrBlock.Block
                     label
                     (opt-licm-unswitch-extend-exit-instrs
                       instrs
@@ -22901,7 +22941,7 @@
         [remap : (__tl_dyn-array ir.CompilerIrValue)
           (array.make-array ir.CompilerIrValue frame)]
         [_fill : unit (opt-unroll-remap-fill remap 0)]
-        [clone-param-moves : ir.CompilerIrInstrList
+        [clone-param-moves : ir.CompilerIrInstrSeq
           (opt-licm-unswitch-clone-param-moves! params remap cell)]
         [_alloc : unit (opt-bce-mb-alloc-defs! shape.body-blocks remap cell)]
         [all-labels : OptLabelSet
@@ -26756,28 +26796,27 @@
   [clear-target? : bool]
   [clear-pred? : bool]
   [gate? : bool]
-  [plan : OptFlagExitPlan]) : ir.CompilerIrInstrList
+  [plan : OptFlagExitPlan]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (if (>= pos count)
-      (ir.CompilerIrInstrList.Nil)
-      (ir.compiler-ir-instr-cons
-        (opt-flag-exit-rewrite-instr
-          (ir.compiler-ir-instr-seq-ref instrs pos)
-          in-body?
-          clear-target?
-          clear-pred?
-          gate?
-          (= pos (- count 1))
-          plan)
-        (opt-flag-exit-rewrite-instrs-from
-          instrs
-          (+ pos 1)
-          in-body?
-          clear-target?
-          clear-pred?
-          gate?
-          plan)))))
+    [index : i64 pos]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count pos))]
+    (begin
+      (while (< index count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (opt-flag-exit-rewrite-instr
+              (ir.compiler-ir-instr-seq-ref instrs index)
+              in-body?
+              clear-target?
+              clear-pred?
+              gate?
+              (= index (- count 1))
+              plan))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-flag-exit-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -26790,7 +26829,7 @@
       (ir.compiler-ir-block-cons
         (match block
           [(ir.CompilerIrBlock.Block label instrs)
-            (ir.compiler-ir-block
+            (ir.CompilerIrBlock.Block
               label
               (opt-flag-exit-rewrite-instrs-from
                 instrs
@@ -27332,7 +27371,7 @@
     i64
     ir.CompilerIrInstr
     i64
-    ir.CompilerIrInstrList
+    ir.CompilerIrInstrSeq
     i64))
 
 (defenum OptLftrMaybePlan
@@ -27831,65 +27870,64 @@
   [pointer : OptLftrPointer]
   [seed : i64]
   [bound : ir.CompilerIrValue]
-  [frame : i64]) : ir.CompilerIrInstrList
+  [frame : i64]) : ir.CompilerIrInstrSeq
   (match pointer
     [(OptLftrPointer.Pointer _ seed-var _ gep-ty step _)
       (let
         [sub-var : i64 frame]
         [mul-var : i64 (+ frame 1)]
         [end-var : i64 (+ frame 2)]
-        (match bound
-          [(ir.CompilerIrValue.I64 limit)
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Gep
-                end-var
-                (ir.CompilerIrValue.Var seed-var)
-                (ir.CompilerIrValue.I64 (* (- limit seed) step))
-                gep-ty)
-              (ir.CompilerIrInstrList.Nil))]
-          [_
-            (let
-              [offset-instrs : ir.CompilerIrInstrList
-                (if (= seed 0)
-                  (ir.CompilerIrInstrList.Nil)
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.BinOp
-                      sub-var
-                      (ir.CompilerIrBinOp.Sub)
-                      bound
-                      (ir.CompilerIrValue.I64 seed)
-                      (ast.AstType.I64))
-                    (ir.CompilerIrInstrList.Nil)))]
-              [offset-value : ir.CompilerIrValue
-                (if (= seed 0)
-                  bound
-                  (ir.CompilerIrValue.Var sub-var))]
-              [scaled-instrs : ir.CompilerIrInstrList
-                (if (= step 1)
-                  offset-instrs
-                  (opt-licm-unswitch-instrs-onto
-                    offset-instrs
-                    (ir.compiler-ir-instr-cons
+        [builder : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity 3)]
+        (begin
+          (match bound
+            [(ir.CompilerIrValue.I64 limit)
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (ir.CompilerIrInstr.Gep
+                  end-var
+                  (ir.CompilerIrValue.Var seed-var)
+                  (ir.CompilerIrValue.I64 (* (- limit seed) step))
+                  gep-ty))]
+            [_
+              (let
+                [offset-value : ir.CompilerIrValue
+                  (if (= seed 0)
+                    bound
+                    (ir.CompilerIrValue.Var sub-var))]
+                [scaled-value : ir.CompilerIrValue
+                  (if (= step 1)
+                    offset-value
+                    (ir.CompilerIrValue.Var mul-var))]
+                (begin
+                  (if (= seed 0)
+                    unit
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (ir.CompilerIrInstr.BinOp
+                        sub-var
+                        (ir.CompilerIrBinOp.Sub)
+                        bound
+                        (ir.CompilerIrValue.I64 seed)
+                        (ast.AstType.I64))))
+                  (if (= step 1)
+                    unit
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
                       (ir.CompilerIrInstr.BinOp
                         mul-var
                         (ir.CompilerIrBinOp.Mul)
                         offset-value
                         (ir.CompilerIrValue.I64 step)
-                        (ast.AstType.I64))
-                      (ir.CompilerIrInstrList.Nil))))]
-              [scaled-value : ir.CompilerIrValue
-                (if (= step 1)
-                  offset-value
-                  (ir.CompilerIrValue.Var mul-var))]
-              (opt-licm-unswitch-instrs-onto
-                scaled-instrs
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Gep
-                    end-var
-                    (ir.CompilerIrValue.Var seed-var)
-                    scaled-value
-                    gep-ty)
-                  (ir.CompilerIrInstrList.Nil))))]))]))
+                        (ast.AstType.I64))))
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (ir.CompilerIrInstr.Gep
+                      end-var
+                      (ir.CompilerIrValue.Var seed-var)
+                      scaled-value
+                      gep-ty))))])
+          (ir.compiler-ir-instr-builder-to-seq builder)))]))
 
 ;; A literal bound is materialised as one folded gep displacement, so keep the
 ;; folded product inside the pass's ordinary small-constant window.
@@ -28073,19 +28111,29 @@
 (define (opt-lftr-rewrite-instr-seq-from
   [plan : OptLftrPlan]
   [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (ir.CompilerIrInstrList.Nil)
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      [rest : ir.CompilerIrInstrList
-        (opt-lftr-rewrite-instr-seq-from plan instrs (+ index 1))]
-      (match (opt-instr-def-var instr)
-        [(option_i64.Some dst)
-          (if (opt-lftr-in-kills? plan dst)
-            rest
-            (ir.compiler-ir-instr-cons (opt-lftr-rewrite-instr plan instr) rest))]
-        [(option_i64.None) (ir.compiler-ir-instr-cons instr rest)]))))
+  [index : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 index]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    (begin
+      (while (< cursor count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          (begin
+            (match (opt-instr-def-var instr)
+              [(option_i64.Some dst)
+                (if (opt-lftr-in-kills? plan dst)
+                  unit
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (opt-lftr-rewrite-instr plan instr)))]
+              [(option_i64.None)
+                (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])
+            (set! cursor (+ cursor 1)))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-lftr-rewrite-blocks
   [plan : OptLftrPlan]
@@ -28098,7 +28146,7 @@
           (match plan
             [(OptLftrPlan.Plan _ _ _ _ preheader end-instrs _)
               (ir.compiler-ir-block-cons
-                (ir.compiler-ir-block
+                (ir.CompilerIrBlock.Block
                   label
                   (if (= label preheader)
                     (opt-licm-insert-before-terminator
@@ -28447,7 +28495,7 @@
 
 (defenum OptBoolBranchConjBuild
   (No)
-  (Some ir.CompilerIrInstrList))
+  (Some ir.CompilerIrInstrSeq))
 
 (defenum OptBoolBranchChainRewrite
   (No)
@@ -28670,7 +28718,8 @@
               (match op
                 [(ir.CompilerIrBinOp.And)
                   (if (array-ref expanded var)
-                    (OptBoolBranchConjBuild.Some (ir.CompilerIrInstrList.Nil))
+                    (OptBoolBranchConjBuild.Some
+                      (ir.compiler-ir-instr-seq-empty))
                     (begin
                       (set! (array-ref expanded var) true)
                       (if (= def-label source-label)
@@ -28706,7 +28755,8 @@
                                 (opt-licm-unswitch-instrs-onto left right))])])))]
                 [_
                   (if (array-ref emitted var)
-                    (OptBoolBranchConjBuild.Some (ir.CompilerIrInstrList.Nil))
+                    (OptBoolBranchConjBuild.Some
+                      (ir.compiler-ir-instr-seq-empty))
                     (let
                       [move? : bool
                         (and
@@ -28728,17 +28778,13 @@
                           (set! (array-ref remove dst) true)
                           unit)
                         (OptBoolBranchConjBuild.Some
-                          (ir.compiler-ir-instr-cons
-                            (ir.CompilerIrInstr.BinOp next-dst op lhs rhs ty)
-                            (ir.CompilerIrInstrList.Nil))))))])]
+                          (ir.compiler-ir-instr-seq1
+                            (ir.CompilerIrInstr.BinOp next-dst op lhs rhs ty))))))])]
             [_ (OptBoolBranchConjBuild.No)])])]
     [_ (OptBoolBranchConjBuild.No)]))
 
-(define (opt-bool-branch-chain-conj-count [conjs : ir.CompilerIrInstrList]) : i64
-  (match conjs
-    [(ir.CompilerIrInstrList.Nil) 0]
-    [(ir.CompilerIrInstrList.Cons _ rest)
-      (+ 1 (opt-bool-branch-chain-conj-count (__tl-box-place rest)))]))
+(define (opt-bool-branch-chain-conj-count [conjs : ir.CompilerIrInstrSeq]) : i64
+  (ir.compiler-ir-instr-seq-count conjs))
 
 (define (opt-bool-branch-chain-label-candidate
   [source-label : i64]
@@ -28808,36 +28854,45 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [last : i64]
-  [remove : (__tl_dyn-array bool)]) : ir.CompilerIrInstrList
-  (if (>= index last)
-    (ir.CompilerIrInstrList.Nil)
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      [tail : ir.CompilerIrInstrList
-        (opt-bool-branch-chain-prefix instrs (+ index 1) last remove)]
-      (match (opt-instr-def-var instr)
-        [(option_i64.Some dst)
-          (if (and
-            (>= dst 0)
-            (< dst (array-length remove))
-            (array-ref remove dst))
-            tail
-            (ir.compiler-ir-instr-cons instr tail))]
-        [(option_i64.None) (ir.compiler-ir-instr-cons instr tail)]))))
+  [remove : (__tl_dyn-array bool)]) : ir.CompilerIrInstrSeq
+  (let
+    [cursor : i64 index]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- last index))]
+    (begin
+      (while (< cursor last)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          (begin
+            (match (opt-instr-def-var instr)
+              [(option_i64.Some dst)
+                (if (and
+                  (>= dst 0)
+                  (< dst (array-length remove))
+                  (array-ref remove dst))
+                  unit
+                  (ir.compiler-ir-instr-builder-push! (&mut builder) instr))]
+              [(option_i64.None)
+                (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])
+            (set! cursor (+ cursor 1)))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-bool-branch-chain-conj-var [instr : ir.CompilerIrInstr]) : i64
   (match instr
     [(ir.CompilerIrInstr.BinOp dst _ _ _ _) dst]
     [_ (- 0 1)]))
 
-(define (opt-bool-branch-chain-fresh-blocks
-  [conjs : ir.CompilerIrInstrList]
+(define (opt-bool-branch-chain-fresh-blocks-from
+  [conjs : ir.CompilerIrInstrSeq]
+  [index : i64]
   [labels : OptLabelSet]
   [true-label : i64]
   [false-label : i64]) : ir.CompilerIrBlockList
-  (match conjs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrBlockList.Nil)]
-    [(ir.CompilerIrInstrList.Cons conj conj-rest)
+  (if (>= index (ir.compiler-ir-instr-seq-count conjs))
+    (ir.CompilerIrBlockList.Nil)
+    (let
+      [conj : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref conjs index)]
       (match labels
         [(OptLabelSet.Nil) (ir.CompilerIrBlockList.Nil)]
         [(OptLabelSet.Dense _ _)
@@ -28847,22 +28902,33 @@
             [next-label : i64
               (opt-bool-branch-chain-first-label label-rest true-label)]
             (ir.compiler-ir-block-cons
-              (ir.compiler-ir-block
+              (ir.CompilerIrBlock.Block
                 label
-                (ir.compiler-ir-instr-cons
+                (ir.compiler-ir-instr-seq2
                   conj
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Var
-                        (opt-bool-branch-chain-conj-var conj))
-                      next-label
-                      false-label)
-                    (ir.CompilerIrInstrList.Nil))))
-              (opt-bool-branch-chain-fresh-blocks
-                (__tl-box-place conj-rest)
+                  (ir.CompilerIrInstr.Branch
+                    (ir.CompilerIrValue.Var
+                      (opt-bool-branch-chain-conj-var conj))
+                    next-label
+                    false-label)))
+              (opt-bool-branch-chain-fresh-blocks-from
+                conjs
+                (+ index 1)
                 label-rest
                 true-label
-                false-label)))])]))
+                false-label)))]))))
+
+(define (opt-bool-branch-chain-fresh-blocks
+  [conjs : ir.CompilerIrInstrSeq]
+  [labels : OptLabelSet]
+  [true-label : i64]
+  [false-label : i64]) : ir.CompilerIrBlockList
+  (opt-bool-branch-chain-fresh-blocks-from
+    conjs
+    0
+    labels
+    true-label
+    false-label))
 
 (define (opt-bool-branch-chain-prepend-blocks
   [prefix : ir.CompilerIrBlockList]
@@ -29041,117 +29107,117 @@
                                     [(OptBoolBranchConjBuild.No)
                                       (OptBoolBranchChainRewrite.No)]
                                     [(OptBoolBranchConjBuild.Some conjs)
-                                      (match conjs
-                                        [(ir.CompilerIrInstrList.Nil)
-                                          (OptBoolBranchChainRewrite.No)]
-                                        [(ir.CompilerIrInstrList.Cons
-                                            first
-                                            rest)
-                                          (let
-                                            [labels : OptLabelSet
-                                              (opt-bool-branch-chain-labels
-                                                blocks
-                                                source-label
-                                                (-
-                                                  (opt-bool-branch-chain-conj-count
-                                                    conjs)
-                                                  1)
-                                                0
-                                                (OptLabelSet.Nil))]
-                                            [false-preds : OptLabelSet
-                                              (opt-bool-branch-chain-label-set
-                                                labels
-                                                (opt-label-add
-                                                  (OptLabelSet.Nil)
-                                                  source-label))]
-                                            [true-preds : OptLabelSet
+                                      (if (ir.compiler-ir-instr-seq-empty?
+                                        conjs)
+                                        (OptBoolBranchChainRewrite.No)
+                                        (let
+                                          [first : ir.CompilerIrInstr
+                                            (ir.compiler-ir-instr-seq-ref
+                                              conjs
+                                              0)]
+                                          [labels : OptLabelSet
+                                            (opt-bool-branch-chain-labels
+                                              blocks
+                                              source-label
+                                              (-
+                                                (opt-bool-branch-chain-conj-count
+                                                  conjs)
+                                                1)
+                                              0
+                                              (OptLabelSet.Nil))]
+                                          [false-preds : OptLabelSet
+                                            (opt-bool-branch-chain-label-set
+                                              labels
                                               (opt-label-add
                                                 (OptLabelSet.Nil)
-                                                (opt-bool-branch-chain-last-label
-                                                  labels
-                                                  source-label))]
-                                            [same-target? : bool
-                                              (= true-label false-label)]
-                                            [all-preds : OptLabelSet
-                                              (if same-target?
-                                                false-preds
-                                                (OptLabelSet.Nil))]
-                                            (if (if same-target?
+                                                source-label))]
+                                          [true-preds : OptLabelSet
+                                            (opt-label-add
+                                              (OptLabelSet.Nil)
+                                              (opt-bool-branch-chain-last-label
+                                                labels
+                                                source-label))]
+                                          [same-target? : bool
+                                            (= true-label false-label)]
+                                          [all-preds : OptLabelSet
+                                            (if same-target?
+                                              false-preds
+                                              (OptLabelSet.Nil))]
+                                          (if (if same-target?
+                                            (not
+                                              (opt-bool-branch-chain-target-phis-repairable?
+                                                blocks
+                                                true-label
+                                                source-label
+                                                all-preds))
+                                            (or
                                               (not
                                                 (opt-bool-branch-chain-target-phis-repairable?
                                                   blocks
                                                   true-label
                                                   source-label
-                                                  all-preds))
-                                              (or
-                                                (not
-                                                  (opt-bool-branch-chain-target-phis-repairable?
+                                                  true-preds))
+                                              (not
+                                                (opt-bool-branch-chain-target-phis-repairable?
+                                                  blocks
+                                                  false-label
+                                                  source-label
+                                                  false-preds))))
+                                            (OptBoolBranchChainRewrite.No)
+                                            (let
+                                              [source-prefix : ir.CompilerIrInstrSeq
+                                                (opt-bool-branch-chain-prefix
+                                                  instrs
+                                                  0
+                                                  (- count 1)
+                                                  remove)]
+                                              [source : ir.CompilerIrBlock
+                                                (ir.CompilerIrBlock.Block
+                                                  source-label
+                                                  (opt-licm-unswitch-instrs-onto
+                                                    source-prefix
+                                                    (ir.compiler-ir-instr-seq2
+                                                      first
+                                                      (ir.CompilerIrInstr.Branch
+                                                        (ir.CompilerIrValue.Var
+                                                          (opt-bool-branch-chain-conj-var
+                                                            first))
+                                                        (opt-bool-branch-chain-first-label
+                                                          labels
+                                                          true-label)
+                                                        false-label))))]
+                                              [fresh : ir.CompilerIrBlockList
+                                                (opt-bool-branch-chain-fresh-blocks-from
+                                                  conjs
+                                                  1
+                                                  labels
+                                                  true-label
+                                                  false-label)]
+                                              (begin
+                                                (if same-target?
+                                                  (opt-bool-branch-repair-target-phis!
                                                     blocks
                                                     true-label
                                                     source-label
-                                                    true-preds))
-                                                (not
-                                                  (opt-bool-branch-chain-target-phis-repairable?
-                                                    blocks
-                                                    false-label
-                                                    source-label
-                                                    false-preds))))
-                                              (OptBoolBranchChainRewrite.No)
-                                              (let
-                                                [source-prefix : ir.CompilerIrInstrList
-                                                  (opt-bool-branch-chain-prefix
-                                                    instrs
-                                                    0
-                                                    (- count 1)
-                                                    remove)]
-                                                [source : ir.CompilerIrBlock
-                                                  (ir.compiler-ir-block
-                                                    source-label
-                                                    (opt-licm-unswitch-instrs-onto
-                                                      source-prefix
-                                                      (ir.compiler-ir-instr-cons
-                                                        first
-                                                        (ir.compiler-ir-instr-cons
-                                                          (ir.CompilerIrInstr.Branch
-                                                            (ir.CompilerIrValue.Var
-                                                              (opt-bool-branch-chain-conj-var
-                                                                first))
-                                                            (opt-bool-branch-chain-first-label
-                                                              labels
-                                                              true-label)
-                                                            false-label)
-                                                          (ir.CompilerIrInstrList.Nil)))))]
-                                                [fresh : ir.CompilerIrBlockList
-                                                  (opt-bool-branch-chain-fresh-blocks
-                                                    (__tl-box-place rest)
-                                                    labels
-                                                    true-label
-                                                    false-label)]
-                                                (begin
-                                                  (if same-target?
+                                                    all-preds)
+                                                  (begin
                                                     (opt-bool-branch-repair-target-phis!
                                                       blocks
                                                       true-label
                                                       source-label
-                                                      all-preds)
-                                                    (begin
-                                                      (opt-bool-branch-repair-target-phis!
-                                                        blocks
-                                                        true-label
-                                                        source-label
-                                                        true-preds)
-                                                      (opt-bool-branch-repair-target-phis!
-                                                        blocks
-                                                        false-label
-                                                        source-label
-                                                        false-preds)))
-                                                  (OptBoolBranchChainRewrite.Some
-                                                    (opt-bool-branch-chain-replace-block
+                                                      true-preds)
+                                                    (opt-bool-branch-repair-target-phis!
                                                       blocks
+                                                      false-label
                                                       source-label
-                                                      source
-                                                      fresh)
-                                                    (array-ref cell 0))))))])]))))))]
+                                                      false-preds)))
+                                                (OptBoolBranchChainRewrite.Some
+                                                  (opt-bool-branch-chain-replace-block
+                                                    blocks
+                                                    source-label
+                                                    source
+                                                    fresh)
+                                                  (array-ref cell 0)))))))]))))))]
                       [_ (OptBoolBranchChainRewrite.No)])]))]
             [_ (OptBoolBranchChainRewrite.No)])))]))
 
@@ -33567,17 +33633,15 @@
       ir.CompilerIrSwitchCaseList.Nil)))
 
 (define (opt-switch-total-enum-trap-block [label : i64] [dst : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
+    (ir.compiler-ir-instr-seq2
       (ir.CompilerIrInstr.Call
         dst
         cbi.compiler-builtin-id-tl-oob-abort
         (ir.CompilerIrCallArgs.Nil)
         (ast.AstType.Unit))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Jump label)
-        ir.CompilerIrInstrList.Nil))))
+      (ir.CompilerIrInstr.Jump label))))
 
 ;; The final case and trap are intentionally materialized only after the
 ;; complete per-function optimization fixpoint and the final scratch-reset
@@ -33698,7 +33762,7 @@
                             frame-cell
                             0)]
                         (OptLateTotalSwitchBlock.Rewritten
-                          (ir.compiler-ir-block
+                          (ir.CompilerIrBlock.Block
                             label
                             (opt-switch-head-instrs
                               instrs
@@ -34209,12 +34273,18 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [prefix : i64]
-  [terminator : ir.CompilerIrInstr]) : ir.CompilerIrInstrList
-  (if (>= index prefix)
-    (ir.compiler-ir-instr-cons terminator (ir.CompilerIrInstrList.Nil))
-    (ir.compiler-ir-instr-cons
-      (ir.compiler-ir-instr-seq-ref instrs index)
-      (opt-switch-head-instrs instrs (+ index 1) prefix terminator))))
+  [terminator : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ (- prefix index) 1))]
+    (begin
+      (ir.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        instrs
+        index
+        prefix)
+      (ir.compiler-ir-instr-builder-push! (&mut builder) terminator)
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-switch-rewrite-block
   [block : ir.CompilerIrBlock]
@@ -34229,7 +34299,7 @@
             default-label
             items
             head-prefix)
-          (ir.compiler-ir-block
+          (ir.CompilerIrBlock.Block
             label
             (opt-switch-head-instrs
               instrs
@@ -35209,22 +35279,6 @@
       (opt-bit-test-fresh-label blocks head (+ suffix 1))
       candidate)))
 
-;; The head's instructions ahead of its branch, oldest first. Everything the
-;; head already computed stays: it ran unconditionally before the rewrite and
-;; still does. Its own compare becomes dead and DCE retires it.
-(define (opt-bit-test-head-prefix
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (if (< index 0)
-    tail
-    (opt-bit-test-head-prefix
-      instrs
-      (- index 1)
-      (ir.compiler-ir-instr-cons
-        (ir.compiler-ir-instr-seq-ref instrs index)
-        tail))))
-
 ;; The mask is materialized in the HEAD block rather than folded into the shift
 ;; operand: as its own loop-invariant value it is hoisted out of the loop and,
 ;; more importantly, the allocator sees it and the offset live at the same point
@@ -35243,36 +35297,48 @@
   [guard-var : i64]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
-      (ir.compiler-ir-block
-        label
-        (opt-bit-test-head-prefix
-          instrs
-          (- (ir.compiler-ir-instr-seq-count instrs) 2)
-          (ir.compiler-ir-instr-cons
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [prefix-end : i64 (- count 1)]
+        [builder : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity (+ count 3))]
+        (begin
+          (ir.compiler-ir-instr-builder-append-seq-range!
+            (&mut builder)
+            instrs
+            0
+            prefix-end)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
             (ir.CompilerIrInstr.Mov
               mask-var
               (ir.CompilerIrValue.I64 mask)
-              (ast.AstType.U64))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                offset-var
-                (ir.CompilerIrBinOp.Sub)
-                (ir.CompilerIrValue.Var value-var)
-                (ir.CompilerIrValue.I64 base)
-                (ast.AstType.U64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.BinOp
-                  guard-var
-                  (ir.CompilerIrBinOp.Le)
-                  (ir.CompilerIrValue.Var offset-var)
-                  (ir.CompilerIrValue.I64 width)
-                  (ast.AstType.U64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var guard-var)
-                    mask-label
-                    false-label)
-                  ir.CompilerIrInstrList.Nil))))))]))
+              (ast.AstType.U64)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.BinOp
+              offset-var
+              (ir.CompilerIrBinOp.Sub)
+              (ir.CompilerIrValue.Var value-var)
+              (ir.CompilerIrValue.I64 base)
+              (ast.AstType.U64)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.BinOp
+              guard-var
+              (ir.CompilerIrBinOp.Le)
+              (ir.CompilerIrValue.Var offset-var)
+              (ir.CompilerIrValue.I64 width)
+              (ast.AstType.U64)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var guard-var)
+              mask-label
+              false-label))
+          (ir.CompilerIrBlock.Block
+            label
+            (ir.compiler-ir-instr-builder-to-seq builder))))]))
 
 ;; The shift count is spelled `offset & 63` rather than bare `offset`. The two
 ;; are the same value on every edge that reaches this block -- the head block's
@@ -35296,35 +35362,31 @@
   [shift-var : i64]
   [test-var : i64]
   [masked-var : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     mask-label
-    (ir.compiler-ir-instr-cons
+    (ir.compiler-ir-instr-seq4
       (ir.CompilerIrInstr.BinOp
         masked-var
         (ir.CompilerIrBinOp.BitAnd)
         (ir.CompilerIrValue.Var offset-var)
         (ir.CompilerIrValue.I64 (- (opt-bit-test-window-width) 1))
         (ast.AstType.U64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.BinOp
-          shift-var
-          (ir.CompilerIrBinOp.Shr (ast.AstType.U64))
-          (ir.CompilerIrValue.Var mask-var)
-          (ir.CompilerIrValue.Var masked-var)
-          (ast.AstType.U64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.BinOp
-            test-var
-            (ir.CompilerIrBinOp.BitTestNe)
-            (ir.CompilerIrValue.Var shift-var)
-            (ir.CompilerIrValue.I64 1)
-            (ast.AstType.U64))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Var test-var)
-              true-label
-              false-label)
-            ir.CompilerIrInstrList.Nil))))))
+      (ir.CompilerIrInstr.BinOp
+        shift-var
+        (ir.CompilerIrBinOp.Shr (ast.AstType.U64))
+        (ir.CompilerIrValue.Var mask-var)
+        (ir.CompilerIrValue.Var masked-var)
+        (ast.AstType.U64))
+      (ir.CompilerIrInstr.BinOp
+        test-var
+        (ir.CompilerIrBinOp.BitTestNe)
+        (ir.CompilerIrValue.Var shift-var)
+        (ir.CompilerIrValue.I64 1)
+        (ast.AstType.U64))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var test-var)
+        true-label
+        false-label))))
 
 (define (opt-bit-test-rewrite-blocks
   [remaining : ir.CompilerIrBlockList]
@@ -36025,43 +36087,30 @@
           instrs
           (- index 1))])))
 
-(define (opt-gvn-rewrite-instr-seq-from
-  [type-segment-bases : i64]
-  [table : OptGvnMap]
-  [sources : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [out : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (if (< index 0)
-    out
-    (opt-gvn-rewrite-instr-seq-from
-      type-segment-bases
-      table
-      sources
-      instrs
-      (- index 1)
-      (ir.compiler-ir-instr-cons
-        (match (opt-gvn-rewrite-instr-maybe
-          type-segment-bases
-          table
-          sources
-          (ir.compiler-ir-instr-seq-ref instrs index))
-          [(OptMaybeInstr.Some rewritten) rewritten]
-          [(OptMaybeInstr.No) (ir.compiler-ir-instr-seq-ref instrs index)])
-        out))))
-
 (define (opt-gvn-rewrite-instr-seq
   [type-segment-bases : i64]
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
-  (opt-gvn-rewrite-instr-seq-from
-    type-segment-bases
-    table
-    sources
-    instrs
-    (- (ir.compiler-ir-instr-seq-count instrs) 1)
-    ir.CompilerIrInstrList.Nil))
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [index : i64 0]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    (begin
+      (while (< index count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (match (opt-gvn-rewrite-instr-maybe
+              type-segment-bases
+              table
+              sources
+              (ir.compiler-ir-instr-seq-ref instrs index))
+              [(OptMaybeInstr.Some rewritten) rewritten]
+              [(OptMaybeInstr.No) (ir.compiler-ir-instr-seq-ref instrs index)]))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-gvn-rewrite-block
   [type-segment-bases : i64]
@@ -36077,7 +36126,7 @@
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
         (OptBlockPassResult.Result
-          (ir.compiler-ir-block
+          (ir.CompilerIrBlock.Block
             label
             (opt-gvn-rewrite-instr-seq type-segment-bases table sources instrs))
           true)

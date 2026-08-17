@@ -42099,6 +42099,124 @@
         4
         "each element store landed exactly once"))))
 
+;; The compatibility ownership model still permits a by-value dynamic-array
+;; handle to be representation-copied. The original and returned handles can
+;; therefore supply overlapping `&` and `&mut` parameters even though their SSA
+;; parameter vars differ. LICM must not use those different vars as noalias
+;; evidence. These are executable witnesses for both a direct object-slot load
+;; and a nested owning-descriptor load chain.
+(defstruct OptLicmCompatDirectHolder
+  (value i64))
+
+(define (opt-licm-compat-alias-direct
+  [items : (__tl_dyn-array OptLicmCompatDirectHolder)]) : (__tl_dyn-array
+    OptLicmCompatDirectHolder)
+  items)
+
+(define (opt-licm-compat-overwrite-and-read
+  [view : (& OptLicmCompatDirectHolder)]
+  [items : (&mut (__tl_dyn-array OptLicmCompatDirectHolder))]) : i64
+  (let
+    [i : i64 0]
+    [sum : i64 0]
+    (begin
+      (while (< i 2)
+        (begin
+          (set! (array-ref items 0) (OptLicmCompatDirectHolder (+ i 10)))
+          (set! sum (+ sum view.value))
+          (set! i (+ i 1))))
+      sum)))
+
+(define (opt-licm-compat-direct-result) : i64
+  (let
+    [items : (__tl_dyn-array OptLicmCompatDirectHolder)
+      (array.make-array OptLicmCompatDirectHolder 1)]
+    (begin
+      (set! (array-ref items 0) (OptLicmCompatDirectHolder 1))
+      (let
+        [alias : (__tl_dyn-array OptLicmCompatDirectHolder)
+          (opt-licm-compat-alias-direct items)]
+        (opt-licm-compat-overwrite-and-read
+          (& (array-ref items 0))
+          (&mut alias))))))
+
+(defstruct OptLicmCompatNestedHolder
+  (items (__tl_dyn-array i64)))
+
+(define (opt-licm-compat-alias-nested
+  [items : (__tl_dyn-array OptLicmCompatNestedHolder)]) : (__tl_dyn-array
+    OptLicmCompatNestedHolder)
+  items)
+
+(define (opt-licm-compat-replace-and-read-inner
+  [view : (& OptLicmCompatNestedHolder)]
+  [holders : (&mut (__tl_dyn-array OptLicmCompatNestedHolder))]
+  [replacement : (__tl_dyn-array i64)]) : i64
+  (let
+    [i : i64 0]
+    [result : i64 0]
+    (begin
+      (while (< i 1)
+        (begin
+          (set! (array-ref holders 0) (OptLicmCompatNestedHolder replacement))
+          (set! result (array-ref view.items 0))
+          (set! i (+ i 1))))
+      result)))
+
+(define (opt-licm-compat-nested-result) : i64
+  (let
+    [old-items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [new-items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [holders : (__tl_dyn-array OptLicmCompatNestedHolder)
+      (array.make-array OptLicmCompatNestedHolder 1)]
+    (begin
+      (set! (array-ref old-items 0) 10)
+      (set! (array-ref new-items 0) 20)
+      (set! (array-ref holders 0) (OptLicmCompatNestedHolder old-items))
+      (let
+        [alias : (__tl_dyn-array OptLicmCompatNestedHolder)
+          (opt-licm-compat-alias-nested holders)]
+        (opt-licm-compat-replace-and-read-inner
+          (& (array-ref holders 0))
+          (&mut alias)
+          new-items)))))
+
+(test
+  licm-compatibility-root-alias
+  (begin
+    (test.assert-i64-eq
+      (opt-licm-compat-direct-result)
+      21
+      "direct shared/exclusive compatibility aliases observe each store")
+    (test.assert-i64-eq
+      (opt-licm-compat-nested-result)
+      20
+      "nested owning-handle compatibility aliases observe replacement")))
+
+(test
+  licm-root-disjointness
+  (begin
+    (test.assert-true
+      (compiler_optimize.opt-licm-root-disjoint-store?
+        (compiler_optimize.OptLicmRoot.Fresh 1)
+        (compiler_optimize.OptLicmRoot.Fresh 2))
+      "different fresh allocations are disjoint")
+    (test.assert-true
+      (compiler_optimize.opt-licm-root-disjoint-store?
+        (compiler_optimize.OptLicmRoot.Exclusive 1)
+        (compiler_optimize.OptLicmRoot.Fresh 2))
+      "a fresh allocation is disjoint from caller storage")
+    (test.assert-false
+      (compiler_optimize.opt-licm-root-disjoint-store?
+        (compiler_optimize.OptLicmRoot.Exclusive 1)
+        (compiler_optimize.OptLicmRoot.Exclusive 2))
+      "different mutable reference parameters may compatibility-alias")
+    (test.assert-false
+      (compiler_optimize.opt-licm-root-disjoint-store?
+        (compiler_optimize.OptLicmRoot.Exclusive 1)
+        (compiler_optimize.OptLicmRoot.Shared 2))
+      "shared and mutable reference parameters may compatibility-alias")))
+
 ;; --- affine chain folding self-test -------------------------------------------
 ;; Emulates the x4 unroller's output: an LCG chain `((x*5+3)*5+3)*5+3` must
 ;; collapse so the last pair reads `x*125` and `+93`, and a counter chain

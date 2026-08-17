@@ -9,6 +9,7 @@
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.json)
+(import stdlib.sort)
 (import stdlib.vector)
 (import (vector.vector String) as lsp_svec)
 (import lex as lexer)
@@ -939,52 +940,55 @@
             "definitionProvider"
             (json.JsonBool true)
             (lsp-json-member
-              "documentSymbolProvider"
+              "referencesProvider"
               (json.JsonBool true)
               (lsp-json-member
-                "documentHighlightProvider"
+                "documentSymbolProvider"
                 (json.JsonBool true)
                 (lsp-json-member
-                  "completionProvider"
-                  (lsp-json-object1 "resolveProvider" (json.JsonBool false))
+                  "documentHighlightProvider"
+                  (json.JsonBool true)
                   (lsp-json-member
-                    "codeActionProvider"
-                    (lsp-json-object1
-                      "codeActionKinds"
-                      (lsp-json-array
-                        (lsp-json-list-cons
-                          (json.JsonString "quickfix")
-                          (json.list-empty))))
+                    "completionProvider"
+                    (lsp-json-object1 "resolveProvider" (json.JsonBool false))
                     (lsp-json-member
-                      "inlayHintProvider"
-                      (json.JsonBool true)
+                      "codeActionProvider"
+                      (lsp-json-object1
+                        "codeActionKinds"
+                        (lsp-json-array
+                          (lsp-json-list-cons
+                            (json.JsonString "quickfix")
+                            (json.list-empty))))
                       (lsp-json-member
-                        "documentFormattingProvider"
+                        "inlayHintProvider"
                         (json.JsonBool true)
                         (lsp-json-member
-                          "hoverProvider"
+                          "documentFormattingProvider"
                           (json.JsonBool true)
                           (lsp-json-member
-                            "documentLinkProvider"
-                            (lsp-json-object1
-                              "resolveProvider"
-                              (json.JsonBool false))
+                            "hoverProvider"
+                            (json.JsonBool true)
                             (lsp-json-member
-                              "foldingRangeProvider"
-                              (json.JsonBool true)
+                              "documentLinkProvider"
+                              (lsp-json-object1
+                                "resolveProvider"
+                                (json.JsonBool false))
                               (lsp-json-member
-                                "workspaceSymbolProvider"
+                                "foldingRangeProvider"
                                 (json.JsonBool true)
                                 (lsp-json-member
-                                  "workspace"
-                                  (lsp-json-object1
-                                    "workspaceFolders"
-                                    (lsp-json-object2
-                                      "supported"
-                                      (json.JsonBool true)
-                                      "changeNotifications"
-                                      (json.JsonBool true)))
-                                  (json.member-list-empty))))))))))))))))
+                                  "workspaceSymbolProvider"
+                                  (json.JsonBool true)
+                                  (lsp-json-member
+                                    "workspace"
+                                    (lsp-json-object1
+                                      "workspaceFolders"
+                                      (lsp-json-object2
+                                        "supported"
+                                        (json.JsonBool true)
+                                        "changeNotifications"
+                                        (json.JsonBool true)))
+                                    (json.member-list-empty)))))))))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -8238,6 +8242,79 @@
             (set! index (+ index 1)))))
       found)))
 
+(define (lsp-workspace-semantic-role-order
+  [role : (& role compiler_semantic_index.CompilerSemanticRecordRole)]) : i64
+  (match (deref role)
+    [(compiler_semantic_index.CompilerSemanticRecordRole.Definition) 0]
+    [(compiler_semantic_index.CompilerSemanticRecordRole.Use) 1]))
+
+(define (lsp-workspace-semantic-fact-less?
+  [left : (& left lsp_vector_families.LspWorkspaceSemanticFact)]
+  [right : (& right lsp_vector_families.LspWorkspaceSemanticFact)]) : bool
+  (cond
+    [(not (string.eq left.uri right.uri))
+      (stdlib.sort.string-less-borrowed? (& left.uri) (& right.uri))]
+    [(< left.span.start-byte right.span.start-byte) true]
+    [(> left.span.start-byte right.span.start-byte) false]
+    [(< left.span.end-byte right.span.end-byte) true]
+    [(> left.span.end-byte right.span.end-byte) false]
+    [else
+      (<
+        (lsp-workspace-semantic-role-order (& left.role))
+        (lsp-workspace-semantic-role-order (& right.role)))]))
+
+;; Insert new facts directly into deterministic provider order. The candidate
+;; is independent of the result storage, so shifting the live prefix cannot
+;; alias or overwrite it.
+(define (lsp-workspace-semantic-facts-insert!
+  [facts : (&mut facts LspWorkspaceSemanticQuery)]
+  [candidate : lsp_vector_families.LspWorkspaceSemanticFact]) : unit
+  (if (lsp-workspace-semantic-facts-contain? facts candidate)
+    unit
+    (begin
+      (if (>= facts.len (array-length facts.slots))
+        (let
+          [old-cap : i64 (array-length facts.slots)]
+          [new-cap : i64
+            (if (< old-cap 16)
+              16
+              (* old-cap 2))]
+          [bigger : (__tl_dyn-array
+            lsp_vector_families.LspWorkspaceSemanticFact)
+            (__tl_make-array
+              lsp_vector_families.LspWorkspaceSemanticFact
+              new-cap)]
+          [copy-index : i64 0]
+          (begin
+            (while (< copy-index facts.len)
+              (begin
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset (array-data bigger) copy-index)
+                    (array-ref facts.slots copy-index)))
+                (set! copy-index (+ copy-index 1))))
+            (set! facts.slots bigger)))
+        unit)
+      (let
+        [position : i64 0]
+        [write : i64 facts.len]
+        (begin
+          (while (and
+            (< position facts.len)
+            (not
+              (lsp-workspace-semantic-fact-less?
+                (& candidate)
+                (& (array-ref facts.slots position)))))
+            (set! position (+ position 1)))
+          (while (> write position)
+            (begin
+              (set!
+                (array-ref facts.slots write)
+                (array-ref facts.slots (- write 1)))
+              (set! write (- write 1))))
+          (set! (array-ref facts.slots position) candidate)
+          (set! facts.len (+ facts.len 1)))))))
+
 (define (lsp-workspace-semantic-facts-add-index!
   [facts : (&mut facts LspWorkspaceSemanticQuery)]
   [semantic-index
@@ -8306,37 +8383,7 @@
                     record.span.utf16-start-col
                     record.span.utf16-end-col)
                   record.editable)]
-              (if (lsp-workspace-semantic-facts-contain? facts candidate)
-                unit
-                (begin
-                  (if (>= facts.len (array-length facts.slots))
-                    (let
-                      [old-cap : i64 (array-length facts.slots)]
-                      [new-cap : i64
-                        (if (< old-cap 16)
-                          16
-                          (* old-cap 2))]
-                      [bigger : (__tl_dyn-array
-                        lsp_vector_families.LspWorkspaceSemanticFact)
-                        (__tl_make-array
-                          lsp_vector_families.LspWorkspaceSemanticFact
-                          new-cap)]
-                      [copy-index : i64 0]
-                      (begin
-                        (while (< copy-index facts.len)
-                          (begin
-                            (unsafe
-                              (ptr-write!
-                                (ptr-offset (array-data bigger) copy-index)
-                                (array-ref facts.slots copy-index)))
-                            (set! copy-index (+ copy-index 1))))
-                        (set! facts.slots bigger)))
-                    unit)
-                  (unsafe
-                    (ptr-write!
-                      (ptr-offset (array-data facts.slots) facts.len)
-                      candidate))
-                  (set! facts.len (+ facts.len 1)))))
+              (lsp-workspace-semantic-facts-insert! facts candidate))
             unit)
           (set! record-index (+ record-index 1)))))))
 
@@ -8456,6 +8503,65 @@
             (set! source-index (+ source-index 1)))))
       (set! facts.completeness completeness)
       facts)))
+
+(define (lsp-workspace-semantic-fact-real-location?
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact]) : bool
+  (let
+    [span : compiler_semantic_index.CompilerSemanticSpan fact.span]
+    [source : ast.AstSourceSpan span.source]
+    (and
+      (> (string.string-length fact.uri) 0)
+      (> (string.string-length span.path) 0)
+      (>= span.start-byte 0)
+      (> span.end-byte span.start-byte)
+      (> (ast.ast-source-span-start-line source) 0)
+      (> (ast.ast-source-span-start-col source) 0)
+      (> (ast.ast-source-span-end-line source) 0)
+      (> (ast.ast-source-span-end-col source) 0)
+      (> span.utf16-start-col 0)
+      (> span.utf16-end-col 0))))
+
+(define (lsp-workspace-semantic-fact-definition?
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact]) : bool
+  (match fact.role
+    [(compiler_semantic_index.CompilerSemanticRecordRole.Definition) true]
+    [(compiler_semantic_index.CompilerSemanticRecordRole.Use) false]))
+
+(define (lsp-reference-location
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact]) : json.Json
+  (lsp-json-object2
+    "uri"
+    (json.JsonString fact.uri)
+    "range"
+    (lsp-json-object2
+      "start"
+      (lsp-semantic-span-position fact.span true)
+      "end"
+      (lsp-semantic-span-position fact.span false))))
+
+(define (lsp-reference-result-json
+  [query : (& query LspWorkspaceSemanticQuery)]
+  [include-declaration : bool]) : json.Json
+  (let
+    [index : i64 (- query.len 1)]
+    [locations : json.JsonSeq (json.list-empty)]
+    (begin
+      (while (>= index 0)
+        (let
+          [fact : lsp_vector_families.LspWorkspaceSemanticFact
+            (lsp-workspace-semantic-facts-get query index)]
+          (begin
+            (if (and
+              (lsp-workspace-semantic-fact-real-location? fact)
+              (or
+                include-declaration
+                (not (lsp-workspace-semantic-fact-definition? fact))))
+              (set!
+                locations
+                (lsp-json-list-cons (lsp-reference-location fact) locations))
+              unit)
+            (set! index (- index 1)))))
+      (lsp-json-array locations))))
 
 (define (lsp-server-state-initialize-workspaces
   [state : lsp_vector_families.LspServerState]
@@ -10736,34 +10842,6 @@
         (lsp-write-error id -32600 "Document not found")
         (LspDocumentHandleResult.Continue docs))]))
 
-;; Helper: find all word-bounded occurrences of name in text
-(define (lsp-find-references-in-text
-  [text : String]
-  [name : String]
-  [i : i64]
-  [n : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
-  (if (>= i n)
-    acc
-    (let
-      [name-len : i64 (string.string-length name)]
-      (if (and
-        (<= (+ i name-len) n)
-        (string.is-string-prefix-at (& text) (& name) i)
-        (or (= i 0) (not (lsp-ident-char? (string.string-ref text (- i 1)))))
-        (or
-          (>= (+ i name-len) n)
-          (not (lsp-ident-char? (string.string-ref text (+ i name-len))))))
-        (let
-          [lc : LspLineCol (lsp-line-col-at-offset text i)]
-          (lsp-find-references-in-text
-            text
-            name
-            (+ i 1)
-            n
-            (lsp-json-list-cons (lsp-position lc.line lc.col) acc)))
-        (lsp-find-references-in-text text name (+ i 1) n acc)))))
-
 (define (lsp-quoted-datum-end [text : String] [start : i64] [limit : i64]) : i64
   (let
     [datum-start : i64 (lsp-skip-space text start limit)]
@@ -11306,57 +11384,6 @@
     [(LspDocumentLookup.Missing)
       (lsp-write-response id (lsp-json-array (json.list-empty)))]))
 
-;; tl/findReferences - All uses of a name
-(define (lsp-handle-tl-find-references
-  [id : json.Json]
-  [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document params docs)
-    [(LspDocumentLookup.Found _ text _)
-      (let
-        [name-from-field : LspJsonText (lsp-json-string-field params "name")]
-        [name : String
-          (match name-from-field
-            [(LspJsonText.Ok n) n]
-            [(LspJsonText.Missing)
-              (let
-                [pos-key : String "position"]
-                (match (json.object-get params (& pos-key))
-                  [(json.JsonFound position)
-                    (let
-                      [line0 : i64
-                        (lsp-json-int-field-default position "line" 0)]
-                      [char0 : i64
-                        (lsp-json-int-field-default position "character" 0)]
-                      [off : i64 (lsp-offset-at-position text line0 char0)]
-                      (lsp-symbol-at-offset text off))]
-                  [(json.JsonMissing) ""]))])]
-        (if (string.eq name "")
-          (begin
-            (lsp-write-error id -32600 "Missing name or position parameter")
-            (LspDocumentHandleResult.Continue docs))
-          (let
-            [refs : json.JsonSeq
-              (lsp-find-references-in-text
-                text
-                name
-                0
-                (string.string-length text)
-                (json.list-empty))]
-            (begin
-              (lsp-write-response
-                id
-                (lsp-json-object2
-                  "success"
-                  (json.JsonBool true)
-                  "references"
-                  (lsp-json-array refs)))
-              (LspDocumentHandleResult.Continue docs)))))]
-    [(LspDocumentLookup.Missing)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspDocumentHandleResult.Continue docs))]))
-
 ;; tl/evalAtPoint - Evaluate expression at cursor
 (define (lsp-handle-tl-eval-at-point
   [id : json.Json]
@@ -11894,6 +11921,178 @@
           id
           (lsp-project-search-result-json (& state.workspace) name)))]))
 
+(define (lsp-reference-include-declaration? [params : json.Json]) : bool
+  (let
+    [context-key : String "context"]
+    [include-key : String "includeDeclaration"]
+    (match (json.object-get params (& context-key))
+      [(json.JsonMissing) false]
+      [(json.JsonFound context)
+        (match (json.object-get context (& include-key))
+          [(json.JsonMissing) false]
+          [(json.JsonFound include)
+            (match include
+              [(json.JsonBool enabled) enabled]
+              [_ false])])])))
+
+(define (lsp-reference-write-query-result!
+  [id : json.Json]
+  [query : (& query LspWorkspaceSemanticQuery)]
+  [include-declaration : bool]) : unit
+  (if (= query.completeness 0)
+    (lsp-write-response
+      id
+      (lsp-reference-result-json query include-declaration))
+    (lsp-write-error
+      id
+      -32803
+      "Workspace semantic references are currently incomplete")))
+
+(define (lsp-reference-query-with-key!
+  [id : json.Json]
+  [state : lsp_vector_families.LspServerState]
+  [stdlib-roots : lsp_svec.Vec]
+  [canonical-key : String]
+  [include-declaration : bool]) : lsp_vector_families.LspServerState
+  (let
+    [query : LspWorkspaceSemanticQuery
+      (lsp-workspace-semantic-query (& state) stdlib-roots canonical-key)]
+    (if (= query.completeness 1)
+      (let
+        [refreshed : lsp_vector_families.LspServerState
+          (lsp-server-state-refresh-semantic-cache state stdlib-roots)]
+        [refreshed-query : LspWorkspaceSemanticQuery
+          (lsp-workspace-semantic-query
+            (& refreshed)
+            stdlib-roots
+            canonical-key)]
+        (begin
+          (lsp-reference-write-query-result!
+            id
+            (& refreshed-query)
+            include-declaration)
+          refreshed))
+      (begin
+        (lsp-reference-write-query-result! id (& query) include-declaration)
+        state))))
+
+(define (lsp-handle-references-position!
+  [id : json.Json]
+  [position : json.Json]
+  [params : json.Json]
+  [state : lsp_vector_families.LspServerState]
+  [stdlib-roots : lsp_svec.Vec]
+  [doc : (& doc lsp_vector_families.LspDocument)]) : lsp_vector_families.LspServerState
+  (if (not
+    (and
+      (lsp-json-int-field-usable? position "line")
+      (lsp-json-int-field-usable? position "character")))
+    (begin
+      (lsp-write-response id (lsp-json-array (json.list-empty)))
+      state)
+    (let
+      [line : i64 (lsp-json-int-field-default position "line" -1)]
+      [character : i64 (lsp-json-int-field-default position "character" -1)]
+      (match (lsp-offset-at-position-checked
+        (string.copy (& doc.text))
+        line
+        character)
+        [(LspOffsetLookup.Missing)
+          (begin
+            (lsp-write-response id (lsp-json-array (json.list-empty)))
+            state)]
+        [(LspOffsetLookup.Found offset)
+          (let
+            [canonical-key : String
+              (lsp-document-semantic-canonical-key-at doc offset)]
+            (if (= (string.string-length canonical-key) 0)
+              (begin
+                (lsp-write-response id (lsp-json-array (json.list-empty)))
+                state)
+              (lsp-reference-query-with-key!
+                id
+                state
+                stdlib-roots
+                canonical-key
+                (lsp-reference-include-declaration? params))))]))))
+
+(define (lsp-handle-references-with-params!
+  [id : json.Json]
+  [params : json.Json]
+  [state : lsp_vector_families.LspServerState]
+  [stdlib-roots : lsp_svec.Vec]) : lsp_vector_families.LspServerState
+  (match (lsp-tl-request-uri params)
+    [(LspJsonText.Missing)
+      (begin
+        (lsp-write-response id (lsp-json-array (json.list-empty)))
+        state)]
+    [(LspJsonText.Ok uri)
+      (let
+        [doc-index : i64 (lsp-documents-find-index state.documents uri)]
+        (if (< doc-index 0)
+          (begin
+            (lsp-write-response id (lsp-json-array (json.list-empty)))
+            state)
+          (let
+            [position-key : String "position"]
+            [doc : lsp_vector_families.LspDocument
+              (lsp_document_vec.get
+                (& state.documents)
+                doc-index
+                (lsp-document-fallback))]
+            (match (json.object-get params (& position-key))
+              [(json.JsonMissing)
+                (begin
+                  (lsp-write-response id (lsp-json-array (json.list-empty)))
+                  state)]
+              [(json.JsonFound position)
+                (lsp-handle-references-position!
+                  id
+                  position
+                  params
+                  state
+                  stdlib-roots
+                  (& doc))]))))]))
+
+;; References may refresh the persistent unopened-source cache. Request-local
+;; keys, facts, and JSON live in a scratch arena and are released after the
+;; response has been framed, while a refreshed state keeps its own arena.
+(define (lsp-handle-references-message
+  [message : json.Json]
+  [state : lsp_vector_families.LspServerState]
+  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  (let
+    [id-key : String "id"]
+    (match (json.object-get message (& id-key))
+      [(json.JsonMissing) (LspHandleResult.Continue state)]
+      [(json.JsonFound id)
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [scratch : i64 (arena.tl_arena_make)]
+          [_install : unit
+            (unsafe
+              (arena.tl_arena_set scratch))]
+          [params-key : String "params"]
+          [next : lsp_vector_families.LspServerState
+            (match (json.object-get message (& params-key))
+              [(json.JsonMissing)
+                (begin
+                  (lsp-write-response id (lsp-json-array (json.list-empty)))
+                  state)]
+              [(json.JsonFound params)
+                (lsp-handle-references-with-params!
+                  id
+                  params
+                  state
+                  stdlib-roots)])]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set previous))
+            (unsafe
+              (arena.tl_arena_destroy scratch-head))
+            (LspHandleResult.Continue next)))])))
+
 ;; Workspace queries are read-only and run in a request-local arena. Repeated
 ;; searches therefore retain neither candidate arrays nor JSON result graphs,
 ;; while the immutable state-owned declaration rows remain untouched.
@@ -11956,6 +12155,9 @@
             (string.eq method "workspace/didChangeWatchedFiles")
             (string.eq method "workspace/didChangeWorkspaceFolders"))
           (lsp-handle-stateful-notification method message state stdlib-roots)]
+        [(string.eq method "$/cancelRequest") (LspHandleResult.Continue state)]
+        [(string.eq method "textDocument/references")
+          (lsp-handle-references-message message state stdlib-roots)]
         [(or
             (string.eq method "workspace/symbol")
             (string.eq method "tl/projectSearch"))
@@ -12003,7 +12205,6 @@
     (string.eq method "tl/expandMacro")
     (string.eq method "tl/check")
     (string.eq method "tl/getType")
-    (string.eq method "tl/findReferences")
     (string.eq method "tl/evalAtPoint")
     (string.eq method "tl/appendFunction")
     (string.eq method "tl/replaceBody")
@@ -12075,8 +12276,6 @@
             (lsp-handle-tl-get-type-at id params docs stdlib-roots job-state))
           (lsp-typecheck-tool-session-after!)
           tool-result))]
-    [(string.eq method "tl/findReferences")
-      (lsp-handle-tl-find-references id params docs)]
     [(string.eq method "tl/evalAtPoint")
       (lsp-handle-tl-eval-at-point id params docs)]
     [(string.eq method "tl/appendFunction")

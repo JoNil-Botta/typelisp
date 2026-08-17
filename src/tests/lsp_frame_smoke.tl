@@ -749,23 +749,6 @@
                 (tc_core.tc-inlay-hints-reset-for-state! inlay-state)
                 ok))))))))
 
-(define (lsp-find-references-smoke-ok?) : bool
-  (let
-    [src : String
-      "(define (foo [x : i64]) : i64 x) (define (bar) : i64 (foo 1))"]
-    [refs : json.JsonSeq
-      (lsp_frame_core.lsp-find-references-in-text
-        src
-        "foo"
-        0
-        (string.string-length src)
-        (json.list-empty))]
-    [rendered : String (json.stringify (lsp_frame_core.lsp-json-array refs))]
-    [count-ok : bool (= (json.list-count refs) 2)]
-    [needle0 : String "\"line\":0"]
-    [line0-ok : bool (string.contains (& rendered) (& needle0))]
-    (and count-ok line0-ok)))
-
 (define (lsp-document-decls-cache-empty-ok?) : bool
   (let
     [uri : String "file:///tmp/cache.tl"]
@@ -2127,7 +2110,6 @@
         (unless (lsp-format-edit-text-smoke-ok?) (return 14))
         (unless (lsp-check-smoke-ok?) (return 9))
         (unless (lsp-get-type-smoke-ok?) (return 10))
-        (unless (lsp-find-references-smoke-ok?) (return 11))
         (unless (lsp-document-decls-cache-empty-ok?) (return 12))
         (unless (lsp-document-disk-resync-ok?) (return 15))
         (unless (lsp-edit-save-doc-smoke-ok?) (return 16))

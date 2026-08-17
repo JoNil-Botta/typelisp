@@ -62,18 +62,17 @@
   [mode : compiler_lower.CompilerLowerMode]
   [wanted : i64]) : bool
   (let
-    [_package : unit
-      (compiler_lower.lower-spmd-set-package-name! "spmd_fixture")]
     [result : compiler_lower.ResultCompilerLower
-      (compiler_lower.lower-compiler-source-with-mode source mode)]
-    (begin
-      (compiler_lower.lower-spmd-clear-package-name!)
-      (match result
-        [(compiler_lower.ResultCompilerLower.Ok program _)
-          (match program
-            [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-              (= (compiler-lower-spmd-package-helper-count functions) wanted)])]
-        [(compiler_lower.ResultCompilerLower.Err _) false]))))
+      (compiler_lower.lower-compiler-source-with-mode-and-package
+        source
+        mode
+        "spmd_fixture")]
+    (match result
+      [(compiler_lower.ResultCompilerLower.Ok program _)
+        (match program
+          [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+            (= (compiler-lower-spmd-package-helper-count functions) wanted)])]
+      [(compiler_lower.ResultCompilerLower.Err _) false])))
 
 (define (compiler-lower-spmd-package-scalar-collapse-source) : String
   "(module spmd_fixture)
@@ -123,29 +122,26 @@
 (define (compiler-lower-spmd-package-return-context-source-ok?
   [source : String]) : bool
   (let
-    [_package : unit
-      (compiler_lower.lower-spmd-set-package-name! "spmd_fixture")]
     [result : compiler_lower.ResultCompilerLower
-      (compiler_lower.lower-compiler-source-with-mode
+      (compiler_lower.lower-compiler-source-with-mode-and-package
         source
-        (compiler_lower.CompilerLowerMode.Avx512))]
-    (begin
-      (compiler_lower.lower-spmd-clear-package-name!)
-      (match result
-        [(compiler_lower.ResultCompilerLower.Ok program _)
-          (match program
-            [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-              (let
-                [rendered : String
-                  (compiler-lower-spmd-package-uniform-helper-render functions)]
-                [splat-i64 : String "splat 7 lanes 8 : i64"]
-                [splat-i32 : String "splat 7 lanes 8 : i32"]
-                [reduce-i64 : String "vector_reduce_min"]
-                (and
-                  (string.contains (& rendered) (& splat-i64))
-                  (not (string.contains (& rendered) (& splat-i32)))
-                  (string.contains (& rendered) (& reduce-i64))))])]
-        [(compiler_lower.ResultCompilerLower.Err _) false]))))
+        (compiler_lower.CompilerLowerMode.Avx512)
+        "spmd_fixture")]
+    (match result
+      [(compiler_lower.ResultCompilerLower.Ok program _)
+        (match program
+          [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+            (let
+              [rendered : String
+                (compiler-lower-spmd-package-uniform-helper-render functions)]
+              [splat-i64 : String "splat 7 lanes 8 : i64"]
+              [splat-i32 : String "splat 7 lanes 8 : i32"]
+              [reduce-i64 : String "vector_reduce_min"]
+              (and
+                (string.contains (& rendered) (& splat-i64))
+                (not (string.contains (& rendered) (& splat-i32)))
+                (string.contains (& rendered) (& reduce-i64))))])]
+      [(compiler_lower.ResultCompilerLower.Err _) false])))
 
 (define (compiler-lower-spmd-package-return-context-ok?) : bool
   (and
@@ -159,46 +155,56 @@
   [mode : compiler_lower.CompilerLowerMode]
   [wanted : String]) : bool
   (let
-    [_package : unit
-      (compiler_lower.lower-spmd-set-package-name! "spmd_fixture")]
     [result : compiler_lower.ResultCompilerLower
-      (compiler_lower.lower-compiler-source-with-mode source mode)]
-    (begin
-      (compiler_lower.lower-spmd-clear-package-name!)
-      (match result
-        [(compiler_lower.ResultCompilerLower.Ok _ _) false]
-        [(compiler_lower.ResultCompilerLower.Err diag)
-          (string.eq
-            (compiler_diagnostic.compiler-diagnostic-message
-              (__tl-box-place diag))
-            wanted)]))))
+      (compiler_lower.lower-compiler-source-with-mode-and-package
+        source
+        mode
+        "spmd_fixture")]
+    (match result
+      [(compiler_lower.ResultCompilerLower.Ok _ _) false]
+      [(compiler_lower.ResultCompilerLower.Err diag)
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-message
+            (__tl-box-place diag))
+          wanted)])))
 
 (define (compiler-lower-spmd-package-symbol-collision-ok?) : bool
   (let
+    [state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
     [_package : unit
-      (compiler_lower.lower-spmd-set-package-name! "collision_fixture")]
+      (compiler_lower.compiler-lower-state-set-spmd-package!
+        state
+        "collision_fixture")]
     [symbol : i64 (compiler_ir_types.compiler-ir-test-symbol "__collision")]
     [first : compiler_lower.LowerSpmdPackageSymbolRegistration
-      (compiler_lower.lower-spmd-package-symbol-register symbol "identity-a")]
+      (compiler_lower.lower-spmd-package-symbol-register
+        state
+        symbol
+        "identity-a")]
     [repeat : compiler_lower.LowerSpmdPackageSymbolRegistration
-      (compiler_lower.lower-spmd-package-symbol-register symbol "identity-a")]
+      (compiler_lower.lower-spmd-package-symbol-register
+        state
+        symbol
+        "identity-a")]
     [collision : compiler_lower.LowerSpmdPackageSymbolRegistration
-      (compiler_lower.lower-spmd-package-symbol-register symbol "identity-b")]
-    (begin
-      (compiler_lower.lower-spmd-clear-package-name!)
-      (and
-        (match first
-          [(compiler_lower.LowerSpmdPackageSymbolRegistration.New) true]
-          [_ false])
-        (match repeat
-          [(compiler_lower.LowerSpmdPackageSymbolRegistration.Existing) true]
-          [_ false])
-        (match collision
-          [(compiler_lower.LowerSpmdPackageSymbolRegistration.Collision message)
-            (string.eq
-              message
-              "lower: :spmd-callable stable symbol collision for __collision")]
-          [_ false])))))
+      (compiler_lower.lower-spmd-package-symbol-register
+        state
+        symbol
+        "identity-b")]
+    (and
+      (match first
+        [(compiler_lower.LowerSpmdPackageSymbolRegistration.New) true]
+        [_ false])
+      (match repeat
+        [(compiler_lower.LowerSpmdPackageSymbolRegistration.Existing) true]
+        [_ false])
+      (match collision
+        [(compiler_lower.LowerSpmdPackageSymbolRegistration.Collision message)
+          (string.eq
+            message
+            "lower: :spmd-callable stable symbol collision for __collision")]
+        [_ false]))))
 
 (define (compiler-lower-spmd-package-callable-validation-errors-ok?) : bool
   (and

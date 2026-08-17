@@ -1318,10 +1318,10 @@
                       (compiler_lower.lower-arenas-release!)
                       (and isolated-ok? b-released-ok?))))))))))))
 
-;; The driver owns one opaque lower job state per compile state. Populate A
-;; through a successful lower, drive B through failures before and after cache
-;; population, then reset B through the driver lifecycle. A's complete
-;; structural observation must remain exact, while B returns to fresh state.
+;; The driver owns one opaque lower job state per compile state. Run real
+;; frontend lowers with deliberately identical source/AST IDs in A and B, plus
+;; failures and reset/reuse in B. A's complete structural observation (including
+;; SPMD package and memo backing) must remain exact throughout.
 (define (compiler-driver-lower-state-isolation-ok?) : bool
   (let
     [state-a : compiler_driver_core.CompilerDriverState
@@ -1335,16 +1335,24 @@
     [initial-a : compiler_lower.CompilerLowerStateObservation
       (compiler_lower.compiler-lower-state-observe lower-a)]
     [b-prepopulate-failed : bool
-      (match (compiler_lower.lower-compiler-source-with-state lower-b "(define")
+      (match (compiler_lower.lower-compiler-source-with-path-mode-package-and-state
+        lower-b
+        "<state-b-pre-failure>"
+        "(define"
+        (compiler_lower.CompilerLowerMode.Scalar)
+        "package-b-pre-failure")
         [(compiler_lower.ResultCompilerLower.Err _) true]
         [(compiler_lower.ResultCompilerLower.Ok _ _) false])]
     [a-after-b-prepopulate-failure : compiler_lower.CompilerLowerStateObservation
       (compiler_lower.compiler-lower-state-observe lower-a)]
-    (match (compiler_lower.lower-compiler-source-with-state
+    (match (compiler_lower.lower-compiler-source-with-path-mode-package-and-state
       lower-a
+      "<state-a>"
       "(define (helper) : i64 42)
 (module main)
-(define (main) : i64 (helper))")
+(define (main) : i64 (helper))"
+      (compiler_lower.CompilerLowerMode.Scalar)
+      "package-a")
       [(compiler_lower.ResultCompilerLower.Err diag)
         (compiler-driver-reader-context-smoke-fail
           (str_cat.str-cat
@@ -1356,51 +1364,105 @@
           [a-before : compiler_lower.CompilerLowerStateObservation
             (compiler_lower.compiler-lower-state-observe lower-a)]
           [b-failed : bool
-            (match (compiler_lower.lower-compiler-source-with-state
+            (match (compiler_lower.lower-compiler-source-with-path-mode-package-and-state
               lower-b
+              "<state-b-failure>"
               "(module main)
-(define (main) : i64 lower-state-controlled-failure)")
+(define (main) : i64 lower-state-controlled-failure)"
+              (compiler_lower.CompilerLowerMode.Scalar)
+              "package-b-failure")
               [(compiler_lower.ResultCompilerLower.Err _) true]
               [(compiler_lower.ResultCompilerLower.Ok _ _) false])]
           (begin
             (compiler_driver_core.compiler-driver-state-reset-lower! state-b)
             (let
-              [a-after : compiler_lower.CompilerLowerStateObservation
-                (compiler_lower.compiler-lower-state-observe lower-a)]
-              (cond
-                [(not (= (compiler_lower.compiler-lower-state-size) 8))
+              [b-reset-before-reuse : bool
+                (compiler_lower.compiler-lower-state-reset? lower-b)]
+              (match (compiler_lower.lower-compiler-source-with-path-mode-package-and-state
+                lower-b
+                "<state-b-reuse>"
+                "(define (helper) : i64 42)
+(module main)
+(define (main) : i64 (helper))"
+                (compiler_lower.CompilerLowerMode.Scalar)
+                "package-b-reuse")
+                [(compiler_lower.ResultCompilerLower.Err diag)
                   (compiler-driver-reader-context-smoke-fail
-                    "lower state carrier is not one word")]
-                [(= lower-a.address lower-b.address)
-                  (compiler-driver-reader-context-smoke-fail
-                    "lower state owners alias")]
-                [(not b-prepopulate-failed)
-                  (compiler-driver-reader-context-smoke-fail
-                    "controlled pre-cache lower state B failure succeeded")]
-                [(not
-                    (compiler_lower.compiler-lower-state-observation-eq?
-                      initial-a
-                      a-after-b-prepopulate-failure))
-                  (compiler-driver-reader-context-smoke-fail
-                    "pre-cache state B failure mutated state A")]
-                [(compiler_lower.compiler-lower-state-observation-eq?
-                    initial-a
-                    a-before)
-                  (compiler-driver-reader-context-smoke-fail
-                    "successful lower did not populate state A")]
-                [(not b-failed)
-                  (compiler-driver-reader-context-smoke-fail
-                    "controlled lower state B failure succeeded")]
-                [(not
-                    (compiler_lower.compiler-lower-state-observation-eq?
-                      a-before
-                      a-after))
-                  (compiler-driver-reader-context-smoke-fail
-                    "state B failure/reset mutated state A")]
-                [(not (compiler_lower.compiler-lower-state-reset? lower-b))
-                  (compiler-driver-reader-context-smoke-fail
-                    "state B reset did not restore fresh state")]
-                [else true]))))])))
+                    (str_cat.str-cat
+                      "lower state B reuse failed: "
+                      (compiler_diagnostic.compiler-diagnostic-render
+                        (__tl-box-place diag))))]
+                [(compiler_lower.ResultCompilerLower.Ok _ _)
+                  (let
+                    [a-after-b-reuse : compiler_lower.CompilerLowerStateObservation
+                      (compiler_lower.compiler-lower-state-observe lower-a)]
+                    [b-package-reused : bool
+                      (string.eq
+                        (compiler_lower.compiler-lower-state-spmd-package-name
+                          lower-b)
+                        "package-b-reuse")]
+                    (begin
+                      (compiler_driver_core.compiler-driver-state-reset-lower!
+                        state-b)
+                      (let
+                        [a-after-b-final-reset : compiler_lower.CompilerLowerStateObservation
+                          (compiler_lower.compiler-lower-state-observe lower-a)]
+                        (cond
+                          [(not
+                              (= (compiler_lower.compiler-lower-state-size) 8))
+                            (compiler-driver-reader-context-smoke-fail
+                              "lower state carrier is not one word")]
+                          [(= lower-a.address lower-b.address)
+                            (compiler-driver-reader-context-smoke-fail
+                              "lower state owners alias")]
+                          [(not b-prepopulate-failed)
+                            (compiler-driver-reader-context-smoke-fail
+                              "controlled pre-cache lower state B failure succeeded")]
+                          [(not
+                              (compiler_lower.compiler-lower-state-observation-eq?
+                                initial-a
+                                a-after-b-prepopulate-failure))
+                            (compiler-driver-reader-context-smoke-fail
+                              "pre-cache state B failure mutated state A")]
+                          [(compiler_lower.compiler-lower-state-observation-eq?
+                              initial-a
+                              a-before)
+                            (compiler-driver-reader-context-smoke-fail
+                              "successful lower did not populate state A")]
+                          [(not
+                              (string.eq
+                                (compiler_lower.compiler-lower-state-spmd-package-name
+                                  lower-a)
+                                "package-a"))
+                            (compiler-driver-reader-context-smoke-fail
+                              "state A package identity changed")]
+                          [(not b-failed)
+                            (compiler-driver-reader-context-smoke-fail
+                              "controlled lower state B failure succeeded")]
+                          [(not b-reset-before-reuse)
+                            (compiler-driver-reader-context-smoke-fail
+                              "state B reset did not restore logical fresh state")]
+                          [(not b-package-reused)
+                            (compiler-driver-reader-context-smoke-fail
+                              "state B package identity was not reusable")]
+                          [(not
+                              (compiler_lower.compiler-lower-state-observation-eq?
+                                a-before
+                                a-after-b-reuse))
+                            (compiler-driver-reader-context-smoke-fail
+                              "state B reuse mutated state A")]
+                          [(not
+                              (compiler_lower.compiler-lower-state-observation-eq?
+                                a-before
+                                a-after-b-final-reset))
+                            (compiler-driver-reader-context-smoke-fail
+                              "state B final reset mutated state A")]
+                          [(not
+                              (compiler_lower.compiler-lower-state-reset?
+                                lower-b))
+                            (compiler-driver-reader-context-smoke-fail
+                              "state B final reset did not restore logical fresh state")]
+                          [else true]))))]))))])))
 
 (define (compiler-driver-base-transients-smoke-ok?) : bool
   (let

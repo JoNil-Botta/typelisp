@@ -199,6 +199,21 @@
   (No)
   (Some CompilerLoadImportAliasCollision))
 
+(defstruct CompilerLoadUnqualifiedImportState
+  (source-ids load_i64_i64_map.Map)
+  (source-modules load_i64_i64_map.Map))
+
+(defstruct CompilerLoadUnqualifiedImportCollision
+  (name String)
+  (first-module String)
+  (second-module String)
+  (path String)
+  (span ast.AstSourceSpan))
+
+(defenum CompilerLoadUnqualifiedImportStep
+  (Ok)
+  (Collision CompilerLoadUnqualifiedImportCollision))
+
 (defenum CompilerLoadSurfaceMaybeString
   (CompilerLoadSurfaceNoString)
   (CompilerLoadSurfaceSomeString String))
@@ -4824,6 +4839,315 @@
                       (str_cat.str-cat
                         collision.second-import
                         "'; use distinct aliases or qualified access")))))))))]))
+
+(define (compiler-load-unqualified-import-note
+  [state : (&mut state CompilerLoadUnqualifiedImportState)]
+  [importer-module : i64]
+  [local-name : i64]
+  [source-module : i64]
+  [source-item : i64]
+  [path : String]
+  [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
+  (let
+    [key : i64 (ci.intern-composite-pair-id importer-module local-name)]
+    [source-id : i64 (ci.intern-composite-pair-id source-module source-item)]
+    (match (load_i64_i64_map.get (& state.source-ids) key)
+      [(load_i64_i64_map.LookupFound prior-source-id)
+        (if (= prior-source-id source-id)
+          (CompilerLoadUnqualifiedImportStep.Ok)
+          (CompilerLoadUnqualifiedImportStep.Collision
+            (CompilerLoadUnqualifiedImportCollision
+              (ci.intern-str local-name)
+              (ci.intern-str
+                (match (load_i64_i64_map.get (& state.source-modules) key)
+                  [(load_i64_i64_map.LookupFound prior-module) prior-module]
+                  [(load_i64_i64_map.LookupMissing)
+                    cbi.compiler-builtin-id-fix-empty]))
+              (ci.intern-str source-module)
+              path
+              span)))]
+      [(load_i64_i64_map.LookupMissing)
+        (begin
+          (load_i64_i64_map.insert-ref! (&mut state.source-ids) key source-id)
+          (load_i64_i64_map.insert-ref!
+            (&mut state.source-modules)
+            key
+            source-module)
+          (CompilerLoadUnqualifiedImportStep.Ok))])))
+
+(define (compiler-load-unqualified-import-note-variants
+  [state : (&mut state CompilerLoadUnqualifiedImportState)]
+  [importer-module : i64]
+  [source-module : i64]
+  [variants : (& variants ast.AstVariantDefList)]
+  [index : i64]
+  [path : String]
+  [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
+  (if (>= index (ast.ast-variant-def-list-len variants))
+    (CompilerLoadUnqualifiedImportStep.Ok)
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def name _ _)
+        (match (compiler-load-unqualified-import-note
+          state
+          importer-module
+          name
+          source-module
+          name
+          path
+          span)
+          [(CompilerLoadUnqualifiedImportStep.Ok)
+            (compiler-load-unqualified-import-note-variants
+              state
+              importer-module
+              source-module
+              variants
+              (+ index 1)
+              path
+              span)]
+          [(CompilerLoadUnqualifiedImportStep.Collision collision)
+            (CompilerLoadUnqualifiedImportStep.Collision collision)])])))
+
+(define (compiler-load-unqualified-import-note-decl
+  [state : (&mut state CompilerLoadUnqualifiedImportState)]
+  [importer-module : i64]
+  [source-module : i64]
+  [decl : ast.AstDecl]
+  [path : String]
+  [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
+  (match (ast.ast-decl-unwrapped decl)
+    [(ast.AstDecl.Def _ name _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefFn _ name _ _ _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefMacro _ name _ _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefDispatch _ name _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.Extern _ name _ _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefStruct _ name _ _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefStructLifetimes _ name _ _ _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefEnum _ name _ variants)
+      (match (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)
+        [(CompilerLoadUnqualifiedImportStep.Ok)
+          (compiler-load-unqualified-import-note-variants
+            state
+            importer-module
+            source-module
+            (& variants)
+            0
+            path
+            span)]
+        [(CompilerLoadUnqualifiedImportStep.Collision collision)
+          (CompilerLoadUnqualifiedImportStep.Collision collision)])]
+    [(ast.AstDecl.DefEnumLifetimes _ name _ _ variants)
+      (match (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)
+        [(CompilerLoadUnqualifiedImportStep.Ok)
+          (compiler-load-unqualified-import-note-variants
+            state
+            importer-module
+            source-module
+            (& variants)
+            0
+            path
+            span)]
+        [(CompilerLoadUnqualifiedImportStep.Collision collision)
+          (CompilerLoadUnqualifiedImportStep.Collision collision)])]
+    [_ (CompilerLoadUnqualifiedImportStep.Ok)]))
+
+(define (compiler-load-unqualified-import-note-wildcard
+  [state : (&mut state CompilerLoadUnqualifiedImportState)]
+  [decls : ast.AstDeclList]
+  [importer-module : i64]
+  [source-module : i64]
+  [path : String]
+  [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
+  (let
+    [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [decl : ast.AstDecl (array-ref decls.slots (+ decls.offset index))]
+          (begin
+            (match decl
+              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
+              [_
+                (when
+                  (= cur-module source-module)
+                  (match (compiler-load-unqualified-import-note-decl
+                    state
+                    importer-module
+                    source-module
+                    decl
+                    path
+                    span)
+                    [(CompilerLoadUnqualifiedImportStep.Ok) unit]
+                    [(CompilerLoadUnqualifiedImportStep.Collision collision)
+                      (return
+                        (CompilerLoadUnqualifiedImportStep.Collision collision))]))])
+            (set! index (+ index 1)))))
+      (CompilerLoadUnqualifiedImportStep.Ok))))
+
+(define (compiler-load-unqualified-import-collision-message
+  [collision : CompilerLoadUnqualifiedImportCollision]) : String
+  (str_cat.str-cat
+    "compiler-load: ambiguous unqualified import '"
+    (str_cat.str-cat
+      collision.name
+      (str_cat.str-cat
+        "' between modules '"
+        (str_cat.str-cat
+          collision.first-module
+          (str_cat.str-cat
+            "' and '"
+            (str_cat.str-cat
+              collision.second-module
+              "'; use explicit selected aliases or qualified access")))))))
+
+(define (compiler-load-unqualified-import-collision-result
+  [collision : CompilerLoadUnqualifiedImportCollision]) : ResultCompilerLoadAliasCheck
+  (ResultCompilerLoadAliasCheck.Err
+    (box
+      (cdiag.compiler-diagnostic-from-ast-span
+        collision.path
+        collision.span
+        (compiler-load-unqualified-import-collision-message collision)))))
+
+(define (compiler-load-check-unqualified-import-collisions
+  [fallback-path : String]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : ResultCompilerLoadAliasCheck
+  (let
+    [state : CompilerLoadUnqualifiedImportState
+      (CompilerLoadUnqualifiedImportState
+        (load_i64_i64_map.with-capacity 64)
+        (load_i64_i64_map.with-capacity 64))]
+    [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [decl : ast.AstDecl (array-ref decls.slots (+ decls.offset index))]
+          [path : String
+            (ast.ast-decl-path-list-get (& paths) index fallback-path)]
+          (begin
+            (match decl
+              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
+              [(ast.AstDecl.Import
+                  _
+                  (ast.AstImportSpec.Spec
+                    (ast.AstImportKind.ModuleAll)
+                    _
+                    (ast.AstMaybeModuleName.Some source-module)
+                    _
+                    span))
+                (match (compiler-load-unqualified-import-note-wildcard
+                  (&mut state)
+                  decls
+                  cur-module
+                  source-module
+                  path
+                  (__tl-box-place span))
+                  [(CompilerLoadUnqualifiedImportStep.Ok) unit]
+                  [(CompilerLoadUnqualifiedImportStep.Collision collision)
+                    (return
+                      (compiler-load-unqualified-import-collision-result
+                        collision))])]
+              [(ast.AstDecl.Import
+                  _
+                  (ast.AstImportSpec.Spec
+                    (ast.AstImportKind.ModuleItem source-item)
+                    _
+                    (ast.AstMaybeModuleName.Some source-module)
+                    (ast.AstMaybeImportAlias.Some alias)
+                    span))
+                (match (compiler-load-unqualified-import-note
+                  (&mut state)
+                  cur-module
+                  alias
+                  source-module
+                  source-item
+                  path
+                  (__tl-box-place span))
+                  [(CompilerLoadUnqualifiedImportStep.Ok) unit]
+                  [(CompilerLoadUnqualifiedImportStep.Collision collision)
+                    (return
+                      (compiler-load-unqualified-import-collision-result
+                        collision))])]
+              [_ unit])
+            (set! index (+ index 1)))))
+      (ResultCompilerLoadAliasCheck.Ok))))
 
 (define (compiler-load-session-state-surface-summaries-reset!
   [state : CompilerLoadSessionState]) : unit
@@ -9462,6 +9786,7 @@
   [source-module-fallback : String]
   [source-module-fallback-id : i64]) : ResultCompilerLoadWithPaths
   (let
+    [entry-depth : i64 (array-ref load-state.surface-summary-load-depth 0)]
     [_ : unit
       (compiler-load-session-state-surface-summary-load-enter! load-state)]
     [source-path-id : i64 parse-identity.source-path-id]
@@ -9572,7 +9897,20 @@
                 (ResultCompilerLoadWithPaths.Err diag)]))])]
     (begin
       (compiler-load-session-state-surface-summary-load-exit! load-state)
-      loaded)))
+      (if (= entry-depth 0)
+        (match loaded
+          [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
+            (match (compiler-load-check-unqualified-import-collisions
+              source-path
+              decls
+              paths)
+              [(ResultCompilerLoadAliasCheck.Ok)
+                (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)]
+              [(ResultCompilerLoadAliasCheck.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)])
+        loaded))))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root
   [path : String]
@@ -12232,6 +12570,9 @@
   [source-module-fallback : String]
   [source-module-fallback-id : i64]) : ResultCompilerLoadWithPaths
   (let
+    [load-state : CompilerLoadSessionState
+      (compiler-load-active-session-state-shared-view)]
+    [entry-depth : i64 (array-ref load-state.surface-summary-load-depth 0)]
     [_ : unit (compiler-load-surface-summary-load-enter!)]
     [source-path-id : i64 parse-identity.source-path-id]
     [module-id-fallback-id : i64 parse-identity.module-fallback-id]
@@ -12336,7 +12677,20 @@
                 (ResultCompilerLoadWithPaths.Err diag)]))])]
     (begin
       (compiler-load-surface-summary-load-exit!)
-      loaded)))
+      (if (= entry-depth 0)
+        (match loaded
+          [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
+            (match (compiler-load-check-unqualified-import-collisions
+              source-path
+              decls
+              paths)
+              [(ResultCompilerLoadAliasCheck.Ok)
+                (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)]
+              [(ResultCompilerLoadAliasCheck.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)])
+        loaded))))
 
 (define (compiler-load-package-program-with-paths-and-roots-expect
   [path : String]
@@ -13776,6 +14130,26 @@
         "(module suffix.invalid)
 (import pkg.shared.absent.extra)
 (define (main) : i64 0)")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_root/pkg/macro-a.tl"
+        "(module pkg.macro-a)
+(defmacro (same-macro) : Expr '(+ 1 1))")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_root/pkg/macro-b.tl"
+        "(module pkg.macro-b)
+(defmacro (same-macro) : Expr '(+ 2 2))")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_collision.tl"
+        "(module suffix.collision)
+(import pkg.macro-a.*)
+(import pkg.macro-b.*)
+(define (main) : i64 0)")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_repeat.tl"
+        "(module suffix.repeat)
+(import pkg.shared.*)
+(import pkg.shared.*)
+(define (main) : i64 value)")
       (and
         (match (compiler-load-file-with-paths-and-roots
           "target/cl_import_suffix_entry.tl"
@@ -13820,7 +14194,29 @@
                   (cdiag.compiler-diagnostic-message value)
                   "compiler-load: import 'pkg.shared.absent.extra' leaves more than one segment after loadable module 'pkg.shared'; only one selected item is supported")
                 (> (cdiag.compiler-diagnostic-line value) 0)))]
-          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))))
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])
+        (match (compiler-load-file-with-paths-and-roots
+          "target/cl_import_suffix_collision.tl"
+          (sym_i64_env.sym-i64-empty)
+          roots)
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (let
+              [value : cdiag.CompilerDiagnostic (__tl-box-place diag)]
+              (and
+                (string.eq
+                  (cdiag.compiler-diagnostic-path value)
+                  "target/cl_import_suffix_collision.tl")
+                (= (cdiag.compiler-diagnostic-line value) 3)
+                (string.eq
+                  (cdiag.compiler-diagnostic-message value)
+                  "compiler-load: ambiguous unqualified import 'same-macro' between modules 'pkg.macro-a' and 'pkg.macro-b'; use explicit selected aliases or qualified access")))]
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])
+        (match (compiler-load-file-with-paths-and-roots
+          "target/cl_import_suffix_repeat.tl"
+          (sym_i64_env.sym-i64-empty)
+          roots)
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+          [(ResultCompilerLoadWithPaths.Err _) false])))))
 
 (define (compiler-load-test-mkdir-direct [path : String]) : bool
   (match (fs.try-mkdir-if-missing (& path))

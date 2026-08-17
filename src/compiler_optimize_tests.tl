@@ -28123,6 +28123,10 @@
             (opt-licm-checked-root-join-blocks true)))]
       [mixed-join : compiler_ir_types.CompilerIrBlockList
         (compiler_optimize.opt-function-blocks mixed-join-func)]
+      ;; Separate checked-reference parameters are not a no-alias proof while
+      ;; compatibility copies can retain ownership edges between them. Only a
+      ;; fresh allocation or an independent pointer-class proof may separate a
+      ;; loop load from a store.
       (cond
         [(not
             (compiler_optimize.opt-verify-ok?
@@ -28133,14 +28137,14 @@
               (opt-count-load-label-blocks
                 ref-distinct
                 (compiler_ir_types.compiler-ir-label "entry"))
-              1))
+              0))
           2]
         [(not
             (=
               (opt-count-load-label-blocks
                 ref-distinct
                 (compiler_ir_types.compiler-ir-label "loop"))
-              0))
+              1))
           3]
         [(not
             (compiler_optimize.opt-verify-ok?
@@ -28151,14 +28155,14 @@
               (opt-count-load-label-blocks
                 mut-distinct
                 (compiler_ir_types.compiler-ir-label "entry"))
-              1))
+              0))
           5]
         [(not
             (=
               (opt-count-load-label-blocks
                 mut-distinct
                 (compiler_ir_types.compiler-ir-label "loop"))
-              0))
+              1))
           6]
         [(not
             (=
@@ -28222,14 +28226,14 @@
               (opt-count-load-label-blocks
                 join-blocks
                 (compiler_ir_types.compiler-ir-label "join"))
-              1))
+              0))
           16]
         [(not
             (=
               (opt-count-load-label-blocks
                 join-blocks
                 (compiler_ir_types.compiler-ir-label "loop"))
-              0))
+              1))
           17]
         [(not
             (=
@@ -28297,14 +28301,14 @@
               (opt-count-load-label-blocks
                 clean-call
                 (compiler_ir_types.compiler-ir-label "entry"))
-              1))
+              0))
           27]
         [(not
             (=
               (opt-count-load-label-blocks
                 clean-call
                 (compiler_ir_types.compiler-ir-label "loop"))
-              0))
+              1))
           28]
         [(not
             (compiler_optimize.opt-verify-ok?

@@ -18323,6 +18323,22 @@
         (+ (array-length selected) 1)
         count))))
 
+;; The carrier boundary pair, shared by the two rewrites that mint stack-only
+;; carriers to hide a clobber from GP allocation: cycle 20's cold-call split and
+;; the general call-hole split below. `S <- V` before the clobber, `V <- S`
+;; after it, both at V's own type.
+(define (compiler-reg-carrier-store-mov
+  [carrier : i64]
+  [var : i64]
+  [ty : ast.AstType]) : ir.CompilerIrInstr
+  (ir.CompilerIrInstr.Mov carrier (ir.CompilerIrValue.Var var) ty))
+
+(define (compiler-reg-carrier-reload-mov
+  [var : i64]
+  [carrier : i64]
+  [ty : ast.AstType]) : ir.CompilerIrInstr
+  (ir.CompilerIrInstr.Mov var (ir.CompilerIrValue.Var carrier) ty))
+
 (define (compiler-reg-cold-call-rewrite-instrs
   [instrs : ir.CompilerIrInstrSeq]
   [selected : (__tl_dyn-array i64)]
@@ -18346,10 +18362,7 @@
               [(CompilerRegMaybeType.Some ty)
                 (set!
                   (array-ref out w)
-                  (ir.CompilerIrInstr.Mov
-                    (+ temp-start i)
-                    (ir.CompilerIrValue.Var v)
-                    ty))]
+                  (compiler-reg-carrier-store-mov (+ temp-start i) v ty))]
               [(CompilerRegMaybeType.No) unit])
             (set! w (+ w 1))
             (set! i (+ i 1)))))
@@ -18364,10 +18377,7 @@
               [(CompilerRegMaybeType.Some ty)
                 (set!
                   (array-ref out w)
-                  (ir.CompilerIrInstr.Mov
-                    v
-                    (ir.CompilerIrValue.Var (+ temp-start i))
-                    ty))]
+                  (compiler-reg-carrier-reload-mov v (+ temp-start i) ty))]
               [(CompilerRegMaybeType.No) unit])
             (set! w (+ w 1))
             (set! i (+ i 1)))))
@@ -18470,6 +18480,1262 @@
     type-segment-bases
     func
     (ir.compiler-ir-representation-index-empty)))
+
+;; ---------------------------------------------------------------------------
+;; P3 -- call-hole live-range splitting for spilled call-spanning values.
+;;
+;; `compiler-reg-greedy-alloc-one!` restricts a value whose interval spans a
+;; kind-0 clobber point to the six callee-saved registers (`csr-only`), and once
+;; those are taken it spills the value for its WHOLE interval: every use in the
+;; function -- including the ones inside the hot loop -- becomes frame traffic.
+;; LLVM's greedy allocator instead spills such a value only AROUND the call and
+;; keeps it in a caller-saved register everywhere else.
+;;
+;; This round realises that shape as an IR rewrite between the initial plan and
+;; the leaf-CSR round. A selected spilled value V gets one stack-only carrier
+;; S_V, and every kind-0 clobber `c` that V is live THROUGH becomes
+;;
+;;     Mov S_V <- V      (elided when S_V already holds V on this path)
+;;     c
+;;     Mov V <- S_V
+;;
+;; V's live range is now split at `c`, so `compiler-reg-greedy-var-spans-clobber?`
+;; answers false for the pieces and V may take a caller-saved register. Uses of
+;; V between two clobbers read V itself, so no other instruction changes.
+;;
+;; The carriers are minted contiguously above the cold-call carriers, so ONE
+;; `forced-spill-from` threshold forces both families into memory. They are
+;; forced with `cold-split?` FALSE: the cold-call rewrite's separate claim (the
+;; function's only kind-0 clobber has been carried away, so the param ABI-pin
+;; gate may ignore the clobber set) is exactly what this round cannot make --
+;; it leaves every call in place. See
+;; `compiler-reg-plan-function-scalar-forced-spill-with-types`.
+;;
+;; The round is a no-op by construction whenever it cannot help: after the
+;; replan every still-spilled selection is dropped and the rewrite retried from
+;; the ORIGINAL function (bounded at three rounds), and the surviving rewrite is
+;; kept only when its estimated plan cost is strictly below the original's.
+;; ---------------------------------------------------------------------------
+(defenum CompilerRegCallHoleSplit
+  ;; rewritten function, var watermark, plan, var types, forced-spill threshold.
+  ;; The threshold is the input `temp-start` when nothing was rewritten, so a
+  ;; declining round leaves every downstream consumer exactly as it was.
+  (Split ir.CompilerIrFunction i64 CompilerRegPlan CompilerRegVarTypes i64))
+
+(define (compiler-reg-call-hole-split-function
+  [split : CompilerRegCallHoleSplit]) : ir.CompilerIrFunction
+  (match split
+    [(CompilerRegCallHoleSplit.Split func _ _ _ _) func]))
+
+(define (compiler-reg-call-hole-split-blocks [split : CompilerRegCallHoleSplit]) : ir.CompilerIrBlockList
+  (match (compiler-reg-call-hole-split-function split)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks) blocks]))
+
+(define (compiler-reg-call-hole-split-vars [split : CompilerRegCallHoleSplit]) : i64
+  (match split
+    [(CompilerRegCallHoleSplit.Split _ vars _ _ _) vars]))
+
+(define (compiler-reg-call-hole-split-plan [split : CompilerRegCallHoleSplit]) : CompilerRegPlan
+  (match split
+    [(CompilerRegCallHoleSplit.Split _ _ plan _ _) plan]))
+
+(define (compiler-reg-call-hole-split-types [split : CompilerRegCallHoleSplit]) : CompilerRegVarTypes
+  (match split
+    [(CompilerRegCallHoleSplit.Split _ _ _ types _) types]))
+
+(define (compiler-reg-call-hole-split-temp-start
+  [split : CompilerRegCallHoleSplit]) : i64
+  (match split
+    [(CompilerRegCallHoleSplit.Split _ _ _ _ temp-start) temp-start]))
+
+(define (compiler-reg-call-hole-split-none
+  [func : ir.CompilerIrFunction]
+  [vars : i64]
+  [plan : CompilerRegPlan]
+  [type-info : CompilerRegVarTypes]
+  [temp-start : i64]) : CompilerRegCallHoleSplit
+  (CompilerRegCallHoleSplit.Split func vars plan type-info temp-start))
+
+;; Selection weight for one block, for THIS decision only (the greedy's own
+;; ranking ladder, compiler-reg-loop-depth-weight, is deliberately untouched: it
+;; is a rank-ordering device across a whole function's webs, and 8^depth was
+;; measured to misrank there). Here the two sides of the comparison are the SAME
+;; value's refs against the SAME value's call crossings, so the weight only has
+;; to model relative execution frequency, and one loop level is worth far more
+;; than 2x.
+;;
+;; The "exit path" discount -- a block inside a natural loop L from which L's
+;; latch is unreachable inside L runs at most once per entry of L and must be
+;; charged at L's PARENT depth -- is already exact in the depth this reads, and
+;; that is a property of how the file builds its loops rather than a coincidence:
+;; `compiler-reg-loop-nest-header-members!` seeds its worklist with L's latches
+;; and closes BACKWARD over predecessors with L's header pre-stamped, so
+;; members(L) is exactly {h} union {b : b reaches a latch of L on a path avoiding
+;; h}. Every non-header member therefore reaches a latch through members only,
+;; and the header reaches one because the cycle exists; so no member is
+;; exit-only, and a block that IS exit-only is not a member and never receives
+;; L's +1 in `compiler-reg-function-loop-depths`. Charging the discount a second
+;; time would be a second backward walk per loop with provably no effect, so the
+;; weight reads the membership depth directly. `compiler-reg-call-hole-exit-arm-weight-ok?`
+;; pins the property against a loop with an exit-only miss arm.
+(define (compiler-reg-call-hole-block-weight [depth : i64]) : i64
+  (cond
+    [(<= depth 0) 1]
+    [(= depth 1) 8]
+    [(= depth 2) 64]
+    [(= depth 3) 512]
+    [else 4096]))
+
+(define (compiler-reg-call-hole-block-weights [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
+    i64)
+  (let
+    [depths : (__tl_dyn-array i64) (compiler-reg-function-loop-depths blocks)]
+    [count : i64 (array-length depths)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref out index)
+            (compiler-reg-call-hole-block-weight (array-ref depths index)))
+          (set! index (+ index 1))))
+      out)))
+
+;; The per-function cap on selections, so one rewrite stays bounded no matter
+;; how wide the spilled set is.
+(define (compiler-reg-call-hole-max-selected) : i64
+  32)
+
+;; How many times the rewrite may be retried after dropping the selections the
+;; replan still spilled.
+(define (compiler-reg-call-hole-max-rounds) : i64
+  3)
+
+;; A value is a candidate when the plan put it in MEMORY (an explicit Spill --
+;; a missing assignment is the representation of a value the planner never
+;; admitted at all), it is a GP register-eligible scalar, and it is not one of
+;; the values the planner holds ineligible (address-taken, stack call argument,
+;; non-scalar). Params qualify: `compiler-reg-greedy-alloc-one!`'s
+;; `is-param -> csr-only` rule stays in force, so a split param only gains when
+;; a callee-saved register is free -- which is exactly the case where splitting
+;; it is what frees one.
+(define (compiler-reg-call-hole-eligible-var?
+  [type-segment-bases : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentTable]
+  [ineligible : live.CompilerLiveI64Set]
+  [var : i64]) : bool
+  (if (live.compiler-live-set-contains? ineligible var)
+    false
+    (match (compiler-reg-assignment-lookup assignments var)
+      [(CompilerRegMaybeLocation.No) false]
+      [(CompilerRegMaybeLocation.Some location)
+        (match location
+          [(CompilerRegLocation.Spill _)
+            (match (compiler-reg-var-types-lookup type-info var)
+              [(CompilerRegMaybeType.No) false]
+              [(CompilerRegMaybeType.Some ty)
+                (compiler-reg-cold-call-protectable-type?
+                  type-segment-bases
+                  type-info.representations
+                  ty)])]
+          [_ false])])))
+
+(define (compiler-reg-call-hole-mark-eligible!
+  [type-segment-bases : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentTable]
+  [ineligible : live.CompilerLiveI64Set]
+  [limit : i64]
+  [flags : (__tl_dyn-array bool)]) : i64
+  (let
+    [var : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< var limit)
+        (begin
+          (if (compiler-reg-call-hole-eligible-var?
+            type-segment-bases
+            type-info
+            assignments
+            ineligible
+            var)
+            (begin
+              (set! (array-ref flags var) true)
+              (set! count (+ count 1)))
+            unit)
+          (set! var (+ var 1))))
+      count)))
+
+;; What a MEMORY home actually costs at one reference. A reference the backend
+;; serves straight out of the stack slot costs no extra instruction at all, so
+;; splitting the value around a call buys nothing for it and it must not be
+;; priced as a reload. The measured case is a plain accumulate loop
+;; (`acc = acc + v` over ten values): with `v` spilled the backend emits
+;; `addq V(%rsp), %acc`, exactly as many instructions as `addq %v, %acc`, and a
+;; model that charged those mentions at the loop weight "rescued" all ten values
+;; into registers and starved the accumulator chain instead (target/wsl/p3
+;; micro, 208 -> 325 instructions per unrolled body).
+;;
+;; Two positions are rebated, and both are rebated at most once per instruction,
+;; because the ladder above also charges a variable at most once per instruction
+;; (`compiler-live-instr-use-ids!` de-duplicates its ids) and because x86 admits
+;; at most ONE memory operand per instruction:
+;;
+;;   * a binop's RHS, the canonical `op RHS(%rsp), %dst` form -- but not when the
+;;     RHS variable is also the LHS (`v * v` still has to load `v` once), and not
+;;     when the binop is a SHIFT, whose count is required in %cl and can never be
+;;     a memory operand at all;
+;;   * a bounds check's LENGTH, the one position that folds unconditionally on
+;;     every arm and at every width (see compiler-reg-foldable-rebate-add-instr!).
+;;
+;; The commutative LHS is deliberately NOT rebated even though the emitter may
+;; swap the operands or use the memory-destination form: rebating both sides of
+;; `a + b` would claim two free memory operands where the encoding allows one.
+;; Every other position (a memory base, a call argument, a Mov/Phi source, a
+;; returned value) is a genuine reload and keeps the full weight.
+;;
+;; Erring toward CHARGING is the safe direction here: an under-rebate can only
+;; keep a split the plan comparison must then justify, while an over-rebate
+;; silently cancels genuine reload costs the same variable pays elsewhere in the
+;; function -- the rebates are summed per variable over the whole walk.
+(define (compiler-reg-call-hole-fold-rebate-instr!
+  [rebates : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]
+  [weight : i64]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.BoundsCheck _ length _)
+      (compiler-reg-call-hole-fold-rebate-value! rebates length weight)]
+    [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+      (if (and
+        (not (compiler-reg-call-hole-shift-op? op))
+        (not (compiler-reg-call-hole-same-var? lhs rhs)))
+        (compiler-reg-call-hole-fold-rebate-value! rebates rhs weight)
+        unit)]
+    [_ unit]))
+
+(define (compiler-reg-call-hole-shift-op? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Shl _) true]
+    [(ir.CompilerIrBinOp.Shr _) true]
+    [_ false]))
+
+(define (compiler-reg-call-hole-same-var?
+  [left : ir.CompilerIrValue]
+  [right : ir.CompilerIrValue]) : bool
+  (match left
+    [(ir.CompilerIrValue.Var left-var)
+      (match right
+        [(ir.CompilerIrValue.Var right-var) (= left-var right-var)]
+        [_ false])]
+    [_ false]))
+
+;; Credit one foldable mention of `value` at its full block weight: the ladder
+;; charged exactly that for the mention and the fold makes it free.
+(define (compiler-reg-call-hole-fold-rebate-value!
+  [rebates : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]
+  [weight : i64]) : unit
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (if (and (>= var 0) (< var (array-length rebates)))
+        (set! (array-ref rebates var) (+ (array-ref rebates var) weight))
+        unit)]
+    [_ unit]))
+
+(define (compiler-reg-call-hole-fold-rebate-seq!
+  [rebates : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [weight : i64]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (compiler-reg-call-hole-fold-rebate-instr!
+          rebates
+          (array-ref slots index)
+          weight)
+        (set! index (+ index 1))))))
+
+;; benefit(V) = sum over V's refs (uses AND defs) of W(block(ref)), rebated as
+;; above, for every var at once. This is the existing ladder walk with the
+;; call-hole weight substituted for the greedy's: it takes the id fast path per
+;; instruction and allocates nothing but the rebate accumulator. The same
+;; quantity is the per-value term of the plan cost below, so both sides of every
+;; comparison this round makes are the same measure of "what memory costs here".
+(define (compiler-reg-call-hole-ref-weights!
+  [refs : (__tl_dyn-array i64)]
+  [seq : ir.CompilerIrBlockSeq]
+  [weights : (__tl_dyn-array i64)]) : unit
+  (let
+    [rebates : (__tl_dyn-array i64) (array.make-array i64 (array-length refs))]
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref seq index)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (let
+                [weight : i64 (array-ref weights index)]
+                (begin
+                  (compiler-reg-ref-counts-seq-weighted! refs instrs weight)
+                  (compiler-reg-call-hole-fold-rebate-seq!
+                    rebates
+                    instrs
+                    weight)))])
+          (set! index (+ index 1))))
+      (compiler-reg-call-hole-apply-rebates! refs rebates))))
+
+;; Subtract the rebates, flooring at ZERO rather than at the greedy ladder's
+;; flat 1. The greedy's floor exists so a mentioned value still outranks an
+;; unmentioned one in a RANKING; this number is not a ranking but an estimate of
+;; instructions, and a value every one of whose mentions folds really does cost
+;; nothing extra in memory. Flooring it at 1 per mention is what still bought the
+;; accumulate micro's ten values a register each.
+(define (compiler-reg-call-hole-apply-rebates!
+  [refs : (__tl_dyn-array i64)]
+  [rebates : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64
+      (if (< (array-length rebates) (array-length refs))
+        (array-length rebates)
+        (array-length refs))]
+    [var : i64 0]
+    (while (< var count)
+      (begin
+        (if (> (array-ref rebates var) 0)
+          (set!
+            (array-ref refs var)
+            (if (> (array-ref refs var) (array-ref rebates var))
+              (- (array-ref refs var) (array-ref rebates var))
+              0))
+          unit)
+        (set! var (+ var 1))))))
+
+;; The HOTTEST block that references V, per var. The split relocates V's memory
+;; traffic from wherever V is referenced to wherever V crosses a call, so this
+;; and its clobber-side twin are what decide whether the relocation is downhill.
+(define (compiler-reg-call-hole-max-weight-var!
+  [maxw : (__tl_dyn-array i64)]
+  [var : i64]
+  [weight : i64]) : unit
+  (if (and
+    (>= var 0)
+    (< var (array-length maxw))
+    (> weight (array-ref maxw var)))
+    (set! (array-ref maxw var) weight)
+    unit))
+
+(define (compiler-reg-call-hole-max-weight-ids!
+  [maxw : (__tl_dyn-array i64)]
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [weight : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index id-count)
+      (begin
+        (compiler-reg-call-hole-max-weight-var!
+          maxw
+          (array-ref ids index)
+          weight)
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-call-hole-max-weight-set!
+  [maxw : (__tl_dyn-array i64)]
+  [set : live.CompilerLiveI64Set]
+  [weight : i64]) : unit
+  (let
+    [words : i64 (live.compiler-live-set-word-count set)]
+    [word : i64 0]
+    (while (< word words)
+      (begin
+        (let
+          [bits : i64 (live.compiler-live-set-word-at-bounded set word)]
+          [base : i64 (* word (live.compiler-live-set-word-bits))]
+          (while (not (= bits 0))
+            (begin
+              (compiler-reg-call-hole-max-weight-var!
+                maxw
+                (+ base (compiler-reg-low-bit-index32 bits))
+                weight)
+              (set! bits (bit-and bits (- bits 1))))))
+        (set! word (+ word 1))))))
+
+(define (compiler-reg-call-hole-max-ref-weights!
+  [maxw : (__tl_dyn-array i64)]
+  [seq : ir.CompilerIrBlockSeq]
+  [weights : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (ir.compiler-ir-block-seq-ref seq index)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+              [weight : i64 (array-ref weights index)]
+              [instr-count : i64 instrs.len]
+              [i : i64 0]
+              (while (< i instr-count)
+                (begin
+                  (let
+                    [instr : ir.CompilerIrInstr (array-ref slots i)]
+                    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+                    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+                    (begin
+                      (if (< id-count 0)
+                        (compiler-reg-call-hole-max-weight-set!
+                          maxw
+                          (live.compiler-live-instr-uses instr)
+                          weight)
+                        (compiler-reg-call-hole-max-weight-ids!
+                          maxw
+                          ids
+                          id-count
+                          weight))
+                      (compiler-reg-call-hole-max-weight-var!
+                        maxw
+                        (live.compiler-live-instr-def-var instr)
+                        weight)))
+                  (set! i (+ i 1)))))])
+        (set! index (+ index 1))))))
+
+;; Kind-0 clobbers that are not their block's terminator. A tail call IS a
+;; terminator -- nothing is live after it and control never returns -- so this
+;; is also exactly the subset of kind 0 that the greedy's kind-6 `call-points`
+;; set can hold, and the only subset a `Mov V <- S_V` could legally follow.
+(define (compiler-reg-call-hole-interior-clobbers
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref seq index)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (let
+                [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+                [last : i64 (- instrs.len 1)]
+                [i : i64 0]
+                (while (< i last)
+                  (begin
+                    (if (compiler-reg-clobber-instr-kind?
+                      type-segment-bases
+                      (array-ref slots i)
+                      0)
+                      (set! total (+ total 1))
+                      unit)
+                    (set! i (+ i 1)))))])
+          (set! index (+ index 1))))
+      total)))
+
+;; Charge `charge` to every eligible value live THROUGH this clobber and report
+;; how many there were. "Live through" is edge-precise: live AFTER the
+;; instruction and not defined BY it -- a value live after a point it does not
+;; define was necessarily live before it, so the two tests are the whole
+;; condition. Every IR instruction defines at most one var
+;; (`compiler-live-instr-defs` is a singleton of `compiler-live-instr-def-var`),
+;; so the def test is one comparison and no set is built.
+;; Charge one crossing to every eligible value live THROUGH this clobber, at
+;; exactly the price the rewrite will pay: a store AND a reload the first time,
+;; a reload alone whenever the store is elided because the carrier already holds
+;; the value on this straight-line path. `valid` is the same per-block flag array
+;; the rewrite keeps, driven by the same rules, so the estimate is not an
+;; approximation of the rewrite -- it is the rewrite's own bookkeeping run ahead
+;; of time. The shape this matters for is a run of consecutive calls with no
+;; intervening def (a marshalling sequence), where the naive `2 * W` per crossing
+;; would nearly double the true cost.
+(define (compiler-reg-call-hole-charge-live-through!
+  [live-after : live.CompilerLiveI64Set]
+  [def-var : i64]
+  [vars : i64]
+  [weight : i64]
+  [flags : (__tl_dyn-array bool)]
+  [cost : (__tl_dyn-array i64)]
+  [max-clobber : (__tl_dyn-array i64)]
+  [valid : (__tl_dyn-array bool)]) : i64
+  (let
+    [words : i64 (live.compiler-live-set-word-count live-after)]
+    [word : i64 0]
+    [found : i64 0]
+    (begin
+      (while (< word words)
+        (begin
+          (let
+            [bits : i64
+              (live.compiler-live-set-word-at-bounded live-after word)]
+            [base : i64 (* word (live.compiler-live-set-word-bits))]
+            (while (not (= bits 0))
+              (begin
+                (let
+                  [var : i64 (+ base (compiler-reg-low-bit-index32 bits))]
+                  (if (and
+                    (< var vars)
+                    (array-ref flags var)
+                    (not (= var def-var)))
+                    (begin
+                      (set!
+                        (array-ref cost var)
+                        (+
+                          (array-ref cost var)
+                          (if (array-ref valid var)
+                            weight
+                            (* 2 weight))))
+                      (set! (array-ref valid var) true)
+                      (compiler-reg-call-hole-max-weight-var!
+                        max-clobber
+                        var
+                        weight)
+                      (set! found (+ found 1)))
+                    unit))
+                (set! bits (bit-and bits (- bits 1))))))
+          (set! word (+ word 1))))
+      found)))
+
+(define (compiler-reg-call-hole-clear-valid! [valid : (__tl_dyn-array bool)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (array-length valid))
+      (begin
+        (set! (array-ref valid index) false)
+        (set! index (+ index 1))))))
+
+;; cost(V) = sum over kind-0 clobber points c that V spans of 2 * W(block(c)) --
+;; one store and one reload per crossing. Returns the total number of
+;; (value, clobber) crossings found, so a function with none skips the rest.
+(define (compiler-reg-call-hole-scan-spans!
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [weights : (__tl_dyn-array i64)]
+  [flags : (__tl_dyn-array bool)]
+  [cost : (__tl_dyn-array i64)]
+  [max-clobber : (__tl_dyn-array i64)]
+  [valid : (__tl_dyn-array bool)]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [vars : i64 (array-length flags)]
+    [index : i64 0]
+    [spans : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref seq index)
+            [(ir.CompilerIrBlock.Block label instrs)
+              (match (live.compiler-live-function-find-block liveness label)
+                [(live.CompilerLiveMaybeBlock.No) unit]
+                [(live.CompilerLiveMaybeBlock.Some live-block)
+                  (let
+                    [after : live.CompilerLiveInstrSetVec
+                      (live.compiler-live-block-instr-after live-block)]
+                    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+                    [last : i64 (- instrs.len 1)]
+                    [weight : i64 (array-ref weights index)]
+                    [i : i64 0]
+                    (begin
+                      ;; Carrier validity is a straight-line claim: it starts
+                      ;; false at every block entry, exactly as in the rewrite.
+                      (compiler-reg-call-hole-clear-valid! valid)
+                      (while (< i last)
+                        (begin
+                          (let
+                            [instr : ir.CompilerIrInstr (array-ref slots i)]
+                            [def-var : i64
+                              (live.compiler-live-instr-def-var instr)]
+                            (begin
+                              (if (compiler-reg-clobber-instr-kind?
+                                type-segment-bases
+                                instr
+                                0)
+                                (set!
+                                  spans
+                                  (+
+                                    spans
+                                    (compiler-reg-call-hole-charge-live-through!
+                                      (live.compiler-live-instr-set-vec-nth
+                                        after
+                                        i)
+                                      def-var
+                                      vars
+                                      weight
+                                      flags
+                                      cost
+                                      max-clobber
+                                      valid)))
+                                unit)
+                              ;; A def of the value invalidates the carrier, so
+                              ;; the next crossing pays for a store again.
+                              (if (and (>= def-var 0) (< def-var vars))
+                                (set! (array-ref valid def-var) false)
+                                unit)))
+                          (set! i (+ i 1))))))])])
+          (set! index (+ index 1))))
+      spans)))
+
+;; Two conditions, and the second is what makes the round a relocation rather
+;; than a gamble.
+;;
+;;   * benefit > cost: V is referenced more, weighted by block frequency, than
+;;     the boundary pairs the split would add.
+;;   * the hottest block V CROSSES A CALL in is strictly colder than the hottest
+;;     block that REFERENCES V.
+;;
+;; Without the second, the round fires on values whose refs and whose call
+;; crossings sit in the same loop -- and there the trade is a wash by
+;; construction (one reload removed per ref, one store and one reload added per
+;; crossing), so any error in either estimate decides it. Two measured cases
+;; landed on the wrong side of that wash: intern_table's `it-intern-slice`,
+;; whose probe-loop value crosses the in-loop `it-slice-eq?` call (+3.57M Ir),
+;; and cfg_domloops/peephole_lines with the same shape. Requiring the crossing
+;; block to be at least one loop level colder makes the relocation downhill: the
+;; weight ratio is 8 per level, so no plausible error in the per-crossing
+;; instruction estimate can flip the comparison. It is also exactly the shape
+;; the mechanism exists for -- LLVM's greedy keeps the value in a caller-saved
+;; register in the HOT region and pays the memory only at the COLD call.
+(define (compiler-reg-call-hole-qualifies?
+  [flags : (__tl_dyn-array bool)]
+  [dropped : (__tl_dyn-array bool)]
+  [benefit : (__tl_dyn-array i64)]
+  [cost : (__tl_dyn-array i64)]
+  [max-ref : (__tl_dyn-array i64)]
+  [max-clobber : (__tl_dyn-array i64)]
+  [var : i64]) : bool
+  (and
+    (array-ref flags var)
+    (not (array-ref dropped var))
+    (> (array-ref cost var) 0)
+    (> (array-ref benefit var) (array-ref cost var))
+    (< (array-ref max-clobber var) (array-ref max-ref var))))
+
+;; Select every value whose benefit strictly exceeds its split cost. When more
+;; than the per-function cap qualify, keep the richest margins; the survivors
+;; are then listed in ascending var order, so carrier ids are a deterministic
+;; function of the input function and not of the ranking walk.
+(define (compiler-reg-call-hole-select!
+  [vars : i64]
+  [flags : (__tl_dyn-array bool)]
+  [dropped : (__tl_dyn-array bool)]
+  [benefit : (__tl_dyn-array i64)]
+  [cost : (__tl_dyn-array i64)]
+  [max-ref : (__tl_dyn-array i64)]
+  [max-clobber : (__tl_dyn-array i64)]
+  [picked : (__tl_dyn-array bool)]
+  [selected : (__tl_dyn-array i64)]) : i64
+  (let
+    [cap : i64 (compiler-reg-call-hole-max-selected)]
+    [var : i64 0]
+    [total : i64 0]
+    [out : i64 0]
+    (begin
+      (while (< var vars)
+        (begin
+          (set! (array-ref picked var) false)
+          (if (compiler-reg-call-hole-qualifies?
+            flags
+            dropped
+            benefit
+            cost
+            max-ref
+            max-clobber
+            var)
+            (set! total (+ total 1))
+            unit)
+          (set! var (+ var 1))))
+      (if (= total 0)
+        0
+        (begin
+          (if (<= total cap)
+            (let
+              [v : i64 0]
+              (while (< v vars)
+                (begin
+                  (if (compiler-reg-call-hole-qualifies?
+                    flags
+                    dropped
+                    benefit
+                    cost
+                    max-ref
+                    max-clobber
+                    v)
+                    (set! (array-ref picked v) true)
+                    unit)
+                  (set! v (+ v 1)))))
+            (let
+              [round : i64 0]
+              (while (< round cap)
+                (begin
+                  (compiler-reg-call-hole-pick-richest!
+                    vars
+                    flags
+                    dropped
+                    benefit
+                    cost
+                    max-ref
+                    max-clobber
+                    picked)
+                  (set! round (+ round 1))))))
+          (set! var 0)
+          (while (< var vars)
+            (begin
+              (if (array-ref picked var)
+                (begin
+                  (set! (array-ref selected out) var)
+                  (set! out (+ out 1)))
+                unit)
+              (set! var (+ var 1))))
+          out)))))
+
+(define (compiler-reg-call-hole-pick-richest!
+  [vars : i64]
+  [flags : (__tl_dyn-array bool)]
+  [dropped : (__tl_dyn-array bool)]
+  [benefit : (__tl_dyn-array i64)]
+  [cost : (__tl_dyn-array i64)]
+  [max-ref : (__tl_dyn-array i64)]
+  [max-clobber : (__tl_dyn-array i64)]
+  [picked : (__tl_dyn-array bool)]) : unit
+  (let
+    [best : i64 (- 0 1)]
+    [best-margin : i64 0]
+    [var : i64 0]
+    (begin
+      (while (< var vars)
+        (begin
+          (if (and
+            (not (array-ref picked var))
+            (compiler-reg-call-hole-qualifies?
+              flags
+              dropped
+              benefit
+              cost
+              max-ref
+              max-clobber
+              var))
+            (let
+              [margin : i64 (- (array-ref benefit var) (array-ref cost var))]
+              (if (or (< best 0) (> margin best-margin))
+                (begin
+                  (set! best var)
+                  (set! best-margin margin))
+                unit))
+            unit)
+          (set! var (+ var 1))))
+      (if (>= best 0)
+        (set! (array-ref picked best) true)
+        unit))))
+
+(define (compiler-reg-call-hole-reset-valid!
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [valid : (__tl_dyn-array bool)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index selected-count)
+      (begin
+        (set! (array-ref valid (array-ref selected index)) false)
+        (set! index (+ index 1))))))
+
+;; A def of V invalidates the claim that S_V still holds V. The reload
+;; `Mov V <- S_V` this pass emits is a def of V too, but it writes exactly what
+;; S_V holds, so the emitter below deliberately does not run this on its own
+;; reloads.
+(define (compiler-reg-call-hole-invalidate!
+  [def-var : i64]
+  [carrier : (__tl_dyn-array i64)]
+  [valid : (__tl_dyn-array bool)]) : unit
+  (if (and
+    (>= def-var 0)
+    (< def-var (array-length carrier))
+    (>= (array-ref carrier def-var) 0))
+    (set! (array-ref valid def-var) false)
+    unit))
+
+(define (compiler-reg-call-hole-rewrite-block
+  [type-segment-bases : i64]
+  [block : ir.CompilerIrBlock]
+  [liveness : live.CompilerFunctionLiveness]
+  [type-info : CompilerRegVarTypes]
+  [carrier : (__tl_dyn-array i64)]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [valid : (__tl_dyn-array bool)]) : ir.CompilerIrBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (match (live.compiler-live-function-find-block liveness label)
+        [(live.CompilerLiveMaybeBlock.No) block]
+        [(live.CompilerLiveMaybeBlock.Some live-block)
+          (let
+            [after : live.CompilerLiveInstrSetVec
+              (live.compiler-live-block-instr-after live-block)]
+            [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+            [count : i64 instrs.len]
+            [last : i64 (- count 1)]
+            [builder : ir.CompilerIrInstrBuilder
+              (ir.compiler-ir-instr-builder-with-capacity count)]
+            [index : i64 0]
+            (begin
+              ;; "S_V valid" starts false at every block entry: the elision is a
+              ;; straight-line claim and this pass proves nothing across edges.
+              (compiler-reg-call-hole-reset-valid!
+                selected
+                selected-count
+                valid)
+              (while (< index count)
+                (begin
+                  (let
+                    [instr : ir.CompilerIrInstr (array-ref slots index)]
+                    [def-var : i64 (live.compiler-live-instr-def-var instr)]
+                    (if (and
+                      (< index last)
+                      (compiler-reg-clobber-instr-kind?
+                        type-segment-bases
+                        instr
+                        0))
+                      (let
+                        [live-after : live.CompilerLiveI64Set
+                          (live.compiler-live-instr-set-vec-nth after index)]
+                        [j : i64 0]
+                        (begin
+                          (while (< j selected-count)
+                            (begin
+                              (let
+                                [var : i64 (array-ref selected j)]
+                                (if (and
+                                  (not (= var def-var))
+                                  (not (array-ref valid var))
+                                  (live.compiler-live-set-contains?
+                                    live-after
+                                    var))
+                                  (match (compiler-reg-var-types-lookup
+                                    type-info
+                                    var)
+                                    [(CompilerRegMaybeType.No) unit]
+                                    [(CompilerRegMaybeType.Some ty)
+                                      (begin
+                                        (ir.compiler-ir-instr-builder-push!
+                                          (&mut builder)
+                                          (compiler-reg-carrier-store-mov
+                                            (array-ref carrier var)
+                                            var
+                                            ty))
+                                        (set! (array-ref valid var) true))])
+                                  unit))
+                              (set! j (+ j 1))))
+                          (ir.compiler-ir-instr-builder-push!
+                            (&mut builder)
+                            instr)
+                          (compiler-reg-call-hole-invalidate!
+                            def-var
+                            carrier
+                            valid)
+                          (set! j 0)
+                          (while (< j selected-count)
+                            (begin
+                              (let
+                                [var : i64 (array-ref selected j)]
+                                (if (and
+                                  (not (= var def-var))
+                                  (live.compiler-live-set-contains?
+                                    live-after
+                                    var))
+                                  (match (compiler-reg-var-types-lookup
+                                    type-info
+                                    var)
+                                    [(CompilerRegMaybeType.No) unit]
+                                    [(CompilerRegMaybeType.Some ty)
+                                      (ir.compiler-ir-instr-builder-push!
+                                        (&mut builder)
+                                        (compiler-reg-carrier-reload-mov
+                                          var
+                                          (array-ref carrier var)
+                                          ty))])
+                                  unit))
+                              (set! j (+ j 1))))))
+                      (begin
+                        (ir.compiler-ir-instr-builder-push!
+                          (&mut builder)
+                          instr)
+                        (compiler-reg-call-hole-invalidate!
+                          def-var
+                          carrier
+                          valid))))
+                  (set! index (+ index 1))))
+              (ir.CompilerIrBlock.Block
+                label
+                (ir.compiler-ir-instr-builder-to-seq builder))))])]))
+
+(define (compiler-reg-call-hole-rewrite-blocks
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [type-info : CompilerRegVarTypes]
+  [carrier : (__tl_dyn-array i64)]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [valid : (__tl_dyn-array bool)]) : ir.CompilerIrBlockList
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [out : (__tl_dyn-array ir.CompilerIrBlock)
+      (array.make-array ir.CompilerIrBlock count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref out index)
+            (compiler-reg-call-hole-rewrite-block
+              type-segment-bases
+              (ir.compiler-ir-block-seq-ref seq index)
+              liveness
+              type-info
+              carrier
+              selected
+              selected-count
+              valid))
+          (set! index (+ index 1))))
+      (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq out count)))))
+
+(define (compiler-reg-call-hole-register-homed?
+  [assignments : CompilerRegAssignmentTable]
+  [var : i64]) : bool
+  (match (compiler-reg-assignment-lookup assignments var)
+    [(CompilerRegMaybeLocation.No) false]
+    [(CompilerRegMaybeLocation.Some location)
+      (match location
+        [(CompilerRegLocation.Register _) true]
+        [(CompilerRegLocation.RegisterPair _ _) true]
+        ;; A rematerialised value is recomputed at each use and has no spill
+        ;; store at all, so the split achieved what it was selected for.
+        [(CompilerRegLocation.Remat _) true]
+        [(CompilerRegLocation.Spill _) false])]))
+
+;; Drop every selection the replan still put in memory: its movs would be pure
+;; overhead. Reports how many were dropped, so the caller knows whether to retry.
+(define (compiler-reg-call-hole-drop-still-spilled!
+  [plan : CompilerRegPlan]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [dropped : (__tl_dyn-array bool)]) : i64
+  (let
+    [assignments : CompilerRegAssignmentTable
+      (compiler-reg-plan-assignments plan)]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index selected-count)
+        (begin
+          (let
+            [var : i64 (array-ref selected index)]
+            (if (compiler-reg-call-hole-register-homed? assignments var)
+              unit
+              (begin
+                (set! (array-ref dropped var) true)
+                (set! count (+ count 1)))))
+          (set! index (+ index 1))))
+      count)))
+
+;; Estimated cost of a plan on its own function: the block-weighted count of
+;; every reference to a value the plan leaves in MEMORY. Both a Spill home and a
+;; missing assignment mean memory (the planner never admits the values it holds
+;; ineligible), and the carriers are in the second class, so a rewritten plan
+;; pays for its own store/reload movs here without a separate term.
+(define (compiler-reg-call-hole-plan-cost
+  [seq : ir.CompilerIrBlockSeq]
+  [weights : (__tl_dyn-array i64)]
+  [vars : i64]
+  [plan : CompilerRegPlan]) : i64
+  (let
+    [refs : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [assignments : CompilerRegAssignmentTable
+      (compiler-reg-plan-assignments plan)]
+    [total : i64 0]
+    [var : i64 0]
+    (begin
+      (compiler-reg-call-hole-ref-weights! refs seq weights)
+      (while (< var vars)
+        (begin
+          (if (compiler-reg-call-hole-register-homed? assignments var)
+            unit
+            (set! total (+ total (array-ref refs var))))
+          (set! var (+ var 1))))
+      total)))
+
+(defstruct CompilerRegCallHoleContext
+  (type-segment-bases i64)
+  (target-abi cabi.CompilerRegTargetAbi)
+  (func ir.CompilerIrFunction)
+  (seq ir.CompilerIrBlockSeq)
+  (liveness live.CompilerFunctionLiveness)
+  (type-info CompilerRegVarTypes)
+  (plan CompilerRegPlan)
+  (vars i64)
+  (temp-start i64)
+  ;; Candidate ids stop below this, new carriers start at `vars`, and the replan
+  ;; forces everything from here up into memory -- one threshold over both
+  ;; carrier families (see the header comment).
+  (threshold i64)
+  (base-cost i64)
+  (weights (__tl_dyn-array i64))
+  (benefit (__tl_dyn-array i64))
+  (cost (__tl_dyn-array i64))
+  (max-ref (__tl_dyn-array i64))
+  (max-clobber (__tl_dyn-array i64))
+  (flags (__tl_dyn-array bool)))
+
+(define (compiler-reg-call-hole-assign-carriers!
+  [carrier : (__tl_dyn-array i64)]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [vars : i64]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (compiler-reg-fill-i64-array carrier (- 0 1))
+      (while (< index selected-count)
+        (begin
+          (set! (array-ref carrier (array-ref selected index)) (+ vars index))
+          (set! index (+ index 1)))))))
+
+(define (compiler-reg-call-hole-split-round
+  [ctx : CompilerRegCallHoleContext]
+  [dropped : (__tl_dyn-array bool)]
+  [picked : (__tl_dyn-array bool)]
+  [carrier : (__tl_dyn-array i64)]
+  [valid : (__tl_dyn-array bool)]
+  [selected : (__tl_dyn-array i64)]
+  [round : i64]) : CompilerRegCallHoleSplit
+  (let
+    [none : CompilerRegCallHoleSplit
+      (compiler-reg-call-hole-split-none
+        ctx.func
+        ctx.vars
+        ctx.plan
+        ctx.type-info
+        ctx.temp-start)]
+    (if (>= round (compiler-reg-call-hole-max-rounds))
+      none
+      (let
+        [selected-count : i64
+          (compiler-reg-call-hole-select!
+            ctx.vars
+            ctx.flags
+            dropped
+            ctx.benefit
+            ctx.cost
+            ctx.max-ref
+            ctx.max-clobber
+            picked
+            selected)]
+        (if (= selected-count 0)
+          none
+          (match ctx.func
+            [(ir.CompilerIrFunction.Function name params ret-ty _ _)
+              (let
+                [_carriers : unit
+                  (compiler-reg-call-hole-assign-carriers!
+                    carrier
+                    selected
+                    selected-count
+                    ctx.vars)]
+                [split-blocks : ir.CompilerIrBlockList
+                  (compiler-reg-call-hole-rewrite-blocks
+                    ctx.type-segment-bases
+                    ctx.seq
+                    ctx.liveness
+                    ctx.type-info
+                    carrier
+                    selected
+                    selected-count
+                    valid)]
+                [split-vars : i64 (+ ctx.vars selected-count)]
+                [split-func : ir.CompilerIrFunction
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    split-vars
+                    split-blocks)]
+                [split-types : CompilerRegVarTypes
+                  (compiler-reg-function-var-types-with-representations
+                    split-func
+                    ctx.type-info.representations)]
+                [split-plan
+                  : CompilerRegPlan
+                  ;; `cold-split?` is FALSE and never observed: cycle 20's
+                  ;; rewrite only fires on a function with EXACTLY ONE kind-0
+                  ;; clobber and carries every value that was live through it,
+                  ;; so in such a function this round finds no live-through
+                  ;; value at the single interior clobber and has already
+                  ;; declined at `spans`. The two rewrites therefore never
+                  ;; produce a plan together, and the conservative reading is
+                  ;; the one to pass -- the claim it relaxes (no clobber
+                  ;; constrains the param ABI pins) is one this round, which
+                  ;; leaves every call in place, could not make on its own.
+                  (compiler-reg-plan-function-scalar-forced-spill-with-types
+                    ctx.type-segment-bases
+                    ctx.target-abi
+                    split-func
+                    ctx.threshold
+                    false
+                    split-types
+                    (compiler-reg-assignment-table-empty))]
+                [still-spilled : i64
+                  (compiler-reg-call-hole-drop-still-spilled!
+                    split-plan
+                    selected
+                    selected-count
+                    dropped)]
+                (if (> still-spilled 0)
+                  (compiler-reg-call-hole-split-round
+                    ctx
+                    dropped
+                    picked
+                    carrier
+                    valid
+                    selected
+                    (+ round 1))
+                  ;; The rewrite preserves the CFG exactly (only straight-line
+                  ;; movs are inserted), so the block weights are the same array.
+                  (if (<
+                    (compiler-reg-call-hole-plan-cost
+                      (live.compiler-live-ir-block-list-to-seq split-blocks)
+                      ctx.weights
+                      split-vars
+                      split-plan)
+                    ctx.base-cost)
+                    (CompilerRegCallHoleSplit.Split
+                      split-func
+                      split-vars
+                      split-plan
+                      split-types
+                      ctx.threshold)
+                    none)))]))))))
+
+;; The whole round: candidates from the initial plan, the weighted
+;; benefit/cost comparison, the IR rewrite, the replan, and the two structural
+;; refusals (still-spilled selections and a plan that did not get cheaper).
+(define (compiler-reg-call-hole-split-rewrite-function
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]
+  [temp-start : i64]) : CompilerRegCallHoleSplit
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      (let
+        [none : CompilerRegCallHoleSplit
+          (compiler-reg-call-hole-split-none
+            func
+            vars
+            plan
+            type-info
+            temp-start)]
+        [threshold : i64
+          (if (>= temp-start 0)
+            temp-start
+            vars)]
+        (if (or
+          (< threshold 1)
+          (not
+            (compiler-reg-assignment-table-has-spill?
+              (compiler-reg-plan-assignments plan))))
+          none
+          (let
+            [seq : ir.CompilerIrBlockSeq
+              (live.compiler-live-ir-block-list-to-seq blocks)]
+            (if (=
+              (compiler-reg-call-hole-interior-clobbers type-segment-bases seq)
+              0)
+              none
+              (let
+                [flags : (__tl_dyn-array bool) (array.make-array bool vars)]
+                [eligible : i64
+                  (compiler-reg-call-hole-mark-eligible!
+                    type-segment-bases
+                    type-info
+                    (compiler-reg-plan-assignments plan)
+                    (compiler-reg-ineligible-vars-non-params
+                      type-segment-bases
+                      func
+                      type-info
+                      target-abi)
+                    threshold
+                    flags)]
+                (if (= eligible 0)
+                  none
+                  (let
+                    [weights : (__tl_dyn-array i64)
+                      (compiler-reg-call-hole-block-weights blocks)]
+                    [benefit : (__tl_dyn-array i64) (array.make-array i64 vars)]
+                    [cost : (__tl_dyn-array i64) (array.make-array i64 vars)]
+                    [max-ref : (__tl_dyn-array i64) (array.make-array i64 vars)]
+                    [max-clobber : (__tl_dyn-array i64)
+                      (array.make-array i64 vars)]
+                    ;; Edge-precise liveness: a phi's inputs belong to their own
+                    ;; predecessor edges, so a loop's back-edge input is not
+                    ;; reported live across a preheader call it never reaches.
+                    [liveness : live.CompilerFunctionLiveness
+                      (live.compiler-live-analyze-function-edge-precise func)]
+                    [_benefit-walk : unit
+                      (compiler-reg-call-hole-ref-weights! benefit seq weights)]
+                    [_max-ref-walk : unit
+                      (compiler-reg-call-hole-max-ref-weights!
+                        max-ref
+                        seq
+                        weights)]
+                    [spans : i64
+                      (compiler-reg-call-hole-scan-spans!
+                        type-segment-bases
+                        seq
+                        liveness
+                        weights
+                        flags
+                        cost
+                        max-clobber
+                        (array.make-array bool vars))]
+                    (if (= spans 0)
+                      none
+                      (compiler-reg-call-hole-split-round
+                        (CompilerRegCallHoleContext
+                          type-segment-bases
+                          target-abi
+                          func
+                          seq
+                          liveness
+                          type-info
+                          plan
+                          vars
+                          temp-start
+                          threshold
+                          (compiler-reg-call-hole-plan-cost
+                            seq
+                            weights
+                            vars
+                            plan)
+                          weights
+                          benefit
+                          cost
+                          max-ref
+                          max-clobber
+                          flags)
+                        (array.make-array bool vars)
+                        (array.make-array bool vars)
+                        (array.make-array i64 vars)
+                        (array.make-array bool vars)
+                        (array.make-array
+                          i64
+                          (compiler-reg-call-hole-max-selected))
+                        0)))))))))]))
 
 (define (compiler-reg-call-region-root
   [parents : (__tl_dyn-array i64)]
@@ -27290,8 +28556,12 @@
             ;; what it read before the EP switch. The cold-split plan's
             ;; allocation index is edge-precise at both levels, exactly what
             ;; it fed this gate before, so it keeps that same object.
+            ;; Keyed on the cold-split CLAIM and not on the threshold: the
+            ;; call-hole split also forces a carrier range to memory, but its
+            ;; function still contains every one of its calls, so it must keep
+            ;; the conservative index this gate is specified against.
             [cons-index : CompilerRegIntervalIndex
-              (if (>= forced-spill-from 0)
+              (if ignore-single-cold-call?
                 interval-index
                 (match (compiler-reg-live-interval-selection
                   func
@@ -28122,6 +29392,31 @@
   [forced-spill-from : i64]
   [type-info : CompilerRegVarTypes]
   [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
+  (compiler-reg-plan-function-scalar-forced-spill-with-types
+    type-segment-bases
+    target-abi
+    func
+    forced-spill-from
+    (>= forced-spill-from 0)
+    type-info
+    forced-assignments))
+
+;; Plan `func` with every variable from `forced-spill-from` up forced into
+;; memory. `cold-split?` is a SEPARATE claim and not a consequence of that
+;; threshold: it says the function's only kind-0 clobber has been carried away
+;; by cycle 20's cold-call rewrite, which is what lets the param ABI-pin gate
+;; below ignore the clobber set entirely and lets the same-value coalescing gate
+;; read the edge-precise index. The call-hole split mints its carriers in a
+;; function that still contains every one of its calls, so it forces them to
+;; memory with `cold-split?` FALSE and both gates keep their real inputs.
+(define (compiler-reg-plan-function-scalar-forced-spill-with-types
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [forced-spill-from : i64]
+  [cold-split? : bool]
+  [type-info : CompilerRegVarTypes]
+  [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
   (let
     [liveness-handle : CompilerRegLivenessHandle
       (compiler-reg-liveness-handle-make func true)]
@@ -28177,7 +29472,7 @@
               interval-index.ends
               (- vars 1)
               (compiler-reg-interval-seq-empty))]
-          [cold-split? : bool (>= forced-spill-from 0)]
+          [forced-spill? : bool (>= forced-spill-from 0)]
           [base-ineligible : live.CompilerLiveI64Set
             (let
               [base : live.CompilerLiveI64Set
@@ -28186,7 +29481,7 @@
                   func
                   type-info
                   target-abi)]
-              (if cold-split?
+              (if forced-spill?
                 (compiler-reg-live-set-insert-range base forced-spill-from vars)
                 base))]
           [param-plan : CompilerRegParamAssignPlan

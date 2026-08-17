@@ -67370,6 +67370,58 @@
                 fn-abi
                 walk-func
                 program-index.representations)))]
+        ;; Did cycle 20's cold-call rewrite fire? That is the claim that this
+        ;; function's ONLY kind-0 clobber was carried away, which is what lets a
+        ;; replan below tell the param ABI-pin gate to ignore the clobber set.
+        ;; The call-hole round below also mints forced-to-memory carriers, but it
+        ;; leaves every call in place, so the two must not be conflated.
+        [cold-call-split? : bool (>= cold-call-temp-start 0)]
+        ;; P3: a GP value whose interval spans a call is callee-saved-only in the
+        ;; greedy and, once those six are taken, is spilled for its WHOLE
+        ;; interval -- every use, including the ones in the hot loop, becomes
+        ;; frame traffic. Split such a value's range AROUND each call it is live
+        ;; through (store to a stack-only carrier before, reload after) and
+        ;; REPLAN, so the pieces are ordinary caller-saved candidates. The round
+        ;; declines unless the replan actually registerises the selections and
+        ;; the replanned function's estimated cost is strictly lower, so it can
+        ;; only ever remove frame traffic.
+        [call-hole-split : compiler_regalloc.CompilerRegCallHoleSplit
+          (if scalar-plan?
+            (compiler_regalloc.compiler-reg-call-hole-split-rewrite-function
+              type-segment-bases
+              fn-abi
+              walk-func
+              walk-types
+              reg-plan
+              cold-call-temp-start)
+            (compiler_regalloc.compiler-reg-call-hole-split-none
+              walk-func
+              walk-vars
+              reg-plan
+              walk-types
+              cold-call-temp-start))]
+        ;; Everything downstream of the initial plan consumes the SPLIT view:
+        ;; the leaf-CSR round, its replan, the carrier self-check, the
+        ;; caller-save/loop-split/remat rewrites, storage coloring and emission.
+        ;; When the round declines, these are the pre-split values unchanged.
+        [split-func : compiler_ir_types.CompilerIrFunction
+          (compiler_regalloc.compiler-reg-call-hole-split-function
+            call-hole-split)]
+        [split-blocks : compiler_ir_types.CompilerIrBlockList
+          (compiler_regalloc.compiler-reg-call-hole-split-blocks
+            call-hole-split)]
+        [split-vars : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-vars call-hole-split)]
+        [split-types : compiler_regalloc.CompilerRegVarTypes
+          (compiler_regalloc.compiler-reg-call-hole-split-types call-hole-split)]
+        [split-reg-plan : compiler_regalloc.CompilerRegPlan
+          (compiler_regalloc.compiler-reg-call-hole-split-plan call-hole-split)]
+        ;; One forced-spill threshold over BOTH carrier families: the cold-call
+        ;; carriers occupy [cold-call-temp-start, walk-vars) and the call-hole
+        ;; carriers [walk-vars, split-vars), contiguously.
+        [split-temp-start : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-temp-start
+            call-hole-split)]
         ;; A call-free natural loop can leave one volatile register dead before
         ;; the loop and another dead inside it while the whole-range greedy pays
         ;; for a callee-saved home. Detect that shape against the initial plan,
@@ -67382,15 +67434,15 @@
             (compiler_regalloc.compiler-reg-leaf-csr-split-rewrite-one
               type-segment-bases
               fn-abi
-              walk-func
-              blocks
-              walk-vars
-              walk-types
-              reg-plan)
+              split-func
+              split-blocks
+              split-vars
+              split-types
+              split-reg-plan)
             (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-              blocks
-              walk-vars
-              walk-vars
+              split-blocks
+              split-vars
+              split-vars
               (compiler_regalloc.compiler-reg-assignment-table-empty)
               (compiler_regalloc.compiler-reg-var-types-empty)))]
         [alloc-blocks : compiler_ir_types.CompilerIrBlockList
@@ -67419,8 +67471,8 @@
             alloc-vars
             alloc-blocks)]
         [alloc-types : compiler_regalloc.CompilerRegVarTypes
-          (if (= alloc-vars walk-vars)
-            walk-types
+          (if (= alloc-vars split-vars)
+            split-types
             (compiler_regalloc.compiler-reg-function-var-types alloc-func))]
         [alloc-preassignments : compiler_regalloc.CompilerRegAssignmentTable
           (match leaf-csr-rewrite
@@ -67432,31 +67484,41 @@
                 _)
               assignments])]
         [raw-alloc-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (= alloc-vars walk-vars)
-            reg-plan
-            (compiler_regalloc.compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-preassignments
+          (if (= alloc-vars split-vars)
+            split-reg-plan
+            ;; The leaf-CSR round only admits functions with NO kind-0 clobber
+            ;; and the call-hole round only fires on functions that have one, so
+            ;; this replan never sees call-hole carriers -- but it still forces
+            ;; whatever carrier range exists to memory, and it passes the
+            ;; cold-call CLAIM separately from that threshold.
+            (compiler_regalloc.compiler-reg-plan-function-scalar-forced-spill-with-types
               type-segment-bases
               fn-abi
               alloc-func
-              cold-call-temp-start
+              split-temp-start
+              cold-call-split?
               alloc-types
               alloc-preassignments))]
         [alloc-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (= alloc-vars walk-vars)
+          (if (= alloc-vars split-vars)
             raw-alloc-reg-plan
             (compiler_regalloc.compiler-reg-plan-hide-leaf-csr-phantoms
               raw-alloc-reg-plan
               alloc-preassignments
-              walk-vars))]
+              split-vars))]
         [_cold-call-self-check : unit
           (cfg
             scavenge-self-check
+            ;; Covers BOTH carrier families: `split-temp-start` is the low
+            ;; watermark of the cold-call carriers when that rewrite fired and of
+            ;; the call-hole carriers otherwise, and the two ranges are
+            ;; contiguous, so one scan to `alloc-vars` checks every carrier.
             (if (compiler_regalloc.compiler-reg-cold-call-carriers-stack?
               alloc-reg-plan
-              cold-call-temp-start
+              split-temp-start
               alloc-vars)
               unit
-              (io.panic "regalloc: cold-call carrier escaped its stack home"))
+              (io.panic "regalloc: split carrier escaped its stack home"))
             unit)]
         [call-save-enabled : bool
           (if (compiler-backend-mode-scalar? mode)

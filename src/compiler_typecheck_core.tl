@@ -84459,7 +84459,7 @@
     0
     0
     0
-    8
+    7
     0
     0
     0
@@ -85685,8 +85685,11 @@
 ;; 432 arenas and retained 106,558,504 non-output bytes, while batch 8 used
 ;; 1,728 arenas and retained 77,175,304 bytes without a work regression. Batch
 ;; 1 retained only 27,169,064 bytes, but paid 13,820 arena pairs and raised
-;; fired-declaration self time by 9.4%. Eight is the measured memory/work knee;
-;; retention is bounded by 2 batches, not by the walk.
+;; fired-declaration self time by 9.4%. Eight was the measured memory/work knee;
+;; after the dependency-TLCI dispatch graph crossed the 25% proportional
+;; retention budget, seven reduced the current selfhost's retained bytes while
+;; staying inside the measured 7..9 cadence band. Retention is bounded by 2
+;; batches, not by the walk.
 ;; Make `next` the live generation and destroy the one retired a batch ago.
 ;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
 ;; flag that disables the virgin-arena zero-fill elision permanently for

@@ -104,7 +104,8 @@
     [(io.ErrIoBool _) false]))
 
 (define (clean-report [dry-run : bool] [path : String]) : unit
-  (io.print-string
+  (io.print-format
+    "{}"
     (str_cat.str-cat
       (if dry-run
         "Would remove: "

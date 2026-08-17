@@ -902,7 +902,7 @@
   (if (>= index (array-length tests))
     (array-length tests)
     (begin
-      (io.print-string (tltest-list-line (array-ref tests index)))
+      (io.print-format "{}" (tltest-list-line (array-ref tests index)))
       (tltest-list-tests-from tests (+ index 1)))))
 
 (define (tltest-list-loaded
@@ -3867,7 +3867,8 @@
         (tltest-cfgs target)))
       [(ResultCompilerTypecheck.Ok _)
         (begin
-          (io.print-string
+          (io.print-format
+            "{}"
             (str_cat.str-cat
               "TypeLisp test typecheck passed: "
               (string.int->string count)
@@ -4193,7 +4194,7 @@
         (tltest-cfgs target)))
       [(ResultCompilerTypecheck.Ok _)
         (begin
-          (io.print-string "TypeLisp test typecheck passed: 0 test(s)\n")
+          (io.print-format "{}" "TypeLisp test typecheck passed: 0 test(s)\n")
           0)]
       [(ResultCompilerTypecheck.Err diag)
         (begin
@@ -4524,7 +4525,7 @@
               (ResultTestPackageTotals.Ok 0 0)
               (ResultTestPackageTotals.Err 1)))
           (begin
-            (io.print-string (tltest-package-source-line source count))
+            (io.print-format "{}" (tltest-package-source-line source count))
             (let
               [status : i64
                 (match test-mode
@@ -4567,7 +4568,7 @@
   [roots : cli_svec.Vec]
   [target : compiler_backend.CompilerBackendTarget]) : ResultTestPackageTotals
   (begin
-    (io.print-string (tltest-package-integration-line source))
+    (io.print-format "{}" (tltest-package-integration-line source))
     (if (tltest-decls-have-main? decls)
       (let
         [legacy-roots : cli_svec.Vec (clone roots)]
@@ -4598,7 +4599,7 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultTestPackageTotals
   (begin
-    (io.print-string (tltest-package-integration-line source))
+    (io.print-format "{}" (tltest-package-integration-line source))
     (if (tltest-decls-have-main? decls)
       (let
         [status : i64
@@ -4631,7 +4632,7 @@
   (if (tltest-package-integration-selected? source)
     (if tltest-list-only
       (begin
-        (io.print-string (str_cat.str-cat source "\n"))
+        (io.print-format "{}" (str_cat.str-cat source "\n"))
         (ResultTestPackageTotals.Ok 1 1))
       (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
         source
@@ -5026,11 +5027,13 @@
   [failed-file-count : i64]) : i64
   (if (= failed-file-count 0)
     (begin
-      (io.print-string
+      (io.print-format
+        "{}"
         (tltest-package-summary-line test-mode file-count test-count))
       0)
     (begin
-      (io.print-string
+      (io.print-format
+        "{}"
         (tltest-package-failed-summary-line
           file-count
           test-count
@@ -5176,7 +5179,7 @@
   (match (tltest-build-harness source decls paths)
     [(InlineHarness.Harness program harness-paths count)
       (begin
-        (io.print-string (tltest-package-source-line source count))
+        (io.print-format "{}" (tltest-package-source-line source count))
         (if tltest-list-only
           (ResultTestFileCheck.Ok (tltest-list-loaded source decls paths))
           (let
@@ -5220,7 +5223,7 @@
   (match (tltest-build-harness source decls paths)
     [(InlineHarness.Harness program harness-paths count)
       (begin
-        (io.print-string (tltest-package-source-line source count))
+        (io.print-format "{}" (tltest-package-source-line source count))
         (let
           [status : i64
             (if (= count 0)
@@ -5367,7 +5370,7 @@
               (set! cursor (+ cursor 1))))))
       (if (= status 0)
         (begin
-          (io.print-string (tltest-batch-summary-line files tests))
+          (io.print-format "{}" (tltest-batch-summary-line files tests))
           0)
         status))))
 
@@ -5482,7 +5485,8 @@
                 (set! cursor (+ cursor 1)))))))
       (if (= fatal-status 0)
         (begin
-          (io.print-string
+          (io.print-format
+            "{}"
             (tltest-batch-run-summary-line files tests failed-files))
           (if (= failed-files 0)
             0
@@ -5540,7 +5544,7 @@
                 (let
                   [count : i64 (tltest-list-loaded source decls paths)]
                   (begin
-                    (io.print-string (tltest-list-summary-line count))
+                    (io.print-format "{}" (tltest-list-summary-line count))
                     0))
                 (match (tltest-build-harness source decls paths)
                   [(InlineHarness.Harness program harness-paths count)

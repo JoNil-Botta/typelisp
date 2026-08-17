@@ -201,7 +201,7 @@ Inline stdlib coverage:
   canonical owner hooks, and ambiguous plain-plus-nominal hook definitions.
   `tests/integration/format_owner_*` covers positive struct/enum/nested hooks,
   multi-type owner modules, same-named types from distinct owners, single
-  evaluation, non-consuming formatting, shared `format`/print dispatch, and
+  evaluation, non-consuming formatting, shared formatter/output dispatch, and
   import-order independence on Linux and Windows.
 - `text_buf.tl` owns inline tests for scoped arena rendering of a program-owned
   text buffer from an inner active arena, empty buffers, repeated appends,

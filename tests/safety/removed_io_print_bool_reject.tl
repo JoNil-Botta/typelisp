@@ -2,6 +2,5 @@
 
 (define (main) : i64
   (begin
-    (io.print-format "{}" 'A')
-    (io.println "")
+    (io.print-bool true)
     0))

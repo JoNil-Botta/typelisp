@@ -62,6 +62,6 @@
   (let
     [result : i64 (run-safe-threading)]
     (begin
-      (io.print-string "safe threading score: ")
-      (io.print result)
+      (io.print-format "{}" "safe threading score: ")
+      (io.println "{}" result)
       result)))

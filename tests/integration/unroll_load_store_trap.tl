@@ -49,7 +49,7 @@
         (begin
           (set! acc (+ (* acc 1000003) (array-ref dst i)))
           (set! i (+ i 1))))
-      (io.print acc)
+      (io.println "{}" acc)
       ;; One element past the destination: the abort must name index `len`.
       (merge! dst src (+ len 1))
       0)))

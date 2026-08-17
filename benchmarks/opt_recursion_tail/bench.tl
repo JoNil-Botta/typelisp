@@ -10,5 +10,5 @@
   (let
     [n : i64 (string.>int (io.arg 1))]
     (begin
-      (io.print (sum-tail n 0))
+      (io.println "{}" (sum-tail n 0))
       0)))

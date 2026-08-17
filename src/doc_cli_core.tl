@@ -58,7 +58,7 @@
   (Err String))
 
 (define (doc-print-wrote [output-path : String]) : unit
-  (io.print-string (str_cat.str-cat "Wrote " output-path "\n")))
+  (io.print-format "{}" (str_cat.str-cat "Wrote " output-path "\n")))
 
 (define (doc-write-text [output-path : String] [contents : String]) : unit
   (io.write-file output-path (byte_buf.str-as-bytes (& contents))))
@@ -309,7 +309,8 @@
       (doc_test.doc-test-run-file-with-roots input-path stdlib-roots)]
     (begin
       (if (doc_test.doc-test-run-report-ok? report)
-        (io.print-string
+        (io.print-format
+          "{}"
           (str_cat.str-cat (doc_test.doc-test-run-report-render report) "\n"))
         (io.print-error (doc_test.doc-test-run-report-render report)))
       (doc_test.doc-test-run-report-status report))))
@@ -586,7 +587,7 @@
       [file-status : i64
         (begin
           (if print-headers
-            (io.print-string (str_cat.str-cat "--- " input-path "\n"))
+            (io.print-format "{}" (str_cat.str-cat "--- " input-path "\n"))
             unit)
           (doc-test-file input-path stdlib-roots))]
       (doc-test-files-from
@@ -616,7 +617,7 @@
       [input-path : String (doc_svec.get (& input-paths) index "")]
       [file-status : i64
         (begin
-          (io.print-string (str_cat.str-cat "--- " input-path "\n"))
+          (io.print-format "{}" (str_cat.str-cat "--- " input-path "\n"))
           (doc-test-file input-path stdlib-roots))]
       (doc-test-package-files-from
         input-paths

@@ -103,5 +103,5 @@
     [len : i64 (string.>int (io.arg 1))]
     [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (io.print (crc-bench len rounds))
+      (io.println "{}" (crc-bench len rounds))
       0)))

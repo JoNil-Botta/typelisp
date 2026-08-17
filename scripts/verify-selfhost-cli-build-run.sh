@@ -1664,7 +1664,7 @@ NEW_BIN_DIR="$SCAFFOLD_ROOT/cli_new_bin"
 assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(kind "bin")'
 assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(entry "src/main.tl")'
 assert_contains scaffold-new-bin-gitignore "$NEW_BIN_DIR/.gitignore" '/target/'
-assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" '(io.print-string "Hello, TypeLisp!\n")'
+assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" '(io.print-format "{}" "Hello, TypeLisp!\n")'
 assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" '(cfg test (import stdlib.test))'
 assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" '(test'
 assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" 'answer-is-42'
@@ -1764,7 +1764,7 @@ assert_contains scaffold-init-bin "$WORKDIR/scaffold-init-bin.out" "scaffold: cr
 [ -f "$INIT_BIN_DIR/.gitignore" ] || fail "init did not write .gitignore"
 assert_contains scaffold-init-bin-gitignore "$INIT_BIN_DIR/.gitignore" '/custom-cache/'
 assert_not_contains scaffold-init-bin-gitignore "$INIT_BIN_DIR/.gitignore" '/target/'
-assert_contains scaffold-init-bin-source "$INIT_BIN_DIR/src/main.tl" '(io.print-string "Hello, TypeLisp!\n")'
+assert_contains scaffold-init-bin-source "$INIT_BIN_DIR/src/main.tl" '(io.print-format "{}" "Hello, TypeLisp!\n")'
 assert_contains scaffold-init-bin-source "$INIT_BIN_DIR/src/main.tl" '(cfg test (import stdlib.test))'
 assert_contains scaffold-init-bin-source "$INIT_BIN_DIR/src/main.tl" 'answer-is-42'
 

@@ -40,8 +40,8 @@
       (EnumTupleArray (Number 5) (tuple 11 4) (array 6 9))]
     [nested : Outer (Outer 2 (Inner (tuple 8 12) (array 3 4 7)) 13)]
     (begin
-      (io.print (cast (tuple-ref pair-value 0) : i64))
-      (io.print (cast (array-ref array-value 2) : i64))
+      (io.println "{}" (cast (tuple-ref pair-value 0) : i64))
+      (io.println "{}" (cast (array-ref array-value 2) : i64))
       (if (and
         (= (marker-value mixed.marker) 5)
         (= (cast (tuple-ref mixed.pair 0) : i64) 11)

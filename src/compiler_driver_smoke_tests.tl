@@ -575,8 +575,10 @@
 
 (define (compiler-driver-reader-context-smoke-fail [message : String]) : bool
   (begin
-    (io.print-string (str_cat.str-cat "driver reader-context smoke: " message))
-    (io.print-string "\n")
+    (io.print-format
+      "{}"
+      (str_cat.str-cat "driver reader-context smoke: " message))
+    (io.print-format "{}" "\n")
     false))
 
 (define (compiler-driver-reader-context-smoke-mirror-intern-state-ok?

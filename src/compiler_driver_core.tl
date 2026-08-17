@@ -5109,7 +5109,7 @@
         (cfg
           compile-profile
           (compiler-driver-profile-finish-total _profile-state))
-        (io.print-string (str_cat.str-cat "Wrote " output-path "\n"))
+        (io.print-format "{}" (str_cat.str-cat "Wrote " output-path "\n"))
         0)]
     [(ResultCompilerDriver.Err diag)
       (begin
@@ -5143,7 +5143,7 @@
             (compiler-driver-profile-finish-total _profile-state))
           (if (= status 0)
             (begin
-              (io.print-string (str_cat.str-cat "Wrote " output-path "\n"))
+              (io.print-format "{}" (str_cat.str-cat "Wrote " output-path "\n"))
               0)
             status)))]
     [(ResultCompilerDriverBuffer.Err diag)
@@ -5183,8 +5183,8 @@
           (cfg
             compile-profile
             (compiler-driver-profile-finish-total _profile-state))
-          (io.print-string (str_cat.str-cat "Wrote " output-path "\n"))
-          (io.print-string (str_cat.str-cat "Wrote " fixups-path "\n"))
+          (io.print-format "{}" (str_cat.str-cat "Wrote " output-path "\n"))
+          (io.print-format "{}" (str_cat.str-cat "Wrote " fixups-path "\n"))
           0))]
     [(ResultCompilerDriverPic.Err diag)
       (begin

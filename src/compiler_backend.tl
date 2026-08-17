@@ -36738,14 +36738,6 @@
 
 (define (compiler-backend-runtime-param-types-id [name-id : i64]) : compiler_ast_types.AstTypeList
   (cond
-    [(cbi.compiler-builtin-backend-tl-print-char-id? name-id)
-      (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.AstType.Char)
-        (compiler_ast_types.ast-type-list-new))]
-    [(cbi.compiler-builtin-backend-tl-print-f64-id? name-id)
-      (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.AstType.F64)
-        (compiler_ast_types.ast-type-list-new))]
     [(cbi.compiler-builtin-backend-tl-array-fill8-id? name-id)
       (compiler_ast_types.ast-type-cons
         (compiler_ast_types.ast-ty-mut-ptr (compiler_ast_types.AstType.U8))
@@ -71782,10 +71774,6 @@
               (compiler-backend-plan-provides-id?
                 plan
                 cbi.compiler-builtin-id-tl-region-reset))]
-          [print-f64 : bool
-            (compiler-backend-plan-provides-id?
-              plan
-              cbi.compiler-builtin-id-tl-print-f64)]
           (runtime_common.CompilerBackendRuntimeFeatures
             alloc
             region-mark
@@ -71794,7 +71782,6 @@
             (compiler-backend-runtime-tail-profile? tail-plan)
             (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
             write-exit
-            print-f64
             (compiler-backend-runtime-tail-startup-profile? tail-plan)))])))
 
 (define (compiler-backend-current-arena-load
@@ -82597,13 +82584,13 @@
   (and
     (backend-and8
       (not (compiler-backend-string-contains? asm "tl_print_err:\n"))
-      (not (compiler-backend-string-contains? asm "tl_print_string:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_arg_count:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_arg:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_read_file:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_file_exists:\n"))
-      (not (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")))
+      (not (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n"))
+      true)
     (backend-and8
       (not (compiler-backend-string-contains? asm ".L_tl_file_close_status:\n"))
       (not
@@ -82628,12 +82615,12 @@
       (not (compiler-backend-string-contains? asm "tl_cpuid_eax:\n"))
       (not (compiler-backend-string-contains? asm "tl_xgetbv:\n")))
     (backend-and4
-      (not (compiler-backend-string-contains? asm "tl_print_char:\n"))
-      (not (compiler-backend-string-contains? asm "tl_print_f64:\n"))
       (not
         (compiler-backend-string-contains? asm ".L_tl_fs_remove_file_status:\n"))
       (not
-        (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n")))
+        (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n"))
+      true
+      true)
     (not (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n"))))
 
 ;; Backend-smoke regression for the fail-closed splice predicate.  Exercise a

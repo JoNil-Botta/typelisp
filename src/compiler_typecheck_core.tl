@@ -35765,22 +35765,15 @@
             [(TcMaybeNameId.Some target-id) target-id]
             [(TcMaybeNameId.No) -1])]))))
 
-;; These are the compiler-recognized unqualified compatibility names whose
-;; definitions deliberately live in stdlib modules. Keep this catalog beside
-;; the typecheck suggestion policy so a missing import can be diagnosed without
-;; loading or parsing unrelated stdlib modules on an error path.
+;; These are compiler-recognized unqualified public names whose definitions
+;; live in stdlib modules. Keep this catalog beside the typecheck suggestion
+;; policy so a missing import can be diagnosed without loading or parsing
+;; unrelated stdlib modules on an error path.
 (define (tc-unbound-stdlib-provider [name : String]) : String
   (cond
     [(or
-        (string.eq name "print")
-        (string.eq name "print-bool")
-        (string.eq name "print-char")
         (string.eq name "print-error")
-        (string.eq name "print-float")
         (string.eq name "print-format")
-        (string.eq name "print-newline")
-        (string.eq name "print-str")
-        (string.eq name "print-string")
         (string.eq name "println")
         (string.eq name "panic")
         (string.eq name "error")

@@ -35,13 +35,13 @@
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (str_cat.str-cat
-    "(extern (io.print [arg0 : i64]) : unit)
-(extern (io.print-bool [arg0 : bool]) : unit)
-(extern (io.print-float [arg0 : f64]) : unit)
-(extern (io.print-char [arg0 : char]) : unit)
-(extern (print-newline) : unit)
-(extern (io.print-string [arg0 : (& arg0 str)]) : unit)
-(extern (io.print-str [arg0 : (& arg0 str)]) : unit)
+    "(extern (io.emit-int [arg0 : i64]) : unit)
+(extern (io.emit-bool [arg0 : bool]) : unit)
+(extern (io.emit-float [arg0 : f64]) : unit)
+(extern (io.emit-char [arg0 : char]) : unit)
+(extern (emit-newline) : unit)
+(extern (io.emit-string [arg0 : (& arg0 str)]) : unit)
+(extern (io.emit-str [arg0 : (& arg0 str)]) : unit)
 (extern (io.print-error [arg0 : (& arg0 str)]) : unit)
 (extern (io.panic [arg0 : (& arg0 str)]) : never)
 (extern (io.error [arg0 : (& arg0 str)]) : never)
@@ -6630,7 +6630,7 @@
 ;; spmd-reduce purity rules (SPEC.md 5.15): the per-lane value
 ;; expression accepts pure arithmetic over dynamic-array reads and the varying
 ;; index, but rejects writes (`array-set!`), function calls (also covers
-;; `print*`/`panic`/file I/O and varying-argument user calls), varying control
+;; output/`panic`/file I/O and varying-argument user calls), varying control
 ;; flow (`if`/`while`/`match`). Pure gather-only array reads are supported.
 (define (compiler-typecheck-spmd-reduce-purity-tests-ok?) : bool
   (and
@@ -12459,36 +12459,36 @@
     unit))
 
 ;; Runtime stdlib signature + shadowing coverage (migrated from
-;; src/typechecker.rs). `io.print-string`/`print-str`/`io.print-error` are stdlib
+;; src/typechecker.rs). `io.emit-string`/`emit-str`/`io.print-error` are stdlib
 ;; functions that borrow `str`; `xgetbv` takes an integer; `cpuid` takes
 ;; integers; `string.string-ref`/`char-at` require an integer index. A user declaration
 ;; may still define the same source-level name when no stdlib import brings it
 ;; into scope.
-(define (compiler-typecheck-runtime-builtin-print-string-ok-source) : String
+(define (compiler-typecheck-runtime-builtin-emit-string-ok-source) : String
   (compiler-typecheck-with-io-source
     "(define (main) : i64
   (begin
-    (io.print-string \"hi\")
-    (io.print-string (begin \"ignored\" \"temporary\"))
+    (io.emit-string \"hi\")
+    (io.emit-string (begin \"ignored\" \"temporary\"))
     0))"))
 
-(define (compiler-typecheck-runtime-builtin-print-str-ok-source) : String
+(define (compiler-typecheck-runtime-builtin-emit-str-ok-source) : String
   (compiler-typecheck-with-io-source
-    "(define (main) : i64 (begin (io.print-str \"hi\") 0))"))
+    "(define (main) : i64 (begin (io.emit-str \"hi\") 0))"))
 
 (define (compiler-typecheck-runtime-builtin-print-error-ok-source) : String
   (compiler-typecheck-with-io-source
     "(define (main) : i64 (begin (io.print-error \"hi\") 0))"))
 
-(define (compiler-typecheck-runtime-builtin-print-region-ok-source) : String
+(define (compiler-typecheck-runtime-builtin-emit-region-ok-source) : String
   (compiler-typecheck-with-io-source
     (compiler-typecheck-with-alloc-string-helper-source
       "(define (main) : i64
   (let
     [s : String (string.int->string 42)]
     (begin
-      (io.print-string s)
-      (io.print-str s)
+      (io.emit-string s)
+      (io.emit-str s)
       (io.print-error s)
       0)))")))
 
@@ -12497,16 +12497,16 @@
     "(define (main) : i64 (begin (xgetbv 0) 0))"))
 
 (define (compiler-typecheck-runtime-builtin-shadow-source) : String
-  "(define (io.print-string [x : i64]) : i64 x)
-(define (main) : i64 (io.print-string 5))")
+  "(define (io.emit-string [x : i64]) : i64 x)
+(define (main) : i64 (io.emit-string 5))")
 
-(define (compiler-typecheck-runtime-builtin-print-string-bad-source) : String
+(define (compiler-typecheck-runtime-builtin-emit-string-bad-source) : String
   (compiler-typecheck-with-io-source
-    "(define (main) : i64 (begin (io.print-string 42) 0))"))
+    "(define (main) : i64 (begin (io.emit-string 42) 0))"))
 
-(define (compiler-typecheck-runtime-builtin-print-str-bad-source) : String
+(define (compiler-typecheck-runtime-builtin-emit-str-bad-source) : String
   (compiler-typecheck-with-io-source
-    "(define (main) : i64 (begin (io.print-str 42) 0))"))
+    "(define (main) : i64 (begin (io.emit-str 42) 0))"))
 
 (define (compiler-typecheck-runtime-builtin-print-error-bad-source) : String
   (compiler-typecheck-with-io-source
@@ -12521,45 +12521,45 @@
     "(define (main) : i64 (begin (cpuid \"x\" 0) 0))"))
 
 (define (compiler-typecheck-runtime-builtin-no-import-source) : String
-  "(define (main) : i64 (begin (io.print-string \"hi\") 0))")
+  "(define (main) : i64 (begin (io.emit-string \"hi\") 0))")
 
 (define (compiler-typecheck-runtime-stdlib-no-import-tests-ok?) : bool
   (let
     [ok : bool true]
     (begin
       (if (compiler-typecheck-error-ok?
-        "(define (main) : i64 (begin (io.print 1) 0))"
-        "typecheck: unknown qualified name io.print; import the module or use a visible dotted module alias")
+        "(define (main) : i64 (begin (io.emit-int 1) 0))"
+        "typecheck: unknown qualified name io.emit-int; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-runtime-builtin-no-import-source)
-        "typecheck: unknown qualified name io.print-string; import the module or use a visible dotted module alias")
+        "typecheck: unknown qualified name io.emit-string; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (main) : i64 (begin (io.print-str \"hi\") 0))"
-        "typecheck: unknown qualified name io.print-str; import the module or use a visible dotted module alias")
+        "(define (main) : i64 (begin (io.emit-str \"hi\") 0))"
+        "typecheck: unknown qualified name io.emit-str; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (main) : i64 (begin (print-newline) 0))"
-        "typecheck: unbound name print-newline")
+        "(define (main) : i64 (begin (emit-newline) 0))"
+        "typecheck: unbound name emit-newline")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (main) : i64 (begin (io.print-bool true) 0))"
-        "typecheck: unknown qualified name io.print-bool; import the module or use a visible dotted module alias")
+        "(define (main) : i64 (begin (io.emit-bool true) 0))"
+        "typecheck: unknown qualified name io.emit-bool; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (main) : i64 (begin (io.print-char 'A') 0))"
-        "typecheck: unknown qualified name io.print-char; import the module or use a visible dotted module alias")
+        "(define (main) : i64 (begin (io.emit-char 'A') 0))"
+        "typecheck: unknown qualified name io.emit-char; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (main) : i64 (begin (io.print-float 1.5) 0))"
-        "typecheck: unknown qualified name io.print-float; import the module or use a visible dotted module alias")
+        "(define (main) : i64 (begin (io.emit-float 1.5) 0))"
+        "typecheck: unknown qualified name io.emit-float; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -12588,21 +12588,21 @@
 (define (compiler-typecheck-runtime-builtin-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
-      (compiler-typecheck-runtime-builtin-print-string-ok-source))
+      (compiler-typecheck-runtime-builtin-emit-string-ok-source))
     (compiler-typecheck-ok?
-      (compiler-typecheck-runtime-builtin-print-str-ok-source))
+      (compiler-typecheck-runtime-builtin-emit-str-ok-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-runtime-builtin-print-error-ok-source))
     (compiler-typecheck-ok?
-      (compiler-typecheck-runtime-builtin-print-region-ok-source))
+      (compiler-typecheck-runtime-builtin-emit-region-ok-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-runtime-builtin-xgetbv-ok-source))
     (compiler-typecheck-ok? (compiler-typecheck-runtime-builtin-shadow-source))
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-runtime-builtin-print-string-bad-source)
+      (compiler-typecheck-runtime-builtin-emit-string-bad-source)
       "typecheck: borrow requires a local, parameter, or aggregate place")
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-runtime-builtin-print-str-bad-source)
+      (compiler-typecheck-runtime-builtin-emit-str-bad-source)
       "typecheck: borrow requires a local, parameter, or aggregate place")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-print-error-bad-source)

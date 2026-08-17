@@ -600,7 +600,7 @@
 (import stdlib.byte_buf)
 (define (main [path : String]) : i64
   (begin
-    (io.print-string \"\")
+    (io.print-format \"{}\" \"\")
     (io.flush-stdout)
     (+ (byte_buf.len (io.read-file path))
        (io.file-open-status path 0))))")

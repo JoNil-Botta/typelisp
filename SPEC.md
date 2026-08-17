@@ -1470,7 +1470,7 @@ definition environment even when the use site shadows the same printed name.
 
 (define (main) : unit
   (let [macro-helper : bool true]
-    (unless2 false (print-string "ok"))))
+    (unless2 false (io.print-format "{}" "ok"))))
 ```
 
 The `macro-helper` referenced by the template is the top-level function
@@ -1533,7 +1533,7 @@ arrays are **not** region-tagged because they do not allocate through
 
 A region-tagged type `(in r T)` is a **subtype** of the plain type `T` for
 operations that do not escape the region: field access, `array-ref`,
-`array-set!`, `match` arms, `print-string`, and function calls whose parameter
+`array-set!`, `match` arms, `io.print-format`, and function calls whose parameter
 types accept `T`. It is **not** a subtype where the value would leave the
 region's scope: as the result of the `with-arena` form, stored into an outer
 `let` or global, captured by an escaping closure, or returned from an enclosing
@@ -2613,7 +2613,7 @@ and owned `String` results for allocation sites.
 | Category | Members | Ownership contract |
 |----------|---------|--------------------|
 | Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string.>int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
-| Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Text-to-binary I/O conversion is explicit. |
+| Text output and diagnostics | `format.format`, `io.print-format`/`io.println`, `io.print-error`, `io.stdout-write`/`io.stderr-write`, `panic`/`error`, process stdin strings | Format macros accept supported values and materialize one active-arena `String`; diagnostic text accepts borrowed `(& r str)`, and raw output accepts borrowed `(& r bytes)`. Text-to-binary I/O conversion is explicit. |
 | Active-arena owned string results | `arg`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
 | Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` `ByteBuf` fallback paths; companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The I/O companion is an explicit binary-to-text materialization boundary for callers that need a borrowed textual fallback. |
@@ -2823,8 +2823,8 @@ declared by the resolved module.
 
 Two unqualified imports, whether through `.*` or `.item`, that bring in the
 same name are a namespace collision. The diagnostic names both module
-identities and suggests alias-qualified access instead. Prelude bare names such
-as `panic`, `print*`, and the deliberately retained prelude exceptions come
+identities and suggests alias-qualified access instead. Prelude bare names and
+deliberately retained prelude exceptions come
 from the implicit prelude and are not affected by these import rules.
 
 Multi-item selected imports are deferred in v1. Spellings such as
@@ -4206,7 +4206,7 @@ guards.
 
 ```lisp test=ignore name=when-unless-guards reason=fragment
 (when (< x 0) (return 0))
-(unless (< x 100) (print-string "large\n"))
+(unless (< x 100) (io.println "large"))
 ```
 
 ### 5.7 `(let [name [: type] init] ... body...)` — local bindings
@@ -4758,7 +4758,7 @@ Masked varying control flow:
 - Side effects other than supported contiguous `array-set!` and explicit
   `stdlib/atomic.tl` integer element operations are rejected in masked
   branches. This includes `set!` to bindings declared outside the `foreach`,
-  `print*`, file/process I/O, `panic`/`error`, allocation whose result
+  formatted output, file/process I/O, `panic`/`error`, allocation whose result
   escapes the branch, nested `foreach`/`spmd-reduce`, and calls outside the
   accepted SPMD helper surface.
 - `match` on a varying scalar lane or enum scrutinee supports literal
@@ -4962,7 +4962,7 @@ Purity and varying rules:
   `spmd-broadcast`, `spmd-shuffle`, and local `let` bindings whose values
   satisfy the same rules.
 - `value` must not perform writes or other side effects. In particular,
-  `set!`, `array-set!`, `print*`, file I/O, `panic`/`error`, nested
+  `set!`, `array-set!`, formatted output, file I/O, `panic`/`error`, nested
   `foreach`/`spmd-reduce`/`spmd-scan`, and user-defined calls with varying
   arguments are rejected.
 - `spmd-scan` applies the same purity and index restrictions to `value`.
@@ -6158,9 +6158,12 @@ names are unbound source names. The backend may emit private runtime symbols
 used by the stdlib extern wrappers; user code must not call private names
 directly.
 
-**Printing and failure.** `print`, `print-bool`, `print-newline`,
-`print-string`, `print-error`, `panic`, and `error` are ordinary `stdlib.io`
-definitions; unimported uses are unbound source names. `panic` and `error`
+**Printing and failure.** `print-format` and `println` are the `stdlib.io`
+value-output macros; `format.format` returns the same formatted text as a
+`String`. `stdout-write` and `stderr-write` provide lower-level borrowed-byte
+output, while `print-error`, `panic`, and `error` accept borrowed text. These
+are ordinary standard-library definitions; unimported uses are unbound source
+names. `panic` and `error`
 report a failure and terminate the process; `error` is an alias for `panic`,
 and both have return type `never` (section 9).
 
@@ -6462,7 +6465,6 @@ Each alias expands to its base name and resolves wherever that name is bound
 | `string=?` | `string-eq` |
 | `string-slice` | `substring` |
 | `char-at` | `string-ref` |
-| `print-str` | `print-string` |
 
 ### 6.4 Stdlib file I/O handles
 
@@ -6992,7 +6994,7 @@ from escaping.
 | Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib.string` `string-replace` when no match is found; `stdlib.io` `read-file-or` when the path is missing | Returns the caller-provided aggregate unchanged. Reference-typed signatures express the caller-owned result; without lifetime information in the signature, the conservative arena-tagging rule above applies inside a scoped arena. |
 | Mutates caller-provided storage | `array-set!`, `byte-buf-set!`/`bytes-set!` mutation helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
-| Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO. Binary writes borrow `bytes` directly; text helpers may allocate active-arena strings only where their own contract says so. |
+| Host/runtime IO | `print-format`/`println`, `stdout-write`/`stderr-write`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO. Format macros allocate one active-arena result string; binary writes borrow `bytes` directly. |
 
 The owned `String` / borrowed `str` source contract, together with the
 `ByteBuf` / borrowed `bytes` binary-storage contract, is specified in section
@@ -7947,9 +7949,9 @@ storage. Target C ABI call/return lowering is a separate backend contract.
   (let
     [result : i64 (factorial 5)]
     (begin
-      (io.print-string "Hello, TypeLisp!\n")
-      (io.print-string "factorial(5) = ")
-      (io.print result)
+      (io.print-format "{}" "Hello, TypeLisp!\n")
+      (io.print-format "{}" "factorial(5) = ")
+      (io.println "{}" result)
       0)))  ; prints the greeting/result and exits successfully
 ```
 
@@ -8008,24 +8010,22 @@ every element zero-initialized per section 5.12.1, and `array-ref` reads and
     (string.string-length s)))  ; returns 5
 ```
 
-```lisp test=run name=print-string exit=0 stdout="hello\n"
+```lisp test=run name=formatted-output exit=0 stdout="hello\n"
 (import stdlib.io)
 
 (define (main) : i64
   (begin
-    (io.print-string "hello\n")
+    (io.print-format "{}" "hello\n")
     0))  ; prints hello + newline, returns 0
 ```
 
-`io.print-format` and `io.println` are format-backed macros. Their first argument
+`format.format`, `io.print-format`, and `io.println` are the public
+value-formatting conveniences. The output macros' first argument
 is a Rust-style literal template using `{}` placeholders and `{{` / `}}`
 escapes; `print-format` writes exactly the formatted text and `println` performs
-one additional newline write. The explicit compatibility-preserving
-`print-format` name leaves the historical newline-writing integer
-`(io.print value)` function unchanged. `print-string`, `print-str`,
-`print-newline`, `print-error`, `print-bool`, `print-char`, and `print-float`
-retain their existing behavior, as do the low-level borrowed `stdout-write` and
-`stderr-write` helpers. All placeholder conversion, including the canonical
+one additional newline write. `print-error` remains the direct borrowed-text
+diagnostic helper, and `stdout-write` / `stderr-write` remain the low-level
+borrowed-byte output surface. All placeholder conversion, including the canonical
 owner-module nominal display protocol specified in section 6.1, is therefore
 identical between `format.format`, `io.print-format`, and `io.println`.
 

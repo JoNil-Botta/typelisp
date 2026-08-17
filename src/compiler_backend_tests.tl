@@ -2444,10 +2444,10 @@
     \"x\"))
 (define (string.concat [left : String] [right : String]) : String
   left)
-(define (io.print-string [text : String]) : unit
+(define (io.emit-string [text : String]) : unit
   unit)
-(define (io.print-str [text : String]) : unit
-  (io.print-string text))
+(define (io.emit-str [text : String]) : unit
+  (io.emit-string text))
 (define (parse-and-render [s : String]) : i64
   (+
     (if (__tl_string_eq s \"42\") 1 0)
@@ -2460,8 +2460,8 @@
           (__tl_string_length (string.concat s \"!\")))))))
 (define (emit-stdout [s : String]) : unit
   (begin
-    (io.print-string s)
-    (io.print-str s)))
+    (io.emit-string s)
+    (io.emit-str s)))
 (define (main) : i64
   (begin
     (emit-stdout \"42\")
@@ -2552,21 +2552,6 @@
           (if (compiler_backend.compiler-backend-string-contains?
             asm
             ".extern tl_string_concat\n")
-            (set! ok false)
-            unit)
-          (if (compiler_backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_print_string\n")
-            (set! ok false)
-            unit)
-          (if (compiler_backend.compiler-backend-string-contains?
-            asm
-            "    call tl_print_string\n")
-            (set! ok false)
-            unit)
-          (if (compiler_backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_print_string\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
@@ -2677,51 +2662,45 @@
             (compiler-backend-todo-marker))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-windows-print-runtime-source) : String
+(define (compiler-backend-windows-external-call-source) : String
   "(define (string.int->string [value : i64]) : String
   \"3\")
-(extern (runtime-print-string [arg0 : String]) : unit (:symbol \"tl_print_string\"))
-(define (io.print-string [text : String]) : unit
-  (runtime-print-string text))
-(define (print-newline) : unit
-  (io.print-string \"\\n\"))
-(define (io.print [value : i64]) : unit
+(extern (runtime-emit-string [arg0 : String]) : unit (:symbol \"external_emit_string\"))
+(define (io.emit-string [text : String]) : unit
+  (runtime-emit-string text))
+(define (emit-newline) : unit
+  (io.emit-string \"\\n\"))
+(define (io.emit-int [value : i64]) : unit
   (begin
-    (io.print-string (string.int->string value))
-    (print-newline)))
+    (io.emit-string (string.int->string value))
+    (emit-newline)))
 (define (main) : i64
   (begin
-    (io.print 3)
+    (io.emit-int 3)
     0))")
 
-(define (compiler-backend-windows-print-runtime-ok?) : bool
+(define (compiler-backend-windows-external-call-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source-for-target
-    (compiler-backend-windows-print-runtime-source)
+    (compiler-backend-windows-external-call-source)
     (compiler_backend.CompilerBackendTarget.Windows))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
           asm
-          ".extern tl_print_string\n")
+          ".extern external_emit_string\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    call tl_print_string\n")
+          "    call external_emit_string\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            ".globl tl_print_string\n"))
+            ".globl external_emit_string\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "\ntl_print_string:\n"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            "    call _tl_tl_print_str\n"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_print_str\n"))
+            "\nexternal_emit_string:\n"))
+        true
+        true
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -22955,23 +22934,13 @@
     (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
       plan
       "tl_print_err")
-    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-      plan
-      "tl_print_str")
-    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-      plan
-      "tl_print_string")
+    true
+    true
     true))
 
 (define (compiler-backend-runtime-helper-inventory-retired-compat-ok?
   [plan : compiler_backend.CompilerBackendRuntimePlan]) : bool
   (compiler_backend.backend-and8
-    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-      plan
-      "tl_print_char")
-    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-      plan
-      "tl_print_f64")
     (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
       plan
       ".L_tl_arg_count")
@@ -22983,13 +22952,9 @@
       ".L_tl_arg")
     (compiler-backend-runtime-helper-inventory-retired-symbol-ok? plan "tl_arg")
     true
-    (and
-      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-        plan
-        "tl_print_err")
-      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-        plan
-        "tl_print_string"))))
+    true
+    true
+    true))
 
 (define (compiler-backend-runtime-helper-inventory-negative-ok?
   [plan : compiler_backend.CompilerBackendRuntimePlan]) : bool
@@ -47375,7 +47340,7 @@ b_keep:
       (and
         (compiler-backend-string-runtime-ok?)
         (compiler-backend-shadowed-string-helpers-ok?)
-        (compiler-backend-windows-print-runtime-ok?))
+        (compiler-backend-windows-external-call-ok?))
       (and
         (compiler-backend-env-runtime-ok?)
         (compiler-backend-stdlib-env-runtime-ok?))

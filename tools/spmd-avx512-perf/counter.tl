@@ -326,7 +326,8 @@
                                         "counter: counter was zero, not running, or multiplexed")
                                       2)
                                     (begin
-                                      (io.print-string
+                                      (io.print-format
+                                        "{}"
                                         (str_cat.str-cat
                                           "counter\t"
                                           (string.int->string

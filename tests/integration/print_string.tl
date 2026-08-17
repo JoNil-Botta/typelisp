@@ -1,11 +1,11 @@
-;; print_string.tl ??? write a whole String's bytes to stdout via print-string.
-;; `(io.print-string s)` / `(io.print-str s)` : (-> (& str) unit) issues a single
-;; write(1) syscall. The "\n" escape lexes to a real newline byte, so this
+;; print_string.tl — write whole String values through the canonical formatter.
+;; Each `(io.print-format "{}" s)` call issues one stdout write. The "\n"
+;; escape lexes to a real newline byte, so this
 ;; emits exactly "hello\nworld\n" to stdout and exits 0.
 (import stdlib.io)
 
 (define (main) : i64
   (begin
-    (io.print-string "hello\n")
-    (io.print-str "world\n")
+    (io.print-format "{}" "hello\n")
+    (io.print-format "{}" "world\n")
     0))

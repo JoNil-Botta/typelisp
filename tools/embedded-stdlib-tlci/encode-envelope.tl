@@ -27,7 +27,8 @@
             [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
             (begin
               (io.write-file output (byte_buf.as-bytes (& contents)))
-              (io.print-string
+              (io.print-format
+                "{}"
                 (str_cat.str-cat
                   "embedded stdlib tlci envelope: "
                   (string.int->string raw-len)

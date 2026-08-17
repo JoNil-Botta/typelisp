@@ -5162,7 +5162,7 @@
       -1)
     (lsp-completion-context-at-end-is? "(pri" 1 1 1 "pri" "pri" "" "pri" 0 0)
     (lsp-completion-context-at-end-is? "(:" 1 1 1 ":" ":" "" ":" 0 0)
-    (lsp-completion-context-at-end-is? "(print " 0 7 7 "" "" "" "print" 0 0)
+    (lsp-completion-context-at-end-is? "(emit " 0 6 6 "" "" "" "emit" 0 0)
     (lsp-completion-context-at-end-is?
       "(outer [x y"
       0
@@ -12695,7 +12695,8 @@
                     (lsp-write-file-text
                       entry.status-path
                       (str_cat.str-cat (string.int->string result.status) "\n"))
-                    (io.print-string
+                    (io.print-format
+                      "{}"
                       (lsp-str3
                         "lsp-transcript-batch-result\t"
                         entry.case-id

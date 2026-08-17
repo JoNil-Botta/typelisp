@@ -5295,14 +5295,16 @@
   [announce : bool]) : i64
   (if announce
     (begin
-      (io.print-string
+      (io.print-format
+        "{}"
         (str_cat.str-cat
           (if runtime-dirty
             "Built "
             "Fresh ")
           artifact-path
           "\n"))
-      (io.print-string
+      (io.print-format
+        "{}"
         (str_cat.str-cat
           (if tlci-dirty
             "Built "
@@ -7367,7 +7369,7 @@
       (match config
         [(BuildConfig.Source _ _ _ _ _ _ _ _)
           (begin
-            (io.print-string (build-source-plan-render config))
+            (io.print-format "{}" (build-source-plan-render config))
             0)]
         [(BuildConfig.Package _ _ _ _ _ _ _ _ _ _)
           (build-package config producer-identity)])]

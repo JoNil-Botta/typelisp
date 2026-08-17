@@ -2885,14 +2885,14 @@ cat > "$FMT_DIAG_DIR/unmatched-open.tl" <<'FIXTURE'
 (import stdlib.format)
 (import stdlib.io)
 (define (main) : i64
-  (begin (io.print-string (format.format "a{")) 0))
+  (begin (io.print-format "{}" (format.format "a{")) 0))
 FIXTURE
 cat > "$FMT_DIAG_DIR/too-few-arguments.tl" <<'FIXTURE'
 (import stdlib.format)
 (import stdlib.io)
 (define one : i64 1)
 (define (main) : i64
-  (begin (io.print-string (format.format "{} {}" one)) 0))
+  (begin (io.print-format "{}" (format.format "{} {}" one)) 0))
 FIXTURE
 cat > "$FMT_DIAG_DIR/too-many-arguments.tl" <<'FIXTURE'
 (import stdlib.format)
@@ -2900,20 +2900,20 @@ cat > "$FMT_DIAG_DIR/too-many-arguments.tl" <<'FIXTURE'
 (define one : i64 1)
 (define two : i64 2)
 (define (main) : i64
-  (begin (io.print-string (format.format "{}" one two)) 0))
+  (begin (io.print-format "{}" (format.format "{}" one two)) 0))
 FIXTURE
 cat > "$FMT_DIAG_DIR/unmatched-close.tl" <<'FIXTURE'
 (import stdlib.format)
 (import stdlib.io)
 (define (main) : i64
-  (begin (io.print-string (format.format "a}b")) 0))
+  (begin (io.print-format "{}" (format.format "a}b")) 0))
 FIXTURE
 cat > "$FMT_DIAG_DIR/non-literal-template.tl" <<'FIXTURE'
 (import stdlib.format)
 (import stdlib.io)
 (define template : String "{}")
 (define (main) : i64
-  (begin (io.print-string (format.format template 1)) 0))
+  (begin (io.print-format "{}" (format.format template 1)) 0))
 FIXTURE
 # The profiled compiler writes its counters to stderr too, and those legitimately
 # differ by route (catalog hits, native dispatches). Compare only the rendered

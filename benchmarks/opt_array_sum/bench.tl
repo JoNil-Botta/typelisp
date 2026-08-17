@@ -31,5 +31,5 @@
     [xs : i64vec.Vec (i64vec.Vec (array.make-array i64 n) n)]
     (begin
       (fill (&mut xs) n)
-      (io.print (sum-array (& xs) n))
+      (io.println "{}" (sum-array (& xs) n))
       0)))

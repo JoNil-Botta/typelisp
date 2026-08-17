@@ -61,5 +61,5 @@
     [path : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (io.print (it-bench path rounds))
+      (io.println "{}" (it-bench path rounds))
       0)))

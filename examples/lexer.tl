@@ -187,6 +187,6 @@
     [result : i64
       (+ count (ident-text-length (token-vec.get (& toks) 0 Token.End)))]
     (begin
-      (io.print-string "lexer score: ")
-      (io.print result)
+      (io.print-format "{}" "lexer score: ")
+      (io.println "{}" result)
       result)))

@@ -30,5 +30,5 @@
     [suffix : String (io.arg 2)]
     [rounds : i64 (string.>int (io.arg 3))]
     (begin
-      (io.print (string-ops-repeat text suffix rounds))
+      (io.println "{}" (string-ops-repeat text suffix rounds))
       0)))

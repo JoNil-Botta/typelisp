@@ -4,14 +4,13 @@
 ;# to platform FFI symbols plus low-level language forms for argv and raw bytes.
 ;#
 ;# Public platform-facing functions such as the `print-format` / `println`
-;# format macros, `print-string`, `panic`, `arg`,
+;# format macros, `panic`, `arg`,
 ;# `read-file`, `write-file`, file-handle status helpers, and stdin/stdout
 ;# helpers are stdlib definitions in this module. Programs must import this module
 ;# to use them.
 ;#
-;# `print` is the integer-specific `(i64) -> unit` helper and appends a newline.
-;# Use `print-string` for text, `print-bool`, `print-char`, or `print-float` for
-;# those scalar types, and `print-format` / `println` for mixed formatted output.
+;# Use `print-format` to write formatted values without a newline and `println`
+;# to append exactly one newline. Use `stdout-write` for borrowed raw bytes.
 ;#
 ;# The `try-*` helpers return explicit monomorphic result enums. Host errors
 ;# are reported through status-code primitives and mapped into `IoError`.
@@ -517,42 +516,15 @@
       (byte_buf.bytes-data contents))
     (byte_buf.bytes-length contents)))
 
-;: Write a string to stdout without adding a newline.
-(define (print-string [text : (& text str)]) : unit
-  (let
-    [status : i64 (write-string-fd-status 1 text)]
-    (if (= status 0)
-      unit
-      (platform-exit 134))))
-
-;: Compatibility alias for `print-string`.
-(define (print-str [text : (& text str)]) : unit
-  (print-string text))
-
-;: Write a trailing newline to stdout.
-(define (print-newline) : unit
-  (print-string "\n"))
-
-;: Write an integer followed by a newline.
-;:
-;: This helper accepts only `i64`. Use `print-string`, `print-bool`,
-;: `print-char`, or `print-float` for one value of those types, and use
-;: `print-format` / `println` for mixed formatted output.
-(define (print [value : i64]) : unit
-  (begin
-    (print-string (string.int->string value))
-    (print-newline)))
-
 ;: Format a literal template and write it to stdout without a newline.
 ;:
 ;: The template and arguments follow `stdlib.format.format`: `{}` consumes one
 ;: value and `{{` / `}}` produce literal braces. Formatting creates one final
-;: String and `print-string` writes that body once.
-;:
-;: The explicit `print-format` name preserves the historical newline-writing
-;: integer function `print` without overloading its semantics.
+;: String and writes that body once.
 (defmacro (print-format [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  `(stdlib.io.print-string (stdlib.format.format ,template ,@args)))
+  `(let
+    [formatted : String (stdlib.format.format ,template ,@args)]
+    (stdlib.io.stdout-write (stdlib.byte_buf.str-as-bytes (& formatted)))))
 
 ;: Format a literal template, write it to stdout, then write one newline.
 ;:
@@ -561,25 +533,7 @@
 (defmacro (println [template : comptime.Expr] [args : comptime.Expr ...]) : unit
   `(let
     [formatted : String (stdlib.format.format ,template ,@args)]
-    (begin
-      (stdlib.io.print-string formatted)
-      (stdlib.io.print-newline))))
-
-;: Write a boolean followed by a newline.
-(define (print-bool [value : bool]) : unit
-  (if value
-    (print-string "true\n")
-    (print-string "false\n")))
-
-;: Write one character byte to stdout without adding a newline.
-(define (print-char [ch : char]) : unit
-  (let
-    [buf : (__tl_dyn-array u8) (array.make-array u8 1)]
-    (begin
-      (set! (array-ref buf 0) (cast ch : u8))
-      (if (= (write-all-fd-status 1 (array-const-ptr buf) 1) 0)
-        unit
-        (platform-exit 134)))))
+    (stdlib.io.stdout-write-line (stdlib.byte_buf.str-as-bytes (& formatted)))))
 
 ;: Fixed-capacity base-2^32 bignum backing the pure-TL f64 formatter.
 (defstruct BigNum
@@ -1097,14 +1051,6 @@
 ;: Return `value` rounded to f32 precision and widened back to f64.
 (define (float-round-f32-as-f64 [value : f64]) : f64
   (cast (cast value : f32) : f64))
-
-;: Format an f64 with `%.17g` and a trailing newline.
-(define (format-float [value : f64]) : String
-  (str_cat.str-cat (stdlib.format.format-float-core value) "\n" ""))
-
-;: Write a floating-point value to stdout using `%.17g` plus a newline.
-(define (print-float [value : f64]) : unit
-  (print-string (stdlib.io.format-float value)))
 
 ;: Write a string to stderr without adding a newline.
 (define (print-error [text : (& text str)]) : unit

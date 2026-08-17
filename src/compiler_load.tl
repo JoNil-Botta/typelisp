@@ -10291,12 +10291,11 @@
         (if (< estimate 256)
           256
           estimate))]
-    [scratch-base : i64 (arena.tl_arena_current)]
     [scratch-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities-in-arena
         expr-capacity
         type-capacity
-        scratch-base)]
+        scratch-root)]
     [records-start : i64 (reader.sp-node-pool-len)]
     [parsed : parser.ResultAstProgramDiagnostic
       (compiler-load-parse-source-diagnostic-escaping-with-pools
@@ -10323,7 +10322,6 @@
                 (parser.compiler-parse-member-records-compact!
                   records-start
                   records-end)]
-              [scratch-head : i64 (arena.tl_arena_current)]
               [_restore-caller : unit
                 (unsafe
                   (arena.tl_arena_set caller-arena))]
@@ -10332,11 +10330,10 @@
               (begin
                 (ast.ast-node-pool-context-destroy-storage! scratch-pools)
                 (unsafe
-                  (arena.tl_arena_destroy scratch-head))
+                  (arena.tl_arena_destroy scratch-root))
                 out))])]
       [(parser.ResultAstProgramDiagnostic.Err diag)
         (let
-          [scratch-head : i64 (arena.tl_arena_current)]
           [_restore-caller : unit
             (unsafe
               (arena.tl_arena_set caller-arena))]
@@ -10348,7 +10345,7 @@
             (reader.sp-node-pool-truncate! records-start)
             (ast.ast-node-pool-context-destroy-storage! scratch-pools)
             (unsafe
-              (arena.tl_arena_destroy scratch-head))
+              (arena.tl_arena_destroy scratch-root))
             out))])))
 
 (define (compiler-load-cache-program-result

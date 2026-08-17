@@ -1346,27 +1346,6 @@
 (define (compiler-backend-state-owner-arena [state : CompilerBackendState]) : i64
   (__tl-project-field (compiler-backend-state-data state) owner-arena))
 
-(define (compiler-backend-arena-owner-current-head [owner : arena.Arena]) : arena.Arena
-  (let
-    [handle : i64 (arena.raw-handle owner)]
-    (if (= handle 0)
-      owner
-      (let
-        [root-candidate : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-        [root : i64
-          (if (= root-candidate 0)
-            handle
-            root-candidate)]
-        [head : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
-        (arena.Arena
-          (if (= head 0)
-            root
-            head))))))
-
 (define (compiler-backend-state-emission-arena [state : CompilerBackendState]) : i64
   (__tl-project-field (compiler-backend-state-data state) emission-arena))
 
@@ -1407,7 +1386,7 @@
     [stored : i64 (compiler-backend-state-emission-arena state)]
     (if (= stored 0)
       (arena.current)
-      (compiler-backend-arena-owner-current-head (arena.Arena stored)))))
+      (arena.Arena stored))))
 
 (define (compiler-backend-state-scalar-registers-enabled?
   [state : CompilerBackendState]) : bool
@@ -80747,16 +80726,13 @@
 (define (compiler-backend-assembly-stream-carry-home-current!
   [stream : CompilerBackendStreamState]
   [home-arena : arena.Arena]) : unit
-  ;; Rendering/appending the retained group can grow `home-arena`. Carry its
-  ;; root-tracked current head into the next flush instead of re-entering the
-  ;; old segment and creating a detached sibling overflow chain.
+  ;; Rendering/appending the retained group can grow `home-arena`; its stable
+  ;; root remains the owner used by every later flush.
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set!
-        data.assembly-home-arena
-        (compiler-backend-arena-owner-current-head home-arena))
+      (set! data.assembly-home-arena home-arena)
       (compiler-backend-stream-state-data-set! stream data))))
 
 ;; Flush one raw function group through the record pipeline. `scratch` is active

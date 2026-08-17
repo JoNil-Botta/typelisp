@@ -2510,46 +2510,11 @@
     crt-entry
     (profile_state.compiler-profile-state-new)))
 
-(define (compiler-driver-arena-owner-root [handle : i64]) : i64
-  (if (= handle 0)
-    0
-    (let
-      [root : i64
-        (unsafe
-          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-      (if (= root 0)
-        handle
-        root))))
-
-(define (compiler-driver-arena-owner-current-head [handle : i64]) : i64
-  (let
-    [root : i64 (compiler-driver-arena-owner-root handle)]
-    (if (= root 0)
-      0
-      (let
-        [head : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
-        (if (= head 0)
-          root
-          head)))))
-
 (define (compiler-driver-restore-arena-owner-current! [return-arena : i64]) : unit
-  (let
-    [active : i64 (arena.tl_arena_current)]
-    [active-root : i64 (compiler-driver-arena-owner-root active)]
-    [return-root : i64 (compiler-driver-arena-owner-root return-arena)]
-    ;; The frontend return handle can name the caller arena's old root while
-    ;; optimizer/backend output has advanced that same owner by several
-    ;; segments. Preserve an already-active head, or resume the owner's
-    ;; root-tracked current head when another arena is active. Re-entering the
-    ;; stale root would create a sibling chain that batch destruction cannot
-    ;; reach.
-    (if (and (not (= active-root 0)) (= active-root return-root))
-      unit
-      (unsafe
-        (arena.tl_arena_set
-          (compiler-driver-arena-owner-current-head return-arena))))))
+  ;; Public handles remain stable owner roots across growth, so restoring the
+  ;; captured handle resumes the complete chain directly.
+  (unsafe
+    (arena.tl_arena_set return-arena)))
 
 (define (compiler-driver-restore-frontend-return-arena!) : unit
   (if (= compiler-driver-pending-frontend-return-arena 0)

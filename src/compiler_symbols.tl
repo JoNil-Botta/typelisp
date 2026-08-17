@@ -3587,7 +3587,6 @@
         (arena.tl_arena_set index-arena))]
     [decl-index : ModuleDeclIndex
       (compiler-symbols-build-module-decl-index all-decls)]
-    [index-arena-head : i64 (arena.tl_arena_current)]
     [_restore-enclosing : unit
       (unsafe
         (arena.tl_arena_set enclosing-arena))]
@@ -3634,7 +3633,7 @@
           cur-registries))]
     (begin
       (unsafe
-        (arena.tl_arena_destroy index-arena-head))
+        (arena.tl_arena_destroy index-arena))
       result)))
 
 (define (build-compiler-registry-aliases-list

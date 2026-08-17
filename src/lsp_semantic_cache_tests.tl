@@ -56,7 +56,7 @@
           noise-path
           noise-text
           false)
-        (lsp.lsp-server-state-finish-swap state draft previous)))))
+        (lsp.lsp-server-state-finish-swap state draft owner previous)))))
 
 (cfg
   test
@@ -75,7 +75,7 @@
         (lsp.lsp-workspace-semantic-cache-invalidate-path!
           (&mut draft.semantic-cache)
           path)
-        (lsp.lsp-server-state-finish-swap state draft previous)))))
+        (lsp.lsp-server-state-finish-swap state draft owner previous)))))
 
 (cfg
   test
@@ -99,7 +99,7 @@
           path
           text
           overlay)
-        (lsp.lsp-server-state-finish-swap state draft previous)))))
+        (lsp.lsp-server-state-finish-swap state draft owner previous)))))
 
 (cfg
   test

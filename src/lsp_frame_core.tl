@@ -7794,9 +7794,9 @@
 (define (lsp-server-state-finish-swap
   [old-state : lsp_vector_families.LspServerState]
   [draft : lsp_vector_families.LspServerState]
+  [owner : i64]
   [previous-arena : i64]) : lsp_vector_families.LspServerState
   (let
-    [owner : i64 (arena.tl_arena_current)]
     [next : lsp_vector_families.LspServerState
       (lsp_vector_families.LspServerState
         owner
@@ -7827,13 +7827,12 @@
         (lsp-workspace-sources-new))]
     [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
       (lsp-workspace-semantic-cache-new)]
-    [head : i64 (arena.tl_arena_current)]
     [_restore : unit
       (unsafe
         (arena.tl_arena_set previous))]
     (begin
-      (set! lsp-document-cache-arena head)
-      (lsp_vector_families.LspServerState head docs workspace semantic-cache))))
+      (set! lsp-document-cache-arena owner)
+      (lsp_vector_families.LspServerState owner docs workspace semantic-cache))))
 
 (define (lsp-server-state-destroy!
   [state : lsp_vector_families.LspServerState (:consume)]) : unit
@@ -8183,7 +8182,7 @@
         draft.documents
         stdlib-roots)]
     [next : lsp_vector_families.LspServerState
-      (lsp-server-state-finish-swap state draft previous)]
+      (lsp-server-state-finish-swap state draft owner previous)]
     (begin
       (set! next.semantic-cache.source-checks source-checks)
       next)))
@@ -8584,7 +8583,7 @@
       (lsp-workspace-semantic-cache-release-all! (&mut semantic-cache))]
     [draft : lsp_vector_families.LspServerState
       (lsp_vector_families.LspServerState 0 docs workspace semantic-cache)]
-    (lsp-server-state-finish-swap state draft previous)))
+    (lsp-server-state-finish-swap state draft owner previous)))
 
 (define (lsp-workspace-index-declaration-count
   [index : (& index lsp_vector_families.LspWorkspaceIndex)]) : i64
@@ -8944,7 +8943,7 @@
                 workspace
                 semantic-cache)]
             (LspHandleResult.Continue
-              (lsp-server-state-finish-swap state draft previous)))])]
+              (lsp-server-state-finish-swap state draft owner previous)))])]
     [(LspDocumentHandleResult.Exit next-documents)
       (match (lsp-server-state-refresh-document-result
         state
@@ -8982,7 +8981,7 @@
         [draft : lsp_vector_families.LspServerState
           (lsp_vector_families.LspServerState 0 docs workspace semantic-cache)]
         (LspHandleResult.Continue
-          (lsp-server-state-finish-swap state draft previous)))]
+          (lsp-server-state-finish-swap state draft owner previous)))]
     [(LspDocumentHandleResult.Exit next-documents)
       (match (lsp-server-state-copy-document-result
         state
@@ -9048,7 +9047,7 @@
                 draft.documents
                 (__tl-box-place items))]
             [_ unit])])]
-    (lsp-server-state-finish-swap state draft previous)))
+    (lsp-server-state-finish-swap state draft owner previous)))
 
 (define (lsp-workspace-index-remove-root-uri!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
@@ -9240,7 +9239,7 @@
             event)])]
     [_invalidate : unit
       (lsp-workspace-semantic-cache-release-all! (&mut draft.semantic-cache))]
-    (lsp-server-state-finish-swap state draft previous)))
+    (lsp-server-state-finish-swap state draft owner previous)))
 
 ;; Helper: extract document from params
 (define (lsp-get-document [params : json.Json] [docs : lsp_document_vec.Vec]) : LspDocumentLookup
@@ -11787,15 +11786,13 @@
                     docs
                     stdlib-roots
                     job-state))
-                (let
-                  [scratch-head : i64 (arena.tl_arena_current)]
-                  (begin
-                    (unsafe
-                      (arena.tl_arena_set enclosing))
-                    (set! lsp-document-cache-arena old-cache-arena)
-                    (unsafe
-                      (arena.tl_arena_destroy scratch-head))
-                    (set! result tool-result)))))
+                (begin
+                  (unsafe
+                    (arena.tl_arena_set enclosing))
+                  (set! lsp-document-cache-arena old-cache-arena)
+                  (unsafe
+                    (arena.tl_arena_destroy scratch))
+                  (set! result tool-result))))
             unit)
           result))]
     [(LspJsonText.Missing) (LspDocumentHandleResult.Continue docs)]))
@@ -12085,12 +12082,11 @@
                   params
                   state
                   stdlib-roots)])]
-          [scratch-head : i64 (arena.tl_arena_current)]
           (begin
             (unsafe
               (arena.tl_arena_set previous))
             (unsafe
-              (arena.tl_arena_destroy scratch-head))
+              (arena.tl_arena_destroy scratch))
             (LspHandleResult.Continue next)))])))
 
 ;; Workspace queries are read-only and run in a request-local arena. Repeated
@@ -12125,13 +12121,10 @@
                 (if (string.eq method "workspace/symbol")
                   (lsp-handle-workspace-symbol-with-params! id params (& state))
                   (lsp-handle-project-search-with-params! id params (& state)))])
-            (let
-              [scratch-head : i64 (arena.tl_arena_current)]
+            (unsafe
               (begin
-                (unsafe
-                  (arena.tl_arena_set previous))
-                (unsafe
-                  (arena.tl_arena_destroy scratch-head))))
+                (arena.tl_arena_set previous)
+                (arena.tl_arena_destroy scratch)))
             (LspHandleResult.Continue state)))])))
 
 ;; Production state dispatch. All long-lived data crosses the loop through the
@@ -12450,7 +12443,6 @@
     [transport : i64 (arena.tl_arena_make)]
     [_install-transport : unit (lsp-frame-memory-install! input transport)]
     [status : i64 (lsp-frame-run-with-config stdlib-roots prefix-cache-stats)]
-    [session-head : i64 (arena.tl_arena_current)]
     [_restore-enclosing : unit
       (unsafe
         (arena.tl_arena_set enclosing))]
@@ -12460,7 +12452,7 @@
     [_fresh-after : unit (lsp-frame-fresh-session-reset!)]
     [_destroy-session : unit
       (unsafe
-        (arena.tl_arena_destroy session-head))]
+        (arena.tl_arena_destroy session))]
     [_destroy-transport : unit
       (unsafe
         (arena.tl_arena_destroy transport-head))]

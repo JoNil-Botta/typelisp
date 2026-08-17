@@ -1149,23 +1149,12 @@
 (define (ctfe-env-arena-segment-capacity) : i64
   8)
 
-(define (ctfe-env-arena-owner-root [handle : i64]) : i64
-  (if (= handle 0)
-    0
-    (let
-      [root : i64
-        (unsafe
-          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-      (if (= root 0)
-        handle
-        root))))
-
 (define (ctfe-env-arena-new) : CtfeEnvArena
   (CtfeEnvArena
     (__tl_make-array (__tl_dyn-array CtfeEnvBinding) 1)
     0
     0
-    (ctfe-env-arena-owner-root (arena.tl_arena_current))))
+    (arena.tl_arena_current)))
 
 (define (ctfe-env-new
   [pools : ast.AstNodePoolContext]

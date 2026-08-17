@@ -45848,7 +45848,7 @@
           "    movq %rbx, %r14\n    cpuid\n")))
     true))
 
-(define (compiler-backend-stream-home-carries-grown-head-ok?) : bool
+(define (compiler-backend-stream-home-keeps-stable-root-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]
     [backend-state : compiler_backend.CompilerBackendState
@@ -45863,8 +45863,8 @@
         (arena.set! home))]
     ;; Leave eight bytes in the Linux root segment. The first retained chunk
     ;; stays Inline; appending the second chunk forces dense-store materialization
-    ;; and advances the home chain without touching 64 MiB of pages,
-    ;; making the stale-handle regression cheap to exercise.
+    ;; and grows the home chain without touching 64 MiB of pages. The public
+    ;; handle must remain the stable owner root throughout.
     [_fill-home : i64 (compiler-backend-test-runtime-alloc 67108792)]
     [home-before-copy : arena.Arena (arena.current)]
     [_set-scratch : unit
@@ -45885,7 +45885,7 @@
       (and
         (arena.eq? (arena.current) scratch)
         (string.eq (text_buf.render copied) "xy")
-        (not (arena.eq? carried-home home-before-copy)))]
+        (arena.eq? carried-home home-before-copy))]
     (begin
       (unsafe
         (arena.set! caller))
@@ -47242,7 +47242,7 @@ b_keep:
         (compiler-backend-stream-flush-preserves-grown-state-ok?)
         (compiler-backend-stream-state-growth-ok?)
         (compiler-backend-stream-record-growth-ok?)
-        (compiler-backend-stream-home-carries-grown-head-ok?))
+        (compiler-backend-stream-home-keeps-stable-root-ok?))
       (and
         (pmove.compiler-parallel-move-self-test?)
         (compiler-backend-phi-parallel-copy-ok?)

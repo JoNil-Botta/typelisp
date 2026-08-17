@@ -338,45 +338,6 @@
             resolved))
         resolved))))
 
-;; Arena ownership follows the persistent store pattern used by lower-name
-;; stores and typechecker environments.  The owner root/current head is used
-;; for every store allocation; an unrelated caller arena is restored after the
-;; operation, while a caller already in this owner keeps its advanced head.
-(define (clone-root-entries-arena-owner-root [handle : i64]) : i64
-  (if (= handle 0)
-    0
-    (let
-      [root : i64
-        (unsafe
-          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-      (if (= root 0)
-        handle
-        root))))
-
-(define (clone-root-entries-arena-owner-current-head [handle : i64]) : i64
-  (let
-    [root : i64 (clone-root-entries-arena-owner-root handle)]
-    (if (= root 0)
-      0
-      (let
-        [head : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
-        (if (= head 0)
-          root
-          head)))))
-
-(define (clone-root-entries-arena-restore-after-owner-alloc!
-  [previous-arena : i64]
-  [owner : i64]) : unit
-  (if (=
-    (clone-root-entries-arena-owner-root previous-arena)
-    (clone-root-entries-arena-owner-root owner))
-    unit
-    (unsafe
-      (arena.tl_arena_set
-        (clone-root-entries-arena-owner-current-head previous-arena)))))
-
 (define (clone-root-entries-empty) : CloneRootEntries
   CloneRootEntries.Empty)
 
@@ -404,7 +365,7 @@
 
 (define (clone-root-entries-store-new) : (Box CloneRootEntryStore)
   (let
-    [owner : i64 (clone-root-entries-arena-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (box
       (CloneRootEntryStore
         (__tl_make-array CloneRootEntry 4)
@@ -430,15 +391,13 @@
   [store : (&mut store CloneRootEntryStore)]) : unit
   (let
     [owner : i64 store.arena]
-    [previous-arena : i64 (arena.tl_arena_current)]
     [old-capacity : i64 (array-length store.entries)]
     [new-capacity : i64
       (if (< old-capacity 1)
         1
         (* old-capacity 2))]
-    (begin
-      (unsafe
-        (arena.tl_arena_set (clone-root-entries-arena-owner-current-head owner)))
+    (in-arena
+      (arena.Arena owner)
       (let
         [bigger : (__tl_dyn-array CloneRootEntry)
           (__tl_make-array CloneRootEntry new-capacity)]
@@ -450,8 +409,7 @@
             (& store.entries)
             0
             store.len)
-          (set! store.entries bigger)))
-      (clone-root-entries-arena-restore-after-owner-alloc! previous-arena owner))))
+          (set! store.entries bigger))))))
 
 (define (clone-root-entries-store-entry-at
   [store : (& store CloneRootEntryStore)]
@@ -664,48 +622,43 @@
                 (let
                   [owner : i64
                     (__tl-project-field (__tl-box-place target-store) arena)]
-                  [previous-arena : i64 (arena.tl_arena_current)]
-                  (begin
-                    (unsafe
-                      (arena.tl_arena_set
-                        (clone-root-entries-arena-owner-current-head owner)))
-                    (if (>=
-                      (__tl-project-field (__tl-box-place target-store) len)
-                      (array-length
-                        (__tl-project-field
+                  (in-arena
+                    (arena.Arena owner)
+                    (begin
+                      (if (>=
+                        (__tl-project-field (__tl-box-place target-store) len)
+                        (array-length
+                          (__tl-project-field
+                            (__tl-box-place target-store)
+                            entries)))
+                        (clone-root-entries-store-grow!
+                          (&mut (__tl-box-place target-store)))
+                        unit)
+                      (let
+                        [physical : i64
+                          (__tl-project-field (__tl-box-place target-store) len)]
+                        (set!
+                          (array-ref
+                            (__tl-project-field
+                              (__tl-box-place target-store)
+                              entries)
+                            physical)
+                          (CloneRootEntry key-id helper-id))
+                        (__tl-project-set-field
                           (__tl-box-place target-store)
-                          entries)))
-                      (clone-root-entries-store-grow!
-                        (&mut (__tl-box-place target-store)))
-                      unit)
-                    (let
-                      [physical : i64
-                        (__tl-project-field (__tl-box-place target-store) len)]
-                      (set!
-                        (array-ref
-                          (__tl-project-field
-                            (__tl-box-place target-store)
-                            entries)
+                          len
+                          (+ physical 1))
+                        (clone_id_map.insert-ref!
+                          (&mut
+                            (__tl-project-field
+                              (__tl-box-place target-store)
+                              key-index))
+                          key-id
                           physical)
-                        (CloneRootEntry key-id helper-id))
-                      (__tl-project-set-field
-                        (__tl-box-place target-store)
-                        len
-                        (+ physical 1))
-                      (clone_id_map.insert-ref!
-                        (&mut
-                          (__tl-project-field
-                            (__tl-box-place target-store)
-                            key-index))
-                        key-id
-                        physical)
-                      (clone-root-entries-arena-restore-after-owner-alloc!
-                        previous-arena
-                        owner)
-                      (CloneRootEntries.Dense
-                        target-store
-                        target-start
-                        (+ target-len 1)))))]
+                        (CloneRootEntries.Dense
+                          target-store
+                          target-start
+                          (+ target-len 1))))))]
               [_ target]))]))))
 
 (define (clone-root-entries-take [roots : CloneRootEntries] [count : i64]) : CloneRootEntries

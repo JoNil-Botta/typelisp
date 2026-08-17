@@ -65,17 +65,6 @@
   (Nil)
   (Bind i64 i64 i64 LowerNameEnv))
 
-(define (lower-name-arena-owner-root [handle : i64]) : i64
-  (if (= handle 0)
-    0
-    (let
-      [root : i64
-        (unsafe
-          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-      (if (= root 0)
-        handle
-        root))))
-
 (define (lower-name-store-new) : LowerNameStore
   (begin
     (cfg
@@ -88,7 +77,7 @@
         (__tl_make-array (__tl_dyn-array LowerNameBinding) 4)]
       [first : (__tl_dyn-array LowerNameBinding)
         (__tl_make-array LowerNameBinding 16)]
-      [owner : i64 (lower-name-arena-owner-root (arena.tl_arena_current))]
+      [owner : i64 (arena.tl_arena_current)]
       (begin
         (set! (array-ref segments 0) first)
         (LowerNameStore segments 1 0 owner)))))
@@ -597,7 +586,7 @@
 
 (define (compiler-lower-function-memo-storage-empty) : CompilerLowerFunctionMemoStorage
   (CompilerLowerFunctionMemoStorage
-    (lower-name-arena-owner-root (arena.tl_arena_current))
+    (arena.tl_arena_current)
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
     (__tl_make-array ast.AstType 0)
@@ -1948,15 +1937,7 @@
   (let
     [base-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
-    (in-arena
-      base-arena
-      (let
-        [out : String (string.copy (& text))]
-        (begin
-          (ast.ast-node-pool-context-sync-base-arena!
-            pools
-            (arena.tl_arena_current))
-          out)))))
+    (in-arena base-arena (string.copy (& text)))))
 
 (define (lower-copy-paths-into-pools
   [paths : ast.AstDeclPathList]
@@ -1988,9 +1969,6 @@
                     index
                     cbi.compiler-builtin-id-fix-empty))
                 (set! index (+ index 1)))))
-          (ast.ast-node-pool-context-sync-base-arena!
-            pools
-            (arena.tl_arena_current))
           out)))))
 
 (define (lower-clear-macro-expanded-source-caches-into-pools!
@@ -2004,10 +1982,7 @@
       (begin
         (load.compiler-load-dotted-path-cache-reset!)
         (tc_core.compiler-typecheck-clear-macro-expanded-source-caches-for-job!
-          job-state)
-        (ast.ast-node-pool-context-sync-base-arena!
-          pools
-          (arena.tl_arena_current))))))
+          job-state)))))
 
 (define (lower-name-env-copy-active [names : LowerNameEnv]) : LowerNameEnv
   (match names
@@ -2022,15 +1997,7 @@
   (let
     [base-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
-    (in-arena
-      base-arena
-      (let
-        [out : LowerNameEnv (lower-name-env-copy-active names)]
-        (begin
-          (ast.ast-node-pool-context-sync-base-arena!
-            pools
-            (arena.tl_arena_current))
-          out)))))
+    (in-arena base-arena (lower-name-env-copy-active names))))
 
 (define (lower-checked-dest-pools-commit!
   [lower-state : CompilerLowerState]
@@ -14109,9 +14076,6 @@
             (begin
               (set! (array-ref keep index) (array-ref source index))
               (set! index (+ index 1))))
-          (ast.ast-node-pool-context-sync-base-arena!
-            pools
-            (arena.tl_arena_current))
           (LowerDeclKeepPlan keep count))))))
 
 (define (lower-decl-keep-plan-apply
@@ -14479,7 +14443,6 @@
                                       reachable
                                       dispatch-variants
                                       reachable-path-type-names)))])]
-                          [scratch-head : i64 (arena.tl_arena_current)]
                           (begin
                             ;; Materialize the pruned program back in the persistent
                             ;; arena before rewinding the scratch arena.
@@ -14506,25 +14469,21 @@
                                       (ast.ast-program filtered-decls)
                                       filtered-paths
                                       keep-plan)])]
-                              [new-prev-arena : i64 (arena.tl_arena_current)]
                               (begin
                                 (unsafe
-                                  (arena.tl_arena_set scratch-head)
+                                  (arena.tl_arena_set scratch)
                                   (arena.tl_region_reset mark)
-                                  (arena.tl_arena_set new-prev-arena))
+                                  (arena.tl_arena_set prev-arena))
                                 pruned))))])))
-                (let
-                  [scratch-head : i64 (arena.tl_arena_current)]
-                  (begin
-                    (unsafe
-                      (arena.tl_arena_set scratch-head)
-                      (arena.tl_region_reset mark)
-                      (arena.tl_arena_set prev-arena))
-                    (LowerPrunedProgramWithPlan.Program
-                      program
-                      paths
-                      (lower-decl-keep-plan-all
-                        (ast.ast-decl-list-len (& decls)))))))]
+                (begin
+                  (unsafe
+                    (arena.tl_arena_set scratch)
+                    (arena.tl_region_reset mark)
+                    (arena.tl_arena_set prev-arena))
+                  (LowerPrunedProgramWithPlan.Program
+                    program
+                    paths
+                    (lower-decl-keep-plan-all (ast.ast-decl-list-len (& decls))))))]
             (begin
               (lower-reach-scratch-state-reset! lower-state)
               result))))]))
@@ -65887,17 +65846,6 @@
         (arena.tl_arena_destroy lower-scratch-arena))
       (set! lower-scratch-arena 0))))
 
-(define (lower-scratch-arena-release-after-overflow!
-  [scratch : i64]
-  [scratch-head : i64]) : unit
-  ;; Region reset retains overflow mappings to preserve the public stale-address
-  ;; semantics. A lowered function has already cloned every live result into the
-  ;; IR/enclosing arenas, so recycle an overflowed internal scratch arena here
-  ;; instead of accumulating one 64 MiB mapping per large function.
-  (if (= scratch scratch-head)
-    unit
-    (lower-scratch-arena-release!)))
-
 ;; Dedicated arena for the escaped (lowered) IR function bodies. The
 ;; lowered IR is consumed exactly once: at opt levels >= 1 the optimizer
 ;; deep-clones every surviving function into the enclosing arena
@@ -66057,52 +66005,40 @@
           mode)
           [(ResultLowerFunction.Ok fns function-spans)
             (let
-              [scratch-head : i64 (arena.tl_arena_current)]
               [escaped-fns : ir.CompilerIrFunctionList
                 (lower-function-list-escape-to-ir-arena fns)]
               ;; The IR function clones go to the dedicated lowered-IR
               ;; arena (released by the driver after optimization); the
               ;; spans side-table is rebuilt in the enclosing arena since
-              ;; it outlives the lowered IR. The stored handle must follow
-              ;; the arena's grown head, or every later allocation re-walks
-              ;; the overflow path from the full first segment.
+              ;; it outlives the lowered IR. Stable-root arena handles preserve
+              ;; both owners across any segment growth during those clones.
               (begin
                 (unsafe
                   (arena.tl_arena_set enclosing))
                 (let
                   [escaped-spans : ir.CompilerSourceSpans
                     (ir.compiler-source-spans-append-new spans function-spans)]
-                  [new-enclosing : i64 (arena.tl_arena_current)]
                   (begin
                     (unsafe
-                      (arena.tl_arena_set scratch-head)
+                      (arena.tl_arena_set scratch)
                       (arena.tl_region_reset mark)
-                      (arena.tl_arena_set new-enclosing))
-                    (lower-scratch-arena-release-after-overflow!
-                      scratch
-                      scratch-head)
+                      (arena.tl_arena_set enclosing))
                     (tc_core.tc-nominal-owner-cache-reset!)
                     (ResultLowerFunction.Ok escaped-fns escaped-spans)))))]
           [(ResultLowerFunction.Err message)
-            (let
-              [scratch-head : i64 (arena.tl_arena_current)]
-              (begin
-                (unsafe
-                  (arena.tl_arena_set enclosing))
-                (let
-                  [escaped-message : (Box cdiag.CompilerDiagnostic)
-                    (clone message)]
-                  [new-enclosing : i64 (arena.tl_arena_current)]
-                  (begin
-                    (unsafe
-                      (arena.tl_arena_set scratch-head)
-                      (arena.tl_region_reset mark)
-                      (arena.tl_arena_set new-enclosing))
-                    (lower-scratch-arena-release-after-overflow!
-                      scratch
-                      scratch-head)
-                    (tc_core.tc-nominal-owner-cache-reset!)
-                    (ResultLowerFunction.Err escaped-message)))))])))))
+            (begin
+              (unsafe
+                (arena.tl_arena_set enclosing))
+              (let
+                [escaped-message : (Box cdiag.CompilerDiagnostic)
+                  (clone message)]
+                (begin
+                  (unsafe
+                    (arena.tl_arena_set scratch)
+                    (arena.tl_region_reset mark)
+                    (arena.tl_arena_set enclosing))
+                  (tc_core.tc-nominal-owner-cache-reset!)
+                  (ResultLowerFunction.Err escaped-message))))])))))
 
 (define (lower-struct-cleanup-param-id [lower-state : CompilerLowerState]) : i64
   (let

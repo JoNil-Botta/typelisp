@@ -74622,7 +74622,6 @@
               [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
                 (let
                   [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
-                  [scratch-head : i64 (arena.tl_arena_current)]
                   (begin
                     (unsafe
                       (arena.tl_arena_set enclosing))
@@ -74644,14 +74643,13 @@
                             1
                             _profile-name
                             _t-dce))]
-                      [new-enclosing : i64 (arena.tl_arena_current)]
                       [_t-restore : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [_restore : unit
                         (unsafe
-                          (arena.tl_arena_set scratch-head)
+                          (arena.tl_arena_set scratch)
                           (arena.tl_region_reset mark)
-                          (arena.tl_arena_set new-enclosing))]
+                          (arena.tl_arena_set enclosing))]
                       [_profile-restore : unit
                         (cfg
                           compile-profile
@@ -74821,7 +74819,6 @@
                     level
                     _profile-name
                     _t-compact))]
-              [scratch-head : i64 (arena.tl_arena_current)]
               (begin
                 (unsafe
                   (arena.tl_arena_set enclosing))
@@ -74837,13 +74834,12 @@
                         level
                         _profile-name
                         _t-clone))]
-                  [new-enclosing : i64 (arena.tl_arena_current)]
                   [_t-restore : i64 (cfg compile-profile (profile.now-ms) 0)]
                   [_restore : unit
                     (unsafe
-                      (arena.tl_arena_set scratch-head)
+                      (arena.tl_arena_set scratch)
                       (arena.tl_region_reset mark)
-                      (arena.tl_arena_set new-enclosing))]
+                      (arena.tl_arena_set enclosing))]
                   [_profile-restore : unit
                     (cfg
                       compile-profile
@@ -91813,9 +91809,8 @@
             (compiler-opt-scratch-region-report-function
               type-segment-bases
               func)]
-          [scratch-head : i64 (arena.tl_arena_current)]
           (unsafe
-            (arena.tl_arena_set scratch-head)
+            (arena.tl_arena_set scratch)
             (arena.tl_region_reset mark)
             (arena.tl_arena_set enclosing)))))))
 
@@ -92383,7 +92378,6 @@
                     (let
                       [changed : bool
                         (or reset-changed paired-changed switched-changed)]
-                      [scratch-head : i64 (arena.tl_arena_current)]
                       (begin
                         (unsafe
                           (arena.tl_arena_set enclosing))
@@ -92398,12 +92392,11 @@
                                 pools
                                 switched-func)
                               func)]
-                          [new-enclosing : i64 (arena.tl_arena_current)]
                           [_restore : unit
                             (unsafe
-                              (arena.tl_arena_set scratch-head)
+                              (arena.tl_arena_set scratch)
                               (arena.tl_region_reset mark)
-                              (arena.tl_arena_set new-enclosing))]
+                              (arena.tl_arena_set enclosing))]
                           escaped)))])])])))))
 
 (define (opt-late-function-list-escaping

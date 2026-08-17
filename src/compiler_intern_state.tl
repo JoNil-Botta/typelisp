@@ -98,13 +98,9 @@
   [left-id : i64]
   [middle-id : i64]
   [right-id : i64]) : InternStructuralKey
-  ;; #6468 owns widening the raw handle beyond the current two non-overlapping
-  ;; kind lanes. Keep this capability honest until that representation lands.
   (if (or
     (not (intern-structural-session-valid? handle))
-    (and
-      (not (= kind (ci.intern-structural-kind-pair)))
-      (not (= kind (ci.intern-structural-kind-triple)))))
+    (not (ci.intern-structural-kind-valid? kind)))
     (ci.tl_oob_abort)
     (let
       [session : ci.InternSourceNameSession
@@ -160,16 +156,12 @@
       [table : ci.InternStructuralTable
         (array-ref session.structural-table-cell 0)]
       [raw : i64 (intern-state-structural-key-raw key)]
-      [encoded-index : i64 (bit-and raw (ci.intern-structural-key-index-mask))]
-      (and
-        (>= raw (ci.intern-structural-key-base))
-        (> encoded-index 0)
-        (=
-          (/
-            (- raw (ci.intern-structural-key-base))
-            (ci.intern-structural-key-owner-stride))
-          session.structural-owner)
-        (<= encoded-index table.len)))))
+      [prefix : i64
+        (+
+          (ci.intern-structural-key-base)
+          (* session.structural-owner (ci.intern-structural-key-owner-stride)))]
+      [encoded-index : i64 (- raw prefix)]
+      (and (> encoded-index 0) (<= encoded-index table.len)))))
 
 (define (intern-structural-session-key-index [key : InternStructuralKey]) : i64
   (-
@@ -309,16 +301,12 @@
     [table : ci.InternStructuralTable
       (array-ref state.compat.structural-table-cell 0)]
     [raw : i64 (intern-state-structural-key-raw key)]
-    [encoded-index : i64 (bit-and raw (ci.intern-structural-key-index-mask))]
-    (and
-      (>= raw (ci.intern-structural-key-base))
-      (> encoded-index 0)
-      (=
-        (/
-          (- raw (ci.intern-structural-key-base))
-          (ci.intern-structural-key-owner-stride))
-        table.owner)
-      (<= encoded-index table.len))))
+    [prefix : i64
+      (+
+        (ci.intern-structural-key-base)
+        (* table.owner (ci.intern-structural-key-owner-stride)))]
+    [encoded-index : i64 (- raw prefix)]
+    (and (> encoded-index 0) (<= encoded-index table.len))))
 
 (define (intern-state-structural-key-index [key : InternStructuralKey]) : i64
   (-
@@ -326,6 +314,19 @@
       (intern-state-structural-key-raw key)
       (ci.intern-structural-key-index-mask))
     1))
+
+(define (intern-state-structural-key-kind
+  [state : InternState]
+  [key : InternStructuralKey]) : i64
+  (if (intern-state-structural-key-owned? state key)
+    (cast
+      (array-ref
+        (__tl-project-field
+          (array-ref state.compat.structural-table-cell 0)
+          kinds)
+        (intern-state-structural-key-index key))
+      : i64)
+    (ci.tl_oob_abort)))
 
 (define (intern-state-structural-key-left
   [state : InternState]
@@ -363,14 +364,40 @@
 (define (intern-state-structural-record-count [state : InternState]) : i64
   (__tl-project-field (array-ref state.compat.structural-table-cell 0) len))
 
+(define (intern-state-structural-record-slot-bytes) : i64
+  (ci.intern-structural-record-slot-bytes))
+
+(define (intern-state-structural-record-capacity [state : InternState]) : i64
+  (array-length
+    (__tl-project-field (array-ref state.compat.structural-table-cell 0) kinds)))
+
+(define (intern-state-structural-record-bytes [state : InternState]) : i64
+  (*
+    (intern-state-structural-record-capacity state)
+    (intern-state-structural-record-slot-bytes)))
+
+(define (intern-state-structural-map-bytes [state : InternState]) : i64
+  (*
+    (array-length
+      (__tl-project-field
+        (array-ref state.compat.structural-table-cell 0)
+        map-slots))
+    8))
+
+(define (intern-state-structural-cache-bytes [state : InternState]) : i64
+  (*
+    (array-length
+      (__tl-project-field
+        (array-ref state.compat.structural-table-cell 0)
+        structural-cache-raws))
+    8))
+
 (define (intern-state-structural-allocated-bytes [state : InternState]) : i64
-  (let
-    [table : ci.InternStructuralTable
-      (array-ref state.compat.structural-table-cell 0)]
-    [records : i64 (array-length table.kinds)]
-    [map-capacity : i64 (array-length table.map-slots)]
-    [cache-capacity : i64 (array-length table.structural-cache-raws)]
-    (+ (+ (* records 25) (* map-capacity 8)) (* cache-capacity 8))))
+  (+
+    (intern-state-structural-record-bytes state)
+    (+
+      (intern-state-structural-map-bytes state)
+      (intern-state-structural-cache-bytes state))))
 
 (define (intern-state-qualified? [state : InternState] [id : i64]) : bool
   (ci.intern-compat-state-qualified? state.compat id))
@@ -411,6 +438,292 @@
       (intern-state-qualified-base state id)
       base-name)))
 
+(define (intern-state-structural-kind-tests-ok?) : bool
+  (let
+    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state : InternState (intern-state-new)]
+    ;; Allocate these owners consecutively. In the old layout, A/kind 3/index 0
+    ;; was numerically identical to B/kind 1/index 0.
+    [alias-a : InternState (intern-state-new)]
+    [alias-b : InternState (intern-state-new)]
+    [former-alias-a : InternStructuralKey
+      (intern-state-structural-key
+        alias-a
+        (ci.intern-structural-kind-template-source)
+        17
+        0
+        23)]
+    [next-owner-pair : InternStructuralKey
+      (intern-state-composite-pair-key alias-b 17 23)]
+    [collision-a : InternStructuralKey
+      (intern-state-structural-key
+        state
+        (ci.intern-structural-kind-arena-phase)
+        300
+        400
+        1)]
+    [collision-b : InternStructuralKey
+      (intern-state-structural-key
+        state
+        (ci.intern-structural-kind-arena-phase)
+        300
+        400
+        513)]
+    [changed-component : InternStructuralKey
+      (intern-state-structural-key
+        state
+        (ci.intern-structural-kind-arena-phase)
+        102
+        0
+        303)]
+    [kind : i64 (ci.intern-structural-kind-pair)]
+    [previous-raw : i64 -1]
+    [growth-index : i64 0]
+    [ok : bool true]
+    (begin
+      (unless
+        (=
+          (__tl-project-field
+            (array-ref alias-b.compat.structural-table-cell 0)
+            owner)
+          (+
+            (__tl-project-field
+              (array-ref alias-a.compat.structural-table-cell 0)
+              owner)
+            1))
+        (set! ok false))
+      (unless
+        (not
+          (=
+            (intern-state-structural-key-raw former-alias-a)
+            (intern-state-structural-key-raw next-owner-pair)))
+        (set! ok false))
+      (unless
+        (=
+          (intern-state-structural-key-kind alias-a former-alias-a)
+          (ci.intern-structural-kind-template-source))
+        (set! ok false))
+      (unless
+        (not (intern-state-structural-key-owned? alias-b former-alias-a))
+        (set! ok false))
+      (unless (not (ci.intern-structural-kind-valid? 0)) (set! ok false))
+      (unless (not (ci.intern-structural-kind-valid? 256)) (set! ok false))
+      (while (<= kind (ci.intern-structural-kind-arena-phase))
+        (let
+          [key : InternStructuralKey
+            (intern-state-structural-key state kind 101 0 303)]
+          [again : InternStructuralKey
+            (intern-state-structural-key state kind 101 0 303)]
+          [raw : i64 (intern-state-structural-key-raw key)]
+          (begin
+            (unless
+              (intern-state-structural-key-owned? state key)
+              (set! ok false))
+            (unless
+              (= (intern-state-structural-key-kind state key) kind)
+              (set! ok false))
+            (unless
+              (= (intern-state-structural-key-left state key) 101)
+              (set! ok false))
+            (unless
+              (= (intern-state-structural-key-middle state key) 0)
+              (set! ok false))
+            (unless
+              (= (intern-state-structural-key-right state key) 303)
+              (set! ok false))
+            (unless
+              (= raw (intern-state-structural-key-raw again))
+              (set! ok false))
+            (unless (not (= raw previous-raw)) (set! ok false))
+            (set! previous-raw raw)
+            (set! kind (+ kind 1)))))
+      (unless
+        (not
+          (= previous-raw (intern-state-structural-key-raw changed-component)))
+        (set! ok false))
+      ;; The low nine hash bits are identical while the records and decoded
+      ;; right components differ, forcing the initial 512-slot map to probe.
+      (unless
+        (=
+          (bit-and
+            (ci.intern-structural-hash
+              (ci.intern-structural-kind-arena-phase)
+              300
+              400
+              1)
+            511)
+          (bit-and
+            (ci.intern-structural-hash
+              (ci.intern-structural-kind-arena-phase)
+              300
+              400
+              513)
+            511))
+        (set! ok false))
+      (unless
+        (not
+          (=
+            (intern-state-structural-key-raw collision-a)
+            (intern-state-structural-key-raw collision-b)))
+        (set! ok false))
+      (unless
+        (= (intern-state-structural-key-right state collision-a) 1)
+        (set! ok false))
+      (unless
+        (= (intern-state-structural-key-right state collision-b) 513)
+        (set! ok false))
+      ;; Cycle all eight reserved kinds while forcing both record and map growth.
+      (while (< growth-index 700)
+        (let
+          [growth-kind : i64
+            (+
+              (ci.intern-structural-kind-pair)
+              (% growth-index (ci.intern-structural-kind-arena-phase)))]
+          [key : InternStructuralKey
+            (intern-state-structural-key
+              state
+              growth-kind
+              (+ 1000 growth-index)
+              (+ 2000 growth-index)
+              (+ 3000 growth-index))]
+          (begin
+            (unless
+              (= (intern-state-structural-key-kind state key) growth-kind)
+              (set! ok false))
+            (unless
+              (=
+                (intern-state-structural-key-middle state key)
+                (+ 2000 growth-index))
+              (set! ok false))
+            (set! growth-index (+ growth-index 1)))))
+      ;; The worker-facing session capability shares the same generalized
+      ;; constructor and record lookup, rather than retaining a pair/triple
+      ;; restriction behind the state wrapper.
+      (let
+        [handle : InternStructuralSessionHandle
+          (intern-structural-session-handle-from-state state.compat)]
+        [session-key : InternStructuralKey
+          (intern-structural-session-key
+            handle
+            (ci.intern-structural-kind-macro-global)
+            808
+            909
+            1001)]
+        [state-key : InternStructuralKey
+          (intern-state-structural-key
+            state
+            (ci.intern-structural-kind-macro-global)
+            808
+            909
+            1001)]
+        (begin
+          (unless
+            (=
+              (intern-state-structural-key-raw session-key)
+              (intern-state-structural-key-raw state-key))
+            (set! ok false))
+          (unless
+            (=
+              (intern-structural-session-key-kind handle session-key)
+              (ci.intern-structural-kind-macro-global))
+            (set! ok false))))
+      (unless
+        (>= (intern-state-structural-record-capacity state) 1024)
+        (set! ok false))
+      (unless
+        (= (intern-state-structural-record-slot-bytes) 37)
+        (set! ok false))
+      (unless
+        (=
+          (intern-state-structural-cache-bytes state)
+          (* (ci.intern-structural-cache-capacity) 8))
+        (set! ok false))
+      (unless
+        (=
+          (intern-state-structural-allocated-bytes state)
+          (+
+            (intern-state-structural-record-bytes state)
+            (+
+              (intern-state-structural-map-bytes state)
+              (intern-state-structural-cache-bytes state))))
+        (set! ok false))
+      ;; A generic kind-1/2 record remains exactly the pair/triple compatibility
+      ;; record after the explicit owner is installed; other kinds classify as
+      ;; neither even when their index is zero.
+      (ci.intern-compat-state-install! state.compat)
+      (let
+        [pair-key : InternStructuralKey
+          (intern-state-structural-key
+            state
+            (ci.intern-structural-kind-pair)
+            101
+            0
+            303)]
+        [triple-key : InternStructuralKey
+          (intern-state-structural-key
+            state
+            (ci.intern-structural-kind-triple)
+            101
+            0
+            303)]
+        (begin
+          (unless
+            (=
+              (intern-state-structural-key-raw pair-key)
+              (ci.intern-composite-pair-id 101 303))
+            (set! ok false))
+          (unless
+            (=
+              (intern-state-structural-key-raw triple-key)
+              (ci.intern-composite-triple-id 101 0 303))
+            (set! ok false))
+          (unless
+            (ci.intern-composite-pair-id?
+              (intern-state-structural-key-raw pair-key))
+            (set! ok false))
+          (unless
+            (ci.intern-composite-triple-id?
+              (intern-state-structural-key-raw triple-key))
+            (set! ok false))
+          (unless
+            (not
+              (ci.intern-composite-triple-id?
+                (intern-state-structural-key-raw pair-key)))
+            (set! ok false))))
+      (ci.intern-compat-state-install! alias-a.compat)
+      (unless
+        (not
+          (ci.intern-composite-pair-id?
+            (intern-state-structural-key-raw former-alias-a)))
+        (set! ok false))
+      (unless
+        (not
+          (ci.intern-composite-triple-id?
+            (intern-state-structural-key-raw former-alias-a)))
+        (set! ok false))
+      (let
+        [stale-alias : InternStructuralKey former-alias-a]
+        (begin
+          (intern-state-reset-to! alias-a 0)
+          (unless
+            (not (intern-state-structural-key-owned? alias-a stale-alias))
+            (set! ok false))
+          (unless
+            (= (intern-state-structural-record-count alias-a) 0)
+            (set! ok false))))
+      (let
+        [stale-grown : InternStructuralKey collision-a]
+        (begin
+          (intern-state-reset! state)
+          (unless
+            (not (intern-state-structural-key-owned? state stale-grown))
+            (set! ok false))
+          (unless
+            (= (intern-state-structural-record-count state) 0)
+            (set! ok false))))
+      (ci.intern-compat-state-install! installed)
+      ok)))
+
 (define (intern-state-isolation-tests-ok?) : bool
   (let
     [installed-state : ci.InternCompatState
@@ -437,6 +750,7 @@
       (intern-structural-session-handle-from-state state-b.compat)]
     [ok : bool true]
     (begin
+      (unless (intern-state-structural-kind-tests-ok?) (set! ok false))
       (unless
         (= (comptime (size-of (type InternStructuralKey))) 8)
         (set! ok false))

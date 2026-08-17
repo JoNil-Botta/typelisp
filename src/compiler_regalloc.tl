@@ -17269,10 +17269,6 @@
 (define (compiler-reg-call-region-cand-loop) : i64
   2)
 
-(define (compiler-reg-call-region-stat-kind [stat : CompilerRegCallRegionStat]) : i64
-  (match stat
-    [(CompilerRegCallRegionStat _ _ _ _ _ _ _ kind) kind]))
-
 ;; One bucket of candidate rows in FLUSH order; the picker walks it back to
 ;; front, which is the order the former prepend-built cons bucket presented.
 (defstruct CompilerRegCallRegionStatSeq
@@ -32940,28 +32936,6 @@
                 (= requirement.ordinal ordinal)
                 item.frame))))))))
 
-(define (compiler-reg-scratch-plan-has-slot?
-  [plan : CompilerRegScratchPlan]
-  [point : i64]
-  [ordinal : i64]) : bool
-  (if (or (< point 0) (not (= (% point 2) 0)) (< ordinal 0))
-    false
-    (let
-      [instruction : i64 (/ point 2)]
-      (and
-        (< instruction (array-length plan.first))
-        (< instruction (array-length plan.slots))
-        (< ordinal (array-ref plan.slots instruction))
-        (let
-          [index : i64 (+ (array-ref plan.first instruction) ordinal)]
-          (and
-            (>= index 0)
-            (< index (array-length plan.items))
-            (let
-              [requirement : CompilerRegScratchRequirement
-                (__tl-project-field (array-ref plan.items index) requirement)]
-              (and (= requirement.point point) (= requirement.ordinal ordinal)))))))))
-
 (define (compiler-reg-scratch-var-register-homed?
   [assignments : CompilerRegAssignmentTable]
   [var : i64]) : bool
@@ -34063,24 +34037,6 @@
                 (compiler-reg-id-seq-prepend
                   cabi.compiler-reg-id-r11
                   (compiler-reg-id-seq-empty))))))))))
-
-(define (compiler-reg-scratch-used-registers
-  [assignments : CompilerRegAssignmentTable]
-  [regs : CompilerRegIdSeq]) : CompilerRegIdSeq
-  (let
-    [index : i64 0]
-    [out : CompilerRegIdSeq
-      (compiler-reg-id-seq-with-capacity (compiler-reg-id-seq-count regs))]
-    (begin
-      (while (< index (compiler-reg-id-seq-count regs))
-        (let
-          [reg : i64 (compiler-reg-id-seq-ref regs index)]
-          (begin
-            (if (compiler-reg-assignments-use-register? assignments reg)
-              (set! out (compiler-reg-id-seq-push out reg))
-              unit)
-            (set! index (+ index 1)))))
-      out)))
 
 (define (compiler-reg-scratch-call-target-allowed
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -36425,18 +36381,6 @@
     [(ir.CompilerIrValue.Char _) true]
     [_ false]))
 
-(define (compiler-reg-early-scratch-target? [instr : ir.CompilerIrInstr]) : bool
-  (match instr
-    [(ir.CompilerIrInstr.BinOp _ op _ rhs ty)
-      (and
-        (not (compiler-reg-float-type? ty))
-        (match op
-          [(ir.CompilerIrBinOp.SafeDiv) true]
-          [(ir.CompilerIrBinOp.SafeMod) true]
-          [_ false])
-        (compiler-reg-early-scratch-literal? rhs))]
-    [_ false]))
-
 (define (compiler-reg-early-scratch-slot-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
     [(ir.CompilerIrInstr.BinOp _ op _ rhs ty)
@@ -37220,24 +37164,6 @@
             (io.print-error (string.int->string requirement.hi))
             (io.print-error "\n")
             (io.panic "regalloc: unable to assign modeled scratch group")))))))
-
-(define (compiler-reg-scratch-items-complete?
-  [items : (__tl_dyn-array CompilerRegScratchAssignment)]) : bool
-  (let
-    [index : i64 0]
-    [complete : bool true]
-    (begin
-      (while (and complete (< index (array-length items)))
-        (begin
-          (if (and
-            (=
-              (__tl-project-field (array-ref items index) register)
-              cabi.compiler-reg-id-invalid)
-            (not (__tl-project-field (array-ref items index) frame)))
-            (set! complete false)
-            unit)
-          (set! index (+ index 1))))
-      complete)))
 
 (define (compiler-reg-scratch-register-array
   [target-abi : cabi.CompilerRegTargetAbi]) : (__tl_dyn-array i64)

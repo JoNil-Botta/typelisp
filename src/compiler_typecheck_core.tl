@@ -11371,6 +11371,11 @@
                     (set! left (- left 1)))]))]))
       found)))
 
+;; `name-id` is the lookup key already selected by the caller. Module/import
+;; bindings use structural keys, while local bindings use raw interner ids.
+;; Do not normalize it with `tc-env-name-key-id` here: a qualified raw id and
+;; its structural key are distinct storage domains, and the marker is stored
+;; beside the value under the selected domain.
 (define (tc-binding-c-abi-fnptr-persistent-id?
   [env : TcTypeEnv]
   [name-id : i64]) : bool
@@ -20355,10 +20360,12 @@
                 name-id
                 prefix-id))))])))
 
-;; The scoped stack already indexes the newest raw binding for each key. When
-;; either candidate is present, its monotonically increasing slot index answers
-;; the ordering question without rebuilding the persistent chain walk. If both
-;; miss, only the immutable persistent tail can contain either key.
+;; The caller still supplies raw source/local keys; canonical top-env lookup is
+;; downstream of this ordering decision. The scoped stack already indexes the
+;; newest raw binding for each key. When either candidate is present, its
+;; monotonically increasing slot index answers the ordering question without
+;; rebuilding the persistent chain walk. If both miss, only the immutable
+;; persistent tail can contain either key.
 (define (tc-source-leading-segment-wins-over-exact-id?
   [env : TcTypeEnv]
   [name-id : i64]
@@ -29890,6 +29897,222 @@
 
 (cfg
   test
+  (define (tc-source-leading-segment-scoped-result-is?
+    [carrier : TcTypeEnvScopedCarrier]
+    [name-id : i64]
+    [prefix-id : i64]
+    [expected : bool]) : bool
+    (let
+      [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
+      [runtime-save : TcTypeEnvScopedRuntimeSave
+        (tc-type-env-scoped-runtime-enter! carrier)]
+      [actual : bool
+        (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id)]
+      (begin
+        (tc-type-env-scoped-runtime-restore! runtime-save)
+        (= actual expected)))))
+
+(cfg
+  test
+  (define (tc-source-leading-segment-raw-ordering-smoke?) : bool
+    (let
+      [module-id : i64 (ci.intern "dotted-order-module")]
+      [base-name-id : i64 (ci.intern "dotted-order-a.b")]
+      [name-id : i64 (ci.intern "dotted-order-module/dotted-order-a.b")]
+      [prefix-id : i64 (ci.intern "dotted-order-module/dotted-order-a")]
+      [structural-name-id : i64 (tc-env-name-key-id name-id)]
+      [structural-prefix-id : i64 (tc-env-name-key-id prefix-id)]
+      [layer-id : i64 (ci.intern "dotted-order-layer")]
+      [exact-below : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-id (tc-empty-env) name-id (ast.AstType.I64)))]
+      [prefix-above : TcTypeEnv
+        (tc-env-with-cache-layer-over-explicit
+          (tc-bind-id exact-below prefix-id (ast.AstType.Bool)))]
+      [prefix-below : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-id (tc-empty-env) prefix-id (ast.AstType.Bool)))]
+      [exact-above : TcTypeEnv
+        (tc-env-with-cache-layer-over-explicit
+          (tc-bind-id prefix-below name-id (ast.AstType.I64)))]
+      [prefix-wins-tail : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-id
+            (tc-bind-id (tc-empty-env) name-id (ast.AstType.I64))
+            prefix-id
+            (ast.AstType.Bool)))]
+      [prefix-wins-recursive-layer : TcTypeEnv
+        (tc-env-with-cache-prefix-layer
+          (tc-bind-id prefix-wins-tail layer-id (ast.AstType.Unit))
+          1
+          true
+          prefix-wins-tail)]
+      [exact-wins-tail : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-id
+            (tc-bind-id (tc-empty-env) prefix-id (ast.AstType.Bool))
+            name-id
+            (ast.AstType.I64)))]
+      [exact-wins-recursive-layer : TcTypeEnv
+        (tc-env-with-cache-prefix-layer
+          (tc-bind-id exact-wins-tail layer-id (ast.AstType.Unit))
+          1
+          true
+          exact-wins-tail)]
+      [structural-exact-only : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-id
+            (tc-bind-id (tc-empty-env) prefix-id (ast.AstType.Bool))
+            structural-name-id
+            (ast.AstType.I64)))]
+      [scoped-prefix-wins : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-carrier-bind-id
+          (tc-type-env-scoped-carrier-bind-id
+            (tc-type-env-scoped-carrier-new)
+            name-id
+            (ast.AstType.I64))
+          prefix-id
+          (ast.AstType.Bool))]
+      [scoped-exact-wins : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-carrier-bind-id
+          (tc-type-env-scoped-carrier-bind-id
+            (tc-type-env-scoped-carrier-new)
+            prefix-id
+            (ast.AstType.Bool))
+          name-id
+          (ast.AstType.I64))]
+      (and
+        (ci.intern-qualified? name-id)
+        (= (ci.intern-qualified-module-id name-id) module-id)
+        (= (ci.intern-qualified-base-id name-id) base-name-id)
+        (= (ci.intern-leading-dot-id name-id) prefix-id)
+        (not (= structural-name-id name-id))
+        (not (= structural-prefix-id prefix-id))
+        (= structural-name-id (tc-module-name-id-by-id module-id base-name-id))
+        (tc-type-env-cache-partial-head? prefix-above)
+        (tc-type-env-cache-partial-head? exact-above)
+        (tc-env-cache-explicit-head? prefix-above)
+        (tc-env-cache-explicit-head? exact-above)
+        (tc-source-leading-segment-wins-over-exact-persistent-id?
+          prefix-above
+          name-id
+          prefix-id)
+        (not
+          (tc-source-leading-segment-wins-over-exact-persistent-id?
+            exact-above
+            name-id
+            prefix-id))
+        (tc-type-env-cache-partial-head? prefix-wins-recursive-layer)
+        (tc-type-env-cache-partial-head? exact-wins-recursive-layer)
+        (tc-source-leading-segment-wins-over-exact-persistent-id?
+          prefix-wins-recursive-layer
+          name-id
+          prefix-id)
+        (not
+          (tc-source-leading-segment-wins-over-exact-persistent-id?
+            exact-wins-recursive-layer
+            name-id
+            prefix-id))
+        ;; This structural top-env key has the same source spelling as the raw
+        ;; exact candidate, but it must not participate in local ordering.
+        (tc-source-leading-segment-wins-over-exact-persistent-id?
+          structural-exact-only
+          name-id
+          prefix-id)
+        (tc-source-leading-segment-scoped-result-is?
+          scoped-prefix-wins
+          name-id
+          prefix-id
+          true)
+        (tc-source-leading-segment-scoped-result-is?
+          scoped-exact-wins
+          name-id
+          prefix-id
+          false)
+        ;; With no scoped candidates, ordering falls back to the persistent
+        ;; tail, including its older partial-cache recursion path.
+        (tc-source-leading-segment-scoped-result-is?
+          (tc-type-env-scoped-carrier-from-env prefix-wins-recursive-layer)
+          name-id
+          prefix-id
+          true)
+        (tc-source-leading-segment-scoped-result-is?
+          (tc-type-env-scoped-carrier-from-env exact-wins-recursive-layer)
+          name-id
+          prefix-id
+          false)))))
+
+(cfg
+  test
+  (define (tc-type-env-c-abi-fnptr-selected-key-smoke?) : bool
+    (let
+      [module-id : i64 (ci.intern "selected-key-module")]
+      [name-id : i64 (ci.intern "selected-key-callback")]
+      [qualified-id : i64
+        (ci.intern "selected-key-module/selected-key-callback")]
+      [structural-key : i64 (tc-module-name-id-by-id module-id name-id)]
+      [normalized-key : i64 (tc-env-name-key-id qualified-id)]
+      [local-id : i64 (ci.intern "selected-key-local")]
+      [layer-id : i64 (ci.intern "selected-key-layer")]
+      [callback-ty : ast.AstType (tc-fn0 (ast.AstType.I64))]
+      [structural-base : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-c-abi-fnptr-id (tc-empty-env) structural-key callback-ty))]
+      [structural-layer : TcTypeEnv
+        (tc-env-with-cache-layer-over-explicit
+          (tc-bind-id structural-base layer-id (ast.AstType.Bool)))]
+      [qualified-raw : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-c-abi-fnptr-id (tc-empty-env) qualified-id callback-ty))]
+      [local-raw : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-c-abi-fnptr-id (tc-empty-env) local-id callback-ty))]
+      [tail-carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-carrier-from-env structural-layer)]
+      [scoped-carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+          (tc-type-env-scoped-carrier-from-env (tc-empty-env))
+          structural-key
+          callback-ty)]
+      [was-active : bool (tc-type-env-scoped-runtime-active?)]
+      [runtime-save : TcTypeEnvScopedRuntimeSave
+        (tc-type-env-scoped-runtime-enter! tail-carrier)]
+      [runtime-ok : bool
+        (and
+          (tc-binding-c-abi-fnptr-id? structural-layer structural-key)
+          (not (tc-binding-c-abi-fnptr-id? structural-layer qualified-id)))]
+      (begin
+        (tc-type-env-scoped-runtime-restore! runtime-save)
+        (and
+          (not was-active)
+          (ci.intern-qualified? qualified-id)
+          (= structural-key normalized-key)
+          (not (= structural-key qualified-id))
+          (tc-env-cache-explicit-head? structural-layer)
+          (tc-type-env-cache-partial-head? structural-layer)
+          (tc-binding-c-abi-fnptr-id? structural-layer structural-key)
+          (not (tc-binding-c-abi-fnptr-id? structural-layer qualified-id))
+          (tc-binding-c-abi-fnptr-id? qualified-raw qualified-id)
+          (not (tc-binding-c-abi-fnptr-id? qualified-raw normalized-key))
+          (tc-binding-c-abi-fnptr-id? local-raw local-id)
+          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+            tail-carrier
+            structural-key)
+          (not
+            (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+              tail-carrier
+              qualified-id))
+          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+            scoped-carrier
+            structural-key)
+          (not
+            (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+              scoped-carrier
+              qualified-id))
+          runtime-ok)))))
+
+(cfg
+  test
   (define (tc-type-env-explicit-cache-layering-lookup-smoke?) : bool
     (let
       [base-id : i64 (ci.intern "base")]
@@ -30839,6 +31062,12 @@
     (io.panic "typecheck: local env cache smoke failed")))
 
 (test
+  tc-source-leading-segment-raw-ordering
+  (if (tc-source-leading-segment-raw-ordering-smoke?)
+    unit
+    (io.panic "typecheck: raw dotted-local ordering smoke failed")))
+
+(test
   tc-type-env-explicit-cache-layering
   (begin
     (if (tc-type-env-explicit-cache-layering-lookup-smoke?)
@@ -30849,7 +31078,10 @@
       (io.panic "typecheck: explicit env cache flag layering smoke failed"))
     (if (tc-type-env-explicit-cache-layering-marker-smoke?)
       unit
-      (io.panic "typecheck: explicit env cache marker layering smoke failed"))))
+      (io.panic "typecheck: explicit env cache marker layering smoke failed"))
+    (if (tc-type-env-c-abi-fnptr-selected-key-smoke?)
+      unit
+      (io.panic "typecheck: selected C ABI fnptr key smoke failed"))))
 
 (define (tc-spmd-env-box-smoke?) : bool
   (let

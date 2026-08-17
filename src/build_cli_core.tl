@@ -3060,6 +3060,7 @@
         [(CompilerPkgKindLib) false])]))
 
 (define (build-package-try-prepare-direct-runtime
+  [name : String]
   [kind : load.CompilerPkgKind]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
@@ -3083,6 +3084,7 @@
       [(backend.CompilerBackendTarget.Linux)
         (match (compiler_driver_core.compiler-driver-emit-package-loaded-runtime
           ""
+          name
           target
           opt-level
           mode
@@ -3116,6 +3118,7 @@
           ""
           (compiler_driver_core.compiler-driver-lower-package-loaded
             ""
+            name
             target
             mode
             decls
@@ -5255,6 +5258,7 @@
           build_run_core.SourceToolCommandStatus.Ok))]))
 
 (define (build-package-write-side-assembly
+  [name : String]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
@@ -5265,6 +5269,7 @@
   [asm-path : String]) : build_run_core.SourceToolCommandStatus
   (match (compiler_driver_core.compiler-driver-emit-package-loaded
     ""
+    name
     target
     true
     opt-level
@@ -5502,6 +5507,7 @@
                             (match side-assembly
                               [(BuildPackageSideAssembly.Regenerate)
                                 (build-package-write-side-assembly
+                                  name
                                   target
                                   opt-level
                                   mode
@@ -5727,6 +5733,7 @@
     [(ResultBuildPackagePreparedRuntime.Unavailable _)
       (match (compiler_driver_core.compiler-driver-emit-package-loaded
         ""
+        name
         target
         true
         opt-level
@@ -5761,6 +5768,7 @@
             announce)])]))
 
 (define (build-package-prepare-runtime
+  [name : String]
   [kind : load.CompilerPkgKind]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
@@ -5770,6 +5778,7 @@
   [decls : ast.AstDeclList]
   [owned-paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
   (match (build-package-try-prepare-direct-runtime
+    name
     kind
     target
     opt-level
@@ -5781,6 +5790,7 @@
     [(ResultBuildPackagePreparedRuntime.Unavailable category)
       (match (compiler_driver_core.compiler-driver-emit-package-loaded
         ""
+        name
         target
         true
         opt-level
@@ -5839,6 +5849,7 @@
       (let
         [prepared : ResultBuildPackagePreparedRuntime
           (build-package-prepare-runtime
+            name
             kind
             target
             opt-level
@@ -6101,7 +6112,6 @@
       [entry-path : String
         (load.compiler-load-join-root-path manifest-dir manifest.entry)]
       [name : String manifest.name]
-      [_spmd-package-name : unit (lower.lower-spmd-set-package-name! name)]
       [_package-artifact-profile : unit
         (load.compiler-load-set-package-artifact-profile!
           (build-profile-name profile))]

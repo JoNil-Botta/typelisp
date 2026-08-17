@@ -301,33 +301,10 @@
     `(unsafe
       (ptr-read (ptr-offset (array-data ,items) ,index)))))
 
-;; Package builds set this identity before lowering. Source-level
-;; `:spmd-callable` declarations are intentionally rejected by ordinary
-;; program compilation because their symbols and TLCI records are a package
-;; artifact ABI, not a source-visible calling convention.
-(define lower-spmd-package-name : String
-  "")
-(define lower-spmd-package-symbol-identities : lower_i64_i64_map.Map
-  (lower_i64_i64_map.with-capacity 8))
-
 (defenum LowerSpmdPackageSymbolRegistration
   (New)
   (Existing)
   (Collision String))
-
-(define (lower-spmd-set-package-name! [name : String]) : unit
-  (begin
-    (set! lower-spmd-package-name name)
-    (set!
-      lower-spmd-package-symbol-identities
-      (lower_i64_i64_map.with-capacity 8))))
-
-(define (lower-spmd-clear-package-name!) : unit
-  (begin
-    (set! lower-spmd-package-name "")
-    (set!
-      lower-spmd-package-symbol-identities
-      (lower_i64_i64_map.with-capacity 8))))
 
 (define (lower-empty-global-name-cache [owner-address : i64]) : LowerNameCache
   (LowerNameCache
@@ -420,6 +397,15 @@
 (defstruct LowerIdSet
   (slots (__tl_dyn-array i64))
   (len i64))
+
+(defenum LowerSpmdScalarCallContext
+  (No)
+  (Some String))
+
+(defenum LowerVariantArmResolution
+  (Missing String)
+  (FieldsErr String)
+  (Some String ast.AstType i64 ast.AstTypeList i64))
 
 ;; Parallel key/value arrays in cons order (oldest first). Lookup scans from the
 ;; tail so the most recent binding still shadows, and both `cons` and `remove`
@@ -564,6 +550,63 @@
   32)
 (define checked-pools : i64
   33)
+(define spmd-package-state : i64
+  34)
+(define function-memo-storage : i64
+  35)
+
+;; Package identity is job-owned. Function-local lowering keeps its four SPMD
+;; traversal values and two memo generations in a separate one-word capability;
+;; only the lazily allocated memo backing is retained by the job for reuse.
+(defstruct CompilerLowerSpmdPackageState
+  (arena i64)
+  (name String)
+  (symbol-identities lower_i64_i64_map.Map)
+  (identities (__tl_dyn-array String)))
+
+(defstruct CompilerLowerFunctionMemoStorage
+  (arena i64)
+  (rtf-generations (__tl_dyn-array i64))
+  (rtf-ids (__tl_dyn-array i64))
+  (rtf-types (__tl_dyn-array ast.AstType))
+  (next-rtf-generation i64)
+  (variant-stamps (__tl_dyn-array i64))
+  (variant-keys (__tl_dyn-array i64))
+  (variant-scrutinee-types (__tl_dyn-array ast.AstType))
+  (variant-outcomes (__tl_dyn-array LowerVariantArmResolution))
+  (next-variant-generation i64))
+
+(defstruct CompilerLowerFunctionStateData
+  (owner-address i64)
+  (inline-helper-stack LowerIdSet)
+  (inline-recursion-detected bool)
+  (inline-next-temp i64)
+  (scalar-call-context LowerSpmdScalarCallContext)
+  (rtf-generation i64)
+  (variant-generation i64))
+
+(defstruct CompilerLowerFunctionState
+  (address i64))
+
+(define (compiler-lower-spmd-package-state-empty) : CompilerLowerSpmdPackageState
+  (CompilerLowerSpmdPackageState
+    (lower-name-arena-owner-root (arena.tl_arena_current))
+    ""
+    (lower_i64_i64_map.with-capacity 8)
+    (__tl_make-array String 0)))
+
+(define (compiler-lower-function-memo-storage-empty) : CompilerLowerFunctionMemoStorage
+  (CompilerLowerFunctionMemoStorage
+    (lower-name-arena-owner-root (arena.tl_arena_current))
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array ast.AstType 0)
+    0
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array ast.AstType 0)
+    (__tl_make-array LowerVariantArmResolution 0)
+    0))
 
 ;; Checked-pool compaction crosses the typecheck/lower result boundary: source
 ;; storage can already be retired before lowering reports an error, while a
@@ -660,7 +703,7 @@
 (define (compiler-lower-state-new-with-intern-state
   [intern-state : ci.InternCompatState]) : CompilerLowerState
   (let
-    [cells : (__tl_dyn-array i64) (array.make-array i64 34)]
+    [cells : (__tl_dyn-array i64) (array.make-array i64 36)]
     [address : i64
       (cast
         (unsafe
@@ -794,6 +837,16 @@
         (compiler-lower-state-cell
           CompilerLowerCheckedPoolsState
           (compiler-lower-checked-pools-state-empty)))
+      (set!
+        (array-ref cells spmd-package-state)
+        (compiler-lower-state-cell
+          CompilerLowerSpmdPackageState
+          (compiler-lower-spmd-package-state-empty)))
+      (set!
+        (array-ref cells function-memo-storage)
+        (compiler-lower-state-cell
+          CompilerLowerFunctionMemoStorage
+          (compiler-lower-function-memo-storage-empty)))
       state)))
 
 ;; Serial/test compatibility adapter. Driver-owned jobs construct the lower
@@ -866,7 +919,9 @@
   (module-decl-index-arena i64)
   (intern-owner i64)
   (comptime-error-cache i64)
-  (checked-pools i64))
+  (checked-pools i64)
+  (spmd-package-state i64)
+  (function-memo-storage i64))
 
 (define (compiler-lower-state-size) : i64
   (comptime (size-of (type CompilerLowerState))))
@@ -1053,7 +1108,15 @@
       ci.InternCompatState
       intern-owner)
     (lower-comptime-error-id-cache-fingerprint state)
-    (compiler-lower-checked-pools-state-fingerprint state)))
+    (compiler-lower-checked-pools-state-fingerprint state)
+    (compiler-lower-state-field-fingerprint
+      state
+      CompilerLowerSpmdPackageState
+      spmd-package-state)
+    (compiler-lower-state-field-fingerprint
+      state
+      CompilerLowerFunctionMemoStorage
+      function-memo-storage)))
 
 (define (compiler-lower-state-observation-eq?
   [left : CompilerLowerStateObservation]
@@ -1091,7 +1154,9 @@
     (= left.module-decl-index-arena right.module-decl-index-arena)
     (= left.intern-owner right.intern-owner)
     (= left.comptime-error-cache right.comptime-error-cache)
-    (= left.checked-pools right.checked-pools)))
+    (= left.checked-pools right.checked-pools)
+    (= left.spmd-package-state right.spmd-package-state)
+    (= left.function-memo-storage right.function-memo-storage)))
 
 (define (lower-active-global-name-cache-current [state : CompilerLowerState]) : LowerNameCache
   (compiler-lower-state-read state LowerNameCache active-global-name-cache))
@@ -1150,10 +1215,6 @@
   (No)
   (Some i64 ast.AstParamList ast.AstType ast.AstExpr)
   (Imported i64 ast.AstType (Box ast.AstImportedSpmdCallableList)))
-
-(defenum LowerSpmdScalarCallContext
-  (No)
-  (Some String))
 
 (defstruct LowerFunctionBodyIndex
   (ids lower_i64_i64_map.Map)
@@ -1234,6 +1295,7 @@
   (spans (Box ir.CompilerSourceSpans))
   (names LowerNameCache)
   (type-cache LowerTypeCache)
+  (function-state CompilerLowerFunctionState)
   (mode CompilerLowerMode)
   (address-taken lower_i64_i64_map.Map)
   ;; Tail-call-safe current function parameter var range: [start, end).
@@ -1257,6 +1319,7 @@
   [spans : (Box ir.CompilerSourceSpans)]
   [names : LowerNameCache]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [address-taken : lower_i64_i64_map.Map]
   [tail-param-start : i64]
@@ -1275,6 +1338,7 @@
         spans
         names
         type-cache
+        function-state
         mode
         address-taken
         tail-param-start
@@ -7903,17 +7967,294 @@
 (define (lower-spmd-inline-empty-helper-stack) : LowerIdSet
   (lower-id-set-empty))
 
-(define lower-spmd-inline-helper-stack : LowerIdSet
-  (lower-spmd-inline-empty-helper-stack))
-(define lower-spmd-inline-recursion-detected : bool
-  false)
-(define lower-spmd-inline-next-temp : i64
-  0)
-(define lower-spmd-scalar-call-context : LowerSpmdScalarCallContext
-  (LowerSpmdScalarCallContext.No))
+(define tc-rtf-cap : i64
+  65536)
+(define lower-variant-arm-memo-cap : i64
+  256)
+
+(define (compiler-lower-state-spmd-package [state : CompilerLowerState]) : CompilerLowerSpmdPackageState
+  (compiler-lower-state-read
+    state
+    CompilerLowerSpmdPackageState
+    spmd-package-state))
+
+(define (compiler-lower-state-set-spmd-package!
+  [state : CompilerLowerState]
+  [name : String]) : unit
+  (let
+    [previous : CompilerLowerSpmdPackageState
+      (compiler-lower-state-spmd-package state)]
+    (in-arena
+      (arena.Arena previous.arena)
+      (compiler-lower-state-write!
+        state
+        CompilerLowerSpmdPackageState
+        spmd-package-state
+        (CompilerLowerSpmdPackageState
+          previous.arena
+          (clone name)
+          (lower_i64_i64_map.with-capacity 8)
+          (__tl_make-array String 0))))))
+
+(define (compiler-lower-state-clear-spmd-package! [state : CompilerLowerState]) : unit
+  (let
+    [previous : CompilerLowerSpmdPackageState
+      (compiler-lower-state-spmd-package state)]
+    (in-arena
+      (arena.Arena previous.arena)
+      (compiler-lower-state-write!
+        state
+        CompilerLowerSpmdPackageState
+        spmd-package-state
+        (CompilerLowerSpmdPackageState
+          previous.arena
+          ""
+          (lower_i64_i64_map.with-capacity 8)
+          (__tl_make-array String 0))))))
+
+(define (compiler-lower-state-spmd-package-name [state : CompilerLowerState]) : String
+  (let
+    [package : CompilerLowerSpmdPackageState
+      (compiler-lower-state-spmd-package state)]
+    package.name))
+
+(define (compiler-lower-function-memo-storage [state : CompilerLowerState]) : CompilerLowerFunctionMemoStorage
+  (compiler-lower-state-read
+    state
+    CompilerLowerFunctionMemoStorage
+    function-memo-storage))
+
+(define (compiler-lower-function-memo-storage-set!
+  [state : CompilerLowerState]
+  [storage : CompilerLowerFunctionMemoStorage]) : unit
+  (compiler-lower-state-write!
+    state
+    CompilerLowerFunctionMemoStorage
+    function-memo-storage
+    storage))
+
+(define (compiler-lower-function-memo-storage-ensure!
+  [state : CompilerLowerState]) : unit
+  (let
+    [storage : CompilerLowerFunctionMemoStorage
+      (compiler-lower-function-memo-storage state)]
+    (if (> (array-length storage.rtf-generations) 0)
+      unit
+      (in-arena
+        (arena.Arena storage.arena)
+        (let
+          [rtf-generations : (__tl_dyn-array i64)
+            (array.make-array i64 tc-rtf-cap)]
+          [rtf-ids : (__tl_dyn-array i64) (array.make-array i64 tc-rtf-cap)]
+          [rtf-types : (__tl_dyn-array ast.AstType)
+            (array.make-array ast.AstType tc-rtf-cap)]
+          [variant-stamps : (__tl_dyn-array i64)
+            (array.make-array i64 lower-variant-arm-memo-cap)]
+          [variant-keys : (__tl_dyn-array i64)
+            (array.make-array i64 lower-variant-arm-memo-cap)]
+          [variant-scrutinee-types : (__tl_dyn-array ast.AstType)
+            (array.make-array ast.AstType lower-variant-arm-memo-cap)]
+          [variant-outcomes : (__tl_dyn-array LowerVariantArmResolution)
+            (array.make-array
+              LowerVariantArmResolution
+              lower-variant-arm-memo-cap)]
+          [index : i64 0]
+          (begin
+            (while (< index tc-rtf-cap)
+              (begin
+                (set! (array-ref rtf-generations index) 0)
+                (set! index (+ index 1))))
+            (set! index 0)
+            (while (< index lower-variant-arm-memo-cap)
+              (begin
+                (set! (array-ref variant-stamps index) 0)
+                (set! index (+ index 1))))
+            (set! storage.rtf-generations rtf-generations)
+            (set! storage.rtf-ids rtf-ids)
+            (set! storage.rtf-types rtf-types)
+            (set! storage.variant-stamps variant-stamps)
+            (set! storage.variant-keys variant-keys)
+            (set! storage.variant-scrutinee-types variant-scrutinee-types)
+            (set! storage.variant-outcomes variant-outcomes)
+            (compiler-lower-function-memo-storage-set! state storage)))))))
+
+(define (compiler-lower-function-state-data
+  [state : CompilerLowerFunctionState]) : CompilerLowerFunctionStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast state.address : u64)
+        : (Ptr CompilerLowerFunctionStateData)))))
+
+(define (compiler-lower-function-state-data-set!
+  [state : CompilerLowerFunctionState]
+  [data : CompilerLowerFunctionStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast state.address : u64)
+        : (MutPtr CompilerLowerFunctionStateData))
+      data)))
+
+(define (compiler-lower-function-state-new-with-stack
+  [owner : CompilerLowerState]
+  [stack : LowerIdSet]) : CompilerLowerFunctionState
+  (begin
+    (compiler-lower-function-memo-storage-ensure! owner)
+    (let
+      [storage : CompilerLowerFunctionMemoStorage
+        (compiler-lower-function-memo-storage owner)]
+      [rtf-generation : i64 (+ storage.next-rtf-generation 1)]
+      [variant-generation : i64 (+ storage.next-variant-generation 1)]
+      [cell : (__tl_dyn-array CompilerLowerFunctionStateData)
+        (array.make-array CompilerLowerFunctionStateData 1)]
+      [address : i64
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast
+                (array-data cell)
+                : (Ptr CompilerLowerFunctionStateData))))
+          : i64)]
+      (begin
+        (set! storage.next-rtf-generation rtf-generation)
+        (set! storage.next-variant-generation variant-generation)
+        (compiler-lower-function-memo-storage-set! owner storage)
+        (set!
+          (array-ref cell 0)
+          (CompilerLowerFunctionStateData
+            owner.address
+            stack
+            false
+            0
+            (LowerSpmdScalarCallContext.No)
+            rtf-generation
+            variant-generation))
+        (CompilerLowerFunctionState address)))))
+
+(define (compiler-lower-function-state-new [owner : CompilerLowerState]) : CompilerLowerFunctionState
+  (compiler-lower-function-state-new-with-stack
+    owner
+    (lower-spmd-inline-empty-helper-stack)))
+
+(define (compiler-lower-function-state-inline-helper-stack
+  [state : CompilerLowerFunctionState]) : LowerIdSet
+  (let
+    [data : CompilerLowerFunctionStateData
+      (compiler-lower-function-state-data state)]
+    data.inline-helper-stack))
+
+(define (compiler-lower-function-state-owner
+  [state : CompilerLowerFunctionState]) : CompilerLowerState
+  (let
+    [data : CompilerLowerFunctionStateData
+      (compiler-lower-function-state-data state)]
+    (compiler-lower-state-from-address data.owner-address)))
+
+(define (compiler-lower-function-state-inline-helper-stack-set!
+  [state : CompilerLowerFunctionState]
+  [stack : LowerIdSet]) : unit
+  (let
+    [data : CompilerLowerFunctionStateData
+      (compiler-lower-function-state-data state)]
+    (begin
+      (set! data.inline-helper-stack stack)
+      (compiler-lower-function-state-data-set! state data))))
+
+(define (compiler-lower-function-state-recursion-detected?
+  [state : CompilerLowerFunctionState]) : bool
+  (let
+    [data : CompilerLowerFunctionStateData
+      (compiler-lower-function-state-data state)]
+    data.inline-recursion-detected))
+
+(define (compiler-lower-function-state-recursion-detected-set!
+  [state : CompilerLowerFunctionState]
+  [detected : bool]) : unit
+  (let
+    [data : CompilerLowerFunctionStateData
+      (compiler-lower-function-state-data state)]
+    (begin
+      (set! data.inline-recursion-detected detected)
+      (compiler-lower-function-state-data-set! state data))))
+
+(define (compiler-lower-function-state-fresh-local-id!
+  [state : CompilerLowerFunctionState]
+  [source-name-id : i64]) : i64
+  (let
+    [data : CompilerLowerFunctionStateData
+      (compiler-lower-function-state-data state)]
+    [next : i64 data.inline-next-temp]
+    (begin
+      (set! data.inline-next-temp (+ next 1))
+      (compiler-lower-function-state-data-set! state data)
+      (ci.intern-structural-local-id
+        next
+        (tc_core.macro-hygiene-global-source-name-id-or
+          source-name-id
+          source-name-id)))))
+
+(define (compiler-lower-function-state-scalar-call-context
+  [state : CompilerLowerFunctionState]) : LowerSpmdScalarCallContext
+  (let
+    [data : CompilerLowerFunctionStateData
+      (compiler-lower-function-state-data state)]
+    data.scalar-call-context))
+
+(define (compiler-lower-function-state-scalar-call-context-set!
+  [state : CompilerLowerFunctionState]
+  [context : LowerSpmdScalarCallContext]) : unit
+  (let
+    [data : CompilerLowerFunctionStateData
+      (compiler-lower-function-state-data state)]
+    (begin
+      (set! data.scalar-call-context context)
+      (compiler-lower-function-state-data-set! state data))))
+
+(define (compiler-lower-function-state-rtf-generation
+  [state : CompilerLowerFunctionState]) : i64
+  (let
+    [data : CompilerLowerFunctionStateData
+      (compiler-lower-function-state-data state)]
+    data.rtf-generation))
+
+(define (compiler-lower-function-state-variant-generation
+  [state : CompilerLowerFunctionState]) : i64
+  (let
+    [data : CompilerLowerFunctionStateData
+      (compiler-lower-function-state-data state)]
+    data.variant-generation))
+
+(define (compiler-lower-state-function-memo-retained-bytes
+  [state : CompilerLowerState]) : i64
+  (let
+    [storage : CompilerLowerFunctionMemoStorage
+      (compiler-lower-function-memo-storage state)]
+    (+
+      (*
+        8
+        (+
+          (array-length storage.rtf-generations)
+          (array-length storage.rtf-ids)))
+      (+
+        (* (ast.ast-type-node-bytes) (array-length storage.rtf-types))
+        (+
+          (*
+            8
+            (+
+              (array-length storage.variant-stamps)
+              (array-length storage.variant-keys)))
+          (+
+            (*
+              (ast.ast-type-node-bytes)
+              (array-length storage.variant-scrutinee-types))
+            (*
+              (comptime (size-of (type LowerVariantArmResolution)))
+              (array-length storage.variant-outcomes))))))))
 
 (define (compiler-lower-state-reset! [lower-state : CompilerLowerState]) : unit
   (begin
+    (compiler-lower-state-clear-spmd-package! lower-state)
     (lower-canonical-path-memo-reset! lower-state)
     (lower-entry-main-selection-restore!
       lower-state
@@ -8007,6 +8348,8 @@
         lower-state
         (__tl_dyn-array i64)
         module-decl-index-positions)]
+    [package : CompilerLowerSpmdPackageState
+      (compiler-lower-state-spmd-package lower-state)]
     (and
       (= (lower_i64_i64_map.len (& global-names.ids)) 0)
       (= (array-length global-names.logical-ids) 0)
@@ -8064,15 +8407,14 @@
       (= (array-length index-ends) 0)
       (= (array-length index-positions) 0)
       (= (compiler-lower-state-read lower-state i64 module-decl-index-arena) 0)
+      (string.eq package.name "")
+      (= (lower_i64_i64_map.len (& package.symbol-identities)) 0)
+      (= (array-length package.identities) 0)
       (lower-comptime-error-ids-reset? lower-state)
       (compiler-lower-checked-pools-state-inert? lower-state))))
 
 (define (lower-reset-file-state!) : unit
-  (begin
-    (set! lower-spmd-inline-helper-stack (lower-spmd-inline-empty-helper-stack))
-    (set! lower-spmd-inline-recursion-detected false)
-    (set! lower-spmd-inline-next-temp 0)
-    (set! lower-spmd-scalar-call-context (LowerSpmdScalarCallContext.No))))
+  unit)
 
 (define (lower-reset-intern-owned-state!) : unit
   (tc_core.compiler-typecheck-reset-intern-owned-state!))
@@ -8094,16 +8436,10 @@
 (define (lower-spmd-inline-recursive-message) : String
   "lower: recursive SPMD helper call is not supported")
 
-(define (lower-spmd-inline-fresh-local-id [source-name-id : i64]) : i64
-  (let
-    [next : i64 lower-spmd-inline-next-temp]
-    (begin
-      (set! lower-spmd-inline-next-temp (+ lower-spmd-inline-next-temp 1))
-      (ci.intern-structural-local-id
-        next
-        (tc_core.macro-hygiene-global-source-name-id-or
-          source-name-id
-          source-name-id)))))
+(define (lower-spmd-inline-fresh-local-id
+  [function-state : CompilerLowerFunctionState]
+  [source-name-id : i64]) : i64
+  (compiler-lower-function-state-fresh-local-id! function-state source-name-id))
 
 (define (lower-spmd-inline-subst-empty) : LowerSpmdInlineSubst
   (LowerSpmdInlineSubst
@@ -8196,12 +8532,14 @@
 
 (define (lower-spmd-inline-helper-lookup
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [shadowed : LowerIdSet]
   [func : ast.AstExpr]) : ResultLowerSpmdInlineHelper
   (lower-spmd-inline-helper-lookup-resolved
     ctx
+    function-state
     func
     (lower-spmd-inline-helper-name-id ctx env type-env shadowed func)))
 
@@ -8241,6 +8579,7 @@
 
 (define (lower-spmd-inline-helper-lookup-resolved
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [func : ast.AstExpr]
   [resolved : tc_core.TcNameLookup]) : ResultLowerSpmdInlineHelper
   (match resolved
@@ -8261,10 +8600,13 @@
                   (csym.compiler-symbol-handle-kind handle)
                   (csym.compiler-symbol-kind-function-define))
                 (lower-id-set-contains?
-                  (lower-global-shared-view lower-spmd-inline-helper-stack)
+                  (compiler-lower-function-state-inline-helper-stack
+                    function-state)
                   handle))
               (begin
-                (set! lower-spmd-inline-recursion-detected true)
+                (compiler-lower-function-state-recursion-detected-set!
+                  function-state
+                  true)
                 (ResultLowerSpmdInlineHelper.Err
                   (box
                     (lower-diagnostic-at-expr
@@ -8344,6 +8686,7 @@
 
 (define (lower-spmd-inline-expr-list
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [exprs : ast.AstExprList]
@@ -8353,6 +8696,7 @@
     [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
     (match (lower-spmd-inline-expr-list-into
       ctx
+      function-state
       env
       type-env
       (& exprs)
@@ -8365,6 +8709,7 @@
 
 (define (lower-spmd-inline-expr-list-into
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
@@ -8377,7 +8722,14 @@
     (let
       [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
       [head : ast.AstExpr (lower-context-expr-get ctx head-id)]
-      (match (lower-spmd-inline-expr ctx env type-env head subst shadowed)
+      (match (lower-spmd-inline-expr
+        ctx
+        function-state
+        env
+        type-env
+        head
+        subst
+        shadowed)
         [(ResultLowerAstExpr.Ok rewritten-head)
           (begin
             (ast.ast-expr-list-push
@@ -8385,6 +8737,7 @@
               (lower-context-expr-push ctx rewritten-head))
             (lower-spmd-inline-expr-list-into
               ctx
+              function-state
               env
               type-env
               exprs
@@ -8396,6 +8749,7 @@
 
 (define (lower-spmd-inline-let-bindings
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [bindings : ast.AstLetBindingList]
@@ -8407,6 +8761,7 @@
         (ast.ast-let-binding-list-len (& bindings)))]
     (match (lower-spmd-inline-let-bindings-into
       ctx
+      function-state
       env
       type-env
       (& bindings)
@@ -8422,6 +8777,7 @@
 
 (define (lower-spmd-inline-let-bindings-into
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [bindings : (& bindings ast.AstLetBindingList)]
@@ -8441,9 +8797,16 @@
           [renamed : bool (> subst.len 0)]
           [bind-id : i64
             (if renamed
-              (lower-spmd-inline-fresh-local-id name)
+              (lower-spmd-inline-fresh-local-id function-state name)
               name)]
-          (match (lower-spmd-inline-expr ctx env type-env init subst shadowed)
+          (match (lower-spmd-inline-expr
+            ctx
+            function-state
+            env
+            type-env
+            init
+            subst
+            shadowed)
             [(ResultLowerAstExpr.Ok rewritten-init)
               (begin
                 (ast.ast-let-binding-list-push
@@ -8454,6 +8817,7 @@
                     (lower-context-expr-push ctx rewritten-init)))
                 (lower-spmd-inline-let-bindings-into
                   ctx
+                  function-state
                   env
                   type-env
                   bindings
@@ -8471,6 +8835,7 @@
 
 (define (lower-spmd-inline-helper-body
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [handle : i64]
@@ -8482,7 +8847,7 @@
     [(ResultLowerSpmdInlineSubst.Ok helper-subst)
       (let
         [previous : LowerIdSet
-          (lower-global-shared-view lower-spmd-inline-helper-stack)]
+          (compiler-lower-function-state-inline-helper-stack function-state)]
         [result : ResultLowerAstExpr
           (ResultLowerAstExpr.Err
             (box
@@ -8490,19 +8855,22 @@
                 origin
                 (lower-spmd-inline-recursive-message))))]
         (begin
-          (set!
-            lower-spmd-inline-helper-stack
+          (compiler-lower-function-state-inline-helper-stack-set!
+            function-state
             (lower-id-set-insert previous handle))
           (set!
             result
             (lower-spmd-inline-expr
               ctx
+              function-state
               env
               type-env
               body
               helper-subst
               (lower-id-set-empty)))
-          (set! lower-spmd-inline-helper-stack previous)
+          (compiler-lower-function-state-inline-helper-stack-set!
+            function-state
+            previous)
           result))]
     [(ResultLowerSpmdInlineSubst.Err diag) (ResultLowerAstExpr.Err diag)]))
 
@@ -8654,6 +9022,7 @@
 
 (define (lower-spmd-inline-call
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [func : ast.AstExpr]
@@ -8661,9 +9030,22 @@
   [subst : LowerSpmdInlineSubst]
   [shadowed : LowerIdSet]
   [origin : ast.AstExpr]) : ResultLowerAstExpr
-  (match (lower-spmd-inline-expr-list ctx env type-env args subst shadowed)
+  (match (lower-spmd-inline-expr-list
+    ctx
+    function-state
+    env
+    type-env
+    args
+    subst
+    shadowed)
     [(ResultLowerAstExprList.Ok rewritten-args)
-      (match (lower-spmd-inline-helper-lookup ctx env type-env shadowed func)
+      (match (lower-spmd-inline-helper-lookup
+        ctx
+        function-state
+        env
+        type-env
+        shadowed
+        func)
         [(ResultLowerSpmdInlineHelper.Ok helper)
           (match helper
             [(LowerSpmdInlineHelper.Some name params _ body)
@@ -8671,6 +9053,7 @@
                 (lower-spmd-preserve-call ctx func rewritten-args)
                 (lower-spmd-inline-helper-body
                   ctx
+                  function-state
                   env
                   type-env
                   name
@@ -8683,6 +9066,7 @@
             [(LowerSpmdInlineHelper.No)
               (match (lower-spmd-inline-expr
                 ctx
+                function-state
                 env
                 type-env
                 func
@@ -8702,6 +9086,7 @@
 
 (define (lower-spmd-inline-expr
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]
@@ -8711,7 +9096,14 @@
     [(ast.AstExpr.Spanned inner-box span)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          inner
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten)
             (ResultLowerAstExpr.Ok
               (lower-context-expr-get
@@ -8729,10 +9121,18 @@
       (let
         [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
         [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (match (lower-spmd-inline-expr ctx env type-env left subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          left
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten-left)
             (match (lower-spmd-inline-expr
               ctx
+              function-state
               env
               type-env
               right
@@ -8752,7 +9152,14 @@
     [(ast.AstExpr.Unary op inner-box)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          inner
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten)
             (ResultLowerAstExpr.Ok
               (lower-context-expr-get
@@ -8765,16 +9172,33 @@
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
-        (lower-spmd-inline-call ctx env type-env func args subst shadowed expr))]
+        (lower-spmd-inline-call
+          ctx
+          function-state
+          env
+          type-env
+          func
+          args
+          subst
+          shadowed
+          expr))]
     [(ast.AstExpr.If cond-box then-box else-box)
       (let
         [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
         [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
         [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
-        (match (lower-spmd-inline-expr ctx env type-env cond subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          cond
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten-cond)
             (match (lower-spmd-inline-expr
               ctx
+              function-state
               env
               type-env
               then-branch
@@ -8783,6 +9207,7 @@
               [(ResultLowerAstExpr.Ok rewritten-then)
                 (match (lower-spmd-inline-expr
                   ctx
+                  function-state
                   env
                   type-env
                   else-branch
@@ -8807,6 +9232,7 @@
             [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
             (match (lower-spmd-inline-let-bindings
               ctx
+              function-state
               env
               type-env
               bindings
@@ -8820,6 +9246,7 @@
                       body-shadowed)
                     (match (lower-spmd-inline-expr
                       ctx
+                      function-state
                       env
                       type-env
                       body
@@ -8838,14 +9265,28 @@
               [(ResultLowerSpmdInlineLetBindings.Err diag)
                 (ResultLowerAstExpr.Err diag)]))])]
     [(ast.AstExpr.Begin exprs)
-      (match (lower-spmd-inline-expr-list ctx env type-env exprs subst shadowed)
+      (match (lower-spmd-inline-expr-list
+        ctx
+        function-state
+        env
+        type-env
+        exprs
+        subst
+        shadowed)
         [(ResultLowerAstExprList.Ok rewritten)
           (ResultLowerAstExpr.Ok (ast.AstExpr.Begin rewritten))]
         [(ResultLowerAstExprList.Err diag) (ResultLowerAstExpr.Err diag)])]
     [(ast.AstExpr.Ann inner-box ty-id)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          inner
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten)
             (ResultLowerAstExpr.Ok
               (lower-context-expr-get
@@ -8858,7 +9299,14 @@
     [(ast.AstExpr.Cast inner-box ty-id)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          inner
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten)
             (ResultLowerAstExpr.Ok
               (lower-context-expr-get
@@ -8872,10 +9320,18 @@
       (let
         [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
         [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-        (match (lower-spmd-inline-expr ctx env type-env array subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          array
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten-array)
             (match (lower-spmd-inline-expr
               ctx
+              function-state
               env
               type-env
               index
@@ -8896,10 +9352,18 @@
         [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
         [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (match (lower-spmd-inline-expr ctx env type-env array subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          array
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten-array)
             (match (lower-spmd-inline-expr
               ctx
+              function-state
               env
               type-env
               index
@@ -8908,6 +9372,7 @@
               [(ResultLowerAstExpr.Ok rewritten-index)
                 (match (lower-spmd-inline-expr
                   ctx
+                  function-state
                   env
                   type-env
                   value
@@ -8930,12 +9395,27 @@
         [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
         [live : ast.AstExpr (lower-context-expr-get ctx live-box)]
         [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-        (match (lower-spmd-inline-expr ctx env type-env array subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          array
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten-array)
-            (match (lower-spmd-inline-expr ctx env type-env live subst shadowed)
+            (match (lower-spmd-inline-expr
+              ctx
+              function-state
+              env
+              type-env
+              live
+              subst
+              shadowed)
               [(ResultLowerAstExpr.Ok rewritten-live)
                 (match (lower-spmd-inline-expr
                   ctx
+                  function-state
                   env
                   type-env
                   index
@@ -8957,10 +9437,18 @@
       (let
         [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
         [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-        (match (lower-spmd-inline-expr ctx env type-env array subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          array
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten-array)
             (match (lower-spmd-inline-expr
               ctx
+              function-state
               env
               type-env
               index
@@ -8980,10 +9468,18 @@
       (let
         [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
         [replacement : ast.AstExpr (lower-context-expr-get ctx replacement-box)]
-        (match (lower-spmd-inline-expr ctx env type-env place subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          place
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten-place)
             (match (lower-spmd-inline-expr
               ctx
+              function-state
               env
               type-env
               replacement
@@ -9003,10 +9499,18 @@
       (let
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (match (lower-spmd-inline-expr ctx env type-env receiver subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          receiver
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten-receiver)
             (match (lower-spmd-inline-expr
               ctx
+              function-state
               env
               type-env
               value
@@ -9044,6 +9548,7 @@
             [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
             (match (lower-spmd-inline-expr
               ctx
+              function-state
               env
               type-env
               start
@@ -9052,6 +9557,7 @@
               [(ResultLowerAstExpr.Ok rewritten-start)
                 (match (lower-spmd-inline-expr
                   ctx
+                  function-state
                   env
                   type-env
                   end
@@ -9060,6 +9566,7 @@
                   [(ResultLowerAstExpr.Ok rewritten-end)
                     (match (lower-spmd-inline-expr
                       ctx
+                      function-state
                       env
                       type-env
                       init
@@ -9068,6 +9575,7 @@
                       [(ResultLowerAstExpr.Ok rewritten-init)
                         (match (lower-spmd-inline-expr
                           ctx
+                          function-state
                           env
                           type-env
                           value
@@ -9076,6 +9584,7 @@
                           [(ResultLowerAstExpr.Ok rewritten-value)
                             (match (lower-spmd-inline-expr
                               ctx
+                              function-state
                               env
                               type-env
                               body
@@ -9118,9 +9627,23 @@
       (let
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-        (match (lower-spmd-inline-expr ctx env type-env value subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          value
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten-value)
-            (match (lower-spmd-inline-expr ctx env type-env lane subst shadowed)
+            (match (lower-spmd-inline-expr
+              ctx
+              function-state
+              env
+              type-env
+              lane
+              subst
+              shadowed)
               [(ResultLowerAstExpr.Ok rewritten-lane)
                 (ResultLowerAstExpr.Ok
                   (lower-context-expr-get
@@ -9135,9 +9658,23 @@
       (let
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-        (match (lower-spmd-inline-expr ctx env type-env value subst shadowed)
+        (match (lower-spmd-inline-expr
+          ctx
+          function-state
+          env
+          type-env
+          value
+          subst
+          shadowed)
           [(ResultLowerAstExpr.Ok rewritten-value)
-            (match (lower-spmd-inline-expr ctx env type-env lane subst shadowed)
+            (match (lower-spmd-inline-expr
+              ctx
+              function-state
+              env
+              type-env
+              lane
+              subst
+              shadowed)
               [(ResultLowerAstExpr.Ok rewritten-lane)
                 (ResultLowerAstExpr.Ok
                   (lower-context-expr-get
@@ -14031,6 +14568,11 @@
     [(LowerState.State data)
       (__tl-project-field (__tl-box-place data) type-cache)]))
 
+(define (lower-state-function-state [state : LowerState]) : CompilerLowerFunctionState
+  (match state
+    [(LowerState.State data)
+      (__tl-project-field (__tl-box-place data) function-state)]))
+
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
     [(LowerState.State data) (__tl-project-field (__tl-box-place data) mode)]))
@@ -18043,6 +18585,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     arr)
     [(tc_core.ResultTcType.Ok arr-ty)
       ;; A reference-valued iterator field is already an address of its array
@@ -18070,6 +18613,7 @@
                       env
                       type-env
                       (lower-state-type-cache arr-state)
+                      (lower-state-function-state arr-state)
                       index)
                       [(tc_core.ResultTcType.Ok idx-ty)
                         (match (lower-expr-expected
@@ -18116,6 +18660,7 @@
                       env
                       type-env
                       (lower-state-type-cache arr-state)
+                      (lower-state-function-state arr-state)
                       index)
                       [(tc_core.ResultTcType.Ok idx-ty)
                         (match (lower-expr-expected
@@ -18165,6 +18710,7 @@
                         env
                         type-env
                         (lower-state-type-cache arr-state)
+                        (lower-state-function-state arr-state)
                         index)
                         [(tc_core.ResultTcType.Ok idx-ty)
                           (match (lower-expr-expected
@@ -21714,6 +22260,7 @@
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [logical-name : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
@@ -21791,6 +22338,7 @@
           (box function-spans)
           names
           type-cache
+          function-state
           mode
           (lower_i64_i64_map.with-capacity 8)
           source-start
@@ -21910,6 +22458,7 @@
             ctx
             type-env
             (lower-state-type-cache state)
+            (compiler-lower-function-state-new (lower-state-owner state))
             lambda-name
             params
             ret-ty
@@ -21953,6 +22502,8 @@
                     ctx
                     type-env
                     (lower-state-type-cache named-state)
+                    (compiler-lower-function-state-new
+                      (lower-state-owner named-state))
                     lambda-name
                     params
                     ret-ty
@@ -26085,6 +26636,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : tc_core.ResultTcType
   (match (ast.ast-expr-unspan func)
@@ -26100,6 +26652,7 @@
             env
             type-env
             type-cache
+            function-state
             (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0)))
           (match (lower-lookup-type-id ctx type-cache env type-env name)
             [(tc_core.ResultTcType.Ok fn-ty)
@@ -26131,6 +26684,7 @@
                         env
                         type-env
                         type-cache
+                        function-state
                         (lower-context-expr-get
                           ctx
                           (ast.ast-expr-list-get (& args) 0 0)))
@@ -26266,15 +26820,23 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [then-branch : ast.AstExpr]
   [else-branch : ast.AstExpr]) : tc_core.ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env type-cache then-branch)
+  (match (lower-expr-result-type-fast
+    ctx
+    env
+    type-env
+    type-cache
+    function-state
+    then-branch)
     [(tc_core.ResultTcType.Ok then-ty)
       (match (lower-expr-result-type-fast
         ctx
         env
         type-env
         type-cache
+        function-state
         else-branch)
         [(tc_core.ResultTcType.Ok else-ty)
           (match (tc_core.tc-merge-branch-type ctx type-env then-ty else-ty)
@@ -26319,6 +26881,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [exprs : ast.AstExprList]) : tc_core.ResultTcType
   (let
     [len : i64 exprs.len]
@@ -26329,6 +26892,7 @@
         env
         type-env
         type-cache
+        function-state
         (lower-context-expr-get
           ctx
           (ast.ast-expr-list-get (& exprs) (- len 1) 0))))))
@@ -26391,6 +26955,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [scrut-ty : ast.AstType]
   [arm : ast.AstMatchArm]) : tc_core.ResultTcType
   (match arm
@@ -26404,6 +26969,7 @@
               (lower-match-pattern-bind-local-names ctx env scrut-ty pattern)
               arm-type-env
               type-cache
+              function-state
               body)]
           [(tc_core.ResultTcEnv.Err message) (tc_core.ResultTcType.Err message)]))]))
 
@@ -26412,6 +26978,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [scrut-ty : ast.AstType]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]
@@ -26423,6 +26990,7 @@
       env
       type-env
       type-cache
+      function-state
       scrut-ty
       (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback)))
       [(tc_core.ResultTcType.Ok got)
@@ -26433,6 +27001,7 @@
               env
               type-env
               type-cache
+              function-state
               scrut-ty
               arms
               (+ index 1)
@@ -26446,9 +27015,16 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [scrutinee : ast.AstExpr]
   [arms : ast.AstMatchArmList]) : tc_core.ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env type-cache scrutinee)
+  (match (lower-expr-result-type-fast
+    ctx
+    env
+    type-env
+    type-cache
+    function-state
+    scrutinee)
     [(tc_core.ResultTcType.Ok scrut-ty)
       (if (ast.ast-match-arm-list-empty? (& arms))
         (tc_core.ResultTcType.Err
@@ -26458,6 +27034,7 @@
           env
           type-env
           type-cache
+          function-state
           scrut-ty
           (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback)))
           [(tc_core.ResultTcType.Ok first-ty)
@@ -26466,6 +27043,7 @@
               env
               type-env
               type-cache
+              function-state
               scrut-ty
               (& arms)
               1
@@ -26479,6 +27057,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [maybe-ty : ast.AstMaybeType]
   [init : ast.AstExpr]) : tc_core.ResultTcType
   (match maybe-ty
@@ -26502,20 +27081,35 @@
                     params
                     maybe-ret
                     body))])]
-          [_ (lower-expr-result-type-fast ctx env type-env type-cache init)])
-        (lower-expr-result-type-fast ctx env type-env type-cache init))]))
+          [_
+            (lower-expr-result-type-fast
+              ctx
+              env
+              type-env
+              type-cache
+              function-state
+              init)])
+        (lower-expr-result-type-fast
+          ctx
+          env
+          type-env
+          type-cache
+          function-state
+          init))]))
 
 (define (lower-let-bindings-type-env-fast
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [bindings : ast.AstLetBindingList]) : tc_core.ResultTcEnv
   (lower-let-bindings-type-env-fast-at
     ctx
     env
     type-env
     type-cache
+    function-state
     (& bindings)
     0))
 
@@ -26524,6 +27118,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [bindings : (& bindings ast.AstLetBindingList)]
   [index : i64]) : tc_core.ResultTcEnv
   (if (>= index (ast.ast-let-binding-list-len bindings))
@@ -26541,6 +27136,7 @@
             env
             type-env
             type-cache
+            function-state
             maybe-ty
             init)
             [(tc_core.ResultTcType.Ok binding-ty)
@@ -26554,6 +27150,7 @@
                   binding-ty
                   init)
                 type-cache
+                function-state
                 bindings
                 (+ index 1))]
             [(tc_core.ResultTcType.Err message)
@@ -26594,13 +27191,20 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [index : ast.AstExpr]) : tc_core.ResultTcType
   ;; The type checker contextually adopts i64 for a bare integer index. Do not
   ;; let the syntax-only result cache reintroduce the default i32 type and a
   ;; narrowing/sign-extension pair after that checked decision.
   (if (tc_core.tc-integer-literal-expr? index)
     (tc_core.ResultTcType.Ok (ast.AstType.I64))
-    (match (lower-expr-result-type-fast ctx env type-env type-cache index)
+    (match (lower-expr-result-type-fast
+      ctx
+      env
+      type-env
+      type-cache
+      function-state
+      index)
       [(tc_core.ResultTcType.Ok index-ty)
         (if (tc_core.tc-integer-type? index-ty)
           (tc_core.ResultTcType.Ok index-ty)
@@ -26613,9 +27217,16 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [op : ast.AstUnOp]
   [inner : ast.AstExpr]) : tc_core.ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env type-cache inner)
+  (match (lower-expr-result-type-fast
+    ctx
+    env
+    type-env
+    type-cache
+    function-state
+    inner)
     [(tc_core.ResultTcType.Ok inner-ty)
       (match (tc_core.tc-unop-type op inner-ty)
         [(tc_core.ResultTcType.Ok result-ty)
@@ -26630,9 +27241,16 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [tuple-expr : ast.AstExpr]
   [index : i64]) : tc_core.ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env type-cache tuple-expr)
+  (match (lower-expr-result-type-fast
+    ctx
+    env
+    type-env
+    type-cache
+    function-state
+    tuple-expr)
     [(tc_core.ResultTcType.Ok tuple-ty)
       (match (tc_core.tc-type-strip-region
         (tc_core.tc-resolve-type ctx tuple-ty))
@@ -26653,15 +27271,23 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [array-expr : ast.AstExpr]
   [index : ast.AstExpr]) : tc_core.ResultTcType
-  (match (lower-index-result-type-fast ctx env type-env type-cache index)
+  (match (lower-index-result-type-fast
+    ctx
+    env
+    type-env
+    type-cache
+    function-state
+    index)
     [(tc_core.ResultTcType.Ok _)
       (match (lower-expr-result-type-fast
         ctx
         env
         type-env
         type-cache
+        function-state
         array-expr)
         [(tc_core.ResultTcType.Ok array-ty)
           (match (tc_core.tc-type-strip-region
@@ -26689,11 +27315,24 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [str : ast.AstExpr]
   [index : ast.AstExpr]) : tc_core.ResultTcType
-  (match (lower-index-result-type-fast ctx env type-env type-cache index)
+  (match (lower-index-result-type-fast
+    ctx
+    env
+    type-env
+    type-cache
+    function-state
+    index)
     [(tc_core.ResultTcType.Ok _)
-      (match (lower-expr-result-type-fast ctx env type-env type-cache str)
+      (match (lower-expr-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        function-state
+        str)
         [(tc_core.ResultTcType.Ok str-ty)
           (if (lower-string-handle-type? ctx str-ty)
             (tc_core.ResultTcType.Ok (ast.AstType.Char))
@@ -26707,9 +27346,16 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [receiver : ast.AstExpr]
   [field : i64]) : tc_core.ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env type-cache receiver)
+  (match (lower-expr-result-type-fast
+    ctx
+    env
+    type-env
+    type-cache
+    function-state
+    receiver)
     [(tc_core.ResultTcType.Ok receiver-ty)
       (match (tc_core.tc-type-strip-region
         (tc_core.tc-resolve-type ctx receiver-ty))
@@ -26741,8 +27387,15 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [box-expr : ast.AstExpr]) : tc_core.ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env type-cache box-expr)
+  (match (lower-expr-result-type-fast
+    ctx
+    env
+    type-env
+    type-cache
+    function-state
+    box-expr)
     [(tc_core.ResultTcType.Ok box-ty)
       (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx box-ty))
         [(ast.AstType.Box inner-ty)
@@ -26760,71 +27413,44 @@
 ;; lower-expr-origin computes each expr's result type (walking the result-
 ;; determining spine) BEFORE lowering, and lowering the children re-walks their
 ;; spines -- so for deeply-nested functions a node's spine is recomputed once per
-;; ancestor: O(N^2), the dominant lower-phase cost (single big functions allocated
-;; hundreds of MB of transient). The cache is a fixed direct-mapped global array
-;; keyed by the spanned node id, validated by a PER-FUNCTION generation counter
-;; (tc-rtf-next-gen! is bumped at each lower-function-escaping). The generation
-;; makes it both correct (a node's type-env is fixed within its own function) and
-;; arena-safe (an entry is only ever read within the same function's lowering,
-;; while that function's scratch arena is still live -- the next function bumps
-;; the generation, so a stale scratch-allocated type is never read). A slot
-;; collision (different id, same slot) misses via the stored-id check.
-(define tc-rtf-cap : i64
-  65536)
-(define tc-rtf-gen-arr : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-rtf-cap))
-(define tc-rtf-id-arr : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-rtf-cap))
-(define tc-rtf-ty-arr : (__tl_dyn-array ast.AstType)
-  (__tl_make-array ast.AstType tc-rtf-cap))
-(define tc-rtf-current-gen : i64
-  0)
-(define tc-rtf-filled : bool
-  false)
-
-(define (tc-rtf-ensure!) : unit
-  (if tc-rtf-filled
-    unit
-    (let
-      [i : i64 0]
-      (begin
-        (while (< i tc-rtf-cap)
-          (begin
-            (set! (array-ref tc-rtf-gen-arr i) 0)
-            (set! i (+ i 1))))
-        (set! tc-rtf-filled true)))))
-
-(define (tc-rtf-next-gen!) : unit
-  (begin
-    (tc-rtf-ensure!)
-    (set! tc-rtf-current-gen (+ tc-rtf-current-gen 1))))
-
+;; ancestor: O(N^2), the dominant lower-phase cost (single big functions
+;; allocated hundreds of MB of transient). The owner lazily retains fixed
+;; direct-mapped backing while each explicitly passed function state carries a
+;; distinct generation. Nested lambdas/helpers may interleave safely: a nested
+;; function can evict slots, but the enclosing generation then misses instead
+;; of reading the nested function's scratch-owned type.
 (define (lower-expr-result-type-fast
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [expr : ast.AstExpr]) : tc_core.ResultTcType
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (let
+        [storage : CompilerLowerFunctionMemoStorage
+          (compiler-lower-function-memo-storage
+            (compiler-lower-function-state-owner function-state))]
+        [generation : i64
+          (compiler-lower-function-state-rtf-generation function-state)]
         [slot : i64 (% inner-box tc-rtf-cap)]
-        (if (if (= (array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
-          (= (array-ref tc-rtf-id-arr slot) inner-box)
+        (if (if (= (array-ref storage.rtf-generations slot) generation)
+          (= (array-ref storage.rtf-ids slot) inner-box)
           false)
-          (tc_core.ResultTcType.Ok
-            (lower-global-array-element-shared-view tc-rtf-ty-arr slot))
+          (tc_core.ResultTcType.Ok (array-ref storage.rtf-types slot))
           (match (lower-expr-result-type-fast
             ctx
             env
             type-env
             type-cache
+            function-state
             (lower-context-expr-get ctx inner-box))
             [(tc_core.ResultTcType.Ok ty)
               (begin
-                (set! (array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
-                (set! (array-ref tc-rtf-id-arr slot) inner-box)
-                (set! (array-ref tc-rtf-ty-arr slot) ty)
+                (set! (array-ref storage.rtf-generations slot) generation)
+                (set! (array-ref storage.rtf-ids slot) inner-box)
+                (set! (array-ref storage.rtf-types slot) ty)
                 (tc_core.ResultTcType.Ok ty))]
             [(tc_core.ResultTcType.Err message)
               (tc_core.ResultTcType.Err message)])))]
@@ -26834,6 +27460,7 @@
         env
         type-env
         type-cache
+        function-state
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Literal lit)
       (tc_core.ResultTcType.Ok (tc_core.tc-literal-type lit))]
@@ -26867,11 +27494,25 @@
     [(ast.AstExpr.Unary op inner-box)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-unary-result-type-fast ctx env type-env type-cache op inner))]
+        (lower-unary-result-type-fast
+          ctx
+          env
+          type-env
+          type-cache
+          function-state
+          op
+          inner))]
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
-        (lower-call-result-type-fast ctx env type-env type-cache func args))]
+        (lower-call-result-type-fast
+          ctx
+          env
+          type-env
+          type-cache
+          function-state
+          func
+          args))]
     [(ast.AstExpr.Binary op left-box right-box)
       (let
         [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
@@ -26886,16 +27527,24 @@
           env
           type-env
           type-cache
+          function-state
           then-branch
           else-branch))]
     [(ast.AstExpr.Begin exprs)
-      (lower-expr-list-result-type-fast ctx env type-env type-cache exprs)]
+      (lower-expr-list-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        function-state
+        exprs)]
     [(ast.AstExpr.Unsafe exprs)
       (lower-expr-list-result-type-fast
         ctx
         env
         (tc_core.tc-enter-unsafe type-env)
         type-cache
+        function-state
         exprs)]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
@@ -26907,6 +27556,7 @@
               env
               type-env
               type-cache
+              function-state
               scrutinee
               arms))])]
     [(ast.AstExpr.Let let-box)
@@ -26919,6 +27569,7 @@
               env
               type-env
               type-cache
+              function-state
               bindings)
               [(tc_core.ResultTcEnv.Ok body-type-env)
                 (lower-expr-result-type-fast
@@ -26926,6 +27577,7 @@
                   (lower-let-bindings-local-env env bindings)
                   body-type-env
                   type-cache
+                  function-state
                   body)]
               [(tc_core.ResultTcEnv.Err message)
                 (tc_core.ResultTcType.Err message)]))])]
@@ -26937,6 +27589,7 @@
           env
           type-env
           type-cache
+          function-state
           tuple-expr
           index))]
     [(ast.AstExpr.ArrayRef array-expr-box index-box)
@@ -26948,6 +27601,7 @@
           env
           type-env
           type-cache
+          function-state
           array-expr
           index))]
     [(ast.AstExpr.StringRef str-box index-box)
@@ -26959,6 +27613,7 @@
           env
           type-env
           type-cache
+          function-state
           str
           index))]
     [(ast.AstExpr.StructGet receiver-box field)
@@ -26969,16 +27624,29 @@
           env
           type-env
           type-cache
+          function-state
           receiver
           field))]
     [(ast.AstExpr.BoxGet box-expr-box)
       (let
         [box-expr : ast.AstExpr (lower-context-expr-get ctx box-expr-box)]
-        (lower-box-get-result-type-fast ctx env type-env type-cache box-expr))]
+        (lower-box-get-result-type-fast
+          ctx
+          env
+          type-env
+          type-cache
+          function-state
+          box-expr))]
     [(ast.AstExpr.BoxTake box-expr-box)
       (let
         [box-expr : ast.AstExpr (lower-context-expr-get ctx box-expr-box)]
-        (lower-box-get-result-type-fast ctx env type-env type-cache box-expr))]
+        (lower-box-get-result-type-fast
+          ctx
+          env
+          type-env
+          type-cache
+          function-state
+          box-expr))]
     [(ast.AstExpr.Replace place-box _)
       (tc_core.tc-replace-place-value-type
         ctx
@@ -26996,8 +27664,15 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [expr : ast.AstExpr]) : tc_core.ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env type-cache expr)
+  (match (lower-expr-result-type-fast
+    ctx
+    env
+    type-env
+    type-cache
+    function-state
+    expr)
     [(tc_core.ResultTcType.Ok expr-ty) (tc_core.ResultTcType.Ok expr-ty)]
     [(tc_core.ResultTcType.Err _) (tc_core.tc-expr ctx type-env expr)]))
 
@@ -27006,8 +27681,15 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [index : ast.AstExpr]) : tc_core.ResultTcType
-  (match (lower-index-result-type-fast ctx env type-env type-cache index)
+  (match (lower-index-result-type-fast
+    ctx
+    env
+    type-env
+    type-cache
+    function-state
+    index)
     [(tc_core.ResultTcType.Ok index-ty) (tc_core.ResultTcType.Ok index-ty)]
     [(tc_core.ResultTcType.Err _)
       (match (tc_core.tc-expr-with-expected-or-actual
@@ -27266,6 +27948,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     (lower-context-expr-get ctx source-id))
     [(tc_core.ResultTcType.Ok source-ty)
       (match (tc_core.tc-type-strip-region
@@ -27432,6 +28115,7 @@
           env
           type-env
           (lower-state-type-cache state)
+          (lower-state-function-state (lower-state-clone state))
           func
           args)
           [(tc_core.ResultTcType.Ok expr-ty)
@@ -27460,6 +28144,7 @@
           env
           type-env
           (lower-state-type-cache state)
+          (lower-state-function-state state)
           then-branch
           else-branch)
           [(tc_core.ResultTcType.Ok expr-ty)
@@ -27484,6 +28169,7 @@
               env
               type-env
               (lower-state-type-cache state)
+              (lower-state-function-state state)
               scrutinee
               arms)
               [(tc_core.ResultTcType.Ok expr-ty)
@@ -27496,6 +28182,7 @@
         env
         type-env
         (lower-state-type-cache state)
+        (lower-state-function-state state)
         expr)
         [(tc_core.ResultTcType.Ok expr-ty)
           (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
@@ -29346,6 +30033,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     inner)
     [(tc_core.ResultTcType.Ok receiver-ty)
       (match (tc_core.tc-type-strip-region
@@ -29399,6 +30087,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     box-expr)
     [(tc_core.ResultTcType.Ok box-ty)
       (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx box-ty))
@@ -35382,6 +36071,7 @@
 
 (define (lower-spmd-scalar-arg-varying?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
@@ -35389,6 +36079,7 @@
   (>
     (lower-masked-vector-expr-lanes-with-locals
       ctx
+      function-state
       (CompilerLowerMode.Avx512)
       env
       type-env
@@ -35399,6 +36090,7 @@
 
 (define (lower-spmd-call-args-from-values
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
@@ -35407,6 +36099,7 @@
   [values : ir.CompilerIrValueList]) : ir.CompilerIrSpmdCallArgList
   (lower-spmd-call-args-from-values-at
     ctx
+    function-state
     env
     type-env
     index
@@ -35417,6 +36110,7 @@
 
 (define (lower-spmd-call-args-from-values-at
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
@@ -35432,6 +36126,7 @@
       [(ir.CompilerIrValueList.Array seq)
         (lower-spmd-call-args-from-values-at
           ctx
+          function-state
           env
           type-env
           index
@@ -35454,7 +36149,13 @@
                   ctx
                   (ast.ast-expr-list-get args arg-index 0))]
               [varying : bool
-                (lower-spmd-scalar-arg-varying? ctx env type-env index arg)]
+                (lower-spmd-scalar-arg-varying?
+                  ctx
+                  function-state
+                  env
+                  type-env
+                  index
+                  arg)]
               (ir.ir-spmd-call-arg-cons
                 (ir.CompilerIrSpmdCallArg.Arg
                   (lower-spmd-ir-value-class resolved-ty varying)
@@ -35462,6 +36163,7 @@
                   resolved-ty)
                 (lower-spmd-call-args-from-values-at
                   ctx
+                  function-state
                   env
                   type-env
                   index
@@ -35492,6 +36194,7 @@
         (if (<=
           (lower-spmd-call-args-lanes
             ctx
+            (lower-state-function-state (lower-state-clone state))
             (CompilerLowerMode.Avx512)
             env
             type-env
@@ -35513,6 +36216,7 @@
                 [call-args : ir.CompilerIrSpmdCallArgList
                   (lower-spmd-call-args-from-values
                     ctx
+                    (lower-state-function-state args-state)
                     env
                     type-env
                     index
@@ -35576,11 +36280,13 @@
   [args : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : LowerMaybeSpmdCall
-  (match (lower-global-shared-view lower-spmd-scalar-call-context)
+  (match (compiler-lower-function-state-scalar-call-context
+    (lower-state-function-state state))
     [(LowerSpmdScalarCallContext.No) (LowerMaybeSpmdCall.No)]
     [(LowerSpmdScalarCallContext.Some index)
       (match (lower-spmd-inline-helper-lookup
         ctx
+        (lower-state-function-state state)
         env
         type-env
         (lower-id-set-empty)
@@ -35593,6 +36299,7 @@
                 (>
                   (lower-spmd-call-args-lanes
                     ctx
+                    (lower-state-function-state state)
                     (CompilerLowerMode.Avx512)
                     env
                     type-env
@@ -35614,16 +36321,36 @@
                           [call-args : ir.CompilerIrSpmdCallArgList
                             (lower-spmd-call-args-from-values
                               ctx
+                              (lower-state-function-state named-state)
                               env
                               type-env
                               index
                               args
                               params
                               values)]
+                          [helper-function-state : CompilerLowerFunctionState
+                            (compiler-lower-function-state-new-with-stack
+                              (lower-state-owner named-state)
+                              (compiler-lower-function-state-inline-helper-stack
+                                (lower-state-function-state named-state)))]
+                          [result-varying : bool
+                            (>
+                              (lower-spmd-direct-call-result-lanes
+                                ctx
+                                (lower-state-function-state named-state)
+                                (CompilerLowerMode.Avx512)
+                                env
+                                type-env
+                                index
+                                (lower-masked-vector-empty-lane-locals)
+                                func
+                                args)
+                              0)]
                           (match (lower-spmd-specialized-helper-function
                             ctx
                             type-env
                             (lower-state-type-cache named-state)
+                            helper-function-state
                             hidden-name
                             params
                             ret
@@ -35649,17 +36376,7 @@
                                 1
                                 call-args
                                 result-ty
-                                (>
-                                  (lower-spmd-direct-call-result-lanes
-                                    ctx
-                                    (CompilerLowerMode.Avx512)
-                                    env
-                                    type-env
-                                    index
-                                    (lower-masked-vector-empty-lane-locals)
-                                    func
-                                    args)
-                                  0)
+                                result-varying
                                 origin)
                                 [(ResultLowerExpr.Ok lowered)
                                   (match lowered
@@ -36271,6 +36988,7 @@
         env
         type-env
         (lower-state-type-cache state)
+        (lower-state-function-state state)
         arr)
         [(tc_core.ResultTcType.Ok arr-ty)
           (lower-array-length-with-type
@@ -37485,6 +38203,7 @@
             env
             type-env
             (lower-state-type-cache arr-state)
+            (lower-state-function-state arr-state)
             index)
             [(tc_core.ResultTcType.Ok idx-ty)
               (match (lower-expr-expected
@@ -38747,6 +39466,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     array)
     [(tc_core.ResultTcType.Ok array-ty)
       (match (tc_core.tc-array-set-receiver ctx array-ty)
@@ -38924,6 +39644,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     array)
     [(tc_core.ResultTcType.Ok array-ty)
       (match (tc_core.tc-fixed-array-take-receiver ctx array-ty)
@@ -38943,6 +39664,7 @@
                           env
                           type-env
                           (lower-state-type-cache array-state)
+                          (lower-state-function-state array-state)
                           index)
                           [(tc_core.ResultTcType.Ok index-ty)
                             (match (lower-expr-expected
@@ -39014,6 +39736,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     arr)
     [(tc_core.ResultTcType.Ok arr-ty)
       (match (tc_core.tc-array-readable-receiver ctx arr-ty)
@@ -39032,6 +39755,7 @@
                           env
                           type-env
                           (lower-state-type-cache arr-state)
+                          (lower-state-function-state arr-state)
                           index)
                           [(tc_core.ResultTcType.Ok idx-ty)
                             (match (lower-expr-expected
@@ -39617,6 +40341,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     arr)
     [(tc_core.ResultTcType.Ok arr-ty)
       (match (tc_core.tc-array-set-receiver ctx arr-ty)
@@ -39716,6 +40441,7 @@
           env
           type-env
           (lower-state-type-cache state)
+          (lower-state-function-state state)
           box-expr)
           [(tc_core.ResultTcType.Ok box-ty)
             (match (tc_core.tc-box-set-inner-type ctx box-ty)
@@ -39742,6 +40468,7 @@
           env
           type-env
           (lower-state-type-cache state)
+          (lower-state-function-state state)
           receiver)
           [(tc_core.ResultTcType.Ok receiver-ty)
             (match (tc_core.tc-box-set-inner-type ctx receiver-ty)
@@ -39856,6 +40583,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     box-expr)
     [(tc_core.ResultTcType.Ok box-ty)
       (match (tc_core.tc-box-set-inner-type ctx box-ty)
@@ -40207,6 +40935,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     receiver)
     [(tc_core.ResultTcType.Ok receiver-ty)
       (if (ast.ast-tuple-set-field-id? field-id)
@@ -40313,6 +41042,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     arr)
     [(tc_core.ResultTcType.Ok arr-ty)
       (match (tc_core.tc-array-set-receiver ctx arr-ty)
@@ -40331,6 +41061,7 @@
                           env
                           type-env
                           (lower-state-type-cache arr-state)
+                          (lower-state-function-state arr-state)
                           index)
                           [(tc_core.ResultTcType.Ok idx-ty)
                             (match (lower-expr-expected
@@ -40677,6 +41408,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     arr)
     [(tc_core.ResultTcType.Ok arr-ty)
       (match (tc_core.tc-array-push-receiver ctx arr-ty)
@@ -43573,6 +44305,7 @@
 
 (define (lower-masked-vector-expr-list-lanes-with-locals
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43581,6 +44314,7 @@
   [exprs : ast.AstExprList]) : i64
   (lower-masked-vector-expr-list-lanes-with-locals-at
     ctx
+    function-state
     mode
     env
     type-env
@@ -43591,6 +44325,7 @@
 
 (define (lower-masked-vector-expr-list-lanes-with-locals-at
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43606,6 +44341,7 @@
       (lower-masked-vector-lanes-merge
         (lower-masked-vector-expr-lanes-with-locals
           ctx
+          function-state
           mode
           env
           type-env
@@ -43614,6 +44350,7 @@
           expr)
         (lower-masked-vector-expr-list-lanes-with-locals-at
           ctx
+          function-state
           mode
           env
           type-env
@@ -43624,6 +44361,7 @@
 
 (define (lower-masked-vector-let-bindings-locals
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43632,6 +44370,7 @@
   [bindings : ast.AstLetBindingList]) : lower_i64_i64_map.Map
   (lower-masked-vector-let-bindings-locals-at
     ctx
+    function-state
     mode
     env
     type-env
@@ -43642,6 +44381,7 @@
 
 (define (lower-masked-vector-let-bindings-locals-at
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43661,6 +44401,7 @@
           [init-lanes : i64
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -43674,6 +44415,7 @@
               init-lanes)]
           (lower-masked-vector-let-bindings-locals-at
             ctx
+            function-state
             mode
             env
             type-env
@@ -43684,6 +44426,7 @@
 
 (define (lower-masked-vector-let-bindings-lanes-with-locals
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43692,6 +44435,7 @@
   [bindings : ast.AstLetBindingList]) : i64
   (lower-masked-vector-let-bindings-lanes-with-locals-at
     ctx
+    function-state
     mode
     env
     type-env
@@ -43702,6 +44446,7 @@
 
 (define (lower-masked-vector-let-bindings-lanes-with-locals-at
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43721,6 +44466,7 @@
           [init-lanes : i64
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -43736,6 +44482,7 @@
             init-lanes
             (lower-masked-vector-let-bindings-lanes-with-locals-at
               ctx
+              function-state
               mode
               env
               type-env
@@ -43806,6 +44553,7 @@
 
 (define (lower-masked-vector-match-arms-lanes-with-locals
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43815,6 +44563,7 @@
   [arms : ast.AstMatchArmList]) : i64
   (lower-masked-vector-match-arms-lanes-with-locals-at
     ctx
+    function-state
     mode
     env
     type-env
@@ -43826,6 +44575,7 @@
 
 (define (lower-masked-vector-match-arms-lanes-with-locals-at
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43848,6 +44598,7 @@
           (lower-masked-vector-lanes-merge
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -43856,6 +44607,7 @@
               body)
             (lower-masked-vector-match-arms-lanes-with-locals-at
               ctx
+              function-state
               mode
               env
               type-env
@@ -43867,6 +44619,7 @@
 
 (define (lower-spmd-call-args-lanes
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43875,6 +44628,7 @@
   [args : ast.AstExprList]) : i64
   (lower-spmd-call-args-lanes-at
     ctx
+    function-state
     mode
     env
     type-env
@@ -43885,6 +44639,7 @@
 
 (define (lower-spmd-call-args-lanes-at
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43897,6 +44652,7 @@
     (lower-masked-vector-lanes-merge
       (lower-masked-vector-expr-lanes-with-locals
         ctx
+        function-state
         mode
         env
         type-env
@@ -43905,6 +44661,7 @@
         (lower-context-expr-get ctx (ast.ast-expr-list-get args arg-index 0)))
       (lower-spmd-call-args-lanes-at
         ctx
+        function-state
         mode
         env
         type-env
@@ -43915,6 +44672,7 @@
 
 (define (lower-spmd-helper-param-locals
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43924,6 +44682,7 @@
   [args : ast.AstExprList]) : lower_i64_i64_map.Map
   (lower-spmd-helper-param-locals-at
     ctx
+    function-state
     mode
     env
     type-env
@@ -43936,6 +44695,7 @@
 
 (define (lower-spmd-helper-param-locals-at
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43955,6 +44715,7 @@
           [arg-lanes : i64
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -43965,6 +44726,7 @@
                 (ast.ast-expr-list-get args arg-index 0)))]
           (lower-spmd-helper-param-locals-at
             ctx
+            function-state
             mode
             env
             type-env
@@ -43977,6 +44739,7 @@
 
 (define (lower-imported-spmd-source-args-code-at
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -43990,6 +44753,7 @@
       [arg-lanes : i64
         (lower-masked-vector-expr-lanes-with-locals
           ctx
+          function-state
           mode
           env
           type-env
@@ -44000,6 +44764,7 @@
         (cond [(> arg-lanes 0) "v"] [(= arg-lanes 0) "u"] [else "?"])
         (lower-imported-spmd-source-args-code-at
           ctx
+          function-state
           mode
           env
           type-env
@@ -44010,6 +44775,7 @@
 
 (define (lower-imported-spmd-direct-call-result-lanes
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44029,6 +44795,7 @@
         [arg-lanes : i64
           (lower-spmd-call-args-lanes
             ctx
+            function-state
             mode
             env
             type-env
@@ -44047,6 +44814,7 @@
         [args-code : String
           (lower-imported-spmd-source-args-code-at
             ctx
+            function-state
             mode
             env
             type-env
@@ -44085,6 +44853,7 @@
 
 (define (lower-spmd-direct-call-result-lanes
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44098,6 +44867,7 @@
         -1
         (match (lower-spmd-inline-helper-lookup
           ctx
+          function-state
           env
           type-env
           (lower-id-set-empty)
@@ -44109,6 +44879,7 @@
                   [arg-lanes : i64
                     (lower-spmd-call-args-lanes
                       ctx
+                      function-state
                       mode
                       env
                       type-env
@@ -44119,23 +44890,25 @@
                     -1
                     (let
                       [previous : LowerIdSet
-                        (lower-global-shared-view
-                          lower-spmd-inline-helper-stack)]
+                        (compiler-lower-function-state-inline-helper-stack
+                          function-state)]
                       [result : i64 -1]
                       (begin
-                        (set!
-                          lower-spmd-inline-helper-stack
+                        (compiler-lower-function-state-inline-helper-stack-set!
+                          function-state
                           (lower-id-set-insert previous name))
                         (set!
                           result
                           (lower-masked-vector-expr-lanes-with-locals
                             ctx
+                            function-state
                             mode
                             env
                             type-env
                             ""
                             (lower-spmd-helper-param-locals
                               ctx
+                              function-state
                               mode
                               env
                               type-env
@@ -44144,13 +44917,16 @@
                               params
                               args)
                             body))
-                        (set! lower-spmd-inline-helper-stack previous)
+                        (compiler-lower-function-state-inline-helper-stack-set!
+                          function-state
+                          previous)
                         (if (< result 0)
                           arg-lanes
                           result)))))]
               [(LowerSpmdInlineHelper.Imported canonical-name fn-ty callables)
                 (lower-imported-spmd-direct-call-result-lanes
                   ctx
+                  function-state
                   mode
                   env
                   type-env
@@ -44167,6 +44943,7 @@
 
 (define (lower-masked-vector-expr-lanes-with-locals
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44179,6 +44956,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-expr-lanes-with-locals
           ctx
+          function-state
           mode
           env
           type-env
@@ -44190,6 +44968,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-expr-lanes-with-locals
           ctx
+          function-state
           mode
           env
           type-env
@@ -44201,6 +44980,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-expr-lanes-with-locals
           ctx
+          function-state
           mode
           env
           type-env
@@ -44223,6 +45003,7 @@
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-masked-vector-expr-lanes-with-locals
             ctx
+            function-state
             mode
             env
             type-env
@@ -44238,6 +45019,7 @@
           (lower-masked-vector-lanes-merge
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -44246,6 +45028,7 @@
               left)
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -44277,6 +45060,7 @@
     [(ast.AstExpr.Call func-box args)
       (lower-spmd-direct-call-result-lanes
         ctx
+        function-state
         mode
         env
         type-env
@@ -44292,6 +45076,7 @@
             [body-locals : lower_i64_i64_map.Map
               (lower-masked-vector-let-bindings-locals
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44301,6 +45086,7 @@
             (lower-masked-vector-lanes-merge
               (lower-masked-vector-let-bindings-lanes-with-locals
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44309,6 +45095,7 @@
                 bindings)
               (lower-masked-vector-expr-lanes-with-locals
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44323,6 +45110,7 @@
         (lower-masked-vector-lanes-merge
           (lower-masked-vector-expr-lanes-with-locals
             ctx
+            function-state
             mode
             env
             type-env
@@ -44332,6 +45120,7 @@
           (lower-masked-vector-lanes-merge
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -44340,6 +45129,7 @@
               then-branch)
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -44353,6 +45143,7 @@
         (lower-masked-vector-lanes-merge
           (lower-masked-vector-expr-lanes-with-locals
             ctx
+            function-state
             mode
             env
             type-env
@@ -44361,6 +45152,7 @@
             cond)
           (lower-masked-vector-expr-lanes-with-locals
             ctx
+            function-state
             mode
             env
             type-env
@@ -44375,6 +45167,7 @@
             [scrut-lanes : i64
               (lower-masked-vector-expr-lanes-with-locals
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44385,6 +45178,7 @@
               scrut-lanes
               (lower-masked-vector-match-arms-lanes-with-locals
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44395,6 +45189,7 @@
     [(ast.AstExpr.Begin exprs)
       (lower-masked-vector-expr-list-lanes-with-locals
         ctx
+        function-state
         mode
         env
         type-env
@@ -44426,6 +45221,7 @@
                   [value-lanes : i64
                     (lower-masked-vector-expr-lanes-with-locals
                       ctx
+                      function-state
                       mode
                       env
                       type-env
@@ -44441,6 +45237,7 @@
                   (lower-simd-lanes-for-elem mode elem-ty)
                   (lower-masked-vector-expr-lanes-with-locals
                     ctx
+                    function-state
                     mode
                     env
                     type-env
@@ -44456,6 +45253,7 @@
         (lower-masked-vector-lanes-merge
           (lower-masked-vector-expr-lanes-with-locals
             ctx
+            function-state
             mode
             env
             type-env
@@ -44464,6 +45262,7 @@
             receiver)
           (lower-masked-vector-expr-lanes-with-locals
             ctx
+            function-state
             mode
             env
             type-env
@@ -44474,6 +45273,7 @@
 
 (define (lower-masked-vector-expr-lanes
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44481,6 +45281,7 @@
   [expr : ast.AstExpr]) : i64
   (lower-masked-vector-expr-lanes-with-locals
     ctx
+    function-state
     mode
     env
     type-env
@@ -44490,6 +45291,7 @@
 
 (define (lower-masked-vector-body-has-varying-if-with-locals?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44502,6 +45304,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-body-has-varying-if-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -44513,6 +45316,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-body-has-varying-if-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -44524,6 +45328,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-body-has-varying-if-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -44538,6 +45343,7 @@
         (if (>
           (lower-masked-vector-expr-lanes-with-locals
             ctx
+            function-state
             mode
             env
             type-env
@@ -44549,6 +45355,7 @@
           (or
             (lower-masked-vector-body-has-varying-if-with-locals?
               ctx
+              function-state
               mode
               env
               type-env
@@ -44557,6 +45364,7 @@
               then-branch)
             (lower-masked-vector-body-has-varying-if-with-locals?
               ctx
+              function-state
               mode
               env
               type-env
@@ -44571,6 +45379,7 @@
             [body-locals : lower_i64_i64_map.Map
               (lower-masked-vector-let-bindings-locals
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44580,6 +45389,7 @@
             (or
               (lower-masked-vector-let-bindings-have-varying-if-with-locals?
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44588,6 +45398,7 @@
                 bindings)
               (lower-masked-vector-body-has-varying-if-with-locals?
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44597,6 +45408,7 @@
     [(ast.AstExpr.Begin exprs)
       (lower-masked-vector-expr-list-has-varying-if-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -44608,6 +45420,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-body-has-varying-if-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -44621,6 +45434,7 @@
         (or
           (lower-masked-vector-body-has-varying-if-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44629,6 +45443,7 @@
             left)
           (lower-masked-vector-body-has-varying-if-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44642,6 +45457,7 @@
         (or
           (lower-masked-vector-body-has-varying-if-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44650,6 +45466,7 @@
             arr)
           (lower-masked-vector-body-has-varying-if-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44664,6 +45481,7 @@
         (or
           (lower-masked-vector-body-has-varying-if-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44672,6 +45490,7 @@
             arr)
           (lower-masked-vector-body-has-varying-if-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44680,6 +45499,7 @@
             idx)
           (lower-masked-vector-body-has-varying-if-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44693,6 +45513,7 @@
         (or
           (lower-masked-vector-body-has-varying-if-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44701,6 +45522,7 @@
             receiver)
           (lower-masked-vector-body-has-varying-if-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44711,6 +45533,7 @@
 
 (define (lower-masked-vector-expr-list-has-varying-if-with-locals?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44719,6 +45542,7 @@
   [exprs : ast.AstExprList]) : bool
   (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
     ctx
+    function-state
     mode
     env
     type-env
@@ -44729,6 +45553,7 @@
 
 (define (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44741,6 +45566,7 @@
     (or
       (lower-masked-vector-body-has-varying-if-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -44749,6 +45575,7 @@
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
       (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
         ctx
+        function-state
         mode
         env
         type-env
@@ -44759,6 +45586,7 @@
 
 (define (lower-masked-vector-let-bindings-have-varying-if-with-locals?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44767,6 +45595,7 @@
   [bindings : ast.AstLetBindingList]) : bool
   (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
     ctx
+    function-state
     mode
     env
     type-env
@@ -44777,6 +45606,7 @@
 
 (define (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44796,6 +45626,7 @@
           [init-lanes : i64
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -44805,6 +45636,7 @@
           [init-has-varying-if : bool
             (lower-masked-vector-body-has-varying-if-with-locals?
               ctx
+              function-state
               mode
               env
               type-env
@@ -44820,6 +45652,7 @@
             init-has-varying-if
             (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
               ctx
+              function-state
               mode
               env
               type-env
@@ -44830,6 +45663,7 @@
 
 (define (lower-masked-vector-body-has-varying-if?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44837,6 +45671,7 @@
   [expr : ast.AstExpr]) : bool
   (lower-masked-vector-body-has-varying-if-with-locals?
     ctx
+    function-state
     mode
     env
     type-env
@@ -44846,6 +45681,7 @@
 
 (define (lower-masked-vector-body-has-varying-while-with-locals?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -44856,6 +45692,7 @@
     [(ast.AstExpr.Spanned inner-box _)
       (lower-masked-vector-body-has-varying-while-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -44865,6 +45702,7 @@
     [(ast.AstExpr.Ann inner-box _)
       (lower-masked-vector-body-has-varying-while-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -44874,6 +45712,7 @@
     [(ast.AstExpr.Cast inner-box _)
       (lower-masked-vector-body-has-varying-while-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -44888,6 +45727,7 @@
           (>
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -44897,6 +45737,7 @@
             0)
           (lower-masked-vector-body-has-varying-while-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44905,6 +45746,7 @@
             cond)
           (lower-masked-vector-body-has-varying-while-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -44915,6 +45757,7 @@
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -44923,6 +45766,7 @@
           (lower-context-expr-get ctx cond-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -44931,6 +45775,7 @@
           (lower-context-expr-get ctx then-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -44945,6 +45790,7 @@
             [body-locals : lower_i64_i64_map.Map
               (lower-masked-vector-let-bindings-locals
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44954,6 +45800,7 @@
             (or
               (lower-masked-vector-let-bindings-have-varying-while-with-locals?
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44962,6 +45809,7 @@
                 bindings)
               (lower-masked-vector-body-has-varying-while-with-locals?
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -44971,6 +45819,7 @@
     [(ast.AstExpr.Begin exprs)
       (lower-masked-vector-expr-list-has-varying-while-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -44980,6 +45829,7 @@
     [(ast.AstExpr.Unary _ inner-box)
       (lower-masked-vector-body-has-varying-while-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -44990,6 +45840,7 @@
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -44998,6 +45849,7 @@
           (lower-context-expr-get ctx left-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45008,6 +45860,7 @@
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45016,6 +45869,7 @@
           (lower-context-expr-get ctx arr-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45026,6 +45880,7 @@
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45034,6 +45889,7 @@
           (lower-context-expr-get ctx arr-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45042,6 +45898,7 @@
           (lower-context-expr-get ctx idx-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45052,6 +45909,7 @@
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45060,6 +45918,7 @@
           (lower-context-expr-get ctx receiver-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45070,6 +45929,7 @@
 
 (define (lower-masked-vector-expr-list-has-varying-while-with-locals?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45078,6 +45938,7 @@
   [exprs : ast.AstExprList]) : bool
   (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
     ctx
+    function-state
     mode
     env
     type-env
@@ -45088,6 +45949,7 @@
 
 (define (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45100,6 +45962,7 @@
     (or
       (lower-masked-vector-body-has-varying-while-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -45108,6 +45971,7 @@
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
       (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
         ctx
+        function-state
         mode
         env
         type-env
@@ -45118,6 +45982,7 @@
 
 (define (lower-masked-vector-let-bindings-have-varying-while-with-locals?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45126,6 +45991,7 @@
   [bindings : ast.AstLetBindingList]) : bool
   (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
     ctx
+    function-state
     mode
     env
     type-env
@@ -45136,6 +46002,7 @@
 
 (define (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45155,6 +46022,7 @@
           [init-lanes : i64
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -45164,6 +46032,7 @@
           [init-has-varying-while : bool
             (lower-masked-vector-body-has-varying-while-with-locals?
               ctx
+              function-state
               mode
               env
               type-env
@@ -45179,6 +46048,7 @@
             init-has-varying-while
             (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
               ctx
+              function-state
               mode
               env
               type-env
@@ -45189,6 +46059,7 @@
 
 (define (lower-masked-vector-body-has-varying-while?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45196,6 +46067,7 @@
   [expr : ast.AstExpr]) : bool
   (lower-masked-vector-body-has-varying-while-with-locals?
     ctx
+    function-state
     mode
     env
     type-env
@@ -45205,6 +46077,7 @@
 
 (define (lower-masked-vector-body-has-varying-match-with-locals?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45215,6 +46088,7 @@
     [(ast.AstExpr.Spanned inner-box _)
       (lower-masked-vector-body-has-varying-match-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -45224,6 +46098,7 @@
     [(ast.AstExpr.Ann inner-box _)
       (lower-masked-vector-body-has-varying-match-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -45233,6 +46108,7 @@
     [(ast.AstExpr.Cast inner-box _)
       (lower-masked-vector-body-has-varying-match-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -45242,6 +46118,7 @@
     [(ast.AstExpr.Unary _ inner-box)
       (lower-masked-vector-body-has-varying-match-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -45252,6 +46129,7 @@
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45260,6 +46138,7 @@
           (lower-context-expr-get ctx left-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45272,6 +46151,7 @@
           (or
             (lower-masked-vector-let-bindings-have-varying-match-with-locals?
               ctx
+              function-state
               mode
               env
               type-env
@@ -45280,12 +46160,14 @@
               bindings)
             (lower-masked-vector-body-has-varying-match-with-locals?
               ctx
+              function-state
               mode
               env
               type-env
               index
               (lower-masked-vector-let-bindings-locals
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -45297,6 +46179,7 @@
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45305,6 +46188,7 @@
           (lower-context-expr-get ctx cond-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45313,6 +46197,7 @@
           (lower-context-expr-get ctx then-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45327,6 +46212,7 @@
             [scrut-lanes : i64
               (lower-masked-vector-expr-lanes-with-locals
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -45337,6 +46223,7 @@
               (> scrut-lanes 0)
               (lower-masked-vector-match-arms-have-varying-match-with-locals?
                 ctx
+                function-state
                 mode
                 env
                 type-env
@@ -45347,6 +46234,7 @@
     [(ast.AstExpr.Begin exprs)
       (lower-masked-vector-expr-list-has-varying-match-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -45357,6 +46245,7 @@
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45365,6 +46254,7 @@
           (lower-context-expr-get ctx arr-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45375,6 +46265,7 @@
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45383,6 +46274,7 @@
           (lower-context-expr-get ctx arr-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45391,6 +46283,7 @@
           (lower-context-expr-get ctx idx-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45401,6 +46294,7 @@
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45409,6 +46303,7 @@
           (lower-context-expr-get ctx receiver-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
           ctx
+          function-state
           mode
           env
           type-env
@@ -45419,6 +46314,7 @@
 
 (define (lower-masked-vector-expr-list-has-varying-match-with-locals?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45427,6 +46323,7 @@
   [exprs : ast.AstExprList]) : bool
   (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
     ctx
+    function-state
     mode
     env
     type-env
@@ -45437,6 +46334,7 @@
 
 (define (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45449,6 +46347,7 @@
     (or
       (lower-masked-vector-body-has-varying-match-with-locals?
         ctx
+        function-state
         mode
         env
         type-env
@@ -45457,6 +46356,7 @@
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
       (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
         ctx
+        function-state
         mode
         env
         type-env
@@ -45467,6 +46367,7 @@
 
 (define (lower-masked-vector-let-bindings-have-varying-match-with-locals?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45475,6 +46376,7 @@
   [bindings : ast.AstLetBindingList]) : bool
   (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
     ctx
+    function-state
     mode
     env
     type-env
@@ -45485,6 +46387,7 @@
 
 (define (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45504,6 +46407,7 @@
           [init-lanes : i64
             (lower-masked-vector-expr-lanes-with-locals
               ctx
+              function-state
               mode
               env
               type-env
@@ -45513,6 +46417,7 @@
           [init-has-varying-match : bool
             (lower-masked-vector-body-has-varying-match-with-locals?
               ctx
+              function-state
               mode
               env
               type-env
@@ -45528,6 +46433,7 @@
             init-has-varying-match
             (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
               ctx
+              function-state
               mode
               env
               type-env
@@ -45538,6 +46444,7 @@
 
 (define (lower-masked-vector-match-arms-have-varying-match-with-locals?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45547,6 +46454,7 @@
   [arms : ast.AstMatchArmList]) : bool
   (lower-masked-vector-match-arms-have-varying-match-with-locals-at?
     ctx
+    function-state
     mode
     env
     type-env
@@ -45558,6 +46466,7 @@
 
 (define (lower-masked-vector-match-arms-have-varying-match-with-locals-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45576,6 +46485,7 @@
         (or
           (lower-masked-vector-body-has-varying-match-with-locals?
             ctx
+            function-state
             mode
             env
             type-env
@@ -45584,6 +46494,7 @@
             (lower-context-expr-get ctx body-box))
           (lower-masked-vector-match-arms-have-varying-match-with-locals-at?
             ctx
+            function-state
             mode
             env
             type-env
@@ -45595,6 +46506,7 @@
 
 (define (lower-masked-vector-body-has-varying-match?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -45602,6 +46514,7 @@
   [expr : ast.AstExpr]) : bool
   (lower-masked-vector-body-has-varying-match-with-locals?
     ctx
+    function-state
     mode
     env
     type-env
@@ -46341,13 +47254,21 @@
 
 (define (lower-spmd-expr-list-has-out-of-line-call?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [exprs : ast.AstExprList]) : bool
-  (lower-spmd-expr-list-has-out-of-line-call-at? ctx env type-env (& exprs) 0))
+  (lower-spmd-expr-list-has-out-of-line-call-at?
+    ctx
+    function-state
+    env
+    type-env
+    (& exprs)
+    0))
 
 (define (lower-spmd-expr-list-has-out-of-line-call-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
@@ -46357,11 +47278,13 @@
     (or
       (lower-spmd-expr-has-out-of-line-call?
         ctx
+        function-state
         env
         type-env
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
       (lower-spmd-expr-list-has-out-of-line-call-at?
         ctx
+        function-state
         env
         type-env
         exprs
@@ -46369,13 +47292,21 @@
 
 (define (lower-spmd-let-has-out-of-line-call?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [bindings : ast.AstLetBindingList]) : bool
-  (lower-spmd-let-has-out-of-line-call-at? ctx env type-env (& bindings) 0))
+  (lower-spmd-let-has-out-of-line-call-at?
+    ctx
+    function-state
+    env
+    type-env
+    (& bindings)
+    0))
 
 (define (lower-spmd-let-has-out-of-line-call-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [bindings : (& bindings ast.AstLetBindingList)]
@@ -46390,11 +47321,13 @@
         (or
           (lower-spmd-expr-has-out-of-line-call?
             ctx
+            function-state
             env
             type-env
             (lower-context-expr-get ctx init-box))
           (lower-spmd-let-has-out-of-line-call-at?
             ctx
+            function-state
             env
             type-env
             bindings
@@ -46402,6 +47335,7 @@
 
 (define (lower-spmd-expr-has-out-of-line-call?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]) : bool
@@ -46409,24 +47343,28 @@
     [(ast.AstExpr.Spanned inner-box _)
       (lower-spmd-expr-has-out-of-line-call?
         ctx
+        function-state
         env
         type-env
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Ann inner-box _)
       (lower-spmd-expr-has-out-of-line-call?
         ctx
+        function-state
         env
         type-env
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Cast inner-box _)
       (lower-spmd-expr-has-out-of-line-call?
         ctx
+        function-state
         env
         type-env
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Unary _ inner-box)
       (lower-spmd-expr-has-out-of-line-call?
         ctx
+        function-state
         env
         type-env
         (lower-context-expr-get ctx inner-box))]
@@ -46434,11 +47372,13 @@
       (or
         (lower-spmd-expr-has-out-of-line-call?
           ctx
+          function-state
           env
           type-env
           (lower-context-expr-get ctx left-box))
         (lower-spmd-expr-has-out-of-line-call?
           ctx
+          function-state
           env
           type-env
           (lower-context-expr-get ctx right-box)))]
@@ -46448,6 +47388,7 @@
         (or
           (match (lower-spmd-inline-helper-lookup
             ctx
+            function-state
             env
             type-env
             (lower-id-set-empty)
@@ -46459,14 +47400,25 @@
                 [(LowerSpmdInlineHelper.Imported _ _ _) true]
                 [(LowerSpmdInlineHelper.No) false])]
             [(ResultLowerSpmdInlineHelper.Err _) false])
-          (lower-spmd-expr-list-has-out-of-line-call? ctx env type-env args)))]
+          (lower-spmd-expr-list-has-out-of-line-call?
+            ctx
+            function-state
+            env
+            type-env
+            args)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (or
-            (lower-spmd-let-has-out-of-line-call? ctx env type-env bindings)
+            (lower-spmd-let-has-out-of-line-call?
+              ctx
+              function-state
+              env
+              type-env
+              bindings)
             (lower-spmd-expr-has-out-of-line-call?
               ctx
+              function-state
               env
               type-env
               (lower-context-expr-get ctx body-box)))])]
@@ -46474,30 +47426,40 @@
       (or
         (lower-spmd-expr-has-out-of-line-call?
           ctx
+          function-state
           env
           type-env
           (lower-context-expr-get ctx cond-box))
         (lower-spmd-expr-has-out-of-line-call?
           ctx
+          function-state
           env
           type-env
           (lower-context-expr-get ctx then-box))
         (lower-spmd-expr-has-out-of-line-call?
           ctx
+          function-state
           env
           type-env
           (lower-context-expr-get ctx else-box)))]
     [(ast.AstExpr.Begin exprs)
-      (lower-spmd-expr-list-has-out-of-line-call? ctx env type-env exprs)]
+      (lower-spmd-expr-list-has-out-of-line-call?
+        ctx
+        function-state
+        env
+        type-env
+        exprs)]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (or
         (lower-spmd-expr-has-out-of-line-call?
           ctx
+          function-state
           env
           type-env
           (lower-context-expr-get ctx array-box))
         (lower-spmd-expr-has-out-of-line-call?
           ctx
+          function-state
           env
           type-env
           (lower-context-expr-get ctx index-box)))]
@@ -46505,16 +47467,19 @@
       (or
         (lower-spmd-expr-has-out-of-line-call?
           ctx
+          function-state
           env
           type-env
           (lower-context-expr-get ctx array-box))
         (lower-spmd-expr-has-out-of-line-call?
           ctx
+          function-state
           env
           type-env
           (lower-context-expr-get ctx index-box))
         (lower-spmd-expr-has-out-of-line-call?
           ctx
+          function-state
           env
           type-env
           (lower-context-expr-get ctx value-box)))]
@@ -46522,6 +47487,7 @@
 
 (define (lower-masked-vector-map
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -46531,6 +47497,7 @@
     [varying-if : bool
       (lower-masked-vector-body-has-varying-if?
         ctx
+        function-state
         mode
         env
         type-env
@@ -46539,6 +47506,7 @@
     [varying-while : bool
       (lower-masked-vector-body-has-varying-while?
         ctx
+        function-state
         mode
         env
         type-env
@@ -46547,6 +47515,7 @@
     [varying-match : bool
       (lower-masked-vector-body-has-varying-match?
         ctx
+        function-state
         mode
         env
         type-env
@@ -46567,7 +47536,12 @@
         index
         body)]
     [out-of-line-call : bool
-      (lower-spmd-expr-has-out-of-line-call? ctx env type-env body)]
+      (lower-spmd-expr-has-out-of-line-call?
+        ctx
+        function-state
+        env
+        type-env
+        body)]
     (if (or
       (and
         (lower-mode-avx512? mode)
@@ -46589,7 +47563,14 @@
           out-of-line-call)))
       (let
         [lanes : i64
-          (lower-masked-vector-expr-lanes ctx mode env type-env index body)]
+          (lower-masked-vector-expr-lanes
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            index
+            body)]
         (if (> lanes 0)
           (LowerMaybeMaskedVectorMap.Some lanes)
           (LowerMaybeMaskedVectorMap.No)))
@@ -47131,6 +48112,7 @@
 
 (define (lower-vector-body-has-atomic-call?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]) : bool
@@ -47138,35 +48120,80 @@
     [(ast.AstExpr.Spanned inner-box _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call? ctx env type-env inner))]
+        (lower-vector-body-has-atomic-call?
+          ctx
+          function-state
+          env
+          type-env
+          inner))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call? ctx env type-env inner))]
+        (lower-vector-body-has-atomic-call?
+          ctx
+          function-state
+          env
+          type-env
+          inner))]
     [(ast.AstExpr.Cast inner-box _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call? ctx env type-env inner))]
+        (lower-vector-body-has-atomic-call?
+          ctx
+          function-state
+          env
+          type-env
+          inner))]
     [(ast.AstExpr.Unary _ inner-box)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-vector-body-has-atomic-call? ctx env type-env inner))]
+        (lower-vector-body-has-atomic-call?
+          ctx
+          function-state
+          env
+          type-env
+          inner))]
     [(ast.AstExpr.Binary _ left-box right-box)
       (let
         [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
         [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
         (or
-          (lower-vector-body-has-atomic-call? ctx env type-env left)
-          (lower-vector-body-has-atomic-call? ctx env type-env right)))]
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            left)
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            right)))]
     [(ast.AstExpr.If cond-box then-box else-box)
       (let
         [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
         [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
         [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
         (or
-          (lower-vector-body-has-atomic-call? ctx env type-env cond)
-          (lower-vector-body-has-atomic-call? ctx env type-env then-branch)
-          (lower-vector-body-has-atomic-call? ctx env type-env else-branch)))]
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            cond)
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            then-branch)
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            else-branch)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -47175,12 +48202,23 @@
             (or
               (lower-vector-let-bindings-have-atomic-call?
                 ctx
+                function-state
                 env
                 type-env
                 bindings)
-              (lower-vector-body-has-atomic-call? ctx env type-env body)))])]
+              (lower-vector-body-has-atomic-call?
+                ctx
+                function-state
+                env
+                type-env
+                body)))])]
     [(ast.AstExpr.Begin exprs)
-      (lower-vector-expr-list-has-atomic-call? ctx env type-env exprs)]
+      (lower-vector-expr-list-has-atomic-call?
+        ctx
+        function-state
+        env
+        type-env
+        exprs)]
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
@@ -47190,43 +48228,101 @@
               (lower-atomic-extern-symbol-for-func ctx type-env func))
             0)
           (lower-atomic-pointer-func? type-env func)
-          (lower-vector-call-target-has-atomic? ctx env type-env func)
-          (lower-vector-body-has-atomic-call? ctx env type-env func)
-          (lower-vector-expr-list-has-atomic-call? ctx env type-env args)))]
+          (lower-vector-call-target-has-atomic?
+            ctx
+            function-state
+            env
+            type-env
+            func)
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            func)
+          (lower-vector-expr-list-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            args)))]
     [(ast.AstExpr.ArrayRef arr-box idx-box)
       (let
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
         [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
         (or
-          (lower-vector-body-has-atomic-call? ctx env type-env arr)
-          (lower-vector-body-has-atomic-call? ctx env type-env idx)))]
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            arr)
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            idx)))]
     [(ast.AstExpr.ArraySet arr-box idx-box value-box)
       (let
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
         [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         (or
-          (lower-vector-body-has-atomic-call? ctx env type-env arr)
-          (lower-vector-body-has-atomic-call? ctx env type-env idx)
-          (lower-vector-body-has-atomic-call? ctx env type-env value)))]
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            arr)
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            idx)
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            value)))]
     [(ast.AstExpr.StructSet receiver-box _ value-box)
       (let
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         (or
-          (lower-vector-body-has-atomic-call? ctx env type-env receiver)
-          (lower-vector-body-has-atomic-call? ctx env type-env value)))]
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            receiver)
+          (lower-vector-body-has-atomic-call?
+            ctx
+            function-state
+            env
+            type-env
+            value)))]
     [_ false]))
 
 (define (lower-vector-expr-list-has-atomic-call?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [exprs : ast.AstExprList]) : bool
-  (lower-vector-expr-list-has-atomic-call-at? ctx env type-env (& exprs) 0))
+  (lower-vector-expr-list-has-atomic-call-at?
+    ctx
+    function-state
+    env
+    type-env
+    (& exprs)
+    0))
 
 (define (lower-vector-expr-list-has-atomic-call-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
@@ -47236,11 +48332,13 @@
     (or
       (lower-vector-body-has-atomic-call?
         ctx
+        function-state
         env
         type-env
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
       (lower-vector-expr-list-has-atomic-call-at?
         ctx
+        function-state
         env
         type-env
         exprs
@@ -47248,11 +48346,13 @@
 
 (define (lower-vector-let-bindings-have-atomic-call?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [bindings : ast.AstLetBindingList]) : bool
   (lower-vector-let-bindings-have-atomic-call-at?
     ctx
+    function-state
     env
     type-env
     (& bindings)
@@ -47260,6 +48360,7 @@
 
 (define (lower-vector-let-bindings-have-atomic-call-at?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [bindings : (& bindings ast.AstLetBindingList)]
@@ -47274,9 +48375,15 @@
         (let
           [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
           (or
-            (lower-vector-body-has-atomic-call? ctx env type-env init)
+            (lower-vector-body-has-atomic-call?
+              ctx
+              function-state
+              env
+              type-env
+              init)
             (lower-vector-let-bindings-have-atomic-call-at?
               ctx
+              function-state
               env
               type-env
               bindings
@@ -47284,11 +48391,13 @@
 
 (define (lower-vector-call-target-has-atomic?
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [func : ast.AstExpr]) : bool
   (match (lower-spmd-inline-helper-lookup
     ctx
+    function-state
     env
     type-env
     (lower-id-set-empty)
@@ -47297,21 +48406,29 @@
       (match helper
         [(LowerSpmdInlineHelper.Some name _ _ body)
           (if (lower-id-set-contains?
-            (lower-global-shared-view lower-spmd-inline-helper-stack)
+            (compiler-lower-function-state-inline-helper-stack function-state)
             name)
             false
             (let
               [previous : LowerIdSet
-                (lower-global-shared-view lower-spmd-inline-helper-stack)]
+                (compiler-lower-function-state-inline-helper-stack
+                  function-state)]
               [result : bool false]
               (begin
-                (set!
-                  lower-spmd-inline-helper-stack
+                (compiler-lower-function-state-inline-helper-stack-set!
+                  function-state
                   (lower-id-set-insert previous name))
                 (set!
                   result
-                  (lower-vector-body-has-atomic-call? ctx env type-env body))
-                (set! lower-spmd-inline-helper-stack previous)
+                  (lower-vector-body-has-atomic-call?
+                    ctx
+                    function-state
+                    env
+                    type-env
+                    body))
+                (compiler-lower-function-state-inline-helper-stack-set!
+                  function-state
+                  previous)
                 result)))]
         [(LowerSpmdInlineHelper.Imported _ _ _) false]
         [(LowerSpmdInlineHelper.No) false])]
@@ -53891,6 +55008,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     expr)
     [(tc_core.ResultTcType.Ok result-ty)
       (let
@@ -54007,6 +55125,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     expr)
     [(tc_core.ResultTcType.Ok result-ty)
       (let
@@ -55759,6 +56878,7 @@
     env
     type-env
     (lower-state-type-cache state)
+    (lower-state-function-state state)
     scrutinee)
     [(tc_core.ResultTcType.Ok scrut-ty) (lower-spmd-enum-type? scrut-ty)]
     [(tc_core.ResultTcType.Err _) false])
@@ -55835,6 +56955,7 @@
   [args : ast.AstExprList]) : ResultLowerSpmdCallArgs
   (lower-avx512-spmd-call-args-at
     ctx
+    (lower-state-function-state state)
     state
     env
     type-env
@@ -55850,6 +56971,7 @@
 
 (define (lower-avx512-spmd-call-args-at
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -55884,6 +57006,7 @@
             [arg-lanes : i64
               (lower-masked-vector-expr-lanes-with-locals
                 ctx
+                (lower-state-function-state state)
                 (lower-state-mode state)
                 env
                 type-env
@@ -55916,6 +57039,7 @@
                     [(LowerExpr.Expr arg-state arg-value _)
                       (match (lower-avx512-spmd-call-args-at
                         ctx
+                        function-state
                         arg-state
                         env
                         type-env
@@ -56487,26 +57611,291 @@
           (str_cat.str-cat "__tl_spmd_ret_uniform_" stable-name))]
       [_ stable-name])))
 
-(define (lower-spmd-package-symbol-register [symbol : i64] [identity : String]) : LowerSpmdPackageSymbolRegistration
+(define (lower-spmd-package-symbol-register
+  [lower-state : CompilerLowerState]
+  [symbol : i64]
+  [identity : String]) : LowerSpmdPackageSymbolRegistration
   (let
-    [identity-id : i64 (ci.intern-generated-canonical-name identity)]
-    (match (lower_i64_i64_map.get
-      (& lower-spmd-package-symbol-identities)
-      symbol)
-      [(lower_i64_i64_map.LookupFound previous)
-        (if (= previous identity-id)
+    [package : CompilerLowerSpmdPackageState
+      (compiler-lower-state-spmd-package lower-state)]
+    (match (lower_i64_i64_map.get (& package.symbol-identities) symbol)
+      [(lower_i64_i64_map.LookupFound identity-index)
+        (if (string.eq (array-ref package.identities identity-index) identity)
           LowerSpmdPackageSymbolRegistration.Existing
           (LowerSpmdPackageSymbolRegistration.Collision
             (str_cat.str-cat
               "lower: :spmd-callable stable symbol collision for "
               (ir.compiler-ir-symbol-text symbol))))]
       [(lower_i64_i64_map.LookupMissing)
+        (in-arena
+          (arena.Arena package.arena)
+          (let
+            [identity-index : i64 (array-length package.identities)]
+            (begin
+              (__tl_array-push! package.identities (clone identity))
+              (lower_i64_i64_map.insert-ref!
+                (&mut package.symbol-identities)
+                symbol
+                identity-index)
+              (compiler-lower-state-write!
+                lower-state
+                CompilerLowerSpmdPackageState
+                spmd-package-state
+                package)
+              LowerSpmdPackageSymbolRegistration.New)))])))
+
+(define (compiler-lower-function-memo-test-write!
+  [function-state : CompilerLowerFunctionState]
+  [slot : i64]
+  [key : i64]
+  [ty : ast.AstType]
+  [outcome : LowerVariantArmResolution]) : unit
+  (let
+    [storage : CompilerLowerFunctionMemoStorage
+      (compiler-lower-function-memo-storage
+        (compiler-lower-function-state-owner function-state))]
+    (begin
+      (set!
+        (array-ref storage.rtf-generations slot)
+        (compiler-lower-function-state-rtf-generation function-state))
+      (set! (array-ref storage.rtf-ids slot) key)
+      (set! (array-ref storage.rtf-types slot) ty)
+      (set!
+        (array-ref storage.variant-stamps slot)
+        (compiler-lower-function-state-variant-generation function-state))
+      (set! (array-ref storage.variant-keys slot) key)
+      (set! (array-ref storage.variant-scrutinee-types slot) ty)
+      (set! (array-ref storage.variant-outcomes slot) outcome))))
+
+(define (compiler-lower-function-memo-test-hit?
+  [function-state : CompilerLowerFunctionState]
+  [slot : i64]
+  [key : i64]
+  [ty : ast.AstType]
+  [outcome-name : String]) : bool
+  (let
+    [storage : CompilerLowerFunctionMemoStorage
+      (compiler-lower-function-memo-storage
+        (compiler-lower-function-state-owner function-state))]
+    (and
+      (=
+        (array-ref storage.rtf-generations slot)
+        (compiler-lower-function-state-rtf-generation function-state))
+      (= (array-ref storage.rtf-ids slot) key)
+      (ast.ast-type-eq? (array-ref storage.rtf-types slot) ty)
+      (=
+        (array-ref storage.variant-stamps slot)
+        (compiler-lower-function-state-variant-generation function-state))
+      (= (array-ref storage.variant-keys slot) key)
+      (ast.ast-type-eq? (array-ref storage.variant-scrutinee-types slot) ty)
+      (match (array-ref storage.variant-outcomes slot)
+        [(LowerVariantArmResolution.Missing name) (string.eq name outcome-name)]
+        [_ false]))))
+
+;; A and B deliberately reuse the same numeric memo slot/key/generation and
+;; fresh-local source ID. The backing arrays are owner-private, while sibling
+;; functions in A share backing but use distinct generations so interleaving is
+;; an eviction/miss rather than a stale read.
+(define (compiler-lower-spmd-function-state-isolation-ok?) : bool
+  (let
+    [owner-a : CompilerLowerState (compiler-lower-state-new)]
+    [owner-b : CompilerLowerState (compiler-lower-state-new)]
+    [idle-a : i64 (compiler-lower-state-function-memo-retained-bytes owner-a)]
+    [idle-b : i64 (compiler-lower-state-function-memo-retained-bytes owner-b)]
+    (begin
+      (compiler-lower-state-set-spmd-package! owner-a "package-a")
+      (compiler-lower-state-set-spmd-package! owner-b "package-b")
+      (let
+        [function-a : CompilerLowerFunctionState
+          (compiler-lower-function-state-new owner-a)]
+        [retained-a : i64
+          (compiler-lower-state-function-memo-retained-bytes owner-a)]
+        [still-idle-b : i64
+          (compiler-lower-state-function-memo-retained-bytes owner-b)]
+        [function-a-nested : CompilerLowerFunctionState
+          (compiler-lower-function-state-new owner-a)]
+        [function-b : CompilerLowerFunctionState
+          (compiler-lower-function-state-new owner-b)]
+        [retained-b : i64
+          (compiler-lower-state-function-memo-retained-bytes owner-b)]
+        [source-id : i64
+          (ci.intern-generated-name "lower-function-state-isolation-temp")]
+        [symbol : i64 81173]
+        [registered-a : LowerSpmdPackageSymbolRegistration
+          (lower-spmd-package-symbol-register owner-a symbol "identity-a")]
+        [registered-b : LowerSpmdPackageSymbolRegistration
+          (lower-spmd-package-symbol-register owner-b symbol "identity-b")]
+        [repeated-b : LowerSpmdPackageSymbolRegistration
+          (lower-spmd-package-symbol-register owner-b symbol "identity-b")]
         (begin
-          (lower_i64_i64_map.insert-ref!
-            (&mut lower-spmd-package-symbol-identities)
-            symbol
-            identity-id)
-          LowerSpmdPackageSymbolRegistration.New)])))
+          (compiler-lower-function-state-inline-helper-stack-set!
+            function-a
+            (lower-id-set-insert (lower-id-set-empty) 4242))
+          (compiler-lower-function-state-recursion-detected-set!
+            function-a
+            true)
+          (compiler-lower-function-state-scalar-call-context-set!
+            function-a
+            (LowerSpmdScalarCallContext.Some "lane-a"))
+          (let
+            [temp-a-0 : i64
+              (compiler-lower-function-state-fresh-local-id!
+                function-a
+                source-id)]
+            [temp-a-1 : i64
+              (compiler-lower-function-state-fresh-local-id!
+                function-a
+                source-id)]
+            [temp-a-nested-0 : i64
+              (compiler-lower-function-state-fresh-local-id!
+                function-a-nested
+                source-id)]
+            [temp-b-0 : i64
+              (compiler-lower-function-state-fresh-local-id!
+                function-b
+                source-id)]
+            [slot : i64 17]
+            [key : i64 17017]
+            (begin
+              (compiler-lower-function-memo-test-write!
+                function-a
+                slot
+                key
+                (ast.AstType.I64)
+                (LowerVariantArmResolution.Missing "memo-a"))
+              (compiler-lower-function-memo-test-write!
+                function-b
+                slot
+                key
+                (ast.AstType.Bool)
+                (LowerVariantArmResolution.Missing "memo-b"))
+              (let
+                [owners-hit : bool
+                  (and
+                    (compiler-lower-function-memo-test-hit?
+                      function-a
+                      slot
+                      key
+                      (ast.AstType.I64)
+                      "memo-a")
+                    (compiler-lower-function-memo-test-hit?
+                      function-b
+                      slot
+                      key
+                      (ast.AstType.Bool)
+                      "memo-b"))]
+                (begin
+                  (compiler-lower-function-memo-test-write!
+                    function-a-nested
+                    slot
+                    key
+                    (ast.AstType.Bool)
+                    (LowerVariantArmResolution.Missing "memo-a-nested"))
+                  (let
+                    [nested-hit : bool
+                      (compiler-lower-function-memo-test-hit?
+                        function-a-nested
+                        slot
+                        key
+                        (ast.AstType.Bool)
+                        "memo-a-nested")]
+                    [outer-evicted : bool
+                      (not
+                        (compiler-lower-function-memo-test-hit?
+                          function-a
+                          slot
+                          key
+                          (ast.AstType.I64)
+                          "memo-a"))]
+                    [b-still-hit : bool
+                      (compiler-lower-function-memo-test-hit?
+                        function-b
+                        slot
+                        key
+                        (ast.AstType.Bool)
+                        "memo-b")]
+                    (begin
+                      (compiler-lower-state-reset! owner-a)
+                      (and
+                        (= idle-a 0)
+                        (= idle-b 0)
+                        (> retained-a 0)
+                        (= still-idle-b 0)
+                        (> retained-b 0)
+                        (not (= owner-a.address owner-b.address))
+                        (not (= function-a.address function-a-nested.address))
+                        (not (= function-a.address function-b.address))
+                        (=
+                          (compiler-lower-function-state-rtf-generation
+                            function-a)
+                          (compiler-lower-function-state-rtf-generation
+                            function-b))
+                        (not
+                          (=
+                            (compiler-lower-function-state-rtf-generation
+                              function-a)
+                            (compiler-lower-function-state-rtf-generation
+                              function-a-nested)))
+                        (lower-id-set-contains?
+                          (compiler-lower-function-state-inline-helper-stack
+                            function-a)
+                          4242)
+                        (not
+                          (lower-id-set-contains?
+                            (compiler-lower-function-state-inline-helper-stack
+                              function-a-nested)
+                            4242))
+                        (not
+                          (lower-id-set-contains?
+                            (compiler-lower-function-state-inline-helper-stack
+                              function-b)
+                            4242))
+                        (compiler-lower-function-state-recursion-detected?
+                          function-a)
+                        (not
+                          (compiler-lower-function-state-recursion-detected?
+                            function-a-nested))
+                        (not
+                          (compiler-lower-function-state-recursion-detected?
+                            function-b))
+                        (match (compiler-lower-function-state-scalar-call-context
+                          function-a)
+                          [(LowerSpmdScalarCallContext.Some lane)
+                            (string.eq lane "lane-a")]
+                          [_ false])
+                        (match (compiler-lower-function-state-scalar-call-context
+                          function-b)
+                          [(LowerSpmdScalarCallContext.No) true]
+                          [_ false])
+                        (= temp-a-0 temp-a-nested-0)
+                        (= temp-a-0 temp-b-0)
+                        (not (= temp-a-0 temp-a-1))
+                        owners-hit
+                        nested-hit
+                        outer-evicted
+                        b-still-hit
+                        (match registered-a
+                          [(LowerSpmdPackageSymbolRegistration.New) true]
+                          [_ false])
+                        (match registered-b
+                          [(LowerSpmdPackageSymbolRegistration.New) true]
+                          [_ false])
+                        (match repeated-b
+                          [(LowerSpmdPackageSymbolRegistration.Existing) true]
+                          [_ false])
+                        (string.eq
+                          (compiler-lower-state-spmd-package-name owner-a)
+                          "")
+                        (string.eq
+                          (compiler-lower-state-spmd-package-name owner-b)
+                          "package-b")
+                        (match (lower-spmd-package-symbol-register
+                          owner-b
+                          symbol
+                          "identity-b")
+                          [(LowerSpmdPackageSymbolRegistration.Existing) true]
+                          [_ false])
+                        (compiler-lower-state-reset? owner-a)))))))))))))
 
 (define (lower-spmd-package-lane-width-supported? [lanes : i64]) : bool
   (or (= lanes 8) (= lanes 16) (= lanes 32) (= lanes 64)))
@@ -56620,6 +58009,7 @@
 (define (lower-spmd-package-specialization-validation-error
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
+  [function-state : CompilerLowerFunctionState]
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
@@ -56648,10 +58038,14 @@
           (tc_core.tc-hygiene-global-env top-env)
           params)
         ret-ty)]
-    [_recursion-reset : unit (set! lower-spmd-inline-recursion-detected false)]
+    [_recursion-reset : unit
+      (compiler-lower-function-state-recursion-detected-set!
+        function-state
+        false)]
     [body-lanes : i64
       (lower-masked-vector-expr-lanes-with-locals
         ctx
+        function-state
         (CompilerLowerMode.Avx512)
         env
         type-env
@@ -56687,7 +58081,7 @@
         "lower: :spmd-callable index-param must name a varying argument"]
       [(not (lower-spmd-package-index-param-i64? ctx (& params) index-param))
         "lower: :spmd-callable index-param must name an i64 parameter"]
-      [lower-spmd-inline-recursion-detected
+      [(compiler-lower-function-state-recursion-detected? function-state)
         (lower-spmd-inline-recursive-message)]
       [(< body-lanes 0)
         "lower: :spmd-callable body does not support SPMD specialization"]
@@ -56895,6 +58289,7 @@
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [hidden-name : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
@@ -56936,6 +58331,7 @@
         (box function-spans)
         names
         type-cache
+        function-state
         mode
         (lower_i64_i64_map.with-capacity 8)
         1
@@ -57041,6 +58437,7 @@
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [hidden-name : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
@@ -57071,6 +58468,7 @@
         (box function-spans)
         names
         type-cache
+        function-state
         mode
         (lower_i64_i64_map.with-capacity 8)
         1
@@ -57107,6 +58505,7 @@
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [hidden-name : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
@@ -57126,6 +58525,7 @@
         ctx
         top-env
         type-cache
+        function-state
         hidden-name
         params
         ret
@@ -57138,6 +58538,7 @@
         ctx
         top-env
         type-cache
+        function-state
         hidden-name
         params
         ret
@@ -57155,6 +58556,7 @@
         ctx
         top-env
         type-cache
+        function-state
         hidden-name
         params
         ret
@@ -57172,6 +58574,7 @@
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [canonical-name : String]
   [params : ast.AstParamList]
   [ret : ast.AstType]
@@ -57182,10 +58585,14 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
+    [lower-state : CompilerLowerState
+      (compiler-lower-state-from-name-cache names)]
+    [package-name : String (compiler-lower-state-spmd-package-name lower-state)]
     [validation-error : String
       (lower-spmd-package-specialization-validation-error
         ctx
         top-env
+        function-state
         params
         ret
         body
@@ -57206,7 +58613,7 @@
         [index-param : i64 specialization.index-param]
         [hidden-name-text : String
           (lower-spmd-package-symbol
-            (lower-global-shared-view lower-spmd-package-name)
+            package-name
             canonical-name
             signature
             ret
@@ -57219,7 +58626,7 @@
           (ci.intern-generated-canonical-name hidden-name-text)]
         [symbol-identity : String
           (lower-spmd-package-symbol-identity
-            (lower-global-shared-view lower-spmd-package-name)
+            package-name
             canonical-name
             signature
             backend
@@ -57228,7 +58635,10 @@
             result-code
             index-param)]
         [registration : LowerSpmdPackageSymbolRegistration
-          (lower-spmd-package-symbol-register hidden-name symbol-identity)]
+          (lower-spmd-package-symbol-register
+            lower-state
+            hidden-name
+            symbol-identity)]
         [call-args : ir.CompilerIrSpmdCallArgList
           (lower-spmd-package-call-args-at ctx (& params) (& classes) 0)]
         [index-name : String
@@ -57243,6 +58653,7 @@
               ctx
               top-env
               type-cache
+              function-state
               hidden-name
               params
               ret
@@ -57274,30 +58685,26 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
-    [previous : LowerIdSet
-      (lower-global-shared-view lower-spmd-inline-helper-stack)]
-    (begin
-      (set!
-        lower-spmd-inline-helper-stack
-        (lower-id-set-insert previous canonical-handle))
-      (let
-        [result : ResultLowerFunction
-          (lower-spmd-package-specialization-function-active
-            ctx
-            top-env
-            type-cache
-            canonical-name
-            params
-            ret
-            body
-            specialization
-            backend
-            spans
-            names
-            mode)]
-        (begin
-          (set! lower-spmd-inline-helper-stack previous)
-          result)))))
+    [function-state : CompilerLowerFunctionState
+      (compiler-lower-function-state-new-with-stack
+        (compiler-lower-state-from-name-cache names)
+        (lower-id-set-insert
+          (lower-spmd-inline-empty-helper-stack)
+          canonical-handle))]
+    (lower-spmd-package-specialization-function-active
+      ctx
+      top-env
+      type-cache
+      function-state
+      canonical-name
+      params
+      ret
+      body
+      specialization
+      backend
+      spans
+      names
+      mode)))
 
 (define (lower-spmd-package-specializations-from
   [ctx : tc_core.TcContext]
@@ -57382,44 +58789,48 @@
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
-  (match callable
-    [(ast.AstSpmdCallable.No)
-      (ResultLowerFunction.Ok ir.CompilerIrFunctionList.Nil spans)]
-    [(ast.AstSpmdCallable.Callable specializations)
-      (if (= (string.string-length lower-spmd-package-name) 0)
-        (ResultLowerFunction.Err
-          (box
-            (lower-diagnostic
-              "lower: :spmd-callable is only supported while building a package")))
-        (if (lower-mode-avx2? mode)
+  (let
+    [package-name : String
+      (compiler-lower-state-spmd-package-name
+        (compiler-lower-state-from-name-cache names))]
+    (match callable
+      [(ast.AstSpmdCallable.No)
+        (ResultLowerFunction.Ok ir.CompilerIrFunctionList.Nil spans)]
+      [(ast.AstSpmdCallable.Callable specializations)
+        (if (= (string.string-length package-name) 0)
           (ResultLowerFunction.Err
             (box
               (lower-diagnostic
-                "lower: :spmd-callable is not supported in AVX2 backend mode; use scalar or avx512")))
-          (let
-            [backend : ir.CompilerIrSpmdBackend
-              (if (lower-mode-avx512? mode)
-                ir.CompilerIrSpmdBackend.Avx512
-                ir.CompilerIrSpmdBackend.Scalar)]
-            [count : i64
-              (ast.ast-spmd-specialization-list-len (& specializations))]
-            (lower-spmd-package-specializations-from
-              ctx
-              top-env
-              type-cache
-              canonical-name
-              canonical-handle
-              params
-              ret
-              body
-              (& specializations)
-              0
-              count
-              backend
-              spans
-              names
-              mode
-              (ir.compiler-ir-function-builder-with-capacity count)))))]))
+                "lower: :spmd-callable is only supported while building a package")))
+          (if (lower-mode-avx2? mode)
+            (ResultLowerFunction.Err
+              (box
+                (lower-diagnostic
+                  "lower: :spmd-callable is not supported in AVX2 backend mode; use scalar or avx512")))
+            (let
+              [backend : ir.CompilerIrSpmdBackend
+                (if (lower-mode-avx512? mode)
+                  ir.CompilerIrSpmdBackend.Avx512
+                  ir.CompilerIrSpmdBackend.Scalar)]
+              [count : i64
+                (ast.ast-spmd-specialization-list-len (& specializations))]
+              (lower-spmd-package-specializations-from
+                ctx
+                top-env
+                type-cache
+                canonical-name
+                canonical-handle
+                params
+                ret
+                body
+                (& specializations)
+                0
+                count
+                backend
+                spans
+                names
+                mode
+                (ir.compiler-ir-function-builder-with-capacity count)))))])))
 
 (define (lower-avx512-emit-spmd-call
   [state : LowerState (:consume)]
@@ -57549,6 +58960,7 @@
         env
         type-env
         (lower-state-type-cache state)
+        (lower-state-function-state state)
         expr)
         [(tc_core.ResultTcType.Err message)
           (ResultLowerExpr.Err (box (lower-diagnostic-at-expr expr message)))]
@@ -57560,6 +58972,7 @@
             [arg-lanes : i64
               (lower-spmd-call-args-lanes
                 ctx
+                (lower-state-function-state state)
                 (lower-state-mode state)
                 env
                 type-env
@@ -57649,7 +59062,13 @@
   [expr : ast.AstExpr]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultLowerExpr
-  (match (lower-spmd-inline-helper-lookup ctx env type-env lane-locals func)
+  (match (lower-spmd-inline-helper-lookup
+    ctx
+    (lower-state-function-state state)
+    env
+    type-env
+    lane-locals
+    func)
     [(ResultLowerSpmdInlineHelper.Ok helper)
       (match helper
         [(LowerSpmdInlineHelper.Some name params ret body)
@@ -57658,12 +59077,14 @@
             env
             type-env
             (lower-state-type-cache state)
+            (lower-state-function-state state)
             expr)
             [(tc_core.ResultTcType.Ok result-ty)
               (let
                 [arg-lanes : i64
                   (lower-spmd-call-args-lanes
                     ctx
+                    (lower-state-function-state state)
                     (lower-state-mode state)
                     env
                     type-env
@@ -57725,6 +59146,7 @@
                                 (>
                                   (lower-spmd-direct-call-result-lanes
                                     ctx
+                                    (lower-state-function-state named-state)
                                     (lower-state-mode named-state)
                                     env
                                     type-env
@@ -57746,10 +59168,16 @@
                                   hidden-name
                                   result-ty
                                   result-varying)]
+                              [helper-function-state : CompilerLowerFunctionState
+                                (compiler-lower-function-state-new-with-stack
+                                  (lower-state-owner named-state)
+                                  (compiler-lower-function-state-inline-helper-stack
+                                    (lower-state-function-state named-state)))]
                               (match (lower-spmd-specialized-helper-function
                                 ctx
                                 type-env
                                 (lower-state-type-cache named-state)
+                                helper-function-state
                                 private-name
                                 params
                                 ret
@@ -57996,6 +59424,7 @@
           env
           type-env
           (lower-state-type-cache state)
+          (lower-state-function-state state)
           expr)
           [(tc_core.ResultTcType.Ok result-ty)
             (lower-avx512-masked-if
@@ -58023,6 +59452,7 @@
             env
             type-env
             (lower-state-type-cache state)
+            (lower-state-function-state state)
             expr)
             [(tc_core.ResultTcType.Ok result-ty)
               (lower-avx512-masked-match
@@ -58628,17 +60058,21 @@
   [index : String]
   [body : ast.AstExpr]) : ResultLowerExpr
   (let
+    [function-state : CompilerLowerFunctionState
+      (lower-state-function-state state)]
     [previous : LowerSpmdScalarCallContext
-      (lower-global-shared-view lower-spmd-scalar-call-context)]
+      (compiler-lower-function-state-scalar-call-context function-state)]
     [result : ResultLowerExpr
       (ResultLowerExpr.Err
         (box (lower-diagnostic "lower: SPMD scalar body lowering failed")))]
     (begin
-      (set!
-        lower-spmd-scalar-call-context
+      (compiler-lower-function-state-scalar-call-context-set!
+        function-state
         (LowerSpmdScalarCallContext.Some index))
       (set! result (lower-expr ctx state env type-env body))
-      (set! lower-spmd-scalar-call-context previous)
+      (compiler-lower-function-state-scalar-call-context-set!
+        function-state
+        previous)
       result)))
 
 (define (lower-scalar-foreach-lowered
@@ -59053,7 +60487,12 @@
             index
             body))]
       [(LowerMaybeVectorMap.No)
-        (if (lower-vector-body-has-atomic-call? ctx env type-env body)
+        (if (lower-vector-body-has-atomic-call?
+          ctx
+          (lower-state-function-state state)
+          env
+          type-env
+          body)
           (lower-scalar-foreach-lowered
             ctx
             state
@@ -59067,6 +60506,7 @@
             body)
           (match (lower-masked-vector-map
             ctx
+            (lower-state-function-state state)
             (lower-state-mode state)
             env
             type-env
@@ -59086,6 +60526,7 @@
                 body
                 (lower-masked-vector-map
                   ctx
+                  (lower-state-function-state state)
                   (lower-state-mode state)
                   env
                   type-env
@@ -59095,6 +60536,7 @@
               (cond
                 [(lower-masked-vector-body-has-varying-while?
                     ctx
+                    (lower-state-function-state state)
                     (lower-state-mode state)
                     env
                     type-env
@@ -59109,6 +60551,7 @@
                           "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
                 [(lower-masked-vector-body-has-varying-if?
                     ctx
+                    (lower-state-function-state state)
                     (lower-state-mode state)
                     env
                     type-env
@@ -59136,6 +60579,7 @@
                           "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))))]
                 [(lower-masked-vector-body-has-varying-match?
                     ctx
+                    (lower-state-function-state state)
                     (lower-state-mode state)
                     env
                     type-env
@@ -59245,6 +60689,7 @@
   [body : ast.AstExpr]) : ResultLowerExpr
   (match (lower-spmd-inline-expr
     ctx
+    (lower-state-function-state state)
     env
     type-env
     body
@@ -63427,31 +64872,8 @@
 ;; arms of one match and pure (registries and ctx caches only grow during one
 ;; function's lowering). Memoize the resolution per (variant-name-id,
 ;; scrutinee type) for the lifetime of one function in a small direct-mapped
-;; cache in program-arena arrays allocated at module init, tagged by a
-;; generation bumped in lower-function-escaping (next to tc-rtf-next-gen!).
-;; Collisions simply evict; the result is exact either way.
-(defenum LowerVariantArmResolution
-  (Missing String)
-  (FieldsErr String)
-  (Some String ast.AstType i64 ast.AstTypeList i64))
-
-(define lower-variant-arm-memo-generation : i64
-  0)
-(define lower-variant-arm-memo-stamps : (__tl_dyn-array i64)
-  (array.make-array i64 256))
-(define lower-variant-arm-memo-keys : (__tl_dyn-array i64)
-  (array.make-array i64 256))
-(define lower-variant-arm-memo-scrut-tys : (__tl_dyn-array ast.AstType)
-  (array.make-array ast.AstType 256))
-(define lower-variant-arm-memo-outcomes : (__tl_dyn-array
-    LowerVariantArmResolution)
-  (array.make-array LowerVariantArmResolution 256))
-
-(define (lower-variant-arm-memo-next-gen!) : unit
-  (set!
-    lower-variant-arm-memo-generation
-    (+ lower-variant-arm-memo-generation 1)))
-
+;; cache in job-owned lazy arrays, tagged by the explicitly passed function
+;; state's generation. Collisions simply evict; the result is exact either way.
 (define (lower-variant-arm-resolution-compute
   [ctx : tc_core.TcContext]
   [symbols : csym.CompilerSymbols]
@@ -63487,25 +64909,30 @@
 
 (define (lower-variant-arm-resolution
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [symbols : csym.CompilerSymbols]
   [scrut-ty : ast.AstType]
   [variant-name-id : i64]) : LowerVariantArmResolution
   (let
-    [slot : i64 (- variant-name-id (* (/ variant-name-id 256) 256))]
+    [storage : CompilerLowerFunctionMemoStorage
+      (compiler-lower-function-memo-storage
+        (compiler-lower-function-state-owner function-state))]
+    [generation : i64
+      (compiler-lower-function-state-variant-generation function-state)]
+    [slot : i64
+      (-
+        variant-name-id
+        (*
+          (/ variant-name-id lower-variant-arm-memo-cap)
+          lower-variant-arm-memo-cap))]
     (if (and
-      (=
-        (array-ref lower-variant-arm-memo-stamps slot)
-        lower-variant-arm-memo-generation)
-      (= (array-ref lower-variant-arm-memo-keys slot) variant-name-id)
+      (= (array-ref storage.variant-stamps slot) generation)
+      (= (array-ref storage.variant-keys slot) variant-name-id)
       (ast.ast-type-eq-with-pools?
         (tc_core.tc-context-pools ctx)
-        (lower-global-array-element-shared-view
-          lower-variant-arm-memo-scrut-tys
-          slot)
+        (array-ref storage.variant-scrutinee-types slot)
         scrut-ty))
-      (array-ref
-        (lower-global-shared-view lower-variant-arm-memo-outcomes)
-        slot)
+      (array-ref storage.variant-outcomes slot)
       (let
         [result : LowerVariantArmResolution
           (lower-variant-arm-resolution-compute
@@ -63520,16 +64947,10 @@
             [(LowerVariantArmResolution.FieldsErr _) unit]
             [_
               (begin
-                (set!
-                  (array-ref lower-variant-arm-memo-stamps slot)
-                  lower-variant-arm-memo-generation)
-                (set!
-                  (array-ref lower-variant-arm-memo-keys slot)
-                  variant-name-id)
-                (set!
-                  (array-ref lower-variant-arm-memo-scrut-tys slot)
-                  scrut-ty)
-                (set! (array-ref lower-variant-arm-memo-outcomes slot) result))])
+                (set! (array-ref storage.variant-stamps slot) generation)
+                (set! (array-ref storage.variant-keys slot) variant-name-id)
+                (set! (array-ref storage.variant-scrutinee-types slot) scrut-ty)
+                (set! (array-ref storage.variant-outcomes slot) result))])
           result)))))
 
 (define (lower-tail-match-variant-final
@@ -63548,7 +64969,12 @@
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
     [(tc_core.TcContext _ symbols registries _ _ _ _ _ _)
-      (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
+      (match (lower-variant-arm-resolution
+        ctx
+        (lower-state-function-state state)
+        symbols
+        scrut-ty
+        variant-name-id)
         [(LowerVariantArmResolution.Missing variant-name)
           (ResultLowerState.Err
             (box
@@ -63680,7 +65106,12 @@
   [total-enum-switch? : bool]) : ResultLowerState
   (match ctx
     [(tc_core.TcContext _ symbols registries _ _ _ _ _ _)
-      (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
+      (match (lower-variant-arm-resolution
+        ctx
+        (lower-state-function-state state)
+        symbols
+        scrut-ty
+        variant-name-id)
         [(LowerVariantArmResolution.Missing variant-name)
           (ResultLowerState.Err
             (box
@@ -64379,6 +65810,7 @@
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
+  [function-state : CompilerLowerFunctionState]
   [logical-name : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
@@ -64462,6 +65894,7 @@
           (box function-spans)
           names
           type-cache
+          function-state
           mode
           (lower_i64_i64_map.with-capacity 8)
           source-start
@@ -64830,28 +66263,18 @@
       ;; typecheck or lower scratch scopes. Keep them scoped to this lowering
       ;; pass and invalidate them before rewinding this function's scratch arena.
       (tc_core.tc-nominal-owner-cache-reset!)
-      ;; Compile-time: new generation for the result-type-fast memo, so
-      ;; this function's cached node types are independent of every other
-      ;; function's (and never outlive this function's scratch arena).
-      (tc-rtf-next-gen!)
-      ;; Same generation discipline for the per-match variant arm
-      ;; resolution memo.
-      (lower-variant-arm-memo-next-gen!)
-      ;; The scalar context and recursive-helper stack carry scratch-owned
-      ;; values while lowering one function. Never let those scoped values
-      ;; cross the per-function arena rewind into the next top-level function.
-      (set! lower-spmd-scalar-call-context (LowerSpmdScalarCallContext.No))
-      (set!
-        lower-spmd-inline-helper-stack
-        (lower-spmd-inline-empty-helper-stack))
       (unsafe
         (arena.tl_arena_set scratch))
       (let
         [mark : i64 (arena.tl_region_mark)]
+        [function-state : CompilerLowerFunctionState
+          (compiler-lower-function-state-new
+            (compiler-lower-state-from-name-cache names))]
         (match (lower-function
           ctx
           top-env
           type-cache
+          function-state
           logical-name
           params
           ret
@@ -64873,9 +66296,6 @@
               (begin
                 (unsafe
                   (arena.tl_arena_set enclosing))
-                (set!
-                  lower-spmd-inline-helper-stack
-                  (lower-spmd-inline-empty-helper-stack))
                 (let
                   [escaped-spans : ir.CompilerSourceSpans
                     (ir.compiler-source-spans-append-new spans function-spans)]
@@ -64896,9 +66316,6 @@
               (begin
                 (unsafe
                   (arena.tl_arena_set enclosing))
-                (set!
-                  lower-spmd-inline-helper-stack
-                  (lower-spmd-inline-empty-helper-stack))
                 (let
                   [escaped-message : (Box cdiag.CompilerDiagnostic)
                     (clone message)]
@@ -67006,8 +68423,8 @@
                               cur-type-cache
                               (csym.compiler-symbol-module-key
                                 (if (= (string.string-length cur-module) 0)
-                                  (lower-global-shared-view
-                                    lower-spmd-package-name)
+                                  (compiler-lower-state-spmd-package-name
+                                    lower-state)
                                   cur-module)
                                 (tc_core.tc-env-key-name-text name))
                               (csym.compiler-symbols-lookup-value-id-or
@@ -68550,13 +69967,35 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (lower-compiler-program-with-decl-paths-mode-cache
-    entry-path
-    program
-    paths
-    mode
-    (svec.new)
-    (tc_core.tc-prefix-default-cache-scope)))
+  (let
+    [state : CompilerLowerState (compiler-lower-state-new)]
+    (lower-compiler-program-with-decl-paths-mode-cache-and-state
+      state
+      entry-path
+      program
+      paths
+      mode
+      (svec.new)
+      (tc_core.tc-prefix-default-cache-scope))))
+
+(define (lower-compiler-program-with-decl-paths-mode-and-package
+  [entry-path : String]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [package-name : String]) : ResultCompilerLower
+  (let
+    [state : CompilerLowerState (compiler-lower-state-new)]
+    (begin
+      (compiler-lower-state-set-spmd-package! state package-name)
+      (lower-compiler-program-with-decl-paths-mode-cache-and-state
+        state
+        entry-path
+        program
+        paths
+        mode
+        (svec.new)
+        (tc_core.tc-prefix-default-cache-scope)))))
 
 (define (lower-compiler-program [program : ast.AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path "<source>" program))
@@ -68568,6 +70007,17 @@
   [src : String]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (lower-compiler-source-with-path-mode "<source>" src mode))
+
+(define (lower-compiler-source-with-mode-and-package
+  [src : String]
+  [mode : CompilerLowerMode]
+  [package-name : String]) : ResultCompilerLower
+  (lower-compiler-source-with-path-mode-package-and-state
+    (compiler-lower-state-new)
+    "<source>"
+    src
+    mode
+    package-name))
 
 (define (lower-source-decls-define-module?
   [decls : ast.AstDeclList]
@@ -69004,11 +70454,12 @@
           (ast.ast-node-pool-context-capture-active)]
         (lower-source-decls-need-loader? pools decls decls))]))
 
-(define (lower-compiler-source-with-path-mode-and-state
+(define (lower-compiler-source-with-path-mode-package-and-state
   [lower-state : CompilerLowerState]
   [path : String]
   [src : String]
-  [mode : CompilerLowerMode]) : ResultCompilerLower
+  [mode : CompilerLowerMode]
+  [package-name : String]) : ResultCompilerLower
   (begin
     (when
       (lower-resetting-entry-in-live-session?)
@@ -69023,6 +70474,7 @@
     ;; through the loader, not this entry, so cli.tl's fixpoint is unaffected.
     (lower-reset-file-state!)
     (compiler-lower-state-reset! lower-state)
+    (compiler-lower-state-set-spmd-package! lower-state package-name)
     (tc_core.compiler-typecheck-reset-file-state!)
     (ci.intern-reset!)
     (lower-reset-intern-owned-state!)
@@ -69059,6 +70511,18 @@
             (lower-diagnostic-with-fallback-path
               (lower-diagnostic message)
               path)))])))
+
+(define (lower-compiler-source-with-path-mode-and-state
+  [lower-state : CompilerLowerState]
+  [path : String]
+  [src : String]
+  [mode : CompilerLowerMode]) : ResultCompilerLower
+  (lower-compiler-source-with-path-mode-package-and-state
+    lower-state
+    path
+    src
+    mode
+    ""))
 
 (define (lower-compiler-source-with-path-mode
   [path : String]

@@ -4594,6 +4594,7 @@
 
 (define (compiler-driver-emit-package-loaded
   [input-path : String]
+  [package-name : String]
   [target : compiler_backend.CompilerBackendTarget]
   [has-target : bool]
   [opt-level : i64]
@@ -4604,7 +4605,13 @@
   [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriver
   (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
     input-path
-    (compiler-driver-lower-package-loaded input-path target mode decls paths)
+    (compiler-driver-lower-package-loaded
+      input-path
+      package-name
+      target
+      mode
+      decls
+      paths)
     target
     has-target
     mode
@@ -4614,15 +4621,17 @@
 
 (define (compiler-driver-lower-package-loaded
   [input-path : String]
+  [package-name : String]
   [target : compiler_backend.CompilerBackendTarget]
   [mode : compiler_backend.CompilerBackendMode]
   [decls : compiler_ast_types.AstDeclList]
   [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverLowered
-  (match (compiler_lower.lower-compiler-program-with-decl-paths-mode
+  (match (compiler_lower.lower-compiler-program-with-decl-paths-mode-and-package
     input-path
     (compiler_ast_types.ast-program decls)
     paths
-    (compiler-driver-lower-mode-for-target target mode))
+    (compiler-driver-lower-mode-for-target target mode)
+    package-name)
     [(compiler_lower.ResultCompilerLower.Ok program spans)
       (compiler-driver-lowered-from-active-pools program spans)]
     [(compiler_lower.ResultCompilerLower.Err diag)
@@ -4630,6 +4639,7 @@
 
 (define (compiler-driver-emit-package-loaded-runtime
   [input-path : String]
+  [package-name : String]
   [target : compiler_backend.CompilerBackendTarget]
   [opt-level : i64]
   [mode : compiler_backend.CompilerBackendMode]
@@ -4639,7 +4649,13 @@
   [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverPackageRuntime
   (compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
     input-path
-    (compiler-driver-lower-package-loaded input-path target mode decls paths)
+    (compiler-driver-lower-package-loaded
+      input-path
+      package-name
+      target
+      mode
+      decls
+      paths)
     target
     mode
     opt-level

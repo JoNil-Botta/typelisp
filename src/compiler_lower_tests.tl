@@ -10967,10 +10967,7 @@
               (> (lower-test-function-spmd-call-count functions "fill-unit") 0)
               (>
                 (compiler_ir_types.compiler-ir-function-list-count functions)
-                4)
-              (match (clone compiler_lower.lower-spmd-scalar-call-context)
-                [(compiler_lower.LowerSpmdScalarCallContext.No) true]
-                [(compiler_lower.LowerSpmdScalarCallContext.Some _) false]))])]
+                4))])]
       [(compiler_lower.ResultCompilerLower.Err _) false])))
 
 (define (compiler-lower-spmd-varying-local-call-shape-ok?) : bool
@@ -13798,6 +13795,9 @@
 (define (compiler-lower-checked-pools-state-isolation-ok?) : bool
   (compiler_lower.compiler-lower-checked-pools-state-isolation-ok?))
 
+(define (compiler-lower-spmd-function-state-isolation-ok?) : bool
+  (compiler_lower.compiler-lower-spmd-function-state-isolation-ok?))
+
 (define (compiler-lower-checked-pools-abort-lifecycle-ok?) : bool
   (compiler_lower.compiler-lower-checked-pools-abort-lifecycle-ok?))
 
@@ -14743,6 +14743,12 @@
     "checked-pool retirement handoff is job-owned and clears to context-free state"))
 
 (test
+  compiler-lower-spmd-function-state-isolation
+  (test.assert-true
+    (compiler-lower-spmd-function-state-isolation-ok?)
+    "SPMD package, traversal, and function memo state stays owner-local under interleaving"))
+
+(test
   compiler-lower-checked-pools-abort-lifecycle
   (test.assert-true
     (compiler-lower-checked-pools-abort-lifecycle-ok?)
@@ -14822,6 +14828,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-checked-pools-state-isolation-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-spmd-function-state-isolation-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-checked-pools-abort-lifecycle-ok?)

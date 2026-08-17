@@ -916,6 +916,21 @@ through the existing module/declaration validation and splice paths. The
 production-route stress gate additionally crosses five pool-reset and image
 release/remap cycles with more than 25,000 routed calls per host.
 
+The separately invokable `verify-embedded-stdlib-tlci-resources.sh` gate runs
+the production image builder, matched opt1/opt2 self-builds, cold startup, and
+a native/forced-source expansion pair under an 8192 MiB complete-process-tree
+ceiling on Linux and Windows. The expansion assemblies must be byte-identical,
+and profile counters must prove non-vacuous native and source routes. Its
+`report.tsv` contains host-specific peak resident/job memory, wall time, binary
+and image sizes, and Cachegrind instruction evidence where available;
+`assertions.tsv` keeps required correctness/cap results separate from those
+informational measurements. Reproduce the full report with a current compiler:
+
+```sh
+TYPELISP_BIN=target/bootstrap-fixpoint/stage2 \
+  scripts/verify-embedded-stdlib-tlci-resources.sh
+```
+
 Run it from Git Bash with:
 
 ```sh

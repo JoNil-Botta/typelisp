@@ -180,7 +180,15 @@ if [ "$HOST_OS" = linux ]; then
     run_gate \
         "Linux resident memory limit helper self-tests" \
         scripts/verify-linux-memory-limit.sh
+else
+    run_gate \
+        "Windows Job Object memory limit helper self-tests" \
+        powershell.exe -NoProfile -ExecutionPolicy Bypass \
+        -File scripts/verify-windows-memory-limit.ps1
 fi
+run_gate \
+    "embedded stdlib TLCI resource verifier self-tests" \
+    scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
 # The stage0, fixpoint, and embedded-image builds all stamp the HEAD commit into
 # their output. CI only ever runs the success path, so the diagnostic for a
 # checkout git cannot resolve has no other coverage.
@@ -516,6 +524,10 @@ if [ ! -s "$COMPILE_PROFILE_CLI_PATH_FILE" ]; then
 fi
 COMPILE_PROFILE_BIN=$(sed -n '1p' "$COMPILE_PROFILE_CLI_PATH_FILE")
 ensure_executable "compile-profile" "$COMPILE_PROFILE_BIN"
+run_with_compiler \
+    "$STAGE2_BIN" \
+    "embedded stdlib TLCI bounded resource report" \
+    scripts/verify-embedded-stdlib-tlci-resources.sh
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
     "TLCI native route sustained stress" \

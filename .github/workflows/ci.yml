@@ -126,3 +126,20 @@ jobs:
           name: tlci-native-route-stress-${{ runner.os }}
           path: target/tlci-native-route-stress/**
           if-no-files-found: warn
+
+      - name: Upload embedded stdlib TLCI resource evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: embedded-stdlib-tlci-resources-${{ runner.os }}
+          path: |
+            target/embedded-stdlib-tlci-resources/*/*.tsv
+            target/embedded-stdlib-tlci-resources/*/reproduce.txt
+            target/embedded-stdlib-tlci-resources/*/reports/**
+            target/embedded-stdlib-tlci-resources/*/logs/**
+            target/embedded-stdlib-tlci-resources/*/*.cachegrind
+            target/embedded-stdlib-tlci-resources/*/*.valgrind.log
+            target/embedded-stdlib-tlci-resources/*/representative-expansion.tl
+            target/embedded-stdlib-tlci-resources/*/native.s
+            target/embedded-stdlib-tlci-resources/*/source.s
+          if-no-files-found: warn

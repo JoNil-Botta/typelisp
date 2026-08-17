@@ -4977,6 +4977,417 @@
         [_ false])]
     [_ false]))
 
+(define (compiler-backend-byte-vector-shift?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]) : bool
+  (and
+    (match elem-ty
+      [(compiler_ast_types.AstType.I8) true]
+      [(compiler_ast_types.AstType.U8) true]
+      [_ false])
+    (match op
+      [(compiler_ir_types.CompilerIrBinOp.Shl _) true]
+      [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
+      [_ false])))
+
+(define (compiler-backend-byte-vector-shift-mnemonic
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]) : String
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Shl _) "vpsllvd"]
+    [(compiler_ir_types.CompilerIrBinOp.Shr _)
+      (match elem-ty
+        [(compiler_ast_types.AstType.I8) "vpsravd"]
+        [(compiler_ast_types.AstType.U8) "vpsrlvd"]
+        [_ ""])]
+    [_ ""]))
+
+(define (compiler-backend-byte-vector-widen-mnemonic
+  [elem-ty : compiler_ast_types.AstType]) : String
+  (match elem-ty
+    [(compiler_ast_types.AstType.I8) "vpmovsxbd"]
+    [(compiler_ast_types.AstType.U8) "vpmovzxbd"]
+    [_ ""]))
+
+;; x86 has no per-byte variable shift. Widen four byte groups to dwords, use
+;; the native dword shift, then pack the low byte of every result. The pack is
+;; exact rather than saturating because each dword is masked to 0..255 first.
+;; A final dword permutation transposes the four 128-bit pack groups back to
+;; source byte order across every 128-bit boundary.
+(define (compiler-backend-emit-byte-vector-shift
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [width : String]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [avx512 : bool (string.eq width "zmm")]
+    [vector-bytes : i64
+      (if avx512
+        64
+        32)]
+    [group-bytes : i64 (/ vector-bytes 4)]
+    [group-base : i64 (* vector-bytes 2)]
+    [index-offset : i64 (* vector-bytes 6)]
+    [stack-bytes : i64 (* vector-bytes 7)]
+    [move : String (compiler-backend-vector-move-for-width width elem-ty)]
+    [dword-move : String
+      (compiler-backend-vector-move-for-width
+        width
+        (compiler_ast_types.AstType.I32))]
+    [widen : String (compiler-backend-byte-vector-widen-mnemonic elem-ty)]
+    [shift : String (compiler-backend-byte-vector-shift-mnemonic op elem-ty)]
+    [tmp0 : String
+      (if avx512
+        "%zmm0"
+        "%ymm0")]
+    [tmp1 : String
+      (if avx512
+        "%zmm1"
+        "%ymm1")]
+    [bit-and : String
+      (if avx512
+        "vpandd"
+        "vpand")]
+    [bit-or : String
+      (if avx512
+        "vpord"
+        "vpor")]
+    (match (compiler-backend-vector-register-use
+      assignments
+      lhs
+      "byte shift lhs"
+      width
+      elem-ty
+      (compiler-backend-vector-spill-scratch width 0)
+      backend-state)
+      [(ResultBackendVectorUse.Ok lhs-use)
+        (match lhs-use
+          [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+            (match (compiler-backend-vector-register-use
+              assignments
+              rhs
+              "byte shift rhs"
+              width
+              elem-ty
+              (compiler-backend-vector-spill-scratch width 1)
+              backend-state)
+              [(ResultBackendVectorUse.Ok rhs-use)
+                (match rhs-use
+                  [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
+                    (match (compiler-backend-vector-dst-reg
+                      assignments
+                      dst
+                      "byte shift dst"
+                      width
+                      (compiler-backend-vector-spill-scratch width 0)
+                      backend-state)
+                      [(ResultBackendReg.Ok dst-reg)
+                        (let
+                          [groups : String ""]
+                          [group : i64 0]
+                          (begin
+                            (while (< group 4)
+                              (let
+                                [byte-offset : i64 (* group group-bytes)]
+                                [result-offset : i64
+                                  (+ group-base (* group vector-bytes))]
+                                (begin
+                                  (set!
+                                    groups
+                                    (str_cat.str-cat
+                                      groups
+                                      "    "
+                                      widen
+                                      " "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        byte-offset)
+                                      ", "
+                                      tmp0
+                                      "\n    "
+                                      widen
+                                      " "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        (+ vector-bytes byte-offset))
+                                      ", "
+                                      tmp1
+                                      "\n    "
+                                      shift
+                                      " "
+                                      tmp1
+                                      ", "
+                                      tmp0
+                                      ", "
+                                      tmp0
+                                      "\n    "
+                                      dword-move
+                                      " "
+                                      tmp0
+                                      ", "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        result-offset)
+                                      "\n"))
+                                  (set! group (+ group 1)))))
+                            (ResultCompilerBackend.Ok
+                              (str_cat.str-cat
+                                lhs-asm
+                                rhs-asm
+                                "    subq $"
+                                (string.int->string stack-bytes)
+                                ", %rsp\n    "
+                                move
+                                " "
+                                lhs-reg
+                                ", (%rsp)\n    "
+                                move
+                                " "
+                                rhs-reg
+                                ", "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  vector-bytes)
+                                "\n"
+                                groups
+                                (if avx512
+                                  (str_cat.str-cat
+                                    "    vpternlogd $255, "
+                                    tmp0
+                                    ", "
+                                    tmp0
+                                    ", "
+                                    tmp0
+                                    "\n")
+                                  (str_cat.str-cat
+                                    "    vpcmpeqd "
+                                    tmp0
+                                    ", "
+                                    tmp0
+                                    ", "
+                                    tmp0
+                                    "\n"))
+                                "    vpsrld $24, "
+                                tmp0
+                                ", "
+                                tmp0
+                                "\n    "
+                                dword-move
+                                " "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  group-base)
+                                ", "
+                                tmp1
+                                "\n    "
+                                bit-and
+                                " "
+                                tmp0
+                                ", "
+                                tmp1
+                                ", "
+                                tmp1
+                                "\n    "
+                                dword-move
+                                " "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  (+ group-base vector-bytes))
+                                ", "
+                                dst-reg
+                                "\n    "
+                                bit-and
+                                " "
+                                tmp0
+                                ", "
+                                dst-reg
+                                ", "
+                                dst-reg
+                                "\n    vpackusdw "
+                                dst-reg
+                                ", "
+                                tmp1
+                                ", "
+                                tmp1
+                                "\n    "
+                                dword-move
+                                " "
+                                tmp1
+                                ", "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  group-base)
+                                "\n    "
+                                dword-move
+                                " "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  (+ group-base (* vector-bytes 2)))
+                                ", "
+                                tmp1
+                                "\n    "
+                                bit-and
+                                " "
+                                tmp0
+                                ", "
+                                tmp1
+                                ", "
+                                tmp1
+                                "\n    "
+                                dword-move
+                                " "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  (+ group-base (* vector-bytes 3)))
+                                ", "
+                                dst-reg
+                                "\n    "
+                                bit-and
+                                " "
+                                tmp0
+                                ", "
+                                dst-reg
+                                ", "
+                                dst-reg
+                                "\n    vpackusdw "
+                                dst-reg
+                                ", "
+                                tmp1
+                                ", "
+                                tmp1
+                                "\n    "
+                                dword-move
+                                " "
+                                tmp1
+                                ", "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  (+ group-base vector-bytes))
+                                "\n    "
+                                dword-move
+                                " "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  group-base)
+                                ", "
+                                tmp1
+                                "\n    "
+                                dword-move
+                                " "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  (+ group-base vector-bytes))
+                                ", "
+                                dst-reg
+                                "\n    vpackuswb "
+                                dst-reg
+                                ", "
+                                tmp1
+                                ", "
+                                tmp1
+                                "\n    movl $50462976, "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  index-offset)
+                                "\n    movl $117835012, "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  (+ index-offset 4))
+                                (if avx512
+                                  (str_cat.str-cat
+                                    "\n    movl $185207048, "
+                                    (compiler-backend-address-add-byte-offset
+                                      "(%rsp)"
+                                      (+ index-offset 8))
+                                    "\n    movl $252579084, "
+                                    (compiler-backend-address-add-byte-offset
+                                      "(%rsp)"
+                                      (+ index-offset 12)))
+                                  "")
+                                "\n    vpmovzxbd "
+                                (compiler-backend-address-add-byte-offset
+                                  "(%rsp)"
+                                  index-offset)
+                                ", "
+                                tmp0
+                                "\n    "
+                                dword-move
+                                " "
+                                tmp0
+                                ", "
+                                dst-reg
+                                "\n    vpsrld $"
+                                (if avx512
+                                  "2"
+                                  "1")
+                                ", "
+                                tmp0
+                                ", "
+                                tmp0
+                                "\n    vpslld $"
+                                (if avx512
+                                  "30"
+                                  "31")
+                                ", "
+                                dst-reg
+                                ", "
+                                dst-reg
+                                "\n    vpsrld $"
+                                (if avx512
+                                  "28"
+                                  "29")
+                                ", "
+                                dst-reg
+                                ", "
+                                dst-reg
+                                "\n    "
+                                bit-or
+                                " "
+                                dst-reg
+                                ", "
+                                tmp0
+                                ", "
+                                tmp0
+                                "\n    vpermd "
+                                tmp1
+                                ", "
+                                tmp0
+                                ", "
+                                dst-reg
+                                "\n    addq $"
+                                (string.int->string stack-bytes)
+                                ", %rsp\n"
+                                (compiler-backend-vector-store-dst
+                                  assignments
+                                  dst
+                                  width
+                                  elem-ty
+                                  dst-reg
+                                  backend-state)))))]
+                      [(ResultBackendReg.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler_diagnostic.compiler-diagnostic-with-message
+                              instr-diag
+                              message)))])])]
+              [(ResultBackendVectorUse.Err message)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-with-message
+                      instr-diag
+                      message)))])])]
+      [(ResultBackendVectorUse.Err message)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-with-message
+              instr-diag
+              message)))])))
+
 (define (compiler-backend-avx2-vector-reduce-op-mnemonic
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
   [elem-ty : compiler_ast_types.AstType]) : String
@@ -5731,6 +6142,17 @@
       [mnemonic : String
         (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
       (cond
+        [(compiler-backend-byte-vector-shift? op elem-ty)
+          (compiler-backend-emit-byte-vector-shift
+            assignments
+            dst
+            op
+            lhs
+            rhs
+            elem-ty
+            "ymm"
+            instr-diag
+            backend-state)]
         [(compiler-backend-avx2-i64-vector-mul? op elem-ty)
           (compiler-backend-emit-avx2-i64-vector-mul
             assignments
@@ -6935,79 +7357,90 @@
     (let
       [mnemonic : String
         (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
-      (if (= (string.string-length mnemonic) 0)
-        (ResultCompilerBackend.Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-with-message
-              instr-diag
-              "backend: unsupported AVX-512 vector binary op")))
-        (match (compiler-backend-vector-register-use
+      (if (compiler-backend-byte-vector-shift? op elem-ty)
+        (compiler-backend-emit-byte-vector-shift
           assignments
+          dst
+          op
           lhs
-          "lhs"
-          "zmm"
+          rhs
           elem-ty
-          (compiler-backend-vector-spill-scratch "zmm" 0)
+          "zmm"
+          instr-diag
           backend-state)
-          [(ResultBackendVectorUse.Ok lhs-use)
-            (match lhs-use
-              [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
-                (match (compiler-backend-vector-memory-or-register-use
-                  assignments
-                  rhs
-                  "rhs"
-                  "zmm"
-                  elem-ty
-                  backend-state)
-                  [(ResultBackendVectorUse.Ok rhs-use)
-                    (match rhs-use
-                      [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
-                        (match (compiler-backend-vector-dst-reg
-                          assignments
-                          dst
-                          "binop dst"
-                          "zmm"
-                          (compiler-backend-vector-spill-scratch "zmm" 0)
-                          backend-state)
-                          [(ResultBackendReg.Ok dst-reg)
-                            (ResultCompilerBackend.Ok
-                              (str_cat.str-cat
-                                lhs-asm
-                                rhs-asm
-                                "    "
-                                mnemonic
-                                " "
-                                rhs-op
-                                ", "
-                                lhs-reg
-                                ", "
-                                dst-reg
-                                "\n"
-                                (compiler-backend-vector-store-dst
-                                  assignments
-                                  dst
-                                  "zmm"
-                                  elem-ty
+        (if (= (string.string-length mnemonic) 0)
+          (ResultCompilerBackend.Err
+            (box
+              (compiler_diagnostic.compiler-diagnostic-with-message
+                instr-diag
+                "backend: unsupported AVX-512 vector binary op")))
+          (match (compiler-backend-vector-register-use
+            assignments
+            lhs
+            "lhs"
+            "zmm"
+            elem-ty
+            (compiler-backend-vector-spill-scratch "zmm" 0)
+            backend-state)
+            [(ResultBackendVectorUse.Ok lhs-use)
+              (match lhs-use
+                [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+                  (match (compiler-backend-vector-memory-or-register-use
+                    assignments
+                    rhs
+                    "rhs"
+                    "zmm"
+                    elem-ty
+                    backend-state)
+                    [(ResultBackendVectorUse.Ok rhs-use)
+                      (match rhs-use
+                        [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
+                          (match (compiler-backend-vector-dst-reg
+                            assignments
+                            dst
+                            "binop dst"
+                            "zmm"
+                            (compiler-backend-vector-spill-scratch "zmm" 0)
+                            backend-state)
+                            [(ResultBackendReg.Ok dst-reg)
+                              (ResultCompilerBackend.Ok
+                                (str_cat.str-cat
+                                  lhs-asm
+                                  rhs-asm
+                                  "    "
+                                  mnemonic
+                                  " "
+                                  rhs-op
+                                  ", "
+                                  lhs-reg
+                                  ", "
                                   dst-reg
-                                  backend-state)))]
-                          [(ResultBackendReg.Err message)
-                            (ResultCompilerBackend.Err
-                              (box
-                                (compiler_diagnostic.compiler-diagnostic-with-message
-                                  instr-diag
-                                  message)))])])]
-                  [(ResultBackendVectorUse.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          message)))])])]
-          [(ResultBackendVectorUse.Err message)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  message)))])))
+                                  "\n"
+                                  (compiler-backend-vector-store-dst
+                                    assignments
+                                    dst
+                                    "zmm"
+                                    elem-ty
+                                    dst-reg
+                                    backend-state)))]
+                            [(ResultBackendReg.Err message)
+                              (ResultCompilerBackend.Err
+                                (box
+                                  (compiler_diagnostic.compiler-diagnostic-with-message
+                                    instr-diag
+                                    message)))])])]
+                    [(ResultBackendVectorUse.Err message)
+                      (ResultCompilerBackend.Err
+                        (box
+                          (compiler_diagnostic.compiler-diagnostic-with-message
+                            instr-diag
+                            message)))])])]
+            [(ResultBackendVectorUse.Err message)
+              (ResultCompilerBackend.Err
+                (box
+                  (compiler_diagnostic.compiler-diagnostic-with-message
+                    instr-diag
+                    message)))]))))
     (compiler-backend-avx512-shape-diagnostic
       type-segment-bases
       instr-diag
@@ -7365,18 +7798,22 @@
     (if (or
       (= (string.string-length shift-op) 0)
       (= (string.string-length gt) 0)
-      (match elem-ty
-        [(compiler_ast_types.AstType.U8) true]
-        [_ false]))
+      false)
       ""
       (let
         [bias-asm : String
           (str_cat.str-cat
-            "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    "
-            shift-op
-            " $"
-            (string.int->string shift)
-            ", %ymm0, %ymm0\n    vpxor %ymm0, "
+            (match elem-ty
+              [(compiler_ast_types.AstType.U8)
+                "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpsrlw $15, %ymm0, %ymm0\n    vpsllw $7, %ymm0, %ymm0\n    vpackuswb %ymm0, %ymm0, %ymm0\n"]
+              [_
+                (str_cat.str-cat
+                  "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    "
+                  shift-op
+                  " $"
+                  (string.int->string shift)
+                  ", %ymm0, %ymm0\n")])
+            "    vpxor %ymm0, "
             rhs-reg
             ", %ymm1\n    vpxor %ymm0, "
             lhs-reg

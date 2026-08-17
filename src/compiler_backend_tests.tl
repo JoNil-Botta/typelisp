@@ -21381,6 +21381,174 @@
         want)]
     [(compiler_backend.ResultCompilerBackend.Ok _) false]))
 
+(define (compiler-backend-byte-vector-shift-shape?
+  [avx512 : bool]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]
+  [lanes : i64]
+  [widen : String]
+  [shift : String]
+  [stack-bytes : i64]) : bool
+  (match (if avx512
+    (compiler_backend.compiler-backend-emit-avx512-vector-binop
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-vector-binop-test-assignments)
+      2
+      op
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      lanes
+      elem-ty
+      (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (compiler_backend.compiler-backend-emit-avx2-vector-binop
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-vector-binop-test-assignments)
+      2
+      op
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      lanes
+      elem-ty
+      (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.backend-and8
+          (=
+            (compiler_backend.compiler-backend-string-count asm widen)
+            (match elem-ty
+              [(compiler_ast_types.AstType.U8) 9]
+              [_ 8]))
+          (= (compiler_backend.compiler-backend-string-count asm shift) 4)
+          (= (compiler_backend.compiler-backend-string-count asm "vpackusdw") 2)
+          (= (compiler_backend.compiler-backend-string-count asm "vpackuswb") 1)
+          (= (compiler_backend.compiler-backend-string-count asm "vpermd") 1)
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            (str_cat.str-cat
+              "    subq $"
+              (string.int->string stack-bytes)
+              ", %rsp\n"))
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            (str_cat.str-cat
+              "    addq $"
+              (string.int->string stack-bytes)
+              ", %rsp\n"))
+          (=
+            (compiler_backend.compiler-backend-string-count asm "vpsrld $24")
+            1))
+        (=
+          (compiler_backend.compiler-backend-string-count asm "movl $50462976")
+          1)
+        (=
+          (compiler_backend.compiler-backend-string-count asm "movl $117835012")
+          1)
+        (if avx512
+          (and
+            (=
+              (compiler_backend.compiler-backend-string-count
+                asm
+                "movl $185207048")
+              1)
+            (=
+              (compiler_backend.compiler-backend-string-count
+                asm
+                "movl $252579084")
+              1)
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    vpsrld $2, %zmm0, %zmm0\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    vpslld $30, %zmm8, %zmm8\n"))
+          (and
+            (=
+              (compiler_backend.compiler-backend-string-count
+                asm
+                "movl $185207048")
+              0)
+            (=
+              (compiler_backend.compiler-backend-string-count
+                asm
+                "movl $252579084")
+              0)
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    vpsrld $1, %ymm0, %ymm0\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    vpslld $31, %ymm8, %ymm8\n"))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-byte-vector-shift-spill-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Spill -64))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Spill -128))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Spill -192))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
+
+(define (compiler-backend-byte-vector-shift-spill-ok? [avx512 : bool]) : bool
+  (match (if avx512
+    (compiler_backend.compiler-backend-emit-avx512-vector-binop
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-byte-vector-shift-spill-assignments)
+      2
+      (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I8))
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      64
+      (compiler_ast_types.AstType.I8)
+      (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (compiler_backend.compiler-backend-emit-avx2-vector-binop
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-byte-vector-shift-spill-assignments)
+      2
+      (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I8))
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      32
+      (compiler_ast_types.AstType.I8)
+      (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (if avx512
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu8 -64(%rbp), %zmm14\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu8 -128(%rbp), %zmm15\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    addq $448, %rsp\n    vmovdqu8 %zmm14, -192(%rbp)\n"))
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu -64(%rbp), %ymm14\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu -128(%rbp), %ymm15\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    addq $224, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-vector-bitwise-binop-ok?) : bool
   (and
     (compiler_backend.backend-and8
@@ -21504,11 +21672,25 @@
         (compiler_ast_types.AstType.I16)
         16
         "backend: unsupported AVX2 vector binary op")
-      (compiler-backend-avx2-vector-binop-diagnostic?
-        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.U8))
-        (compiler_ast_types.AstType.U8)
-        32
-        "backend: unsupported AVX2 vector binary op"))
+      (and
+        (compiler-backend-byte-vector-shift-shape?
+          false
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.I8))
+          (compiler_ast_types.AstType.I8)
+          32
+          "vpmovsxbd"
+          "vpsllvd"
+          224)
+        (compiler-backend-byte-vector-shift-shape?
+          false
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.U8))
+          (compiler_ast_types.AstType.U8)
+          32
+          "vpmovzxbd"
+          "vpsrlvd"
+          224)))
     (compiler_backend.backend-and8
       (compiler-backend-avx512-vector-binop-emits?
         (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.U32))
@@ -21545,23 +21727,46 @@
         (compiler_ast_types.AstType.U16)
         32
         "backend: unsupported AVX-512 vector binary op")
-      (compiler-backend-avx512-vector-binop-diagnostic?
-        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.I8))
-        (compiler_ast_types.AstType.I8)
-        64
-        "backend: unsupported AVX-512 vector binary op"))))
+      (and
+        (compiler-backend-byte-vector-shift-shape?
+          true
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.U8))
+          (compiler_ast_types.AstType.U8)
+          64
+          "vpmovzxbd"
+          "vpsllvd"
+          448)
+        (compiler-backend-byte-vector-shift-shape?
+          true
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.I8))
+          (compiler_ast_types.AstType.I8)
+          64
+          "vpmovsxbd"
+          "vpsravd"
+          448)))))
 
 (define (compiler-backend-avx2-unsigned-compare-alias-ok?) : bool
   ;; Preserve the RHS before writing the destination: the allocator may assign
   ;; both to the same vector register.
-  (string.eq
-    (compiler_backend.compiler-backend-avx2-emit-unsigned-int-compare-asm
-      (compiler_ir_types.CompilerIrBinOp.Ge)
-      "%ymm14"
-      "%ymm7"
-      "%ymm7"
-      (compiler_ast_types.AstType.U32))
-    "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpslld $31, %ymm0, %ymm0\n    vpxor %ymm0, %ymm7, %ymm1\n    vpxor %ymm0, %ymm14, %ymm7\n    vpcmpgtd %ymm7, %ymm1, %ymm7\n    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpxor %ymm0, %ymm7, %ymm7\n"))
+  (and
+    (string.eq
+      (compiler_backend.compiler-backend-avx2-emit-unsigned-int-compare-asm
+        (compiler_ir_types.CompilerIrBinOp.Ge)
+        "%ymm14"
+        "%ymm7"
+        "%ymm7"
+        (compiler_ast_types.AstType.U32))
+      "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpslld $31, %ymm0, %ymm0\n    vpxor %ymm0, %ymm7, %ymm1\n    vpxor %ymm0, %ymm14, %ymm7\n    vpcmpgtd %ymm7, %ymm1, %ymm7\n    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpxor %ymm0, %ymm7, %ymm7\n")
+    (string.eq
+      (compiler_backend.compiler-backend-avx2-emit-unsigned-int-compare-asm
+        (compiler_ir_types.CompilerIrBinOp.Ge)
+        "%ymm14"
+        "%ymm7"
+        "%ymm7"
+        (compiler_ast_types.AstType.U8))
+      "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpsrlw $15, %ymm0, %ymm0\n    vpsllw $7, %ymm0, %ymm0\n    vpackuswb %ymm0, %ymm0, %ymm0\n    vpxor %ymm0, %ymm7, %ymm1\n    vpxor %ymm0, %ymm14, %ymm7\n    vpcmpgtb %ymm7, %ymm1, %ymm7\n    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpxor %ymm0, %ymm7, %ymm7\n")))
 
 (define (compiler-backend-avx2-data-pointer-cse-source) : String
   "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
@@ -21687,6 +21892,8 @@
     (compiler-backend-vector-spill-pressure-ok?)
     (compiler-backend-vector-bitwise-binop-ok?)
     (compiler-backend-vector-shift-binop-ok?)
+    (compiler-backend-byte-vector-shift-spill-ok? false)
+    (compiler-backend-byte-vector-shift-spill-ok? true)
     (compiler-backend-avx2-unsigned-compare-alias-ok?)
     (compiler-backend-vector-call-lifetime-spill-ok?)))
 

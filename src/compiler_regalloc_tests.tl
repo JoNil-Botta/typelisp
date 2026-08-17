@@ -796,11 +796,12 @@
   test
   (define (compiler-reg-call-hole-cold-arm-weight-ok?) : bool
     (match (compiler-reg-call-hole-cold-arm-function)
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
         (let
           [arms : reg.CompilerRegCallHoleWeights
             (reg.compiler-reg-call-hole-cold-arm-weights
               (ast.ast-node-pool-reader-type-segment-bases)
+              self-name
               (live.compiler-live-ir-block-list-to-seq blocks))]
           [weights : (__tl_dyn-array i64) arms.weights]
           [cold : (__tl_dyn-array bool) arms.cold]
@@ -886,11 +887,12 @@
   test
   (define (compiler-reg-call-hole-bypass-loop-ok?) : bool
     (match (compiler-reg-call-hole-bypass-loop-function)
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
         (let
           [arms : reg.CompilerRegCallHoleWeights
             (reg.compiler-reg-call-hole-cold-arm-weights
               (ast.ast-node-pool-reader-type-segment-bases)
+              self-name
               (live.compiler-live-ir-block-list-to-seq blocks))]
           (and
             (= (array-length arms.weights) 4)
@@ -1801,7 +1803,15 @@
 ;; guard_k / cold_k for k in [index, arms), then the hot tail.
 (cfg
   test
-  (define (compiler-reg-call-hole-cold-arms-chain [index : i64] [arms : i64]) : ir.CompilerIrBlockList
+  (define (compiler-reg-call-hole-cold-arms-name) : i64
+    (ir.compiler-ir-test-symbol "call_hole_cold_arms")))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-cold-arms-chain
+    [index : i64]
+    [arms : i64]
+    [callee : i64]) : ir.CompilerIrBlockList
     (if (>= index arms)
       (ir.compiler-ir-block-cons
         (ir.compiler-ir-block
@@ -1837,7 +1847,7 @@
             (ir.compiler-ir-instr-cons
               (ir.CompilerIrInstr.Call
                 (+ index 1)
-                (ir.compiler-ir-test-symbol "f")
+                callee
                 (ir.CompilerIrCallArgs.Nil)
                 (compiler-reg-i64-ty))
               (ir.compiler-ir-instr-cons
@@ -1845,26 +1855,28 @@
                   (ir.compiler-ir-label
                     (compiler-reg-call-hole-join-label (+ index 1) arms)))
                 ir.CompilerIrInstrList.Nil)))
-          (compiler-reg-call-hole-cold-arms-chain (+ index 1) arms))))))
+          (compiler-reg-call-hole-cold-arms-chain (+ index 1) arms callee))))))
 
 (cfg
   test
-  (define (compiler-reg-call-hole-cold-arms-function [arms : i64]) : ir.CompilerIrFunction
+  (define (compiler-reg-call-hole-cold-arms-function
+    [arms : i64]
+    [callee : i64]) : ir.CompilerIrFunction
     (ir.CompilerIrFunction.Function
-      (ir.compiler-ir-test-symbol "call_hole_cold_arms")
+      (compiler-reg-call-hole-cold-arms-name)
       (ir.compiler-ir-param-cons
         (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         ir.CompilerIrParamList.Nil)
       (ast.AstType.I64)
       (+ arms 2)
-      (compiler-reg-call-hole-cold-arms-chain 0 arms))))
+      (compiler-reg-call-hole-cold-arms-chain 0 arms callee))))
 
 (cfg
   test
-  (define (compiler-reg-call-hole-cold-arms-split [arms : i64]) : reg.CompilerRegCallHoleSplit
+  (define (compiler-reg-call-hole-cold-arms-split [arms : i64] [callee : i64]) : reg.CompilerRegCallHoleSplit
     (let
       [func : ir.CompilerIrFunction
-        (compiler-reg-call-hole-cold-arms-function arms)]
+        (compiler-reg-call-hole-cold-arms-function arms callee)]
       [type-info : reg.CompilerRegVarTypes
         (reg.compiler-reg-function-var-types func)]
       [plan : reg.CompilerRegPlan
@@ -1885,9 +1897,13 @@
   (define (compiler-reg-call-hole-csr-cost-strict-ok?) : bool
     (let
       [three : reg.CompilerRegCallHoleSplit
-        (compiler-reg-call-hole-cold-arms-split 3)]
+        (compiler-reg-call-hole-cold-arms-split
+          3
+          (ir.compiler-ir-test-symbol "f"))]
       [four : reg.CompilerRegCallHoleSplit
-        (compiler-reg-call-hole-cold-arms-split 4)]
+        (compiler-reg-call-hole-cold-arms-split
+          4
+          (ir.compiler-ir-test-symbol "f"))]
       (and
         ;; 3 arms: one carrier minted above the 5 original vars, and the
         ;; parameter is pinned back into %rdi.
@@ -1908,6 +1924,76 @@
         ;; its input untouched.
         (= (reg.compiler-reg-call-hole-split-vars four) 6)
         (= (reg.compiler-reg-call-hole-split-temp-start four) (- 0 1))))))
+
+;; --- P7b the recursion exclusion --------------------------------------------
+;; PRED_CALL's recursion exclusion on the same fixture the discount is measured
+;; with: the two functions below differ in ONE symbol, the callee inside the
+;; arm, so everything the classification and the cost model see is otherwise
+;; identical and the arm's SHAPE cannot be what separates them.
+;;
+;; With a foreign callee the arm is a depth-0 side arm that calls: discounted to
+;; a quarter, and one arm's carriers (2 x 1) buy back the parameter's push and
+;; pop (2 x 4), so the round fires and the pin walk hands %rdi back. With the
+;; self-call the arm keeps its full depth-0 weight, because for a self-recursive
+;; function the arm runs on every activation but the last; the carriers now cost
+;; 2 x 4 against the pair's 2 x 4, the comparison is strictly-below, and the
+;; round declines and returns its input untouched. That is `deeprec`'s arithmetic
+;; in tests/integration/csr_push_prologue.tl with one value instead of four
+;; (4 x 2 x 4 against four pairs = 32 against 32), and it is why its push
+;; prologue and shrink-wrapped base case survive.
+(cfg
+  test
+  (define (compiler-reg-call-hole-recursive-arm-weights [callee : i64]) : reg.CompilerRegCallHoleWeights
+    (match (compiler-reg-call-hole-cold-arms-function 1 callee)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
+        (reg.compiler-reg-call-hole-cold-arm-weights
+          (ast.ast-node-pool-reader-type-segment-bases)
+          self-name
+          (live.compiler-live-ir-block-list-to-seq blocks))])))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-recursive-arm-ok?) : bool
+    (let
+      [self : i64 (compiler-reg-call-hole-cold-arms-name)]
+      [foreign-name : i64 (ir.compiler-ir-test-symbol "f")]
+      [foreign : reg.CompilerRegCallHoleWeights
+        (compiler-reg-call-hole-recursive-arm-weights foreign-name)]
+      [recursive : reg.CompilerRegCallHoleWeights
+        (compiler-reg-call-hole-recursive-arm-weights self)]
+      [foreign-split : reg.CompilerRegCallHoleSplit
+        (compiler-reg-call-hole-cold-arms-split 1 foreign-name)]
+      [recursive-split : reg.CompilerRegCallHoleSplit
+        (compiler-reg-call-hole-cold-arms-split 1 self)]
+      (and
+        ;; entry / hot call nothing and are never discounted, either way.
+        (= (array-length foreign.weights) 3)
+        (= (array-ref foreign.weights 0) 4)
+        (not (array-ref foreign.cold 0))
+        (= (array-ref foreign.weights 2) 4)
+        (not (array-ref foreign.cold 2))
+        ;; the foreign arm IS a cold arm ...
+        (= (array-ref foreign.weights 1) 1)
+        (array-ref foreign.cold 1)
+        ;; ... and the self-recursive one, same block, same shape, is not.
+        (= (array-length recursive.weights) 3)
+        (= (array-ref recursive.weights 0) 4)
+        (= (array-ref recursive.weights 1) 4)
+        (not (array-ref recursive.cold 1))
+        (= (array-ref recursive.weights 2) 4)
+        ;; The round follows the weights. Foreign: one carrier minted above the
+        ;; three original vars, and the parameter is back in %rdi.
+        (= (reg.compiler-reg-call-hole-split-vars foreign-split) 4)
+        (= (reg.compiler-reg-call-hole-split-temp-start foreign-split) 3)
+        (compiler-reg-call-hole-plan-register?
+          (reg.compiler-reg-call-hole-split-plan foreign-split)
+          0
+          cabi.compiler-reg-id-rdi)
+        ;; Recursive: nothing selected, input returned untouched.
+        (= (reg.compiler-reg-call-hole-split-vars recursive-split) 3)
+        (=
+          (reg.compiler-reg-call-hole-split-temp-start recursive-split)
+          (- 0 1))))))
 
 ;; --- P3c loop-boundary parking ----------------------------------------------
 ;; Two fixtures carry the whole round.
@@ -16939,6 +17025,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-call-hole-csr-cost-strict-ok?"
       (cfg test (compiler-reg-call-hole-csr-cost-strict-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-recursive-arm-ok?"
+      (cfg test (compiler-reg-call-hole-recursive-arm-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-park-detect-ok?"
       (cfg test (compiler-reg-loop-park-detect-ok?) true))

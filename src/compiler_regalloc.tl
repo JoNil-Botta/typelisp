@@ -18666,10 +18666,11 @@
 ;; arm therefore takes a callee-saved home (or a spill) and the hot path of
 ;; EVERY call of the function pays the pushes and pops.
 ;;
-;; A block is charged the discount when it contains a kind-0 clobber, sits at
-;; LOOP DEPTH 0, does not post-dominate the function's entry block -- that is,
-;; the function can reach a `Return` without ever running it -- and its BYPASS
-;; RUNS NO LOOP THE ARM SKIPS.
+;; A block is charged the discount when it contains a kind-0 clobber, NONE of
+;; its calls is a call to the function being allocated, it sits at LOOP DEPTH 0,
+;; it does not post-dominate the function's entry block -- that is, the function
+;; can reach a `Return` without ever running it -- and its BYPASS RUNS NO LOOP
+;; THE ARM SKIPS.
 ;;
 ;; That last clause is what keeps the prediction pointed at real side arms. Not
 ;; taking a grow / rehash / OOM arm costs nothing: the bypass is an empty edge
@@ -18697,8 +18698,33 @@
 ;; dispatch arms, 1.3M calls per run, predicted cold and taken 12% of the time).
 ;; So inside a loop the crossing keeps its full depth weight and the pre-existing
 ;; "one loop level colder than the hottest reference" rule decides alone.
-;; `compiler-reg-call-hole-cold-arm-weight-ok?` pins the depth-0 bound and
-;; `compiler-reg-call-hole-bypass-loop-ok?` the bypass one.
+;;
+;; The SELF-CALL exclusion is PRED_CALL's own recursion exclusion, carried over
+;; whole. GCC does not predict a branch leading to a recursive call not-taken;
+;; it has a separate, TAKEN predictor for that edge (PRED_RECURSIVE_CALL),
+;; because the not-taken argument does not survive recursion. "An arm that calls
+;; is rare" is an argument about arms that lead OUT of the function -- grow,
+;; rehash, OOM, the error return -- and it is wrong exactly when the callee is
+;; the function itself: for a self-recursive function the arm holding the
+;; recursive call runs on every activation but the last, so the arm's frequency
+;; IS the entry frequency and the two sides of the trade are the same number.
+;; Predicting it cold trades the prologue's push/pop pairs, which the base case
+;; can shrink-wrap away entirely, for carriers that run at every level of the
+;; recursion -- a regression proportional to the depth. `deeprec` in
+;; tests/integration/csr_push_prologue.tl is the shape (four values live across
+;; a non-tail self-call, 10,000 levels): at full weight the round's own strict
+;; comparison refuses it, 4 values x 2 x 4 in carriers against 4 pairs x 2 x 4
+;; in pushes and pops, and the push prologue is kept.
+;;
+;; A block is excluded as soon as ANY of its calls is the self-call: mixing a
+;; foreign call into the recursion arm does not make the arm rare. Only DIRECT
+;; calls can be recognised -- an indirect call names no target -- and tail
+;; self-calls are excluded too, on the same frequency argument, even though they
+;; never appear in a crossing set (`compiler-reg-call-hole-scan-spans!` charges
+;; interior instructions only and a tail call is always a block terminator).
+;; `compiler-reg-call-hole-cold-arm-weight-ok?` pins the depth-0 bound,
+;; `compiler-reg-call-hole-bypass-loop-ok?` the bypass one, and
+;; `compiler-reg-call-hole-recursive-arm-ok?` the recursion one.
 (define (compiler-reg-call-hole-cold-arm-weight [weight : i64]) : i64
   (let
     [quarter : i64 (/ weight 4)]
@@ -18884,6 +18910,47 @@
                       (set! edge (+ edge 1)))))))))
         escapes?))))
 
+;; Does this block call the function being allocated? `Call` and `TailCall` are
+;; the IR's two by-name direct-call forms, and a self-call is name equality on
+;; the same interned symbol the inliner compares (`ir.compiler-ir-symbol-eq?`).
+;; Indirect calls carry a value rather than a name and can therefore never be
+;; PROVED self-recursive here, so they are left to the ordinary prediction --
+;; the conservative direction, since that is the pre-existing behaviour.
+;;
+;; Only one call has to be the self-call: a block that calls `f` and then calls
+;; itself still runs at the entry frequency, so a block is excluded as soon as
+;; any of its calls is one.
+(define (compiler-reg-call-hole-self-call-instr?
+  [self-name : i64]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Call _ name _ _)
+      (ir.compiler-ir-symbol-eq? name self-name)]
+    [(ir.CompilerIrInstr.TailCall name _ _)
+      (ir.compiler-ir-symbol-eq? name self-name)]
+    [_ false]))
+
+(define (compiler-reg-call-hole-block-self-call?
+  [self-name : i64]
+  [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (let
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+        [count : i64 instrs.len]
+        [index : i64 0]
+        [found : bool false]
+        (begin
+          (while (and (< index count) (not found))
+            (begin
+              (if (compiler-reg-call-hole-self-call-instr?
+                self-name
+                (array-ref slots index))
+                (set! found true)
+                unit)
+              (set! index (+ index 1))))
+          found))]))
+
 (define (compiler-reg-call-hole-block-has-clobber?
   [type-segment-bases : i64]
   [block : ir.CompilerIrBlock]) : bool
@@ -18917,6 +18984,7 @@
 
 (define (compiler-reg-call-hole-cold-arm-weights
   [type-segment-bases : i64]
+  [self-name : i64]
   [seq : ir.CompilerIrBlockSeq]) : CompilerRegCallHoleWeights
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -18942,7 +19010,11 @@
                 (<= (array-ref depths index) 0)
                 (compiler-reg-call-hole-block-has-clobber?
                   type-segment-bases
-                  (ir.compiler-ir-block-seq-ref seq index)))
+                  (ir.compiler-ir-block-seq-ref seq index))
+                (not
+                  (compiler-reg-call-hole-block-self-call?
+                    self-name
+                    (ir.compiler-ir-block-seq-ref seq index))))
                 (begin
                   (set! generation (+ generation 1))
                   (if (compiler-reg-call-hole-entry-escapes?
@@ -20491,7 +20563,7 @@
   [plan : CompilerRegPlan]
   [temp-start : i64]) : CompilerRegCallHoleSplit
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+    [(ir.CompilerIrFunction.Function self-name _ _ vars blocks)
       (let
         [none : CompilerRegCallHoleSplit
           (compiler-reg-call-hole-split-none
@@ -20540,6 +20612,7 @@
                     [cold-arms : CompilerRegCallHoleWeights
                       (compiler-reg-call-hole-cold-arm-weights
                         type-segment-bases
+                        self-name
                         seq)]
                     [weights : (__tl_dyn-array i64) cold-arms.weights]
                     [benefit : (__tl_dyn-array i64) (array.make-array i64 vars)]

@@ -2724,7 +2724,7 @@
       [(and extreme (>= abstop (cast 0x409 : u64)))
         (if (!= (shr (stdlib.math.f64-to-bits x) 63) (cast 0 : u64))
           (if (!= sign-bias (cast 0 : u64))
-            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))
+            -0.0
             0.0)
           (if (!= sign-bias (cast 0 : u64))
             (stdlib.math.f64-negative-infinity)

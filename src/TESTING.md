@@ -170,9 +170,10 @@ remain compatibility boundaries for synthetic callers until those callers have
 an explicit owner-state ID; parser-only and ID-first constructors should not
 recover an ID from String storage.
 
-`compiler_intern.tl` self-tests own reset cases,
-`compiler_intern_state_isolation.tl` owns explicit worker-state isolation, and
-`compiler_backend_smoke.tl` covers equal numeric IDs with different spellings.
+`compiler_intern.tl` self-tests own source-name reset cases, the registered
+`compiler-typecheck-structural-intern-session-isolation` test owns explicit
+structural-session isolation/reset/growth, and `compiler_backend_smoke.tl`
+covers equal numeric IDs with different spellings.
 `compiler_ast_types_smoke.tl` owns synthetic AST construction, empty-name
 compatibility, and pool reset cases. `compiler_parse_smoke.tl` owns parsed-token
 identity.

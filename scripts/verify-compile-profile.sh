@@ -1570,10 +1570,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # planned bounds-preservation regression helper, the authoritative Windows
     # probe measured 2,764,373 used nodes and retained the same capacity and
     # physical payload boundary. #5262's complete public-place surface and
-    # native source-name handoff coverage also retain this 43-segment boundary;
-    # the required Windows probe below reports the exact combined used count.
+    # native source-name handoff coverage also retain this 43-segment boundary.
+    # #5754's explicit context projection for typecheck expression reads crosses
+    # the boundary to 44 segments: the authoritative Windows CI probe measured
+    # 2,827,771 used nodes, 2,883,584 capacity, and 92,274,688 physical payload
+    # bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 43 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 44 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -1604,8 +1607,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # source and retains 35 segments: the authoritative Windows probe on the
     # rebased tree measured 2,238,298 used nodes, 2,293,760 capacity and
     # 73,400,320 physical payload bytes, leaving 55,462 nodes of headroom.
+    # #5754's context-projected expression reads cross the boundary to 36
+    # segments: the authoritative Windows probe measured 2,298,673 used nodes,
+    # 2,359,296 capacity, and 75,497,472 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 35 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 36 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

@@ -11447,14 +11447,26 @@
   (entries (__tl_dyn-array OptSsaVarBlockEntry))
   (entry-count i64))
 
-(defenum OptSsaRenameEnv
-  (Nil)
-  (Cons i64 i64 (Box OptSsaRenameEnv)))
+(defstruct OptSsaRenameEnv
+  (by-var (__tl_dyn-array i64))
+  (current (__tl_dyn-array i64))
+  (present (__tl_dyn-array bool))
+  (change-slots (__tl_dyn-array i64))
+  (change-values (__tl_dyn-array i64))
+  (change-present (__tl_dyn-array bool))
+  (entry-count i64)
+  (change-count i64))
+
+(defstruct OptSsaRenameSnapshot
+  (by-var (__tl_dyn-array i64))
+  (current (__tl_dyn-array i64))
+  (present (__tl_dyn-array bool))
+  (entry-count i64))
 
 (defenum OptSsaDenseEntry
   (PhiSite i64 i64 ast.AstType i64)
   (RenameBlock i64 ir.CompilerIrInstrSeq)
-  (BlockOut i64 OptSsaRenameEnv))
+  (BlockOut i64 OptSsaRenameSnapshot))
 
 (import (vector.vector OptSsaDenseEntry core) as opt_ssa_dense_vec)
 
@@ -11552,7 +11564,7 @@
     (begin
       (opt_ssa_dense_vec.push-ref!
         (&mut items)
-        (OptSsaDenseEntry.BlockOut label env))
+        (OptSsaDenseEntry.BlockOut label (opt-ssa-env-snapshot env)))
       (OptSsaBlockOuts items))))
 
 (define (opt-ssa-block-outs-ref [outs : OptSsaBlockOuts] [index : i64]) : OptSsaDenseEntry
@@ -12251,19 +12263,208 @@
             site-members)
           0))]))
 
+;; SSA candidate vregs are function-local and dense, but only a sparse subset
+;; is renamed. `by-var` maps those vregs to compact slots; zero is absence and
+;; present slots are one-based. The current mapping is mutated during the
+;; dominator walk, while the parallel change arrays form an exact-capacity undo
+;; log. A child checkpoints the log and rolls it back before its sibling runs.
+;; Block exits clone only the compact current/presence prefixes, so retained
+;; predecessor snapshots cannot alias later mutations (#5731).
+(define (opt-ssa-env-with-capacity
+  [var-capacity : i64]
+  [entry-capacity : i64]
+  [change-capacity : i64]) : OptSsaRenameEnv
+  (OptSsaRenameEnv
+    (array.make-array i64 var-capacity)
+    (array.make-array i64 entry-capacity)
+    (array.make-array bool entry-capacity)
+    (array.make-array i64 change-capacity)
+    (array.make-array i64 change-capacity)
+    (array.make-array bool change-capacity)
+    0
+    0))
+
+(define (opt-ssa-env-register [env : OptSsaRenameEnv (:consume)] [var : i64]) : OptSsaRenameEnv
+  (if (or
+    (< var 0)
+    (>= var (array-length env.by-var))
+    (not (= (array-ref env.by-var var) 0)))
+    env
+    (if (>= env.entry-count (array-length env.current))
+      (string.tl_oob_abort)
+      (let
+        [out : OptSsaRenameEnv env]
+        (begin
+          (set! (array-ref out.by-var var) (+ out.entry-count 1))
+          (set! out.entry-count (+ out.entry-count 1))
+          out)))))
+
+(define (opt-ssa-env-slot [by-var : (__tl_dyn-array i64)] [var : i64]) : i64
+  (if (or (< var 0) (>= var (array-length by-var)))
+    (- 0 1)
+    (- (array-ref by-var var) 1)))
+
 (define (opt-ssa-env-lookup [env : OptSsaRenameEnv] [var : i64]) : option_i64.Option
-  (match env
-    [(OptSsaRenameEnv.Nil) (option_i64.None)]
-    [(OptSsaRenameEnv.Cons original current rest)
-      (if (= original var)
-        (option_i64.Some current)
-        (opt-ssa-env-lookup (__tl-box-place rest) var))]))
+  (let
+    [slot : i64 (opt-ssa-env-slot env.by-var var)]
+    (if (or
+      (< slot 0)
+      (>= slot env.entry-count)
+      (not (array-ref env.present slot)))
+      (option_i64.None)
+      (option_i64.Some (array-ref env.current slot)))))
 
 (define (opt-ssa-env-bind
-  [env : OptSsaRenameEnv]
+  [env : OptSsaRenameEnv (:consume)]
   [original : i64]
   [current : i64]) : OptSsaRenameEnv
-  (OptSsaRenameEnv.Cons original current (box env)))
+  (let
+    [slot : i64 (opt-ssa-env-slot env.by-var original)]
+    [change : i64 env.change-count]
+    (if (or
+      (< slot 0)
+      (>= slot env.entry-count)
+      (>= change (array-length env.change-slots)))
+      (string.tl_oob_abort)
+      (let
+        [out : OptSsaRenameEnv env]
+        (begin
+          (set! (array-ref out.change-slots change) slot)
+          (set!
+            (array-ref out.change-values change)
+            (array-ref out.current slot))
+          (set!
+            (array-ref out.change-present change)
+            (array-ref out.present slot))
+          (set! (array-ref out.current slot) current)
+          (set! (array-ref out.present slot) true)
+          (set! out.change-count (+ change 1))
+          out)))))
+
+(define (opt-ssa-env-checkpoint [env : OptSsaRenameEnv]) : i64
+  env.change-count)
+
+(define (opt-ssa-env-rollback
+  [env : OptSsaRenameEnv (:consume)]
+  [checkpoint : i64]) : OptSsaRenameEnv
+  (if (or (< checkpoint 0) (> checkpoint env.change-count))
+    (string.tl_oob_abort)
+    (let
+      [count : i64 env.change-count]
+      [out : OptSsaRenameEnv env]
+      (begin
+        (while (> count checkpoint)
+          (let
+            [change : i64 (- count 1)]
+            [slot : i64 (array-ref out.change-slots change)]
+            (begin
+              (set!
+                (array-ref out.current slot)
+                (array-ref out.change-values change))
+              (set!
+                (array-ref out.present slot)
+                (array-ref out.change-present change))
+              (set! count change))))
+        (set! out.change-count checkpoint)
+        out))))
+
+(define (opt-ssa-env-snapshot [env : OptSsaRenameEnv]) : OptSsaRenameSnapshot
+  (OptSsaRenameSnapshot
+    env.by-var
+    (clone env.current)
+    (clone env.present)
+    env.entry-count))
+
+(define (opt-ssa-env-snapshot-empty) : OptSsaRenameSnapshot
+  (OptSsaRenameSnapshot
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array bool 0)
+    0))
+
+(define (opt-ssa-env-snapshot-lookup
+  [snapshot : OptSsaRenameSnapshot]
+  [var : i64]) : option_i64.Option
+  (let
+    [slot : i64 (opt-ssa-env-slot snapshot.by-var var)]
+    (if (or
+      (< slot 0)
+      (>= slot snapshot.entry-count)
+      (not (array-ref snapshot.present slot)))
+      (option_i64.None)
+      (option_i64.Some (array-ref snapshot.current slot)))))
+
+(define (opt-ssa-env-candidate-count-from
+  [facts : OptSsaFacts]
+  [types : OptSsaVarTypes]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (opt-ssa-var-types-count types))
+    count
+    (let
+      [var : i64 (opt-ssa-var-types-newest-var types index)]
+      (opt-ssa-env-candidate-count-from
+        facts
+        types
+        (+ index 1)
+        (if (opt-ssa-candidate? facts var)
+          (+ count 1)
+          count)))))
+
+(define (opt-ssa-env-binding-count-from
+  [facts : OptSsaFacts]
+  [types : OptSsaVarTypes]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (opt-ssa-var-types-count types))
+    count
+    (let
+      [var : i64 (opt-ssa-var-types-newest-var types index)]
+      (opt-ssa-env-binding-count-from
+        facts
+        types
+        (+ index 1)
+        (if (opt-ssa-candidate? facts var)
+          (match facts
+            [(OptSsaFacts.Facts counts _ _)
+              (+ count (opt-ssa-count counts var))])
+          count)))))
+
+(define (opt-ssa-env-register-candidates-from
+  [facts : OptSsaFacts]
+  [types : OptSsaVarTypes]
+  [env : OptSsaRenameEnv]
+  [index : i64]) : OptSsaRenameEnv
+  (if (>= index (opt-ssa-var-types-count types))
+    env
+    (let
+      [var : i64 (opt-ssa-var-types-newest-var types index)]
+      (opt-ssa-env-register-candidates-from
+        facts
+        types
+        (if (opt-ssa-candidate? facts var)
+          (opt-ssa-env-register env var)
+          env)
+        (+ index 1)))))
+
+(define (opt-ssa-env-for-function
+  [facts : OptSsaFacts]
+  [sites : OptSsaPhiSites]
+  [frame : i64]) : OptSsaRenameEnv
+  (match facts
+    [(OptSsaFacts.Facts _ _ types)
+      (let
+        [candidate-count : i64
+          (opt-ssa-env-candidate-count-from facts types 0 0)]
+        [binding-count : i64
+          (+
+            (opt-ssa-env-binding-count-from facts types 0 0)
+            (opt-ssa-phi-sites-count sites))]
+        (opt-ssa-env-register-candidates-from
+          facts
+          types
+          (opt-ssa-env-with-capacity frame candidate-count binding-count)
+          0))]))
 
 (define (opt-ssa-env-from-params
   [facts : OptSsaFacts]
@@ -12428,97 +12629,89 @@
   [instr : ir.CompilerIrInstr]) : OptSsaInstrResult
   (match instr
     [(ir.CompilerIrInstr.Mov dst src ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.Mov out-dst (opt-ssa-rewrite-value env src) ty)
-            next-env
-            out-next)])]
+      (let
+        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.Mov out-dst out-src ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.Load dst src ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.Load out-dst (opt-ssa-rewrite-value env src) ty)
-            next-env
-            out-next)])]
+      (let
+        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.Load out-dst out-src ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.Cast
-              out-dst
-              (opt-ssa-rewrite-value env src)
-              from-ty
-              to-ty)
-            next-env
-            out-next)])]
+      (let
+        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.Cast out-dst out-src from-ty to-ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.Bitcast
-              out-dst
-              (opt-ssa-rewrite-value env src)
-              from-ty
-              to-ty)
-            next-env
-            out-next)])]
+      (let
+        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.Bitcast out-dst out-src from-ty to-ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.BinOp
-              out-dst
-              op
-              (opt-ssa-rewrite-value env lhs)
-              (opt-ssa-rewrite-value env rhs)
-              ty)
-            next-env
-            out-next)])]
+      (let
+        [out-lhs : ir.CompilerIrValue (opt-ssa-rewrite-value env lhs)]
+        [out-rhs : ir.CompilerIrValue (opt-ssa-rewrite-value env rhs)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.BinOp out-dst op out-lhs out-rhs ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.UnOp dst op src ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.UnOp
-              out-dst
-              op
-              (opt-ssa-rewrite-value env src)
-              ty)
-            next-env
-            out-next)])]
+      (let
+        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.UnOp out-dst op out-src ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.Call dst name args ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.Call
-              out-dst
-              name
-              (opt-ssa-rewrite-call-args env args)
-              ty)
-            next-env
-            out-next)])]
+      (let
+        [out-args : ir.CompilerIrCallArgs (opt-ssa-rewrite-call-args env args)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.Call out-dst name out-args ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.CallIndirect dst func args ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.CallIndirect
-              out-dst
-              (opt-ssa-rewrite-value env func)
-              (opt-ssa-rewrite-call-args env args)
-              ty)
-            next-env
-            out-next)])]
+      (let
+        [out-func : ir.CompilerIrValue (opt-ssa-rewrite-value env func)]
+        [out-args : ir.CompilerIrCallArgs (opt-ssa-rewrite-call-args env args)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.CallIndirect out-dst out-func out-args ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.CallIndirectC dst func args ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.CallIndirectC
-              out-dst
-              (opt-ssa-rewrite-value env func)
-              (opt-ssa-rewrite-call-args env args)
-              ty)
-            next-env
-            out-next)])]
+      (let
+        [out-func : ir.CompilerIrValue (opt-ssa-rewrite-value env func)]
+        [out-args : ir.CompilerIrCallArgs (opt-ssa-rewrite-call-args env args)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.CallIndirectC out-dst out-func out-args ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
         [base (__tl-project-field (__tl-box-place payload-box) base)]
@@ -12591,18 +12784,23 @@
               env
               next-var)]
           [(ir.CompilerIrSpmdCallResult.Value dst class ty)
-            (match (opt-ssa-rename-dst facts env next-var dst)
-              [(OptSsaDstResult.Result out-dst next-env out-next)
-                (OptSsaInstrResult.Result
-                  (ir.ir-instr-spmd-call
-                    callee
-                    backend
-                    lanes
-                    (opt-ssa-rewrite-value env active-mask)
-                    (opt-ssa-rewrite-spmd-call-args env args)
-                    (ir.CompilerIrSpmdCallResult.Value out-dst class ty))
-                  next-env
-                  out-next)])]))]
+            (let
+              [out-mask : ir.CompilerIrValue
+                (opt-ssa-rewrite-value env active-mask)]
+              [out-args : ir.CompilerIrSpmdCallArgList
+                (opt-ssa-rewrite-spmd-call-args env args)]
+              (match (opt-ssa-rename-dst facts env next-var dst)
+                [(OptSsaDstResult.Result out-dst next-env out-next)
+                  (OptSsaInstrResult.Result
+                    (ir.ir-instr-spmd-call
+                      callee
+                      backend
+                      lanes
+                      out-mask
+                      out-args
+                      (ir.CompilerIrSpmdCallResult.Value out-dst class ty))
+                    next-env
+                    out-next)]))]))]
     [(ir.CompilerIrInstr.EntryArgc dst)
       (match (opt-ssa-rename-dst facts env next-var dst)
         [(OptSsaDstResult.Result out-dst next-env out-next)
@@ -12921,26 +13119,24 @@
     ;; SSA-rename register-group ops -- rewrite operands with the current
     ;; env, then rename the dst.
     [(ir.CompilerIrInstr.Pack dst words ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.Pack
-              out-dst
-              (opt-ssa-rewrite-value-list env words)
-              ty)
-            next-env
-            out-next)])]
+      (let
+        [out-words : ir.CompilerIrValueList
+          (opt-ssa-rewrite-value-list env words)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.Pack out-dst out-words ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.Word dst src index ty)
-      (match (opt-ssa-rename-dst facts env next-var dst)
-        [(OptSsaDstResult.Result out-dst next-env out-next)
-          (OptSsaInstrResult.Result
-            (ir.CompilerIrInstr.Word
-              out-dst
-              (opt-ssa-rewrite-value env src)
-              index
-              ty)
-            next-env
-            out-next)])]
+      (let
+        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        (match (opt-ssa-rename-dst facts env next-var dst)
+          [(OptSsaDstResult.Result out-dst next-env out-next)
+            (OptSsaInstrResult.Result
+              (ir.CompilerIrInstr.Word out-dst out-src index ty)
+              next-env
+              out-next)]))]
     [(ir.CompilerIrInstr.TailCallIndirect func args ty)
       (OptSsaInstrResult.Result
         (ir.CompilerIrInstr.TailCallIndirect
@@ -13044,17 +13240,17 @@
 (define (opt-ssa-block-out-lookup-from
   [outs : OptSsaBlockOuts]
   [label : i64]
-  [index : i64]) : OptSsaRenameEnv
+  [index : i64]) : OptSsaRenameSnapshot
   (if (>= index (opt-ssa-block-outs-count outs))
-    (OptSsaRenameEnv.Nil)
+    (opt-ssa-env-snapshot-empty)
     (match (opt-ssa-block-outs-ref outs index)
-      [(OptSsaDenseEntry.BlockOut out-label env)
+      [(OptSsaDenseEntry.BlockOut out-label snapshot)
         (if (= out-label label)
-          env
+          snapshot
           (opt-ssa-block-out-lookup-from outs label (+ index 1)))]
       [_ (string.tl_oob_abort)])))
 
-(define (opt-ssa-block-out-lookup [outs : OptSsaBlockOuts] [label : i64]) : OptSsaRenameEnv
+(define (opt-ssa-block-out-lookup [outs : OptSsaBlockOuts] [label : i64]) : OptSsaRenameSnapshot
   (opt-ssa-block-out-lookup-from outs label 0))
 
 (define (opt-ssa-rename-state-add-block
@@ -13081,6 +13277,7 @@
   (let
     [index : OptCfgIndex context.index]
     [label : i64 (array-ref index.labels id)]
+    [checkpoint : i64 (opt-ssa-env-checkpoint env)]
     (match (opt-cfg-index-block index id)
       [(OptMaybeBlock.No) state]
       [(OptMaybeBlock.Some block)
@@ -13097,20 +13294,25 @@
                 instrs
                 0)
                 [(OptSsaBlockResult.Result renamed out-env next-var)
-                  (opt-ssa-rename-children
-                    context
-                    blocks
-                    facts
-                    sites
-                    id
-                    out-env
-                    (opt-ssa-rename-state-add-block
-                      state
-                      label
-                      renamed
-                      out-env
-                      next-var)
-                    0)]))])])))
+                  (let
+                    [next-state : OptSsaRenameState
+                      (opt-ssa-rename-children
+                        context
+                        blocks
+                        facts
+                        sites
+                        id
+                        out-env
+                        (opt-ssa-rename-state-add-block
+                          state
+                          label
+                          renamed
+                          out-env
+                          next-var)
+                        0)]
+                    (begin
+                      (opt-ssa-env-rollback out-env checkpoint)
+                      next-state))]))])])))
 
 (define (opt-ssa-rename-children
   [context : OptCfgContext]
@@ -13162,19 +13364,26 @@
                 [(OptSsaRenameState.State renamed _ next-var)
                   (if (opt-ssa-rename-blocks-contains? renamed label)
                     state
-                    (match (opt-ssa-rename-instr-seq-from
-                      facts
-                      (opt-ssa-env-bind-phis sites label initial-env)
-                      next-var
-                      instrs
-                      0)
-                      [(OptSsaBlockResult.Result out out-env out-next)
-                        (opt-ssa-rename-state-add-block
-                          state
-                          label
-                          out
-                          out-env
-                          out-next)]))])]
+                    (let
+                      [checkpoint : i64 (opt-ssa-env-checkpoint initial-env)]
+                      (match (opt-ssa-rename-instr-seq-from
+                        facts
+                        (opt-ssa-env-bind-phis sites label initial-env)
+                        next-var
+                        instrs
+                        0)
+                        [(OptSsaBlockResult.Result out out-env out-next)
+                          (let
+                            [out-state : OptSsaRenameState
+                              (opt-ssa-rename-state-add-block
+                                state
+                                label
+                                out
+                                out-env
+                                out-next)]
+                            (begin
+                              (opt-ssa-env-rollback out-env checkpoint)
+                              out-state))])))])]
             (opt-ssa-rename-missing-blocks
               (__tl-box-place rest)
               facts
@@ -13198,7 +13407,10 @@
   [blocks : ir.CompilerIrBlockList]) : OptSsaRenameState
   (let
     [initial-env : OptSsaRenameEnv
-      (opt-ssa-env-from-params facts params (OptSsaRenameEnv.Nil))]
+      (opt-ssa-env-from-params
+        facts
+        params
+        (opt-ssa-env-for-function facts sites frame))]
     [entry-label : i64 (opt-cfg-entry-label blocks)]
     [index : OptCfgIndex context.index]
     [block-capacity : i64 (opt-cfg-index-block-count index)]
@@ -13256,9 +13468,9 @@
     [(OptLabelSet.Dense _ _)
       (let
         [pred : i64 (opt-label-ref preds 0)]
-        [env : OptSsaRenameEnv (opt-ssa-block-out-lookup outs pred)]
+        [snapshot : OptSsaRenameSnapshot (opt-ssa-block-out-lookup outs pred)]
         [value : ir.CompilerIrValue
-          (match (opt-ssa-env-lookup env var)
+          (match (opt-ssa-env-snapshot-lookup snapshot var)
             [(option_i64.Some current) (ir.CompilerIrValue.Var current)]
             [(option_i64.None) (opt-ssa-phi-undef-input ty)])]
         (ir.compiler-ir-phi-input-cons
@@ -13399,7 +13611,9 @@
         (match value
           [(ir.CompilerIrValue.Var v)
             (if (opt-ssa-candidate? facts v)
-              (match (opt-ssa-env-lookup (opt-ssa-block-out-lookup outs pred) v)
+              (match (opt-ssa-env-snapshot-lookup
+                (opt-ssa-block-out-lookup outs pred)
+                v)
                 [(option_i64.Some current) (ir.CompilerIrValue.Var current)]
                 [(option_i64.None) (opt-ssa-phi-undef-input ty)])
               value)]

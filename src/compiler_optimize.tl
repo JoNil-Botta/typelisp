@@ -60,20 +60,46 @@
 (defenum CompilerOptimizedProgram
   (Program ir.CompilerIrProgram ir.CompilerSourceSpans))
 
+(defstruct OptDebugState
+  ;; Borrowed from the ambient compile job by compiler-opt-debug-configure!.
+  ;; That job must outlive every observation and result read for this session.
+  (dump-arena arena.Arena)
+  (dump-pass String)
+  (dump-buf text_buf.TextBuf)
+  (verify-error String))
+
+(defstruct OptInlineOwnedState
+  (verify-scratch arena.Arena)
+  (multiblock-ok-memo (__tl_dyn-array i64)))
+
+;; The optimizer's two cross-function arena protocols are process-serial, but
+;; their owners and every global view backed by the surrounding compile job
+;; still have to move together. Install and reset each complete substate below
+;; one aggregate so a later lifetime-branded owner can consume it instead of
+;; clearing unrelated globals. Refs #6257.
+(defstruct CompilerOptOwnedState
+  (inline-state OptInlineOwnedState)
+  (debug-state OptDebugState))
+
+(define compiler-opt-owned-state : CompilerOptOwnedState
+  (CompilerOptOwnedState
+    (OptInlineOwnedState (arena.Arena 0) (array.make-array i64 0))
+    (OptDebugState (arena.Arena 0) "" (text_buf.empty) "")))
+
+;; Serial compatibility reads intentionally take shallow shared views of this
+;; process-global aggregate. Production optimizer work is not re-entrant.
+(define (compiler-opt-owned-state-shared-view) : CompilerOptOwnedState
+  (cfg
+    stage0-seed-bootstrap
+    compiler-opt-owned-state
+    (unsafe
+      (ptr-read (ptr-addr-of compiler-opt-owned-state)))))
+
 ;; Developer-only optimizer observability. The CLI resets this state before
 ;; every command, so normal compilation remains silent and allocation-free at
 ;; pass boundaries.
 (define compiler-opt-debug-trace-passes : bool
   false)
-(define compiler-opt-debug-dump-pass : String
-  "")
-
-;; Pass snapshots accumulate in a segmented buffer: each observation is
-;; O(its rendered size) instead of a whole-prefix string copy (#6115).
-(define compiler-opt-debug-dump-buf : text_buf.TextBuf
-  (text_buf.empty))
-(define compiler-opt-debug-dump-arena : i64
-  0)
 (define compiler-opt-debug-verify-ir : bool
   false)
 
@@ -89,31 +115,43 @@
 (define (compiler-opt-debug-set-suppressed! [on : bool]) : unit
   (set! compiler-opt-debug-suppressed? on))
 
-(define compiler-opt-debug-verify-error : String
-  "")
-
 (define (compiler-opt-debug-configure!
   [trace-passes : bool]
   [dump-pass : String]
   [verify-ir : bool]) : unit
   (begin
     (set! compiler-opt-debug-trace-passes trace-passes)
-    (set! compiler-opt-debug-dump-pass dump-pass)
-    (set! compiler-opt-debug-dump-buf (text_buf.empty))
-    (set! compiler-opt-debug-dump-arena (arena.tl_arena_current))
     (set! compiler-opt-debug-verify-ir verify-ir)
-    (set! compiler-opt-debug-verify-error "")))
+    ;; Pass snapshots accumulate in a segmented buffer: each observation is
+    ;; O(its rendered size) instead of a whole-prefix string copy (#6115).
+    ;; Publish the borrowed owner and every dependent view as one value.
+    ;; Configuration is a command boundary, so no inline owner is live. Reset
+    ;; that substate here as well instead of carrying an empty descriptor from
+    ;; an arena the preceding command may already have retired.
+    (set!
+      compiler-opt-owned-state
+      (CompilerOptOwnedState
+        (OptInlineOwnedState (arena.Arena 0) (array.make-array i64 0))
+        (OptDebugState (arena.current) dump-pass (text_buf.empty) "")))))
 
 (define (compiler-opt-debug-dump-result) : String
-  (text_buf.render (clone compiler-opt-debug-dump-buf)))
+  (let
+    [state : OptDebugState
+      (__tl-project-field (compiler-opt-owned-state-shared-view) debug-state)]
+    (text_buf.render (clone state.dump-buf))))
 
 (define (compiler-opt-debug-verification-error) : String
-  (string.copy (& compiler-opt-debug-verify-error)))
+  (let
+    [state : OptDebugState
+      (__tl-project-field (compiler-opt-owned-state-shared-view) debug-state)]
+    (string.copy (& state.verify-error))))
 
-(define (compiler-opt-debug-pass-selected? [pass : String]) : bool
+(define (compiler-opt-debug-pass-selected?
+  [state : OptDebugState]
+  [pass : String]) : bool
   (and
-    (> (string.string-length compiler-opt-debug-dump-pass) 0)
-    (string.eq compiler-opt-debug-dump-pass pass)))
+    (> (string.string-length state.dump-pass) 0)
+    (string.eq state.dump-pass pass)))
 
 (define (compiler-opt-debug-observe-function
   [type-segment-bases : i64]
@@ -138,25 +176,38 @@
                 (ir.compiler-ir-block-list-instruction-count blocks))
               "\n"))
           unit)
-        (if (and
-          (not compiler-opt-debug-suppressed?)
-          (compiler-opt-debug-pass-selected? pass))
-          (in-arena
-            (arena.Arena compiler-opt-debug-dump-arena)
-            (set!
-              compiler-opt-debug-dump-buf
-              (text_buf.append
-                (if (text_buf.empty? (clone compiler-opt-debug-dump-buf))
-                  (clone compiler-opt-debug-dump-buf)
-                  (text_buf.append (clone compiler-opt-debug-dump-buf) "\n"))
-                (str_cat.str-cat
-                  "after "
-                  pass
-                  " @"
-                  (ir.compiler-ir-symbol-text name)
-                  "\n"
-                  (ir.compiler-ir-function-render type-segment-bases func)))))
-          unit)
+        (let
+          [state : OptDebugState
+            (__tl-project-field
+              (compiler-opt-owned-state-shared-view)
+              debug-state)]
+          (if (and
+            (not compiler-opt-debug-suppressed?)
+            (compiler-opt-debug-pass-selected? state pass))
+            (in-arena
+              state.dump-arena
+              (let
+                [next-buf : text_buf.TextBuf
+                  (text_buf.append
+                    (if (text_buf.empty? (clone state.dump-buf))
+                      (clone state.dump-buf)
+                      (text_buf.append (clone state.dump-buf) "\n"))
+                    (str_cat.str-cat
+                      "after "
+                      pass
+                      " @"
+                      (ir.compiler-ir-symbol-text name)
+                      "\n"
+                      (ir.compiler-ir-function-render type-segment-bases func)))]
+                (__tl-project-set-field
+                  compiler-opt-owned-state
+                  debug-state
+                  (OptDebugState
+                    state.dump-arena
+                    state.dump-pass
+                    next-buf
+                    state.verify-error))))
+            unit))
         func)]))
 
 (define (compiler-opt-debug-observe-blocks
@@ -8571,10 +8622,12 @@
 (define opt-cfg-label-generation : i64
   0)
 
-;; The table outlives every optimizer scratch rewind, so it is bound in the IR
-;; label arena -- the same dedicated, never-reset arena the label pool uses.
-;; Growing it in the ambient arena instead leaves the globals pointing into
-;; memory a later rewind frees.
+;; DELIBERATE-RAW (#6620): these globals do not own an arena handle. The table
+;; is process-lifetime storage bound to the IR label arena -- the same
+;; dedicated, never-reset arena the label pool uses -- and outlives every
+;; optimizer scratch rewind. Growing it in the ambient arena instead leaves the
+;; globals pointing into memory a later rewind frees. Keep this family outside
+;; CompilerOptOwnedState unless the IR label pool itself gains a reset owner.
 (define (opt-cfg-label-table-reserve! [count : i64]) : unit
   (if (<= count (array-length opt-cfg-label-slot))
     unit
@@ -11345,11 +11398,21 @@
 (define (compiler-opt-debug-finish-program [program : ir.CompilerIrProgram]) : ir.CompilerIrProgram
   (begin
     (if compiler-opt-debug-verify-ir
-      (match (opt-verify-program program)
-        [(ResultCompilerOptimizeVerify.Ok)
-          (set! compiler-opt-debug-verify-error "")]
-        [(ResultCompilerOptimizeVerify.Err message)
-          (set! compiler-opt-debug-verify-error message)])
+      (let
+        [owned : CompilerOptOwnedState (compiler-opt-owned-state-shared-view)]
+        [state : OptDebugState owned.debug-state]
+        [message : String
+          (match (opt-verify-program program)
+            [(ResultCompilerOptimizeVerify.Ok) ""]
+            [(ResultCompilerOptimizeVerify.Err verify-message) verify-message])]
+        (__tl-project-set-field
+          compiler-opt-owned-state
+          debug-state
+          (OptDebugState
+            state.dump-arena
+            state.dump-pass
+            state.dump-buf
+            message)))
       unit)
     program))
 
@@ -77336,50 +77399,69 @@
 ;; rest of the pass and the cached verdict cannot go stale. A -1 slot means
 ;; "not yet computed". The verdict cached here is caller-independent; the
 ;; self-call check stays outside in opt-inline-multiblock-callee-ok-cached?.
-(define opt-inline-multiblock-ok-memo : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-
-(define (opt-inline-multiblock-ok-memo-install! [index : OptFunctionIndex]) : unit
+(define (opt-inline-owned-state-install! [index : OptFunctionIndex]) : unit
   (let
     [count : i64 (opt-function-index-count index)]
     [memo : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [scratch : arena.Arena (arena.make)]
     (begin
       (opt-cfg-fill-i64! memo count (- 0 1))
-      (set! opt-inline-multiblock-ok-memo memo))))
+      (__tl-project-set-field
+        compiler-opt-owned-state
+        inline-state
+        (OptInlineOwnedState scratch memo)))))
 
-(define (opt-inline-multiblock-ok-memo-reset!) : unit
-  (set! opt-inline-multiblock-ok-memo (array.make-array i64 0)))
+(define (opt-inline-owned-state-reset! [destroy-owner? : bool]) : unit
+  (let
+    [retired : OptInlineOwnedState
+      (__tl-project-field (compiler-opt-owned-state-shared-view) inline-state)]
+    [scratch : arena.Arena retired.verify-scratch]
+    (begin
+      ;; Unpublish the memo and its owner together before invalidating the
+      ;; scratch generation. This becomes a consuming branded-state move once
+      ;; stored-owner invalidation is available end to end (#6255 follow-ups).
+      (__tl-project-set-field
+        compiler-opt-owned-state
+        inline-state
+        (OptInlineOwnedState (arena.Arena 0) (array.make-array i64 0)))
+      (if (or (not destroy-owner?) (= (arena.raw-handle scratch) 0))
+        unit
+        (unsafe
+          (arena.destroy scratch))))))
 
 (define (opt-inline-multiblock-callee-ok-cached?
   [callee-slot : i64]
   [callee : ir.CompilerIrFunction]
   [caller-name : i64]) : bool
-  (match callee
-    [(ir.CompilerIrFunction.Function cname cparams ret cvars cblocks)
-      (if (ir.compiler-ir-symbol-eq? cname caller-name)
-        false
-        (if (or
-          (< callee-slot 0)
-          (>= callee-slot (array-length opt-inline-multiblock-ok-memo)))
-          (opt-inline-multiblock-callee-body-ok? cparams ret cvars cblocks)
-          (let
-            [cached : i64 (array-ref opt-inline-multiblock-ok-memo callee-slot)]
-            (if (>= cached 0)
-              (= cached 1)
-              (let
-                [ok : bool
-                  (opt-inline-multiblock-callee-body-ok?
-                    cparams
-                    ret
-                    cvars
-                    cblocks)]
-                (begin
-                  (set!
-                    (array-ref opt-inline-multiblock-ok-memo callee-slot)
-                    (if ok
-                      1
-                      0))
-                  ok))))))]))
+  (let
+    [memo : (__tl_dyn-array i64)
+      (__tl-project-field
+        (__tl-project-field (compiler-opt-owned-state-shared-view) inline-state)
+        multiblock-ok-memo)]
+    (match callee
+      [(ir.CompilerIrFunction.Function cname cparams ret cvars cblocks)
+        (if (ir.compiler-ir-symbol-eq? cname caller-name)
+          false
+          (if (or (< callee-slot 0) (>= callee-slot (array-length memo)))
+            (opt-inline-multiblock-callee-body-ok? cparams ret cvars cblocks)
+            (let
+              [cached : i64 (array-ref memo callee-slot)]
+              (if (>= cached 0)
+                (= cached 1)
+                (let
+                  [ok : bool
+                    (opt-inline-multiblock-callee-body-ok?
+                      cparams
+                      ret
+                      cvars
+                      cblocks)]
+                  (begin
+                    (set!
+                      (array-ref memo callee-slot)
+                      (if ok
+                        1
+                        0))
+                    ok))))))])))
 
 ;; Admitted inline sites in the caller currently being rewritten, bumped once
 ;; per single-block expansion and per multiblock rewrite. When it is still zero
@@ -80793,42 +80875,44 @@
   [site-weight : i64]
   [np : i64]
   [banked-cost-in : i64]) : bool
-  (if (= opt-inline-verify-scratch-arena 0)
-    (opt-inline-checked-verdict
-      type-segment-bases
-      checked
-      banked
-      callee
-      site-depth
-      site-weight
-      np
-      banked-cost-in)
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 opt-inline-verify-scratch-arena]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set scratch))]
-      [mark : i64 (arena.tl_region_mark)]
-      [ok : bool
-        (opt-inline-checked-verdict
-          type-segment-bases
-          checked
-          banked
-          callee
-          site-depth
-          site-weight
-          np
-          banked-cost-in)]
-      [scratch-head : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch-head)
-          (arena.tl_region_reset mark))
-        (set! opt-inline-verify-scratch-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set enclosing))
-        ok))))
+  (let
+    [scratch : arena.Arena
+      (__tl-project-field
+        (__tl-project-field (compiler-opt-owned-state-shared-view) inline-state)
+        verify-scratch)]
+    (if (= (arena.raw-handle scratch) 0)
+      (opt-inline-checked-verdict
+        type-segment-bases
+        checked
+        banked
+        callee
+        site-depth
+        site-weight
+        np
+        banked-cost-in)
+      (let
+        [enclosing : arena.Arena (arena.current)]
+        [_switch : unit
+          (unsafe
+            (arena.set! scratch))]
+        [mark : arena.ArenaMark (arena.mark)]
+        [ok : bool
+          (opt-inline-checked-verdict
+            type-segment-bases
+            checked
+            banked
+            callee
+            site-depth
+            site-weight
+            np
+            banked-cost-in)]
+        (begin
+          ;; Arena handles are stable roots after #6285; rewinding cannot
+          ;; require recapturing and republishing a newer physical head.
+          (unsafe
+            (arena.rewind mark)
+            (arena.set! enclosing))
+          ok)))))
 
 (define (opt-inline-bounds-leaf-cost-inline?
   [callee-instrs : i64]
@@ -82940,51 +83024,48 @@
 ;; verifier builds only temporary CFG indexes and predecessor maps. Reuse one
 ;; scratch arena across the program so those per-function tables do not remain
 ;; live until backend emission.
-(define opt-inline-verify-scratch-arena : i64
-  0)
-
 (define (opt-inline-structure-ok-reclaiming? [blocks : ir.CompilerIrBlockList]) : bool
-  (if (= opt-inline-verify-scratch-arena 0)
-    (opt-inline-structure-ok? blocks)
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 opt-inline-verify-scratch-arena]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set scratch))]
-      [mark : i64 (arena.tl_region_mark)]
-      [ok : bool (opt-inline-structure-ok? blocks)]
-      [scratch-head : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch-head)
-          (arena.tl_region_reset mark))
-        (set! opt-inline-verify-scratch-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set enclosing))
-        ok))))
+  (let
+    [scratch : arena.Arena
+      (__tl-project-field
+        (__tl-project-field (compiler-opt-owned-state-shared-view) inline-state)
+        verify-scratch)]
+    (if (= (arena.raw-handle scratch) 0)
+      (opt-inline-structure-ok? blocks)
+      (let
+        [enclosing : arena.Arena (arena.current)]
+        [_switch : unit
+          (unsafe
+            (arena.set! scratch))]
+        [mark : arena.ArenaMark (arena.mark)]
+        [ok : bool (opt-inline-structure-ok? blocks)]
+        (begin
+          (unsafe
+            (arena.rewind mark)
+            (arena.set! enclosing))
+          ok)))))
 
 (define (opt-inline-tiny-predicate-acyclic-reclaiming?
   [blocks : ir.CompilerIrBlockList]) : bool
-  (if (= opt-inline-verify-scratch-arena 0)
-    (opt-inline-tiny-predicate-acyclic? blocks)
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 opt-inline-verify-scratch-arena]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set scratch))]
-      [mark : i64 (arena.tl_region_mark)]
-      [ok : bool (opt-inline-tiny-predicate-acyclic? blocks)]
-      [scratch-head : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch-head)
-          (arena.tl_region_reset mark))
-        (set! opt-inline-verify-scratch-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set enclosing))
-        ok))))
+  (let
+    [scratch : arena.Arena
+      (__tl-project-field
+        (__tl-project-field (compiler-opt-owned-state-shared-view) inline-state)
+        verify-scratch)]
+    (if (= (arena.raw-handle scratch) 0)
+      (opt-inline-tiny-predicate-acyclic? blocks)
+      (let
+        [enclosing : arena.Arena (arena.current)]
+        [_switch : unit
+          (unsafe
+            (arena.set! scratch))]
+        [mark : arena.ArenaMark (arena.mark)]
+        [ok : bool (opt-inline-tiny-predicate-acyclic? blocks)]
+        (begin
+          (unsafe
+            (arena.rewind mark)
+            (arena.set! enclosing))
+          ok)))))
 
 (define (opt-inline-revert-or-keep
   [fallback : ir.CompilerIrFunction]
@@ -84225,11 +84306,9 @@
       [graph : OptCallGraph (opt-callgraph-build index)]
       [scc-result : OptSccResult (opt-scc-compute graph)]
       [census : OptInlineCensus (opt-inline-census-build index devirt)]
-      [verify-scratch : i64 (arena.tl_arena_make)]
       (begin
-        (set! opt-inline-verify-scratch-arena verify-scratch)
+        (opt-inline-owned-state-install! index)
         (opt-inline-checked-program-begin!)
-        (opt-inline-multiblock-ok-memo-install! index)
         (opt-inline-process-scc-order!
           type-segment-bases
           index
@@ -84237,12 +84316,8 @@
           scc-result)
         (let
           [out : ir.CompilerIrFunctionList (opt-function-index-to-list index)]
-          [scratch-head : i64 opt-inline-verify-scratch-arena]
           (begin
-            (set! opt-inline-verify-scratch-arena 0)
-            (opt-inline-multiblock-ok-memo-reset!)
-            (unsafe
-              (arena.tl_arena_destroy scratch-head))
+            (opt-inline-owned-state-reset! true)
             out))))))
 
 (define (opt-inline-program-functions-with-spans
@@ -84261,12 +84336,8 @@
       [graph : OptCallGraph (opt-callgraph-build index)]
       [scc-result : OptSccResult (opt-scc-compute graph)]
       [census : OptInlineCensus (opt-inline-census-build index devirt)]
-      [verify-scratch : i64 (arena.tl_arena_make)]
-      [_install-verify-scratch : unit
-        (set! opt-inline-verify-scratch-arena verify-scratch)]
+      [_install-owned-state : unit (opt-inline-owned-state-install! index)]
       [_begin-checked : unit (opt-inline-checked-program-begin!)]
-      [_install-multiblock-memo : unit
-        (opt-inline-multiblock-ok-memo-install! index)]
       [next-spans : ir.CompilerSourceSpans
         (opt-inline-process-scc-order-with-spans
           type-segment-bases
@@ -84278,12 +84349,8 @@
         (OptInlineSpanProgram.Program
           (opt-function-index-to-list index)
           next-spans)]
-      [scratch-head : i64 opt-inline-verify-scratch-arena]
       (begin
-        (set! opt-inline-verify-scratch-arena 0)
-        (opt-inline-multiblock-ok-memo-reset!)
-        (unsafe
-          (arena.tl_arena_destroy scratch-head))
+        (opt-inline-owned-state-reset! true)
         out))))
 
 (define (opt-function-list-defines?
@@ -90234,7 +90301,7 @@
             ;; function is about to destroy.
             [_rebind-inline-globals : unit
               (begin
-                (opt-inline-multiblock-ok-memo-reset!)
+                (opt-inline-owned-state-reset! false)
                 (set!
                   (array-ref opt-inline-pred-renames 0)
                   (OptInlinePredRenameList.Nil)))]

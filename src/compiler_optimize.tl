@@ -54903,108 +54903,110 @@
   [offset : i64]
   [cell : (__tl_dyn-array i64)]
   [acc : OptBceVersionGuardAcc (:consume)]) : OptBceVersionGuardAcc
-  (if (or (<= scale 0) (= offset (- (- 0 9223372036854775807) 1)))
-    (OptBceVersionGuardAcc.No)
-    (if (and (= scale 1) (= offset 0))
+  (cond
+    [(or (<= scale 0) (= offset (- (- 0 9223372036854775807) 1)))
+      (OptBceVersionGuardAcc.No)]
+    [(and (= scale 1) (= offset 0))
       (opt-bce-version-cond-counter-seen
-        (opt-bce-version-cond cell (ir.CompilerIrBinOp.Le) bound length acc))
-      (if (= scale 1)
-        (opt-bce-version-scale1-guard seed bound length offset cell acc)
-        (match acc
-          [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
-          [(OptBceVersionGuardAcc.Some instrs values counter-seen)
-            (let
-              [last-counter : i64 (opt-bce-version-alloc-var cell)]
-              [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
-              [adjusted-capacity : i64 (opt-bce-version-alloc-var cell)]
-              [maximum-counter : i64 (opt-bce-version-alloc-var cell)]
-              [_emit-arithmetic : unit
-                (begin
-                  (opt-bce-version-builder-push!
-                    (&mut instrs)
-                    (ir.CompilerIrInstr.BinOp
-                      last-counter
-                      (ir.CompilerIrBinOp.Sub)
-                      bound
-                      (ir.CompilerIrValue.I64 1)
-                      (ast.AstType.I64)))
-                  (opt-bce-version-builder-push!
-                    (&mut instrs)
-                    (ir.CompilerIrInstr.BinOp
-                      length-minus-one
-                      (ir.CompilerIrBinOp.Sub)
-                      length
-                      (ir.CompilerIrValue.I64 1)
-                      (ast.AstType.I64)))
-                  (opt-bce-version-builder-push!
-                    (&mut instrs)
-                    (ir.CompilerIrInstr.BinOp
-                      adjusted-capacity
-                      (ir.CompilerIrBinOp.Sub)
-                      (ir.CompilerIrValue.Var length-minus-one)
-                      (ir.CompilerIrValue.I64 offset)
-                      (ast.AstType.I64)))
-                  (opt-bce-version-builder-push!
-                    (&mut instrs)
-                    (ir.CompilerIrInstr.BinOp
-                      maximum-counter
-                      (ir.CompilerIrBinOp.Div)
-                      (ir.CompilerIrValue.Var adjusted-capacity)
-                      (ir.CompilerIrValue.I64 scale)
-                      (ast.AstType.I64))))]
-              [with-arithmetic : OptBceVersionGuardAcc
-                (OptBceVersionGuardAcc.Some instrs values counter-seen)]
-              [upper : OptBceVersionGuardAcc
+        (opt-bce-version-cond cell (ir.CompilerIrBinOp.Le) bound length acc))]
+    [(= scale 1)
+      (opt-bce-version-scale1-guard seed bound length offset cell acc)]
+    [else
+      (match acc
+        [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+        [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+          (let
+            [last-counter : i64 (opt-bce-version-alloc-var cell)]
+            [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
+            [adjusted-capacity : i64 (opt-bce-version-alloc-var cell)]
+            [maximum-counter : i64 (opt-bce-version-alloc-var cell)]
+            [_emit-arithmetic : unit
+              (begin
+                (opt-bce-version-builder-push!
+                  (&mut instrs)
+                  (ir.CompilerIrInstr.BinOp
+                    last-counter
+                    (ir.CompilerIrBinOp.Sub)
+                    bound
+                    (ir.CompilerIrValue.I64 1)
+                    (ast.AstType.I64)))
+                (opt-bce-version-builder-push!
+                  (&mut instrs)
+                  (ir.CompilerIrInstr.BinOp
+                    length-minus-one
+                    (ir.CompilerIrBinOp.Sub)
+                    length
+                    (ir.CompilerIrValue.I64 1)
+                    (ast.AstType.I64)))
+                (opt-bce-version-builder-push!
+                  (&mut instrs)
+                  (ir.CompilerIrInstr.BinOp
+                    adjusted-capacity
+                    (ir.CompilerIrBinOp.Sub)
+                    (ir.CompilerIrValue.Var length-minus-one)
+                    (ir.CompilerIrValue.I64 offset)
+                    (ast.AstType.I64)))
+                (opt-bce-version-builder-push!
+                  (&mut instrs)
+                  (ir.CompilerIrInstr.BinOp
+                    maximum-counter
+                    (ir.CompilerIrBinOp.Div)
+                    (ir.CompilerIrValue.Var adjusted-capacity)
+                    (ir.CompilerIrValue.I64 scale)
+                    (ast.AstType.I64))))]
+            [with-arithmetic : OptBceVersionGuardAcc
+              (OptBceVersionGuardAcc.Some instrs values counter-seen)]
+            [upper : OptBceVersionGuardAcc
+              (opt-bce-version-cond
+                cell
+                (ir.CompilerIrBinOp.Le)
+                (ir.CompilerIrValue.Var last-counter)
+                (ir.CompilerIrValue.Var maximum-counter)
+                with-arithmetic)]
+            [capacity-safe : OptBceVersionGuardAcc
+              (if (>= offset 0)
+                ;; length > offset makes `length - 1 - offset`
+                ;; representable and non-negative.
                 (opt-bce-version-cond
                   cell
-                  (ir.CompilerIrBinOp.Le)
-                  (ir.CompilerIrValue.Var last-counter)
-                  (ir.CompilerIrValue.Var maximum-counter)
-                  with-arithmetic)]
-              [capacity-safe : OptBceVersionGuardAcc
-                (if (>= offset 0)
-                  ;; length > offset makes `length - 1 - offset`
-                  ;; representable and non-negative.
+                  (ir.CompilerIrBinOp.Gt)
+                  length
+                  (ir.CompilerIrValue.I64 offset)
+                  upper)
+                (let
+                  ;; For offset=-d, cap <= MAX-d+1 prevents positive
+                  ;; overflow in `cap - 1 + d`; cap > 0 supplies its lower
+                  ;; bound.
+                  [maximum-length : i64 (+ (+ 9223372036854775807 offset) 1)]
                   (opt-bce-version-cond
                     cell
                     (ir.CompilerIrBinOp.Gt)
                     length
-                    (ir.CompilerIrValue.I64 offset)
-                    upper)
-                  (let
-                    ;; For offset=-d, cap <= MAX-d+1 prevents positive
-                    ;; overflow in `cap - 1 + d`; cap > 0 supplies its lower
-                    ;; bound.
-                    [maximum-length : i64 (+ (+ 9223372036854775807 offset) 1)]
+                    (ir.CompilerIrValue.I64 0)
                     (opt-bce-version-cond
                       cell
-                      (ir.CompilerIrBinOp.Gt)
+                      (ir.CompilerIrBinOp.Le)
                       length
-                      (ir.CompilerIrValue.I64 0)
-                      (opt-bce-version-cond
-                        cell
-                        (ir.CompilerIrBinOp.Le)
-                        length
-                        (ir.CompilerIrValue.I64 maximum-length)
-                        upper))))]
-              [minimum-safe : OptBceVersionGuardAcc
-                (if (>= offset 0)
-                  capacity-safe
-                  (let
-                    [magnitude : i64 (- 0 offset)]
-                    [minimum-seed : i64
-                      (+
-                        (/ magnitude scale)
-                        (if (= (% magnitude scale) 0)
-                          0
-                          1))]
-                    (opt-bce-version-cond
-                      cell
-                      (ir.CompilerIrBinOp.Ge)
-                      seed
-                      (ir.CompilerIrValue.I64 minimum-seed)
-                      capacity-safe)))]
-              (opt-bce-version-cond-counter-seen minimum-safe))])))))
+                      (ir.CompilerIrValue.I64 maximum-length)
+                      upper))))]
+            [minimum-safe : OptBceVersionGuardAcc
+              (if (>= offset 0)
+                capacity-safe
+                (let
+                  [magnitude : i64 (- 0 offset)]
+                  [minimum-seed : i64
+                    (+
+                      (/ magnitude scale)
+                      (if (= (% magnitude scale) 0)
+                        0
+                        1))]
+                  (opt-bce-version-cond
+                    cell
+                    (ir.CompilerIrBinOp.Ge)
+                    seed
+                    (ir.CompilerIrValue.I64 minimum-seed)
+                    capacity-safe)))]
+            (opt-bce-version-cond-counter-seen minimum-safe))])]))
 
 ;; The scale-1 specialization of the guard above, for a whole RANGE of literal
 ;; offsets [kmin, kmax] against one length: `bound <= length - kmax`, plus
@@ -84677,7 +84679,8 @@
                             prefix-added
                             (if (or
                               hot-import?
-                              (or chain-import? absorb-import?)
+                              chain-import?
+                              absorb-import?
                               accessor-import?
                               checked?)
                               0
@@ -85578,7 +85581,8 @@
                             prefix-added
                             (if (or
                               hot-import?
-                              (or chain-import? absorb-import?)
+                              chain-import?
+                              absorb-import?
                               accessor-import?
                               checked?)
                               0

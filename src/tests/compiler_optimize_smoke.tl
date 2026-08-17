@@ -4477,10 +4477,10 @@
     "the same unbounded body stays out of line at an in-loop site"))
 
 (test
-  inline-single-site-narrow-small-caller-absorb
+  inline-single-site-narrow-small-caller-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-small-caller-absorb-ok?)
-    "below the arity floor the body still absorbs into a caller inside the narrow band"))
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-small-caller-refusal-ok?)
+    "below the arity floor the body stays out of line even in a two-block caller"))
 
 (test
   inline-single-site-narrow-large-caller-refusal

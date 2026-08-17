@@ -17278,12 +17278,13 @@
         compiler_ir_types.CompilerIrBlockList.Nil))))
 
 ;; Below the arity floor there is no argument marshalling for the absorption to
-;; retire, so the narrow class is paid for by the caller it lands in: it is
-;; admitted only into a caller at or under
-;; opt-inline-single-site-narrow-max-caller-blocks. Here the caller is two
-;; blocks, and the identical 220-instruction three-parameter body that the
-;; arity floor alone would refuse is absorbed whole.
-(define (compiler-optimize-inline-single-site-narrow-small-caller-absorb-ok?) : bool
+;; retire and the narrow class stays with the site-conditioned tiers: the
+;; identical 220-instruction body that the band absorbs at ten parameters stays
+;; out of line at three, in a two-block caller (the small-caller relief that
+;; once admitted it measured nothing in the corpus and merged every small
+;; program's single-site functions into `main`; see
+;; opt-inline-single-site-min-params) ...
+(define (compiler-optimize-inline-single-site-narrow-small-caller-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
@@ -17293,12 +17294,11 @@
         (opt-inline-wide-two-function-optimized
           (opt-inline-wide-padded-caller symbols.main callee-name narrow 1)
           (opt-inline-wide-callee-arity callee-name narrow)))
-      0)))
+      1)))
 
-;; The identical narrow body stays out of line once the caller is past the
-;; band. 71 blocks is the shape the corpus measured: `pl-parse-line` at 127
-;; blocks and `pl-record-sweep` at 197 took three and one narrow absorptions
-;; respectively and cost peephole_lines +1.29%.
+;; ... and in a 71-block one, the shape the corpus measured: `pl-parse-line` at
+;; 127 blocks and `pl-record-sweep` at 197 took three and one narrow
+;; absorptions respectively and cost peephole_lines +1.29%.
 (define (compiler-optimize-inline-single-site-narrow-large-caller-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]

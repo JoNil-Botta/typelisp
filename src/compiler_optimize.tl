@@ -82198,16 +82198,14 @@
 ;;      caller and one self-call counts 2 and lands in the duplication class.
 ;;      Mutual recursion is excluded one level up, where a callee in the
 ;;      caller's own SCC is refused before any of these predicates run;
-;;   2. the boundary is WIDE -- opt-inline-single-site-min-params or more -- OR
-;;      the CALLER is small, by opt-inline-single-site-narrow-max-caller-blocks.
-;;      Arity is the band's original subject. What no size budget prices, and
-;;      what absorption retires outright, is argument marshalling, and
-;;      marshalling cost scales with ARITY, not with body size. Below the arity
-;;      where the ABI runs out of argument registers there is no marshalling to
-;;      retire and the boundary is a call and a cheap prologue -- so a narrow
-;;      absorption has to be paid for by something else, and the measured
-;;      something else is the caller it lands in. See that constant for the
-;;      corpus split;
+;;   2. the boundary is WIDE -- opt-inline-single-site-min-params or more.
+;;      Arity is the band's subject. What no size budget prices, and what
+;;      absorption retires outright, is argument marshalling, and marshalling
+;;      cost scales with ARITY, not with body size. Below the arity where the
+;;      ABI runs out of argument registers there is no marshalling to retire
+;;      and the boundary is a call and a cheap prologue, so the narrow class is
+;;      left to the site-conditioned tiers (see the note at
+;;      opt-inline-single-site-min-params for the two measured variants);
 ;;   3. the site is NOT in a natural loop of the caller. An unbounded body may
 ;;      be moved next to a loop; it may not be moved inside one. This is the
 ;;      clause the first version lacked, and the 17.10% above is what it costs
@@ -82279,24 +82277,20 @@
 (define (opt-inline-single-site-min-params) : i64
   8)
 
-;; Below the arity floor the boundary has no marshalling to retire, so a narrow
-;; absorption is only worth making where the merged function still allocates
-;; well, and the measured predictor of that is the size of the caller it lands
-;; in. Removing the floor outright admits the whole narrow class and costs
-;; peephole_lines 602,719,795 -> 610,515,468 (+1.29%), with no row improving:
-;; `pl-token-len` (27 blocks), `pl-movq-prefix?` (66) and `pl-mnemonic-call?`
-;; (40) merge into `pl-parse-line`, taking it from 127 blocks to 249;
-;; `pl-stack-parens` (54) into `pl-operand-flags` (66 -> 120); `pl-indexed-rsp?`
-;; (51) into `pl-record-sweep` (197 -> 249). Every one of those callers is
-;; already past 64 blocks before the import. 64 sits above every caller the
-;; band claims today and below the smallest of the three that lose, so the
-;; narrow class is admitted where a merged function stays inside one working
-;; set and refused where it joins one already an order larger -- the same
-;; question opt-inline-hot-loop-leaf-max-caller-blocks asks of its own imports,
-;; asked here of a move rather than a copy.
-(define (opt-inline-single-site-narrow-max-caller-blocks) : i64
-  64)
-
+;; Below the arity floor the boundary has no marshalling to retire, and the
+;; narrow class stays with the site-conditioned tiers. Two variants were
+;; measured and refused. Removing the floor outright admits the whole narrow
+;; class and costs peephole_lines 602,719,795 -> 610,515,468 (+1.29%), with no
+;; row improving: `pl-token-len` (27 blocks), `pl-movq-prefix?` (66) and
+;; `pl-mnemonic-call?` (40) merge into `pl-parse-line`, taking it from 127
+;; blocks to 249; `pl-stack-parens` (54) into `pl-operand-flags` (66 -> 120);
+;; `pl-indexed-rsp?` (51) into `pl-record-sweep` (197 -> 249). Admitting the
+;; narrow class only into a SMALL caller (<= 64 blocks) left every
+;; instruction-count row byte-identical -- it bought nothing in the corpus --
+;; while merging the single-site functions of every small program into `main`,
+;; which is the shape the codegen fixtures under tests/integration inspect by
+;; name (switch_dispatch_scavenge, const_global_mask_unroll, ...). A relief that
+;; measures nothing and reshapes small programs is not kept.
 ;; The pathological-case backstop of clause 7. 1024 instructions is nearly
 ;; three times the largest measured absorption (`ln-recompute!`, 368) and eight
 ;; times the largest band ceiling anywhere else in this file; 128 blocks is
@@ -82320,9 +82314,7 @@
   [added-so-far : i64]) : bool
   (and
     (= absorb-class 1)
-    (or
-      (>= param-count (opt-inline-single-site-min-params))
-      (<= caller-blocks (opt-inline-single-site-narrow-max-caller-blocks)))
+    (>= param-count (opt-inline-single-site-min-params))
     (<= callee-instrs (opt-inline-single-site-max-body))
     (<=
       (ir.compiler-ir-block-list-count blocks)

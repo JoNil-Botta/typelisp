@@ -590,9 +590,9 @@
 
 (define (compiler-lower-spmd-package-state-empty) : CompilerLowerSpmdPackageState
   (CompilerLowerSpmdPackageState
-    (lower-name-arena-owner-root (arena.tl_arena_current))
+    0
     ""
-    (lower_i64_i64_map.with-capacity 8)
+    (lower_i64_i64_map.with-capacity 0)
     (__tl_make-array String 0)))
 
 (define (compiler-lower-function-memo-storage-empty) : CompilerLowerFunctionMemoStorage
@@ -7984,33 +7984,53 @@
   (let
     [previous : CompilerLowerSpmdPackageState
       (compiler-lower-state-spmd-package state)]
-    (in-arena
-      (arena.Arena previous.arena)
-      (compiler-lower-state-write!
-        state
-        CompilerLowerSpmdPackageState
-        spmd-package-state
-        (CompilerLowerSpmdPackageState
-          previous.arena
-          (clone name)
-          (lower_i64_i64_map.with-capacity 8)
-          (__tl_make-array String 0))))))
+    [home : i64 (arena.tl_arena_current)]
+    [next : i64 (arena.tl_arena_make_small)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set next))
+      (let
+        [package : CompilerLowerSpmdPackageState
+          (CompilerLowerSpmdPackageState
+            next
+            (clone name)
+            (lower_i64_i64_map.with-capacity 8)
+            (__tl_make-array String 0))]
+        (begin
+          (unsafe
+            (arena.tl_arena_set home))
+          (if (= previous.arena 0)
+            unit
+            (unsafe
+              (arena.tl_arena_destroy previous.arena)))
+          (compiler-lower-state-write!
+            state
+            CompilerLowerSpmdPackageState
+            spmd-package-state
+            package))))))
 
 (define (compiler-lower-state-clear-spmd-package! [state : CompilerLowerState]) : unit
   (let
     [previous : CompilerLowerSpmdPackageState
       (compiler-lower-state-spmd-package state)]
-    (in-arena
-      (arena.Arena previous.arena)
+    (begin
+      (if (= previous.arena 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy previous.arena)))
       (compiler-lower-state-write!
         state
         CompilerLowerSpmdPackageState
         spmd-package-state
-        (CompilerLowerSpmdPackageState
-          previous.arena
-          ""
-          (lower_i64_i64_map.with-capacity 8)
-          (__tl_make-array String 0))))))
+        (compiler-lower-spmd-package-state-empty)))))
+
+(define (compiler-lower-state-ensure-spmd-package! [state : CompilerLowerState]) : unit
+  (let
+    [package : CompilerLowerSpmdPackageState
+      (compiler-lower-state-spmd-package state)]
+    (if (= package.arena 0)
+      (compiler-lower-state-set-spmd-package! state "")
+      unit)))
 
 (define (compiler-lower-state-spmd-package-name [state : CompilerLowerState]) : String
   (let
@@ -57615,34 +57635,36 @@
   [lower-state : CompilerLowerState]
   [symbol : i64]
   [identity : String]) : LowerSpmdPackageSymbolRegistration
-  (let
-    [package : CompilerLowerSpmdPackageState
-      (compiler-lower-state-spmd-package lower-state)]
-    (match (lower_i64_i64_map.get (& package.symbol-identities) symbol)
-      [(lower_i64_i64_map.LookupFound identity-index)
-        (if (string.eq (array-ref package.identities identity-index) identity)
-          LowerSpmdPackageSymbolRegistration.Existing
-          (LowerSpmdPackageSymbolRegistration.Collision
-            (str_cat.str-cat
-              "lower: :spmd-callable stable symbol collision for "
-              (ir.compiler-ir-symbol-text symbol))))]
-      [(lower_i64_i64_map.LookupMissing)
-        (in-arena
-          (arena.Arena package.arena)
-          (let
-            [identity-index : i64 (array-length package.identities)]
-            (begin
-              (__tl_array-push! package.identities (clone identity))
-              (lower_i64_i64_map.insert-ref!
-                (&mut package.symbol-identities)
-                symbol
-                identity-index)
-              (compiler-lower-state-write!
-                lower-state
-                CompilerLowerSpmdPackageState
-                spmd-package-state
-                package)
-              LowerSpmdPackageSymbolRegistration.New)))])))
+  (begin
+    (compiler-lower-state-ensure-spmd-package! lower-state)
+    (let
+      [package : CompilerLowerSpmdPackageState
+        (compiler-lower-state-spmd-package lower-state)]
+      (match (lower_i64_i64_map.get (& package.symbol-identities) symbol)
+        [(lower_i64_i64_map.LookupFound identity-index)
+          (if (string.eq (array-ref package.identities identity-index) identity)
+            LowerSpmdPackageSymbolRegistration.Existing
+            (LowerSpmdPackageSymbolRegistration.Collision
+              (str_cat.str-cat
+                "lower: :spmd-callable stable symbol collision for "
+                (ir.compiler-ir-symbol-text symbol))))]
+        [(lower_i64_i64_map.LookupMissing)
+          (in-arena
+            (arena.Arena package.arena)
+            (let
+              [identity-index : i64 (array-length package.identities)]
+              (begin
+                (__tl_array-push! package.identities (clone identity))
+                (lower_i64_i64_map.insert-ref!
+                  (&mut package.symbol-identities)
+                  symbol
+                  identity-index)
+                (compiler-lower-state-write!
+                  lower-state
+                  CompilerLowerSpmdPackageState
+                  spmd-package-state
+                  package)
+                LowerSpmdPackageSymbolRegistration.New)))]))))
 
 (define (lower-spmd-package-lane-width-supported? [lanes : i64]) : bool
   (or (= lanes 8) (= lanes 16) (= lanes 32) (= lanes 64)))

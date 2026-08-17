@@ -303,7 +303,7 @@
   [key : String]
   [value : i64]) : build_string_i64_map.Map
   (let
-    [out : build_string_i64_map.Map map]
+    [out : build_string_i64_map.Map (owned_view.compiler-owned-shared-view map)]
     (begin
       (build_string_i64_map.insert-ref! (&mut out) key value)
       out)))
@@ -471,7 +471,8 @@
           stdlib-lines
           (owned_view.compiler-owned-shared-view value))
         (let
-          [next-roots : cli_svec.Vec stdlib-roots]
+          [next-roots : cli_svec.Vec
+            (owned_view.compiler-owned-shared-view stdlib-roots)]
           (begin
             (cli_svec.push-ref! (&mut next-roots) value)
             next-roots)))]
@@ -894,7 +895,8 @@
         has-opt-level
         lock-policy
         (let
-          [next-roots : cli_svec.Vec stdlib-roots]
+          [next-roots : cli_svec.Vec
+            (owned_view.compiler-owned-shared-view stdlib-roots)]
           (begin
             (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
@@ -3258,70 +3260,39 @@
             ""
             name
             target
-            true
-            opt-level
             mode
-            emit-entry
-            crt-entry
-            (owned_view.compiler-owned-shared-view decls)
-            (owned_view.compiler-owned-shared-view paths))
-            [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
-              (match (build-package-render-linux-direct-object kind image)
-                [(build_run_core.ResultSourceToolString.Ok object)
-                  (ResultBuildPackagePreparedRuntime.DirectObject
-                    object
-                    BuildPackageSideAssembly.Regenerate)]
-                [(build_run_core.ResultSourceToolString.Err message)
-                  (ResultBuildPackagePreparedRuntime.Unavailable message)])]
-            [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
-                category)
-              (ResultBuildPackagePreparedRuntime.Unavailable category)]
-            [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
-              (ResultBuildPackagePreparedRuntime.Unavailable
-                (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (owned_view.compiler-owned-box-shared-view diag)))])]
-        [(backend.CompilerBackendTarget.Windows)
-          ;; The shared Windows batch emitter owns the semantic gate as well as
-          ;; the COFF encoding/linkability checks. Its Assembly result is an
-          ;; intentional, stable fallback rather than a compilation failure.
-          (match (compiler_windows_coff_core.compiler-windows-batch-emit-lowered-result
-            ""
-            (compiler_driver_core.compiler-driver-lower-package-loaded
-              ""
-              target
-              mode
-              (owned_view.compiler-owned-shared-view decls)
-              (owned_view.compiler-owned-shared-view paths))
-            mode
-            opt-level
-            false
-            true)
-            [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
-                object
-                side-assembly)
-              (match side-assembly
-                [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.None)
-                  (ResultBuildPackagePreparedRuntime.DirectObject
-                    object
-                    BuildPackageSideAssembly.Regenerate)]
-                [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.Some
-                    asm)
-                  (ResultBuildPackagePreparedRuntime.DirectObject
-                    object
-                    (BuildPackageSideAssembly.Prepared asm))])]
-            [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
-                asm
-                category)
-              (ResultBuildPackagePreparedRuntime.Assembly
-                (text_buf.render asm)
-                category)]
-            [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
-                diag)
-              (ResultBuildPackagePreparedRuntime.Err
-                (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (owned_view.compiler-owned-box-shared-view diag)))])])
-      (ResultBuildPackagePreparedRuntime.Unavailable
-        "package direct object disabled"))))
+            decls
+            paths)
+          mode
+          opt-level
+          false
+          true)
+          [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
+              object
+              side-assembly)
+            (match side-assembly
+              [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.None)
+                (ResultBuildPackagePreparedRuntime.DirectObject
+                  object
+                  BuildPackageSideAssembly.Regenerate)]
+              [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.Some
+                  asm)
+                (ResultBuildPackagePreparedRuntime.DirectObject
+                  object
+                  (BuildPackageSideAssembly.Prepared asm))])]
+          [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
+              asm
+              category)
+            (ResultBuildPackagePreparedRuntime.Assembly
+              (text_buf.render asm)
+              category)]
+          [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
+              diag)
+            (ResultBuildPackagePreparedRuntime.Err
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (owned_view.compiler-owned-box-shared-view diag)))])])
+    (ResultBuildPackagePreparedRuntime.Unavailable
+      "package direct object disabled")))
 
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
@@ -4460,128 +4431,102 @@
     (source-set package_source_core.PackageSourceSet)
     (digest i64)))
 
-(define (build-package-tlci-text
-  [manifest-path : String]
-  [manifest : load.CompilerPkgManifest]
-  [mode : backend.CompilerBackendMode]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [producer-identity : String]) : ResultBuildPackageTlciText
-  (if (not (tlci.tlci-producer-identity-valid? producer-identity))
-    (ResultBuildPackageTlciText.Err
-      "build: exact producer compiler identity is unavailable")
-    (match (package_source_core.package-source-discover-for
-      "build"
-      manifest-path
-      true)
-      [(package_source_core.ResultPackageSourceSet.Err message)
-        (ResultBuildPackageTlciText.Err message)]
-      [(package_source_core.ResultPackageSourceSet.Ok source-set)
-        (match (package_source_core.package-source-set-digest
-          (owned_view.compiler-owned-shared-view source-set))
-          [(package_source_core.ResultPackageSourceDigest.Err message)
-            (ResultBuildPackageTlciText.Err
-              (str_cat.str-cat
-                "build: failed to compute package source digest: "
-                message))]
-          [(package_source_core.ResultPackageSourceDigest.Ok digest)
-            (match (build-package-tlci-source-binding-rodata digest)
-              [(tlci.ResultTlciAuxBytes.Err message)
-                (ResultBuildPackageTlciText.Err
-                  (str_cat.str-cat
-                    "build: failed to pack package source binding: "
-                    message))]
-              [(tlci.ResultTlciAuxBytes.Ok rodata)
-                (let
-                  [collector : BuildPackageTlciCallableCollector
-                    (build-package-tlci-callable-collector
-                      (owned_view.compiler-owned-shared-view source-set)
-                      (owned_view.compiler-owned-shared-view manifest)
-                      mode
-                      (owned_view.compiler-owned-shared-view decls)
-                      (owned_view.compiler-owned-shared-view paths))]
-                  [macro-collector : BuildPackageTlciMacroCollector
-                    (build-package-tlci-macro-collector
-                      source-set
-                      (owned_view.compiler-owned-shared-view manifest)
-                      decls
-                      paths)]
-                  [macro-names : (__tl_dyn-array String) macro-collector.names]
-                  (if (> (string.string-length collector.error) 0)
-                    (ResultBuildPackageTlciText.Err collector.error)
-                    (let
-                      [metadata : tlci.TlciMetadata
-                        (build-package-tlci-metadata manifest collector.items)]
-                      (if (= (array-length macro-names) 0)
-                        (match (tlci.tlci-emit-image
-                          (build-package-tlci-image
-                            metadata
-                            producer-identity
-                            rodata))
-                          [(tlci.ResultTlciBytes.Err message)
-                            (ResultBuildPackageTlciText.Err
-                              (str_cat.str-cat
-                                "build: failed to emit package tlci: "
-                                message))]
-                          [(tlci.ResultTlciBytes.Ok bytes)
-                            (ResultBuildPackageTlciText.Ok
-                              (tlci.tlci-bytes->string
-                                bytes
-                                0
-                                (array-length bytes)))])
-                        (match (compiler_tlci_native_producer.embedded-native-emit-package
-                          (tlci.tlci-metadata-emit metadata)
-                          producer-identity
-                          (cfg windows true false)
-                          rodata
-                          macro-names
-                          (& macro-collector.captures))
-                          [(compiler_tlci_native_producer.ResultProducerBytes.Err
-                              message)
-                            (ResultBuildPackageTlciText.Err
-                              (str_cat.str-cat
-                                "build: failed to emit package tlci: "
-                                message))]
-                          [(compiler_tlci_native_producer.ResultProducerBytes.Ok
-                              bytes)
-                            (ResultBuildPackageTlciText.Ok
-                              (tlci.tlci-bytes->string
-                                bytes
-                                0
-                                (array-length bytes)))])))))])])])))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (defenum ResultBuildPackageTlciSourceInputs
+    (Ok BuildPackageTlciSourceInputs)
+    (Err String)))
 
-;; This producer load is disposable; only the caller-owned TLCI text crosses
-;; the reset before the final lowering load.
-(define (build-package-tlci-text-loaded
-  [manifest-path : String]
-  [manifest : load.CompilerPkgManifest]
-  [mode : backend.CompilerBackendMode]
-  [entry-path : String]
-  [stdlib-roots : cli_svec.Vec]
-  [manifest-dir : String]
-  [deps : load.CompilerPkgDeps]
-  [emit-entry : bool]
-  [compile-cfgs : sym_i64_env.SymI64Env]
-  [producer-identity : String]) : ResultBuildPackageTlciText
-  (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime-cfg
-    entry-path
-    stdlib-roots
-    manifest-dir
-    deps
-    emit-entry
-    compile-cfgs)
-    [(load.ResultCompilerLoadWithPaths.Err diag)
-      (ResultBuildPackageTlciText.Err
-        (compiler_driver_core.compiler-driver-render-source-diagnostic
-          (owned_view.compiler-owned-box-shared-view diag)))]
-    [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-      (build-package-tlci-text
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-tlci-source-inputs
+    [manifest-path : String]
+    [producer-identity : String]) : ResultBuildPackageTlciSourceInputs
+    (if (not (tlci.tlci-producer-identity-valid? producer-identity))
+      (ResultBuildPackageTlciSourceInputs.Err
+        "build: exact producer compiler identity is unavailable")
+      (match (package_source_core.package-source-discover-for
+        "build"
         manifest-path
-        manifest
-        mode
-        (owned_view.compiler-owned-shared-view decls)
-        (owned_view.compiler-owned-shared-view paths)
-        producer-identity)]))
+        true)
+        [(package_source_core.ResultPackageSourceSet.Err message)
+          (ResultBuildPackageTlciSourceInputs.Err message)]
+        [(package_source_core.ResultPackageSourceSet.Ok source-set)
+          (match (package_source_core.package-source-set-digest
+            (owned_view.compiler-owned-shared-view source-set))
+            [(package_source_core.ResultPackageSourceDigest.Err message)
+              (ResultBuildPackageTlciSourceInputs.Err
+                (str_cat.str-cat
+                  "build: failed to compute package source digest: "
+                  message))]
+            [(package_source_core.ResultPackageSourceDigest.Ok digest)
+              (ResultBuildPackageTlciSourceInputs.Ok
+                (BuildPackageTlciSourceInputs source-set digest))])]))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-tlci-text-with-surface
+    [manifest : load.CompilerPkgManifest]
+    [mode : backend.CompilerBackendMode]
+    [decls : ast.AstDeclList]
+    [paths : ast.AstDeclPathList]
+    [producer-identity : String]
+    [source-inputs : BuildPackageTlciSourceInputs]
+    [surface : package_surface.PackageSurfacePayloads]) : ResultBuildPackageTlciText
+    (match (package_surface.package-surface-pack surface source-inputs.digest)
+      [(tlci.ResultTlciAuxBytes.Err message)
+        (ResultBuildPackageTlciText.Err
+          (str_cat.str-cat
+            "build: failed to pack package frontend surface: "
+            message))]
+      [(tlci.ResultTlciAuxBytes.Ok rodata)
+        (let
+          [collector : BuildPackageTlciCallableCollector
+            (build-package-tlci-callable-collector
+              (owned_view.compiler-owned-shared-view source-inputs.source-set)
+              (owned_view.compiler-owned-shared-view manifest)
+              mode
+              (owned_view.compiler-owned-shared-view decls)
+              (owned_view.compiler-owned-shared-view paths))]
+          [macro-collector : BuildPackageTlciMacroCollector
+            (build-package-tlci-macro-collector
+              (owned_view.compiler-owned-shared-view source-inputs.source-set)
+              (owned_view.compiler-owned-shared-view manifest)
+              (owned_view.compiler-owned-shared-view decls)
+              (owned_view.compiler-owned-shared-view paths))]
+          [macro-names : (__tl_dyn-array String) macro-collector.names]
+          (if (> (string.string-length collector.error) 0)
+            (ResultBuildPackageTlciText.Err collector.error)
+            (let
+              [metadata : tlci.TlciMetadata
+                (build-package-tlci-metadata manifest collector.items)]
+              (if (= (array-length macro-names) 0)
+                (match (tlci.tlci-emit-image
+                  (build-package-tlci-image metadata producer-identity rodata))
+                  [(tlci.ResultTlciBytes.Err message)
+                    (ResultBuildPackageTlciText.Err
+                      (str_cat.str-cat
+                        "build: failed to emit package tlci: "
+                        message))]
+                  [(tlci.ResultTlciBytes.Ok bytes)
+                    (ResultBuildPackageTlciText.Ok
+                      (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])
+                (match (compiler_tlci_native_producer.embedded-native-emit-package
+                  (tlci.tlci-metadata-emit metadata)
+                  producer-identity
+                  (cfg windows true false)
+                  rodata
+                  macro-names
+                  (& macro-collector.captures))
+                  [(compiler_tlci_native_producer.ResultProducerBytes.Err
+                      message)
+                    (ResultBuildPackageTlciText.Err
+                      (str_cat.str-cat
+                        "build: failed to emit package tlci: "
+                        message))]
+                  [(compiler_tlci_native_producer.ResultProducerBytes.Ok bytes)
+                    (ResultBuildPackageTlciText.Ok
+                      (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])))))])))
 
 (define (build-package-runtime-fingerprint-path [artifact-path : String]) : String
   (str_cat.str-cat artifact-path ".runtime-inputs"))
@@ -6125,8 +6070,8 @@
     mode
     emit-entry
     crt-entry
-    decls
-    owned-paths)
+    (owned_view.compiler-owned-shared-view decls)
+    (owned_view.compiler-owned-shared-view owned-paths))
     [(ResultBuildPackagePreparedRuntime.Unavailable category)
       (match (compiler_driver_core.compiler-driver-emit-package-loaded
         ""
@@ -6142,7 +6087,7 @@
         [(compiler_driver_core.ResultCompilerDriver.Err diag)
           (ResultBuildPackagePreparedRuntime.Err
             (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (__tl-box-place diag)))]
+              (owned_view.compiler-owned-box-shared-view diag)))]
         [(compiler_driver_core.ResultCompilerDriver.Ok asm)
           (ResultBuildPackagePreparedRuntime.Assembly asm category)])]
     [(ResultBuildPackagePreparedRuntime.DirectObject object side-assembly)
@@ -6180,10 +6125,10 @@
     (begin
       (package_surface.package-surface-capture-start!
         (package_surface.package-surface-identity-key
-          name
-          owned-paths
+          (owned_view.compiler-owned-shared-view name)
+          (owned_view.compiler-owned-shared-view owned-paths)
           source-inputs.digest
-          producer-identity
+          (owned_view.compiler-owned-shared-view producer-identity)
           (build_run_core.source-tool-target-name target))
         seen)
       (let
@@ -6196,12 +6141,13 @@
             mode
             emit-entry
             crt-entry
-            decls
-            owned-paths)]
-        (match prepared
+            (owned_view.compiler-owned-shared-view decls)
+            (owned_view.compiler-owned-shared-view owned-paths))]
+        (match (owned_view.compiler-owned-shared-view prepared)
           [(ResultBuildPackagePreparedRuntime.Err message)
             (begin
-              (package_surface.package-surface-capture-abort! message)
+              (package_surface.package-surface-capture-abort!
+                (owned_view.compiler-owned-shared-view message))
               (io.print-error message)
               1)]
           [_
@@ -6217,9 +6163,9 @@
                 (match (build-package-tlci-text-with-surface
                   manifest
                   mode
-                  decls
+                  (owned_view.compiler-owned-shared-view decls)
                   source-paths
-                  producer-identity
+                  (owned_view.compiler-owned-shared-view producer-identity)
                   source-inputs
                   surface)
                   [(ResultBuildPackageTlciText.Err message)
@@ -6334,114 +6280,83 @@
         cfgs
         "typecheck-prefix-inline-build-package")]))
 
-(define (build-package-emit-one
-  [manifest-path : String]
-  [manifest : load.CompilerPkgManifest]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
-  [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]
-  [dep-libs : process.ProcessStringList]
-  [producer-identity : String]
-  [announce : bool]) : i64
-  (let
-    ;; Windows package DAG nodes are serial same-process compiles; keep only
-    ;; persistent cache floors between dependency and root emits.
-    [_ : unit
-      (cfg
-        windows
-        (compiler_driver_core.compiler-driver-reset-file-state!)
-        unit)]
-    [manifest-dir : String (load.compiler-load-dirname manifest-path)]
-    [compile-context : BuildPackageCompileContext
-      (build-package-compile-context
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view manifest))]
-    [entry-path : String
-      (load.compiler-load-join-root-path
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view manifest.entry))]
-    [name : String (owned_view.compiler-owned-shared-view manifest.name)]
-    [_spmd-package-name : unit
-      (lower.lower-spmd-set-package-name!
-        (owned_view.compiler-owned-shared-view name))]
-    [_package-artifact-profile : unit
-      (load.compiler-load-set-package-artifact-profile!
-        (build-profile-name profile))]
-    [kind : load.CompilerPkgKind manifest.kind]
-    [asm-path : String
-      (build-package-asm-path-profile
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view name)
-        profile)]
-    [obj-path : String
-      (build-package-obj-path-profile
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view name)
-        profile
-        target)]
-    [artifact-paths : BuildPackageArtifactPaths
-      (build-package-artifact-paths
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view name)
-        kind
-        profile
-        target)]
-    [artifact-path : String
-      (build-package-runtime-artifact-path
-        (owned_view.compiler-owned-shared-view artifact-paths))]
-    [tlci-path : String (build-package-host-tlci-artifact-path artifact-paths)]
-    [_reset-file-state : unit
-      (compiler_driver_core.compiler-driver-reset-file-state!)]
-    (if (or
-      (> (string.string-length compile-context.error) 0)
-      (not
-        (build-ensure-package-output-dirs
-          (owned_view.compiler-owned-shared-view manifest-dir)
-          (owned_view.compiler-owned-shared-view name)
-          profile)))
-      (let
-        [message : String
-          (if (> (string.string-length compile-context.error) 0)
-            compile-context.error
-            (str_cat.str-cat
-              "build: failed to create package output directory "
-              (build-package-output-dir-profile manifest-dir name profile)))]
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-emit-one-with-surface
+    [manifest-path : String]
+    [manifest : load.CompilerPkgManifest]
+    [target : backend.CompilerBackendTarget]
+    [opt-level : i64]
+    [profile : BuildProfile]
+    [mode : backend.CompilerBackendMode]
+    [stdlib-roots : cli_svec.Vec]
+    [producer-identity : String]
+    [entry-path : String]
+    [manifest-dir : String]
+    [kind : load.CompilerPkgKind]
+    [asm-path : String]
+    [obj-path : String]
+    [artifact-path : String]
+    [tlci-path : String]
+    [manifest-link-inputs : build_run_core.SourceToolLinkInputs]
+    [dep-link-inputs : build_run_core.SourceToolLinkInputs]
+    [emit-entry : bool]
+    [compile-cfgs : sym_i64_env.SymI64Env]
+    [announce : bool]) : i64
+    (match (build-package-tlci-source-inputs
+      manifest-path
+      (owned_view.compiler-owned-shared-view producer-identity))
+      [(ResultBuildPackageTlciSourceInputs.Err message)
         (begin
           (io.print-error message)
-          1))
-      (let
-        [manifest-link-inputs : build_run_core.SourceToolLinkInputs
-          (build-package-manifest-link-inputs
-            (owned_view.compiler-owned-shared-view manifest.link)
-            (owned_view.compiler-owned-shared-view manifest-dir)
-            target)]
-        [dep-link-inputs : build_run_core.SourceToolLinkInputs
-          (build_run_core.source-tool-link-inputs-from-archives dep-libs)]
-        [emit-entry : bool (build-package-kind-entry? kind)]
-        [inline-test-status : i64
-          (build-inline-test-typecheck-package-sources
-            (owned_view.compiler-owned-shared-view manifest-path)
-            (owned_view.compiler-owned-shared-view stdlib-roots)
-            (owned_view.compiler-owned-shared-view manifest-dir)
-            (owned_view.compiler-owned-shared-view name)
-            (owned_view.compiler-owned-shared-view manifest.deps)
-            (build-package-compile-cfgs target compile-context.root-compiler))]
-        [_reset-after-inline-tests : unit
-          (if (= inline-test-status 0)
+          1)]
+      [(ResultBuildPackageTlciSourceInputs.Ok source-inputs)
+        (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime-cfg
+          (owned_view.compiler-owned-shared-view entry-path)
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view manifest.deps)
+          emit-entry
+          compile-cfgs)
+          [(load.ResultCompilerLoadWithPaths.Err diag)
             (begin
-              (compiler_driver_core.compiler-driver-reset-file-state!)
-              (ci.intern-persistent-arena-reset!))
-            unit)]
-        (if (= inline-test-status 0)
-          (let
-            [pre-emit-doctest-status : i64
-              (build-package-run-doctest-worker-or-inline
-                (owned_view.compiler-owned-shared-view name)
-                (owned_view.compiler-owned-shared-view entry-path)
-                (owned_view.compiler-owned-shared-view manifest-path)
+              (io.print-error
+                (compiler_driver_core.compiler-driver-render-source-diagnostic
+                  (owned_view.compiler-owned-box-shared-view diag)))
+              1)]
+          [(load.ResultCompilerLoadWithPaths.Ok decls paths _ seen)
+            (let
+              [owned-paths : ast.AstDeclPathList
+                (load.compiler-load-package-owned-paths-for-decls
+                  (owned_view.compiler-owned-shared-view manifest.name)
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (owned_view.compiler-owned-shared-view entry-path)
+                  (owned_view.compiler-owned-shared-view decls)
+                  (owned_view.compiler-owned-shared-view paths))]
+              [metadata-link-inputs : build_run_core.SourceToolLinkInputs
+                (build_run_core.source-tool-link-inputs-from-decls
+                  (owned_view.compiler-owned-shared-view decls)
+                  (build_run_core.source-tool-link-inputs-empty))]
+              [effective-link-inputs : build_run_core.SourceToolLinkInputs
+                (build_run_core.source-tool-link-inputs-merge
+                  (build_run_core.source-tool-link-inputs-merge
+                    manifest-link-inputs
+                    metadata-link-inputs)
+                  dep-link-inputs)]
+              [crt-entry : bool
+                (and
+                  emit-entry
+                  (build_run_core.source-tool-linux-crt-entry?
+                    target
+                    (owned_view.compiler-owned-shared-view
+                      effective-link-inputs)))]
+              (build-package-finish-fresh-artifacts-with-surface
+                (owned_view.compiler-owned-shared-view manifest)
+                source-inputs
+                seen
+                (owned_view.compiler-owned-shared-view manifest.name)
+                kind
                 target
                 opt-level
                 profile
@@ -6546,104 +6461,96 @@
             (if (= inline-test-status 0)
               (begin
                 (compiler_driver_core.compiler-driver-reset-file-state!)
-                (ci.intern-persistent-arena-reset!))]
-            (if (= pre-emit-doctest-status 0)
-              (match (build-package-tlci-text-loaded
-                (owned_view.compiler-owned-shared-view manifest-path)
-                (owned_view.compiler-owned-shared-view manifest)
-                mode
-                (owned_view.compiler-owned-shared-view entry-path)
-                (owned_view.compiler-owned-shared-view stdlib-roots)
-                (owned_view.compiler-owned-shared-view manifest-dir)
-                (owned_view.compiler-owned-shared-view manifest.deps)
-                emit-entry
-                (build-package-compile-cfgs
+                (ci.intern-persistent-arena-reset!))
+              unit)]
+          (if (= inline-test-status 0)
+            (let
+              [pre-emit-doctest-status : i64
+                (build-package-run-doctest-worker-or-inline
+                  (owned_view.compiler-owned-shared-view name)
+                  (owned_view.compiler-owned-shared-view entry-path)
+                  (owned_view.compiler-owned-shared-view manifest-path)
                   target
-                  compile-context.root-compiler)
-                (owned_view.compiler-owned-shared-view producer-identity))
-                [(ResultBuildPackageTlciText.Err message)
-                  (begin
-                    (io.print-error
-                      (owned_view.compiler-owned-shared-view message))
-                    1)]
-                [(ResultBuildPackageTlciText.Ok tlci-text)
-                  (begin
-                    ;; Producer-created intern ids must not remain live into
-                    ;; lowering; tlci-text is allocated in the caller arena.
-                    (compiler_driver_core.compiler-driver-reset-file-state!)
-                    (ci.intern-persistent-arena-reset!)
-                    (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime-cfg
-                      (owned_view.compiler-owned-shared-view entry-path)
-                      (owned_view.compiler-owned-shared-view stdlib-roots)
-                      (owned_view.compiler-owned-shared-view manifest-dir)
-                      (owned_view.compiler-owned-shared-view manifest.deps)
-                      emit-entry
-                      (build-package-compile-cfgs
-                        target
-                        compile-context.root-compiler))
-                      [(load.ResultCompilerLoadWithPaths.Err diag)
-                        (begin
-                          (io.print-error
-                            (compiler_driver_core.compiler-driver-render-source-diagnostic
-                              (owned_view.compiler-owned-box-shared-view diag)))
-                          1)]
-                      [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-                        (let
-                          [owned-paths : ast.AstDeclPathList
-                            (load.compiler-load-package-owned-paths-for-decls
-                              (owned_view.compiler-owned-shared-view name)
-                              (owned_view.compiler-owned-shared-view
-                                manifest-dir)
-                              (owned_view.compiler-owned-shared-view
-                                stdlib-roots)
-                              (owned_view.compiler-owned-shared-view entry-path)
-                              (owned_view.compiler-owned-shared-view decls)
-                              (owned_view.compiler-owned-shared-view paths))]
-                          [metadata-link-inputs : build_run_core.SourceToolLinkInputs
-                            (build_run_core.source-tool-link-inputs-from-decls
-                              (owned_view.compiler-owned-shared-view decls)
-                              (build_run_core.source-tool-link-inputs-empty))]
-                          ;; Merge order: manifest all-target/target inputs, source extern
-                          ;; metadata, then dependency archives (kept positional after the
-                          ;; requested libraries/args).
-                          [effective-link-inputs : build_run_core.SourceToolLinkInputs
-                            (build_run_core.source-tool-link-inputs-merge
-                              (build_run_core.source-tool-link-inputs-merge
-                                manifest-link-inputs
-                                metadata-link-inputs)
-                              dep-link-inputs)]
-                          [crt-entry : bool
-                            (and
-                              emit-entry
-                              (build_run_core.source-tool-linux-crt-entry?
-                                target
-                                (owned_view.compiler-owned-shared-view
-                                  effective-link-inputs)))]
-                          (build-package-finish-fresh-artifacts
-                            (owned_view.compiler-owned-shared-view name)
-                            kind
-                            target
-                            opt-level
-                            profile
-                            mode
-                            producer-identity
-                            emit-entry
-                            crt-entry
-                            (owned_view.compiler-owned-shared-view decls)
-                            (owned_view.compiler-owned-shared-view owned-paths)
-                            (build-package-output-dir-profile
-                              manifest-dir
-                              name
-                              profile)
-                            asm-path
-                            obj-path
-                            artifact-path
-                            effective-link-inputs
-                            tlci-path
-                            (owned_view.compiler-owned-shared-view tlci-text)
-                            announce))]))])
-              pre-emit-doctest-status))
-          inline-test-status)))))
+                  opt-level
+                  profile
+                  mode
+                  lock-policy
+                  (owned_view.compiler-owned-shared-view manifest.deps)
+                  (load.compiler-pkg-deps-list
+                    (owned_view.compiler-owned-shared-view manifest.deps))
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  emit-entry)]
+              [_reset-after-pre-emit-doctests : unit
+                (begin
+                  (compiler_driver_core.compiler-driver-reset-file-state!)
+                  (ci.intern-persistent-arena-reset!))]
+              (if (= pre-emit-doctest-status 0)
+                (build-package-emit-one-with-surface
+                  manifest-path
+                  manifest
+                  target
+                  opt-level
+                  profile
+                  mode
+                  stdlib-roots
+                  producer-identity
+                  entry-path
+                  manifest-dir
+                  kind
+                  asm-path
+                  obj-path
+                  artifact-path
+                  tlci-path
+                  manifest-link-inputs
+                  dep-link-inputs
+                  emit-entry
+                  (build-package-compile-cfgs
+                    target
+                    compile-context.root-compiler)
+                  announce)
+                pre-emit-doctest-status))
+            inline-test-status))))))
+
+(cfg
+  (not
+    (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci))
+  (define (build-package-emit-one
+    [_manifest-path : String]
+    [_manifest : load.CompilerPkgManifest]
+    [_target : backend.CompilerBackendTarget]
+    [_opt-level : i64]
+    [_profile : BuildProfile]
+    [_mode : backend.CompilerBackendMode]
+    [_lock-policy : BuildPackageLockPolicy]
+    [_stdlib-roots : cli_svec.Vec]
+    [_dep-libs : process.ProcessStringList]
+    [_producer-identity : String]
+    [_announce : bool]) : i64
+    (begin
+      (io.print-error
+        "build: package emission requires checked frontend surface support")
+      1)))
+
+(define (build-package-dependency-catalog-finish [status : i64]) : i64
+  (let
+    [state : load.CompilerLoadSessionState
+      (load.compiler-load-serial-test-session-state)]
+    (begin
+      (compiler_dependency_tlci.compiler-dependency-tlci-verification-finish!
+        (owned_view.compiler-owned-shared-view state))
+      (match (load.compiler-load-session-state-dependency-catalog-release!
+        state)
+        [(load.ResultCompilerLoadDependencyCatalogUnit.Ok) status]
+        [(load.ResultCompilerLoadDependencyCatalogUnit.Err message)
+          (begin
+            (io.print-error
+              (str_cat.str-cat
+                "build: failed to release dependency catalog mapping: "
+                message))
+            (if (= status 0)
+              1
+              status))]))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and
@@ -7204,8 +7111,10 @@
     [count : i64
       (build-package-graph-node-vec-len
         (owned_view.compiler-owned-shared-view nodes))]
-    [next-scheduled : build_string_i64_map.Map scheduled]
-    [next-workers : BuildPackageGraphWorkerVec workers]
+    [next-scheduled : build_string_i64_map.Map
+      (owned_view.compiler-owned-shared-view scheduled)]
+    [next-workers : BuildPackageGraphWorkerVec
+      (owned_view.compiler-owned-shared-view workers)]
     [ok : bool true]
     [error-message : String ""]
     (begin
@@ -7294,7 +7203,8 @@
     [count : i64
       (build-package-graph-worker-vec-len
         (owned_view.compiler-owned-shared-view workers))]
-    [next-built : build_string_i64_map.Map built]
+    [next-built : build_string_i64_map.Map
+      (owned_view.compiler-owned-shared-view built)]
     [next-failed-status : i64 failed-status]
     (begin
       (while (< index count)
@@ -7965,7 +7875,8 @@
         target
         mode
         (let
-          [next-roots : cli_svec.Vec stdlib-roots]
+          [next-roots : cli_svec.Vec
+            (owned_view.compiler-owned-shared-view stdlib-roots)]
           (begin
             (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))

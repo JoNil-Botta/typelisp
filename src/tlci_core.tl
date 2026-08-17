@@ -87,7 +87,7 @@
     [next : TlciSpmdSpecializations
       (owned_view.compiler-owned-shared-view items)]
     (begin
-      (tlci_specialization_vec.push (&mut next.items) item)
+      (tlci_specialization_vec.push-ref! (&mut next.items) item)
       next)))
 
 (define (tlci-spmd-specializations-push!
@@ -121,7 +121,7 @@
   (let
     [next : TlciSpmdCallables (owned_view.compiler-owned-shared-view items)]
     (begin
-      (tlci_callable_vec.push (&mut next.items) item)
+      (tlci_callable_vec.push-ref! (&mut next.items) item)
       next)))
 
 (define (tlci-spmd-callables-push!
@@ -4474,9 +4474,15 @@
       (set!
         (array-ref sections 0)
         (TlciAuxSection tlci-aux-kind-package-identity 1 first))
-      (set! (array-ref sections 1) (TlciAuxSection 99 7 unknown))
-      (set! (array-ref duplicates 0) (array-ref sections 0))
-      (set! (array-ref duplicates 1) (array-ref sections 0))
+      (set!
+        (array-ref sections 1)
+        (TlciAuxSection 99 7 (owned_view.compiler-owned-shared-view unknown)))
+      (set!
+        (array-ref duplicates 0)
+        (owned_view.compiler-owned-array-element-shared-view sections 0))
+      (set!
+        (array-ref duplicates 1)
+        (owned_view.compiler-owned-array-element-shared-view sections 0))
       (and
         (match (tlci-aux-pack-rodata (tlci-empty-bytes) duplicates)
           [(ResultTlciAuxBytes.Err _) true]
@@ -4491,18 +4497,23 @@
                     (tlci-copy-bytes packed)]
                   [overlap : (__tl_dyn-array u8) (tlci-copy-bytes packed)]
                   [oversized : (__tl_dyn-array u8) (tlci-copy-bytes packed)]
+                  [truncated : (__tl_dyn-array u8)
+                    (tlci-slice-bytes packed 0 (- (array-length packed) 1))]
                   [first-record : i64 directory.directory-offset]
                   [second-record : i64 (+ first-record tlci-aux-record-size)]
                   [first-offset : i64
                     (tlci-read-u64 packed (+ first-record 16))]
                   (begin
                     (tlci-set-u64!
-                      duplicate-kind
+                      (&mut duplicate-kind)
                       second-record
                       tlci-aux-kind-package-identity)
-                    (tlci-set-u64! overlap (+ second-record 16) first-offset)
                     (tlci-set-u64!
-                      oversized
+                      (&mut overlap)
+                      (+ second-record 16)
+                      first-offset)
+                    (tlci-set-u64!
+                      (&mut oversized)
                       (+ first-record 24)
                       (+ directory.directory-offset 1))
                     (and
@@ -4525,8 +4536,7 @@
                         tlci-aux-kind-package-identity)
                         [(ResultTlciAuxLookup.Err _) true]
                         [_ false])
-                      (match (tlci-aux-directory
-                        (tlci-slice-bytes packed 0 (- (array-length packed) 1)))
+                      (match (tlci-aux-directory truncated)
                         [(ResultTlciAuxDirectory.Missing) true]
                         [_ false]))))]
               [_ false])])))))

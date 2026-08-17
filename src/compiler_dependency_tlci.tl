@@ -7,6 +7,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(import compiler_owned_view as owned_view)
 (import compiler_load as load)
 (import package_source_core as package_source)
 (import tlci_core as tlci)
@@ -207,17 +208,20 @@
   (let
     [key : load.CompilerLoadDependencyCatalogKey
       (compiler-dependency-tlci-image-key
-        source-set
+        (owned_view.compiler-owned-shared-view source-set)
         artifact-path
         source-digest
         (tlci.tlci-content-hash bytes)
-        image)]
+        (owned_view.compiler-owned-shared-view image))]
     [reused : i64
-      (load.compiler-load-dependency-catalog-find-key-slot state key)]
+      (load.compiler-load-dependency-catalog-find-key-slot
+        (owned_view.compiler-owned-shared-view state)
+        (owned_view.compiler-owned-shared-view key))]
     (if (>= reused 0)
       reused
       (let
-        [metadata : tlci.TlciMetadata image.metadata]
+        [metadata : tlci.TlciMetadata
+          (owned_view.compiler-owned-shared-view image.metadata)]
         (if (or
           (not (string.eq metadata.package-name source-set.manifest.name))
           (not (string.eq metadata.package-version source-set.manifest.version)))
@@ -231,7 +235,7 @@
               (compiler-dependency-tlci-own-text metadata.package-version)))
           (match (package_source.package-source-verify-binding
             source-set
-            image.rodata)
+            (owned_view.compiler-owned-shared-view image.rodata))
             [(package_source.PackageSourceBindingVerification.Match digest)
               (if (not (= digest source-digest))
                 (compiler-dependency-tlci-record-unavailable!
@@ -241,7 +245,7 @@
                     source-digest
                     digest))
                 (match (tlci.tlci-image-admit-host
-                  image
+                  (owned_view.compiler-owned-shared-view image)
                   (tlci.tlci-build-host-platform))
                   [(tlci.TlciImageHostAdmission.MetadataOnly)
                     ;; Metadata-only images are trusted for later metadata
@@ -306,9 +310,10 @@
   (let
     [artifact-path : String
       (load.compiler-load-package-tlci-path
-        source-set.manifest-dir
-        source-set.manifest.name)]
-    (match (package_source.package-source-set-digest source-set)
+        (owned_view.compiler-owned-shared-view source-set.manifest-dir)
+        (owned_view.compiler-owned-shared-view source-set.manifest.name))]
+    (match (package_source.package-source-set-digest
+      (owned_view.compiler-owned-shared-view source-set))
       [(package_source.ResultPackageSourceDigest.Err message)
         (compiler-dependency-tlci-record-unavailable!
           state
@@ -322,19 +327,22 @@
             state
             (compiler-dependency-tlci-base-key
               source-set
-              artifact-path
+              (owned_view.compiler-owned-shared-view artifact-path)
               source-digest)
             (load.CompilerLoadDependencyCatalogFailure.Missing
               "dependency tlci disabled by verification source control"))
-          (if (not (io.file-exists? artifact-path))
+          (if (not
+            (io.file-exists?
+              (owned_view.compiler-owned-shared-view artifact-path)))
             (compiler-dependency-tlci-record-unavailable!
               state
               (compiler-dependency-tlci-base-key
                 source-set
-                artifact-path
+                (owned_view.compiler-owned-shared-view artifact-path)
                 source-digest)
               (load.CompilerLoadDependencyCatalogFailure.Missing
-                (compiler-dependency-tlci-own-text artifact-path)))
+                (compiler-dependency-tlci-own-text
+                  (owned_view.compiler-owned-shared-view artifact-path))))
             (match (io.try-read-file (& artifact-path))
               [(io.ErrIoBytes error)
                 (compiler-dependency-tlci-record-unavailable!
@@ -348,7 +356,8 @@
               [(io.OkIoBytes contents)
                 (let
                   [bytes : (__tl_dyn-array u8) (byte_buf.to-array contents)]
-                  (match (tlci.tlci-parse-image bytes)
+                  (match (tlci.tlci-parse-image
+                    (owned_view.compiler-owned-shared-view bytes))
                     [(tlci.ResultTlciImage.Err message)
                       (compiler-dependency-tlci-record-unavailable!
                         state
@@ -360,9 +369,9 @@
                           (compiler-dependency-tlci-own-text message)))]
                     [(tlci.ResultTlciImage.Ok image)
                       (compiler-dependency-tlci-admit-parsed!
-                        state
+                        (owned_view.compiler-owned-shared-view state)
                         (load.compiler-load-dependency-catalog-owner-arena
-                          state)
+                          (owned_view.compiler-owned-shared-view state))
                         source-set
                         artifact-path
                         source-digest
@@ -374,7 +383,8 @@
   [source-set : package_source.PackageSourceSet]) : i64
   (let
     [owner : i64
-      (load.compiler-load-dependency-catalog-owner-arena-ensure! state)]
+      (load.compiler-load-dependency-catalog-owner-arena-ensure!
+        (owned_view.compiler-owned-shared-view state))]
     (in-arena
       (arena.Arena owner)
       (compiler-dependency-tlci-prepare-source-set-owned! state source-set))))
@@ -388,7 +398,9 @@
       (load.compiler-load-normalize-path
         (load.compiler-load-join-root-path manifest-dir dep.path))]
     [manifest-path : String
-      (load.compiler-load-join-root-path root "typelisp.pkg")]
+      (load.compiler-load-join-root-path
+        (owned_view.compiler-owned-shared-view root)
+        "typelisp.pkg")]
     (match (package_source.package-source-discover-for
       "build dependency catalog"
       manifest-path
@@ -398,14 +410,16 @@
       [(package_source.ResultPackageSourceSet.Err message)
         (let
           [owner : i64
-            (load.compiler-load-dependency-catalog-owner-arena-ensure! state)]
+            (load.compiler-load-dependency-catalog-owner-arena-ensure!
+              (owned_view.compiler-owned-shared-view state))]
           (in-arena
             (arena.Arena owner)
             (compiler-dependency-tlci-record-unavailable!
               state
               (compiler-dependency-tlci-key
-                (load.compiler-load-canonical-path root)
-                dep.alias
+                (load.compiler-load-canonical-path
+                  (owned_view.compiler-owned-shared-view root))
+                (owned_view.compiler-owned-shared-view dep.alias)
                 ""
                 (load.compiler-load-canonical-path
                   (load.compiler-load-package-tlci-path root dep.alias))
@@ -426,8 +440,8 @@
     unit
     (begin
       (compiler-dependency-tlci-prepare-dep!
-        state
-        manifest-dir
+        (owned_view.compiler-owned-shared-view state)
+        (owned_view.compiler-owned-shared-view manifest-dir)
         (load.compiler-pkg-dep-list-at deps index))
       (compiler-dependency-tlci-prepare-deps-from!
         state
@@ -481,20 +495,20 @@
 (cfg
   test
   (define (compiler-dependency-tlci-test-write-text
-    [path : String]
-    [contents : String]) : bool
-    (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
+    [path : (& path str)]
+    [contents : (& contents str)]) : bool
+    (match (io.try-write-file path (byte_buf.str-as-bytes contents))
       [(io.OkIoUnit) true]
       [(io.ErrIoUnit _) false])))
 
 (cfg
   test
   (define (compiler-dependency-tlci-test-write-bytes
-    [path : String]
+    [path : (& path str)]
     [contents : (__tl_dyn-array u8)]) : bool
     (let
       [buffer : byte_buf.ByteBuf (byte_buf.from-array contents)]
-      (match (io.try-write-file (& path) (byte_buf.as-bytes (& buffer)))
+      (match (io.try-write-file path (byte_buf.as-bytes (& buffer)))
         [(io.OkIoUnit) true]
         [(io.ErrIoUnit _) false]))))
 
@@ -551,7 +565,7 @@
         (__tl_make-array tlci.TlciAuxSection 1)]
       (begin
         (if (>= payload-len 8)
-          (tlci.tlci-set-u64! payload 0 digest)
+          (tlci.tlci-set-u64! (&mut payload) 0 digest)
           unit)
         (set!
           (array-ref sections 0)
@@ -614,15 +628,17 @@
       (let
         [source-set : package_source.PackageSourceSet
           (compiler-dependency-tlci-test-source-set)]
-        [digest : i64 (compiler-dependency-tlci-test-digest source-set)]
+        [digest : i64
+          (compiler-dependency-tlci-test-digest
+            (owned_view.compiler-owned-shared-view source-set))]
         [wrong-digest : i64
           (if (= digest 2147483646)
             0
             (+ digest 1))]
         [artifact : String
           (load.compiler-load-package-tlci-path
-            source-set.manifest-dir
-            source-set.manifest.name)]
+            (owned_view.compiler-owned-shared-view source-set.manifest-dir)
+            (owned_view.compiler-owned-shared-view source-set.manifest.name))]
         [good-image : tlci.TlciImage
           (compiler-dependency-tlci-test-image
             "metadata_dep"
@@ -651,15 +667,22 @@
           (load.compiler-load-session-state-new)]
         (begin
           (unless
-            (compiler-dependency-tlci-test-write-bytes artifact good-bytes)
+            (compiler-dependency-tlci-test-write-bytes
+              artifact
+              (owned_view.compiler-owned-shared-view good-bytes))
             (return (io.panic "dependency tlci: unable to write trusted image")))
           (let
             [first : i64
-              (compiler-dependency-tlci-prepare-source-set! state source-set)]
+              (compiler-dependency-tlci-prepare-source-set!
+                (owned_view.compiler-owned-shared-view state)
+                (owned_view.compiler-owned-shared-view source-set))]
             [second : i64
-              (compiler-dependency-tlci-prepare-source-set! state source-set)]
+              (compiler-dependency-tlci-prepare-source-set!
+                (owned_view.compiler-owned-shared-view state)
+                (owned_view.compiler-owned-shared-view source-set))]
             [observed : load.CompilerLoadDependencyCatalogObservation
-              (load.compiler-load-dependency-catalog-observe state)]
+              (load.compiler-load-dependency-catalog-observe
+                (owned_view.compiler-owned-shared-view state))]
             (unless
               (and
                 (= first 0)
@@ -674,7 +697,7 @@
                 (= observed.entry-bytes 0)
                 (= observed.import-bytes 0)
                 (match (load.compiler-load-dependency-catalog-lookup-macro
-                  state
+                  (owned_view.compiler-owned-shared-view state)
                   first
                   "metadata_dep/missing")
                   [(load.CompilerLoadDependencyCatalogLookup.MetadataOnly) true]
@@ -697,10 +720,10 @@
               (io.panic "dependency tlci: unable to write cross-host image")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              opposite-state
+              (owned_view.compiler-owned-shared-view opposite-state)
               (compiler-dependency-tlci-prepare-source-set!
-                opposite-state
-                source-set))
+                (owned_view.compiler-owned-shared-view opposite-state)
+                (owned_view.compiler-owned-shared-view source-set)))
               [(load.CompilerLoadDependencyCatalogAdmittedImage.TrustedMetadataOnly
                   image)
                 (and
@@ -726,10 +749,10 @@
             (return (io.panic "dependency tlci: unable to write stale image")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              stale-state
+              (owned_view.compiler-owned-shared-view stale-state)
               (compiler-dependency-tlci-prepare-source-set!
-                stale-state
-                source-set))
+                (owned_view.compiler-owned-shared-view stale-state)
+                (owned_view.compiler-owned-shared-view source-set)))
               [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
                   (load.CompilerLoadDependencyCatalogFailure.StaleSource
                     expected
@@ -753,10 +776,10 @@
               (io.panic "dependency tlci: unable to write identity mismatch")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              mismatch-state
+              (owned_view.compiler-owned-shared-view mismatch-state)
               (compiler-dependency-tlci-prepare-source-set!
-                mismatch-state
-                source-set))
+                (owned_view.compiler-owned-shared-view mismatch-state)
+                (owned_view.compiler-owned-shared-view source-set)))
               [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
                   (load.CompilerLoadDependencyCatalogFailure.PackageMismatch
                     expected-name
@@ -781,10 +804,10 @@
               (io.panic "dependency tlci: unable to write unsupported schema")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              unsupported-state
+              (owned_view.compiler-owned-shared-view unsupported-state)
               (compiler-dependency-tlci-prepare-source-set!
-                unsupported-state
-                source-set))
+                (owned_view.compiler-owned-shared-view unsupported-state)
+                (owned_view.compiler-owned-shared-view source-set)))
               [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
                   (load.CompilerLoadDependencyCatalogFailure.Unsupported _))
                 true]
@@ -807,10 +830,10 @@
               (io.panic "dependency tlci: unable to write malformed schema")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              malformed-state
+              (owned_view.compiler-owned-shared-view malformed-state)
               (compiler-dependency-tlci-prepare-source-set!
-                malformed-state
-                source-set))
+                (owned_view.compiler-owned-shared-view malformed-state)
+                (owned_view.compiler-owned-shared-view source-set)))
               [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
                   (load.CompilerLoadDependencyCatalogFailure.Malformed _))
                 true]
@@ -822,10 +845,10 @@
             [(io.ErrIoUnit error) (return (io.panic (io.error-message error)))])
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              missing-state
+              (owned_view.compiler-owned-shared-view missing-state)
               (compiler-dependency-tlci-prepare-source-set!
-                missing-state
-                source-set))
+                (owned_view.compiler-owned-shared-view missing-state)
+                (owned_view.compiler-owned-shared-view source-set)))
               [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
                   (load.CompilerLoadDependencyCatalogFailure.Missing path))
                 (string.eq path artifact)]
@@ -837,24 +860,27 @@
             (return (io.panic "dependency tlci: unable to write parse failure")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              parse-state
+              (owned_view.compiler-owned-shared-view parse-state)
               (compiler-dependency-tlci-prepare-source-set!
-                parse-state
-                source-set))
+                (owned_view.compiler-owned-shared-view parse-state)
+                (owned_view.compiler-owned-shared-view source-set)))
               [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
                   (load.CompilerLoadDependencyCatalogFailure.Malformed _))
                 true]
               [_ false])
             (return
               (io.panic "dependency tlci: malformed image was not classified")))
-          (compiler-dependency-tlci-test-release! state)
+          (compiler-dependency-tlci-test-release!
+            (owned_view.compiler-owned-shared-view state))
           (unless
             (and
               (=
-                (load.compiler-load-dependency-catalog-observe state).entries
+                (load.compiler-load-dependency-catalog-observe
+                  (owned_view.compiler-owned-shared-view state)).entries
                 0)
               (=
-                (load.compiler-load-dependency-catalog-observe opposite-state).entries
+                (load.compiler-load-dependency-catalog-observe
+                  (owned_view.compiler-owned-shared-view opposite-state)).entries
                 1))
             (return (io.panic "dependency tlci: session release leaked state")))
           (compiler-dependency-tlci-test-release! opposite-state)

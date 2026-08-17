@@ -142,7 +142,7 @@
 
 (define (compile-cli-cfg-names-add [names : CompileCliCfgNames] [name : String]) : CompileCliCfgNames
   (let
-    [next : CompileCliCfgNames names]
+    [next : CompileCliCfgNames (owned_view.compiler-owned-shared-view names)]
     (begin
       (compile-cli-cfg-names-push! (&mut next) name)
       next)))
@@ -351,7 +351,8 @@
         has-target
         target
         (let
-          [next-roots : cli_svec.Vec stdlib-roots]
+          [next-roots : cli_svec.Vec
+            (owned_view.compiler-owned-shared-view stdlib-roots)]
           (begin
             (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
@@ -721,7 +722,8 @@
         has-target
         target
         (let
-          [next-roots : cli_svec.Vec stdlib-roots]
+          [next-roots : cli_svec.Vec
+            (owned_view.compiler-owned-shared-view stdlib-roots)]
           (begin
             (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
@@ -1063,7 +1065,8 @@
             count
             input-path
             (let
-              [next-roots : cli_svec.Vec stdlib-roots]
+              [next-roots : cli_svec.Vec
+                (owned_view.compiler-owned-shared-view stdlib-roots)]
               (begin
                 (cli_svec.push-ref! (&mut next-roots) value)
                 next-roots)))]
@@ -2047,11 +2050,13 @@
       (tc_core.tc-agg-align-cache-storage-ensure!)
       (tc_core.tc-agg-regwords-cache-storage-ensure!)
       (tc_core.tc-lazy-import-stub-storage-ensure-for-job!
-        (compiler_driver_core.compiler-driver-state-typecheck state))
+        (compiler_driver_core.compiler-driver-state-typecheck
+          (owned_view.compiler-owned-shared-view state)))
       (tc_core.tc-agg-layout-cache-table-storage-ensure!)
       (tc_core.macro-unqualified-import-cache-storage-ensure!
         (tc_core.tc-job-state-macro-state
-          (compiler_driver_core.compiler-driver-state-typecheck state))))))
+          (compiler_driver_core.compiler-driver-state-typecheck
+            (owned_view.compiler-owned-shared-view state)))))))
 
 (define (compile-cli-run-batch-entries
   [state : compiler_driver_core.CompilerDriverState]
@@ -2141,12 +2146,12 @@
           (match entry-result
             [(ResultCompileCliWindowsBatchEntry.Ok kind path category)
               (begin
-                (cli_svec.push
+                (cli_svec.push-ref!
                   results
                   (owned_view.compiler-owned-shared-view input-path))
-                (cli_svec.push results kind)
-                (cli_svec.push results path)
-                (cli_svec.push results category)
+                (cli_svec.push-ref! results kind)
+                (cli_svec.push-ref! results path)
+                (cli_svec.push-ref! results category)
                 0)]
             [(ResultCompileCliWindowsBatchEntry.Err entry-status) entry-status]))]
       (begin

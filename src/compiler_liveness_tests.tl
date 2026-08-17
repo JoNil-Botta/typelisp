@@ -18,11 +18,21 @@
           (live.compiler-live-set-max (live.compiler-live-set-max a b) c)
           (live.compiler-live-set-max d e)))]
     (begin
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) a)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) b)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) c)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) d)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) e)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        a)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        b)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        c)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        d)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        e)
       (live.CompilerLiveI64Set words))))
 
 (define (compiler-live-set6
@@ -39,12 +49,24 @@
           (live.compiler-live-set-max (live.compiler-live-set-max a b) c)
           (live.compiler-live-set-max (live.compiler-live-set-max d e) f)))]
     (begin
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) a)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) b)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) c)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) d)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) e)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) f)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        a)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        b)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        c)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        d)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        e)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        f)
       (live.CompilerLiveI64Set words))))
 
 (define (compiler-live-set7
@@ -64,22 +86,34 @@
             (live.compiler-live-set-max d e))
           (live.compiler-live-set-max f g)))]
     (begin
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) a)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) b)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) c)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) d)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) e)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) f)
-      (live.compiler-live-set-builder-insert! (live.compiler-live-shared-view words) g)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        a)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        b)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        c)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        d)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        e)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        f)
+      (live.compiler-live-set-builder-insert!
+        (live.compiler-live-shared-view words)
+        g)
       (live.CompilerLiveI64Set words))))
 
 (define (compiler-live-set-ops-ok?) : bool
   (let
     [empty : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
     [with-negative : live.CompilerLiveI64Set
-      (live.compiler-live-set-insert
-        (live.compiler-live-shared-view empty)
-        -4)]
+      (live.compiler-live-set-insert (live.compiler-live-shared-view empty) -4)]
     [a : live.CompilerLiveI64Set (live.compiler-live-set4 0 31 32 66)]
     [b : live.CompilerLiveI64Set (live.compiler-live-set4 66 32 31 0)]
     [removed : live.CompilerLiveI64Set
@@ -94,9 +128,7 @@
         (live.compiler-live-set2 0 65))]
     [trimmed : live.CompilerLiveI64Set
       (live.compiler-live-set-remove
-        (live.compiler-live-set-remove
-          (live.compiler-live-shared-view a)
-          66)
+        (live.compiler-live-set-remove (live.compiler-live-shared-view a) 66)
         32)]
     [deduplicated : live.CompilerLiveI64Set
       (live.compiler-live-set4 -1 31 31 66)]
@@ -107,19 +139,37 @@
         ok
         (and
           ok
-          (= (live.compiler-live-set-count (live.compiler-live-shared-view a)) 4)))
+          (=
+            (live.compiler-live-set-count (live.compiler-live-shared-view a))
+            4)))
       (set!
         ok
-        (and ok (live.compiler-live-set-contains? (live.compiler-live-shared-view a) 0)))
+        (and
+          ok
+          (live.compiler-live-set-contains?
+            (live.compiler-live-shared-view a)
+            0)))
       (set!
         ok
-        (and ok (live.compiler-live-set-contains? (live.compiler-live-shared-view a) 31)))
+        (and
+          ok
+          (live.compiler-live-set-contains?
+            (live.compiler-live-shared-view a)
+            31)))
       (set!
         ok
-        (and ok (live.compiler-live-set-contains? (live.compiler-live-shared-view a) 32)))
+        (and
+          ok
+          (live.compiler-live-set-contains?
+            (live.compiler-live-shared-view a)
+            32)))
       (set!
         ok
-        (and ok (live.compiler-live-set-contains? (live.compiler-live-shared-view a) 66)))
+        (and
+          ok
+          (live.compiler-live-set-contains?
+            (live.compiler-live-shared-view a)
+            66)))
       (set!
         ok
         (and
@@ -187,9 +237,7 @@
             (live.compiler-live-set-count
               (live.compiler-live-shared-view trimmed))
             2)))
-      (set!
-        ok
-        (and ok (= (live.compiler-live-set-word-count trimmed) 1)))
+      (set! ok (and ok (= (live.compiler-live-set-word-count trimmed) 1)))
       (set!
         ok
         (and
@@ -302,9 +350,7 @@
           (if (< def-var 0)
             0
             1))
-        (or
-          (< def-var 0)
-          (live.compiler-live-set-contains? defs def-var))))))
+        (or (< def-var 0) (live.compiler-live-set-contains? defs def-var))))))
 
 (define (compiler-live-instr-ids-seq-match-set-from?
   [instrs : ir.CompilerIrInstrSeq]
@@ -822,10 +868,12 @@
       [(live.CompilerLiveMaybeBlock.Some block)
         (and
           (live.compiler-live-set-eq?
-            (live.compiler-live-block-uses (live.compiler-live-shared-view block))
+            (live.compiler-live-block-uses
+              (live.compiler-live-shared-view block))
             (live.compiler-live-set1 2))
           (live.compiler-live-set-eq?
-            (live.compiler-live-block-defs (live.compiler-live-shared-view block))
+            (live.compiler-live-block-defs
+              (live.compiler-live-shared-view block))
             (live.compiler-live-set2 0 1))
           (live.compiler-live-set-eq?
             (live.compiler-live-block-live-in
@@ -888,10 +936,12 @@
       [(live.CompilerLiveMaybeBlock.Some block)
         (and
           (live.compiler-live-set-eq?
-            (live.compiler-live-block-uses (live.compiler-live-shared-view block))
+            (live.compiler-live-block-uses
+              (live.compiler-live-shared-view block))
             (live.compiler-live-set2 1 2))
           (live.compiler-live-set-eq?
-            (live.compiler-live-block-defs (live.compiler-live-shared-view block))
+            (live.compiler-live-block-defs
+              (live.compiler-live-shared-view block))
             (live.compiler-live-set1 3))
           (live.compiler-live-set-eq?
             (live.compiler-live-block-live-in block)

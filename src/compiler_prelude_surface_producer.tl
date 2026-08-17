@@ -1,4 +1,5 @@
 ;; compiler_prelude_surface_producer.tl - shared prelude/package surface helpers.
+(import compiler_load as load)
 (import compiler_ast_types as ast)
 (import compiler_clone as clone)
 (import compiler_diagnostic as cdiag)
@@ -12,9 +13,20 @@
 (import compiler_owned_view as owned_view)
 (import compiler_surface_facts as surface_facts)
 (import compiler_surface_identity as surface_identity)
+(import stdlib.arena)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.vector)
+(import sym_i64_env as cfg_env)
 (import (vector.vector String) as surface_svec)
+
+(defenum ResultPreludeSurface
+  (Ok (__tl_dyn-array u8))
+  (Err String))
+
+(defenum ResultPreludeSurfaceFacts
+  (Ok surface_facts.SurfaceTypecheckFacts ast.AstProgram ast.AstDeclPathList)
+  (Err String))
 
 (define (prelude-surface-path-present?
   [items : (& items surface_svec.Vec)]
@@ -169,7 +181,7 @@
       (surface_facts.surface-typecheck-facts-recording-start!
         (arena.tl_arena_current))]
     [checked : tc.ResultCompilerTypecheckChecked
-      (tc.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+      (tc.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
         load-state
         prefix-cache
         job-state
@@ -178,7 +190,8 @@
         roots
         (tc.tc-prefix-default-cache-scope)
         pools
-        source-names)]
+        source-names
+        (ci.intern-compat-state-capture-active))]
     (match checked
       [(tc.ResultCompilerTypecheckChecked.Partial diag _ _ _)
         (begin
@@ -412,7 +425,7 @@
     [load-state : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
     (begin
-      (surface_svec.push (&mut roots) root)
+      (surface_svec.push-ref! (&mut roots) root)
       (match (prelude-surface-load-cold
         (load.compiler-load-session-state-shared-view (& load-state))
         (owned_view.compiler-owned-shared-view roots)

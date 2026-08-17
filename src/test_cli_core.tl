@@ -319,7 +319,8 @@
           next-start
           n
           (let
-            [next-paths : cli_svec.Vec paths]
+            [next-paths : cli_svec.Vec
+              (owned_view.compiler-owned-shared-view paths)]
             (begin
               (cli_svec.push-ref!
                 (&mut next-paths)
@@ -452,7 +453,8 @@
         target
         mode
         (let
-          [next-roots : cli_svec.Vec roots]
+          [next-roots : cli_svec.Vec
+            (owned_view.compiler-owned-shared-view roots)]
           (begin
             (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
@@ -812,8 +814,10 @@
   (let
     [cur-decls : ast.AstDeclList decls]
     [cur-paths : ast.AstDeclPathList paths]
-    [runtime-decls-out : ast.AstDeclList runtime-decls]
-    [runtime-paths-out : ast.AstDeclPathList runtime-paths]
+    [runtime-decls-out : ast.AstDeclList
+      (owned_view.compiler-owned-shared-view runtime-decls)]
+    [runtime-paths-out : ast.AstDeclPathList
+      (owned_view.compiler-owned-shared-view runtime-paths)]
     [test-items : (__tl_dyn-array InlineTest) tests]
     [current-module : i64 (tltest-empty-name-id)]
     [done : bool false]
@@ -1380,7 +1384,7 @@
   [names : tltest_name_map.Map]
   [name-id : i64]) : tltest_name_map.Map
   (let
-    [result : tltest_name_map.Map names]
+    [result : tltest_name_map.Map (owned_view.compiler-owned-shared-view names)]
     [_inserted : bool
       (tltest_name_map.insert-if-absent-ref!
         (&mut result)
@@ -2274,8 +2278,10 @@
   (let
     [cur-decls : ast.AstDeclList decls]
     [cur-paths : ast.AstDeclPathList paths]
-    [result-decls : ast.AstDeclList out-decls]
-    [result-paths : ast.AstDeclPathList out-paths]
+    [result-decls : ast.AstDeclList
+      (owned_view.compiler-owned-shared-view out-decls)]
+    [result-paths : ast.AstDeclPathList
+      (owned_view.compiler-owned-shared-view out-paths)]
     [done : bool false]
     (begin
       (while (not done)
@@ -5022,6 +5028,21 @@
             (ResultTestPackageTotals.Err 1))]))
     (ResultTestPackageTotals.Ok 0 0)))
 
+(define (tltest-package-finish-entry
+  [entry-arena : arena.Arena]
+  [entry-result : i64]) : i64
+  ;; Reset while the entry arena remains alive but allocation has returned to
+  ;; the parent. Compiler globals may still inspect entry-owned state while
+  ;; installing their replacement state.
+  (begin
+    (driver.compiler-driver-reset-file-state!)
+    (compiler_load.compiler-load-session-fresh-reset!)
+    (compiler_load.compiler-load-session-cache-enable!)
+    (compiler_load.compiler-load-session-program-cache-disable!)
+    (unsafe
+      (arena.destroy entry-arena))
+    entry-result))
+
 (define (tltest-package-run-integration-source-isolated-count
   [source : String]
   [target : String]
@@ -5032,23 +5053,28 @@
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : i64
-  (with-scratch
-    (begin
-      (driver.compiler-driver-reset-file-state!)
-      (match (tltest-package-run-integration-source
-        source
-        target
-        roots
-        opt-level
-        test-mode
-        backend-target
-        manifest-dir
-        package-owner
-        deps)
-        [(ResultTestPackageTotals.Err status) (- 0 status)]
-        [(ResultTestPackageTotals.Failed _ tests _)
-          (- 0 (+ tltest-failed-count-offset tests))]
-        [(ResultTestPackageTotals.Ok _ tests) tests]))))
+  (let
+    [entry-arena : arena.Arena (arena.make)]
+    [entry-result : i64
+      (in-arena
+        entry-arena
+        (begin
+          (driver.compiler-driver-reset-file-state!)
+          (match (tltest-package-run-integration-source
+            source
+            target
+            roots
+            opt-level
+            test-mode
+            backend-target
+            manifest-dir
+            package-owner
+            deps)
+            [(ResultTestPackageTotals.Err status) (- 0 status)]
+            [(ResultTestPackageTotals.Failed _ tests _)
+              (- 0 (+ tltest-failed-count-offset tests))]
+            [(ResultTestPackageTotals.Ok _ tests) tests])))]
+    (tltest-package-finish-entry entry-arena entry-result)))
 
 (define (tltest-package-run-source
   [source : String]
@@ -5109,23 +5135,28 @@
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : i64
-  (with-scratch
-    (begin
-      (driver.compiler-driver-reset-file-state!)
-      (match (tltest-package-run-source
-        source
-        target
-        roots
-        opt-level
-        test-mode
-        backend-target
-        manifest-dir
-        package-owner
-        deps)
-        [(ResultTestPackageTotals.Err status) (- 0 status)]
-        [(ResultTestPackageTotals.Failed _ tests _)
-          (- 0 (+ tltest-failed-count-offset tests))]
-        [(ResultTestPackageTotals.Ok _ tests) tests]))))
+  (let
+    [entry-arena : arena.Arena (arena.make)]
+    [entry-result : i64
+      (in-arena
+        entry-arena
+        (begin
+          (driver.compiler-driver-reset-file-state!)
+          (match (tltest-package-run-source
+            source
+            target
+            roots
+            opt-level
+            test-mode
+            backend-target
+            manifest-dir
+            package-owner
+            deps)
+            [(ResultTestPackageTotals.Err status) (- 0 status)]
+            [(ResultTestPackageTotals.Failed _ tests _)
+              (- 0 (+ tltest-failed-count-offset tests))]
+            [(ResultTestPackageTotals.Ok _ tests) tests])))]
+    (tltest-package-finish-entry entry-arena entry-result)))
 
 (define (tltest-package-run-sources-from
   [sources : cli_svec.Vec]

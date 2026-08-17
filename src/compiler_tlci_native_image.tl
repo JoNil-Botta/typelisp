@@ -67,13 +67,17 @@
 (define (compiler-tlci-native-data-fixup-count
   [records : cobj.CompilerObjectDataRecordList]) : i64
   (let
-    [count : i64 (cobj.compiler-object-data-record-list-count records)]
+    [count : i64
+      (cobj.compiler-object-data-record-list-count
+        (owned_view.compiler-owned-shared-view records))]
     [index : i64 0]
     [fixups : i64 0]
     (begin
       (while (< index count)
         (begin
-          (match (cobj.compiler-object-data-record-list-ref records index)
+          (match (cobj.compiler-object-data-record-list-ref
+            (owned_view.compiler-owned-shared-view records)
+            index)
             [(cobj.CompilerObjectDataRecord.SymbolAddress _)
               (set! fixups (+ fixups 1))]
             [_ unit])
@@ -783,8 +787,10 @@
     [error : (__tl_dyn-array String) (__tl_make-array "")]
     [fixup-cap : i64
       (+
-        (compiler-tlci-native-data-fixup-count rodata-records)
-        (compiler-tlci-native-data-fixup-count data-records))]
+        (compiler-tlci-native-data-fixup-count
+          (owned_view.compiler-owned-shared-view rodata-records))
+        (compiler-tlci-native-data-fixup-count
+          (owned_view.compiler-owned-shared-view data-records)))]
     [fixup-offsets : (__tl_dyn-array i64) (array.make-array i64 fixup-cap)]
     [fixup-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [builder : byte_buf_core.ByteBufBuilder

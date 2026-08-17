@@ -33,7 +33,7 @@
   (if (>= index count)
     unit
     (begin
-      (doc_module_vec.push
+      (doc_module_vec.push-ref!
         out
         (doc-module-list-ref (owned_view.compiler-owned-shared-view src) index))
       (doc-module-list-append-from out src (+ index 1) count))))

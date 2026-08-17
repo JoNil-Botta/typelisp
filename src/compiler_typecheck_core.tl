@@ -910,17 +910,13 @@
             (* new-capacity tc-macro-call-site-record-stride))]
         [index : i64 0]
         (begin
-          (set! (array-ref new-records index) (array-ref old-records index))
-          (set! index (+ index 1))))
-      (set! data.records new-records)
-      (set! data.capacity new-capacity)
-      (set! data.fixed-storage-arena (arena.tl_arena_current))
-      (tc-macro-call-site-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            owner
-            previous))))))
+          (while (< index (* data.len tc-macro-call-site-record-stride))
+            (begin
+              (set! (array-ref new-records index) (array-ref old-records index))
+              (set! index (+ index 1))))
+          (set! data.records new-records)
+          (set! data.capacity new-capacity)
+          (tc-macro-call-site-state-data-set! state data))))))
 
 (define (tc-macro-call-site-record-key-eq?
   [data : (& data TcMacroCallSiteStateData)]
@@ -1039,13 +1035,7 @@
               (&mut data.seen-sites)
               site-hash
               record-index)
-            (set! data.fixed-storage-arena (arena.tl_arena_current))
-            (tc-macro-call-site-state-data-set! state data)
-            (unsafe
-              (arena.tl_arena_set
-                (if (= previous owner)
-                  owner
-                  previous)))))])))
+            (tc-macro-call-site-state-data-set! state data)))])))
 
 (define (tc-macro-call-site-state-record!
   [state : TcMacroCallSiteState]
@@ -3532,7 +3522,8 @@
 (define (tc-context-type-resolution-pools [ctx : TcContext]) : ast.AstNodePoolContext
   (let
     [owned : ast.AstNodePoolContext (tc-context-type-pools ctx)]
-    (if (ast.ast-node-pool-context-type-installed? owned)
+    (if (ast.ast-node-pool-context-type-installed?
+      (tc-global-shared-view owned))
       owned
       (if (ast.ast-node-pool-has-active-context?)
         (ast.ast-node-pool-context-active-live)
@@ -12711,7 +12702,6 @@
                 seq
                 jumps-address
                 prev-address)
-              (tc-type-env-store-restore-after-owner-alloc! previous owner)
               (tc-chain-register-layer!
                 store-handle
                 state-addr
@@ -12739,7 +12729,7 @@
       [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill
-          env
+          (tc-global-shared-view env)
           (tc_i64_i64_map.with-capacity capacity)
           (&mut values)
           (not scan-through)
@@ -12807,7 +12797,7 @@
       [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill-prefix
-          env
+          (tc-global-shared-view env)
           count
           (tc_i64_i64_map.with-capacity capacity)
           (&mut values)
@@ -13147,7 +13137,7 @@
     [(ast.AstStructCleanup.No) env]
     [(ast.AstStructCleanup.Fn cleanup-name)
       (tc-bind-import-alias-value-id
-        ctx
+        (tc-global-shared-view ctx)
         env
         alias-id
         importer-module-id
@@ -13704,13 +13694,7 @@
           (set! data.block-spans (array.make-array ast.AstSourceSpan 128))
           (set! data.block-paths (array.make-array String 128))
           (set! data.block-used (array.make-array bool 128))
-          (set! data.fixed-storage-arena (arena.tl_arena_current))
-          (tc-unused-unsafe-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set
-              (if (= previous owner)
-                owner
-                previous))))))))
+          (tc-unused-unsafe-state-data-set! state data))))))
 
 (define (tc-unused-unsafe-tracking-reset!
   [state : TcUnusedUnsafeState]
@@ -17461,16 +17445,16 @@
         ;; survives the scratch arenas active during per-decl typechecking.
         (let
           [current : TcMacroModuleEnvStateData
-            (tc-macro-module-env-state-data state)]
-          (match (tc-module-local-env-cached-id
-            ctx
-            current.hygiene-active-top-env
-            module
-            module-id
-            (tc-global-shared-view current.hygiene-module-env-cache))
-            [(ResultTcModuleLocalEnv.Ok def-env next-cache)
-              (let
-                [cache-head : i64 (arena.tl_arena_current)]
+            (tc-hygiene-module-env-cache-owned-data state)]
+          (in-arena
+            (arena.Arena current.hygiene-cache-arena)
+            (match (tc-module-local-env-cached-id
+              (tc-global-shared-view ctx)
+              current.hygiene-active-top-env
+              (tc-global-shared-view module)
+              module-id
+              (tc-global-shared-view current.hygiene-module-env-cache))
+              [(ResultTcModuleLocalEnv.Ok def-env next-cache)
                 (begin
                   (set! current.hygiene-module-env-cache next-cache)
                   (tc-macro-module-env-state-data-set! state current)
@@ -20542,6 +20526,19 @@
                 context
                 "; region value would escape"))))])))
 
+(define (tc-resolve-type-list-at
+  [ctx : TcContext]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : ast.AstTypeList
+  (if (>= index (ast.ast-type-list-len types))
+    (ast.ast-type-list-new)
+    (ast.ast-type-cons
+      (tc-resolve-type
+        (tc-global-shared-view ctx)
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+      (tc-resolve-type-list-at ctx types (+ index 1)))))
+
 (define (tc-resolve-type-list [ctx : TcContext] [types : ast.AstTypeList]) : ast.AstTypeList
   (if (tc-type-list-needs-resolution? (tc-global-shared-view types))
     (tc-resolve-type-list-at ctx (& types) 0)
@@ -20553,7 +20550,10 @@
   [types : ast.AstTypeList]) : ast.AstTypeList
   (let
     [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
-    (if (tc-type-list-needs-resolution-for-pools? pools type-bases types)
+    (if (tc-type-list-needs-resolution-for-pools?
+      (tc-global-shared-view pools)
+      type-bases
+      (tc-global-shared-view types))
       (tc-resolve-type-list-at-with-pools ctx pools (& types) 0)
       types)))
 
@@ -20564,10 +20564,13 @@
   [index : i64]) : ast.AstTypeList
   (if (>= index (ast.ast-type-list-len types))
     (ast.ast-type-list-new)
-    (ast.ast-type-cons
-      (tc-resolve-type
+    (ast.ast-type-cons-with-pools
+      (tc-global-shared-view pools)
+      (tc-resolve-type-with-pools
         (tc-global-shared-view ctx)
-        (ast.ty-node-get
+        (tc-global-shared-view pools)
+        (ast.ast-node-pool-context-type-get
+          pools
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
       (tc-resolve-type-list-at-with-pools ctx pools types (+ index 1)))))
 
@@ -20736,13 +20739,13 @@
     [(ast.AstType.Func args ret)
       (if (tc-type-list-needs-resolution-with-bases?
         type-bases
-        (__tl-box-place args))
+        (ast.ast-type-list-box-shared-view args))
         true
         (tc-type-needs-resolution-id-with-bases? type-bases ret))]
     [(ast.AstType.Tuple elems)
       (tc-type-list-needs-resolution-with-bases?
         type-bases
-        (__tl-box-place elems))]
+        (ast.ast-type-list-box-shared-view elems))]
     [(ast.AstType.Array elem _)
       (tc-type-needs-resolution-id-with-bases? type-bases elem)]
     [(ast.AstType.DynArray elem)
@@ -20760,8 +20763,6 @@
     [(ast.AstType.MutRef _ inner)
       (tc-type-needs-resolution-id-with-bases? type-bases inner)]
     [(ast.AstType.Region _ inner)
-      (tc-type-needs-resolution-id-with-bases? type-bases inner)]
-    [(ast.AstType.Consume inner)
       (tc-type-needs-resolution-id-with-bases? type-bases inner)]
     [(ast.AstType.VarArgs _ _) true]
     [(ast.AstType.Var _) true]
@@ -23020,8 +23021,8 @@
 
 (define (tc-lazy-import-stub-index-reset! [state : TcLazyImportState]) : unit
   (let
-    [slots : (__tl_dyn-array i64)
-      (__tl-project-field (tc-lazy-import-state-data state) index-slots)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data state)]
+    [slots : (__tl_dyn-array i64) (tc-global-shared-view data.index-slots)]
     [slot : i64 0]
     (while (< slot tc-lazy-import-stub-capacity)
       (begin
@@ -23290,6 +23291,7 @@
 ;; concrete recorded target that exports the requested type resolves to the
 ;; same symbol handle; otherwise preserve the ordinary unresolved result.
 (define (tc-lazy-import-unique-type-key-id
+  [state : TcMacroState]
   [symbols : (& symbols csym.CompilerSymbols)]
   [alias-id : i64]
   [base-id : i64]) : TcMaybeNameId
@@ -23358,7 +23360,7 @@
   [current-module-id : i64]
   [alias-id : i64]) : TcMaybeNameId
   (match (tc-lazy-import-stub-target-id-for-state
-    (tc-context-macro-state ctx)
+    (tc-context-macro-state (tc-global-shared-view ctx))
     current-module-id
     alias-id)
     [(TcMaybeNameId.Some target-module-id)
@@ -24814,7 +24816,8 @@
                             (= target-module-id alias-id))
                             option_i64.None
                             (match (tc-lazy-import-unique-type-key-id
-                              (tc-context-macro-state ctx)
+                              (tc-context-macro-state
+                                (tc-global-shared-view ctx))
                               symbols
                               alias-id
                               base-id)
@@ -24833,7 +24836,7 @@
                         [(option_i64.Some _) (option_i64.Some key-id)]
                         [(option_i64.None)
                           (match (tc-lazy-import-unique-type-key-id
-                            (tc-context-macro-state ctx)
+                            (tc-context-macro-state (tc-global-shared-view ctx))
                             symbols
                             alias-id
                             base-id)
@@ -25008,6 +25011,9 @@
       (tc-resolve-source-type-name resolution-ctx name name-id))))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
+  ;; The ordinary resolver follows the installed compatibility pool because
+  ;; most production AstType values still carry child ids in that domain.
+  ;; Callers that carry a pool end-to-end use `tc-resolve-type-with-pools`.
   (match ty
     [(ast.AstType.I64) (ast.AstType.I64)]
     [(ast.AstType.I32) (ast.AstType.I32)]
@@ -25069,6 +25075,113 @@
         (ast.ast-lifetime-list-box-shared-view lifetimes))]
     [(ast.AstType.Var name)
       (tc-resolve-type-name ctx (tc-hygiene-name-text-id name) name)]))
+
+(define (tc-resolve-type-with-pools
+  [ctx : TcContext]
+  [pools : ast.AstNodePoolContext]
+  [ty : ast.AstType]) : ast.AstType
+  (let
+    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (if (tc-type-needs-resolution-for-pools?
+      (tc-global-shared-view pools)
+      type-bases
+      (tc-global-shared-view ty))
+      (match (tc-global-shared-view ty)
+        [(ast.AstType.Func args ret)
+          (ast.ast-ty-func-with-pools
+            (tc-global-shared-view pools)
+            (tc-resolve-type-list-with-pools
+              (tc-global-shared-view ctx)
+              (tc-global-shared-view pools)
+              (ast.ast-type-list-box-shared-view args))
+            (tc-resolve-type-with-pools
+              ctx
+              (tc-global-shared-view pools)
+              (ast.ast-node-pool-context-type-get pools ret)))]
+        [(ast.AstType.Tuple elems)
+          (ast.AstType.Tuple
+            (box
+              (tc-resolve-type-list-with-pools
+                ctx
+                (tc-global-shared-view pools)
+                (ast.ast-type-list-box-shared-view elems))))]
+        [(ast.AstType.Array elem len)
+          (ast.ast-ty-array-with-pools
+            (tc-global-shared-view pools)
+            (tc-resolve-type-with-pools
+              ctx
+              (tc-global-shared-view pools)
+              (ast.ast-node-pool-context-type-get pools elem))
+            len)]
+        [(ast.AstType.DynArray elem)
+          (ast.ast-ty-dyn-array-with-pools
+            (tc-global-shared-view pools)
+            (tc-resolve-type-with-pools
+              ctx
+              (tc-global-shared-view pools)
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.Slice elem)
+          (ast.ast-ty-slice-with-pools
+            (tc-global-shared-view pools)
+            (tc-resolve-type-with-pools
+              ctx
+              (tc-global-shared-view pools)
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.Box elem)
+          (ast.ast-ty-box-with-pools
+            (tc-global-shared-view pools)
+            (tc-resolve-type-with-pools
+              ctx
+              (tc-global-shared-view pools)
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.Ptr elem)
+          (ast.ast-ty-ptr-with-pools
+            (tc-global-shared-view pools)
+            (tc-resolve-type-with-pools
+              ctx
+              (tc-global-shared-view pools)
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.MutPtr elem)
+          (ast.ast-ty-mut-ptr-with-pools
+            (tc-global-shared-view pools)
+            (tc-resolve-type-with-pools
+              ctx
+              (tc-global-shared-view pools)
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.Ref region inner)
+          (ast.ast-ty-ref-with-pools
+            (tc-global-shared-view pools)
+            region
+            (tc-resolve-type-with-pools
+              ctx
+              (tc-global-shared-view pools)
+              (ast.ast-node-pool-context-type-get pools inner)))]
+        [(ast.AstType.MutRef region inner)
+          (ast.ast-ty-mut-ref-with-pools
+            (tc-global-shared-view pools)
+            region
+            (tc-resolve-type-with-pools
+              ctx
+              (tc-global-shared-view pools)
+              (ast.ast-node-pool-context-type-get pools inner)))]
+        [(ast.AstType.Region region inner)
+          (ast.ast-ty-region-with-pools
+            (tc-global-shared-view pools)
+            region
+            (tc-resolve-type-with-pools
+              ctx
+              (tc-global-shared-view pools)
+              (ast.ast-node-pool-context-type-get pools inner)))]
+        [(ast.AstType.VarArgs name lifetimes)
+          (tc-resolve-type-name-with-args
+            ctx
+            (tc-hygiene-name-text-id name)
+            name
+            (ast.ast-lifetime-list-box-shared-view lifetimes))]
+        [(ast.AstType.Var name)
+          (tc-resolve-type-name ctx (tc-hygiene-name-text-id name) name)]
+        [_ ty])
+      ty)))
 
 (define (tc-canonicalize-resolved-nominal-type-list-at
   [ctx : TcContext]
@@ -44583,8 +44696,8 @@
         (tc-ref-closure-local-uses-ok?
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases place-box)
-          name
-          bound)
+          (tc-global-shared-view name)
+          (tc-global-shared-view bound))
         (tc-ref-closure-local-uses-ok?
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases replacement-box)
@@ -45172,15 +45285,7 @@
           (set! data.lines (array.make-array i64 tc-inlay-hint-capacity))
           (set! data.cols (array.make-array i64 tc-inlay-hint-capacity))
           (set! data.types (array.make-array String tc-inlay-hint-capacity))
-          ;; Arena allocation chains segments; retain the newest owner head so
-          ;; a later switch keeps allocating on the live chain.
-          (set! data.fixed-storage-arena (arena.tl_arena_current))
-          (tc-inlay-hint-state-data-set! state (tc-global-shared-view data))
-          (unsafe
-            (arena.tl_arena_set
-              (if (= previous owner)
-                data.fixed-storage-arena
-                previous))))))))
+          (tc-inlay-hint-state-data-set! state data))))))
 
 (define (tc-inlay-hint-string-arena-ensure-for-state!
   [state : TcInlayHintState]) : i64
@@ -45192,8 +45297,6 @@
         (begin
           (set! data.string-arena owner)
           (tc-inlay-hint-state-data-set! state (tc-global-shared-view data))
-          (unsafe
-            (arena.tl_arena_set previous))
           data.string-arena))
       data.string-arena)))
 
@@ -50644,8 +50747,8 @@
         (tc-expr-uses-free-name?
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases place-box)
-          name
-          bound)
+          (tc-global-shared-view name)
+          (tc-global-shared-view bound))
         (tc-expr-uses-free-name?
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases replacement-box)
@@ -52699,15 +52802,26 @@
         [replacement : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
         [sets-target : bool
-          (match (tc-move-root-projection-var-id expr-bases place)
+          (match (tc-move-root-projection-var-id
+            expr-bases
+            (tc-global-shared-view place))
             [(TcMaybeNameId.Some root-id)
               (and
-                (string.eq (tc-env-key-name-text root-id) name)
-                (not (tc-string-list-contains bound name)))]
+                (string.eq
+                  (tc-env-key-name-text root-id)
+                  (tc-global-shared-view name))
+                (not
+                  (tc-string-list-contains
+                    (tc-global-shared-view bound)
+                    (tc-global-shared-view name))))]
             [(TcMaybeNameId.No) false])]
         (or
           sets-target
-          (tc-expr-sets-free-name? expr-bases place name bound)
+          (tc-expr-sets-free-name?
+            expr-bases
+            (tc-global-shared-view place)
+            (tc-global-shared-view name)
+            (tc-global-shared-view bound))
           (tc-expr-sets-free-name? expr-bases replacement name bound)))]
     [(ast.AstExpr.ArrayTake array-box live-box index-box)
       (let
@@ -53835,10 +53949,16 @@
       [count : i64 decls.len]
       [decl-offset : i64 decls.offset]
       [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+      [prev-arena : i64 (arena.tl_arena_current)]
       [index-arena : i64 (arena.tl_arena_make)]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set index-arena))]
+      [positions : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 8192)]
+      [module-id : i64 (csym.compiler-symbol-root-module-id)]
+      [position : i64 0]
       (begin
-        (in-arena
-          (arena.Arena index-arena)
+        (while (< position count)
           (let
             [decl : ast.AstDecl
               (tc-global-array-element-shared-view
@@ -53858,7 +53978,9 @@
         (set! tc-program-enum-index-decl-count count)
         (set! tc-program-enum-index-decl-offset decl-offset)
         (set! tc-program-enum-index-generation (ci.intern-generation))
-        (set! tc-program-enum-index-arena index-arena)
+        (set! tc-program-enum-index-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set prev-arena))
         (set! tc-program-enum-index-ready true)))))
 
 (define (tc-program-enum-variants-from-indexed-decl
@@ -60284,18 +60406,22 @@
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? handle)
       (let
-        [owner-id : i64 (tc-variant-owner-id-or ctx handle -1)]
+        [owner-id : i64
+          (tc-variant-owner-id-or (tc-global-shared-view ctx) handle -1)]
         (if (and
           (>= owner-id 0)
           (or
             (tc-nominal-name-id-eq? owner-id enum-id)
-            (tc-nominal-name-id-canonical-eq? ctx owner-id enum-id)))
+            (tc-nominal-name-id-canonical-eq?
+              (tc-global-shared-view ctx)
+              owner-id
+              enum-id)))
           (match (csym.compiler-registries-variant-fields-indexed
             (tc-context-symbols ctx)
             handle)
             [(parser.ResultAstTypeList.Ok fields)
               (match (tc-variant-pattern-payload-types
-                ctx
+                (tc-global-shared-view ctx)
                 owner-id
                 (csym.compiler-registry-handle-owner-index handle)
                 enum-lifetimes
@@ -60434,7 +60560,7 @@
                       ctx
                       enum-name
                       variant-id
-                      (__tl-box-place lifetimes)
+                      (ast.ast-lifetime-list-box-shared-view lifetimes)
                       args)]
                   [(TcMaybeNameId.No) false])]
               [(parser.ResultAstVariantDefList.Err _) false])]
@@ -60495,7 +60621,8 @@
   [ctx : TcContext]
   [pattern : ast.AstPattern]
   [enum-id : i64]
-  [variant-id : i64]) : bool
+  [variant-id : i64]
+  [enum-lifetimes : ast.AstLifetimeList]) : bool
   (match (tc-global-shared-view pattern)
     [(ast.AstPattern.Wildcard) true]
     [(ast.AstPattern.Binding name)
@@ -60510,7 +60637,12 @@
             enum-id
             name
             variant-id)
-          (tc-variant-pattern-irrefutable-id? ctx enum-id variant-id args)))]
+          (tc-variant-pattern-irrefutable-id?
+            ctx
+            enum-id
+            variant-id
+            enum-lifetimes
+            args)))]
     [_ false]))
 
 (define (tc-match-arms-cover-variant?
@@ -60542,7 +60674,8 @@
           (tc-global-shared-view ctx)
           pattern
           enum-id
-          variant-id)
+          variant-id
+          (tc-global-shared-view enum-lifetimes))
           true
           (tc-match-arms-cover-variant-at?
             ctx
@@ -60629,7 +60762,8 @@
           (tc-global-shared-view ctx)
           (tc-global-shared-view arms)
           enum-id
-          name)
+          name
+          (tc-global-shared-view enum-lifetimes))
           (tc-enum-variants-exhaustive-ok-at
             ctx
             enum-id
@@ -60918,7 +61052,7 @@
             (tc-enum-variants-exhaustive-ok
               ctx
               enum-name
-              (__tl-box-place lifetimes)
+              (owned_view.compiler-owned-box-shared-view lifetimes)
               variants
               arms)]
           [(parser.ResultAstVariantDefList.Err _)
@@ -63094,57 +63228,80 @@
   [place : ast.AstExpr]) : ResultTcType
   (match (ast.ast-expr-unspan place)
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        name)
         (match (tc-dotted-local-field-expr-id-after-check name)
           [(ResultTcExprId.Ok virtual-id)
             (tc-replace-place-value-type
-              ctx
-              env
+              (tc-global-shared-view ctx)
+              (tc-global-shared-view env)
               (ast.ast-expr-segment-bases-get
-                (tc-context-expr-bases ctx)
+                (tc-context-expr-bases (tc-global-shared-view ctx))
                 virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcType.Err message)])
-        (match (tc-lookup-visible-id ctx env name)
+        (match (tc-lookup-visible-id
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          name)
           [(ResultTcType.Ok ty)
-            (match (tc-type-strip-region (tc-resolve-type ctx ty))
+            (match (tc-type-strip-region
+              (tc-resolve-type
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view ty)))
               [(ast.AstType.MutRef _ referent-id)
-                (ResultTcType.Ok (tc-context-type-get ctx referent-id))]
+                (ResultTcType.Ok
+                  (tc-context-type-get (tc-global-shared-view ctx) referent-id))]
               [(ast.AstType.Ref _ _)
                 (ResultTcType.Err
                   "typecheck: replace! requires mutable place access")]
-              [_ (ResultTcType.Ok (tc-resolve-type ctx ty))])]
+              [_
+                (ResultTcType.Ok
+                  (tc-resolve-type (tc-global-shared-view ctx) ty))])]
           [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ast.AstExpr.StructGet receiver-box field)
       (match (tc-replace-place-value-type
-        ctx
-        env
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
         (ast.ast-expr-segment-bases-get
-          (tc-context-expr-bases ctx)
+          (tc-context-expr-bases (tc-global-shared-view ctx))
           receiver-box))
         [(ResultTcType.Ok receiver-ty)
-          (tc-struct-set-field-type-id ctx receiver-ty field)]
+          (tc-struct-set-field-type-id
+            (tc-global-shared-view ctx)
+            receiver-ty
+            field)]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.TupleRef receiver-box index)
       (match (tc-replace-place-value-type
-        ctx
-        env
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
         (ast.ast-expr-segment-bases-get
-          (tc-context-expr-bases ctx)
+          (tc-context-expr-bases (tc-global-shared-view ctx))
           receiver-box))
         [(ResultTcType.Ok receiver-ty)
-          (tc-tuple-set-element-type ctx receiver-ty index)]
+          (tc-tuple-set-element-type
+            (tc-global-shared-view ctx)
+            receiver-ty
+            index)]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (match (tc-expr-with-expected-or-actual-id
-        ctx
-        env
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
         index-box
         (ast.AstType.I64))
         [(ResultTcType.Ok index-ty)
           (if (tc-integer-type? index-ty)
-            (match (tc-expr-id ctx env array-box)
+            (match (tc-expr-id
+              (tc-global-shared-view ctx)
+              (tc-global-shared-view env)
+              array-box)
               [(ResultTcType.Ok array-ty)
-                (match (tc-array-set-receiver ctx array-ty)
+                (match (tc-array-set-receiver
+                  (tc-global-shared-view ctx)
+                  array-ty)
                   [(ResultTcArrayReceiver.Ok receiver)
                     (match receiver
                       [(TcArrayReceiver _ elem-ty) (ResultTcType.Ok elem-ty)])]
@@ -63154,12 +63311,20 @@
             (ResultTcType.Err "typecheck: replace! array index must be integer"))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.BoxGet receiver-box)
-      (match (tc-expr-id ctx env receiver-box)
-        [(ResultTcType.Ok receiver-ty) (tc-box-set-inner-type ctx receiver-ty)]
+      (match (tc-expr-id
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        receiver-box)
+        [(ResultTcType.Ok receiver-ty)
+          (tc-box-set-inner-type (tc-global-shared-view ctx) receiver-ty)]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.BoxTake receiver-box)
-      (match (tc-expr-id ctx env receiver-box)
-        [(ResultTcType.Ok receiver-ty) (tc-box-set-inner-type ctx receiver-ty)]
+      (match (tc-expr-id
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        receiver-box)
+        [(ResultTcType.Ok receiver-ty)
+          (tc-box-set-inner-type (tc-global-shared-view ctx) receiver-ty)]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [_ (ResultTcType.Err "typecheck: replace! target must be a mutable place")]))
 
@@ -63168,45 +63333,56 @@
   [env : TcTypeEnv]
   [place : ast.AstExpr]
   [replacement-id : i64]) : ResultTcType
-  (match (tc-store-place-lifetime ctx env place)
+  (match (tc-store-place-lifetime
+    (tc-global-shared-view ctx)
+    (tc-global-shared-view env)
+    (tc-global-shared-view place))
     [(ResultTcNameId.Ok _)
-      (if (tc-fixed-array-take-active-cleanup-owner-place? ctx env place)
+      (if (tc-fixed-array-take-active-cleanup-owner-place?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (tc-global-shared-view place))
         (ResultTcType.Err
           "typecheck: replace! cannot replace an active cleanup owner")
-        (match (tc-replace-place-value-type ctx env place)
+        (match (tc-replace-place-value-type
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          (tc-global-shared-view place))
           [(ResultTcType.Ok place-ty)
-            (if (tc-cleanup-owning-aggregate-type? ctx place-ty)
+            (if (tc-cleanup-owning-aggregate-type?
+              (tc-global-shared-view ctx)
+              (tc-global-shared-view place-ty))
               (ResultTcType.Err
                 "typecheck: replace! does not support cleanup-owning places")
               (let
                 [replacement : ast.AstExpr
                   (tc-context-expr-get ctx replacement-id)]
                 (match (tc-expr-with-expected-or-actual-id
-                  ctx
-                  env
+                  (tc-global-shared-view ctx)
+                  (tc-global-shared-view env)
                   replacement-id
-                  place-ty)
+                  (tc-global-shared-view place-ty))
                   [(ResultTcType.Ok replacement-ty)
                     (match (tc-expect-in-context
-                      ctx
-                      env
-                      replacement-ty
-                      place-ty
+                      (tc-global-shared-view ctx)
+                      (tc-global-shared-view env)
+                      (tc-global-shared-view replacement-ty)
+                      (tc-global-shared-view place-ty)
                       "typecheck: replace! replacement type mismatch")
                       [(ResultTcUnit.Ok)
                         (match (tc-ensure-cleanup-resource-not-stored-expr
-                          env
+                          (tc-global-shared-view env)
                           replacement)
                           [(ResultTcUnit.Ok)
                             (match (tc-ensure-region-value-can-flow-into
-                              env
-                              place-ty
-                              replacement-ty
+                              (tc-global-shared-view env)
+                              (tc-global-shared-view place-ty)
+                              (tc-global-shared-view replacement-ty)
                               "replace! destination")
                               [(ResultTcUnit.Ok)
                                 (match (tc-ensure-reference-value-can-store-in-place
-                                  ctx
-                                  env
+                                  (tc-global-shared-view ctx)
+                                  (tc-global-shared-view env)
                                   place
                                   replacement-ty
                                   "replace! destination")
@@ -66952,12 +67128,14 @@
 
 (defmacro (tc-macro-proof-field [state : Expr] [field : Expr]) : Expr
   `(let
-    [data : TcMacroProofReuseStateData (tc-macro-proof-reuse-state-data ,state)]
+    [data : compiler_typecheck_core.TcMacroProofReuseStateData
+      (tc-macro-proof-reuse-state-data ,state)]
     (tc-global-shared-view (__tl-project-field data ,field))))
 
 (defmacro (tc-macro-proof-set! [state : Expr] [field : Expr] [value : Expr]) : Expr
   `(let
-    [data : TcMacroProofReuseStateData (tc-macro-proof-reuse-state-data ,state)]
+    [data : compiler_typecheck_core.TcMacroProofReuseStateData
+      (tc-macro-proof-reuse-state-data ,state)]
     (begin
       (__tl-project-set-field data ,field ,value)
       (tc-macro-proof-reuse-state-data-set! ,state data))))
@@ -67218,18 +67396,19 @@
         [next-slots : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
         [index : i64 0]
         (begin
-          (set! (array-ref next-keys index) (array-ref data.keys index))
-          (tc-macro-identity-rehash-one!
-            (tc-array-address next-keys)
-            (&mut next-slots)
-            next-capacity
-            index)
-          (set! index (+ index 1))))
-      (set! data.keys next-keys)
-      (set! data.slots next-slots)
-      (set! data.capacity next-capacity)
-      (tc-macro-identity-state-data-set! state data)
-      (tc-type-env-store-restore-after-owner-alloc! previous owner))))
+          (while (< index data.count)
+            (begin
+              (set! (array-ref next-keys index) (array-ref data.keys index))
+              (tc-macro-identity-rehash-one!
+                (tc-array-address next-keys)
+                (&mut next-slots)
+                next-capacity
+                index)
+              (set! index (+ index 1))))
+          (set! data.keys next-keys)
+          (set! data.slots next-slots)
+          (set! data.capacity next-capacity)
+          (tc-macro-identity-state-data-set! state data))))))
 
 (define (tc-macro-identity-lookup-for-state
   [state : TcMacroState]
@@ -71777,13 +71956,8 @@
 
 ;; A by-value read may not extract an owner-bearing tail from its Box. These
 ;; recursive, read-only walkers use a shallow view while the box stays live.
-(define (tc-moved-path-facts-box-shared-view [value : (Box TcMovedPathFacts)]) : TcMovedPathFacts
-  (let
-    [address : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
-    (unsafe
-      (ptr-read (int->ptr (cast address : u64) : (Ptr TcMovedPathFacts))))))
+(defmacro (tc-moved-path-facts-box-shared-view [value : Expr]) : Expr
+  `(tc-global-shared-view ,value))
 
 (defenum TcMovedPathFactsRemove
   (Missing)
@@ -72037,16 +72211,73 @@
   (unsafe
     (ptr-read (ptr-offset (array-data data.nodes) index))))
 
-(define (tc-moved-path-facts-empty? [facts : TcMovedPathFacts]) : bool
+(define (tc-moved-path-facts-empty-impl [facts : TcMovedPathFacts]) : bool
   (match facts
     [(TcMovedPathFacts.Nil) true]
     [_ false]))
 
+(defmacro (tc-moved-path-facts-empty? [facts : Expr]) : Expr
+  `(tc-moved-path-facts-empty-impl (tc-global-shared-view ,facts)))
+
 (define (tc-moved-path-facts-len [facts : TcMovedPathFacts]) : i64
   (match facts
     [(TcMovedPathFacts.Nil) 0]
-    [(TcMovedPathFacts.Cons _ rest)
-      (+ 1 (tc-moved-path-facts-len (tc-moved-path-facts-box-shared-view rest)))]))
+    [(TcMovedPathFacts.One _) 1]
+    [(TcMovedPathFacts.Dense _ _ len) len]))
+
+(define (tc-moved-path-facts-head-impl [facts : TcMovedPathFacts]) : TcMovedPathFact
+  (match facts
+    [(TcMovedPathFacts.Nil)
+      (io.panic "typecheck: moved-path fact head of empty snapshot")]
+    [(TcMovedPathFacts.One fact) fact]
+    [(TcMovedPathFacts.Dense store tail _)
+      (__tl-project-field
+        (tc-moved-path-fact-store-node (& (__tl-box-place store)) tail)
+        fact)]))
+
+(defmacro (tc-moved-path-facts-head [facts : Expr]) : Expr
+  `(tc-moved-path-facts-head-impl (tc-global-shared-view ,facts)))
+
+(define (tc-moved-path-facts-rest-impl [facts : TcMovedPathFacts]) : TcMovedPathFacts
+  (match facts
+    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
+    [(TcMovedPathFacts.One _) TcMovedPathFacts.Nil]
+    [(TcMovedPathFacts.Dense store tail len)
+      (let
+        [parent : i64
+          (__tl-project-field
+            (tc-moved-path-fact-store-node (& (__tl-box-place store)) tail)
+            parent)]
+        (if (= len 2)
+          (TcMovedPathFacts.One
+            (__tl-project-field
+              (tc-moved-path-fact-store-node (& (__tl-box-place store)) parent)
+              fact))
+          (TcMovedPathFacts.Dense store parent (- len 1))))]))
+
+(defmacro (tc-moved-path-facts-rest [facts : Expr]) : Expr
+  `(tc-moved-path-facts-rest-impl (tc-global-shared-view ,facts)))
+
+(define (tc-moved-path-facts-cons
+  [facts : TcMovedPathFacts]
+  [fact : TcMovedPathFact]) : TcMovedPathFacts
+  (match facts
+    [(TcMovedPathFacts.Nil) (TcMovedPathFacts.One fact)]
+    [(TcMovedPathFacts.One previous)
+      (let
+        [store : (Box TcMovedPathFactStoreData)
+          (tc-moved-path-fact-store-new previous)]
+        [tail : i64
+          (tc-moved-path-fact-store-push! (&mut (__tl-box-place store)) 0 fact)]
+        (TcMovedPathFacts.Dense store tail 2))]
+    [(TcMovedPathFacts.Dense store tail len)
+      (let
+        [next-tail : i64
+          (tc-moved-path-fact-store-push!
+            (&mut (__tl-box-place store))
+            tail
+            fact)]
+        (TcMovedPathFacts.Dense store next-tail (+ len 1)))]))
 
 (define (tc-moved-hidden-atomic-users [set : TcMovedSet]) : tc_i64_i64_map.Map
   set.hidden-atomic-users)
@@ -72736,7 +72967,7 @@
         (tc-moved-path-facts-contains-exact-kind?
           (tc-moved-path-facts-box-shared-view rest)
           path
-          kind))]))
+          kind)))))
 
 (define (tc-moved-add-path-fact
   [set : TcMovedSet]
@@ -72753,9 +72984,9 @@
       (TcMovedSet
         (tc-moved-roots (tc-global-shared-view set))
         (tc-moved-partials (tc-global-shared-view set))
-        (TcMovedPathFacts.Cons
-          fact
-          (box (tc-moved-paths (tc-global-shared-view set))))
+        (tc-moved-path-facts-cons
+          (tc-moved-paths (tc-global-shared-view set))
+          fact)
         (tc-moved-hidden-atomic-users (tc-global-shared-view set))
         (tc-moved-param-storage-origins set)))))
 
@@ -72798,7 +73029,7 @@
         (tc-moved-path-exact-conflict-kind-at
           (tc-moved-path-facts-box-shared-view rest)
           path
-          kind))]))
+          kind)))))
 
 (define (tc-moved-path-exact-conflict-kind
   [set : TcMovedSet]
@@ -73071,7 +73302,7 @@
           (tc-moved-path-fact-origin fact))
         (tc-moved-path-conflict-at
           (tc-moved-path-facts-box-shared-view rest)
-          path))]))
+          path)))))
 
 (define (tc-moved-path-conflict-kind-at
   [facts : TcMovedPathFacts]
@@ -73095,7 +73326,7 @@
         (tc-moved-path-conflict-kind-at
           (tc-moved-path-facts-box-shared-view rest)
           path
-          kind))]))
+          kind)))))
 
 (define (tc-moved-path-conflict-kind
   [set : TcMovedSet]
@@ -73139,7 +73370,9 @@
       [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
       [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       [remove : bool (tc-moved-path-fact-filter-remove? fact filter)]
-      (match (tc-moved-path-facts-filter-step rest filter)
+      (match (tc-moved-path-facts-filter-step
+        (tc-global-shared-view rest)
+        filter)
         [(TcMovedPathFactsRemove.Missing)
           (if remove
             (TcMovedPathFactsRemove.Removed rest)
@@ -73153,24 +73386,14 @@
 (define (tc-moved-path-facts-filter
   [facts : TcMovedPathFacts]
   [filter : TcMovedPathFactsFilter]) : TcMovedPathFacts
-  (match (tc-moved-path-facts-filter-step facts filter)
+  (match (tc-moved-path-facts-filter-step (tc-global-shared-view facts) filter)
     [(TcMovedPathFactsRemove.Missing) facts]
     [(TcMovedPathFactsRemove.Removed tail) tail]))
 
 (define (tc-moved-path-facts-remove-root
   [facts : TcMovedPathFacts]
   [root-id : i64]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-root
-            (tc-moved-path-facts-box-shared-view rest)
-            root-id)]
-        (if (= (tc-move-path-root-id fact.path) root-id)
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (tc-moved-path-facts-filter facts (TcMovedPathFactsFilter.Root root-id)))
 
 (define (tc-moved-remove-root-state [set : TcMovedSet] [name-id : i64]) : TcMovedSet
   (let
@@ -73203,7 +73426,7 @@
         true
         (tc-moved-any-root-path-at?
           (tc-moved-path-facts-box-shared-view rest)
-          root-id))]))
+          root-id)))))
 
 (define (tc-moved-any-root-path? [set : TcMovedSet] [root-id : i64]) : bool
   (tc-moved-any-root-path-at? (tc-moved-paths set) root-id))
@@ -73226,7 +73449,7 @@
           (tc-moved-path-fact-origin fact))
         (tc-moved-root-path-conflict-loop
           (tc-moved-path-facts-box-shared-view rest)
-          root-id))]))
+          root-id)))))
 
 (define (tc-moved-root-path-conflict [set : TcMovedSet] [root-id : i64]) : TcMoveConflict
   (tc-moved-root-path-conflict-loop (tc-moved-paths set) root-id))
@@ -73845,7 +74068,9 @@
   [locals : TcMovedSet]
   [moved : TcMovedSet]
   [place : ast.AstExpr]) : TcMovedSet
-  (match (tc-move-direct-root-base-path expr-bases place)
+  (match (tc-move-direct-root-base-path
+    expr-bases
+    (tc-global-shared-view place))
     [(TcMaybeMovePath.Some path)
       (if (tc-moved-contains? locals path.root)
         (if (= path.segments.len 0)
@@ -73863,42 +74088,48 @@
   [locals : TcMovedSet]
   [moved : TcMovedSet]
   [place : ast.AstExpr]) : TcMoveResult
-  (match (tc-move-direct-root-base-path expr-bases place)
+  (match (tc-move-direct-root-base-path
+    expr-bases
+    (tc-global-shared-view place))
     [(TcMaybeMovePath.Some path)
       (if (tc-moved-contains? locals path.root)
-        (match (tc-moved-path-conflict moved path)
+        (match (tc-moved-path-conflict
+          (tc-global-shared-view moved)
+          (tc-global-shared-view path))
           [(TcMoveConflict.Some key origin-id)
             (tc-move-rich-use-conflict-result
               expr-bases
               (TcMoveConflict.Some key origin-id)
               (tc-move-path-render path)
-              place
+              (tc-global-shared-view place)
               (tc-move-path-render path))]
           [TcMoveConflict.No
             (if (and
               (= path.segments.len 0)
               (or
-                (tc-moved-contains? moved path.root)
-                (tc-moved-partial? moved path.root)))
+                (tc-moved-contains? (tc-global-shared-view moved) path.root)
+                (tc-moved-partial? (tc-global-shared-view moved) path.root)))
               (tc-move-rich-use-conflict-result
                 expr-bases
-                (tc-moved-root-conflict moved path.root)
+                (tc-moved-root-conflict (tc-global-shared-view moved) path.root)
                 (tc-move-path-render path)
                 place
                 (tc-move-path-render path))
               (TcMoveResult.Ok moved))])
         (TcMoveResult.Ok moved))]
     [(TcMaybeMovePath.No)
-      (match (tc-move-root-projection-var-id expr-bases place)
+      (match (tc-move-root-projection-var-id
+        expr-bases
+        (tc-global-shared-view place))
         [(TcMaybeNameId.Some root-id)
           (if (and
             (tc-moved-contains? locals root-id)
             (or
-              (tc-moved-contains? moved root-id)
-              (tc-moved-partial? moved root-id)))
+              (tc-moved-contains? (tc-global-shared-view moved) root-id)
+              (tc-moved-partial? (tc-global-shared-view moved) root-id)))
             (tc-move-rich-use-conflict-result
               expr-bases
-              (tc-moved-root-conflict moved root-id)
+              (tc-moved-root-conflict (tc-global-shared-view moved) root-id)
               (tc-hygiene-name-text-id root-id)
               place
               (tc-hygiene-name-text-id root-id))
@@ -74420,16 +74651,21 @@
   [locals : TcMovedSet]
   [moved : TcMovedSet]
   [place : ast.AstExpr]) : TcMoveResult
-  (match (tc-replace-place-value-type ctx env place)
+  (match (tc-replace-place-value-type
+    (tc-global-shared-view ctx)
+    (tc-global-shared-view env)
+    (tc-global-shared-view place))
     [(ResultTcType.Ok place-ty)
       (tc-move-check-global-source
-        ctx
+        (tc-global-shared-view ctx)
         expr-bases
-        env
-        locals
-        moved
-        place
-        (tc-type-move-only? ctx (tc-resolve-type ctx place-ty)))]
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        (tc-global-shared-view moved)
+        (tc-global-shared-view place)
+        (tc-type-move-only?
+          (tc-global-shared-view ctx)
+          (tc-resolve-type (tc-global-shared-view ctx) place-ty)))]
     [(ResultTcType.Err _) (TcMoveResult.Ok moved)]))
 
 (define (tc-move-after-consuming-projection
@@ -78992,56 +79228,59 @@
         [replacement : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
         (match (tc-param-storage-check-write
-          ctx
+          (tc-global-shared-view ctx)
           expr-bases
-          env
-          moved
-          place
+          (tc-global-shared-view env)
+          (tc-global-shared-view moved)
+          (tc-global-shared-view place)
           "replace")
           [(ResultTcUnit.Ok)
             (match (tc-move-check-replace-global-source
-              ctx
+              (tc-global-shared-view ctx)
               expr-bases
-              env
-              locals
-              moved
-              place)
+              (tc-global-shared-view env)
+              (tc-global-shared-view locals)
+              (tc-global-shared-view moved)
+              (tc-global-shared-view place))
               [(TcMoveResult.Ok moved0)
                 (match (tc-move-check-replace-place-initialized
                   expr-bases
-                  locals
+                  (tc-global-shared-view locals)
                   moved0
-                  place)
+                  (tc-global-shared-view place))
                   [(TcMoveResult.Ok initialized)
                     (match (tc-move-check-borrow-place
-                      ctx
+                      (tc-global-shared-view ctx)
                       expr-bases
-                      env
-                      locals
-                      loop-carried
+                      (tc-global-shared-view env)
+                      (tc-global-shared-view locals)
+                      (tc-global-shared-view loop-carried)
                       initialized
-                      place)
+                      (tc-global-shared-view place))
                       [(TcMoveResult.Ok moved1)
                         (match (tc-move-check-expr-id
-                          ctx
+                          (tc-global-shared-view ctx)
                           expr-bases
-                          env
-                          locals
-                          loop-carried
+                          (tc-global-shared-view env)
+                          (tc-global-shared-view locals)
+                          (tc-global-shared-view loop-carried)
                           moved1
                           replacement-box)
                           [(TcMoveResult.Ok moved2)
-                            (match (tc-replace-place-value-type ctx env place)
+                            (match (tc-replace-place-value-type
+                              (tc-global-shared-view ctx)
+                              (tc-global-shared-view env)
+                              (tc-global-shared-view place))
                               [(ResultTcType.Ok place-ty)
                                 (match (tc-move-after-move-only-value
-                                  ctx
+                                  (tc-global-shared-view ctx)
                                   expr-bases
-                                  env
-                                  locals
-                                  loop-carried
+                                  (tc-global-shared-view env)
+                                  (tc-global-shared-view locals)
+                                  (tc-global-shared-view loop-carried)
                                   moved2
-                                  replacement
-                                  place-ty)
+                                  (tc-global-shared-view replacement)
+                                  (tc-global-shared-view place-ty))
                                   [(TcMoveResult.Ok moved3)
                                     (TcMoveResult.Ok
                                       (tc-move-reinitialize-place-path
@@ -81956,7 +82195,7 @@
               path)])
         (tc-borrow-check-lending-binding-at
           (tc-moved-path-facts-box-shared-view rest)
-          path))]))
+          path)))))
 
 (define (tc-borrow-check-lending-binding
   [facts : TcMovedPathFacts]
@@ -81993,31 +82232,29 @@
         (tc-borrow-check-lending-binding-used-at?
           (tc-moved-path-facts-box-shared-view rest)
           path
-          binding-id))]))
+          binding-id)))))
 
 (define (tc-borrow-check-note-lending-use-at
   [facts : TcMovedPathFacts]
   [binding-id : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending fact-binding-id)
-              (if (= fact-binding-id binding-id)
-                (tc-moved-add-path-fact
-                  out
-                  fact.path
-                  (TcMovedPathKind.BorrowLendingUsed binding-id)
-                  (tc-moved-path-fact-origin fact))
-                out)]
-            [_ out])]
-        (tc-borrow-check-note-lending-use-at
-          (tc-moved-path-facts-box-shared-view rest)
-          binding-id
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending fact-binding-id)
+            (if (= fact-binding-id binding-id)
+              (tc-moved-add-path-fact
+                out
+                fact.path
+                (TcMovedPathKind.BorrowLendingUsed binding-id)
+                (tc-moved-path-fact-origin fact))
+              out)]
+          [_ out])]
+      (tc-borrow-check-note-lending-use-at rest binding-id out2))))
 
 (define (tc-borrow-check-note-lending-use
   [borrowed : TcMovedSet]
@@ -82030,29 +82267,28 @@
 (define (tc-borrow-check-propagate-lending-uses-at
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLendingUsed _)
-              (let
-                [path : TcMovePath fact.path]
-                (match (tc-borrow-check-lending-binding
-                  (tc-moved-paths (tc-global-shared-view out))
-                  path)
-                  [(TcMaybeNameId.Some binding-id)
-                    (tc-moved-add-path-fact
-                      out
-                      path
-                      (TcMovedPathKind.BorrowLendingUsed binding-id)
-                      (tc-moved-path-fact-origin fact))]
-                  [(TcMaybeNameId.No) out]))]
-            [_ out])]
-        (tc-borrow-check-propagate-lending-uses-at
-          (tc-moved-path-facts-box-shared-view rest)
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLendingUsed _)
+            (let
+              [path : TcMovePath fact.path]
+              (match (tc-borrow-check-lending-binding
+                (tc-moved-paths (tc-global-shared-view out))
+                path)
+                [(TcMaybeNameId.Some binding-id)
+                  (tc-moved-add-path-fact
+                    out
+                    path
+                    (TcMovedPathKind.BorrowLendingUsed binding-id)
+                    (tc-moved-path-fact-origin fact))]
+                [(TcMaybeNameId.No) out]))]
+          [_ out])]
+      (tc-borrow-check-propagate-lending-uses-at rest out2))))
 
 (define (tc-borrow-check-propagate-lending-uses
   [from : TcMovedSet]
@@ -82069,31 +82305,32 @@
   [bound : TcStringList]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending binding-id)
-              (if (tc-expr-uses-free-name?
-                expr-bases
-                (tc-global-shared-view body)
-                (tc-env-key-name-text binding-id)
-                (tc-global-shared-view bound))
-                (tc-moved-add-path-fact
-                  out
-                  fact.path
-                  (TcMovedPathKind.BorrowLendingUsed binding-id)
-                  (tc-moved-path-fact-origin fact))
-                out)]
-            [_ out])]
-        (tc-borrow-check-note-called-lambda-capture-uses-at
-          expr-bases
-          body
-          bound
-          (tc-moved-path-facts-box-shared-view rest)
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending binding-id)
+            (if (tc-expr-uses-free-name?
+              expr-bases
+              (tc-global-shared-view body)
+              (tc-env-key-name-text binding-id)
+              (tc-global-shared-view bound))
+              (tc-moved-add-path-fact
+                out
+                fact.path
+                (TcMovedPathKind.BorrowLendingUsed binding-id)
+                (tc-moved-path-fact-origin fact))
+              out)]
+          [_ out])]
+      (tc-borrow-check-note-called-lambda-capture-uses-at
+        expr-bases
+        (tc-global-shared-view body)
+        (tc-global-shared-view bound)
+        rest
+        out2))))
 
 (define (tc-borrow-check-note-called-lambda-capture-uses
   [expr-bases : i64]
@@ -82218,35 +82455,36 @@
   [half : i64]
   [binding-id : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [copy : bool
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending fact-binding-id)
-              (and
-                (= fact-binding-id source-binding-id)
-                (or
-                  (and
-                    (not (tc-move-path-slice-half? fact.path 0))
-                    (not (tc-move-path-slice-half? fact.path 1)))
-                  (tc-move-path-slice-half? fact.path half)))]
-            [_ false])]
-        [out2 : TcMovedSet
-          (if copy
-            (tc-moved-add-path-fact
-              out
-              fact.path
-              (TcMovedPathKind.BorrowLending binding-id)
-              (tc-moved-path-fact-origin fact))
-            out)]
-        (tc-borrow-check-rebind-split-projection-at
-          (tc-moved-path-facts-box-shared-view rest)
-          source-binding-id
-          half
-          binding-id
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [copy : bool
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending fact-binding-id)
+            (and
+              (= fact-binding-id source-binding-id)
+              (or
+                (and
+                  (not (tc-move-path-slice-half? fact.path 0))
+                  (not (tc-move-path-slice-half? fact.path 1)))
+                (tc-move-path-slice-half? fact.path half)))]
+          [_ false])]
+      [out2 : TcMovedSet
+        (if copy
+          (tc-moved-add-path-fact
+            out
+            fact.path
+            (TcMovedPathKind.BorrowLending binding-id)
+            (tc-moved-path-fact-origin fact))
+          out)]
+      (tc-borrow-check-rebind-split-projection-at
+        rest
+        source-binding-id
+        half
+        binding-id
+        out2))))
 
 (define (tc-borrow-check-binding-has-split-provenance?
   [facts : TcMovedPathFacts]
@@ -82267,7 +82505,7 @@
         true
         (tc-borrow-check-binding-has-split-provenance?
           (tc-moved-path-facts-box-shared-view rest)
-          binding-id))]))
+          binding-id)))))
 
 (define (tc-borrow-check-rebind-split-projection
   [expr-bases : i64]
@@ -82296,22 +82534,7 @@
 (define (tc-moved-path-facts-remove-lending
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-lending
-            (tc-moved-path-facts-box-shared-view rest)
-            path)]
-        (if (and
-          (tc-move-path-eq? fact.path path)
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending _) true]
-            [(TcMovedPathKind.BorrowLendingUsed _) true]
-            [_ false]))
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (tc-moved-path-facts-filter facts (TcMovedPathFactsFilter.Lending path)))
 
 (define (tc-borrow-check-remove-borrow-path
   [borrowed : TcMovedSet]
@@ -82592,59 +82815,59 @@
   [result-lifetimes : TcNameIdList]
   [direct-path : TcMaybeMovePath]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [keep-kind : bool
-          (match kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [(TcMovedPathKind.BorrowMut) true]
-            [_ false])]
-        [keep-direct : bool
-          (match direct-path
-            [(TcMaybeMovePath.Some direct)
-              (tc-move-path-conflicts? path direct)]
-            [(TcMaybeMovePath.No) true])]
-        [missing : bool
-          (match (tc-moved-path-exact-conflict-kind
-            (tc-global-shared-view out)
-            path
-            kind)
-            [(TcMoveConflict.Some _ _) false]
-            [TcMoveConflict.No true])]
-        [out2 : TcMovedSet
-          (if (and
-            keep-kind
-            (tc-borrow-check-root-in-scope?
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [keep-kind : bool
+        (match kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [(TcMovedPathKind.BorrowMut) true]
+          [_ false])]
+      [keep-direct : bool
+        (match direct-path
+          [(TcMaybeMovePath.Some direct) (tc-move-path-conflicts? path direct)]
+          [(TcMaybeMovePath.No) true])]
+      [missing : bool
+        (match (tc-moved-path-exact-conflict-kind
+          (tc-global-shared-view out)
+          (tc-global-shared-view path)
+          (tc-global-shared-view kind))
+          [(TcMoveConflict.Some _ _) false]
+          [TcMoveConflict.No true])]
+      [out2 : TcMovedSet
+        (if (and
+          keep-kind
+          (tc-borrow-check-root-in-scope?
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
+            (tc-global-shared-view outer-locals)
+            (tc-move-path-root-id path))
+          (tc-name-id-list-contains
+            (tc-global-shared-view result-lifetimes)
+            (tc-borrow-check-path-lifetime
               (tc-global-shared-view ctx)
-              env
-              (tc-global-shared-view outer-locals)
-              (tc-move-path-root-id path))
-            (tc-name-id-list-contains
-              result-lifetimes
-              (tc-borrow-check-path-lifetime
-                (tc-global-shared-view ctx)
-                env
-                path))
-            keep-direct
-            missing)
-            (tc-moved-add-path-fact
-              out
-              path
-              kind
-              (tc-moved-path-fact-origin fact))
-            out)]
-        (tc-borrow-check-propagate-return-borrows-at
-          ctx
-          env
-          outer-locals
-          (tc-moved-path-facts-box-shared-view rest)
-          result-lifetimes
-          direct-path
-          out2))]))
+              (tc-global-shared-view env)
+              path))
+          keep-direct
+          missing)
+          (tc-moved-add-path-fact
+            out
+            path
+            kind
+            (tc-moved-path-fact-origin fact))
+          out)]
+      (tc-borrow-check-propagate-return-borrows-at
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (tc-global-shared-view outer-locals)
+        rest
+        (tc-global-shared-view result-lifetimes)
+        (tc-global-shared-view direct-path)
+        out2))))
 
 (define (tc-borrow-check-propagate-return-borrows
   [ctx : TcContext]
@@ -82670,8 +82893,8 @@
         [TcNameIdList.Nil outer-borrowed]
         [_
           (tc-borrow-check-propagate-return-borrows-at
-            ctx
-            env
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
             (tc-global-shared-view outer-locals)
             (tc-moved-paths inner-borrowed)
             result-lifetimes
@@ -82691,53 +82914,54 @@
   [result-lifetimes : TcNameIdList]
   [origin : ast.AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [shared : bool
-          (match fact.kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [_ false])]
-        [new : bool
-          (match (tc-moved-path-exact-conflict-kind
-            (tc-global-shared-view prior)
-            path
-            fact.kind)
-            [(TcMoveConflict.Some _ _) false]
-            [TcMoveConflict.No true])]
-        [out2 : TcMovedSet
-          (if (and
-            shared
-            new
-            (tc-borrow-check-root-in-scope?
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [shared : bool
+        (match fact.kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [_ false])]
+      [new : bool
+        (match (tc-moved-path-exact-conflict-kind
+          (tc-global-shared-view prior)
+          (tc-global-shared-view path)
+          (tc-global-shared-view fact.kind))
+          [(TcMoveConflict.Some _ _) false]
+          [TcMoveConflict.No true])]
+      [out2 : TcMovedSet
+        (if (and
+          shared
+          new
+          (tc-borrow-check-root-in-scope?
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
+            (tc-global-shared-view locals)
+            (tc-move-path-root-id path))
+          (tc-name-id-list-contains
+            (tc-global-shared-view result-lifetimes)
+            (tc-borrow-check-path-lifetime
               (tc-global-shared-view ctx)
-              env
-              (tc-global-shared-view locals)
-              (tc-move-path-root-id path))
-            (tc-name-id-list-contains
-              result-lifetimes
-              (tc-borrow-check-path-lifetime
-                (tc-global-shared-view ctx)
-                env
-                path)))
-            (tc-borrow-check-add-lending-marker
-              out
-              path
-              binding-id
-              (tc-global-shared-view origin))
-            out)]
-        (tc-borrow-check-mark-new-return-borrows-at
-          ctx
-          env
-          locals
-          prior
-          (tc-moved-path-facts-box-shared-view rest)
-          binding-id
-          result-lifetimes
-          origin
-          out2))]))
+              (tc-global-shared-view env)
+              path)))
+          (tc-borrow-check-add-lending-marker
+            out
+            path
+            binding-id
+            (tc-global-shared-view origin))
+          out)]
+      (tc-borrow-check-mark-new-return-borrows-at
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        (tc-global-shared-view prior)
+        rest
+        binding-id
+        (tc-global-shared-view result-lifetimes)
+        (tc-global-shared-view origin)
+        out2))))
 
 ;; A propagated returned borrow needs an NLL marker for the outer result
 ;; binding. Mark only source paths newly introduced by the initializer; this
@@ -82809,79 +83033,7 @@
         true
         (tc-borrow-check-pending-path-at?
           (tc-moved-path-facts-box-shared-view rest)
-          path))]))
-
-(define (tc-borrow-check-add-pending-markers-at
-  [expr-bases : i64]
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [exprs : ast.AstExprList]
-  [scope-id : i64]
-  [facts : TcMovedPathFacts]
-  [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending binding-id)
-              (if (or
-                (tc-expr-list-uses-free-name?
-                  expr-bases
-                  (tc-global-shared-view exprs)
-                  (tc-env-key-name-text binding-id)
-                  TcStringList.Nil)
-                (tc-borrow-check-lifetime-used-in-exprs?
-                  expr-bases
-                  (tc-global-shared-view ctx)
-                  env
-                  (tc-global-shared-view locals)
-                  (tc-global-shared-view exprs)
-                  (tc-borrow-check-path-lifetime
-                    (tc-global-shared-view ctx)
-                    env
-                    path)))
-                (tc-moved-add-path-fact
-                  out
-                  path
-                  (TcMovedPathKind.BorrowPending scope-id)
-                  (tc-moved-path-fact-origin fact))
-                out)]
-            [_ out])]
-        (tc-borrow-check-add-pending-markers-at
-          expr-bases
-          ctx
-          env
-          locals
-          exprs
-          scope-id
-          (tc-moved-path-facts-box-shared-view rest)
-          out2))]))
-
-(define (tc-borrow-check-add-pending-markers
-  [expr-bases : i64]
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [borrowed : TcMovedSet]
-  [exprs : ast.AstExprList]
-  [scope-id : i64]) : TcMovedSet
-  (if (or
-    (ast.ast-expr-list-empty? (& exprs))
-    (= (tc-moved-len (tc-global-shared-view borrowed)) 0))
-    borrowed
-    (tc-borrow-check-add-pending-markers-at
-      expr-bases
-      ctx
-      env
-      locals
-      exprs
-      scope-id
-      (tc-moved-paths (tc-global-shared-view borrowed))
-      borrowed)))
+          path)))))
 
 ;; Sequence walkers do not need to scan their full remaining syntax eagerly.
 ;; Guard every lending borrow while a later sibling exists; if the current
@@ -82891,23 +83043,21 @@
   [scope-id : i64]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending _)
-              (tc-moved-add-path-fact
-                out
-                fact.path
-                (TcMovedPathKind.BorrowPending scope-id)
-                (tc-moved-path-fact-origin fact))]
-            [_ out])]
-        (tc-borrow-check-add-all-pending-markers-at
-          scope-id
-          (tc-moved-path-facts-box-shared-view rest)
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending _)
+            (tc-moved-add-path-fact
+              out
+              fact.path
+              (TcMovedPathKind.BorrowPending scope-id)
+              (tc-moved-path-fact-origin fact))]
+          [_ out])]
+      (tc-borrow-check-add-all-pending-markers-at scope-id rest out2))))
 
 (define (tc-borrow-check-add-all-pending-markers
   [borrowed : TcMovedSet]
@@ -82925,20 +83075,7 @@
 (define (tc-moved-path-facts-remove-pending-scope
   [facts : TcMovedPathFacts]
   [scope-id : i64]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-pending-scope
-            (tc-moved-path-facts-box-shared-view rest)
-            scope-id)]
-        (if (match fact.kind
-          [(TcMovedPathKind.BorrowPending fact-scope-id)
-            (= fact-scope-id scope-id)]
-          [_ false])
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (tc-moved-path-facts-filter facts (TcMovedPathFactsFilter.Pending scope-id)))
 
 (define (tc-borrow-check-remove-pending-markers
   [borrowed : TcMovedSet]
@@ -82961,84 +83098,85 @@
   [protected : TcMovedSet]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [shared : bool
-          (match fact.kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [_ false])]
-        [out2 : TcMovedSet
-          (if (or
-            (not shared)
-            (tc-borrow-check-pending-path-at?
-              (tc-moved-paths (tc-global-shared-view out))
-              path)
-            (and
-              (not
-                (tc-borrow-check-has-lending-binding?
-                  (tc-global-shared-view out)
-                  path))
-              (tc-borrow-check-protected-path?
-                (tc-global-shared-view protected)
-                path)))
-            out
-            (match (tc-borrow-check-lending-binding
-              (tc-moved-paths (tc-global-shared-view out))
-              path)
-              [(TcMaybeNameId.Some lending-binding-id)
-                (cond
-                  [(not
-                      (tc-borrow-check-lending-binding-used-at?
-                        (tc-moved-paths (tc-global-shared-view out))
-                        path
-                        lending-binding-id))
-                    out]
-                  [(tc-expr-list-uses-free-name?
-                      expr-bases
-                      (tc-global-shared-view exprs)
-                      (tc-env-key-name-text lending-binding-id)
-                      TcStringList.Nil)
-                    out]
-                  [(tc-borrow-check-lifetime-used-in-exprs?
-                      expr-bases
-                      (tc-global-shared-view ctx)
-                      env
-                      (tc-global-shared-view locals)
-                      (tc-global-shared-view exprs)
-                      (tc-borrow-check-path-lifetime
-                        (tc-global-shared-view ctx)
-                        env
-                        path))
-                    (tc-moved-remove-path-kind
-                      out
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [shared : bool
+        (match fact.kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [_ false])]
+      [out2 : TcMovedSet
+        (if (or
+          (not shared)
+          (tc-borrow-check-pending-path-at?
+            (tc-moved-paths (tc-global-shared-view out))
+            path)
+          (and
+            (not
+              (tc-borrow-check-has-lending-binding?
+                (tc-global-shared-view out)
+                path))
+            (tc-borrow-check-protected-path?
+              (tc-global-shared-view protected)
+              path)))
+          out
+          (match (tc-borrow-check-lending-binding
+            (tc-moved-paths (tc-global-shared-view out))
+            path)
+            [(TcMaybeNameId.Some lending-binding-id)
+              (cond
+                [(not
+                    (tc-borrow-check-lending-binding-used-at?
+                      (tc-moved-paths (tc-global-shared-view out))
                       path
-                      (TcMovedPathKind.BorrowLending lending-binding-id))]
-                  [else (tc-borrow-check-remove-borrow-path out path)])]
-              [(TcMaybeNameId.No)
-                (if (tc-borrow-check-lifetime-used-in-exprs?
-                  expr-bases
-                  (tc-global-shared-view ctx)
-                  env
-                  (tc-global-shared-view locals)
-                  (tc-global-shared-view exprs)
-                  (tc-borrow-check-path-lifetime
+                      lending-binding-id))
+                  out]
+                [(tc-expr-list-uses-free-name?
+                    expr-bases
+                    (tc-global-shared-view exprs)
+                    (tc-env-key-name-text lending-binding-id)
+                    TcStringList.Nil)
+                  out]
+                [(tc-borrow-check-lifetime-used-in-exprs?
+                    expr-bases
                     (tc-global-shared-view ctx)
-                    env
-                    path))
-                  out
-                  (tc-borrow-check-remove-borrow-path out path))]))]
-        (tc-borrow-check-prune-before-exprs-loop
-          expr-bases
-          ctx
-          env
-          locals
-          exprs
-          protected
-          (tc-moved-path-facts-box-shared-view rest)
-          out2))]))
+                    (tc-global-shared-view env)
+                    (tc-global-shared-view locals)
+                    (tc-global-shared-view exprs)
+                    (tc-borrow-check-path-lifetime
+                      (tc-global-shared-view ctx)
+                      (tc-global-shared-view env)
+                      path))
+                  (tc-moved-remove-path-kind
+                    out
+                    path
+                    (TcMovedPathKind.BorrowLending lending-binding-id))]
+                [else (tc-borrow-check-remove-borrow-path out path)])]
+            [(TcMaybeNameId.No)
+              (if (tc-borrow-check-lifetime-used-in-exprs?
+                expr-bases
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view env)
+                (tc-global-shared-view locals)
+                (tc-global-shared-view exprs)
+                (tc-borrow-check-path-lifetime
+                  (tc-global-shared-view ctx)
+                  (tc-global-shared-view env)
+                  path))
+                out
+                (tc-borrow-check-remove-borrow-path out path))]))]
+      (tc-borrow-check-prune-before-exprs-loop
+        expr-bases
+        ctx
+        env
+        locals
+        exprs
+        protected
+        rest
+        out2))))
 
 (define (tc-borrow-check-prune-before-exprs
   [expr-bases : i64]
@@ -83725,58 +83863,59 @@
   [facts : TcMovedPathFacts]
   [value : ast.AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [borrow-kind : bool
-          (match kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [(TcMovedPathKind.BorrowMut) true]
-            [(TcMovedPathKind.BorrowTwoPhaseMut) true]
-            [_ false])]
-        [new : bool
-          (not
-            (tc-moved-path-facts-contains-exact-kind?
-              (tc-moved-paths (tc-global-shared-view prior))
-              path
-              kind))]
-        [remove : bool
-          (if (and borrow-kind new)
-            (let
-              [lifetime : i64
-                (tc-borrow-check-path-lifetime
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [borrow-kind : bool
+        (match kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [(TcMovedPathKind.BorrowMut) true]
+          [(TcMovedPathKind.BorrowTwoPhaseMut) true]
+          [_ false])]
+      [new : bool
+        (not
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths (tc-global-shared-view prior))
+            path
+            kind))]
+      [remove : bool
+        (if (and borrow-kind new)
+          (let
+            [lifetime : i64
+              (tc-borrow-check-path-lifetime
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view env)
+                path)]
+            (not
+              (or
+                (tc-borrow-check-expr-type-contains-lifetime?
                   (tc-global-shared-view ctx)
-                  env
-                  path)]
-              (not
-                (or
-                  (tc-borrow-check-expr-type-contains-lifetime?
-                    (tc-global-shared-view ctx)
-                    env
-                    (tc-global-shared-view value)
-                    lifetime)
-                  (tc-borrow-check-expr-stores-lifetime?
-                    (tc-global-shared-view ctx)
-                    expr-bases
-                    env
-                    (tc-global-shared-view value)
-                    lifetime))))
-            false)]
-        [out2 : TcMovedSet
-          (if remove
-            (tc-moved-remove-path-kind out path kind)
-            out)]
-        (tc-borrow-check-prune-value-temporaries-at
-          (tc-global-shared-view ctx)
-          expr-bases
-          env
-          prior
-          (tc-moved-path-facts-box-shared-view rest)
-          value
-          out2))]))
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view value)
+                  lifetime)
+                (tc-borrow-check-expr-stores-lifetime?
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view value)
+                  lifetime))))
+          false)]
+      [out2 : TcMovedSet
+        (if remove
+          (tc-moved-remove-path-kind out path kind)
+          out)]
+      (tc-borrow-check-prune-value-temporaries-at
+        ctx
+        expr-bases
+        env
+        prior
+        rest
+        value
+        out2))))
 
 ;; Argument auto-borrows created while evaluating an assignment RHS end after
 ;; that value is (tc-global-shared-view produced) unless the result or a nested store retains their
@@ -83885,7 +84024,7 @@
       [(TcTypeEnvMarkerStep.Done) (TcBorrowCheckResult.Ok borrowed)]
       [(TcTypeEnvMarkerStep.Cache rest-env)
         (tc-borrow-check-region-invalidation-scan
-          ctx
+          (tc-global-shared-view ctx)
           expr-bases
           rest-env
           locals
@@ -84443,7 +84582,7 @@
             expr-bases
             borrowed
             (tc-moved-path-facts-box-shared-view rest)
-            primary)])]))
+            primary)]))))
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows
   [expr-bases : i64]
@@ -85487,7 +85626,7 @@
         lifetime)]
     [(ast.AstExpr.Replace place-box _)
       (match (tc-replace-place-value-type
-        ctx
+        (tc-global-shared-view ctx)
         env
         (ast.ast-expr-segment-bases-get expr-bases place-box))
         [(ResultTcType.Ok place-ty)
@@ -85519,38 +85658,39 @@
   [before : TcMovedSet]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [out2 : TcMovedSet
-          (if (or
-            (match (tc-moved-path-exact-conflict-kind
-              (tc-global-shared-view before)
-              path
-              kind)
-              [(TcMoveConflict.Some _ _) true]
-              [TcMoveConflict.No false])
-            (match (tc-moved-path-exact-conflict-kind
-              (tc-global-shared-view out)
-              path
-              kind)
-              [(TcMoveConflict.Some _ _) true]
-              [TcMoveConflict.No false]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [out2 : TcMovedSet
+        (if (or
+          (match (tc-moved-path-exact-conflict-kind
+            (tc-global-shared-view before)
+            path
+            kind)
+            [(TcMoveConflict.Some _ _) true]
+            [TcMoveConflict.No false])
+          (match (tc-moved-path-exact-conflict-kind
+            (tc-global-shared-view out)
+            path
+            kind)
+            [(TcMoveConflict.Some _ _) true]
+            [TcMoveConflict.No false]))
+          out
+          (tc-moved-add-path-fact
             out
-            (tc-moved-add-path-fact
-              out
-              path
-              kind
-              (tc-moved-path-fact-origin fact)))]
-        (tc-borrow-check-loop-protect-carried-facts-loop
-          (tc-global-shared-view ctx)
-          loop-env
-          before
-          (tc-moved-path-facts-box-shared-view rest)
-          out2))]))
+            path
+            kind
+            (tc-moved-path-fact-origin fact)))]
+      (tc-borrow-check-loop-protect-carried-facts-loop
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view loop-env)
+        (tc-global-shared-view before)
+        rest
+        out2))))
 
 (define (tc-borrow-check-loop-protect-carried-facts
   [ctx : TcContext]
@@ -85572,45 +85712,46 @@
   [expr : ast.AstExpr]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [out2 : TcMovedSet
-          (if (match (tc-moved-path-exact-conflict-kind
-            (tc-global-shared-view out)
-            (tc-global-shared-view path)
-            (tc-global-shared-view kind))
-            [(TcMoveConflict.Some _ _) true]
-            [TcMoveConflict.No false])
-            out
-            (let
-              [lifetime : i64
-                (tc-borrow-check-path-lifetime
-                  (tc-global-shared-view ctx)
-                  (tc-global-shared-view env)
-                  (tc-global-shared-view path))]
-              (if (tc-borrow-check-expr-stores-lifetime?
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [out2 : TcMovedSet
+        (if (match (tc-moved-path-exact-conflict-kind
+          (tc-global-shared-view out)
+          (tc-global-shared-view path)
+          (tc-global-shared-view kind))
+          [(TcMoveConflict.Some _ _) true]
+          [TcMoveConflict.No false])
+          out
+          (let
+            [lifetime : i64
+              (tc-borrow-check-path-lifetime
                 (tc-global-shared-view ctx)
-                expr-bases
                 (tc-global-shared-view env)
-                (tc-global-shared-view expr)
-                lifetime)
-                (tc-moved-add-path-fact
-                  out
-                  path
-                  kind
-                  (tc-moved-path-fact-origin fact))
-                out)))]
-        (tc-borrow-check-loop-protect-stored-facts-loop
-          (tc-global-shared-view ctx)
-          expr-bases
-          env
-          expr
-          (tc-moved-path-facts-box-shared-view rest)
-          out2))]))
+                (tc-global-shared-view path))]
+            (if (tc-borrow-check-expr-stores-lifetime?
+              (tc-global-shared-view ctx)
+              expr-bases
+              (tc-global-shared-view env)
+              (tc-global-shared-view expr)
+              lifetime)
+              (tc-moved-add-path-fact
+                out
+                path
+                kind
+                (tc-moved-path-fact-origin fact))
+              out)))]
+      (tc-borrow-check-loop-protect-stored-facts-loop
+        ctx
+        expr-bases
+        env
+        expr
+        rest
+        out2))))
 
 (define (tc-borrow-check-loop-protect-stored-facts
   [ctx : TcContext]
@@ -86885,44 +87026,45 @@
   [body : ast.AstExpr]
   [closure-id : i64]
   [facts : TcMovedPathFacts]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-borrow-check-rebind-lambda-lending-facts
-            ctx
-            expr-bases
-            env
-            (tc-global-shared-view locals)
-            (tc-global-shared-view bound)
-            (tc-global-shared-view body)
-            closure-id
-            (tc-moved-path-facts-box-shared-view rest))]
-        (match fact.kind
-          [(TcMovedPathKind.BorrowLending binding-id)
-            (let
-              [captured : bool
-                (tc-expr-uses-free-name?
-                  expr-bases
-                  body
-                  (tc-env-key-name-text binding-id)
-                  bound)]
-              (if captured
-                (let
-                  [rebound : TcMovedPathFact
-                    (TcMovedPathFact
-                      fact.path
-                      (TcMovedPathKind.BorrowLending closure-id)
-                      fact.origin)]
-                  (if (tc-closure-local-fact-copyable-code?
-                    (tc-closure-local-fact-code locals binding-id))
-                    (TcMovedPathFacts.Cons
-                      fact
-                      (box (TcMovedPathFacts.Cons rebound (box tail))))
-                    (TcMovedPathFacts.Cons rebound (box tail))))
-                (TcMovedPathFacts.Cons fact (box tail))))]
-          [_ (TcMovedPathFacts.Cons fact (box tail))]))]))
+  (if (tc-moved-path-facts-empty? facts)
+    TcMovedPathFacts.Nil
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [tail : TcMovedPathFacts
+        (tc-borrow-check-rebind-lambda-lending-facts
+          ctx
+          expr-bases
+          (tc-global-shared-view env)
+          (tc-global-shared-view locals)
+          (tc-global-shared-view bound)
+          (tc-global-shared-view body)
+          closure-id
+          rest)]
+      (match fact.kind
+        [(TcMovedPathKind.BorrowLending binding-id)
+          (let
+            [captured : bool
+              (tc-expr-uses-free-name?
+                expr-bases
+                (tc-global-shared-view body)
+                (tc-env-key-name-text binding-id)
+                (tc-global-shared-view bound))]
+            (if captured
+              (let
+                [rebound : TcMovedPathFact
+                  (TcMovedPathFact
+                    fact.path
+                    (TcMovedPathKind.BorrowLending closure-id)
+                    fact.origin)]
+                (if (tc-closure-local-fact-copyable-code?
+                  (tc-closure-local-fact-code locals binding-id))
+                  (tc-moved-path-facts-cons
+                    (tc-moved-path-facts-cons tail rebound)
+                    fact)
+                  (tc-moved-path-facts-cons tail rebound)))
+              (tc-moved-path-facts-cons tail fact)))]
+        [_ (tc-moved-path-facts-cons tail fact)]))))
 
 ;; A Copy closure alias keeps the source closure live and gains the same
 ;; lending provenance. Duplicate only the checker-only lending marker; the
@@ -86931,29 +87073,26 @@
   [facts : TcMovedPathFacts]
   [source-id : i64]
   [closure-id : i64]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-borrow-check-copy-lambda-lending-facts
-            (tc-moved-path-facts-box-shared-view rest)
-            source-id
-            closure-id)]
-        (match fact.kind
-          [(TcMovedPathKind.BorrowLending binding-id)
-            (if (= binding-id source-id)
-              (TcMovedPathFacts.Cons
-                fact
-                (box
-                  (TcMovedPathFacts.Cons
-                    (TcMovedPathFact
-                      fact.path
-                      (TcMovedPathKind.BorrowLending closure-id)
-                      fact.origin)
-                    (box tail))))
-              (TcMovedPathFacts.Cons fact (box tail)))]
-          [_ (TcMovedPathFacts.Cons fact (box tail))]))]))
+  (if (tc-moved-path-facts-empty? facts)
+    TcMovedPathFacts.Nil
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [tail : TcMovedPathFacts
+        (tc-borrow-check-copy-lambda-lending-facts rest source-id closure-id)]
+      (match fact.kind
+        [(TcMovedPathKind.BorrowLending binding-id)
+          (if (= binding-id source-id)
+            (tc-moved-path-facts-cons
+              (tc-moved-path-facts-cons
+                tail
+                (TcMovedPathFact
+                  fact.path
+                  (TcMovedPathKind.BorrowLending closure-id)
+                  fact.origin))
+              fact)
+            (tc-moved-path-facts-cons tail fact))]
+        [_ (tc-moved-path-facts-cons tail fact)]))))
 
 (define (tc-borrow-check-add-closure-lending-for-lifetimes
   [ctx : TcContext]
@@ -86963,36 +87102,37 @@
   [closure-id : i64]
   [origin : ast.AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [out2 : TcMovedSet
-          (if (and
-            (match fact.kind
-              [(TcMovedPathKind.BorrowShared) true]
-              [_ false])
-            (tc-name-id-list-contains
-              lifetimes
-              (tc-borrow-check-path-lifetime
-                (tc-global-shared-view ctx)
-                env
-                path)))
-            (tc-borrow-check-add-lending-marker
-              out
-              path
-              closure-id
-              (tc-global-shared-view origin))
-            out)]
-        (tc-borrow-check-add-closure-lending-for-lifetimes
-          (tc-global-shared-view ctx)
-          env
-          (tc-moved-path-facts-box-shared-view rest)
-          lifetimes
-          closure-id
-          origin
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [out2 : TcMovedSet
+        (if (and
+          (match fact.kind
+            [(TcMovedPathKind.BorrowShared) true]
+            [_ false])
+          (tc-name-id-list-contains
+            lifetimes
+            (tc-borrow-check-path-lifetime
+              (tc-global-shared-view ctx)
+              (tc-global-shared-view env)
+              path)))
+          (tc-borrow-check-add-lending-marker
+            out
+            path
+            closure-id
+            (tc-global-shared-view origin))
+          out)]
+      (tc-borrow-check-add-closure-lending-for-lifetimes
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        rest
+        (tc-global-shared-view lifetimes)
+        closure-id
+        (tc-global-shared-view origin)
+        out2))))
 
 (define (tc-borrow-check-add-lambda-capture-lending-scan
   [ctx : TcContext]
@@ -87467,7 +87607,7 @@
       [(ast.AstMatchArm.Arm pattern body-box)
         (match (tc-bind-match-pattern
           (tc-global-shared-view ctx)
-          env
+          (tc-global-shared-view env)
           (tc-global-shared-view scrut-ty)
           (tc-global-shared-view pattern))
           [(ResultTcEnv.Ok arm-env)
@@ -87996,7 +88136,7 @@
             (tc-borrow-check-slice-split-call
               ctx
               expr-bases
-              env
+              (tc-global-shared-view env)
               locals
               borrowed
               expr
@@ -88376,32 +88516,35 @@
         [replacement : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
         (match (tc-borrow-check-reserve-two-phase-mut-call-arg
-          ctx
+          (tc-global-shared-view ctx)
           expr-bases
-          env
-          locals
-          borrowed
-          expr
-          place)
+          (tc-global-shared-view env)
+          (tc-global-shared-view locals)
+          (tc-global-shared-view borrowed)
+          (tc-global-shared-view expr)
+          (tc-global-shared-view place))
           [(TcBorrowCheckResult.Ok reserved)
             (match (tc-borrow-check-expr-id
-              ctx
+              (tc-global-shared-view ctx)
               expr-bases
-              env
-              locals
-              reserved
+              (tc-global-shared-view env)
+              (tc-global-shared-view locals)
+              (tc-global-shared-view reserved)
               replacement-box)
               [(TcBorrowCheckResult.Ok rhs-borrowed)
-                (match (tc-replace-place-value-type ctx env place)
+                (match (tc-replace-place-value-type
+                  (tc-global-shared-view ctx)
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view place))
                   [(ResultTcType.Ok place-ty)
                     (match (tc-borrow-check-after-move-only-value
-                      ctx
+                      (tc-global-shared-view ctx)
                       expr-bases
-                      env
-                      locals
-                      rhs-borrowed
-                      replacement
-                      place-ty)
+                      (tc-global-shared-view env)
+                      (tc-global-shared-view locals)
+                      (tc-global-shared-view rhs-borrowed)
+                      (tc-global-shared-view replacement)
+                      (tc-global-shared-view place-ty))
                       [(TcBorrowCheckResult.Ok consumed-borrowed)
                         (let
                           [pruned : TcMovedSet
@@ -90563,6 +90706,43 @@
   (state TcMacroState)
   (pools ast.AstNodePoolContext))
 
+;; Macro hygiene threads a shared node-pool context through a large recursive
+;; walk. Rebuild the carrier around the context's shared state cells: an
+;; ordinary aggregate copy would structurally copy the dynamic-array
+;; descriptors and detach context pushes from the installed global pool.
+(defmacro (macro-hygiene-env-shared-view [env : Expr]) : Expr
+  `(let
+    [shared-env (& ,env)]
+    (MacroHygieneEnv
+      shared-env.head
+      (TcMacroState shared-env.state.address)
+      (ast.ast-node-pool-context-shared-view (& shared-env.pools)))))
+
+(defmacro (macro-hygiene-env-pools-shared-view [env : Expr]) : Expr
+  `(let
+    [shared-env (& ,env)]
+    (ast.ast-node-pool-context-shared-view (& shared-env.pools))))
+
+(defmacro (macro-hygiene-expr-push [env : Expr] [node : Expr]) : Expr
+  `(ast.ast-node-pool-context-expr-push
+    (macro-hygiene-env-pools-shared-view ,env)
+    ,node))
+
+(defmacro (macro-hygiene-expr-get [env : Expr] [id : Expr]) : Expr
+  `(let
+    [pools (macro-hygiene-env-pools-shared-view ,env)]
+    (ast.ast-node-pool-context-expr-get (& pools) ,id)))
+
+(defmacro (macro-hygiene-expr-segment-bases [env : Expr]) : Expr
+  `(let
+    [pools (macro-hygiene-env-pools-shared-view ,env)]
+    (ast.ast-node-pool-context-expr-segment-bases (& pools))))
+
+(defmacro (macro-hygiene-type-get [env : Expr] [id : Expr]) : Expr
+  `(let
+    [pools (macro-hygiene-env-pools-shared-view ,env)]
+    (ast.ast-node-pool-context-type-get (& pools) ,id)))
+
 ;; Per-program traversal and CTFE handoff state. These fields have one owner and
 ;; lifetime, so keep one flat carrier and avoid compile-time dispatch through
 ;; artificial nested sections.
@@ -91333,6 +91513,7 @@
                   compile-profile
                   (compiler-tc-walk-ctfe-extension-start!)
                   unit)]
+              [previous-arena : i64 (arena.tl_arena_current)]
               [_switch-owner : unit
                 (unsafe
                   (arena.tl_arena_set
@@ -91374,55 +91555,17 @@
                 (tc-type-env-store-restore-after-owner-alloc!
                   previous-arena
                   (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))
-                (let
-                  [grown-layouts : ctfe_support.CtfeLayoutInfoList
-                    (ctfe_support.ctfe-layout-info-list-ensure-capacity
-                      layouts
-                      required-layouts)]
-                  [grown-reflections : ctfe_support.CtfeReflectInfoList
-                    (ctfe_support.ctfe-reflect-info-list-ensure-capacity
-                      reflections
-                      required-reflections)]
-                  [next-layouts : ctfe_support.CtfeLayoutInfoList
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      decls
-                      module
-                      module-id
-                      grown-layouts)]
-                  [next-reflections : ctfe_support.CtfeReflectInfoList
-                    (ctfe_support.ctfe-reflections-from-decls
-                      decls
-                      module
-                      module-id
-                      grown-reflections)]
-                  (begin
-                    (tc-macro-walk-set!
-                      state
-                      macro-expand-ctfe-env-value
-                      (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
-                        next-layouts
-                        next-reflections
-                        (ctfe_support.ctfe-env-pools
-                          (tc-macro-walk-field
-                            state
-                            macro-expand-ctfe-env-value))
-                        (ctfe_support.ctfe-env-source-names
-                          (tc-macro-walk-field
-                            state
-                            macro-expand-ctfe-env-value))
-                        (tc-macro-ctfe-state state)))
-                    (if grew?
-                      (cfg
-                        compile-profile
-                        (compiler-tc-walk-ctfe-extension-reject-note! 3)
-                        unit)
-                      unit)
-                    (cfg
-                      compile-profile
-                      (compiler-tc-walk-ctfe-extension-finish!)
-                      unit)
-                    CompilerCtfeSpliceExtensionResult.Extended))))
+                (if grew?
+                  (cfg
+                    compile-profile
+                    (compiler-tc-walk-ctfe-extension-reject-note! 3)
+                    unit)
+                  unit)
+                (cfg
+                  compile-profile
+                  (compiler-tc-walk-ctfe-extension-finish!)
+                  unit)
+                CompilerCtfeSpliceExtensionResult.Extended))
             (begin
               (cfg
                 compile-profile
@@ -93348,6 +93491,11 @@
             (let
               [owner-id : i64
                 (ast.ast-decl-path-list-owner-id
+                  (& cursor)
+                  0
+                  cbi.compiler-builtin-id-fix-empty)]
+              [provenance-id : i64
+                (ast.ast-decl-path-list-provenance-id
                   (& cursor)
                   0
                   cbi.compiler-builtin-id-fix-empty)]
@@ -97980,7 +98128,10 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Replace place-id replacement-id)
-      (match (macro-child-to-spanned-sexpr place-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        place-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok splace)
           (match (macro-child-to-spanned-sexpr replacement-id span origin)
             [(ResultMacroSexpr.Ok sreplacement)
@@ -98510,16 +98661,18 @@
               (macro-hygiene-env-empty state pools))]
           [output-env : MacroHygieneEnv
             (macro-hygiene-output-decl-env expr param-env)]
+          [output-pools : ast.AstNodePoolContext
+            (macro-hygiene-env-pools-shared-view output-env)]
           [out : ctfe_support.CompilerCtfeValue
             (ctfe_support.CompilerCtfeValue.Expr
-              (macro-hygiene-produced-expr
-                expr-bases
-                node
-                output-env
-                hygiene
-                depth)
+              (macro-hygiene-produced-expr node output-env hygiene depth)
               (tc-global-shared-view produced))]
           (begin
+            ;; Hygiene owns every push while the copied tree is being built.
+            ;; Publish only at this durable output boundary so declaration and
+            ;; expression consumers using legacy global getters see the
+            ;; committed root and all of its children.
+            (ast.ast-node-pool-context-publish-to-compat! output-pools)
             (macro-hygiene-env-root-finish! state)
             out)))]
     [_ value]))
@@ -99128,6 +99281,7 @@
               (tc-global-shared-view summaries)
               index)]
           (match (macro-surface-decls-call-decl-in-module
+            state
             (tc-global-shared-view summary.decls)
             target-module-id
             base-id)
@@ -99842,17 +99996,20 @@
     [stored-kind : i64
       (if (or
         (= kind (macro-hygiene-env-output-flat-import-kind))
-        (macro-hygiene-env-has-output-flat-import? env))
+        (macro-hygiene-env-has-output-flat-import?
+          (macro-hygiene-env-shared-view env)))
         (bit-or kind (macro-hygiene-env-output-flat-import-flag))
         kind)]
     (begin
       (set! (array-ref kinds index) stored-kind)
       (set! (array-ref keys index) key-id)
       (set! (array-ref values index) value-id)
-      (set! (array-ref parents index) (macro-hygiene-env-head env))
+      (set!
+        (array-ref parents index)
+        (macro-hygiene-env-head (macro-hygiene-env-shared-view env)))
       (tc-macro-walk-set! state macro-hygiene-env-slot-count (+ index 1))
       (cfg compile-profile (compiler-tc-macro-hygiene-note-binding!))
-      (MacroHygieneEnv index state env.pools))))
+      (MacroHygieneEnv index state (macro-hygiene-env-pools-shared-view env)))))
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
   (let
@@ -100033,7 +100190,7 @@
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [(ast.AstExpr.Call func-box _)
-      (match (ast.ast-expr-unspan (ast.ast-node-get func-box))
+      (match (ast.ast-expr-unspan (macro-hygiene-expr-get env func-box))
         [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
         [_ env])]
     [_ env]))
@@ -100055,7 +100212,7 @@
       items
       (+ index 1)
       (macro-hygiene-output-bind-var-expr
-        (ast.ast-node-get (ast.ast-expr-list-get items index 0))
+        (macro-hygiene-expr-get env (ast.ast-expr-list-get items index 0))
         env))))
 
 (define (macro-hygiene-output-aggregate-member-env
@@ -100068,7 +100225,7 @@
         (macro-hygiene-output-pattern-name-id env name-id)
         (macro-hygiene-output-bind-id env name-id))]
     [(ast.AstExpr.Call func-box _)
-      (match (ast.ast-expr-unspan (ast.ast-node-get func-box))
+      (match (ast.ast-expr-unspan (macro-hygiene-expr-get env func-box))
         [(ast.AstExpr.Var name-id)
           (let
             [source-id : i64 (tc-hygiene-template-source-id-or name-id name-id)]
@@ -100098,7 +100255,7 @@
       (+ index 1)
       pattern-name?
       (macro-hygiene-output-aggregate-member-env
-        (ast.ast-node-get (ast.ast-expr-list-get items index 0))
+        (macro-hygiene-expr-get env (ast.ast-expr-list-get items index 0))
         pattern-name?
         env))))
 
@@ -100110,7 +100267,7 @@
     [with-target : MacroHygieneEnv
       (if (> count 0)
         (match (ast.ast-expr-unspan
-          (ast.ast-node-get (ast.ast-expr-list-get items 0 0)))
+          (macro-hygiene-expr-get env (ast.ast-expr-list-get items 0 0)))
           [(ast.AstExpr.Var target-id)
             (macro-hygiene-output-bind-id env target-id)]
           [(ast.AstExpr.Call _ _)
@@ -100122,9 +100279,13 @@
     (if (>= count 3)
       (let
         [as-expr : ast.AstExpr
-          (ast.ast-node-get (ast.ast-expr-list-get items (- count 2) 0))]
+          (macro-hygiene-expr-get
+            with-target
+            (ast.ast-expr-list-get items (- count 2) 0))]
         [alias-expr : ast.AstExpr
-          (ast.ast-node-get (ast.ast-expr-list-get items (- count 1) 0))]
+          (macro-hygiene-expr-get
+            with-target
+            (ast.ast-expr-list-get items (- count 1) 0))]
         (match (ast.ast-expr-unspan as-expr)
           [(ast.AstExpr.Var as-id)
             (if (string.eq
@@ -100140,7 +100301,7 @@
           [_ with-target]))
       (if (= count 1)
         (match (ast.ast-expr-unspan
-          (ast.ast-node-get (ast.ast-expr-list-get items 0 0)))
+          (macro-hygiene-expr-get with-target (ast.ast-expr-list-get items 0 0)))
           [(ast.AstExpr.Var target-id)
             (let
               [source-id : i64
@@ -100164,7 +100325,7 @@
       items
       (+ index 1)
       (macro-hygiene-output-decl-env
-        (ast.ast-node-get (ast.ast-expr-list-get items index 0))
+        (macro-hygiene-expr-get env (ast.ast-expr-list-get items index 0))
         env))))
 
 (define (macro-hygiene-output-decl-env
@@ -100176,9 +100337,9 @@
     [(ast.AstExpr.Unsafe items)
       (macro-hygiene-output-decl-list-env (& items) 0 env)]
     [(ast.AstExpr.Comptime inner-box)
-      (macro-hygiene-output-decl-env (ast.ast-node-get inner-box) env)]
+      (macro-hygiene-output-decl-env (macro-hygiene-expr-get env inner-box) env)]
     [(ast.AstExpr.Call func-box args)
-      (match (ast.ast-expr-unspan (ast.ast-node-get func-box))
+      (match (ast.ast-expr-unspan (macro-hygiene-expr-get env func-box))
         [(ast.AstExpr.Var head-id)
           (let
             [source-head-id : i64
@@ -100202,7 +100363,9 @@
                     1
                     true
                     (macro-hygiene-output-declaration-name-env
-                      (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))
+                      (macro-hygiene-expr-get
+                        env
+                        (ast.ast-expr-list-get (& args) 0 0))
                       env))
                   env)]
               [(= tag (parser.compiler-parse-tag-decl-defstruct))
@@ -100212,7 +100375,9 @@
                     1
                     false
                     (macro-hygiene-output-declaration-name-env
-                      (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))
+                      (macro-hygiene-expr-get
+                        env
+                        (ast.ast-expr-list-get (& args) 0 0))
                       env))
                   env)]
               [(or
@@ -100222,7 +100387,9 @@
                   (= tag (parser.compiler-parse-tag-decl-defdispatch)))
                 (if (> count 0)
                   (macro-hygiene-output-declaration-name-env
-                    (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))
+                    (macro-hygiene-expr-get
+                      env
+                      (ast.ast-expr-list-get (& args) 0 0))
                     env)
                   env)]
               [else env]))]
@@ -100367,7 +100534,9 @@
             (parser.compiler-parse-dispatch-tag-id
               (parser.compiler-parse-dispatch-env)
               template-source-id)]
-          (match (macro-hygiene-env-lookup env name-id)
+          (match (macro-hygiene-env-lookup
+            (macro-hygiene-env-shared-view env)
+            name-id)
             [(MacroMaybeHygieneName.Some renamed-id) renamed-id]
             [(MacroMaybeHygieneName.No)
               (if (or
@@ -100381,7 +100550,7 @@
                   [renamed-leading-id : i64
                     (if (>= leading-id 0)
                       (match (macro-hygiene-env-lookup
-                        env
+                        (macro-hygiene-env-shared-view env)
                         (ci.intern-template-source-id leading-id))
                         [(MacroMaybeHygieneName.Some renamed-id) renamed-id]
                         [(MacroMaybeHygieneName.No) -1])
@@ -100399,9 +100568,11 @@
                             base)))
                       (if (and
                         (< (tc-name-first-dot-id source-name-id) 0)
-                        (macro-hygiene-env-has-output-flat-import? env))
+                        (macro-hygiene-env-has-output-flat-import?
+                          (macro-hygiene-env-shared-view env)))
                         source-name-id
                         (macro-hygiene-global-name-id
+                          env.state
                           source-name-id
                           (tc-global-shared-view macro-name)))))))]))
         name-id)]
@@ -100544,10 +100715,7 @@
               (set! produced.refcounts (array.make-array i64 capacity))
               (tc-macro-hygiene-produced-state-data-set!
                 state
-                (tc-global-shared-view produced))
-              (tc-type-env-store-restore-after-owner-alloc!
-                previous-arena
-                owner))))))))
+                (tc-global-shared-view produced)))))))))
 
 (define (macro-hygiene-produced-note-id!
   [produced : TcMacroHygieneProducedStateData]
@@ -100842,12 +101010,12 @@
     [(ast.AstExpr.Replace place-box replacement-box)
       (begin
         (macro-hygiene-produced-note-id!
-          produced
+          (tc-global-shared-view produced)
           expr-bases
           place-box
           shared-path?)
         (macro-hygiene-produced-note-id!
-          produced
+          (tc-global-shared-view produced)
           expr-bases
           replacement-box
           shared-path?))]
@@ -101442,7 +101610,7 @@
         (macro-hygiene-expr
           expr-bases
           (ast.ast-expr-list-get exprs index 0)
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           depth))
       (macro-hygiene-expr-list-into
@@ -101473,7 +101641,7 @@
               (macro-hygiene-expr
                 expr-bases
                 (ast.ast-expr-list-get (& exprs) index 0)
-                env
+                (macro-hygiene-env-shared-view env)
                 (tc-global-shared-view macro-name)
                 depth)))
           (set! index (+ index 1))))
@@ -101542,7 +101710,7 @@
           (ast.ast-lifetime-list-push
             (&mut out)
             (macro-hygiene-rename-lifetime-id
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               (ast.ast-lifetime-list-get
                 (& lifetimes)
@@ -101555,21 +101723,21 @@
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
   [name-id : i64]) : i64
-  (match (macro-hygiene-env-lookup env name-id)
+  (match (macro-hygiene-env-lookup (macro-hygiene-env-shared-view env) name-id)
     [(MacroMaybeHygieneName.Some renamed-id) renamed-id]
     [(MacroMaybeHygieneName.No)
       (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
         (match (macro-hygiene-env-lookup
-          env
+          (macro-hygiene-env-shared-view env)
           (ci.intern-template-source-id name-id))
           [(MacroMaybeHygieneName.Some renamed-id) renamed-id]
           [(MacroMaybeHygieneName.No)
             (macro-hygiene-rename-var-id
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               name-id)])
         (macro-hygiene-rename-var-id
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           name-id))]))
 
@@ -101587,15 +101755,15 @@
           (ast.ast-type-list-push
             (&mut out)
             (ast.ast-node-pool-context-type-push
-              env.pools
+              (macro-hygiene-env-pools-shared-view env)
               (macro-hygiene-type
-                (ast.ast-node-pool-context-type-get
-                  env.pools
+                (macro-hygiene-type-get
+                  env
                   (ast.ast-type-list-get
                     (& types)
                     index
                     (ast.ast-type-id-fallback)))
-                env
+                (macro-hygiene-env-shared-view env)
                 (tc-global-shared-view macro-name))))
           (set! index (+ index 1))))
       out)))
@@ -101609,10 +101777,10 @@
       (ast.ast-ty-func
         (macro-hygiene-type-list
           (ast.ast-type-list-box-shared-view args)
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name))
         (macro-hygiene-type
-          (ast.ty-node-get ret)
+          (macro-hygiene-type-get env ret)
           env
           (tc-global-shared-view macro-name)))]
     [(ast.AstType.Tuple elems)
@@ -101624,68 +101792,68 @@
     [(ast.AstType.Array elem count)
       (ast.ast-ty-array
         (macro-hygiene-type
-          (ast.ty-node-get elem)
+          (macro-hygiene-type-get env elem)
           env
           (tc-global-shared-view macro-name))
         count)]
     [(ast.AstType.DynArray elem)
       (ast.ast-ty-dyn-array
         (macro-hygiene-type
-          (ast.ty-node-get elem)
+          (macro-hygiene-type-get env elem)
           env
           (tc-global-shared-view macro-name)))]
     [(ast.AstType.Slice elem)
       (ast.ast-ty-slice
         (macro-hygiene-type
-          (ast.ty-node-get elem)
+          (macro-hygiene-type-get env elem)
           env
           (tc-global-shared-view macro-name)))]
     [(ast.AstType.Box elem)
       (ast.ast-ty-box
         (macro-hygiene-type
-          (ast.ty-node-get elem)
+          (macro-hygiene-type-get env elem)
           env
           (tc-global-shared-view macro-name)))]
     [(ast.AstType.Ptr elem)
       (ast.ast-ty-ptr
         (macro-hygiene-type
-          (ast.ty-node-get elem)
+          (macro-hygiene-type-get env elem)
           env
           (tc-global-shared-view macro-name)))]
     [(ast.AstType.MutPtr elem)
       (ast.ast-ty-mut-ptr
         (macro-hygiene-type
-          (ast.ty-node-get elem)
+          (macro-hygiene-type-get env elem)
           env
           (tc-global-shared-view macro-name)))]
     [(ast.AstType.Ref region inner)
       (ast.ast-ty-ref
         (macro-hygiene-rename-lifetime-id
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           region)
         (macro-hygiene-type
-          (ast.ty-node-get inner)
+          (macro-hygiene-type-get env inner)
           env
           (tc-global-shared-view macro-name)))]
     [(ast.AstType.MutRef region inner)
       (ast.ast-ty-mut-ref
         (macro-hygiene-rename-lifetime-id
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           region)
         (macro-hygiene-type
-          (ast.ty-node-get inner)
+          (macro-hygiene-type-get env inner)
           env
           (tc-global-shared-view macro-name)))]
     [(ast.AstType.Region region inner)
       (ast.ast-ty-region
         (macro-hygiene-rename-lifetime-id
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           region)
         (macro-hygiene-type
-          (ast.ty-node-get inner)
+          (macro-hygiene-type-get env inner)
           env
           (tc-global-shared-view macro-name)))]
     [(ast.AstType.EnumArgs name lifetimes)
@@ -101758,9 +101926,12 @@
       [(ast.AstParam.Param name ty comptime?)
         (let
           [nty : ast.AstType
-            (macro-hygiene-type ty env (tc-global-shared-view macro-name))]
+            (macro-hygiene-type
+              ty
+              (macro-hygiene-env-shared-view env)
+              (tc-global-shared-view macro-name))]
           (match (macro-hygiene-bind-name-id
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth
             name)
@@ -101831,10 +102002,10 @@
         [nmaybe-ty : ast.AstMaybeType
           (macro-hygiene-maybe-type
             maybe-ty
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name))]
         (match (macro-hygiene-bind-name-id
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           depth
           name)
@@ -101873,11 +102044,13 @@
           (MacroHygienePattern.Pattern
             (ast.ast-pat-binding-id
               (macro-hygiene-rename-var-id
-                env
+                (macro-hygiene-env-shared-view env)
                 (tc-global-shared-view macro-name)
                 name))
-            env)
-          (match (macro-hygiene-env-lookup-pattern-name env name)
+            (macro-hygiene-env-shared-view env))
+          (match (macro-hygiene-env-lookup-pattern-name
+            (macro-hygiene-env-shared-view env)
+            name)
             [(MacroMaybeHygieneName.Some pattern-name-id)
               (MacroHygienePattern.Pattern
                 (ast.ast-pat-binding-id pattern-name-id)
@@ -101898,7 +102071,7 @@
           (ast.ast-pattern-list-box-shared-view args-box)]
         (match (macro-hygiene-pattern-list
           args
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           depth)
           [(MacroHygienePatternList.PatternList nargs next-env)
@@ -101954,13 +102127,13 @@
             (macro-hygiene-expr
               expr-bases
               init-box
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)]
           [nmaybe-ty : ast.AstMaybeType
             (macro-hygiene-maybe-type
               maybe-ty
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name))]
           (match (macro-hygiene-bind-name-id
             env
@@ -102022,18 +102195,18 @@
             (macro-hygiene-expr
               expr-bases
               init-box
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)]
           [ncleanup : i64
             (macro-hygiene-expr
               expr-bases
               cleanup-box
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)]
           (match (macro-hygiene-bind-name-id
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth
             name)
@@ -102088,7 +102261,7 @@
       [(ast.AstMatchArm.Arm pattern body-box)
         (match (macro-hygiene-pattern
           pattern
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           depth)
           [(MacroHygienePattern.Pattern npattern arm-env)
@@ -102130,20 +102303,28 @@
       (macro-hygiene-expr-inner
         expr-bases
         expr
-        env
+        (macro-hygiene-env-shared-view env)
         (tc-global-shared-view macro-name)
         depth)]
     [reuse? : bool
       (and
         (macro-hygiene-produced-owned? env.state expr-id)
-        (= (+ result 1) (ast.ast-node-pool-len)))]
+        (=
+          (+ result 1)
+          (ast.ast-node-pool-context-expr-len
+            (macro-hygiene-env-pools-shared-view env))))]
     [out : i64
       (if reuse?
         (let
-          [replacement : ast.AstExpr (ast.ast-node-get result)]
+          [replacement : ast.AstExpr (macro-hygiene-expr-get env result)]
           (begin
-            (ast.ast-node-set! expr-id replacement)
-            (ast.ast-node-pool-truncate! result)
+            (ast.ast-node-pool-context-expr-set!
+              (macro-hygiene-env-pools-shared-view env)
+              expr-id
+              replacement)
+            (ast.ast-node-pool-context-expr-truncate!
+              (macro-hygiene-env-pools-shared-view env)
+              result)
             expr-id))
         result)]
     (begin
@@ -102169,15 +102350,18 @@
   (begin
     (cfg compile-profile (compiler-tc-walk-hygiene-start!))
     (let
-      [expr-bases : i64
-        (ast.ast-node-pool-context-expr-segment-bases env.pools)]
+      [expr-bases : i64 (macro-hygiene-expr-segment-bases env)]
       [_prepare : unit
-        (macro-hygiene-produced-prepare! env.state env.pools expr-bases expr-id)]
+        (macro-hygiene-produced-prepare!
+          (tc-global-shared-view env.state)
+          (macro-hygiene-env-pools-shared-view env)
+          expr-bases
+          expr-id)]
       [result : i64
         (macro-hygiene-expr
           expr-bases
           expr-id
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           depth)]
       [produced : TcMacroHygieneProducedStateData
@@ -102187,7 +102371,8 @@
         (tc-macro-hygiene-produced-state-data-set! env.state produced)
         ;; The recursive walker uses one-node copy-on-write replacements. Keep
         ;; those transient cursors private and publish only the committed root.
-        (ast.ast-node-pool-context-expr-sync-installed! env.pools)
+        (ast.ast-node-pool-context-expr-sync-installed!
+          (macro-hygiene-env-pools-shared-view env))
         (cfg compile-profile (compiler-tc-walk-hygiene-finish!))
         result))))
 
@@ -102201,11 +102386,12 @@
     [(ast.AstExpr.Spanned inner-box span)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-spanned
+        (ast.ast-expr-spanned-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           span))]
@@ -102213,12 +102399,15 @@
     ;; provenance boundary.  Macro discovery still walks through the marker so
     ;; nested, not-yet-expanded calls can fire in their own hygiene pass.
     [(ast.AstExpr.MacroExpansion _ _ _)
-      (ast.ast-node-pool-context-expr-push env.pools expr)]
+      (ast.ast-node-pool-context-expr-push
+        (macro-hygiene-env-pools-shared-view env)
+        expr)]
     [(ast.AstExpr.Var name)
-      (ast.ast-node-push
+      (macro-hygiene-expr-push
+        env
         (ast.AstExpr.Var
           (macro-hygiene-rename-var-id
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             name)))]
     [(ast.AstExpr.Binary op left-box right-box)
@@ -102226,30 +102415,30 @@
         [left : i64 left-box]
         [right : i64 right-box]
         (ast.ast-expr-binary-with-pools
-          env.pools
+          (macro-hygiene-env-pools-shared-view env)
           op
           (macro-hygiene-expr
             expr-bases
             left
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             right
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Unary op inner-box)
       (let
         [inner : i64 inner-box]
         (ast.ast-expr-unary-with-pools
-          env.pools
+          (macro-hygiene-env-pools-shared-view env)
           op
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Call func-box args)
@@ -102261,12 +102450,13 @@
             expr-bases
             (tc-global-shared-view func)
             (& args)
-            env)]
-        (ast.ast-expr-call
+            (macro-hygiene-env-shared-view env))]
+        (ast.ast-expr-call-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             func-box
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (match (ast.ast-expr-unspan func)
@@ -102277,7 +102467,7 @@
                 (macro-hygiene-module-call-args
                   expr-bases
                   args
-                  env
+                  (macro-hygiene-env-shared-view env)
                   (tc-global-shared-view macro-name)
                   depth)
                 (macro-hygiene-expr-list
@@ -102294,11 +102484,12 @@
                 (tc-global-shared-view macro-name)
                 depth)])))]
     [(ast.AstExpr.BracketClause items)
-      (ast.ast-expr-bracket-clause
+      (ast.ast-expr-bracket-clause-with-pools
+        (macro-hygiene-env-pools-shared-view env)
         (macro-hygiene-expr-list
           expr-bases
           items
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           depth))]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
@@ -102306,23 +102497,24 @@
         [cond : i64 cond-box]
         [then-branch : i64 then-branch-box]
         [else-branch : i64 else-branch-box]
-        (ast.ast-expr-if
+        (ast.ast-expr-if-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             cond
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             then-branch
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             else-branch
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Let let-box)
@@ -102333,12 +102525,12 @@
             (match (macro-hygiene-let-bindings
               expr-bases
               bindings
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)
               [(MacroHygieneLetBindings.LetBindings nbindings body-env)
                 (ast.ast-expr-let-with-pools
-                  env.pools
+                  (macro-hygiene-env-pools-shared-view env)
                   nbindings
                   (macro-hygiene-expr
                     expr-bases
@@ -102353,16 +102545,16 @@
             [body : i64 body-box]
             (match (macro-hygiene-param-list
               params
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)
               [(MacroHygieneParams.Params nparams body-env)
                 (ast.ast-expr-lambda-with-pools
-                  env.pools
+                  (macro-hygiene-env-pools-shared-view env)
                   nparams
                   (macro-hygiene-maybe-type
                     maybe-ret
-                    body-env
+                    (tc-global-shared-view body-env)
                     (tc-global-shared-view macro-name))
                   (macro-hygiene-expr
                     expr-bases
@@ -102372,74 +102564,77 @@
                     depth))]))])]
     [(ast.AstExpr.Tuple exprs)
       (ast.ast-node-pool-context-expr-push
-        env.pools
+        (macro-hygiene-env-pools-shared-view env)
         (ast.AstExpr.Tuple
           (macro-hygiene-expr-list
             expr-bases
             exprs
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.TupleRef tuple-expr-box index)
       (let
         [tuple-expr : i64 tuple-expr-box]
-        (ast.ast-expr-tuple-ref
+        (ast.ast-expr-tuple-ref-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             tuple-expr
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           index))]
     [(ast.AstExpr.Array exprs)
       (ast.ast-node-pool-context-expr-push
-        env.pools
+        (macro-hygiene-env-pools-shared-view env)
         (ast.AstExpr.Array
           (macro-hygiene-expr-list
             expr-bases
             exprs
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.DynArray exprs)
       (ast.ast-node-pool-context-expr-push
-        env.pools
+        (macro-hygiene-env-pools-shared-view env)
         (ast.AstExpr.DynArray
           (macro-hygiene-expr-list
             expr-bases
             exprs
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.MakeArray ty-id len-box)
       (let
         [len : i64 len-box]
-        (ast.ast-expr-make-array
+        (ast.ast-expr-make-array-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-type
             (ast.ty-node-get ty-id)
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name))
           (macro-hygiene-expr
             expr-bases
             len
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (let
         [array : i64 array-box]
         [index : i64 index-box]
-        (ast.ast-expr-array-ref
+        (ast.ast-expr-array-ref-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             array
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             index
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
@@ -102447,23 +102642,24 @@
         [array : i64 array-box]
         [index : i64 index-box]
         [value : i64 value-box]
-        (ast.ast-expr-array-set
+        (ast.ast-expr-array-set-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             array
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             index
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             value
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.ArrayTake array-box live-box index-box)
@@ -102471,88 +102667,93 @@
         [array : i64 array-box]
         [live : i64 live-box]
         [index : i64 index-box]
-        (ast.ast-expr-array-take
+        (ast.ast-expr-array-take-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             array
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             live
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             index
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (ast.ast-expr-fixed-array-take
+      (ast.ast-expr-fixed-array-take-with-pools
+        (macro-hygiene-env-pools-shared-view env)
         (macro-hygiene-expr
           expr-bases
           array-box
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           depth)
         (macro-hygiene-expr
           expr-bases
           index-box
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           depth))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : i64 array-box]
         [value : i64 value-box]
-        (ast.ast-expr-array-push
+        (ast.ast-expr-array-push-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             array
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             value
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.StringRef text-box index-box)
       (let
         [text : i64 text-box]
         [index : i64 index-box]
-        (ast.ast-expr-string-ref
+        (ast.ast-expr-string-ref-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             text
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             index
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.While cond-box body-box)
       (let
         [cond : i64 cond-box]
         [body : i64 body-box]
-        (ast.ast-expr-while
+        (ast.ast-expr-while-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             cond
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             body
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.ForOwnedState payload)
@@ -102564,33 +102765,34 @@
         [source-name-id : i64 (tc-for-owned-name-id expr-bases source-name)]
         [index-name-id : i64 (tc-for-owned-name-id expr-bases index-name)]
         (if (or (< source-name-id 0) (< index-name-id 0))
-          (ast.ast-expr-for-owned-state
+          (ast.ast-expr-for-owned-state-with-pools
+            (macro-hygiene-env-pools-shared-view env)
             (macro-hygiene-expr
               expr-bases
               source-name
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)
             (macro-hygiene-expr
               expr-bases
               index-name
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)
             (macro-hygiene-expr
               expr-bases
               source
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)
             (macro-hygiene-expr
               expr-bases
               body
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth))
           (match (macro-hygiene-bind-name-id
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth
             source-name-id)
@@ -102601,13 +102803,14 @@
                 depth
                 index-name-id)
                 [(MacroHygieneName.Name nindex-name body-env)
-                  (ast.ast-expr-for-owned-state
-                    (ast.ast-node-push (ast.AstExpr.Var nsource-name))
-                    (ast.ast-node-push (ast.AstExpr.Var nindex-name))
+                  (ast.ast-expr-for-owned-state-with-pools
+                    (macro-hygiene-env-pools-shared-view env)
+                    (macro-hygiene-expr-push env (ast.AstExpr.Var nsource-name))
+                    (macro-hygiene-expr-push env (ast.AstExpr.Var nindex-name))
                     (macro-hygiene-expr
                       expr-bases
                       source
-                      env
+                      (macro-hygiene-env-shared-view env)
                       (tc-global-shared-view macro-name)
                       depth)
                     (macro-hygiene-expr
@@ -102626,43 +102829,44 @@
         [body : i64 (ast.ast-for-owned-step-body (& payload))]
         [binding-name-id : i64 (tc-for-owned-name-id expr-bases binding-name)]
         (if (< binding-name-id 0)
-          (ast.ast-expr-for-owned-step
+          (ast.ast-expr-for-owned-step-with-pools
+            (macro-hygiene-env-pools-shared-view env)
             (macro-hygiene-expr
               expr-bases
               source-name
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)
             (macro-hygiene-expr
               expr-bases
               index-name
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)
             (macro-hygiene-expr
               expr-bases
               binding-name
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)
             (if (>= expected-type 0)
               (macro-hygiene-expr
                 expr-bases
                 expected-type
-                env
+                (macro-hygiene-env-shared-view env)
                 (tc-global-shared-view macro-name)
                 depth)
               -1)
             (macro-hygiene-expr
               expr-bases
               done-name
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth)
             (macro-hygiene-expr
               expr-bases
               body
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth))
           (let
@@ -102673,33 +102877,37 @@
             [nbinding-name : i64
               (tc-hygiene-template-source-id-or binding-name-id binding-name-id)]
             [body-env : MacroHygieneEnv
-              (macro-hygiene-env-bind-raw env binding-name-id nbinding-name)]
-            (ast.ast-expr-for-owned-step
+              (macro-hygiene-env-bind-raw
+                (macro-hygiene-env-shared-view env)
+                binding-name-id
+                nbinding-name)]
+            (ast.ast-expr-for-owned-step-with-pools
+              (macro-hygiene-env-pools-shared-view env)
               (macro-hygiene-expr
                 expr-bases
                 source-name
-                env
+                (macro-hygiene-env-shared-view env)
                 (tc-global-shared-view macro-name)
                 depth)
               (macro-hygiene-expr
                 expr-bases
                 index-name
-                env
+                (macro-hygiene-env-shared-view env)
                 (tc-global-shared-view macro-name)
                 depth)
-              (ast.ast-node-push (ast.AstExpr.Var nbinding-name))
+              (macro-hygiene-expr-push env (ast.AstExpr.Var nbinding-name))
               (if (>= expected-type 0)
                 (macro-hygiene-expr
                   expr-bases
                   expected-type
-                  env
+                  (macro-hygiene-env-shared-view env)
                   (tc-global-shared-view macro-name)
                   depth)
                 -1)
               (macro-hygiene-expr
                 expr-bases
                 done-name
-                env
+                (macro-hygiene-env-shared-view env)
                 (tc-global-shared-view macro-name)
                 depth)
               (macro-hygiene-expr
@@ -102710,80 +102918,83 @@
                 depth)))))]
     [(ast.AstExpr.Begin exprs)
       (ast.ast-node-pool-context-expr-push
-        env.pools
+        (macro-hygiene-env-pools-shared-view env)
         (ast.AstExpr.Begin
           (macro-hygiene-expr-list
             expr-bases
             exprs
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Unsafe exprs)
       (ast.ast-node-pool-context-expr-push
-        env.pools
+        (macro-hygiene-env-pools-shared-view env)
         (ast.AstExpr.Unsafe
           (macro-hygiene-expr-list
             expr-bases
             exprs
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Set name rhs-box)
       (let
         [rhs : i64 rhs-box]
-        (ast.ast-expr-set-id
+        (ast.ast-expr-set-id-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-rename-var-id
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             name)
           (macro-hygiene-expr
             expr-bases
             rhs
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Ann inner-box ty-id)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-ann
+        (ast.ast-expr-ann-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-type
             (ast.ty-node-get ty-id)
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name))))]
     [(ast.AstExpr.Cast inner-box ty-id)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-cast
+        (ast.ast-expr-cast-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-type
             (ast.ty-node-get ty-id)
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name))))]
     [(ast.AstExpr.Borrow mutable lifetime-id place-box)
       (let
         [place : i64 place-box]
         (ast.ast-expr-borrow-with-pools
-          env.pools
+          (macro-hygiene-env-pools-shared-view env)
           mutable
           (macro-hygiene-borrow-lifetime
             (ast.ast-borrow-lifetime-from-id lifetime-id)
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name))
           (macro-hygiene-expr
             expr-bases
             place
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Match match-box)
@@ -102791,17 +103002,18 @@
         [(ast.AstMatch.Match scrut-box arms)
           (let
             [scrut : i64 scrut-box]
-            (ast.ast-expr-match
+            (ast.ast-expr-match-with-pools
+              (macro-hygiene-env-pools-shared-view env)
               (macro-hygiene-expr
                 expr-bases
                 scrut
-                env
+                (macro-hygiene-env-shared-view env)
                 (tc-global-shared-view macro-name)
                 depth)
               (macro-hygiene-arm-list
                 expr-bases
                 arms
-                env
+                (macro-hygiene-env-shared-view env)
                 (tc-global-shared-view macro-name)
                 depth)))])]
     [(ast.AstExpr.Foreach fe-box)
@@ -102812,28 +103024,28 @@
             [end : i64 end-box]
             [body : i64 body-box]
             (match (macro-hygiene-bind-name-id
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth
               index)
               [(MacroHygieneName.Name nindex-id body-env)
                 (ast.ast-expr-foreach-id-with-pools
-                  env.pools
+                  (macro-hygiene-env-pools-shared-view env)
                   nindex-id
                   (macro-hygiene-type
                     index-ty
-                    env
+                    (macro-hygiene-env-shared-view env)
                     (tc-global-shared-view macro-name))
                   (macro-hygiene-expr
                     expr-bases
                     start
-                    env
+                    (macro-hygiene-env-shared-view env)
                     (tc-global-shared-view macro-name)
                     depth)
                   (macro-hygiene-expr
                     expr-bases
                     end
-                    env
+                    (macro-hygiene-env-shared-view env)
                     (tc-global-shared-view macro-name)
                     depth)
                   (macro-hygiene-expr
@@ -102858,35 +103070,35 @@
             [init : i64 init-box]
             [value : i64 value-box]
             (match (macro-hygiene-bind-name-id
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth
               index)
               [(MacroHygieneName.Name nindex-id body-env)
                 (ast.ast-expr-spmd-reduce-id-with-pools
-                  env.pools
+                  (macro-hygiene-env-pools-shared-view env)
                   op
                   nindex-id
                   (macro-hygiene-type
                     index-ty
-                    env
+                    (macro-hygiene-env-shared-view env)
                     (tc-global-shared-view macro-name))
                   (macro-hygiene-expr
                     expr-bases
                     start
-                    env
+                    (macro-hygiene-env-shared-view env)
                     (tc-global-shared-view macro-name)
                     depth)
                   (macro-hygiene-expr
                     expr-bases
                     end
-                    env
+                    (macro-hygiene-env-shared-view env)
                     (tc-global-shared-view macro-name)
                     depth)
                   (macro-hygiene-expr
                     expr-bases
                     init
-                    env
+                    (macro-hygiene-env-shared-view env)
                     (tc-global-shared-view macro-name)
                     depth)
                   (macro-hygiene-expr
@@ -102915,46 +103127,46 @@
             [value : i64 value-box]
             [body : i64 body-box]
             (match (macro-hygiene-bind-name-id
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)
               depth
               index)
               [(MacroHygieneName.Name nindex-id value-env)
                 (match (macro-hygiene-bind-name-id
-                  value-env
+                  (tc-global-shared-view value-env)
                   (tc-global-shared-view macro-name)
                   depth
                   prefix)
                   [(MacroHygieneName.Name nprefix-id body-env)
                     (ast.ast-expr-spmd-scan-id-with-pools
-                      env.pools
+                      (macro-hygiene-env-pools-shared-view env)
                       op
                       nindex-id
                       (macro-hygiene-type
                         index-ty
-                        env
+                        (macro-hygiene-env-shared-view env)
                         (tc-global-shared-view macro-name))
                       (macro-hygiene-expr
                         expr-bases
                         start
-                        env
+                        (macro-hygiene-env-shared-view env)
                         (tc-global-shared-view macro-name)
                         depth)
                       (macro-hygiene-expr
                         expr-bases
                         end
-                        env
+                        (macro-hygiene-env-shared-view env)
                         (tc-global-shared-view macro-name)
                         depth)
                       nprefix-id
                       (macro-hygiene-type
                         prefix-ty
-                        value-env
+                        (tc-global-shared-view value-env)
                         (tc-global-shared-view macro-name))
                       (macro-hygiene-expr
                         expr-bases
                         init
-                        env
+                        (macro-hygiene-env-shared-view env)
                         (tc-global-shared-view macro-name)
                         depth)
                       (macro-hygiene-expr
@@ -102973,44 +103185,47 @@
       (let
         [value : i64 value-box]
         [lane : i64 lane-box]
-        (ast.ast-expr-spmd-broadcast
+        (ast.ast-expr-spmd-broadcast-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             value
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             lane
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
       (let
         [value : i64 value-box]
         [lane : i64 lane-box]
-        (ast.ast-expr-spmd-shuffle
+        (ast.ast-expr-spmd-shuffle-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             value
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             lane
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.StructGet inner-box field)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-struct-get-id
+        (ast.ast-expr-struct-get-id-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           field))]
@@ -103018,29 +103233,30 @@
       (let
         [inner : i64 inner-box]
         [value : i64 value-box]
-        (ast.ast-expr-struct-set-id
+        (ast.ast-expr-struct-set-id-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           field
           (macro-hygiene-expr
             expr-bases
             value
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.WithRegion name body)
       (match (macro-hygiene-bind-name-id
-        env
+        (macro-hygiene-env-shared-view env)
         (tc-global-shared-view macro-name)
         depth
         name)
         [(MacroHygieneName.Name nname-id body-env)
           (ast.ast-node-pool-context-expr-push
-            env.pools
+            (macro-hygiene-env-pools-shared-view env)
             (ast.AstExpr.WithRegion
               nname-id
               (macro-hygiene-expr-list
@@ -103052,41 +103268,44 @@
     [(ast.AstExpr.WithEscape scratch-box body)
       (let
         [scratch : i64 scratch-box]
-        (ast.ast-expr-with-escape
+        (ast.ast-expr-with-escape-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             scratch
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr-list
             expr-bases
             body
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.WithScratch body)
-      (ast.ast-expr-with-scratch
+      (ast.ast-expr-with-scratch-with-pools
+        (macro-hygiene-env-pools-shared-view env)
         (macro-hygiene-expr-list
           expr-bases
           body
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           depth))]
     [(ast.AstExpr.InArena arena-box body)
       (let
         [arena : i64 arena-box]
-        (ast.ast-expr-in-arena
+        (ast.ast-expr-in-arena-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             arena
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr-list
             expr-bases
             body
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.WithResource wr-box)
@@ -103095,12 +103314,12 @@
           (match (macro-hygiene-resource-bindings
             expr-bases
             bindings
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
             [(MacroHygieneResourceBindings.ResourceBindings nbindings body-env)
               (ast.ast-node-pool-context-expr-push
-                env.pools
+                (macro-hygiene-env-pools-shared-view env)
                 (ast.AstExpr.WithResource
                   (box
                     (ast.AstWithResource.WithResource
@@ -103114,340 +103333,367 @@
     [(ast.AstExpr.Box inner-box)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-box
+        (ast.ast-expr-box-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.BoxGet inner-box)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-box-get
+        (ast.ast-expr-box-get-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.BoxTake inner-box)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-box-take
+        (ast.ast-expr-box-take-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.BoxSet inner-box value-box)
       (let
         [inner : i64 inner-box]
         [value : i64 value-box]
-        (ast.ast-expr-box-set
+        (ast.ast-expr-box-set-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             value
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.TypeLiteral ty-id)
-      (ast.ast-expr-type-literal
+      (ast.ast-expr-type-literal-with-pools
+        (macro-hygiene-env-pools-shared-view env)
         (macro-hygiene-type
           (ast.ty-node-get ty-id)
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)))]
     [(ast.AstExpr.Init maybe-ty-id)
       (ast.ast-expr-init-maybe-with-pools
-        env.pools
+        (macro-hygiene-env-pools-shared-view env)
         (macro-hygiene-maybe-type
           (ast.ast-maybe-type-from-id maybe-ty-id)
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)))]
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-comptime
+        (ast.ast-expr-comptime-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Return inner-box)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-return
+        (ast.ast-expr-return-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Try inner-box)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-try
+        (ast.ast-expr-try-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.PtrNull ty-id)
       (ast.ast-node-pool-context-expr-push
-        env.pools
+        (macro-hygiene-env-pools-shared-view env)
         (ast.AstExpr.PtrNull
           (ast.ty-node-push
             (macro-hygiene-type
               (ast.ty-node-get ty-id)
-              env
+              (macro-hygiene-env-shared-view env)
               (tc-global-shared-view macro-name)))))]
     [(ast.AstExpr.PtrNullCheck ptr-box)
       (let
         [ptr : i64 ptr-box]
-        (ast.ast-expr-ptr-null-check
+        (ast.ast-expr-ptr-null-check-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             ptr
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.PtrAddrOf place-box)
       (let
         [place : i64 place-box]
-        (ast.ast-expr-ptr-addr-of-id
+        (ast.ast-expr-ptr-addr-of-id-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             place
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.PtrRead ptr-box)
       (let
         [ptr : i64 ptr-box]
-        (ast.ast-expr-ptr-read
+        (ast.ast-expr-ptr-read-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             ptr
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.PtrWrite ptr-box value-box)
       (let
         [ptr : i64 ptr-box]
         [value : i64 value-box]
-        (ast.ast-expr-ptr-write
+        (ast.ast-expr-ptr-write-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             ptr
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             value
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.PtrOffset ptr-box offset-box)
       (let
         [ptr : i64 ptr-box]
         [offset : i64 offset-box]
-        (ast.ast-expr-ptr-offset
+        (ast.ast-expr-ptr-offset-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             ptr
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             offset
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.PtrCast ptr-box ty-id)
       (let
         [ptr : i64 ptr-box]
-        (ast.ast-expr-ptr-cast
+        (ast.ast-expr-ptr-cast-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             ptr
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-type
             (ast.ty-node-get ty-id)
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name))))]
     [(ast.AstExpr.PtrToInt ptr-box)
       (let
         [ptr : i64 ptr-box]
-        (ast.ast-expr-ptr-to-int
+        (ast.ast-expr-ptr-to-int-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             ptr
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.IntToPtr value-box ty-id)
       (let
         [value : i64 value-box]
-        (ast.ast-expr-int-to-ptr
+        (ast.ast-expr-int-to-ptr-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             value
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-type
             (ast.ty-node-get ty-id)
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name))))]
     [(ast.AstExpr.StringData inner-box)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-string-data
+        (ast.ast-expr-string-data-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.StringFromBytes ptr-box len-box)
       (let
         [ptr : i64 ptr-box]
         [len : i64 len-box]
-        (ast.ast-expr-string-from-bytes
+        (ast.ast-expr-string-from-bytes-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             ptr
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             len
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.ArrayData inner-box)
       (let
         [inner : i64 inner-box]
-        (ast.ast-expr-array-data
+        (ast.ast-expr-array-data-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             inner
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.BinaryData bytes)
       (ast.ast-node-pool-context-expr-push
-        env.pools
+        (macro-hygiene-env-pools-shared-view env)
         (ast.AstExpr.BinaryData bytes))]
     [(ast.AstExpr.SpmdProgramIndex)
-      (ast.ast-expr-spmd-program-index-with-pools env.pools)]
+      (ast.ast-expr-spmd-program-index-with-pools
+        (macro-hygiene-env-pools-shared-view env))]
     [(ast.AstExpr.SpmdProgramCount)
-      (ast.ast-expr-spmd-program-count-with-pools env.pools)]
+      (ast.ast-expr-spmd-program-count-with-pools
+        (macro-hygiene-env-pools-shared-view env))]
     [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
         [leaf : i64 leaf-box]
         [subleaf : i64 subleaf-box]
-        (ast.ast-expr-cpuid-eax
+        (ast.ast-expr-cpuid-eax-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             leaf
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             subleaf
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : i64 leaf-box]
         [subleaf : i64 subleaf-box]
-        (ast.ast-expr-cpuid-ebx
+        (ast.ast-expr-cpuid-ebx-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             leaf
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             subleaf
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : i64 leaf-box]
         [subleaf : i64 subleaf-box]
-        (ast.ast-expr-cpuid-ecx
+        (ast.ast-expr-cpuid-ecx-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             leaf
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             subleaf
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : i64 leaf-box]
         [subleaf : i64 subleaf-box]
-        (ast.ast-expr-cpuid-edx
+        (ast.ast-expr-cpuid-edx-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             leaf
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)
           (macro-hygiene-expr
             expr-bases
             subleaf
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Xgetbv index-box)
       (let
         [index : i64 index-box]
-        (ast.ast-expr-xgetbv
+        (ast.ast-expr-xgetbv-with-pools
+          (macro-hygiene-env-pools-shared-view env)
           (macro-hygiene-expr
             expr-bases
             index
-            env
+            (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
     [(ast.AstExpr.Syscall args)
-      (ast.ast-expr-syscall
+      (ast.ast-expr-syscall-with-pools
+        (macro-hygiene-env-pools-shared-view env)
         (macro-hygiene-expr-list
           expr-bases
           args
-          env
+          (macro-hygiene-env-shared-view env)
           (tc-global-shared-view macro-name)
           depth))]
-    [(ast.AstExpr.Quote _) (ast.ast-node-push expr)]
-    [(ast.AstExpr.Quasiquote _) (ast.ast-node-push expr)]
-    [(ast.AstExpr.Unquote _) (ast.ast-node-push expr)]
-    [(ast.AstExpr.UnquoteSplicing _) (ast.ast-node-push expr)]
-    [_ (ast.ast-node-push expr)]))
+    [(ast.AstExpr.Quote _) (macro-hygiene-expr-push env expr)]
+    [(ast.AstExpr.Quasiquote _) (macro-hygiene-expr-push env expr)]
+    [(ast.AstExpr.Unquote _) (macro-hygiene-expr-push env expr)]
+    [(ast.AstExpr.UnquoteSplicing _) (macro-hygiene-expr-push env expr)]
+    [_ (macro-hygiene-expr-push env expr)]))
 
 (define (macro-expand-depth-limit) : i64
   512)
@@ -104326,13 +104572,17 @@
       [state-b : TcMacroState (tc-job-state-macro-state job-b)]
       [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
       [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-      [importer-a : i64 (ci.intern-compat-state-intern intern-a "importer")]
-      [alias-a : i64 (ci.intern-compat-state-intern intern-a "alias")]
-      [target-a : i64 (ci.intern-compat-state-intern intern-a "target-a")]
-      [importer-b : i64 (ci.intern-compat-state-intern intern-b "importer")]
-      [alias-b : i64 (ci.intern-compat-state-intern intern-b "alias")]
-      [_filler-b : i64 (ci.intern-compat-state-intern intern-b "filler")]
-      [target-b : i64 (ci.intern-compat-state-intern intern-b "target-b")]
+      [importer-a : i64
+        (ci.intern-compat-state-intern (&mut intern-a) "importer")]
+      [alias-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "alias")]
+      [target-a : i64
+        (ci.intern-compat-state-intern (&mut intern-a) "target-a")]
+      [importer-b : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "importer")]
+      [alias-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "alias")]
+      [_filler-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "filler")]
+      [target-b : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "target-b")]
       [_bind-a : unit
         (tc-macro-state-bind-source-names!
           state-a
@@ -104443,7 +104693,7 @@
                   alias-a
                   target-a
                   false)
-                (ci.intern-compat-state-reset! intern-a)
+                (ci.intern-compat-state-reset! (&mut intern-a))
                 (tc-macro-state-bind-source-names!
                   state-a
                   (ci.intern-source-name-session-handle-from-state intern-a))
@@ -104933,7 +105183,10 @@
             (ast.ast-program (ast.ast-decl-list-new))]
           [empty-paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
           [symbols-a : csym.ResultCompilerSymbols
-            (macro-live-symbols-build-fresh state-a empty-program empty-paths)]
+            (macro-live-symbols-build-fresh
+              state-a
+              (tc-global-shared-view empty-program)
+              (tc-global-shared-view empty-paths))]
           [symbols-b : csym.ResultCompilerSymbols
             (macro-live-symbols-build-fresh state-b empty-program empty-paths)]
           [decl-arena-a : i64 (macro-decl-generation-enter! state-a)]
@@ -104991,13 +105244,15 @@
         (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
           (tc-macro-ctfe-state state-b))
         (let
+          [failed-env : ctfe_support.CtfeEnv
+            (ctfe_support.ctfe-env-empty-with-pools-and-source-names-and-macro-state
+              (ast.ast-node-pool-context-capture-active)
+              source-names-a
+              (tc-macro-ctfe-state state-a))]
           [failed : ctfe_support.ResultCtfe
             (ctfe_support.compiler-ctfe-eval
               (ast.AstExpr.Literal (ast.AstLiteral.Float "not-a-float"))
-              (ctfe_support.ctfe-env-empty-with-pools-and-source-names-and-macro-state
-                (ast.ast-node-pool-context-capture-active)
-                source-names-a
-                (tc-macro-ctfe-state state-a))
+              failed-env
               8)]
           (set!
             ok
@@ -106217,7 +106472,7 @@
     ;; symbol table.
     (if (csym.compiler-symbols-handle-found? macro-handle)
       (match (macro-decl-at-index-with-owner-module
-        ctx
+        (tc-global-shared-view ctx)
         (tc-context-symbols ctx)
         (csym.compiler-symbol-handle-index macro-handle)
         target-module-id)
@@ -106325,6 +106580,7 @@
 ;; precedence over the prelude. Returns MacroMaybeDecl.No (an ordinary call, not an
 ;; error) when the name is not a prelude macro, leaving plain calls unaffected.
 (define (macro-prelude-resolve-module
+  [ctx : TcContext]
   [symbols : (& symbols csym.CompilerSymbols)]
   [module-id : i64]
   [lookup-id : i64]) : ResultMacroCallDecl
@@ -106363,10 +106619,11 @@
       (ResultMacroCallDecl.Ok (MacroMaybeDecl.No)))))
 
 (define (macro-prelude-resolve
+  [ctx : TcContext]
   [symbols : (& symbols csym.CompilerSymbols)]
   [lookup-id : i64]) : ResultMacroCallDecl
   (match (macro-prelude-resolve-module
-    ctx
+    (tc-global-shared-view ctx)
     symbols
     cbi.compiler-builtin-id-core-macros-module
     lookup-id)
@@ -106388,7 +106645,10 @@
   [_decls : ast.AstDeclList]
   [lookup-name-id : i64]
   [_call-expr : ast.AstExpr]) : ResultMacroCallDecl
-  (macro-prelude-resolve ctx (tc-context-symbols ctx) lookup-name-id))
+  (macro-prelude-resolve
+    (tc-global-shared-view ctx)
+    (tc-context-symbols ctx)
+    lookup-name-id))
 
 (defstruct TcMacroResultIdentityStateData
   (table-id i64)
@@ -106528,7 +106788,7 @@
     ;; the symbol table.
     (if (csym.compiler-symbols-handle-found? handle)
       (match (macro-decl-at-index-with-owner-module
-        ctx
+        (tc-global-shared-view ctx)
         (tc-context-symbols ctx)
         (csym.compiler-symbol-handle-index handle)
         target-module-id)
@@ -106716,7 +106976,7 @@
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? handle)
       (match (macro-decl-at-index-with-owner-module
-        ctx
+        (tc-global-shared-view ctx)
         (tc-context-symbols ctx)
         (csym.compiler-symbol-handle-index handle)
         module-id)
@@ -109916,7 +110176,9 @@
           (tc-context-macro-state (tc-global-shared-view ctx))
           macro-expand-stdlib-tlci-route-active))
       (> params.len 8)
-      (not (cload.compiler-load-embedded-stdlib-module-id? fallback-module)))
+      (not
+        (cload.compiler-load-embedded-stdlib-module-id?
+          (tc-global-shared-view fallback-module))))
       MacroDirectStdlibTlciResult.No
       (let
         [dependency-slot : i64
@@ -109937,20 +110199,20 @@
               (match (let
                 [capture-result : ResultMacroCapturedOperands
                   (macro-capture-params-direct
-                    ctx
+                    (tc-global-shared-view ctx)
                     decls
-                    fallback-module
+                    (tc-global-shared-view fallback-module)
                     fallback-module-id
                     type-env
-                    macro-name
-                    params
-                    expanded-args
-                    (tc-ctfe-env ctx)
+                    (tc-global-shared-view macro-name)
+                    (tc-global-shared-view params)
+                    (tc-global-shared-view expanded-args)
+                    (tc-ctfe-env (tc-global-shared-view ctx))
                     (macro-expand-expr-type-macro?
                       (tc-context-macro-state (tc-global-shared-view ctx))
                       fallback-module-id
                       macro-name-id)
-                    call-expr)]
+                    (tc-global-shared-view call-expr))]
                 (begin
                   (cfg
                     compile-profile
@@ -109965,18 +110227,18 @@
                     syntax-pools)
                   (begin
                     (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-                      (tc-context-ctfe-macro-state ctx))
+                      (tc-context-ctfe-macro-state (tc-global-shared-view ctx)))
                     (macro-result-provenance-reset-with-captured-body!
-                      (tc-context-ctfe-macro-state ctx)
+                      (tc-context-ctfe-macro-state (tc-global-shared-view ctx))
                       (macro-binding-prefix-transformer?
                         (tc-global-shared-view ctx)
-                        fallback-module
+                        (tc-global-shared-view fallback-module)
                         fallback-module-id
                         macro-name-id
-                        params))
+                        (tc-global-shared-view params)))
                     (macro-hygiene-produced-eval-start-with-pools!
                       (tc-context-macro-state (tc-global-shared-view ctx))
-                      syntax-pools)
+                      (tc-global-shared-view syntax-pools))
                     (cfg
                       compile-profile
                       (compiler-tc-walk-native-dispatch-start!))
@@ -109990,9 +110252,9 @@
                           catalog
                           params
                           ret
-                          base-env
+                          (tc-global-shared-view base-env)
                           call-expr
-                          operands
+                          (tc-global-shared-view operands)
                           count
                           true)]
                       (begin
@@ -110002,7 +110264,8 @@
                         native-result))
                       [(MacroNativeStdlibTlciResult.Value value)
                         (begin
-                          (tc-context-install-pools! ctx)
+                          (tc-context-install-pools!
+                            (tc-global-shared-view ctx))
                           (cfg
                             compile-profile
                             (begin
@@ -111310,6 +111573,8 @@
                                   expanded
                                   (macro-hygiene-env-empty
                                     (tc-context-macro-state
+                                      (tc-global-shared-view ctx))
+                                    (tc-context-type-pools
                                       (tc-global-shared-view ctx)))
                                   (MacroHygieneContext
                                     macro-name-id
@@ -111372,7 +111637,8 @@
                                   expanded
                                   (macro-hygiene-env-empty
                                     (tc-context-macro-state
-                                      (tc-global-shared-view ctx)))
+                                      (tc-global-shared-view ctx))
+                                    pools)
                                   (MacroHygieneContext
                                     macro-name-id
                                     definition-module-id
@@ -112609,7 +112875,12 @@
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.Replace place-box replacement-box)
-      (match (macro-expand-node ctx env decls depth place-box)
+      (match (macro-expand-node
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (tc-global-shared-view decls)
+        depth
+        place-box)
         [(ResultMacroExpr.Ok nplace)
           (match (macro-expand-node ctx env decls depth replacement-box)
             [(ResultMacroExpr.Ok nreplacement)
@@ -114032,7 +114303,8 @@
                                           (macro-hygiene-ctfe-output
                                             (tc-context-macro-state
                                               (tc-global-shared-view call-ctx))
-                                            (ast.ast-node-pool-active-expr-segment-bases)
+                                            (ctfe_support.ctfe-env-syntax-pool-context
+                                              (& macro-env))
                                             (tc-global-shared-view value)
                                             (MacroHygieneContext
                                               (tc-global-shared-view macro-name)
@@ -114333,7 +114605,8 @@
                                                   (tc-context-macro-state
                                                     (tc-global-shared-view
                                                       call-ctx))
-                                                  (ast.ast-node-pool-active-expr-segment-bases)
+                                                  (ctfe_support.ctfe-env-syntax-pool-context
+                                                    (& macro-env))
                                                   (tc-global-shared-view value)
                                                   (MacroHygieneContext
                                                     (tc-global-shared-view
@@ -118903,8 +119176,7 @@
     program
     paths
     pools
-    (ci.intern-source-name-session-handle-from-state
-      (owned_view.compiler-owned-shared-view intern-state))
+    (ci.intern-source-name-session-handle-from-state intern-state)
     job-state
     stdlib-roots
     cfgs
@@ -119876,10 +120148,6 @@
                 (arena.tl_arena_set scratch-head)
                 (arena.tl_region_reset mark)
                 (arena.tl_arena_set new-enclosing))
-              (tc-fn-scratch-arena-release-after-overflow!
-                (tc-global-shared-view scratch-state)
-                scratch
-                scratch-head)
               ;; Single-entry name caches may hold strings allocated in the
               ;; scratch that was just rewound; invalidate them before
               ;; anything can compare against freed memory.
@@ -119969,9 +120237,12 @@
       ;; outer scope already provides the required reclamation boundary.
       (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)
       (let
+        [enclosing : i64 (arena.tl_arena_current)]
         [scratch : i64 (tc-decl-scratch-arena-get scratch-state)]
         (begin
           (tc-decl-scratch-depth-set! scratch-state 1)
+          (unsafe
+            (arena.tl_arena_set scratch))
           (let
             [mark : i64 (arena.tl_region_mark)]
             [raw : ResultTcUnit
@@ -120000,11 +120271,6 @@
                   (tc-decl-scratch-depth-set!
                     scratch-state
                     (- (tc-decl-scratch-depth scratch-state) 1))
-                  (if (and
-                    (= (tc-decl-scratch-depth scratch-state) 0)
-                    (not (= scratch scratch-head)))
-                    (tc-decl-scratch-arena-release! scratch-state)
-                    unit)
                   ;; Single-entry name caches may hold strings allocated in the
                   ;; scratch that was just rewound; invalidate them before
                   ;; anything can compare against freed memory.
@@ -121858,11 +122124,15 @@
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
-  [intern-state : ci.InternCompatState]) : ResultCompilerTypecheckChecked
-  ;; Publish owner-generated IDs before the legacy body/typecheck state runs.
-  (ast.ast-node-pool-context-install! (tc-global-shared-view pools))
-  (ci.intern-compat-state-install! (tc-global-shared-view intern-state))
+  [intern-state-input : ci.InternCompatState]) : ResultCompilerTypecheckChecked
   (let
+    [intern-state : ci.InternCompatState
+      (tc-global-shared-view intern-state-input)]
+    ;; Publish owner-generated IDs before the legacy body/typecheck state runs.
+    [_install-pools : unit
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools))]
+    [_install-intern-state : unit
+      (ci.intern-compat-state-install! (tc-global-shared-view intern-state))]
     [job-source-names : ci.InternSourceNameSessionHandle
       (tc-macro-state-source-names (tc-job-state-macro-state job-state))]
     [body-state : TcBodyState

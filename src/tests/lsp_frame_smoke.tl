@@ -2043,7 +2043,7 @@
         (lsp_svec.push
           (&mut roots)
           (owned_view.compiler-owned-shared-view root-b-uri))
-        (lsp_svec.push (&mut roots) "https://example.invalid/workspace"))]
+        (lsp_svec.push-ref! (&mut roots) "https://example.invalid/workspace"))]
     [single-state : lsp_vector_families.LspServerState
       (lsp-smoke-state-with-overlay
         (lsp_frame_core.lsp-server-state-new)

@@ -529,26 +529,26 @@
     [pfx : String (program-files-x86)]
     [items : svec.Vec (svec.with-capacity 8)]
     (begin
-      (svec.push
+      (svec.push-ref!
         (&mut items)
         (vs-toolset-parent (msvc-shared-view pf) "2022" "Enterprise"))
-      (svec.push
+      (svec.push-ref!
         (&mut items)
         (vs-toolset-parent (msvc-shared-view pf) "2022" "Professional"))
-      (svec.push
+      (svec.push-ref!
         (&mut items)
         (vs-toolset-parent (msvc-shared-view pf) "2022" "Community"))
-      (svec.push
+      (svec.push-ref!
         (&mut items)
         (vs-toolset-parent (msvc-shared-view pfx) "2022" "BuildTools"))
-      (svec.push
+      (svec.push-ref!
         (&mut items)
         (vs-toolset-parent (msvc-shared-view pf) "2019" "Enterprise"))
-      (svec.push
+      (svec.push-ref!
         (&mut items)
         (vs-toolset-parent (msvc-shared-view pf) "2019" "Professional"))
-      (svec.push (&mut items) (vs-toolset-parent pf "2019" "Community"))
-      (svec.push (&mut items) (vs-toolset-parent pfx "2019" "BuildTools"))
+      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2019" "Community"))
+      (svec.push-ref! (&mut items) (vs-toolset-parent pfx "2019" "BuildTools"))
       items)))
 
 ;: Return the bin directory for host x64 -> target x64 tools.

@@ -60,7 +60,7 @@
         (intern-structural-session-handle-session handle)]
       [raw : i64
         (ci.intern-structural-table-intern
-          session.structural-table-cell
+          (&mut session.structural-table-cell)
           (array-ref session.persistent-arena-cell 0)
           kind
           left-id
@@ -71,7 +71,7 @@
         ;; owner. Keep that owner's scalar/address snapshot coherent without
         ;; touching an unrelated installed table.
         (if (= (ci.intern-active-table-id) session.table-id)
-          (ci.intern-active-structural-sync! session.structural-table-cell)
+          (ci.intern-active-structural-sync! (& session.structural-table-cell))
           unit)
         (InternStructuralKey raw)))))
 

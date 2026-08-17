@@ -106,9 +106,11 @@
 (define (doc-test-example-list-append
   [examples : doc_example_vec.Vec]
   [example : DocTestExample]) : doc_example_vec.Vec
-  (begin
-    (doc_example_vec.push-ref! (&mut examples) example)
-    examples))
+  (let
+    [out : doc_example_vec.Vec (owned_view.compiler-owned-shared-view examples)]
+    (begin
+      (doc_example_vec.push-ref! (&mut out) example)
+      out)))
 
 (define (doc-test-error-list-empty) : doc_error_vec.Vec
   (doc_error_vec.new))
@@ -122,9 +124,11 @@
 (define (doc-test-error-list-append
   [errors : doc_error_vec.Vec]
   [err : DocTestError]) : doc_error_vec.Vec
-  (begin
-    (doc_error_vec.push-ref! (&mut errors) err)
-    errors))
+  (let
+    [out : doc_error_vec.Vec (owned_view.compiler-owned-shared-view errors)]
+    (begin
+      (doc_error_vec.push-ref! (&mut out) err)
+      out)))
 
 (define (doc-test-error-list-append-all-from
   [errors : doc_error_vec.Vec]
@@ -621,15 +625,18 @@
           (doc-test-line-text (owned_view.compiler-owned-shared-view line)))
         "```")
         (DocTestCodeCollect.Collect (+ index 1) code collected true)
-        (begin
-          (doc_line_vec.push
-            (&mut collected)
-            (owned_view.compiler-owned-shared-view line))
-          (doc-test-collect-code-inner
-            lines
-            (+ index 1)
-            (str_cat.str-cat code (doc-test-line-text line) "\n")
-            collected))))))
+        (let
+          [out : doc_line_vec.Vec
+            (owned_view.compiler-owned-shared-view collected)]
+          (begin
+            (doc_line_vec.push-ref!
+              (&mut out)
+              (owned_view.compiler-owned-shared-view line))
+            (doc-test-collect-code-inner
+              lines
+              (+ index 1)
+              (str_cat.str-cat code (doc-test-line-text line) "\n")
+              out)))))))
 
 (define (doc-test-collect-code [lines : doc_line_vec.Vec] [index : i64]) : DocTestCodeCollect
   (doc-test-collect-code-inner lines index "" (doc_line_vec.new)))
@@ -1142,9 +1149,12 @@
 (define (doc-test-run-failure-list-append
   [failures : doc_run_failure_vec.Vec]
   [failure : DocTestRunFailure]) : doc_run_failure_vec.Vec
-  (begin
-    (doc_run_failure_vec.push-ref! (&mut failures) failure)
-    failures))
+  (let
+    [out : doc_run_failure_vec.Vec
+      (owned_view.compiler-owned-shared-view failures)]
+    (begin
+      (doc_run_failure_vec.push-ref! (&mut out) failure)
+      out)))
 
 ;; Grow the generated error collection past its initial capacity while preserving
 ;; source order. The extraction path uses this same helper.

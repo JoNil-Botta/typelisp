@@ -24,6 +24,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import token)
 (import tlci_core as tlci)
+(import tlci_loader as tlci_loader_support)
 (import compiler_owned_view as owned_view)
 
 (defmacro (compiler-load-global-shared-view [place : Expr]) : Expr
@@ -849,7 +850,9 @@
 (define (compiler-load-dependency-catalog-owner-arena-ensure!
   [state : CompilerLoadSessionState]) : i64
   (let
-    [owner : i64 (compiler-load-dependency-catalog-owner-arena state)]
+    [owner : i64
+      (compiler-load-dependency-catalog-owner-arena
+        (owned_view.compiler-owned-shared-view state))]
     (if (> owner 0)
       owner
       (let
@@ -890,11 +893,16 @@
     [index : i64 0]
     (begin
       (while (< index items.len)
-        (if (string.eq
-          (array-ref items.slots index).key.canonical-root
-          canonical-root)
-          (return index)
-          (set! index (+ index 1))))
+        (let
+          [entry : CompilerLoadDependencyCatalogEntry
+            (owned_view.compiler-owned-array-element-shared-view
+              items.slots
+              index)]
+          (if (string.eq
+            (owned_view.compiler-owned-shared-view entry.key.canonical-root)
+            (owned_view.compiler-owned-shared-view canonical-root))
+            (return index)
+            (set! index (+ index 1)))))
       -1)))
 
 (define (compiler-load-dependency-catalog-find-key-slot
@@ -902,14 +910,21 @@
   [key : CompilerLoadDependencyCatalogKey]) : i64
   (let
     [items : CompilerLoadDependencyCatalogList
-      (array-ref state.dependency-catalog.entries 0)]
+      (owned_view.compiler-owned-array-element-shared-view
+        state.dependency-catalog.entries
+        0)]
     [slot : i64
-      (compiler-load-dependency-catalog-find-root-slot items key.canonical-root)]
+      (compiler-load-dependency-catalog-find-root-slot
+        (owned_view.compiler-owned-shared-view items)
+        (owned_view.compiler-owned-shared-view key.canonical-root))]
     (if (and
       (>= slot 0)
-      (compiler-load-dependency-catalog-key-eq?
-        (array-ref items.slots slot).key
-        key))
+      (let
+        [entry : CompilerLoadDependencyCatalogEntry
+          (owned_view.compiler-owned-array-element-shared-view items.slots slot)]
+        (compiler-load-dependency-catalog-key-eq?
+          (owned_view.compiler-owned-shared-view entry.key)
+          key)))
       slot
       -1)))
 
@@ -930,7 +945,11 @@
     (begin
       (while (< index items.len)
         (begin
-          (set! (array-ref slots index) (array-ref items.slots index))
+          (set!
+            (array-ref slots index)
+            (owned_view.compiler-owned-array-element-shared-view
+              items.slots
+              index))
           (set! index (+ index 1))))
       (CompilerLoadDependencyCatalogList slots items.len))))
 
@@ -942,19 +961,25 @@
   [state : CompilerLoadSessionState]
   [entry : CompilerLoadDependencyCatalogEntry]) : i64
   (let
-    [registry : CompilerLoadDependencyCatalogRegistry state.dependency-catalog]
-    [items : CompilerLoadDependencyCatalogList (array-ref registry.entries 0)]
+    [registry : CompilerLoadDependencyCatalogRegistry
+      (owned_view.compiler-owned-shared-view state.dependency-catalog)]
+    [items : CompilerLoadDependencyCatalogList
+      (owned_view.compiler-owned-array-element-shared-view registry.entries 0)]
     [slot : i64
       (compiler-load-dependency-catalog-find-root-slot
-        items
-        entry.key.canonical-root)]
+        (owned_view.compiler-owned-shared-view items)
+        (owned_view.compiler-owned-shared-view entry.key.canonical-root))]
     (if (>= slot 0)
       (let
-        [old : CompilerLoadDependencyCatalogEntry (array-ref items.slots slot)]
-        (if (compiler-load-dependency-catalog-key-eq? old.key entry.key)
+        [old : CompilerLoadDependencyCatalogEntry
+          (owned_view.compiler-owned-array-element-shared-view items.slots slot)]
+        (if (compiler-load-dependency-catalog-key-eq?
+          (owned_view.compiler-owned-shared-view old.key)
+          (owned_view.compiler-owned-shared-view entry.key))
           slot
           (begin
-            (match (compiler-load-dependency-catalog-entry-release-mapping! old)
+            (match (compiler-load-dependency-catalog-entry-release-mapping!
+              (owned_view.compiler-owned-shared-view old))
               [(ResultCompilerLoadDependencyCatalogUnit.Ok) unit]
               [(ResultCompilerLoadDependencyCatalogUnit.Err _) unit])
             (set! (array-ref items.slots slot) entry)
@@ -964,7 +989,8 @@
             slot)))
       (let
         [owner : i64
-          (compiler-load-dependency-catalog-owner-arena-ensure! state)]
+          (compiler-load-dependency-catalog-owner-arena-ensure!
+            (owned_view.compiler-owned-shared-view state))]
         [ready : CompilerLoadDependencyCatalogList
           (if (< items.len (array-length items.slots))
             items
@@ -986,15 +1012,15 @@
   (if (>= index items.len)
     first-error
     (match (compiler-load-dependency-catalog-entry-release-mapping!
-      (array-ref items.slots index))
+      (owned_view.compiler-owned-array-element-shared-view items.slots index))
       [(ResultCompilerLoadDependencyCatalogUnit.Ok)
         (compiler-load-dependency-catalog-release-from!
-          items
+          (owned_view.compiler-owned-shared-view items)
           (+ index 1)
-          first-error)]
+          (owned_view.compiler-owned-shared-view first-error))]
       [(ResultCompilerLoadDependencyCatalogUnit.Err message)
         (compiler-load-dependency-catalog-release-from!
-          items
+          (owned_view.compiler-owned-shared-view items)
           (+ index 1)
           (if (= (string.string-length first-error) 0)
             message
@@ -1003,8 +1029,10 @@
 (define (compiler-load-session-state-dependency-catalog-release!
   [state : CompilerLoadSessionState]) : ResultCompilerLoadDependencyCatalogUnit
   (let
-    [registry : CompilerLoadDependencyCatalogRegistry state.dependency-catalog]
-    [items : CompilerLoadDependencyCatalogList (array-ref registry.entries 0)]
+    [registry : CompilerLoadDependencyCatalogRegistry
+      (owned_view.compiler-owned-shared-view state.dependency-catalog)]
+    [items : CompilerLoadDependencyCatalogList
+      (owned_view.compiler-owned-array-element-shared-view registry.entries 0)]
     [owner : i64 (array-ref registry.owner-arena 0)]
     [error : String (compiler-load-dependency-catalog-release-from! items 0 "")]
     (begin
@@ -1054,14 +1082,23 @@
       (begin
         (while (< index items.len)
           (let
-            [root : String (array-ref items.slots index).key.canonical-root]
+            [entry : CompilerLoadDependencyCatalogEntry
+              (owned_view.compiler-owned-array-element-shared-view
+                items.slots
+                index)]
+            [root : String
+              (owned_view.compiler-owned-shared-view entry.key.canonical-root)]
             [root-len : i64 (string.string-length root)]
             (begin
               (if (and
                 (> root-len best-len)
                 (or
-                  (string.eq path root)
-                  (compiler-load-path-under-root? path root)))
+                  (string.eq
+                    (owned_view.compiler-owned-shared-view path)
+                    (owned_view.compiler-owned-shared-view root))
+                  (compiler-load-path-under-root?
+                    (owned_view.compiler-owned-shared-view path)
+                    (owned_view.compiler-owned-shared-view root))))
                 (begin
                   (set! best index)
                   (set! best-len root-len))
@@ -1089,7 +1126,7 @@
       CompilerLoadDependencyCatalogLookup.NoCatalog
       (let
         [entry : CompilerLoadDependencyCatalogEntry
-          (array-ref items.slots slot)]
+          (owned_view.compiler-owned-array-element-shared-view items.slots slot)]
         (match entry.status
           [(CompilerLoadDependencyCatalogStatus.Unavailable failure)
             (CompilerLoadDependencyCatalogLookup.Unavailable failure)]
@@ -1239,12 +1276,14 @@
   [slot : i64]) : CompilerLoadDependencyCatalogAdmittedImage
   (let
     [items : CompilerLoadDependencyCatalogList
-      (array-ref state.dependency-catalog.entries 0)]
+      (owned_view.compiler-owned-array-element-shared-view
+        state.dependency-catalog.entries
+        0)]
     (if (or (< slot 0) (>= slot items.len))
       CompilerLoadDependencyCatalogAdmittedImage.NoCatalog
       (let
         [entry : CompilerLoadDependencyCatalogEntry
-          (array-ref items.slots slot)]
+          (owned_view.compiler-owned-array-element-shared-view items.slots slot)]
         (match entry.status
           [(CompilerLoadDependencyCatalogStatus.Unavailable failure)
             (CompilerLoadDependencyCatalogAdmittedImage.Unavailable failure)]
@@ -1272,8 +1311,10 @@
   [state : CompilerLoadSessionState]) : CompilerLoadDependencyCatalogObservation
   (let
     [registry : CompilerLoadDependencyCatalogRegistry
-      (compiler-load-session-state-dependency-catalog state)]
-    [items : CompilerLoadDependencyCatalogList (array-ref registry.entries 0)]
+      (compiler-load-session-state-dependency-catalog
+        (owned_view.compiler-owned-shared-view state))]
+    [items : CompilerLoadDependencyCatalogList
+      (owned_view.compiler-owned-array-element-shared-view registry.entries 0)]
     [index : i64 0]
     [unavailable : i64 0]
     [metadata-only : i64 0]
@@ -1285,7 +1326,9 @@
     (begin
       (while (< index items.len)
         (begin
-          (match (compiler-load-dependency-catalog-admitted-image state index)
+          (match (compiler-load-dependency-catalog-admitted-image
+            (owned_view.compiler-owned-shared-view state)
+            index)
             [(CompilerLoadDependencyCatalogAdmittedImage.NoCatalog) unit]
             [(CompilerLoadDependencyCatalogAdmittedImage.Unavailable _)
               (set! unavailable (+ unavailable 1))]
@@ -4313,6 +4356,8 @@
       (ast.ast-place-shared-view right.slots)]
     [right-owner-ids : (__tl_dyn-array i64)
       (ast.ast-place-shared-view right.owner-ids)]
+    [left-capacity : i64 (array-length left.slots)]
+    [right-capacity : i64 (array-length right.slots)]
     (if (and
       (<= left-len right.offset)
       right.prependable
@@ -7402,11 +7447,11 @@
     [(ast.AstExpr.Replace place replacement)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
-          state
+          (compiler-load-session-state-shared-view (& state))
           (ast.ast-node-get place)
           alias
-          summary
-          locals)
+          (ast.ast-place-shared-view summary)
+          (sym_i64_env.sym-i64-shared-view (& locals)))
         (compiler-load-session-state-lazy-expr-demand
           state
           (ast.ast-node-get replacement)
@@ -9406,6 +9451,7 @@
     [after-alias : ast.AstDeclPathList
       (compiler-load-alias-path-list
         (clone importer-path)
+        importer-path-id
         importer-decl-owner-id
         alias
         rest)]
@@ -9521,7 +9567,7 @@
                                 (ast.ast-decl-module-id
                                   importer-source-module-id)
                                 rest-decls)))
-                          (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                          (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                             (clone importer-path)
                             target-module-id
                             traversal.importer-path-id
@@ -9576,7 +9622,7 @@
                       decl
                       decls
                       rest-decls)
-                    (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                    (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                       (clone importer-path)
                       traversal.importer-decl-owner-id
                       traversal.importer-path-id
@@ -9842,7 +9888,7 @@
                         expanded
                         (ast.ast-place-shared-view decls)
                         rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                         (clone importer-path)
                         traversal.importer-decl-owner-id
                         traversal.importer-path-id
@@ -9886,7 +9932,7 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                         (clone importer-path)
                         traversal.importer-decl-owner-id
                         traversal.importer-path-id
@@ -9927,7 +9973,7 @@
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
                       (ast.ast-decl-list-prepend-builder expanded rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                         (clone importer-path)
                         traversal.importer-decl-owner-id
                         traversal.importer-path-id
@@ -9971,7 +10017,7 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                         (clone importer-path)
                         traversal.importer-decl-owner-id
                         traversal.importer-path-id
@@ -10008,7 +10054,7 @@
                     decl
                     (ast.ast-place-shared-view decls)
                     rest-decls)
-                  (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                  (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                     (clone importer-path)
                     traversal.importer-decl-owner-id
                     traversal.importer-path-id
@@ -18951,7 +18997,9 @@
   (let
     [state : CompilerLoadSessionState (compiler-load-session-state-new)]
     [other-state : CompilerLoadSessionState (compiler-load-session-state-new)]
-    [owner : i64 (compiler-load-dependency-catalog-owner-arena-ensure! state)]
+    [owner : i64
+      (compiler-load-dependency-catalog-owner-arena-ensure!
+        (compiler-load-global-shared-view state))]
     [checks : (__tl_dyn-array bool) (__tl_make-array false)]
     (begin
       (compiler-load-session-state-set-dependency-tlci-force-source! state true)
@@ -18967,15 +19015,21 @@
                 (fs.current-dir)
                 "__dependency_catalog_test"))]
           [nested-root : String
-            (compiler-load-join-root-path outer-root "nested")]
+            (compiler-load-join-root-path
+              (compiler-load-global-shared-view outer-root)
+              "nested")]
           [metadata-root : String
-            (compiler-load-join-root-path outer-root "metadata")]
+            (compiler-load-join-root-path
+              (compiler-load-global-shared-view outer-root)
+              "metadata")]
           [outer-key : CompilerLoadDependencyCatalogKey
             (CompilerLoadDependencyCatalogKey
-              outer-root
+              (compiler-load-global-shared-view outer-root)
               "outer"
               "1.0.0"
-              (compiler-load-join-root-path outer-root "target/outer.tlci")
+              (compiler-load-join-root-path
+                (compiler-load-global-shared-view outer-root)
+                "target/outer.tlci")
               11
               12
               13
@@ -18983,10 +19037,12 @@
               "compiler-a")]
           [nested-key : CompilerLoadDependencyCatalogKey
             (CompilerLoadDependencyCatalogKey
-              nested-root
+              (compiler-load-global-shared-view nested-root)
               "nested"
               "2.0.0"
-              (compiler-load-join-root-path nested-root "target/nested.tlci")
+              (compiler-load-join-root-path
+                (compiler-load-global-shared-view nested-root)
+                "target/nested.tlci")
               21
               22
               23
@@ -18994,11 +19050,11 @@
               "compiler-b")]
           [metadata-key : CompilerLoadDependencyCatalogKey
             (CompilerLoadDependencyCatalogKey
-              metadata-root
+              (compiler-load-global-shared-view metadata-root)
               "metadata"
               "3.0.0"
               (compiler-load-join-root-path
-                metadata-root
+                (compiler-load-global-shared-view metadata-root)
                 "target/metadata.tlci")
               31
               32
@@ -19028,7 +19084,7 @@
                 (CompilerLoadDependencyCatalogFailure.Missing "outer missing")))]
           [nested-entry : CompilerLoadDependencyCatalogEntry
             (CompilerLoadDependencyCatalogEntry
-              nested-key
+              (compiler-load-global-shared-view nested-key)
               CompilerLoadDependencyCatalogImage.None
               (CompilerLoadDependencyCatalogStatus.Unavailable
                 (CompilerLoadDependencyCatalogFailure.Missing "nested missing")))]
@@ -19038,12 +19094,16 @@
               (CompilerLoadDependencyCatalogImage.Some metadata-image)
               CompilerLoadDependencyCatalogStatus.TrustedMetadataOnly)]
           [outer-slot : i64
-            (compiler-load-dependency-catalog-record-owned! state outer-entry)]
+            (compiler-load-dependency-catalog-record-owned!
+              (compiler-load-global-shared-view state)
+              outer-entry)]
           [nested-slot : i64
-            (compiler-load-dependency-catalog-record-owned! state nested-entry)]
+            (compiler-load-dependency-catalog-record-owned!
+              (compiler-load-global-shared-view state)
+              (compiler-load-global-shared-view nested-entry))]
           [metadata-slot : i64
             (compiler-load-dependency-catalog-record-owned!
-              state
+              (compiler-load-global-shared-view state)
               metadata-entry)]
           [nested-provenance : i64
             (ci.intern (compiler-load-join-root-path nested-root "src/lib.tl"))]
@@ -19055,9 +19115,12 @@
                 (fs.current-dir)
                 "__dependency_catalog_test-other/src/lib.tl"))]
           [same-slot : i64
-            (compiler-load-dependency-catalog-record-owned! state nested-entry)]
+            (compiler-load-dependency-catalog-record-owned!
+              (compiler-load-global-shared-view state)
+              (compiler-load-global-shared-view nested-entry))]
           [observation : CompilerLoadDependencyCatalogObservation
-            (compiler-load-dependency-catalog-observe state)]
+            (compiler-load-dependency-catalog-observe
+              (compiler-load-global-shared-view state))]
           (set!
             (array-ref checks 0)
             (and
@@ -19071,22 +19134,22 @@
               (= same-slot nested-slot)
               (=
                 (compiler-load-dependency-catalog-find-key-slot
-                  state
+                  (compiler-load-global-shared-view state)
                   nested-key)
                 nested-slot)
               (=
                 (compiler-load-dependency-catalog-slot-for-provenance-id
-                  state
+                  (compiler-load-global-shared-view state)
                   nested-provenance)
                 nested-slot)
               (=
                 (compiler-load-dependency-catalog-slot-for-provenance-id
-                  state
+                  (compiler-load-global-shared-view state)
                   outer-provenance)
                 outer-slot)
               (=
                 (compiler-load-dependency-catalog-slot-for-provenance-id
-                  state
+                  (compiler-load-global-shared-view state)
                   sibling-provenance)
                 -1)
               (=
@@ -19095,13 +19158,13 @@
                   nested-provenance)
                 -1)
               (match (compiler-load-dependency-catalog-lookup-macro
-                state
+                (compiler-load-global-shared-view state)
                 metadata-slot
                 "metadata/macro")
                 [(CompilerLoadDependencyCatalogLookup.MetadataOnly) true]
                 [_ false])
               (match (compiler-load-dependency-catalog-admitted-image
-                state
+                (compiler-load-global-shared-view state)
                 metadata-slot)
                 [(CompilerLoadDependencyCatalogAdmittedImage.TrustedMetadataOnly
                     image)
@@ -19112,7 +19175,7 @@
                     (= (array-length image.imports) 0))]
                 [_ false])
               (match (compiler-load-dependency-catalog-lookup-macro
-                state
+                (compiler-load-global-shared-view state)
                 nested-slot
                 "nested/macro")
                 [(CompilerLoadDependencyCatalogLookup.Unavailable
@@ -19178,13 +19241,17 @@
                       capability))))))))
       (let
         [release-ok : bool
-          (match (compiler-load-session-state-dependency-catalog-release! state)
+          (match (compiler-load-session-state-dependency-catalog-release!
+            (compiler-load-global-shared-view state))
             [(ResultCompilerLoadDependencyCatalogUnit.Ok) true]
             [(ResultCompilerLoadDependencyCatalogUnit.Err _) false])]
         (and
           (array-ref checks 0)
           release-ok
-          (= (compiler-load-dependency-catalog-owner-arena state) 0)
+          (=
+            (compiler-load-dependency-catalog-owner-arena
+              (compiler-load-global-shared-view state))
+            0)
           (= (array-ref state.dependency-catalog.entries 0).len 0))))))
 
 (define (compiler-load-self-test) : i64

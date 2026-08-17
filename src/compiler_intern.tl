@@ -8,6 +8,8 @@
 ;; integration cases. The dependency-free arena leaf provides checker-visible
 ;; allocation extents without pulling collection or formatting modules into them.
 ;;
+(import compiler_owned_view as owned_view)
+
 ;; The table is PERSISTENT for a compile (ids stay valid across the loader's
 ;; per-file parse-arena destroy -- ids are integers, so they survive); it resets
 ;; between compiles (REPL/LSP and single-source smoke compiles) via intern-reset!.
@@ -936,7 +938,7 @@
 
 (define (intern-structural-table-grow-records!
   [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]
-  [arena : i64]) : unit
+  [arena-handle : i64]) : unit
   (let
     [table : (&mut cell InternStructuralTable) (&mut (array-ref cell 0))]
     [count : i64 table.len]
@@ -974,8 +976,6 @@
                     (intern-private-string-length
                       (& (array-ref table.rendered-names index)))))
                 (set! index (+ index 1)))))
-          (unsafe
-            (tl_arena_set previous-arena))
           (set! table.kinds next-kinds)
           (set! table.lefts next-lefts)
           (set! table.middles next-middles)
@@ -1001,7 +1001,7 @@
 
 (define (intern-structural-table-grow-map!
   [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]
-  [arena : i64]) : unit
+  [arena-handle : i64]) : unit
   (let
     [table : (&mut cell InternStructuralTable) (&mut (array-ref cell 0))]
     [new-capacity : i64 (* (array-length table.map-slots) 2)]
@@ -1110,7 +1110,7 @@
 
 (define (intern-structural-table-reinitialize-in-arena!
   [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]
-  [arena : i64]) : unit
+  [arena-handle : i64]) : unit
   (let
     [next : InternStructuralTable
       (in-arena (arena.Arena arena-handle) (intern-structural-table-new))]
@@ -1495,7 +1495,7 @@
 
 (define (intern-compat-state-persistent-substring-ref
   [state : (& state InternCompatState)]
-  [text : String]
+  [text : (& text str)]
   [start : i64]
   [len : i64]) : String
   (in-arena
@@ -1518,8 +1518,8 @@
     0
     (intern-private-string-length text)))
 
-(define (intern-compat-state-record-qualified-metadata!
-  [state : (&mut state InternCompatState)]
+(define (intern-compat-state-record-qualified-metadata-ref!
+  [state : (& state InternCompatState)]
   [id : i64]
   [name : (& name str)]) : unit
   (let
@@ -1599,12 +1599,75 @@
 ;; State-owned interning mirrors the compatibility table without installing it
 ;; into process globals. Compile-job setup and reset paths use this API while
 ;; the legacy parser/typecheck/lower call graph is migrated incrementally.
+(define (intern-compat-state-intern-ready-ref
+  [state : (& state InternCompatState)]
+  [name : (& name str)]) : i64
+  (let
+    [capacity : i64 (array-length state.map-id-slots)]
+    [hash : i64 (intern-hash name)]
+    [cursor : i64 (intern-bucket hash capacity)]
+    [steps : i64 0]
+    [out : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< steps capacity))
+        (let
+          [stored-empty? : bool
+            (intern-id-slot-empty? (array-ref state.map-id-slots cursor))]
+          (if stored-empty?
+            (let
+              [id : i64 (array-ref state.pool-count 0)]
+              (if (> id (array-ref state.generated-next-id 0))
+                (intern-pool-capacity-abort)
+                (let
+                  [persistent-name : String
+                    (intern-compat-state-persistent-substring-ref
+                      state
+                      name
+                      0
+                      (intern-private-string-length name))]
+                  (begin
+                    (set! (array-ref state.pool-slots id) persistent-name)
+                    (set!
+                      (array-ref state.map-id-slots cursor)
+                      (intern-id-slot-encode id))
+                    (set! (array-ref state.map-hash-slots cursor) hash)
+                    (set! (array-ref state.pool-count 0) (+ id 1))
+                    (intern-compat-state-record-qualified-metadata-ref!
+                      state
+                      id
+                      persistent-name)
+                    (set! out id)
+                    (set! done true)))))
+            (let
+              [slot-id : i64
+                (intern-id-slot-decode (array-ref state.map-id-slots cursor))]
+              [slot-hash : i64 (array-ref state.map-hash-slots cursor)]
+              [slot-key : (& state str)
+                (& (array-ref state.pool-slots slot-id))]
+              (if (and
+                (= slot-hash hash)
+                (intern-private-string-eq slot-key name))
+                (begin
+                  (set! out slot-id)
+                  (set! done true))
+                (begin
+                  (set! cursor (intern-bucket (+ cursor 1) capacity))
+                  (set! steps (+ steps 1))))))))
+      out)))
+
+(define (intern-compat-state-ensure-ready!
+  [state : (&mut state InternCompatState)]) : unit
+  (if (array-ref state.map-ready 0)
+    unit
+    (intern-compat-state-reset! state)))
+
 (define (intern-compat-state-intern
   [state : (&mut state InternCompatState)]
   [name : String]) : i64
   (begin
     (intern-compat-state-ensure-ready! state)
-    (intern-compat-state-intern-ready-ref (& state) name)))
+    (intern-compat-state-intern-ready-ref (& state) (& name))))
 
 ;; State-owned source-slice interning. This is the explicit lexer boundary:
 ;; hits compare against the caller's source bytes without allocating, while
@@ -1613,7 +1676,7 @@
 ;; selector is read or published here.
 (define (intern-compat-state-intern-slice-ready-ref
   [state : (& state InternCompatState)]
-  [text : String]
+  [text : (& text str)]
   [start : i64]
   [len : i64]) : i64
   (begin
@@ -1637,7 +1700,11 @@
                   (intern-pool-capacity-abort)
                   (let
                     [persistent-name : String
-                      (intern-compat-state-persistent-copy state (& name))]
+                      (intern-compat-state-persistent-substring-ref
+                        state
+                        text
+                        start
+                        len)]
                     (begin
                       (cfg
                         compile-profile
@@ -1664,11 +1731,7 @@
                   (& (array-ref state.pool-slots slot-id))]
                 (if (and
                   (= slot-hash hash)
-                  (intern-string-slice-eq?
-                    (& (array-ref state.pool-slots slot-id))
-                    (& text)
-                    start
-                    len))
+                  (intern-string-slice-eq? slot-key text start len))
                   (begin
                     (cfg
                       compile-profile
@@ -1741,16 +1804,18 @@
   [id : i64]) : i64
   (intern-id-slot-decode (array-ref state.pool-base-id-slots id)))
 
-(define (intern-compat-state-first-dot [state : InternCompatState] [id : i64]) : i64
+(define (intern-compat-state-first-dot
+  [state : (& state InternCompatState)]
+  [id : i64]) : i64
   (cast (array-ref state.pool-first-dot-slots id) : i64))
 
 (define (intern-compat-state-dotted-prefix-id
-  [state : InternCompatState]
+  [state : (& state InternCompatState)]
   [id : i64]) : i64
   (intern-id-slot-decode (array-ref state.pool-dotted-prefix-id-slots id)))
 
 (define (intern-compat-state-dotted-tail-id
-  [state : InternCompatState]
+  [state : (& state InternCompatState)]
   [id : i64]) : i64
   (let
     [base-id : i64
@@ -1767,7 +1832,7 @@
           tail-id)))))
 
 (define (intern-compat-state-dotted-final-id
-  [state : InternCompatState]
+  [state : (& state InternCompatState)]
   [id : i64]) : i64
   (let
     [current : i64
@@ -1784,11 +1849,13 @@
             (set! current tail-id))))
       current)))
 
-(define (intern-compat-state-dotted? [state : InternCompatState] [id : i64]) : bool
+(define (intern-compat-state-dotted?
+  [state : (& state InternCompatState)]
+  [id : i64]) : bool
   (>= (intern-compat-state-first-dot state id) 0))
 
 (define (intern-compat-state-macro-local-name-id?
-  [state : InternCompatState]
+  [state : (& state InternCompatState)]
   [id : i64]) : bool
   (=
     (array-ref state.pool-macro-prefix-class-slots id)
@@ -2325,7 +2392,7 @@
         id))))
 
 (define (intern-compat-state-generated-scalars-publish-if-active!
-  [state : InternCompatState]) : unit
+  [state : (& state InternCompatState)]) : unit
   (if (= (intern-active-table-id) (intern-compat-state-table-id state))
     (begin
       (set! intern-pool-count (array-ref state.pool-count 0))
@@ -2337,9 +2404,12 @@
 ;; State-owned generated allocation. Generated ids share the same high-end
 ;; lane as the compatibility allocator, but all metadata and the monotonic
 ;; counter live in the supplied state; no active-table installation is needed.
-(define (intern-compat-state-generated-name
+(define (intern-compat-state-generated-name-store
   [state : (&mut state InternCompatState)]
-  [name : String]) : i64
+  [name : String]
+  [qualified : bool]
+  [module-id : i64]
+  [base-id : i64]) : i64
   (begin
     (if (array-ref state.map-ready 0)
       unit
@@ -2390,12 +2460,12 @@
             next-id))))))
 
 (define (intern-compat-state-generated-name
-  [state : InternCompatState]
+  [state : (&mut state InternCompatState)]
   [name : String]) : i64
   (intern-compat-state-generated-name-store state name false -1 -1))
 
 (define (intern-compat-state-generated-canonical-name-at
-  [state : InternCompatState]
+  [state : (&mut state InternCompatState)]
   [name : String]
   [hash : i64]
   [cursor : i64]
@@ -2459,7 +2529,7 @@
                 base-id))))))))
 
 (define (intern-compat-state-generated-canonical-qualified-name
-  [state : InternCompatState]
+  [state : (&mut state InternCompatState)]
   [name : String]
   [module-id : i64]
   [base-id : i64]) : i64
@@ -2665,7 +2735,7 @@
   (if (or
     (intern-compat-state-composite-pair-id? state id)
     (intern-compat-state-composite-triple-id? state id))
-    (array-ref
+    (intern-array-shared-view
       (__tl-project-field
         (array-ref state.structural-table-cell 0)
         rendered-names)
@@ -2715,7 +2785,7 @@
     (intern-generated-id-active? id)
     (intern-generated-canonical-id-at? id 0)))
 
-(define (intern-private-last-slash [name : String]) : i64
+(define (intern-private-last-slash [name : (& name str)]) : i64
   (let
     [i : i64 0]
     [n : i64 (intern-private-string-length name)]
@@ -2774,7 +2844,7 @@
     [else -1]))
 
 (define (intern-compat-state-generated-role-key
-  [state : InternCompatState]
+  [state : (&mut state InternCompatState)]
   [role : i64]
   [qualification : i64]
   [components : i64]) : i64
@@ -2787,7 +2857,7 @@
       components)))
 
 (define (intern-compat-state-generated-role-refresh-active!
-  [state : InternCompatState]) : unit
+  [state : (&mut state InternCompatState)]) : unit
   ;; Parsing, macro expansion, and typechecking still have compatibility
   ;; callers that reserve generated IDs through the installed global view.
   ;; A driver-owned state captured before those phases shares the arrays but
@@ -2799,7 +2869,7 @@
     unit))
 
 (define (intern-compat-state-generated-role-symbol-id-from-key
-  [state : InternCompatState]
+  [state : (&mut state InternCompatState)]
   [role : i64]
   [key : i64]
   [qualified : bool]
@@ -2807,7 +2877,8 @@
   [base-id : i64]) : i64
   (let
     [index : i64 (- (bit-and key (intern-structural-key-index-mask)) 1)]
-    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    [table : InternStructuralTable
+      (intern-array-shared-view state.structural-table-cell 0)]
     [existing : InternSlotId (array-ref table.generated-symbol-handles index)]
     (if (not (intern-id-slot-empty? existing))
       (let
@@ -2858,7 +2929,7 @@
           id)))))
 
 (define (intern-compat-state-generated-role-symbol-id
-  [state : InternCompatState]
+  [state : (&mut state InternCompatState)]
   [role : i64]
   [components : i64]) : i64
   (begin
@@ -2877,7 +2948,7 @@
         -1))))
 
 (define (intern-compat-state-generated-role-qualified-symbol-id
-  [state : InternCompatState]
+  [state : (&mut state InternCompatState)]
   [role : i64]
   [components : i64]
   [module-id : i64]
@@ -2909,14 +2980,14 @@
 ;; concatenation or hashing; the caller supplies the legacy spelling only when
 ;; crossing a diagnostic, serialization, or backend text boundary.
 (define (intern-compat-state-generated-role-symbol-materialize!
-  [state : InternCompatState]
+  [state : (&mut state InternCompatState)]
   [role : i64]
   [id : i64]
   [name : String]) : String
   (if (< (intern-generated-symbol-role-index role) 0)
     (tl_oob_abort)
     (let
-      [cached : String (array-ref state.pool-slots id)]
+      [cached : String (intern-array-shared-view state.pool-slots id)]
       [rendered : String
         (intern-compat-state-generated-symbol-materialize! state id name)]
       (begin
@@ -2982,7 +3053,9 @@
   (let
     [index : i64 (- (bit-and key (intern-structural-key-index-mask)) 1)]
     [table : InternStructuralTable
-      (array-ref (intern-global-shared-view intern-structural-table-cell) 0)]
+      (intern-array-shared-view
+        (intern-global-shared-view intern-structural-table-cell)
+        0)]
     [existing : InternSlotId (array-ref table.generated-symbol-handles index)]
     (if (not (intern-id-slot-empty? existing))
       (begin
@@ -3033,7 +3106,9 @@
     (tl_oob_abort)
     (let
       [cached : String
-        (array-ref (intern-global-shared-view intern-pool-slots) id)]
+        (intern-array-shared-view
+          (intern-global-shared-view intern-pool-slots)
+          id)]
       (if (> (intern-private-string-length cached) 0)
         cached
         (let
@@ -3054,7 +3129,7 @@
             rendered))))))
 
 (define (intern-compat-state-generated-role-symbol?
-  [state : InternCompatState]
+  [state : (& state InternCompatState)]
   [id : i64]
   [role : i64]) : bool
   (and
@@ -3063,14 +3138,15 @@
     (= (cast (array-ref state.pool-first-dot-slots id) : i64) role)))
 
 (define (intern-compat-state-generated-role-record-count
-  [state : InternCompatState]) : i64
+  [state : (& state InternCompatState)]) : i64
   (__tl-project-field (array-ref state.structural-table-cell 0) len))
 
 (define (intern-compat-state-generated-role-record-handle-at
-  [state : InternCompatState]
+  [state : (& state InternCompatState)]
   [index : i64]) : i64
   (let
-    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    [table : InternStructuralTable
+      (intern-array-shared-view state.structural-table-cell 0)]
     (if (or (< index 0) (>= index table.len))
       0
       (let
@@ -3080,10 +3156,11 @@
           (intern-id-slot-decode handle))))))
 
 (define (intern-compat-state-generated-role-record-role-at
-  [state : InternCompatState]
+  [state : (& state InternCompatState)]
   [index : i64]) : i64
   (let
-    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    [table : InternStructuralTable
+      (intern-array-shared-view state.structural-table-cell 0)]
     (if (or
       (< index 0)
       (>= index table.len)
@@ -3096,19 +3173,21 @@
       (array-ref table.lefts index))))
 
 (define (intern-compat-state-generated-role-record-qualification-at
-  [state : InternCompatState]
+  [state : (& state InternCompatState)]
   [index : i64]) : i64
   (let
-    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    [table : InternStructuralTable
+      (intern-array-shared-view state.structural-table-cell 0)]
     (if (or (< index 0) (>= index table.len))
       0
       (array-ref table.middles index))))
 
 (define (intern-compat-state-generated-role-record-components-at
-  [state : InternCompatState]
+  [state : (& state InternCompatState)]
   [index : i64]) : i64
   (let
-    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    [table : InternStructuralTable
+      (intern-array-shared-view state.structural-table-cell 0)]
     (if (or (< index 0) (>= index table.len))
       0
       (array-ref table.rights index))))
@@ -3838,14 +3917,17 @@
 ;; Capture the source-name boundary from an explicitly owned intern state. The
 ;; caller chooses when parsing is complete, so generated strings can resolve
 ;; only against names that existed at that boundary.
-(define (intern-source-name-session-from-state [state : InternCompatState]) : InternSourceNameSession
+(define (intern-source-name-session-from-state
+  [state : (& state InternCompatState)]) : InternSourceNameSession
   (InternSourceNameSession
-    (intern-global-shared-view state.table-id)
-    (intern-global-shared-view state.reset-generation)
-    (intern-global-shared-view state.pool-slots)
-    (intern-global-shared-view state.map-id-slots)
-    (intern-global-shared-view state.map-hash-slots)
-    (intern-global-shared-view state.map-ready)
+    (owned_view.compiler-owned-shared-view state.table-id)
+    (owned_view.compiler-owned-shared-view state.reset-generation)
+    (owned_view.compiler-owned-shared-view state.pool-slots)
+    (owned_view.compiler-owned-shared-view state.map-id-slots)
+    (owned_view.compiler-owned-shared-view state.map-hash-slots)
+    (owned_view.compiler-owned-shared-view state.map-ready)
+    (owned_view.compiler-owned-shared-view state.persistent-arena)
+    (owned_view.compiler-owned-shared-view state.structural-table-cell)
     (intern-compat-state-table-id state)
     (intern-compat-state-generation state)
     (intern-compat-state-pool-len state)
@@ -3854,7 +3936,9 @@
 ;; Compatibility adapter for standalone compiler APIs. Production driver jobs
 ;; pass `intern-source-name-session-from-state` explicitly.
 (define (intern-source-name-session-capture-active) : InternSourceNameSession
-  (intern-source-name-session-from-state (intern-compat-state-capture-active)))
+  (let
+    [state : InternCompatState (intern-compat-state-capture-active)]
+    (intern-source-name-session-from-state state)))
 
 (define (intern-source-name-session-handle [session : InternSourceNameSession]) : InternSourceNameSessionHandle
   (in-arena
@@ -3872,7 +3956,7 @@
             : i64))))))
 
 (define (intern-source-name-session-handle-from-state
-  [state : InternCompatState]) : InternSourceNameSessionHandle
+  [state : (& state InternCompatState)]) : InternSourceNameSessionHandle
   ;; The owner-local CTFE view must keep its handle cell in the caller's
   ;; current arena; unlike the active compatibility handle it must not retain
   ;; a persistent-arena allocation for every explicit compile job.
@@ -4713,7 +4797,7 @@
           (while (< structural-grow-index 600)
             (begin
               (intern-structural-table-intern
-                state.structural-table-cell
+                (&mut state.structural-table-cell)
                 grown-arena
                 (intern-structural-kind-pair)
                 (+ 1000000 structural-grow-index)
@@ -4758,7 +4842,7 @@
           (unless (= (tl_arena_current) home) (set! ok false))
           (let
             [grown-structural-table : InternStructuralTable
-              (array-ref state.structural-table-cell 0)]
+              (intern-array-shared-view state.structural-table-cell 0)]
             (begin
               (unless
                 (>= (array-length grown-structural-table.kinds) 512)
@@ -4846,17 +4930,28 @@
     [empty-id : i64 (intern-compat-state-intern (&mut state-a) "")]
     [qualified-id : i64
       (intern-compat-state-intern (&mut state-a) "pkg/module.name")]
+    [slice-mark : i64 (intern-compat-state-pool-len state-a)]
+    [qualified-slice-id : InternId
+      (intern-compat-state-source-slice-id
+        (&mut state-a)
+        "xxpkg/module.nameyy"
+        2
+        15)]
+    [slice-mark-after : i64 (intern-compat-state-pool-len state-a)]
     [hygiene-id : i64
       (intern-compat-state-intern (&mut state-a) "local#hygiene")]
     [source-mark : i64 (intern-compat-state-pool-len state-a)]
     [session-a : InternSourceNameSession
-      (intern-source-name-session-from-state
-        (intern-global-shared-view state-a))]
+      (intern-source-name-session-from-state state-a)]
     [session-b : InternSourceNameSession
       (begin
         (intern-compat-state-intern (&mut state-b) "equal")
-        (intern-source-name-session-from-state
-          (intern-global-shared-view state-b)))]
+        (intern-source-name-session-from-state state-b))]
+    [persistent-handle : InternSourceNameSessionHandle
+      (intern-source-name-session-handle (intern-global-shared-view session-a))]
+    [persistent-handle-session : InternSourceNameSession
+      (intern-source-name-session-handle-session persistent-handle)]
+    [persistent-handle-restored? : bool (= (tl_arena_current) home)]
     [generated-id : i64 (- (intern-capacity) 1)]
     [generated-a : InternSyntaxTextIdentity
       (intern-source-name-session-identity session-a generated-id)]
@@ -5010,8 +5105,7 @@
         [_ (set! ok false)])
       (let
         [next-session : InternSourceNameSession
-          (intern-source-name-session-from-state
-            (intern-global-shared-view state-a))]
+          (intern-source-name-session-from-state state-a)]
         [next-generated : InternSyntaxTextIdentity
           (intern-source-name-session-identity next-session generated-id)]
         (match (intern-source-name-session-resolve
@@ -5029,55 +5123,66 @@
   (let
     [state-a : InternCompatState (intern-compat-state-new)]
     [state-b : InternCompatState (intern-compat-state-new)]
-    [component-a : i64 (intern-compat-state-intern state-a "component")]
-    [component-b : i64 (intern-compat-state-intern state-b "component")]
+    [component-a : i64 (intern-compat-state-intern (&mut state-a) "component")]
+    [component-b : i64 (intern-compat-state-intern (&mut state-b) "component")]
     [source-collision-a : i64
-      (intern-compat-state-intern state-a "__tl_lambda_component_0")]
+      (intern-compat-state-intern (&mut state-a) "__tl_lambda_component_0")]
     [lambda-a : i64
       (intern-compat-state-generated-role-symbol-id
-        state-a
+        (&mut state-a)
         (intern-generated-symbol-role-lambda)
         component-a)]
     [lambda-a-again : i64
       (intern-compat-state-generated-role-symbol-id
-        state-a
+        (&mut state-a)
         (intern-generated-symbol-role-lambda)
         component-a)]
     [clone-a : i64
       (intern-compat-state-generated-role-symbol-id
-        state-a
+        (&mut state-a)
         (intern-generated-symbol-role-clone-helper)
         component-a)]
     [lambda-b : i64
       (intern-compat-state-generated-role-symbol-id
-        state-b
+        (&mut state-b)
         (intern-generated-symbol-role-lambda)
         component-b)]
-    [module-a : i64 (intern-compat-state-intern state-a "pkg")]
-    [base-a : i64 (intern-compat-state-intern state-a "cleanup")]
+    [module-a : i64 (intern-compat-state-intern (&mut state-a) "pkg")]
+    [base-a : i64 (intern-compat-state-intern (&mut state-a) "cleanup")]
     [qualified-a : i64
       (intern-compat-state-generated-role-qualified-symbol-id
-        state-a
+        (&mut state-a)
         (intern-generated-symbol-role-cleanup-helper)
         component-a
         module-a
         base-a)]
+    [enum-boundary-a-left : i64
+      (intern-compat-state-intern (&mut state-a) "A_B")]
+    [enum-boundary-a-right : i64
+      (intern-compat-state-intern (&mut state-a) "C")]
+    [enum-boundary-a-components : i64
+      (intern-compat-state-composite-pair-id
+        (&mut state-a)
+        enum-boundary-a-left
+        enum-boundary-a-right)]
     [enum-boundary-a : i64
       (intern-compat-state-generated-role-symbol-id
-        state-a
+        (&mut state-a)
         (intern-generated-symbol-role-nullary-enum-object)
-        (intern-compat-state-composite-pair-id
-          state-a
-          (intern-compat-state-intern state-a "A_B")
-          (intern-compat-state-intern state-a "C")))]
+        enum-boundary-a-components)]
+    [enum-boundary-b-left : i64 (intern-compat-state-intern (&mut state-a) "A")]
+    [enum-boundary-b-right : i64
+      (intern-compat-state-intern (&mut state-a) "B_C")]
+    [enum-boundary-b-components : i64
+      (intern-compat-state-composite-pair-id
+        (&mut state-a)
+        enum-boundary-b-left
+        enum-boundary-b-right)]
     [enum-boundary-b : i64
       (intern-compat-state-generated-role-symbol-id
-        state-a
+        (&mut state-a)
         (intern-generated-symbol-role-nullary-enum-object)
-        (intern-compat-state-composite-pair-id
-          state-a
-          (intern-compat-state-intern state-a "A")
-          (intern-compat-state-intern state-a "B_C")))]
+        enum-boundary-b-components)]
     [ok : bool true]
     (begin
       (unless (= lambda-a lambda-a-again) (set! ok false))
@@ -5113,7 +5218,7 @@
       (unless
         (intern-private-string-eq
           (intern-compat-state-generated-role-symbol-materialize!
-            state-a
+            (&mut state-a)
             (intern-generated-symbol-role-lambda)
             lambda-a
             "__tl_lambda_component_0")
@@ -5122,7 +5227,7 @@
       (unless
         (intern-private-string-eq
           (intern-compat-state-generated-role-symbol-materialize!
-            state-b
+            (&mut state-b)
             (intern-generated-symbol-role-lambda)
             lambda-b
             "state_b_lambda")
@@ -5139,7 +5244,7 @@
           "state_b_lambda")
         (set! ok false))
       (intern-compat-state-generated-role-symbol-materialize!
-        state-a
+        (&mut state-a)
         (intern-generated-symbol-role-cleanup-helper)
         qualified-a
         "pkg/__tl_cleanup_cleanup")
@@ -5160,14 +5265,14 @@
       (let
         [growth-first : i64
           (intern-compat-state-generated-role-symbol-id
-            state-a
+            (&mut state-a)
             (intern-generated-symbol-role-global-initializer)
             1000)]
         ;; The initial structural map has 512 slots; components differing by
         ;; 512 deliberately share the role triple's first bucket.
         [hash-collision : i64
           (intern-compat-state-generated-role-symbol-id
-            state-a
+            (&mut state-a)
             (intern-generated-symbol-role-global-initializer)
             1512)]
         [index : i64 0]
@@ -5176,7 +5281,7 @@
           (while (< index 300)
             (begin
               (intern-compat-state-generated-role-symbol-id
-                state-a
+                (&mut state-a)
                 (intern-generated-symbol-role-global-initializer)
                 (+ 2000 index))
               (set! index (+ index 1))))
@@ -5184,27 +5289,27 @@
             (=
               growth-first
               (intern-compat-state-generated-role-symbol-id
-                state-a
+                (&mut state-a)
                 (intern-generated-symbol-role-global-initializer)
                 1000))
             (set! ok false))))
       (let
         [mark-b : i64 (intern-compat-state-pool-len state-b)]
         (begin
-          (intern-compat-state-reset-to! state-b mark-b)
+          (intern-compat-state-reset-to! (&mut state-b) mark-b)
           (unless
             (not (intern-compat-state-generated-id-active? state-b lambda-b))
             (set! ok false))))
-      (intern-compat-state-reset! state-a)
+      (intern-compat-state-reset! (&mut state-a))
       (unless
         (not (intern-compat-state-generated-id-active? state-a lambda-a))
         (set! ok false))
       (let
         [next-component : i64
-          (intern-compat-state-intern state-a "next-component")]
+          (intern-compat-state-intern (&mut state-a) "next-component")]
         [next-lambda : i64
           (intern-compat-state-generated-role-symbol-id
-            state-a
+            (&mut state-a)
             (intern-generated-symbol-role-lambda)
             next-component)]
         (begin
@@ -5215,7 +5320,7 @@
               0)
             (set! ok false))
           (intern-compat-state-generated-role-symbol-materialize!
-            state-a
+            (&mut state-a)
             (intern-generated-symbol-role-lambda)
             next-lambda
             "after_reset")))
@@ -5229,7 +5334,7 @@
         [compat-id : i64 (intern-generated-name "compat-generated")]
         [role-id : i64
           (intern-compat-state-generated-role-symbol-id
-            active-state
+            (&mut active-state)
             (intern-generated-symbol-role-lambda)
             99)]
         (begin
@@ -5249,7 +5354,7 @@
         [compat-role-id : i64 (intern-generated-role-symbol-id role component)]
         [state-role-id : i64
           (intern-compat-state-generated-role-symbol-id
-            active-state
+            (&mut active-state)
             role
             component)]
         (begin
@@ -5263,7 +5368,7 @@
           (unless
             (intern-private-string-eq
               (intern-compat-state-generated-role-symbol-materialize!
-                active-state
+                (&mut active-state)
                 role
                 state-role-id
                 "clone$SharedRole")

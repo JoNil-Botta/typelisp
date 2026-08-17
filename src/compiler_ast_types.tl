@@ -2989,6 +2989,26 @@
         ast-node-pool-context-transient-witness)
       (set! ast-node-pool-active-context-installed? true))))
 
+;; Commit a completed explicit-context phase back to the compatibility context
+;; selected for the compile. CTFE syntax and hygiene can use distinct state
+;; cells over the same pool storage; copying the final states preserves the
+;; selected context owner while making every committed node visible to legacy
+;; global readers. Outside compatibility mode, installing the context is the
+;; equivalent publication boundary.
+(define (ast-node-pool-context-publish-to-compat! [pools : AstNodePoolContext]) : unit
+  (if ast-node-pool-compat-context-explicit?
+    (let
+      [selected : AstNodePoolContext (ast-node-pool-compat-context-shared-view)]
+      (begin
+        (set!
+          (array-ref selected.expr-pool 0)
+          (ast-array-shared-view pools.expr-pool 0))
+        (set!
+          (array-ref selected.type-pool 0)
+          (ast-array-shared-view pools.type-pool 0))
+        (ast-node-pool-compat-context-sync-installed!)))
+    (ast-node-pool-context-install! pools)))
+
 (defmacro (ast-node-pool-context-expr-len [pools : Expr]) : i64
   `(__tl-project-field
     (array-ref (__tl-project-field-name ,pools "expr-pool") 0)
@@ -3171,10 +3191,11 @@
 ;; legacy constructor observe replacement nodes that are about to be rewound.
 (define (ast-node-pool-context-expr-sync-installed!
   [pools : AstNodePoolContext]) : unit
-  (if (not (ast-node-pool-context-expr-installed? pools))
+  (if (not
+    (ast-node-pool-context-expr-installed? (ast-global-shared-view pools)))
     unit
     (let
-      [state : AstExprNodePoolState (array-ref pools.expr-pool 0)]
+      [state : AstExprNodePoolState (ast-array-shared-view pools.expr-pool 0)]
       (begin
         (set! ast-node-pool-segment-bases state.segment-bases)
         (set! ast-node-pool-count state.count)
@@ -3187,7 +3208,7 @@
   [pools : AstNodePoolContext]
   [node : AstExpr]) : i64
   (let
-    [current : AstExprNodePoolState (array-ref pools.expr-pool 0)]
+    [current : AstExprNodePoolState (ast-array-shared-view pools.expr-pool 0)]
     (match (ast-expr-node-pool-state-push current node)
       [(AstExprNodePoolPushOk next id)
         (begin
@@ -3338,6 +3359,49 @@
             unit)
           (ast-node-pool-compat-context-sync-installed!)
           id)])))
+
+(define (ast-node-pool-context-type-cell-address [pools : AstNodePoolContext]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data pools.type-pool) : (Ptr u8))))
+    : i64))
+
+;; Cell identity, rather than a segment-bases comparison, distinguishes the
+;; live installed owner from a snapshot that shares immutable prefix segments
+;; but has an independent logical length.
+(define (ast-node-pool-context-type-installed? [pools : AstNodePoolContext]) : bool
+  (if (ast-node-pool-compat-context-active?)
+    (=
+      (ast-node-pool-context-type-cell-address (ast-global-shared-view pools))
+      (ast-node-pool-context-type-cell-address
+        (ast-node-pool-compat-context-current)))
+    (and
+      (ast-node-pool-has-active-context?)
+      (=
+        (ast-node-pool-context-type-cell-address (ast-global-shared-view pools))
+        (ast-node-pool-context-type-cell-address
+          (ast-node-pool-context-active-live))))))
+
+;; An explicit push through the cells of the ordinary installed context must
+;; publish its new count/dedup state to the transitional global pushers.
+(define (ast-node-pool-context-type-sync-installed!
+  [pools : AstNodePoolContext]) : unit
+  (if (not
+    (ast-node-pool-context-type-installed? (ast-global-shared-view pools)))
+    unit
+    (let
+      [state : AstTypeNodePoolState (ast-array-shared-view pools.type-pool 0)]
+      (begin
+        (set! ty-node-pool-segment-bases state.segment-bases)
+        (set! ty-node-pool-count state.count)
+        (set! ty-node-pool-storage-arena state.storage-arena)
+        (set! ty-node-pool-segment-count state.segment-count)
+        (set! ty-node-pool-exhausted state.exhausted)
+        (set! ty-node-dedup-capacity (array-length state.dedup-slots))
+        (set! ty-node-dedup-slots (ast-global-shared-view state.dedup-slots))
+        (set! ty-node-dedup-count state.dedup-count)
+        (set! node-pool-base-arena state.base-arena)
+        (set! node-pool-owner-arena pools.owner-arena)))))
 
 ;; Raw type-node read keyed by the pool's segment-bases pointer rather than a
 ;; pool value. Identical addressing to `ty-node-get`, so hot readers can hoist
@@ -7229,7 +7293,7 @@
       (begin
         (set! (array-ref rest.slots new-offset) head)
         (ast-decl-path-list-set-owner-and-provenance-id-at-physical-index!
-          rest.owner-ids
+          (ast-global-shared-view rest.owner-ids)
           (array-length rest.slots)
           new-offset
           owner-id

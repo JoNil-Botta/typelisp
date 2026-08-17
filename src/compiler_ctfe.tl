@@ -486,6 +486,12 @@
 (define (ctfe-pat-variant-id [name-id : i64] [items : ast.AstPatternList]) : ast.AstPattern
   (ast.ast-pat-variant-id name-id items))
 
+(define (ctfe-pat-binding [name : String]) : ast.AstPattern
+  (ctfe-pat-binding-id (ctfe-generated-name-store name)))
+
+(define (ctfe-pat-variant [name : String] [items : ast.AstPatternList]) : ast.AstPattern
+  (ctfe-pat-variant-id (ctfe-generated-name-store name) items))
+
 (define (ctfe-builtin-refresh!) : unit
   (cbi.compiler-builtin-refresh!))
 
@@ -7180,13 +7186,13 @@
       (match (compiler-ctfe-eval place-arg env fuel)
         [(ResultCtfe.Ok place-value place-fuel)
           (let
-            [place-node : i64 (ctfe-syntax-expr-value-node place-value)]
+            [place-node : i64 (ctfe-syntax-expr-value-node place-value (& env))]
             (if (>= place-node 0)
               (match (compiler-ctfe-eval replacement-arg env place-fuel)
                 [(ResultCtfe.Ok replacement-value replacement-fuel)
                   (let
                     [replacement-node : i64
-                      (ctfe-syntax-expr-value-node replacement-value)]
+                      (ctfe-syntax-expr-value-node replacement-value (& env))]
                     (if (>= replacement-node 0)
                       (ResultCtfe.Ok
                         (ctfe-syntax-expr-value
@@ -7758,7 +7764,8 @@
 ;; correct Expr / ExprClause / ExprBindingClause value. Bounds diagnostics are
 ;; named after the public helper, as in the checked-in stdlib body. Arguments
 ;; are evaluated sequence-then-index, matching the stdlib body evaluation order.
-(define (ctfe-comptime-sequence-length-or-negative [value : CompilerCtfeValue]) : i64
+(define (ctfe-comptime-sequence-length-or-negative
+  [value : (& value CompilerCtfeValue)]) : i64
   (match value
     [(CompilerCtfeValue.ExprList items) (ctfe-expr-list-length items)]
     [(CompilerCtfeValue.CapturedExprList items _) (ctfe-expr-list-length items)]
@@ -9470,221 +9477,27 @@
           expr
           "syntax-name-fresh expects exactly one arg")))))
 
-(define (ctfe-source-helper-var [env : (& env CtfeEnv)] [name : String]) : i64
-  (ctfe-ast-push
-    env
-    (ast.AstExpr.Var (ctfe-materialize-generated-name-id name))))
+(define (ctfe-direct-inspector-expr-result
+  [node : i64]
+  [ty : ast.AstType]
+  [pools : ast.AstNodePoolContext]
+  [captured? : bool]) : CompilerCtfeValue
+  (if captured?
+    (CompilerCtfeValue.CapturedExpr node ty pools)
+    (CompilerCtfeValue.Expr node ty)))
 
-(define (ctfe-source-helper-bool [env : (& env CtfeEnv)] [value : bool]) : i64
-  (ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Bool value))))
-
-(define (ctfe-source-helper-i64 [env : (& env CtfeEnv)] [value : i64]) : i64
-  (ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int value))))
-
-(define (ctfe-source-helper-string [env : (& env CtfeEnv)] [value : String]) : i64
-  (ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-generated-string value))))
-
-(define (ctfe-source-helper-struct-get
-  [env : (& env CtfeEnv)]
-  [target : i64]
-  [field-id : i64]) : i64
-  (ast.ast-expr-struct-get-id-with-pools (ctfe-env-pools env) target field-id))
-
-(define (ctfe-source-helper-array-ref
-  [env : (& env CtfeEnv)]
-  [target : i64]
-  [index : i64]) : i64
-  (ast.ast-expr-array-ref-with-pools (ctfe-env-pools env) target index))
-
-(define (ctfe-source-helper-binary
-  [env : (& env CtfeEnv)]
-  [op : ast.AstBinOp]
-  [left : i64]
-  [right : i64]) : i64
-  (ast.ast-expr-binary-with-pools (ctfe-env-pools env) op left right))
-
-(define (ctfe-source-helper-if
-  [env : (& env CtfeEnv)]
-  [cond : i64]
-  [then-expr : i64]
-  [else-expr : i64]) : i64
-  (ast.ast-expr-if-with-pools (ctfe-env-pools env) cond then-expr else-expr))
-
-(define (ctfe-source-helper-call1
-  [env : (& env CtfeEnv)]
+(define (ctfe-direct-inspector-expr-call-with-pools
   [name : String]
-  [arg : i64]) : i64
-  (ctfe-ast-expr-call-with-provenance
-    (ctfe-env-macro-state env)
-    (ctfe-env-pools env)
-    (ctfe-source-helper-var env name)
-    (ast.ast-expr-cons arg (ast.ast-expr-list-new))))
-
-(define (ctfe-source-helper-comptime-error
-  [env : (& env CtfeEnv)]
-  [message : String]) : i64
-  (ctfe-source-helper-call1
-    env
-    "comptime-error"
-    (ctfe-source-helper-string env message)))
-
-(define (ctfe-source-helper-sequence-len [env : (& env CtfeEnv)] [items : i64]) : i64
-  (ctfe-source-helper-struct-get env items cbi.compiler-builtin-id-fix-len))
-
-(define (ctfe-source-helper-sequence-items
-  [env : (& env CtfeEnv)]
-  [items : i64]) : i64
-  (ctfe-source-helper-struct-get env items cbi.compiler-builtin-id-fix-items))
-
-(define (ctfe-source-helper-sequence-empty?
-  [env : (& env CtfeEnv)]
-  [items : i64]) : i64
-  (ctfe-source-helper-binary
-    env
-    (ast.AstBinOp.Eq)
-    (ctfe-source-helper-sequence-len env items)
-    (ctfe-source-helper-i64 env 0)))
-
-(define (ctfe-source-helper-sequence-head
-  [env : (& env CtfeEnv)]
-  [items : i64]
-  [message : String]) : i64
+  [node : i64]
+  [ty : ast.AstType]
+  [pools : ast.AstNodePoolContext]
+  [captured? : bool]
+  [fuel : i64]) : ResultCtfe
   (let
-    [zero : i64 (ctfe-source-helper-i64 env 0)]
-    [has-items : i64
-      (ctfe-source-helper-binary
-        env
-        (ast.AstBinOp.Gt)
-        (ctfe-source-helper-sequence-len env items)
-        zero)]
-    [head : i64
-      (ctfe-source-helper-array-ref
-        env
-        (ctfe-source-helper-sequence-items env items)
-        zero)]
-    [err : i64 (ctfe-source-helper-comptime-error env message)]
-    (ctfe-source-helper-if env has-items head err)))
-
-(define (ctfe-source-helper-sequence-nth
-  [env : (& env CtfeEnv)]
-  [items : i64]
-  [index : i64]
-  [message : String]) : i64
-  (let
-    [zero : i64 (ctfe-source-helper-i64 env 0)]
-    [negative : i64
-      (ctfe-source-helper-binary env (ast.AstBinOp.Lt) index zero)]
-    [too-large : i64
-      (ctfe-source-helper-binary
-        env
-        (ast.AstBinOp.Ge)
-        index
-        (ctfe-source-helper-sequence-len env items))]
-    [value : i64
-      (ctfe-source-helper-array-ref
-        env
-        (ctfe-source-helper-sequence-items env items)
-        index)]
-    [err : i64 (ctfe-source-helper-comptime-error env message)]
-    [non-negative : i64 (ctfe-source-helper-if env too-large err value)]
-    (ctfe-source-helper-if env negative err non-negative)))
-
-(define (ctfe-source-helper-match-with-fallback
-  [env : (& env CtfeEnv)]
-  [scrutinee : i64]
-  [pattern : ast.AstPattern]
-  [body : i64]
-  [fallback : i64]) : i64
-  (ast.ast-expr-match-with-pools
-    (ctfe-env-pools env)
-    scrutinee
-    (ast.ast-match-arm-cons
-      (ast.ast-match-arm pattern body)
-      (ast.ast-match-arm-cons
-        (ast.ast-match-arm ast.AstPattern.Wildcard fallback)
-        (ast.ast-match-arm-list-new)))))
-
-(define (ctfe-source-helper-match-single
-  [env : (& env CtfeEnv)]
-  [scrutinee : i64]
-  [pattern : ast.AstPattern]
-  [body : i64]) : i64
-  (ast.ast-expr-match-with-pools
-    (ctfe-env-pools env)
-    scrutinee
-    (ast.ast-match-arm-cons
-      (ast.ast-match-arm pattern body)
-      (ast.ast-match-arm-list-new))))
-
-(define (ctfe-source-helper-expr-bool-pattern [arg : ast.AstPattern]) : ast.AstPattern
-  (ctfe-pat-variant
-    "Bool"
-    (ast.ast-pattern-cons arg (ast.ast-pattern-list-new))))
-
-(define (ctfe-source-helper-expr-if-pattern
-  [cond : ast.AstPattern]
-  [then-expr : ast.AstPattern]
-  [else-expr : ast.AstPattern]) : ast.AstPattern
-  (ctfe-pat-variant
-    "If"
-    (ast.ast-pattern-cons
-      cond
-      (ast.ast-pattern-cons
-        then-expr
-        (ast.ast-pattern-cons else-expr (ast.ast-pattern-list-new))))))
-
-(define (ctfe-source-helper-expr-clause-pattern
-  [first : ast.AstPattern]
-  [second : ast.AstPattern]) : ast.AstPattern
-  (ctfe-pat-variant
-    "ExprClause"
-    (ast.ast-pattern-cons
-      first
-      (ast.ast-pattern-cons second (ast.ast-pattern-list-new)))))
-
-(define (ctfe-comptime-source-helper-nth-name? [name : String]) : bool
-  (or
-    (string.eq name "expr-list-nth")
-    (string.eq name "expr-clause-list-nth")
-    (string.eq name "expr-binding-clause-list-nth")))
-
-(define (ctfe-comptime-source-helper-arity [name : String]) : i64
-  (if (ctfe-comptime-source-helper-nth-name? name)
-    2
-    1))
-
-(define (ctfe-comptime-source-helper-param-name [name : String]) : String
-  (cond
-    [(or
-        (string.eq name "expr-clause-first")
-        (string.eq name "expr-clause-second")
-        (string.eq name "expr-binding-clause-name")
-        (string.eq name "expr-binding-clause-has-type?")
-        (string.eq name "expr-binding-clause-type")
-        (string.eq name "expr-binding-clause-init"))
-      "clause"]
-    [(or
-        (string.eq name "expr-list-empty?")
-        (string.eq name "expr-list-length")
-        (string.eq name "expr-list-head")
-        (string.eq name "expr-list-nth")
-        (string.eq name "expr-clause-list-empty?")
-        (string.eq name "expr-clause-list-length")
-        (string.eq name "expr-clause-list-head")
-        (string.eq name "expr-clause-list-nth")
-        (string.eq name "expr-binding-clause-list-empty?")
-        (string.eq name "expr-binding-clause-list-length")
-        (string.eq name "expr-binding-clause-list-head")
-        (string.eq name "expr-binding-clause-list-nth"))
-      "items"]
-    [else "value"]))
-
-(define (ctfe-comptime-source-helper-body
-  [name : String]
-  [env : (& env CtfeEnv)]) : i64
-  (let
-    [param : String (ctfe-comptime-source-helper-param-name (clone name))]
-    [scrutinee : i64 (ctfe-source-helper-var env param)]
+    [inspected : ast.AstExpr
+      (ast.ast-expr-unspan-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-get pools node))]
     (cond
       [(string.eq name "expr-bool?")
         (ResultCtfe.Ok
@@ -9727,10 +9540,13 @@
               (ctfe-direct-inspector-expr-result node ty pools captured?)
               fuel)])])))
 
-(define (ctfe-comptime-source-helper-arity-message [name : String]) : String
-  (if (= (ctfe-comptime-source-helper-arity (clone name)) 1)
-    (str_cat.str-cat (clone name) " expects exactly one arg")
-    (str_cat.str-cat name " expects exactly two args")))
+(define (ctfe-direct-inspector-clause-result
+  [node : i64]
+  [pools : ast.AstNodePoolContext]
+  [captured? : bool]) : CompilerCtfeValue
+  (if captured?
+    (CompilerCtfeValue.CapturedExpr node (ctfe-untyped-expr-type) pools)
+    (CompilerCtfeValue.Expr node (ctfe-untyped-expr-type))))
 
 (define (ctfe-direct-inspector-clause-call
   [name : String]
@@ -9747,7 +9563,7 @@
       captured?)
     fuel))
 
-(define (ctfe-direct-inspector-clause-name? [name : String]) : bool
+(define (ctfe-direct-inspector-clause-name? [name : (& name str)]) : bool
   (or
     (string.eq name "expr-clause-first")
     (string.eq name "expr-clause-second")))
@@ -9758,9 +9574,7 @@
   [expr : ast.AstExpr]) : ResultCtfe
   (ResultCtfe.Err
     (box
-      (ctfe-diagnostic-at-expr
-        (clone expr)
-        (ctfe-comptime-source-helper-arity-message name)))))
+      (ctfe-diagnostic-at-expr expr (str_cat.str-cat name " expects " expected)))))
 
 (define (ctfe-eval-comptime-direct-inspector-value
   [name : String]
@@ -9805,31 +9619,21 @@
   [expr : ast.AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (let
-    [arity : i64 (ctfe-comptime-source-helper-arity (clone name))]
-    (if (= (ctfe-expr-arg-count args) arity)
-      (let
-        [arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
-        (match (compiler-ctfe-eval arg env fuel)
-          [(ResultCtfe.Ok value arg-fuel)
-            (let
-              [arg-env : CtfeEnv
-                (ctfe-env-extend-id
-                  (ctfe-env-shared-view (& env))
-                  (ctfe-materialize-generated-name-id
-                    (ctfe-comptime-source-helper-param-name (clone name)))
-                  value)]
-              (if (= arity 1)
-                (ctfe-eval-comptime-source-helper-body name arg-env arg-fuel)
-                (ctfe-eval-comptime-source-helper-index
-                  name
-                  args
-                  expr
-                  env
-                  arg-env
-                  arg-fuel)))]
-          [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
-      (ctfe-comptime-source-helper-arity-error name expr))))
+  (if (= (ctfe-expr-arg-count args) 1)
+    (match (compiler-ctfe-eval (ctfe-expr-arg args 0 env) env fuel)
+      [(ResultCtfe.Ok value next-fuel)
+        (ctfe-eval-comptime-direct-inspector-value
+          name
+          value
+          expr
+          env
+          next-fuel)]
+      [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (str_cat.str-cat name " expects exactly one arg"))))))
 
 ;; Dispatch a comptime call. Layout and reflection queries are compile-time-only
 ;; compiler metadata; selected String and Expr helpers make that metadata usable
@@ -10031,20 +9835,25 @@
             (let
               [raw-name : String (ci.intern-str raw-id)]
               [lookup-name : String
-                (ctfe-hygiene-global-call-name (clone raw-name))]
+                (ctfe-hygiene-global-call-name
+                  (owned_view.compiler-owned-shared-view raw-name))]
               [lookup-id : i64 raw-id]
               [call-name : String
                 (if (= call-id lookup-id)
-                  (clone lookup-name)
+                  (owned_view.compiler-owned-shared-view lookup-name)
                   (ci.intern-str call-id))]
               [string-helper-candidate : bool
                 (ctfe-string-helper-candidate-name-id?
-                  (clone lookup-name)
+                  (owned_view.compiler-owned-shared-view lookup-name)
                   lookup-id)]
               (cond
                 [(or
-                    (string.eq call-name "expr-for-owned-state")
-                    (string.eq (clone lookup-name) "expr-for-owned-state"))
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view call-name)
+                      "expr-for-owned-state")
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view lookup-name)
+                      "expr-for-owned-state"))
                   (ctfe-eval-expr-for-owned-call
                     0
                     "expr-for-owned-state"
@@ -10053,8 +9862,12 @@
                     env
                     fuel)]
                 [(or
-                    (string.eq call-name "expr-for-owned-step")
-                    (string.eq (clone lookup-name) "expr-for-owned-step"))
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view call-name)
+                      "expr-for-owned-step")
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view lookup-name)
+                      "expr-for-owned-step"))
                   (ctfe-eval-expr-for-owned-call
                     1
                     "expr-for-owned-step"
@@ -10063,8 +9876,12 @@
                     env
                     fuel)]
                 [(or
-                    (string.eq call-name "expr-for-owned-step-typed")
-                    (string.eq (clone lookup-name) "expr-for-owned-step-typed"))
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view call-name)
+                      "expr-for-owned-step-typed")
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view lookup-name)
+                      "expr-for-owned-step-typed"))
                   (ctfe-eval-expr-for-owned-call
                     2
                     "expr-for-owned-step-typed"
@@ -10074,7 +9891,7 @@
                     fuel)]
                 [(ctfe-builtin-size-align-id? lookup-id)
                   (ctfe-eval-size-align-query
-                    (clone lookup-name)
+                    (owned_view.compiler-owned-shared-view lookup-name)
                     args
                     expr
                     env
@@ -10083,7 +9900,7 @@
                   (ctfe-eval-offset-query args expr env fuel)]
                 [(ctfe-builtin-reflection-id? call-id)
                   (ctfe-eval-reflection-query
-                    call-name
+                    (owned_view.compiler-owned-shared-view call-name)
                     call-id
                     args
                     expr
@@ -10092,23 +9909,28 @@
                 [(and
                     string-helper-candidate
                     (ctfe-string-eq-helper-name-id?
-                      (clone lookup-name)
+                      (owned_view.compiler-owned-shared-view lookup-name)
                       lookup-id))
                   (ctfe-eval-string-eq-call
-                    (clone lookup-name)
+                    (owned_view.compiler-owned-shared-view lookup-name)
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-string-build-id? call-id)
-                  (ctfe-eval-string-append-call call-name args expr env fuel)]
+                  (ctfe-eval-string-append-call
+                    (owned_view.compiler-owned-shared-view call-name)
+                    args
+                    expr
+                    env
+                    fuel)]
                 [(and
                     string-helper-candidate
                     (ctfe-string-length-helper-name-id?
-                      (clone lookup-name)
+                      (owned_view.compiler-owned-shared-view lookup-name)
                       lookup-id))
                   (ctfe-eval-string-length-call
-                    (clone lookup-name)
+                    (owned_view.compiler-owned-shared-view lookup-name)
                     args
                     expr
                     env
@@ -10116,10 +9938,10 @@
                 [(and
                     string-helper-candidate
                     (ctfe-string-ref-helper-name-id?
-                      (clone lookup-name)
+                      (owned_view.compiler-owned-shared-view lookup-name)
                       lookup-id))
                   (ctfe-eval-string-ref-call
-                    (clone lookup-name)
+                    (owned_view.compiler-owned-shared-view lookup-name)
                     args
                     expr
                     env
@@ -10127,10 +9949,10 @@
                 [(and
                     string-helper-candidate
                     (ctfe-string-to-int-helper-name-id?
-                      (clone lookup-name)
+                      (owned_view.compiler-owned-shared-view lookup-name)
                       lookup-id))
                   (ctfe-eval-string-to-int-call
-                    (clone lookup-name)
+                    (owned_view.compiler-owned-shared-view lookup-name)
                     args
                     expr
                     env
@@ -10139,42 +9961,42 @@
                   (ctfe-eval-int-to-string-call args expr env fuel)]
                 [(ctfe-builtin-sequence-length-id? call-id)
                   (ctfe-eval-comptime-sequence-length-call
-                    call-name
+                    (owned_view.compiler-owned-shared-view call-name)
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-sequence-nth-id? call-id)
                   (ctfe-eval-comptime-sequence-nth-call
-                    call-name
+                    (owned_view.compiler-owned-shared-view call-name)
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-expr-binding-clause-inspector-id? call-id)
                   (ctfe-eval-expr-binding-clause-inspector-call
-                    call-name
+                    (owned_view.compiler-owned-shared-view call-name)
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-direct-inspector-id? call-id)
                   (ctfe-eval-comptime-direct-inspector-call
-                    call-name
+                    (owned_view.compiler-owned-shared-view call-name)
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-expr-clause-list-inspector-id? call-id)
                   (ctfe-eval-expr-clause-list-inspector-call
-                    call-name
+                    (owned_view.compiler-owned-shared-view call-name)
                     args
                     expr
                     env
                     fuel)]
                 [(ctfe-builtin-expr-binding-clause-list-inspector-id? call-id)
                   (ctfe-eval-expr-binding-clause-list-inspector-call
-                    call-name
+                    (owned_view.compiler-owned-shared-view call-name)
                     args
                     expr
                     env
@@ -10184,7 +10006,12 @@
                 [(cbi.compiler-builtin-typecheck-float-sqrt-id? lookup-id)
                   (ctfe-float-sqrt-unsupported expr)]
                 [else
-                  (ctfe-unsupported-call expr raw-name raw-id call-name call-id)]))]))]
+                  (ctfe-unsupported-call
+                    expr
+                    raw-name
+                    raw-id
+                    (owned_view.compiler-owned-shared-view call-name)
+                    call-id)]))]))]
     [_ (ctfe-unsupported-form expr)]))
 
 ;; Shared "unsupported compile-time form" diagnostic for ordinary calls.
@@ -14430,9 +14257,12 @@
         (match b
           [(ast.AstExpr.Replace b-place-box b-replacement-box)
             (and
-              (ctfe-expr-eq-in-env env a-place (ctfe-ast-get env b-place-box))
               (ctfe-expr-eq-in-env
-                env
+                (ctfe-env-shared-view (& env))
+                a-place
+                (ctfe-ast-get env b-place-box))
+              (ctfe-expr-eq-in-env
+                (ctfe-env-shared-view (& env))
                 a-replacement
                 (ctfe-ast-get env b-replacement-box)))]
           [_ false]))]

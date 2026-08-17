@@ -59,13 +59,30 @@
           identity-count)))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any
+    compiler-surface-producer
+    compiler-surface-selftest
+    compiler-build-identity
+    embedded-stdlib-tlci)
   (define (surface-ast-write-valid?
     [context : (& context SurfaceAstWriteContext)]) : bool
     (array-ref context.valid 0)))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any
+    compiler-surface-producer
+    compiler-surface-selftest
+    compiler-build-identity
+    embedded-stdlib-tlci)
+  (define (surface-ast-write-invalid-name [context : SurfaceAstWriteContext]) : i64
+    (array-ref context.invalid-name 0)))
+
+(cfg
+  (any
+    compiler-surface-producer
+    compiler-surface-selftest
+    compiler-build-identity
+    embedded-stdlib-tlci)
   (define (surface-ast-write-fail!
     [context : (&mut context SurfaceAstWriteContext)]) : unit
     (set! (array-ref context.valid 0) false)))

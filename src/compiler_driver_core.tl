@@ -273,11 +273,15 @@
 ;; provenance and are discarded at the post-load bind.
 (define (compiler-driver-state-bind-owned-source-names!
   [state : CompilerDriverState]) : unit
-  (compiler_typecheck_core.tc-macro-state-bind-source-names!
-    (compiler_typecheck_core.tc-job-state-macro-state
-      (compiler-driver-state-typecheck state))
-    (ci.intern-source-name-session-handle-from-state
-      (compiler-driver-state-owned-interns state))))
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-driver-state-owned-interns
+        (owned_view.compiler-owned-shared-view state))]
+    (compiler_typecheck_core.tc-macro-state-bind-source-names!
+      (compiler_typecheck_core.tc-job-state-macro-state
+        (compiler-driver-state-typecheck
+          (owned_view.compiler-owned-shared-view state)))
+      (ci.intern-source-name-session-handle-from-state intern-state))))
 
 (define (compiler-driver-state-prefix-cache-enable!
   [state : CompilerDriverState]) : unit
@@ -607,7 +611,9 @@
         retained
         (compiler-driver-state-profile
           (owned_view.compiler-owned-shared-view state))
-        (compiler-driver-state-backend state)))))
+        (compiler-driver-state-backend
+          (owned_view.compiler-owned-shared-view state))
+        (compiler-driver-state-typecheck state)))))
 
 (define (compiler-driver-state-clear-pool-backed-caches-for-state!
   [state : CompilerDriverState]) : unit
@@ -1187,7 +1193,7 @@
     (any compile-profile test)
     (begin
       (compiler-driver-profile-set!
-        _state
+        (profile_state.compiler-profile-state-shared-view _state)
         compiler-driver-profile-prelude-source-pipeline-entries-metric
         0)
       (compiler-driver-profile-set!
@@ -1226,28 +1232,35 @@
       [right : profile_state.CompilerProfileState
         (profile_state.compiler-profile-state-new)]
       (begin
-        (compiler-driver-profile-reset-prelude! left)
-        (compiler-driver-profile-reset-prelude! right)
-        (compiler-driver-profile-note-prelude-source-pipeline! left)
-        (compiler-driver-profile-note-prelude-hydration! right)
-        (compiler-driver-profile-note-prelude-source-pipeline! left)
-        (compiler-driver-profile-note-prelude-hydration! left)
-        (compiler-driver-profile-reset-prelude! right)
+        (compiler-driver-profile-reset-prelude!
+          (profile_state.compiler-profile-state-shared-view left))
+        (compiler-driver-profile-reset-prelude!
+          (profile_state.compiler-profile-state-shared-view right))
+        (compiler-driver-profile-note-prelude-source-pipeline!
+          (profile_state.compiler-profile-state-shared-view left))
+        (compiler-driver-profile-note-prelude-hydration!
+          (profile_state.compiler-profile-state-shared-view right))
+        (compiler-driver-profile-note-prelude-source-pipeline!
+          (profile_state.compiler-profile-state-shared-view left))
+        (compiler-driver-profile-note-prelude-hydration!
+          (profile_state.compiler-profile-state-shared-view left))
+        (compiler-driver-profile-reset-prelude!
+          (profile_state.compiler-profile-state-shared-view right))
         (test.assert-i64-eq
           (compiler-driver-profile-value
-            left
+            (profile_state.compiler-profile-state-shared-view left)
             compiler-driver-profile-prelude-source-pipeline-entries-metric)
           2
           "left job keeps interleaved source-pipeline count")
         (test.assert-i64-eq
           (compiler-driver-profile-value
-            left
+            (profile_state.compiler-profile-state-shared-view left)
             compiler-driver-profile-prelude-hydrations-metric)
           1
           "right reset does not erase left hydration count")
         (test.assert-i64-eq
           (compiler-driver-profile-value
-            right
+            (profile_state.compiler-profile-state-shared-view right)
             compiler-driver-profile-prelude-source-pipeline-entries-metric)
           0
           "right source-pipeline count resets independently")
@@ -2321,7 +2334,7 @@
                   (>= opt-level 2))
                 (match (compiler_backend.compiler-backend-object-program-eligibility
                   backend-state
-                  optimized)
+                  (owned_view.compiler-owned-shared-view optimized))
                   [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
                       category)
                     (begin
@@ -2359,7 +2372,8 @@
                             (ResultCompilerDriverPackageRuntime.Err
                               (box
                                 (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-                                  (__tl-box-place diag)
+                                  (owned_view.compiler-owned-box-shared-view
+                                    diag)
                                   input-path))))]))]
                   [(compiler_backend.CompilerBackendObjectEligibility.Eligible)
                     (begin
@@ -2369,14 +2383,14 @@
                         (compiler-driver-profile-start-phase profile-state))
                       (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                         backend-state
-                        pools
-                        optimized
-                        target
-                        mode
-                        optimized-spans
+                        (owned_view.compiler-owned-shared-view pools)
+                        (owned_view.compiler-owned-shared-view optimized)
+                        (owned_view.compiler-owned-shared-view target)
+                        (owned_view.compiler-owned-shared-view mode)
+                        (owned_view.compiler-owned-shared-view optimized-spans)
                         emit-entry
                         crt-entry
-                        profile-state)
+                        (owned_view.compiler-owned-shared-view profile-state))
                         [(compiler_backend.ResultCompilerBackendObject.Ok image)
                           (begin
                             (cfg
@@ -2428,7 +2442,8 @@
                                       (ResultCompilerDriverPackageRuntime.Err
                                         (box
                                           (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-                                            (__tl-box-place diag)
+                                            (owned_view.compiler-owned-box-shared-view
+                                              diag)
                                             input-path))))]))))]
                         [(compiler_backend.ResultCompilerBackendObject.Err diag)
                           (begin
@@ -2440,7 +2455,8 @@
                             (ResultCompilerDriverPackageRuntime.Err
                               (box
                                 (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-                                  (__tl-box-place diag)
+                                  (owned_view.compiler-owned-box-shared-view
+                                    diag)
                                   input-path))))]))]))))]))))
 
 (define (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
@@ -2587,7 +2603,9 @@
     compiler_diagnostic.CompilerDiagnostic)
   (in-arena
     (arena.Arena (compiler-driver-state-surface-arena state))
-    (box (compiler_diagnostic.compiler-diagnostic-copy (__tl-box-place diag)))))
+    (box
+      (compiler_diagnostic.compiler-diagnostic-copy
+        (owned_view.compiler-owned-box-shared-view diag)))))
 
 (define (compiler-driver-retirement-clone-shells? [opt-level : i64]) : bool
   (and
@@ -2894,7 +2912,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              (owned_view.compiler-owned-shared-view pools)
+              program)
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -2902,7 +2922,8 @@
             spans)]
         [out : ResultCompilerDriverPackageRuntime
           (begin
-            (compiler_ast_types.ast-node-pool-reader-use! pools)
+            (compiler_ast_types.ast-node-pool-reader-use!
+              (owned_view.compiler-owned-shared-view pools))
             (if (>= opt-level 1)
               (compiler-driver-retire-lowered-source-arena!)
               unit)
@@ -3090,7 +3111,8 @@
       outer-build
       (build_identity.compiler-build-git-hash-shared-view))
       [(tlci.TlciProducerIdentityAdmission.ExactMatch)
-        (match (compiler_surface_hydrate.compiler-surface-key rodata)
+        (match (compiler_surface_hydrate.compiler-surface-key
+          (owned_view.compiler-owned-shared-view rodata))
           [(compiler_surface_hydrate.ResultCompilerSurfaceKey.Missing)
             CompilerDriverPreludeSurface.Missing]
           [(compiler_surface_hydrate.ResultCompilerSurfaceKey.Err _)
@@ -3098,7 +3120,7 @@
           [(compiler_surface_hydrate.ResultCompilerSurfaceKey.Ok key)
             (if (not
               (compiler-driver-prelude-surface-key-valid?
-                key
+                (owned_view.compiler-owned-shared-view key)
                 outer-build
                 expected-source-hash
                 configuration))
@@ -3441,7 +3463,8 @@
           (owned_view.compiler-owned-shared-view load-state)
           stdlib-roots
           cfgs
-          (owned_view.compiler-owned-shared-view pools))]
+          (owned_view.compiler-owned-shared-view pools)
+          (profile_state.compiler-profile-state-shared-view profile-state))]
       (begin
         (match (owned_view.compiler-owned-shared-view cold)
           [(compiler_load.ResultCompilerLoadWithPaths.Ok
@@ -3515,9 +3538,9 @@
           unit)]
       [surface : CompilerDriverPreludeSurface
         (compiler-driver-try-hydrate-runtime-prelude
-          stdlib-roots
-          cfgs
-          pools
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view cfgs)
+          (owned_view.compiler-owned-shared-view pools)
           surface-arena)]
       [_surface-end : unit
         (cfg
@@ -3591,7 +3614,8 @@
         (owned_view.compiler-owned-shared-view stdlib-roots)
         (owned_view.compiler-owned-shared-view cfgs)
         (owned_view.compiler-owned-shared-view pools)
-        surface-arena)]
+        surface-arena
+        (profile_state.compiler-profile-state-shared-view profile-state))]
     [_prelude-end : unit
       (cfg
         compile-startup-profile
@@ -3648,7 +3672,8 @@
     (owned_view.compiler-owned-shared-view load-state)
     (owned_view.compiler-owned-shared-view stdlib-roots)
     (owned_view.compiler-owned-shared-view cfgs)
-    (owned_view.compiler-owned-shared-view pools))
+    (owned_view.compiler-owned-shared-view pools)
+    (profile_state.compiler-profile-state-shared-view profile-state))
     [(compiler_load.ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
@@ -3930,6 +3955,8 @@
       (owned_view.compiler-owned-shared-view parse-cfgs)
       (owned_view.compiler-owned-shared-view pools)
       (compiler-driver-state-surface-arena
+        (owned_view.compiler-owned-shared-view state))
+      (compiler-driver-state-profile
         (owned_view.compiler-owned-shared-view state)))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
@@ -3978,11 +4005,12 @@
             [_capture-source-names : unit
               (compiler-driver-state-capture-active-interns!
                 (owned_view.compiler-owned-shared-view state))]
+            [intern-state : ci.InternCompatState
+              (compiler-driver-state-owned-interns
+                (owned_view.compiler-owned-shared-view state))]
             [source-names : ci.InternSourceNameSessionHandle
               (ci.intern-source-name-session-handle
-                (ci.intern-source-name-session-from-state
-                  (compiler-driver-state-owned-interns
-                    (owned_view.compiler-owned-shared-view state))))]
+                (ci.intern-source-name-session-from-state intern-state))]
             [dest-pools : compiler_ast_types.AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -4016,6 +4044,8 @@
             [_arm-release : unit
               (if release-source-pools?
                 (compiler_lower.compiler-lower-checked-dest-pools-use!
+                  (compiler-driver-state-owned-lower-state
+                    (owned_view.compiler-owned-shared-view state))
                   (owned_view.compiler-owned-shared-view dest-pools)
                   source-pools-arena
                   (compiler_ast_types.ast-node-pool-context-expr-storage-arena
@@ -4026,7 +4056,8 @@
                     frontend-arena
                     0))
                 (compiler_lower.compiler-lower-checked-dest-pools-clear!
-                  (compiler-driver-state-owned-lower-state state)))]
+                  (compiler-driver-state-owned-lower-state
+                    (owned_view.compiler-owned-shared-view state))))]
             [lowered-raw : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
                 (compiler-driver-state-owned-lower-state
@@ -4049,17 +4080,31 @@
                 (owned_view.compiler-owned-shared-view pools)
                 (owned_view.compiler-owned-shared-view source-names)
                 (compiler-driver-state-owned-interns
+                  (owned_view.compiler-owned-shared-view state))
+                (compiler-driver-state-owned-builtins
                   (owned_view.compiler-owned-shared-view state)))]
+            [lowered : compiler_lower.ResultCompilerLower
+              (match (owned_view.compiler-owned-shared-view lowered-raw)
+                [(compiler_lower.ResultCompilerLower.Ok program spans)
+                  (compiler_lower.ResultCompilerLower.Ok program spans)]
+                [(compiler_lower.ResultCompilerLower.Err diag)
+                  (compiler_lower.ResultCompilerLower.Err
+                    (compiler-driver-diagnostic-copy-to-state-surface
+                      (owned_view.compiler-owned-shared-view state)
+                      diag))])]
             [dest-committed? : bool
               (compiler_lower.compiler-lower-checked-dest-pools-committed?
-                (compiler-driver-state-owned-lower-state state))]
+                (compiler-driver-state-owned-lower-state
+                  (owned_view.compiler-owned-shared-view state)))]
             [frontend-released? : bool
               (compiler_lower.compiler-lower-checked-frontend-released?
-                (compiler-driver-state-owned-lower-state state))]
+                (compiler-driver-state-owned-lower-state
+                  (owned_view.compiler-owned-shared-view state)))]
             [result-pools : compiler_ast_types.AstNodePoolContext
               (if dest-committed?
                 (compiler_lower.compiler-lower-checked-dest-pools-current
-                  (compiler-driver-state-owned-lower-state state))
+                  (compiler-driver-state-owned-lower-state
+                    (owned_view.compiler-owned-shared-view state)))
                 pools)]
             [_adopt-dest : unit
               (if dest-committed?
@@ -4071,7 +4116,8 @@
               (if (and release-source-pools? (not dest-committed?))
                 (begin
                   (compiler_lower.compiler-lower-checked-dest-pools-abort-uncommitted!
-                    (compiler-driver-state-owned-lower-state state))
+                    (compiler-driver-state-owned-lower-state
+                      (owned_view.compiler-owned-shared-view state)))
                   (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
                 unit)]
             [_restore-entry-arena : unit
@@ -4089,7 +4135,8 @@
                 unit)]
             [_clear-release : unit
               (compiler_lower.compiler-lower-checked-dest-pools-clear!
-                (compiler-driver-state-owned-lower-state state))]
+                (compiler-driver-state-owned-lower-state
+                  (owned_view.compiler-owned-shared-view state)))]
             (match lowered
               [(compiler_lower.ResultCompilerLower.Ok program spans)
                 (begin
@@ -4156,7 +4203,8 @@
                         (compiler-driver-state-profile
                           (owned_view.compiler-owned-shared-view state))
                         (compiler-driver-state-backend
-                          (owned_view.compiler-owned-shared-view state))))))]
+                          (owned_view.compiler-owned-shared-view state))
+                        (compiler-driver-state-typecheck state)))))]
               [(compiler_lower.ResultCompilerLower.Err diag)
                 (begin
                   ;; A lower-phase failure can leave the state's checked pool
@@ -4256,11 +4304,12 @@
             [_capture-source-names : unit
               (compiler-driver-state-capture-active-interns!
                 (owned_view.compiler-owned-shared-view state))]
+            [intern-state : ci.InternCompatState
+              (compiler-driver-state-owned-interns
+                (owned_view.compiler-owned-shared-view state))]
             [source-names : ci.InternSourceNameSessionHandle
               (ci.intern-source-name-session-handle
-                (ci.intern-source-name-session-from-state
-                  (compiler-driver-state-owned-interns
-                    (owned_view.compiler-owned-shared-view state))))]
+                (ci.intern-source-name-session-from-state intern-state))]
             [release-source-pools? : bool
               (compiler-driver-state-can-release-checked-lower-source-pools?
                 (owned_view.compiler-owned-shared-view state))]
@@ -4297,6 +4346,8 @@
             [_arm-release : unit
               (if release-source-pools?
                 (compiler_lower.compiler-lower-checked-dest-pools-use!
+                  (compiler-driver-state-owned-lower-state
+                    (owned_view.compiler-owned-shared-view state))
                   (owned_view.compiler-owned-shared-view dest-pools)
                   source-pools-arena
                   (compiler_ast_types.ast-node-pool-context-expr-storage-arena
@@ -4305,7 +4356,8 @@
                     pools)
                   0)
                 (compiler_lower.compiler-lower-checked-dest-pools-clear!
-                  (compiler-driver-state-owned-lower-state state)))]
+                  (compiler-driver-state-owned-lower-state
+                    (owned_view.compiler-owned-shared-view state))))]
             [lowered-raw : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
                 (compiler-driver-state-owned-lower-state
@@ -4328,14 +4380,27 @@
                 (owned_view.compiler-owned-shared-view pools)
                 (owned_view.compiler-owned-shared-view source-names)
                 (compiler-driver-state-owned-interns
+                  (owned_view.compiler-owned-shared-view state))
+                (compiler-driver-state-owned-builtins
                   (owned_view.compiler-owned-shared-view state)))]
+            [lowered : compiler_lower.ResultCompilerLower
+              (match (owned_view.compiler-owned-shared-view lowered-raw)
+                [(compiler_lower.ResultCompilerLower.Ok program spans)
+                  (compiler_lower.ResultCompilerLower.Ok program spans)]
+                [(compiler_lower.ResultCompilerLower.Err diag)
+                  (compiler_lower.ResultCompilerLower.Err
+                    (compiler-driver-diagnostic-copy-to-state-surface
+                      (owned_view.compiler-owned-shared-view state)
+                      diag))])]
             [dest-committed? : bool
               (compiler_lower.compiler-lower-checked-dest-pools-committed?
-                (compiler-driver-state-owned-lower-state state))]
+                (compiler-driver-state-owned-lower-state
+                  (owned_view.compiler-owned-shared-view state)))]
             [result-pools : compiler_ast_types.AstNodePoolContext
               (if dest-committed?
                 (compiler_lower.compiler-lower-checked-dest-pools-current
-                  (compiler-driver-state-owned-lower-state state))
+                  (compiler-driver-state-owned-lower-state
+                    (owned_view.compiler-owned-shared-view state)))
                 pools)]
             [_adopt-dest : unit
               (if dest-committed?
@@ -4347,7 +4412,8 @@
               (if (and release-source-pools? (not dest-committed?))
                 (begin
                   (compiler_lower.compiler-lower-checked-dest-pools-abort-uncommitted!
-                    (compiler-driver-state-owned-lower-state state))
+                    (compiler-driver-state-owned-lower-state
+                      (owned_view.compiler-owned-shared-view state)))
                   (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
                 unit)]
             [_restore-entry-arena : unit
@@ -4361,7 +4427,8 @@
                 unit)]
             [_clear-release : unit
               (compiler_lower.compiler-lower-checked-dest-pools-clear!
-                (compiler-driver-state-owned-lower-state state))]
+                (compiler-driver-state-owned-lower-state
+                  (owned_view.compiler-owned-shared-view state)))]
             (match lowered
               [(compiler_lower.ResultCompilerLower.Ok program spans)
                 (begin
@@ -4401,7 +4468,10 @@
                         result-pools
                         (compiler-driver-state-profile
                           (owned_view.compiler-owned-shared-view state))
-                        (compiler-driver-state-backend state)))))]
+                        (compiler-driver-state-backend
+                          (owned_view.compiler-owned-shared-view state))
+                        (compiler-driver-state-typecheck
+                          (owned_view.compiler-owned-shared-view state))))))]
               [(compiler_lower.ResultCompilerLower.Err diag)
                 (begin
                   ;; See the matching note in

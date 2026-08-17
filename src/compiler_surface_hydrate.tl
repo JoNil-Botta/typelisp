@@ -4,6 +4,7 @@
 (import compiler_surface_identity as surface_identity)
 (import compiler_surface_facts as surface_facts)
 (import compiler_ast_types as ast)
+(import compiler_owned_view as owned_view)
 (import tlci_core as tlci)
 (cfg compiler-surface-selftest (import compiler_intern as ci))
 (cfg compiler-surface-selftest (import sym_i64_env as sym_env))
@@ -74,13 +75,16 @@
     [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch message)
       (ResultCompilerSurfaceHydration.KeyMismatch message)]
     [(surface_identity.ResultSurfaceIdentityHydration.Ok identity)
-      (match (surface_ast.surface-ast-decode ast-bytes identity.remap pools)
+      (match (surface_ast.surface-ast-decode
+        ast-bytes
+        (owned_view.compiler-owned-shared-view identity.remap)
+        pools)
         [(surface_ast.ResultSurfaceAstHydration.Err message)
           (ResultCompilerSurfaceHydration.Err message)]
         [(surface_ast.ResultSurfaceAstHydration.Ok hydration)
           (match (surface_facts.surface-typecheck-facts-decode
             fact-bytes
-            identity.remap)
+            (owned_view.compiler-owned-shared-view identity.remap))
             [(surface_facts.ResultSurfaceTypecheckFacts.Err message)
               (ResultCompilerSurfaceHydration.Err message)]
             [(surface_facts.ResultSurfaceTypecheckFacts.Ok facts)
@@ -91,7 +95,8 @@
   [rodata : (__tl_dyn-array u8)]
   [expected-key : surface_identity.SurfaceIdentityKey]
   [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
-  (match (compiler-surface-identity-bytes rodata)
+  (match (compiler-surface-identity-bytes
+    (owned_view.compiler-owned-shared-view rodata))
     [(tlci.ResultTlciAuxLookup.Missing) ResultCompilerSurfaceHydration.Missing]
     [(tlci.ResultTlciAuxLookup.Err message)
       (ResultCompilerSurfaceHydration.Err message)]
@@ -100,7 +105,8 @@
         (= identity-schema surface_identity.surface-identity-schema-version))
         (ResultCompilerSurfaceHydration.Err
           "compiler surface: unsupported identity schema")
-        (match (compiler-surface-ast-bytes rodata)
+        (match (compiler-surface-ast-bytes
+          (owned_view.compiler-owned-shared-view rodata))
           [(tlci.ResultTlciAuxLookup.Missing)
             ResultCompilerSurfaceHydration.Missing]
           [(tlci.ResultTlciAuxLookup.Err message)
@@ -109,7 +115,8 @@
             (if (not (= ast-schema surface_ast.surface-ast-schema-version))
               (ResultCompilerSurfaceHydration.Err
                 "compiler surface: unsupported AST schema")
-              (match (compiler-surface-fact-bytes rodata)
+              (match (compiler-surface-fact-bytes
+                (owned_view.compiler-owned-shared-view rodata))
                 [(tlci.ResultTlciAuxLookup.Missing)
                   ResultCompilerSurfaceHydration.Missing]
                 [(tlci.ResultTlciAuxLookup.Err message)

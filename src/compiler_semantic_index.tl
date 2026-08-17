@@ -1012,7 +1012,9 @@
       (while (and (< path-index index.path-len) (not found))
         (let
           [info : CompilerSemanticSourcePathInfo
-            (array-ref index.paths path-index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              index.paths
+              path-index)]
           [owned-path : String (string.copy (& info.path))]
           (begin
             (if (string.eq
@@ -6282,6 +6284,7 @@
   [entry-source : String]
   [complete : bool]) : CompilerSemanticSourceIndex
   (let
+    [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
     (begin
       (set!
@@ -6924,6 +6927,7 @@
                               (&mut (__tl-box-place walk-state.records))
                               (CompilerSemanticRecord
                                 symbol
+                                -1
                                 CompilerSemanticRecordRole.Definition
                                 kind
                                 (string.copy (& name))
@@ -6990,6 +6994,10 @@
             [record-items : (__tl_dyn-array CompilerSemanticRecord)
               (owned_view.compiler-owned-shared-view records.items)]
             [record-count : i64 records.len]
+            [canonical-build : CompilerSemanticCanonicalBuildResult
+              (compiler-semantic-canonical-build
+                (owned_view.compiler-owned-shared-view record-items)
+                record-count)]
             [bindings : CompilerSemanticBindingVec
               (owned_view.compiler-owned-box-shared-view walk-state.bindings)]
             [binding-items : (__tl_dyn-array CompilerSemanticBinding)
@@ -7047,6 +7055,8 @@
                         owner
                         record-items
                         record-count
+                        canonical-build.symbols
+                        canonical-build.len
                         complete
                         paths-out
                         path-count
@@ -10072,7 +10082,7 @@
 (define (pair-value [pair : ChosenPair]) : i64 pair.value)"]
     [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
     (match (compiler-check-source-index-with-roots
-      first-path
+      (owned_view.compiler-owned-shared-view first-path)
       first-source
       (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
@@ -10080,58 +10090,58 @@
           [first-shared-definition-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              shared-path
+              (owned_view.compiler-owned-shared-view shared-path)
               "shared-value")]
           [first-shared-use-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
-              first-path
+              (owned_view.compiler-owned-shared-view first-path)
               "shared-value"
               CompilerSemanticRecordRole.Use
               1)]
           [first-noise-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              noise-path
+              (owned_view.compiler-owned-shared-view noise-path)
               "shared-value")]
           [first-local-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              first-path
+              (owned_view.compiler-owned-shared-view first-path)
               "local"
               CompilerSemanticRecordRole.Definition
               0)]
           [first-function-definition-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              shared-path
+              (owned_view.compiler-owned-shared-view shared-path)
               "function")]
           [first-function-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              first-path
+              (owned_view.compiler-owned-shared-view first-path)
               "function"
               CompilerSemanticRecordRole.Use
               -1)]
           [first-macro-definition-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              shared-path
+              (owned_view.compiler-owned-shared-view shared-path)
               "macro")]
           [first-macro-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
-              first-path
+              (owned_view.compiler-owned-shared-view first-path)
               "macro"
               CompilerSemanticRecordRole.Use
               -1)]
           [first-type-definition-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
-              shared-path
+              (owned_view.compiler-owned-shared-view shared-path)
               "SharedPair")]
           (match (compiler-check-source-index-with-roots
-            second-path
+            (owned_view.compiler-owned-shared-view second-path)
             second-source
             (svec.new))
             [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
@@ -10139,50 +10149,50 @@
                 [second-shared-definition-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& second)
-                    shared-path
+                    (owned_view.compiler-owned-shared-view shared-path)
                     "shared-value")]
                 [second-shared-use-index : i64
                   (compiler-semantic-source-index-find-name-occurrence
                     (& second)
-                    second-path
+                    (owned_view.compiler-owned-shared-view second-path)
                     "shared-value"
                     CompilerSemanticRecordRole.Use
                     0)]
                 [second-local-index : i64
                   (compiler-semantic-source-index-find-record
                     (& second)
-                    second-path
+                    (owned_view.compiler-owned-shared-view second-path)
                     "local"
                     CompilerSemanticRecordRole.Definition
                     0)]
                 [second-function-definition-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& second)
-                    shared-path
+                    (owned_view.compiler-owned-shared-view shared-path)
                     "function")]
                 [second-function-use-index : i64
                   (compiler-semantic-source-index-find-record
                     (& second)
-                    second-path
+                    (owned_view.compiler-owned-shared-view second-path)
                     "function"
                     CompilerSemanticRecordRole.Use
                     -1)]
                 [second-macro-definition-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& second)
-                    shared-path
+                    (owned_view.compiler-owned-shared-view shared-path)
                     "macro")]
                 [second-macro-use-index : i64
                   (compiler-semantic-source-index-find-record
                     (& second)
-                    second-path
+                    (owned_view.compiler-owned-shared-view second-path)
                     "macro"
                     CompilerSemanticRecordRole.Use
                     -1)]
                 [second-type-definition-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& second)
-                    shared-path
+                    (owned_view.compiler-owned-shared-view shared-path)
                     "SharedPair")]
                 [first-shared-definition : CompilerSemanticRecord
                   (compiler-semantic-source-index-get
@@ -10387,10 +10397,13 @@
 ;; A harmless edit moves the declaration without changing its owner.
 
 (define steady : i64 1)"]
-    (match (compiler-check-source-index-with-roots path first-source (svec.new))
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      first-source
+      (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
         (match (compiler-check-source-index-with-roots
-          path
+          (owned_view.compiler-owned-shared-view path)
           second-source
           (svec.new))
           [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
@@ -10400,14 +10413,14 @@
                   (& first)
                   (compiler-semantic-source-index-find-definition
                     (& first)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "steady"))]
               [second-record : CompilerSemanticRecord
                 (compiler-semantic-source-index-get
                   (& second)
                   (compiler-semantic-source-index-find-definition
                     (& second)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "steady"))]
               [ok : bool
                 (and
@@ -10447,34 +10460,37 @@
 (defenum Same (Only))
 (define (left [local : i64]) : i64 local)
 (define (right [local : i64]) : i64 local)"]
-    (match (compiler-check-source-index-with-roots path source (svec.new))
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      source
+      (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
         (let
           [value-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "Same"
               CompilerSemanticRecordRole.Definition
               0)]
           [type-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "Same"
               CompilerSemanticRecordRole.Definition
               1)]
           [left-local-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "local"
               CompilerSemanticRecordRole.Definition
               0)]
           [right-local-index : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
-              path
+              (owned_view.compiler-owned-shared-view path)
               "local"
               CompilerSemanticRecordRole.Definition
               1)]
@@ -10517,12 +10533,12 @@
   (let
     [path : String "src/tests/semantic_canonical_rename.tl"]
     (match (compiler-check-source-index-with-roots
-      path
+      (owned_view.compiler-owned-shared-view path)
       "(module semantic.canonical.rename)\n(define before : i64 1)"
       (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
         (match (compiler-check-source-index-with-roots
-          path
+          (owned_view.compiler-owned-shared-view path)
           "(module semantic.canonical.rename)\n(define after : i64 1)"
           (svec.new))
           [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
@@ -10532,14 +10548,14 @@
                   (& first)
                   (compiler-semantic-source-index-find-definition
                     (& first)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "before"))]
               [second-record : CompilerSemanticRecord
                 (compiler-semantic-source-index-get
                   (& second)
                   (compiler-semantic-source-index-find-definition
                     (& second)
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     "after"))]
               [ok : bool
                 (not

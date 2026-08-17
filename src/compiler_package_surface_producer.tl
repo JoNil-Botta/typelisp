@@ -8,6 +8,7 @@
 ;; boundary.
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
+(import compiler_owned_view as owned_view)
 (import compiler_prelude_surface_producer as prelude_surface)
 (import compiler_surface_ast as surface_ast)
 (import compiler_surface_facts as surface_facts)
@@ -65,7 +66,12 @@
     (begin
       (while (< index (array-length all-modules))
         (begin
-          (if (> (string.string-length (array-ref all-modules index)) 0)
+          (if (>
+            (string.string-length
+              (owned_view.compiler-owned-array-element-shared-view
+                all-modules
+                index))
+            0)
             (set! count (+ count 1))
             unit)
           (set! index (+ index 1))))
@@ -81,7 +87,11 @@
         (begin
           (while (< source-index (array-length all-modules))
             (let
-              [module-name : String (array-ref all-modules source-index)]
+              [module-name : String
+                (string.copy
+                  (owned_view.compiler-owned-array-element-shared-view
+                    all-modules
+                    source-index))]
               (begin
                 (if (> (string.string-length module-name) 0)
                   (begin
@@ -90,7 +100,7 @@
                   unit)
                 (set! source-index (+ source-index 1)))))
           (if (= count 0)
-            (set! (array-ref modules 0) package-name)
+            (set! (array-ref modules 0) (string.copy (& package-name)))
             unit)
           (surface_identity.SurfaceIdentityKey
             package-name
@@ -117,7 +127,8 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        [decls : ast.AstDeclList
+          (owned_view.compiler-owned-box-shared-view decls-box)]
         [count : i64 (ast.ast-decl-list-len (& decls))]
         [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [module-id : i64 cbi.compiler-builtin-id-fix-empty]
@@ -138,18 +149,22 @@
   [pools : ast.AstNodePoolContext]) : unit
   (match (package-surface-capture-state-shared-view)
     [(PackageSurfaceCaptureState.Pending key seen result-arena)
-      (begin
-        (surface_facts.surface-typecheck-facts-recording-start! result-arena)
-        (set!
-          package-surface-capture-state
-          (PackageSurfaceCaptureState.Expanded
-            key
-            seen
-            program
-            paths
-            pools
-            (package-surface-program-decl-count program)
-            result-arena)))]
+      (let
+        [macro-decl-count : i64
+          (package-surface-program-decl-count
+            (owned_view.compiler-owned-shared-view program))]
+        (begin
+          (surface_facts.surface-typecheck-facts-recording-start! result-arena)
+          (set!
+            package-surface-capture-state
+            (PackageSurfaceCaptureState.Expanded
+              key
+              seen
+              program
+              paths
+              pools
+              macro-decl-count
+              result-arena))))]
     [(PackageSurfaceCaptureState.Inactive) unit]
     [(PackageSurfaceCaptureState.Err _) unit]
     [_
@@ -173,6 +188,8 @@
     [source-count : i64 (array-length identity-payload.source-names)]
     [identity-count : i64
       (+ source-count (array-length identity-payload.generated))]
+    [modules : ast.AstDeclModuleList
+      (package-surface-modules (owned_view.compiler-owned-shared-view program))]
     (match (surface_identity.surface-identity-encode identity-payload)
       [(surface_identity.ResultSurfaceIdentityBytes.Err message)
         (set!
@@ -182,9 +199,9 @@
         (match program
           [(ast.AstProgram.Program decls-box)
             (match (surface_ast.surface-ast-encode
-              (__tl-box-place decls-box)
+              (owned_view.compiler-owned-box-shared-view decls-box)
               paths
-              (package-surface-modules program)
+              modules
               seen
               pools
               source-count

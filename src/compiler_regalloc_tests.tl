@@ -169,9 +169,13 @@
           (reg.compiler-reg-fill-i64-array
             (reg.compiler-reg-global-shared-view def-status)
             0)
+          (reg.compiler-reg-fill-i64-array
+            (reg.compiler-reg-global-shared-view rebates)
+            0)
           (reg.compiler-reg-ref-counts-blocks-weighted-remat!
             (reg.compiler-reg-global-shared-view counts)
             (reg.compiler-reg-global-shared-view def-status)
+            (reg.compiler-reg-global-shared-view rebates)
             blocks
             depths
             0
@@ -2984,10 +2988,10 @@
   test
   (define (compiler-reg-foldable-rebate-array [func : ir.CompilerIrFunction]) : (__tl_dyn-array
       i64)
-    (match func
+    (match (reg.compiler-reg-global-shared-view func)
       [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
         (reg.compiler-reg-function-foldable-rebates
-          blocks
+          (reg.compiler-reg-global-shared-view blocks)
           (reg.compiler-reg-function-loop-depths blocks)
           vars)])))
 
@@ -2995,7 +2999,7 @@
   test
   (define (compiler-reg-foldable-rebate-combined [func : ir.CompilerIrFunction]) : (__tl_dyn-array
       i64)
-    (match func
+    (match (reg.compiler-reg-global-shared-view func)
       [(ir.CompilerIrFunction.Function _ _ _ vars _)
         (reg.compiler-reg-function-spill-weights-combined
           func
@@ -3010,7 +3014,9 @@
     (if (< var 1)
       false
       (if (compiler-reg-location-spill-offset?
-        (reg.compiler-reg-assignment-lookup assignments var)
+        (reg.compiler-reg-assignment-lookup
+          (reg.compiler-reg-global-shared-view assignments)
+          var)
         (reg.compiler-reg-stack-slot-offset var))
         true
         (compiler-reg-foldable-rebate-any-spilled? assignments (- var 1))))))
@@ -3074,7 +3080,9 @@
         [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
           (and
             (compiler-reg-location-any-register?
-              (reg.compiler-reg-assignment-lookup assignments 0))
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                0))
             (compiler-reg-foldable-rebate-any-spilled? assignments 5))]))))
 
 ;; (b) The negative: the same shape with the candidates in the non-foldable
@@ -3091,10 +3099,14 @@
         [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
           (and
             (compiler-reg-location-spill-offset?
-              (reg.compiler-reg-assignment-lookup assignments 0)
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                0)
               (reg.compiler-reg-stack-slot-offset 0))
             (compiler-reg-location-any-register?
-              (reg.compiler-reg-assignment-lookup assignments 1))
+              (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-global-shared-view assignments)
+                1))
             (compiler-reg-location-any-register?
               (reg.compiler-reg-assignment-lookup assignments 5)))]))))
 
@@ -3120,11 +3132,14 @@
       [func : ir.CompilerIrFunction
         (compiler-reg-foldable-rebate-function true)]
       [first-rebates : (__tl_dyn-array i64)
-        (compiler-reg-foldable-rebate-array func)]
+        (compiler-reg-foldable-rebate-array
+          (reg.compiler-reg-global-shared-view func))]
       [second-rebates : (__tl_dyn-array i64)
-        (compiler-reg-foldable-rebate-array func)]
+        (compiler-reg-foldable-rebate-array
+          (reg.compiler-reg-global-shared-view func))]
       [first-combined : (__tl_dyn-array i64)
-        (compiler-reg-foldable-rebate-combined func)]
+        (compiler-reg-foldable-rebate-combined
+          (reg.compiler-reg-global-shared-view func))]
       [second-combined : (__tl_dyn-array i64)
         (compiler-reg-foldable-rebate-combined func)]
       (and
@@ -9412,7 +9427,7 @@
           (reg.compiler-reg-assignment-table-empty)))]
     [direct : reg.CompilerRegIdSeq
       (reg.compiler-reg-scratch-instr-registers
-        assignments
+        (reg.compiler-reg-global-shared-view assignments)
         (ir.CompilerIrInstr.Call
           0
           0
@@ -9428,7 +9443,9 @@
           (ast.AstType.U64)))]
     (and
       (reg.compiler-reg-id-seq-contains? direct cabi.compiler-reg-id-rbx)
-      (reg.compiler-reg-id-seq-contains? indirect cabi.compiler-reg-id-rbx)
+      (reg.compiler-reg-id-seq-contains?
+        (reg.compiler-reg-global-shared-view indirect)
+        cabi.compiler-reg-id-rbx)
       (reg.compiler-reg-id-seq-contains? indirect cabi.compiler-reg-id-r10))))
 
 (define (compiler-reg-scratch-coalesced-home-hull-preserve-ok?) : bool
@@ -9509,28 +9526,28 @@
     (and
       ;; Neither expanded member overlaps the scratch point by itself.
       (reg.compiler-reg-scratch-register-free-from?
-        assignments
-        index
+        (reg.compiler-reg-global-shared-view assignments)
+        (reg.compiler-reg-global-shared-view index)
         2
         cabi.compiler-reg-id-rdi
         0
         3)
       ;; The exact coalesced class gap excludes its shared physical home.
       (reg.compiler-reg-scratch-register-coalesced-gap-from?
-        assignments
-        index
-        coalesced
-        requirement
+        (reg.compiler-reg-global-shared-view assignments)
+        (reg.compiler-reg-global-shared-view index)
+        (reg.compiler-reg-global-shared-view coalesced)
+        (reg.compiler-reg-global-shared-view requirement)
         cabi.compiler-reg-id-rdi
         0
         2)
       ;; One segmented vreg can likewise carry its value across a modeled
       ;; lowering group even when its precise segments leave the point free.
       (reg.compiler-reg-scratch-register-coalesced-gap-from?
-        assignments
+        (reg.compiler-reg-global-shared-view assignments)
         segmented-index
-        independent
-        requirement
+        (reg.compiler-reg-global-shared-view independent)
+        (reg.compiler-reg-global-shared-view requirement)
         cabi.compiler-reg-id-rdi
         0
         2)
@@ -14857,11 +14874,31 @@
         (compiler-reg-loop-nest-early-exit-blocks))]
     (and
       (= (array-length depths) 6)
-      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
-      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 3) 0)
-      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          0)
+        0)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          1)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          2)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          3)
+        0)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          4)
+        1)
       (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
 
 ;; entry / hot / join / cold. The motivating shape of the layout arc: `cold` is
@@ -14890,9 +14927,21 @@
         (compiler-reg-loop-nest-sunk-cold-blocks))]
     (and
       (= (array-length depths) 4)
-      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
-      (= (compiler-reg-loop-nest-depth-at depths 1) 0)
-      (= (compiler-reg-loop-nest-depth-at depths 2) 0)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          0)
+        0)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          1)
+        0)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          2)
+        0)
       (= (compiler-reg-loop-nest-depth-at depths 3) 0))))
 
 ;; entry / header / body / cont / tail / exit. TWO back edges into one header --
@@ -14926,11 +14975,31 @@
         (compiler-reg-loop-nest-two-latch-blocks))]
     (and
       (= (array-length depths) 6)
-      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
-      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 3) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          0)
+        0)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          1)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          2)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          3)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          4)
+        1)
       (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
 
 ;; entry / outer / inner / inner-latch / outer-latch / exit. Containment is what
@@ -14964,11 +15033,31 @@
         (compiler-reg-loop-nest-nested-blocks))]
     (and
       (= (array-length depths) 6)
-      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
-      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 2) 2)
-      (= (compiler-reg-loop-nest-depth-at depths 3) 2)
-      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          0)
+        0)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          1)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          2)
+        2)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          3)
+        2)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          4)
+        1)
       (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
 
 ;; entry / header / body / tail / latch / exit, where `body` ends without a
@@ -15002,11 +15091,31 @@
         (compiler-reg-loop-nest-fallthrough-blocks))]
     (and
       (= (array-length depths) 6)
-      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
-      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 3) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          0)
+        0)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          1)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          2)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          3)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          4)
+        1)
       (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
 
 ;; A loop among blocks the entry cannot reach is still emitted and still
@@ -15031,8 +15140,16 @@
         (compiler-reg-loop-nest-unreachable-blocks))]
     (and
       (= (array-length depths) 3)
-      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
-      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          0)
+        0)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          1)
+        1)
       (= (compiler-reg-loop-nest-depth-at depths 2) 1))))
 
 ;; --- CFG loop nest: the member set, and what admits a hoist on it -----------
@@ -15074,31 +15191,85 @@
   (let
     [nest : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build (compiler-reg-loop-nest-rotated-blocks))]
-    [total : i64 (reg.compiler-reg-loop-nest-header-members! nest 3 1)]
+    [total : i64
+      (reg.compiler-reg-loop-nest-header-members!
+        (reg.compiler-reg-global-shared-view nest)
+        3
+        1)]
     [depths : (__tl_dyn-array i64)
       (reg.compiler-reg-function-loop-depths
         (compiler-reg-loop-nest-rotated-blocks))]
     (and
-      (= (reg.compiler-reg-loop-nest-header-count nest) 1)
-      (= (reg.compiler-reg-loop-nest-header nest 0) 3)
+      (=
+        (reg.compiler-reg-loop-nest-header-count
+          (reg.compiler-reg-global-shared-view nest))
+        1)
+      (=
+        (reg.compiler-reg-loop-nest-header
+          (reg.compiler-reg-global-shared-view nest)
+          0)
+        3)
       (= total 2)
-      (reg.compiler-reg-loop-nest-member? nest 1 1)
-      (reg.compiler-reg-loop-nest-member? nest 2 1)
-      (reg.compiler-reg-loop-nest-member? nest 3 1)
-      (not (reg.compiler-reg-loop-nest-member? nest 0 1))
-      (not (reg.compiler-reg-loop-nest-member? nest 4 1))
+      (reg.compiler-reg-loop-nest-member?
+        (reg.compiler-reg-global-shared-view nest)
+        1
+        1)
+      (reg.compiler-reg-loop-nest-member?
+        (reg.compiler-reg-global-shared-view nest)
+        2
+        1)
+      (reg.compiler-reg-loop-nest-member?
+        (reg.compiler-reg-global-shared-view nest)
+        3
+        1)
+      (not
+        (reg.compiler-reg-loop-nest-member?
+          (reg.compiler-reg-global-shared-view nest)
+          0
+          1))
+      (not
+        (reg.compiler-reg-loop-nest-member?
+          (reg.compiler-reg-global-shared-view nest)
+          4
+          1))
       ;; The preheader, named without consulting the layout: `entry` is the
       ;; header's only predecessor that is not itself in the loop.
-      (= (reg.compiler-reg-loop-nest-outside-pred nest 3 1) 0)
+      (=
+        (reg.compiler-reg-loop-nest-outside-pred
+          (reg.compiler-reg-global-shared-view nest)
+          3
+          1)
+        0)
       ;; The span the members occupy is still what an instruction-point hull
       ;; has to be written in, and it does NOT start at the header.
-      (= (reg.compiler-reg-loop-nest-member-lo nest 3 total) 1)
+      (=
+        (reg.compiler-reg-loop-nest-member-lo
+          (reg.compiler-reg-global-shared-view nest)
+          3
+          total)
+        1)
       (= (reg.compiler-reg-loop-nest-member-hi nest 3 total) 3)
       ;; And the rotation costs the frequency ranking nothing either.
-      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
-      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
-      (= (compiler-reg-loop-nest-depth-at depths 3) 1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          0)
+        0)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          1)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          2)
+        1)
+      (=
+        (compiler-reg-loop-nest-depth-at
+          (reg.compiler-reg-global-shared-view depths)
+          3)
+        1)
       (= (compiler-reg-loop-nest-depth-at depths 4) 0))))
 
 ;; entry / header / body / latch / second / exit: `second` jumps to the header
@@ -15160,23 +15331,45 @@
     [two : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build
         (compiler-reg-loop-nest-two-entry-blocks))]
-    [two-total : i64 (reg.compiler-reg-loop-nest-header-members! two 1 1)]
+    [two-total : i64
+      (reg.compiler-reg-loop-nest-header-members!
+        (reg.compiler-reg-global-shared-view two)
+        1
+        1)]
     [side : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build
         (compiler-reg-loop-nest-side-entry-blocks))]
     ;; WHICH of the two blocks the DFS names the header of an irreducible pair
     ;; depends on the order it walks `entry`'s arms in -- either answer is a
     ;; correct natural loop -- so read it from the nest instead of assuming.
-    [side-header : i64 (reg.compiler-reg-loop-nest-header side 0)]
+    [side-header : i64
+      (reg.compiler-reg-loop-nest-header
+        (reg.compiler-reg-global-shared-view side)
+        0)]
     [side-total : i64
-      (reg.compiler-reg-loop-nest-header-members! side side-header 1)]
+      (reg.compiler-reg-loop-nest-header-members!
+        (reg.compiler-reg-global-shared-view side)
+        side-header
+        1)]
     (and
       ;; Two entries into the header: header + body + latch, and `second`
       ;; stays outside, so the header keeps two predecessors from outside.
-      (= (reg.compiler-reg-loop-nest-header-count two) 1)
+      (=
+        (reg.compiler-reg-loop-nest-header-count
+          (reg.compiler-reg-global-shared-view two))
+        1)
       (= two-total 2)
-      (not (reg.compiler-reg-loop-nest-member? two 4 1))
-      (= (reg.compiler-reg-loop-nest-outside-pred two 1 1) (- 0 2))
+      (not
+        (reg.compiler-reg-loop-nest-member?
+          (reg.compiler-reg-global-shared-view two)
+          4
+          1))
+      (=
+        (reg.compiler-reg-loop-nest-outside-pred
+          (reg.compiler-reg-global-shared-view two)
+          1
+          1)
+        (- 0 2))
       ;; An entry into the BODY instead. The walk stops only at the header, and
       ;; this header does not dominate its own latch, so it runs back past the
       ;; loop until it runs out of graph -- and swallows the function's ENTRY
@@ -15185,10 +15378,21 @@
       ;; predecessor at all, so no injection dominates the set however few
       ;; edges cross into it. The guard is the entry itself being a member
       ;; under a header that is not the entry.
-      (= (reg.compiler-reg-loop-nest-header-count side) 1)
-      (reg.compiler-reg-loop-nest-member? side 0 1)
+      (=
+        (reg.compiler-reg-loop-nest-header-count
+          (reg.compiler-reg-global-shared-view side))
+        1)
+      (reg.compiler-reg-loop-nest-member?
+        (reg.compiler-reg-global-shared-view side)
+        0
+        1)
       (not (= side-header 0))
-      (= (reg.compiler-reg-loop-nest-member-lo side side-header side-total) 0))))
+      (=
+        (reg.compiler-reg-loop-nest-member-lo
+          (reg.compiler-reg-global-shared-view side)
+          side-header
+          side-total)
+        0))))
 
 ;; The two shapes the range encoding overcharged, read as membership. `early`
 ;; is laid out inside the loop's span but reaches the exit and never the latch,
@@ -15201,20 +15405,56 @@
     [nest : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build
         (compiler-reg-loop-nest-early-exit-blocks))]
-    [total : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 1)]
+    [total : i64
+      (reg.compiler-reg-loop-nest-header-members!
+        (reg.compiler-reg-global-shared-view nest)
+        1
+        1)]
     [sunk : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build
         (compiler-reg-loop-nest-sunk-cold-blocks))]
     (and
-      (= (reg.compiler-reg-loop-nest-header-count nest) 1)
-      (= (reg.compiler-reg-loop-nest-header nest 0) 1)
+      (=
+        (reg.compiler-reg-loop-nest-header-count
+          (reg.compiler-reg-global-shared-view nest))
+        1)
+      (=
+        (reg.compiler-reg-loop-nest-header
+          (reg.compiler-reg-global-shared-view nest)
+          0)
+        1)
       (= total 2)
-      (reg.compiler-reg-loop-nest-member? nest 2 1)
-      (reg.compiler-reg-loop-nest-member? nest 4 1)
-      (not (reg.compiler-reg-loop-nest-member? nest 3 1))
-      (= (reg.compiler-reg-loop-nest-member-lo nest 1 total) 1)
-      (= (reg.compiler-reg-loop-nest-member-hi nest 1 total) 4)
-      (= (reg.compiler-reg-loop-nest-outside-pred nest 1 1) 0)
+      (reg.compiler-reg-loop-nest-member?
+        (reg.compiler-reg-global-shared-view nest)
+        2
+        1)
+      (reg.compiler-reg-loop-nest-member?
+        (reg.compiler-reg-global-shared-view nest)
+        4
+        1)
+      (not
+        (reg.compiler-reg-loop-nest-member?
+          (reg.compiler-reg-global-shared-view nest)
+          3
+          1))
+      (=
+        (reg.compiler-reg-loop-nest-member-lo
+          (reg.compiler-reg-global-shared-view nest)
+          1
+          total)
+        1)
+      (=
+        (reg.compiler-reg-loop-nest-member-hi
+          (reg.compiler-reg-global-shared-view nest)
+          1
+          total)
+        4)
+      (=
+        (reg.compiler-reg-loop-nest-outside-pred
+          (reg.compiler-reg-global-shared-view nest)
+          1
+          1)
+        0)
       (= (reg.compiler-reg-loop-nest-header-count sunk) 0))))
 
 ;; The depth vector is one CONSUMER of the producer and not a second analysis:
@@ -15224,24 +15464,37 @@
   [blocks : ir.CompilerIrBlockList]) : bool
   (let
     [depths : (__tl_dyn-array i64)
-      (reg.compiler-reg-function-loop-depths blocks)]
+      (reg.compiler-reg-function-loop-depths
+        (reg.compiler-reg-global-shared-view blocks))]
     [nest : reg.CompilerRegLoopNest (reg.compiler-reg-loop-nest-build blocks)]
     [count : i64 (array-length depths)]
     [mine : (__tl_dyn-array i64) (array.make-array i64 count)]
     [index : i64 0]
     [ok : bool true]
     (begin
-      (while (< index (reg.compiler-reg-loop-nest-header-count nest))
+      (while (<
+        index
+        (reg.compiler-reg-loop-nest-header-count
+          (reg.compiler-reg-global-shared-view nest)))
         (let
-          [header : i64 (reg.compiler-reg-loop-nest-header nest index)]
+          [header : i64
+            (reg.compiler-reg-loop-nest-header
+              (reg.compiler-reg-global-shared-view nest)
+              index)]
           [generation : i64 (+ index 1)]
           [_total : i64
-            (reg.compiler-reg-loop-nest-header-members! nest header generation)]
+            (reg.compiler-reg-loop-nest-header-members!
+              (reg.compiler-reg-global-shared-view nest)
+              header
+              generation)]
           [block : i64 0]
           (begin
             (while (< block count)
               (begin
-                (if (reg.compiler-reg-loop-nest-member? nest block generation)
+                (if (reg.compiler-reg-loop-nest-member?
+                  (reg.compiler-reg-global-shared-view nest)
+                  block
+                  generation)
                   (set! (array-ref mine block) (+ (array-ref mine block) 1))
                   unit)
                 (set! block (+ block 1))))
@@ -15275,17 +15528,42 @@
   (let
     [nest : reg.CompilerRegLoopNest
       (reg.compiler-reg-loop-nest-build (compiler-reg-loop-nest-nested-blocks))]
-    [outer : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 1)]
-    [inner : i64 (reg.compiler-reg-loop-nest-header-members! nest 2 2)]
-    [again : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 3)]
+    [outer : i64
+      (reg.compiler-reg-loop-nest-header-members!
+        (reg.compiler-reg-global-shared-view nest)
+        1
+        1)]
+    [inner : i64
+      (reg.compiler-reg-loop-nest-header-members!
+        (reg.compiler-reg-global-shared-view nest)
+        2
+        2)]
+    [again : i64
+      (reg.compiler-reg-loop-nest-header-members!
+        (reg.compiler-reg-global-shared-view nest)
+        1
+        3)]
     (and
       (= outer 3)
       (= inner 1)
       (= again outer)
-      (reg.compiler-reg-loop-nest-member? nest 2 3)
-      (reg.compiler-reg-loop-nest-member? nest 3 3)
-      (reg.compiler-reg-loop-nest-member? nest 4 3)
-      (not (reg.compiler-reg-loop-nest-member? nest 0 3))
+      (reg.compiler-reg-loop-nest-member?
+        (reg.compiler-reg-global-shared-view nest)
+        2
+        3)
+      (reg.compiler-reg-loop-nest-member?
+        (reg.compiler-reg-global-shared-view nest)
+        3
+        3)
+      (reg.compiler-reg-loop-nest-member?
+        (reg.compiler-reg-global-shared-view nest)
+        4
+        3)
+      (not
+        (reg.compiler-reg-loop-nest-member?
+          (reg.compiler-reg-global-shared-view nest)
+          0
+          3))
       (not (reg.compiler-reg-loop-nest-member? nest 5 3)))))
 
 ;; --- CFG loop nest: the layout span, and the preheader spliced on it --------
@@ -15320,7 +15598,7 @@
     [seq : ir.CompilerIrBlockSeq
       (live.compiler-live-ir-block-list-to-seq blocks)]
     (reg.compiler-reg-loop-nest-spans-seq
-      seq
+      (reg.compiler-reg-global-shared-view seq)
       (ir.compiler-ir-block-seq-count seq))))
 
 (define (compiler-reg-loop-nest-spans-ok?) : bool
@@ -15338,26 +15616,74 @@
     (and
       ;; A nest: each loop's span is recorded on its OWN header, and the outer
       ;; span contains the inner one rather than being merged with it.
-      (= (compiler-reg-loop-nest-span-lo nested 1) 1)
-      (= (compiler-reg-loop-nest-span-hi nested 1) 4)
-      (= (compiler-reg-loop-nest-span-lo nested 2) 2)
-      (= (compiler-reg-loop-nest-span-hi nested 2) 3)
-      (= (compiler-reg-loop-nest-span-hi nested 0) (- 0 1))
-      (= (compiler-reg-loop-nest-span-hi nested 3) (- 0 1))
-      (= (compiler-reg-loop-nest-span-hi nested 4) (- 0 1))
+      (=
+        (compiler-reg-loop-nest-span-lo
+          (reg.compiler-reg-global-shared-view nested)
+          1)
+        1)
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view nested)
+          1)
+        4)
+      (=
+        (compiler-reg-loop-nest-span-lo
+          (reg.compiler-reg-global-shared-view nested)
+          2)
+        2)
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view nested)
+          2)
+        3)
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view nested)
+          0)
+        (- 0 1))
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view nested)
+          3)
+        (- 0 1))
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view nested)
+          4)
+        (- 0 1))
       (= (compiler-reg-loop-nest-span-hi nested 5) (- 0 1))
       ;; The break arm is laid out inside the span and is not a member. The
       ;; span stays the overapproximation it always was -- which is why every
       ;; consumer of it still re-proves single entry over the range it uses.
-      (= (compiler-reg-loop-nest-span-lo early 1) 1)
-      (= (compiler-reg-loop-nest-span-hi early 1) 4)
+      (=
+        (compiler-reg-loop-nest-span-lo
+          (reg.compiler-reg-global-shared-view early)
+          1)
+        1)
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view early)
+          1)
+        4)
       (= (compiler-reg-loop-nest-span-hi early 3) (- 0 1))
       ;; The sunk cold block's backward-in-layout jump closes no cycle, so no
       ;; block is given a span at all -- where the range encoding published one
       ;; covering [join, cold] and charged a rescue region for it.
-      (= (compiler-reg-loop-nest-span-hi sunk 0) (- 0 1))
-      (= (compiler-reg-loop-nest-span-hi sunk 1) (- 0 1))
-      (= (compiler-reg-loop-nest-span-hi sunk 2) (- 0 1))
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view sunk)
+          0)
+        (- 0 1))
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view sunk)
+          1)
+        (- 0 1))
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view sunk)
+          2)
+        (- 0 1))
       (= (compiler-reg-loop-nest-span-hi sunk 3) (- 0 1))
       ;; A ROTATED loop is contiguous but does not START at its header: the
       ;; span is [body..header] and it is published under the header, block 3.
@@ -15365,11 +15691,31 @@
       ;; used to cost every rotated loop its rescue. No other block heads
       ;; anything -- in particular block 1, which the range encoding read as a
       ;; header with no out-of-loop predecessor at all.
-      (= (compiler-reg-loop-nest-span-lo rotated 3) 1)
-      (= (compiler-reg-loop-nest-span-hi rotated 3) 3)
-      (= (compiler-reg-loop-nest-span-hi rotated 0) (- 0 1))
-      (= (compiler-reg-loop-nest-span-hi rotated 1) (- 0 1))
-      (= (compiler-reg-loop-nest-span-hi rotated 2) (- 0 1))
+      (=
+        (compiler-reg-loop-nest-span-lo
+          (reg.compiler-reg-global-shared-view rotated)
+          3)
+        1)
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view rotated)
+          3)
+        3)
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view rotated)
+          0)
+        (- 0 1))
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view rotated)
+          1)
+        (- 0 1))
+      (=
+        (compiler-reg-loop-nest-span-hi
+          (reg.compiler-reg-global-shared-view rotated)
+          2)
+        (- 0 1))
       (= (compiler-reg-loop-nest-span-hi rotated 4) (- 0 1)))))
 
 ;; entry / body / latch / header / other / exit. The rescue's motivating case
@@ -15412,7 +15758,12 @@
   (let
     [seq : ir.CompilerIrBlockSeq
       (live.compiler-live-ir-block-list-to-seq blocks)]
-    (if (or (< index 0) (>= index (ir.compiler-ir-block-seq-count seq)))
+    (if (or
+      (< index 0)
+      (>=
+        index
+        (ir.compiler-ir-block-seq-count
+          (reg.compiler-reg-global-shared-view seq))))
       (ir.compiler-ir-label-none)
       (match (ir.compiler-ir-block-seq-ref seq index)
         [(ir.CompilerIrBlock.Block label _) label]))))
@@ -15436,13 +15787,13 @@
     [blocks : ir.CompilerIrBlockList (compiler-reg-preheader-rotated-blocks)]
     [spliced : ir.CompilerIrBlockList
       (reg.compiler-reg-loop-split-splice-preheader
-        blocks
+        (reg.compiler-reg-global-shared-view blocks)
         (ir.compiler-ir-label "header"))]
     ;; Asked a second time, the splice finds the preheader it already made and
     ;; leaves the function alone.
     [again : ir.CompilerIrBlockList
       (reg.compiler-reg-loop-split-splice-preheader
-        spliced
+        (reg.compiler-reg-global-shared-view spliced)
         (ir.compiler-ir-label "header"))]
     ;; And asked about the block the RANGE encoding would have called a header
     ;; of the sunk-cold shape, there is no loop to give a preheader to.
@@ -15452,23 +15803,30 @@
         (ir.compiler-ir-label "join"))]
     (and
       (= (ir.compiler-ir-block-list-count blocks) 6)
-      (= (ir.compiler-ir-block-list-count spliced) 7)
+      (=
+        (ir.compiler-ir-block-list-count
+          (reg.compiler-reg-global-shared-view spliced))
+        7)
       ;; The new block sits immediately before the header it serves.
       (=
-        (compiler-reg-preheader-label-at spliced 3)
+        (compiler-reg-preheader-label-at
+          (reg.compiler-reg-global-shared-view spliced)
+          3)
         (ir.compiler-ir-label "header.preheader"))
       (=
-        (compiler-reg-preheader-label-at spliced 4)
+        (compiler-reg-preheader-label-at
+          (reg.compiler-reg-global-shared-view spliced)
+          4)
         (ir.compiler-ir-label "header"))
       ;; `entry`'s critical edge now lands on the preheader, and the latch's
       ;; back edge -- inside the loop -- is left pointing at the header.
       (compiler-reg-preheader-succ-has?
-        spliced
+        (reg.compiler-reg-global-shared-view spliced)
         0
         (ir.compiler-ir-label "header.preheader"))
       (not
         (compiler-reg-preheader-succ-has?
-          spliced
+          (reg.compiler-reg-global-shared-view spliced)
           0
           (ir.compiler-ir-label "header")))
       (compiler-reg-preheader-succ-has?
@@ -15548,8 +15906,11 @@
   (let
     [func : ir.CompilerIrFunction (compiler-reg-live-in-call-function)]
     [liveness : live.CompilerFunctionLiveness
-      (live.compiler-live-analyze-function func)]
-    (match (reg.compiler-reg-live-interval-selection func liveness)
+      (live.compiler-live-analyze-function
+        (reg.compiler-reg-global-shared-view func))]
+    (match (reg.compiler-reg-live-interval-selection
+      (reg.compiler-reg-global-shared-view func)
+      liveness)
       [(reg.CompilerRegIntervalSelection.Selection _ index)
         (and
           ;; The jump is point 0, so `use` opens at point 2 and the bridge
@@ -15558,7 +15919,7 @@
           ;; And that is what makes the call spanned: hull start 1, exclusive,
           ;; still admits the call at point 2.
           (reg.compiler-reg-segments-span-clobber?
-            (array-ref index.segments 0)
+            (reg.compiler-reg-global-array-element-shared-view index.segments 0)
             (reg.compiler-reg-direct-call-points func)
             (array-ref index.starts 0)
             false))])))

@@ -156,7 +156,13 @@ Summary:
     [(tlci_core.ResultTlciAuxLookup.Missing)
       (str_cat.str-cat name ": missing\n")]
     [(tlci_core.ResultTlciAuxLookup.Err message)
-      (str_cat.str-cat name ": malformed\n" name "-error: " message "\n")]
+      (str_cat.str-cat
+        (owned_view.compiler-owned-shared-view name)
+        ": malformed\n"
+        name
+        "-error: "
+        message
+        "\n")]
     [(tlci_core.ResultTlciAuxLookup.Ok schema payload)
       (str_cat.str-cat
         name
@@ -172,11 +178,11 @@ Summary:
   (str_cat.str-cat
     (tlci-inspect-surface-section
       "surface-package-identity"
-      rodata
+      (owned_view.compiler-owned-shared-view rodata)
       tlci_core.tlci-aux-kind-package-identity)
     (tlci-inspect-surface-section
       "surface-frontend-ast"
-      rodata
+      (owned_view.compiler-owned-shared-view rodata)
       tlci_core.tlci-aux-kind-frontend-ast)
     (tlci-inspect-surface-section
       "surface-frontend-facts"
@@ -214,9 +220,10 @@ Summary:
       (string.int->string image.callback-abi-version)
       "\n"
       "producer-compiler-identity: "
-      image.compiler-build-hash
+      (owned_view.compiler-owned-shared-view image.compiler-build-hash)
       "\n"
-      (tlci-inspect-source-binding image.rodata)
+      (tlci-inspect-source-binding
+        (owned_view.compiler-owned-shared-view image.rodata))
       (tlci-inspect-surface image.rodata image.compiler-build-hash)
       "content-hash: "
       (string.int->string

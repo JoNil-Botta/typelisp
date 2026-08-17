@@ -45,22 +45,26 @@
   (slots (__tl_dyn-array SpecTemplate))
   (len i64))
 
-(defenum SpecTemplateShadowList
-  (Nil)
-  (Cons i64 (Box SpecTemplateShadowList)))
-
-(define (spec-template-shadow-box-shared-view
-  [value : (Box SpecTemplateShadowList)]) : SpecTemplateShadowList
-  (let
-    [address : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
-    (unsafe
-      (ptr-read (int->ptr (cast address : u64) : (Ptr SpecTemplateShadowList))))))
-
 (defenum SpecMaybeTemplate
   (None)
   (Some SpecTemplate))
+
+;; Shadow snapshots form a persistent tree of dense slots. Each lexical child
+;; appends one `(template slot, parent, depth)` record; siblings retain their
+;; own head index without allocating a boxed name chain. `counts` caches the
+;; currently activated head so template lookup stays O(1), while `scratch`
+;; switches between retained sibling/nested snapshots without allocating.
+(defstruct SpecTemplateShadowStateData
+  (slots (__tl_dyn-array i64))
+  (parents (__tl_dyn-array i64))
+  (depths (__tl_dyn-array i64))
+  (counts (__tl_dyn-array i64))
+  (scratch (__tl_dyn-array i64))
+  (len i64)
+  (active-head i64))
+
+(defstruct SpecTemplateShadowState
+  (address i64))
 
 (defstruct SpecTemplateEnvData
   (index spec_id_i64_map.Map)
@@ -74,10 +78,11 @@
 (define (spec-template-env-new
   [index : spec_id_i64_map.Map]
   [values : (__tl_dyn-array SpecMaybeTemplate)]
-  [shadowed : SpecTemplateShadowList]) : SpecTemplateEnv
+  [shadow-state : SpecTemplateShadowState]
+  [shadow-head : i64]) : SpecTemplateEnv
   (let
     [cell : (__tl_dyn-array SpecTemplateEnvData)
-      (make-array (SpecTemplateEnvData index values shadowed))]
+      (make-array (SpecTemplateEnvData index values shadow-state shadow-head))]
     (SpecTemplateEnv
       (unsafe
         (ptr->int (array-data cell))))))
@@ -85,6 +90,10 @@
 (define (spec-template-env-data [templates : SpecTemplateEnv]) : SpecTemplateEnvData
   (unsafe
     (ptr-read (int->ptr templates.address : (Ptr SpecTemplateEnvData)))))
+
+(define (spec-template-env-shadow-state
+  [templates : (& templates SpecTemplateEnv)]) : SpecTemplateShadowState
+  (spec-template-env-data (SpecTemplateEnv templates.address)).shadow-state)
 
 ;; Comptime argument vectors and the two substitution environments keep their
 ;; head at slot 0, so every lookup scans forward from the newest binding and
@@ -210,11 +219,12 @@
 (define (spec-owner-ctfe-env
   [owner : (& owner SpecOwnerContext)]
   [reflections : ctfe.CtfeReflectInfoList]) : ctfe.CtfeEnv
-  (ctfe.ctfe-env-with-reflections-and-pools-and-source-names
-    reflections
-    (spec-owner-pools owner)
-    (spec_ci.intern-source-name-session-handle-from-state
-      (spec-owner-intern-state owner))))
+  (let
+    [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
+    (ctfe.ctfe-env-with-reflections-and-pools-and-source-names
+      reflections
+      (spec-owner-pools owner)
+      (spec_ci.intern-source-name-session-handle-from-state intern-state))))
 
 ;; The specialization cache maps a canonical structural-key handle directly to
 ;; its session-owned generated-symbol handle.
@@ -749,17 +759,199 @@
       true
       (spec-param-list-has-comptime-at? params (+ index 1)))))
 
-(define (spec-template-shadow-contains?
-  [shadowed : SpecTemplateShadowList]
-  [name-id : i64]) : bool
-  (match shadowed
-    [(SpecTemplateShadowList.Nil) false]
-    [(SpecTemplateShadowList.Cons shadow-name rest)
-      (if (= shadow-name name-id)
-        true
-        (spec-template-shadow-contains?
-          (spec-template-shadow-box-shared-view rest)
-          name-id))]))
+(define (spec-template-shadow-copy-range
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [src : (& src (__tl_dyn-array i64))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (set! (array-ref dst index) (array.ref src index))
+      (spec-template-shadow-copy-range dst src (+ index 1) count))))
+
+(define (spec-template-shadow-fill-zero
+  [slots : (&mut slots (__tl_dyn-array i64))]
+  [index : i64]) : unit
+  (if (>= index (array.length slots))
+    unit
+    (begin
+      (set! (array-ref slots index) 0)
+      (spec-template-shadow-fill-zero slots (+ index 1)))))
+
+(define (spec-template-shadow-state-data [state : SpecTemplateShadowState]) : SpecTemplateShadowStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast state.address : u64) : (Ptr SpecTemplateShadowStateData)))))
+
+(define (spec-template-shadow-state-data-set!
+  [state : SpecTemplateShadowState]
+  [data : SpecTemplateShadowStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast state.address : u64)
+        : (MutPtr SpecTemplateShadowStateData))
+      data)))
+
+(define (spec-template-shadow-state-new [template-count : i64]) : SpecTemplateShadowState
+  (let
+    [counts : (__tl_dyn-array i64) (array.make-array i64 template-count)]
+    [cell : (__tl_dyn-array SpecTemplateShadowStateData)
+      (array.make-array SpecTemplateShadowStateData 1)]
+    (begin
+      (spec-template-shadow-fill-zero (&mut counts) 0)
+      (set!
+        (array-ref cell 0)
+        (SpecTemplateShadowStateData
+          (array.make-array i64 8)
+          (array.make-array i64 8)
+          (array.make-array i64 8)
+          counts
+          (array.make-array i64 8)
+          0
+          -1))
+      (SpecTemplateShadowState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (array-data cell) : (Ptr SpecTemplateShadowStateData))))
+          : i64)))))
+
+(define (spec-template-shadow-state-grow-records
+  [data : SpecTemplateShadowStateData]) : SpecTemplateShadowStateData
+  (let
+    [count : i64 data.len]
+    [next-capacity : i64 (+ (* (array.length data.slots) 2) 8)]
+    [next-slots : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    [next-parents : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    [next-depths : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    (begin
+      (spec-template-shadow-copy-range (&mut next-slots) (& data.slots) 0 count)
+      (spec-template-shadow-copy-range
+        (&mut next-parents)
+        (& data.parents)
+        0
+        count)
+      (spec-template-shadow-copy-range
+        (&mut next-depths)
+        (& data.depths)
+        0
+        count)
+      (SpecTemplateShadowStateData
+        next-slots
+        next-parents
+        next-depths
+        data.counts
+        data.scratch
+        data.len
+        data.active-head))))
+
+(define (spec-template-shadow-state-grow-scratch
+  [data : SpecTemplateShadowStateData]
+  [count : i64]) : SpecTemplateShadowStateData
+  (let
+    [next : (__tl_dyn-array i64)
+      (array.make-array i64 (+ (* (array.length data.scratch) 2) 8))]
+    (begin
+      (spec-template-shadow-copy-range (&mut next) (& data.scratch) 0 count)
+      (SpecTemplateShadowStateData
+        data.slots
+        data.parents
+        data.depths
+        data.counts
+        next
+        data.len
+        data.active-head))))
+
+(define (spec-template-shadow-state-depth
+  [data : (& data SpecTemplateShadowStateData)]
+  [head : i64]) : i64
+  (if (< head 0)
+    0
+    (array.ref data.depths head)))
+
+(define (spec-template-shadow-state-append
+  [state : SpecTemplateShadowState]
+  [parent : i64]
+  [slot : i64]) : i64
+  (let
+    [data : SpecTemplateShadowStateData (spec-template-shadow-state-data state)]
+    (begin
+      (if (< data.len (array.length data.slots))
+        unit
+        (set! data (spec-template-shadow-state-grow-records data)))
+      (let
+        [index : i64 data.len]
+        (begin
+          (set! (array-ref data.slots index) slot)
+          (set! (array-ref data.parents index) parent)
+          (set!
+            (array-ref data.depths index)
+            (+ (spec-template-shadow-state-depth (& data) parent) 1))
+          (set! data.len (+ index 1))
+          (spec-template-shadow-state-data-set! state data)
+          index)))))
+
+(define (spec-template-shadow-state-activate!
+  [state : SpecTemplateShadowState]
+  [wanted-head : i64]) : unit
+  (let
+    [data : SpecTemplateShadowStateData (spec-template-shadow-state-data state)]
+    [current : i64 data.active-head]
+    [wanted : i64 wanted-head]
+    [scratch-len : i64 0]
+    (begin
+      ;; Walk both retained snapshots to their common parent. Remove the old
+      ;; path immediately and record the new path leaf-first in reusable dense
+      ;; scratch storage, then apply it parent-first.
+      (while (not (= current wanted))
+        (let
+          [current-depth : i64
+            (spec-template-shadow-state-depth (& data) current)]
+          [wanted-depth : i64
+            (spec-template-shadow-state-depth (& data) wanted)]
+          (begin
+            (if (and (>= current-depth wanted-depth) (>= current 0))
+              (let
+                [slot : i64 (array.ref data.slots current)]
+                (begin
+                  (set!
+                    (array-ref data.counts slot)
+                    (- (array.ref data.counts slot) 1))
+                  (set! current (array.ref data.parents current))))
+              unit)
+            (if (and (>= wanted-depth current-depth) (>= wanted 0))
+              (begin
+                (if (< scratch-len (array.length data.scratch))
+                  unit
+                  (set!
+                    data
+                    (spec-template-shadow-state-grow-scratch data scratch-len)))
+                (set! (array-ref data.scratch scratch-len) wanted)
+                (set! scratch-len (+ scratch-len 1))
+                (set! wanted (array.ref data.parents wanted)))
+              unit))))
+      (while (> scratch-len 0)
+        (let
+          [next-index : i64 (- scratch-len 1)]
+          [node : i64 (array.ref data.scratch next-index)]
+          [slot : i64 (array.ref data.slots node)]
+          (begin
+            (set!
+              (array-ref data.counts slot)
+              (+ (array.ref data.counts slot) 1))
+            (set! scratch-len next-index))))
+      (set! data.active-head wanted-head)
+      (spec-template-shadow-state-data-set! state data))))
+
+(define (spec-template-shadow-state-slot-shadowed?
+  [state : SpecTemplateShadowState]
+  [head : i64]
+  [slot : i64]) : bool
+  (begin
+    (spec-template-shadow-state-activate! state head)
+    (> (array.ref (spec-template-shadow-state-data state).counts slot) 0)))
 
 (define (spec-template-values-fill-empty
   [values : (&mut values (__tl_dyn-array SpecMaybeTemplate))]
@@ -827,14 +1019,15 @@
   (let
     [data : SpecTemplateEnvData
       (spec-template-env-data (SpecTemplateEnv templates.address))]
-    (if (spec-template-shadow-contains?
-      (spec-place-shared-view data.shadowed)
-      name-id)
-      (SpecMaybeTemplate.None)
-      (match (spec_id_i64_map.get (& data.index) name-id)
-        [(spec_id_i64_map.LookupFound slot)
-          (spec-array-shared-view data.values slot)]
-        [(spec_id_i64_map.LookupMissing) (SpecMaybeTemplate.None)]))))
+    (match (spec_id_i64_map.get (& data.index) name-id)
+      [(spec_id_i64_map.LookupFound slot)
+        (if (spec-template-shadow-state-slot-shadowed?
+          data.shadow-state
+          data.shadow-head
+          slot)
+          (SpecMaybeTemplate.None)
+          (spec-array-shared-view data.values slot))]
+      [(spec_id_i64_map.LookupMissing) (SpecMaybeTemplate.None)])))
 
 (define (spec-template-env-shadow-name
   [templates : (& templates SpecTemplateEnv)]
@@ -842,12 +1035,18 @@
   (let
     [data : SpecTemplateEnvData
       (spec-template-env-data (SpecTemplateEnv templates.address))]
-    (spec-template-env-new
-      (spec-place-shared-view data.index)
-      (spec-place-shared-view data.values)
-      (SpecTemplateShadowList.Cons
-        name-id
-        (box (spec-place-shared-view data.shadowed))))))
+    (match (spec_id_i64_map.get (& data.index) name-id)
+      [(spec_id_i64_map.LookupFound slot)
+        (spec-template-env-new
+          (spec-place-shared-view data.index)
+          (spec-place-shared-view data.values)
+          data.shadow-state
+          (spec-template-shadow-state-append
+            data.shadow-state
+            data.shadow-head
+            slot))]
+      ;; Names that cannot select a template need no shadow record.
+      [(spec_id_i64_map.LookupMissing) (SpecTemplateEnv templates.address)])))
 
 (define (spec-template-env-shadow-params
   [templates : (& templates SpecTemplateEnv)]
@@ -3510,10 +3709,11 @@
     (begin
       (while (< index count)
         (begin
-          (ast.ast-decl-path-list-push-with-owner-id
+          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
             (&mut out)
             (spec-place-shared-view path)
-            owner-id)
+            owner-id
+            provenance-id)
           (set! index (+ index 1))))
       (ast.ast-decl-path-list-append-from (&mut out) (& rest-paths) 0)
       out)))
@@ -3528,11 +3728,18 @@
   (if (>= index (ast.ast-decl-list-len (& decls)))
     unit
     (begin
-      (ast.ast-decl-path-list-push-with-owner-id
+      (ast.ast-decl-path-list-push-with-owner-and-provenance-id
         out
         (spec-place-shared-view path)
-        owner-id)
-      (gen-path-list-push-for-decls out decls path owner-id (+ index 1)))))
+        owner-id
+        provenance-id)
+      (gen-path-list-push-for-decls
+        out
+        decls
+        path
+        owner-id
+        provenance-id
+        (+ index 1)))))
 
 (define (gen-rewrite-decls-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -5595,7 +5802,10 @@
       (let
         [place : ast.AstExpr (spec-state-expr-get state place-box)]
         [replacement : ast.AstExpr (spec-state-expr-get state replacement-box)]
-        (match (spec-rewrite-expr place templates state)
+        (match (spec-rewrite-expr
+          place
+          templates
+          (spec-place-shared-view state))
           [(ResultSpecExpr.Ok rewritten-place place-state)
             (match (spec-rewrite-expr replacement templates place-state)
               [(ResultSpecExpr.Ok rewritten-replacement replacement-state)
@@ -9654,7 +9864,9 @@
           (ast.ast-param-list-new)
           (ast.AstType.I64)
           (ast.AstExpr.Literal (ast.ast-lit-int 2))))]
-    [base : SpecTemplateEnv (spec-template-env-from-list items)]
+    [base : SpecTemplateEnv
+      (spec-template-env-from-list
+        (owned_view.compiler-owned-shared-view items))]
     [shadow-x : SpecTemplateEnv
       (spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-x)]
     [duplicate-x : SpecTemplateEnv
@@ -9718,11 +9930,13 @@
           (ast.AstMaybeType.No)
           binding-value))]
     [binding-both : SpecTemplateEnv
-      (spec-template-env-shadow-let-binding-names base bindings)]
+      (spec-template-env-shadow-let-binding-names
+        base
+        (owned_view.compiler-owned-shared-view bindings))]
     [param-then-binding : SpecTemplateEnv
       (spec-template-env-shadow-let-binding-names
-        (spec-template-env-shadow-params base params)
-        bindings)]
+        param-both
+        (owned_view.compiler-owned-shared-view bindings))]
     [unrelated : SpecTemplateEnv
       (spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-flag)]
     [wide : SpecTemplateEnv (spec-template-env-from-list items)]
@@ -9822,11 +10036,18 @@
               cbi.compiler-builtin-id-fix-second))
           ;; A missing-template name creates no record; all real shadows are
           ;; dense slots, and the state grew beyond its initial capacity.
-          (= (spec-template-shadow-state-data base.shadow-state).len 18)
-          (= (spec-template-shadow-state-data wide.shadow-state).len 64)
+          (=
+            (spec-template-shadow-state-data
+              (spec-template-env-shadow-state base)).len
+            18)
+          (=
+            (spec-template-shadow-state-data
+              (spec-template-env-shadow-state wide)).len
+            64)
           (>
             (array.length
-              (spec-template-shadow-state-data wide.shadow-state).slots)
+              (spec-template-shadow-state-data
+                (spec-template-env-shadow-state wide)).slots)
             8)
           (= (comptime (size-of (type SpecTemplateShadowState))) 8)
           (= (comptime (size-of (type SpecTemplateShadowStateData))) 56)))

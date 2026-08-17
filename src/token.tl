@@ -203,8 +203,8 @@
 (define (sym-id [t : Token]) : ci.InternId
   (match t
     [(Token.Sym id)
-      (cfg stage0-token-scalar-bootstrap id (ci.intern-id-value id))]
-    [_ -1]))
+      (cfg stage0-token-scalar-bootstrap (ci.intern-id-from-renderable id) id)]
+    [_ (ci.tl_oob_abort)]))
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
 ;; the interned lexeme id back to text, the way a parser reads a symbol/name.
@@ -259,8 +259,8 @@
 (define (str-id [t : Token]) : ci.InternId
   (match t
     [(Token.Str id)
-      (cfg stage0-token-scalar-bootstrap id (ci.intern-id-value id))]
-    [_ -1]))
+      (cfg stage0-token-scalar-bootstrap (ci.intern-id-from-renderable id) id)]
+    [_ (ci.tl_oob_abort)]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):
 ;; the selfhost frontend carries source spelling until backend emission, so it

@@ -393,9 +393,9 @@
 
 (define (lsp-string-vec-push-copy [items : lsp_svec.Vec] [value : String]) : lsp_svec.Vec
   (let
-    [next-items : lsp_svec.Vec items]
+    [next-items : lsp_svec.Vec (owned_view.compiler-owned-shared-view items)]
     (begin
-      (lsp_svec.push (&mut next-items) value)
+      (lsp_svec.push-ref! (&mut next-items) value)
       next-items)))
 
 (define (lsp-string-vec-push-copy!
@@ -1296,6 +1296,7 @@
   [version : i64]
   [diagnostic-uris : lsp_vector_families.LspDiagnosticUris]) : lsp_document_vec.Vec
   (let
+    [docs : lsp_document_vec.Vec (owned_view.compiler-owned-shared-view docs)]
     [index : i64 (lsp-documents-find-index docs uri)]
     [cached-diagnostic-uris : lsp_vector_families.LspDiagnosticUris
       (lsp-cache-diagnostic-uris-copy diagnostic-uris)]
@@ -1399,9 +1400,11 @@
   [docs : lsp_document_vec.Vec]
   [uri : String]
   [check-cache : lsp_vector_families.LspCheckCache]) : lsp_document_vec.Vec
-  (begin
-    (lsp-documents-set-check-cache! (&mut docs) uri check-cache)
-    docs))
+  (let
+    [docs : lsp_document_vec.Vec (owned_view.compiler-owned-shared-view docs)]
+    (begin
+      (lsp-documents-set-check-cache! (&mut docs) uri check-cache)
+      docs)))
 
 (define (lsp-documents-set-semantic-index
   [docs : lsp_document_vec.Vec]
@@ -1409,6 +1412,9 @@
   [version : i64]
   [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex]) : lsp_document_vec.Vec
   (let
+    [docs : lsp_document_vec.Vec (owned_view.compiler-owned-shared-view docs)]
+    [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex
+      (owned_view.compiler-owned-shared-view semantic-index)]
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
       (let
@@ -1468,15 +1474,17 @@
           (set! i (+ i 1)))))))
 
 (define (lsp-documents-remove-index [docs : lsp_document_vec.Vec] [index : i64]) : lsp_document_vec.Vec
-  (if (if (>= index 0)
-    (< index (lsp_document_vec.len (& docs)))
-    false)
-    (begin
-      (lsp-documents-release-index! (&mut docs) index)
-      (lsp-documents-shift-left! (&mut docs) index)
-      (lsp_vector_families.lsp-documents-drop-last! (&mut docs))
-      docs)
-    docs))
+  (let
+    [docs : lsp_document_vec.Vec (owned_view.compiler-owned-shared-view docs)]
+    (if (if (>= index 0)
+      (< index (lsp_document_vec.len (& docs)))
+      false)
+      (begin
+        (lsp-documents-release-index! (&mut docs) index)
+        (lsp-documents-shift-left! (&mut docs) index)
+        (lsp_vector_families.lsp-documents-drop-last! (&mut docs))
+        docs)
+      docs)))
 
 (define (lsp-documents-remove [docs : lsp_document_vec.Vec] [uri : String]) : lsp_document_vec.Vec
   (let
@@ -6593,7 +6601,7 @@
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
-    [out : lsp_svec.Vec acc]
+    [out : lsp_svec.Vec (owned_view.compiler-owned-shared-view acc)]
     (begin
       (while (< i n)
         (let
@@ -8207,7 +8215,11 @@
     [found : i64 -1]
     (begin
       (while (and (< index cache.len) (< found 0))
-        (if (string.eq (array-ref cache.slots index).uri uri)
+        (if (string.eq
+          (owned_view.compiler-owned-array-element-shared-view
+            cache.slots
+            index).uri
+          uri)
           (set! found index)
           (set! index (+ index 1))))
       found)))
@@ -8221,13 +8233,10 @@
       [cursor : i64 index]
       [last : i64 (- cache.len 1)]
       (begin
-        (let
-          [removed : lsp_vector_families.LspWorkspaceSemanticCacheEntry
-            (array-ref cache.slots index)]
-          (if (> removed.index.owner-arena 0)
-            (compiler_semantic_index.compiler-semantic-source-index-release!
-              (&mut removed.index))
-            unit))
+        (if (> (array-ref cache.slots index).index.owner-arena 0)
+          (compiler_semantic_index.compiler-semantic-source-index-release!
+            (&mut (array-ref cache.slots index).index))
+          unit)
         (while (< cursor last)
           (begin
             (unsafe
@@ -8243,15 +8252,12 @@
     [index : i64 0]
     (begin
       (while (< index cache.len)
-        (let
-          [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
-            (array-ref cache.slots index)]
-          (begin
-            (if (> entry.index.owner-arena 0)
-              (compiler_semantic_index.compiler-semantic-source-index-release!
-                (&mut entry.index))
-              unit)
-            (set! index (+ index 1)))))
+        (begin
+          (if (> (array-ref cache.slots index).index.owner-arena 0)
+            (compiler_semantic_index.compiler-semantic-source-index-release!
+              (&mut (array-ref cache.slots index).index))
+            unit)
+          (set! index (+ index 1))))
       (set! cache.len 0)
       (set! cache.context-key "")
       (set! cache.source-checks 0))))
@@ -8274,7 +8280,9 @@
       (while (< index cache.len)
         (let
           [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
-            (array-ref cache.slots index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              cache.slots
+              index)]
           (begin
             ;; Move the independent owner; old state destruction never walks
             ;; stale cache rows.
@@ -8303,14 +8311,18 @@
     (while (< index cache.len)
       (let
         [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
-          (array-ref cache.slots index)]
+          (owned_view.compiler-owned-array-element-shared-view
+            cache.slots
+            index)]
         [affected : bool
           (or
-            (string.eq entry.path normalized)
+            (string.eq
+              entry.path
+              (owned_view.compiler-owned-shared-view normalized))
             (<= entry.index.owner-arena 0)
             (compiler_semantic_index.compiler-semantic-source-index-contains-path?
               (& entry.index)
-              normalized))]
+              (owned_view.compiler-owned-shared-view normalized)))]
         (if affected
           (lsp-workspace-semantic-cache-remove-index! cache index)
           (set! index (+ index 1)))))))
@@ -8436,7 +8448,7 @@
   (let
     [doc-index : i64
       (lsp-documents-find-path-index
-        (owned_view.compiler-owned-shared-view docs)
+        (& docs)
         (owned_view.compiler-owned-shared-view path))]
     (if (>= doc-index 0)
       (let
@@ -8569,6 +8581,8 @@
 
 (define (lsp-server-state-destroy! [state : lsp_vector_families.LspServerState]) : unit
   (let
+    [state : lsp_vector_families.LspServerState
+      (owned_view.compiler-owned-shared-view state)]
     [owner : i64 state.owner-arena]
     (begin
       (lsp-documents-release-all! (&mut state.documents))
@@ -8689,15 +8703,17 @@
               (>= doc.version 0)
               (compiler_semantic_index.compiler-semantic-source-index-contains-path?
                 index
-                doc.path))
+                (owned_view.compiler-owned-shared-view doc.path)))
               (match (io.try-read-file (& doc.path))
                 [(io.OkIoBytes contents)
                   (let
                     [text : String (byte_buf.to-string contents)]
                     (if (and
                       (=
-                        (lsp-workspace-semantic-source-fingerprint text)
-                        (lsp-workspace-semantic-source-fingerprint doc.text))
+                        (lsp-workspace-semantic-source-fingerprint
+                          (owned_view.compiler-owned-shared-view text))
+                        (lsp-workspace-semantic-source-fingerprint
+                          (owned_view.compiler-owned-shared-view doc.text)))
                       (=
                         (string.string-length text)
                         (string.string-length doc.text)))
@@ -8713,9 +8729,7 @@
   [source : lsp_vector_families.LspWorkspaceSource]
   [fingerprint : i64]
   [source-len : i64]
-  [semantic-index
-    : compiler_semantic_index.CompilerSemanticSourceIndex
-    (:consume)]) : unit
+  [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex]) : unit
   (begin
     (unsafe
       (ptr-write!
@@ -8737,7 +8751,9 @@
     [(io.ErrIoBytes _)
       (let
         [existing : i64
-          (lsp-workspace-semantic-cache-find-uri cache source.uri)]
+          (lsp-workspace-semantic-cache-find-uri
+            cache
+            (lsp-global-shared-view source.uri))]
         (begin
           (if (>= existing 0)
             (lsp-workspace-semantic-cache-remove-index! cache existing)
@@ -8746,23 +8762,31 @@
     [(io.OkIoBytes contents)
       (let
         [text : String (byte_buf.to-string contents)]
-        [fingerprint : i64 (lsp-workspace-semantic-source-fingerprint text)]
-        [source-len : i64 (string.string-length text)]
+        [fingerprint : i64
+          (lsp-workspace-semantic-source-fingerprint
+            (lsp-global-shared-view text))]
+        [source-len : i64 (string.string-length (lsp-global-shared-view text))]
         [existing : i64
-          (lsp-workspace-semantic-cache-find-uri cache source.uri)]
+          (lsp-workspace-semantic-cache-find-uri
+            cache
+            (lsp-global-shared-view source.uri))]
         [fresh : bool
           (if (< existing 0)
             false
             (let
               [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
-                (array-ref cache.slots existing)]
+                (owned_view.compiler-owned-array-element-shared-view
+                  cache.slots
+                  existing)]
               (and
                 (= entry.source-fingerprint fingerprint)
                 (= entry.source-len source-len))))]
         (if fresh
           (let
             [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
-              (array-ref cache.slots existing)]
+              (owned_view.compiler-owned-array-element-shared-view
+                cache.slots
+                existing)]
             (if (and
               (> entry.index.owner-arena 0)
               (lsp-workspace-semantic-index-overlay-mismatch?
@@ -8772,7 +8796,7 @@
                 (lsp-workspace-semantic-cache-remove-index! cache existing)
                 (lsp-workspace-semantic-cache-install!
                   cache
-                  source
+                  (lsp-global-shared-view source)
                   fingerprint
                   source-len
                   (compiler_semantic_index.compiler-semantic-source-index-empty))
@@ -8785,7 +8809,7 @@
             (let
               [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex
                 (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
-                  source.path
+                  (lsp-global-shared-view source.path)
                   text
                   stdlib-roots
                   (lsp-language-cfgs))
@@ -8828,7 +8852,9 @@
   [stdlib-roots : lsp_svec.Vec]) : i64
   (let
     [context-key : String
-      (lsp-workspace-semantic-context-key workspace stdlib-roots)]
+      (lsp-workspace-semantic-context-key
+        workspace
+        (lsp-global-shared-view stdlib-roots))]
     [source-index : i64 0]
     [source-checks : i64 0]
     (begin
@@ -8842,7 +8868,9 @@
         (while (< prune-index cache.len)
           (let
             [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
-              (array-ref cache.slots prune-index)]
+              (owned_view.compiler-owned-array-element-shared-view
+                cache.slots
+                prune-index)]
             [uri : String (string.copy (& entry.uri))]
             [live-index : i64
               (lsp-workspace-sources-find-uri (& workspace.sources) uri)]
@@ -8870,14 +8898,17 @@
                 (unsafe
                   (ptr-write!
                     (ptr-offset (array-data bigger) copy-index)
-                    (array-ref cache.slots copy-index)))
+                    (owned_view.compiler-owned-array-element-shared-view
+                      cache.slots
+                      copy-index)))
                 (set! copy-index (+ copy-index 1))))
             (set! cache.slots bigger)))
         unit)
       (while (< source-index (lsp-workspace-sources-len (& workspace.sources)))
         (let
           [source : lsp_vector_families.LspWorkspaceSource
-            (lsp-workspace-sources-get (& workspace.sources) source-index)]
+            (lsp-workspace-source-copy
+              (lsp-workspace-sources-get (& workspace.sources) source-index))]
           (begin
             (if source.overlay
               unit
@@ -8888,8 +8919,8 @@
                   (lsp-workspace-semantic-cache-refresh-source!
                     cache
                     source
-                    docs
-                    stdlib-roots))))
+                    (lsp-global-shared-view docs)
+                    (lsp-global-shared-view stdlib-roots)))))
             (set! source-index (+ source-index 1)))))
       source-checks)))
 
@@ -8906,12 +8937,12 @@
       (unsafe
         (arena.tl_arena_set owner))]
     [draft : lsp_vector_families.LspServerState
-      (lsp-server-state-copy-in-current state)]
+      (lsp-server-state-copy-in-current (lsp-global-shared-view state))]
     [source-checks : i64
       (lsp-workspace-semantic-cache-refresh!
         (&mut draft.semantic-cache)
         (& draft.workspace)
-        draft.documents
+        (lsp-global-shared-view draft.documents)
         stdlib-roots)]
     [next : lsp_vector_families.LspServerState
       (lsp-server-state-finish-swap state draft owner previous)]
@@ -8938,7 +8969,7 @@
   [facts : (& facts LspWorkspaceSemanticQuery)]
   [index : i64]) : lsp_vector_families.LspWorkspaceSemanticFact
   (if (and (>= index 0) (< index facts.len))
-    (array-ref facts.slots index)
+    (owned_view.compiler-owned-array-element-shared-view facts.slots index)
     (lsp-workspace-semantic-fact-fallback)))
 
 (define (lsp-workspace-semantic-facts-contain?
@@ -8951,7 +8982,9 @@
       (while (and (< index facts.len) (not found))
         (let
           [existing : lsp_vector_families.LspWorkspaceSemanticFact
-            (array-ref facts.slots index)]
+            (owned_view.compiler-owned-array-element-shared-view
+              facts.slots
+              index)]
           (begin
             (if (and
               (string.eq candidate.span.path existing.span.path)
@@ -9078,7 +9111,9 @@
                   "")]
               [doc-index : i64
                 (if (> (string.string-length path) 0)
-                  (lsp-documents-find-path-index docs path)
+                  (lsp-documents-find-path-index
+                    docs
+                    (owned_view.compiler-owned-shared-view path))
                   -1)]
               [open : bool (>= doc-index 0)]
               [version : i64
@@ -9093,7 +9128,8 @@
               [candidate : lsp_vector_families.LspWorkspaceSemanticFact
                 (lsp_vector_families.LspWorkspaceSemanticFact
                   (if (> (string.string-length path) 0)
-                    (lsp-path-to-file-uri path)
+                    (lsp-path-to-file-uri
+                      (owned_view.compiler-owned-shared-view path))
                     "")
                   open
                   version
@@ -9173,7 +9209,7 @@
                     (&mut facts)
                     (& doc.semantic.index)
                     (& state.documents)
-                    canonical-key)
+                    (lsp-global-shared-view canonical-key))
                   (if complete
                     unit
                     (set! completeness 2)))]
@@ -9201,7 +9237,9 @@
                     unit)
                   (let
                     [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
-                      (array-ref state.semantic-cache.slots cache-index)]
+                      (owned_view.compiler-owned-array-element-shared-view
+                        state.semantic-cache.slots
+                        cache-index)]
                     (match (io.try-read-file (& source.path))
                       [(io.ErrIoBytes _)
                         (if (= completeness 0)
@@ -9211,8 +9249,10 @@
                         (let
                           [text : String (byte_buf.to-string contents)]
                           [fingerprint : i64
-                            (lsp-workspace-semantic-source-fingerprint text)]
-                          [source-len : i64 (string.string-length text)]
+                            (lsp-workspace-semantic-source-fingerprint
+                              (lsp-global-shared-view text))]
+                          [source-len : i64
+                            (string.string-length (lsp-global-shared-view text))]
                           (if (or
                             (not (= fingerprint entry.source-fingerprint))
                             (not (= source-len entry.source-len)))
@@ -9225,7 +9265,7 @@
                                   (&mut facts)
                                   (& entry.index)
                                   (& state.documents)
-                                  canonical-key)
+                                  (lsp-global-shared-view canonical-key))
                                 (if (compiler_semantic_index.compiler-semantic-source-index-complete?
                                   (& entry.index))
                                   unit
@@ -9315,6 +9355,11 @@
       (lsp-workspace-index-build-sources!
         (&mut workspace)
         (owned_view.compiler-owned-shared-view docs))]
+    [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
+      (lsp-workspace-semantic-cache-copy
+        (owned_view.compiler-owned-shared-view state.semantic-cache))]
+    [_invalidate : unit
+      (lsp-workspace-semantic-cache-release-all! (&mut semantic-cache))]
     [draft : lsp_vector_families.LspServerState
       (lsp_vector_families.LspServerState 0 docs workspace semantic-cache)]
     (lsp-server-state-finish-swap state draft owner previous)))
@@ -9590,7 +9635,7 @@
     [existing : i64 (lsp-workspace-sources-find-uri (& index.sources) uri)]
     [doc-index : i64
       (lsp-documents-find-path-index
-        (owned_view.compiler-owned-shared-view docs)
+        (& docs)
         (owned_view.compiler-owned-shared-view normalized))]
     (if (>= doc-index 0)
       (let
@@ -9678,6 +9723,9 @@
             [workspace : lsp_vector_families.LspWorkspaceIndex
               (lsp-workspace-index-copy
                 (owned_view.compiler-owned-shared-view state.workspace))]
+            [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
+              (lsp-workspace-semantic-cache-copy
+                (owned_view.compiler-owned-shared-view state.semantic-cache))]
             [_refresh : unit
               (lsp-workspace-index-refresh-path!
                 (&mut workspace)
@@ -9721,6 +9769,9 @@
         [workspace : lsp_vector_families.LspWorkspaceIndex
           (lsp-workspace-index-copy
             (owned_view.compiler-owned-shared-view state.workspace))]
+        [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
+          (lsp-workspace-semantic-cache-copy
+            (owned_view.compiler-owned-shared-view state.semantic-cache))]
         [_refresh : unit
           (if refresh-documents
             (lsp-workspace-index-refresh-documents!
@@ -9769,16 +9820,20 @@
                   [(LspUriPath.Err _) unit]
                   [(LspUriPath.Ok path)
                     (if (string.eq (fs.extension (& path)) "tl")
-                      (lsp-workspace-index-refresh-path!
-                        workspace
-                        (owned_view.compiler-owned-shared-view docs)
-                        path
-                        (=
-                          (lsp-json-int-field-default
-                            (owned_view.compiler-owned-shared-view change)
-                            "type"
-                            2)
-                          3))
+                      (begin
+                        (lsp-workspace-semantic-cache-invalidate-path!
+                          semantic-cache
+                          (owned_view.compiler-owned-shared-view path))
+                        (lsp-workspace-index-refresh-path!
+                          workspace
+                          (owned_view.compiler-owned-shared-view docs)
+                          path
+                          (=
+                            (lsp-json-int-field-default
+                              (owned_view.compiler-owned-shared-view change)
+                              "type"
+                              2)
+                            3)))
                       unit)])])])
         (set! index (+ index 1))))))
 
@@ -9805,6 +9860,7 @@
             [(json.JsonArray items)
               (lsp-watched-files-refresh-items!
                 (&mut draft.workspace)
+                (&mut draft.semantic-cache)
                 (owned_view.compiler-owned-shared-view draft.documents)
                 (owned_view.compiler-owned-box-shared-view items))]
             [_ unit])])]
@@ -9892,7 +9948,7 @@
               (package_source_core.package-source-path-location-eligible-for-root?
                 (owned_view.compiler-owned-shared-view root.path)
                 (owned_view.compiler-owned-shared-view source.path)))
-              (lsp_svec.push (&mut paths) (string.copy (& source.path)))
+              (lsp_svec.push-ref! (&mut paths) (string.copy (& source.path)))
               unit)
             (set! source-index (+ source-index 1)))))
       (lsp-workspace-index-recover-live-paths!
@@ -15146,10 +15202,7 @@
   [name : String]
   [decls : lsp_decl_vec.Vec]) : LspStringResult
   (let
-    [idx : i64
-      (lsp-decl-list-find-name
-        (& decls)
-        name)]
+    [idx : i64 (lsp-decl-list-find-name (& decls) name)]
     (if (= idx -1)
       (LspStringResult.Err "Declaration not found")
       (lsp-form-text-by-entry
@@ -15839,10 +15892,7 @@
   [name : String]
   [decls : lsp_decl_vec.Vec]) : LspEditResult
   (let
-    [idx : i64
-      (lsp-decl-list-find-name
-        (& decls)
-        name)]
+    [idx : i64 (lsp-decl-list-find-name (& decls) name)]
     (if (= idx -1)
       (LspEditResult.Err "Declaration not found")
       (let
@@ -15942,10 +15992,7 @@
             params
             new-text)
           (let
-            [idx : i64
-              (lsp-decl-list-find-name
-                (& decls)
-                name)]
+            [idx : i64 (lsp-decl-list-find-name (& decls) name)]
             (if (= idx -1)
               (LspEditResult.Err "Declaration not found")
               (lsp-insert-after-entry
@@ -16294,14 +16341,8 @@
   [name : String]
   [destination : String]) : LspEditResult
   (let
-    [found-idx : i64
-      (lsp-decl-list-find-name
-        (& decls)
-        name)]
-    [dest-idx : i64
-      (lsp-decl-list-find-name
-        (& decls)
-        destination)]
+    [found-idx : i64 (lsp-decl-list-find-name (& decls) name)]
+    [dest-idx : i64 (lsp-decl-list-find-name (& decls) destination)]
     (cond
       [(= found-idx -1) (LspEditResult.Err "Declaration not found")]
       [(= dest-idx -1) (LspEditResult.Err "Destination declaration not found")]
@@ -16321,10 +16362,7 @@
   [name : String]
   [direction : String]) : LspEditResult
   (let
-    [found-idx : i64
-      (lsp-decl-list-find-name
-        (& decls)
-        name)]
+    [found-idx : i64 (lsp-decl-list-find-name (& decls) name)]
     [n : i64 (lsp_decl_vec.len (& decls))]
     [target-idx : i64
       (if (string.eq direction "up")

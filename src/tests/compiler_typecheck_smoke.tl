@@ -2734,51 +2734,63 @@
     [name-id : i64 (ci.intern "generated-type-param-pool-isolation")]
     [env : ctfe.CtfeEnv
       (ctfe.ctfe-env-extend-id
-        (ctfe.ctfe-env-empty-with-pools source-pools)
+        (ctfe.ctfe-env-empty-with-pools
+          (ast.ast-node-pool-context-shared-view (& source-pools)))
         name-id
         (ctfe.CompilerCtfeValue.Type (ast.AstType.I64)))]
     [installed-type-id : i64
-      (ast.ast-node-pool-context-type-push installed-pools (ast.AstType.Bool))]
+      (ast.ast-node-pool-context-type-push
+        (ast.ast-node-pool-context-shared-view (& installed-pools))
+        (ast.AstType.Bool))]
     [installed-expr-id : i64
       (ast.ast-node-pool-context-expr-push
-        installed-pools
+        (ast.ast-node-pool-context-shared-view (& installed-pools))
         (ast.AstExpr.Literal (ast.AstLiteral.Bool false)))]
     (begin
-      (ast.ast-node-pool-context-install! installed-pools)
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-shared-view (& installed-pools)))
       (let
         [result-id : i64
           (tc_core.macro-generated-type-param-expr
-            source-pools
+            (ast.ast-node-pool-context-shared-view (& source-pools))
             env
             (ast.AstExpr.Var name-id))]
         [installed-expr-bases : i64
-          (ast.ast-node-pool-context-expr-segment-bases installed-pools)]
+          (ast.ast-node-pool-context-expr-segment-bases
+            (& installed-pools))]
         [installed-type-bases : i64
-          (ast.ast-node-pool-context-type-segment-bases installed-pools)]
+          (ast.ast-node-pool-context-type-segment-bases
+            (& installed-pools))]
         [ok : bool
           (and
             (= result-id installed-expr-id)
-            (= (ast.ast-node-pool-context-expr-len source-pools) 1)
-            (= (ast.ast-node-pool-context-type-len source-pools) 1)
-            (= (ast.ast-node-pool-context-expr-len installed-pools) 1)
-            (= (ast.ast-node-pool-context-type-len installed-pools) 1)
-            (match (ast.ast-node-pool-context-expr-get source-pools result-id)
+            (= (ast.ast-node-pool-context-expr-len
+              (ast.ast-node-pool-context-shared-view (& source-pools))) 1)
+            (= (ast.ast-node-pool-context-type-len
+              (ast.ast-node-pool-context-shared-view (& source-pools))) 1)
+            (= (ast.ast-node-pool-context-expr-len
+              (ast.ast-node-pool-context-shared-view (& installed-pools))) 1)
+            (= (ast.ast-node-pool-context-type-len
+              (ast.ast-node-pool-context-shared-view (& installed-pools))) 1)
+            (match (ast.ast-node-pool-context-expr-get
+              (& source-pools)
+              result-id)
               [(ast.AstExpr.TypeLiteral source-type-id)
                 (and
                   (= source-type-id installed-type-id)
                   (match (ast.ast-node-pool-context-type-get
-                    source-pools
+                    (& source-pools)
                     source-type-id)
                     [(ast.AstType.I64) true]
                     [_ false]))]
               [_ false])
             (match (ast.ast-node-pool-context-expr-get
-              installed-pools
+              (& installed-pools)
               installed-expr-id)
               [(ast.AstExpr.Literal (ast.AstLiteral.Bool value)) (not value)]
               [_ false])
             (match (ast.ast-node-pool-context-type-get
-              installed-pools
+              (& installed-pools)
               installed-type-id)
               [(ast.AstType.Bool) true]
               [_ false])
@@ -2802,19 +2814,21 @@
     [owned-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 4 4)]
     [installed-child : i64
-      (ast.ast-node-pool-context-type-push installed-pools (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push
+        (ast.ast-node-pool-context-shared-view (& installed-pools))
+        (ast.AstType.I64))]
     [installed-parent : i64
       (ast.ast-node-pool-context-type-push
-        installed-pools
+        (ast.ast-node-pool-context-shared-view (& installed-pools))
         (ast.AstType.Array installed-child 3))]
     [name-id : i64 (ci.intern "Expr")]
     [owned-child : i64
       (ast.ast-node-pool-context-type-push
-        owned-pools
+        (ast.ast-node-pool-context-shared-view (& owned-pools))
         (ast.AstType.Var name-id))]
     [owned-parent : i64
       (ast.ast-node-pool-context-type-push
-        owned-pools
+        (ast.ast-node-pool-context-shared-view (& owned-pools))
         (ast.AstType.Array owned-child 3))]
     [ctx : tc_core.TcContext
       (tc_core.tc-context-new
@@ -2823,7 +2837,7 @@
         (compiler_symbols.compiler-registries-empty)
         ""
         cbi.compiler-builtin-id-fix-empty
-        owned-pools)]
+        (ast.ast-node-pool-context-shared-view (& owned-pools)))]
     [installed-ctx : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -2831,9 +2845,10 @@
         (compiler_symbols.compiler-registries-empty)
         ""
         cbi.compiler-builtin-id-fix-empty
-        installed-pools)]
+        (ast.ast-node-pool-context-shared-view (& installed-pools)))]
     (begin
-      (ast.ast-node-pool-context-install! installed-pools)
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-shared-view (& installed-pools)))
       ;; The same numeric parent id deliberately means "already concrete" in
       ;; the installed pool and "contains Var" in the context-owned pool.
       (let
@@ -2843,57 +2858,67 @@
           (ast.ty-node-pool-generation-value)]
         [owned-explicit-answer : bool
           (tc_core.tc-type-needs-resolution-id-with-bases?
-            (ast.ast-node-pool-context-type-segment-bases owned-pools)
+            (ast.ast-node-pool-context-type-segment-bases
+              (& owned-pools))
             owned-parent)]
         [resolved : ast.AstType
           (tc_core.tc-resolve-type-with-pools
             ctx
-            owned-pools
-            (ast.ast-node-pool-context-type-get owned-pools owned-parent))]
+            (ast.ast-node-pool-context-shared-view (& owned-pools))
+            (ast.ast-node-pool-context-type-get
+              (& owned-pools)
+              owned-parent))]
         [foreign-installed-count : i64
-          (ast.ast-node-pool-context-type-len installed-pools)]
+          (ast.ast-node-pool-context-type-len
+            (ast.ast-node-pool-context-shared-view (& installed-pools)))]
         [installed-var : i64
           (ast.ast-node-pool-context-type-push
-            installed-pools
+            (ast.ast-node-pool-context-shared-view (& installed-pools))
             (ast.AstType.Var name-id))]
         [installed-var-parent : i64
           (ast.ast-node-pool-context-type-push
-            installed-pools
+            (ast.ast-node-pool-context-shared-view (& installed-pools))
             (ast.AstType.Array installed-var 5))]
         [installed-resolved : ast.AstType
           (tc_core.tc-resolve-type
             installed-ctx
             (ast.ast-node-pool-context-type-get
-              installed-pools
+              (& installed-pools)
               installed-var-parent))]
         [installed-bases : i64
-          (ast.ast-node-pool-context-type-segment-bases installed-pools)]
+          (ast.ast-node-pool-context-type-segment-bases
+            (& installed-pools))]
+        [installed-active : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
         [ok : bool
           (and
             (= installed-child owned-child)
             (= installed-parent owned-parent)
             (not installed-memo-answer)
             owned-explicit-answer
-            (ast.ast-node-pool-context-type-installed? installed-pools)
+            (ast.ast-node-pool-context-type-installed?
+              (ast.ast-node-pool-context-shared-view (& installed-pools)))
             (=
               (ast.ty-node-pool-generation-value)
               installed-generation-after-prime)
             (= foreign-installed-count 2)
-            (= (ast.ast-node-pool-context-type-len installed-pools) 5)
+            (= (ast.ast-node-pool-context-type-len
+              (ast.ast-node-pool-context-shared-view (& installed-pools))) 5)
             (= (ast.ty-node-pool-len) 5)
-            (= (ast.ast-node-pool-context-type-len owned-pools) 3)
+            (= (ast.ast-node-pool-context-type-len
+              (ast.ast-node-pool-context-shared-view (& owned-pools))) 3)
             (match resolved
               [(ast.AstType.Array resolved-child count)
                 (and
                   (= count 3)
                   (match (ast.ast-node-pool-context-type-get
-                    owned-pools
+                    (& owned-pools)
                     resolved-child)
                     [(ast.AstType.Expr) true]
                     [_ false]))]
               [_ false])
             (match (ast.ast-node-pool-context-type-get
-              installed-pools
+              (& installed-pools)
               installed-child)
               [(ast.AstType.I64) true]
               [_ false])
@@ -2904,10 +2929,10 @@
                   (match (ast.ty-node-get resolved-child)
                     [(ast.AstType.Expr) true]
                     [_ false]))]
-              [_ false])
+            [_ false])
             (=
               (ast.ast-node-pool-context-type-segment-bases
-                (ast.ast-node-pool-context-capture-active))
+                installed-active)
               installed-bases))]
         (begin
           (ast.ast-node-pool-context-install! active-before)
@@ -5650,9 +5675,11 @@
         cbi.compiler-builtin-id-fix-empty
         (ast.ast-node-pool-context-capture-active)
         (tc_core.tc-macro-state-source-names macro-a)
-        body-a)]
+        (tc_core.tc-global-shared-view body-a))]
     [hygiene-a : tc_core.MacroHygieneEnv
-      (tc_core.macro-hygiene-env-empty macro-a (tc_core.tc-context-pools ctx-a))]
+      (tc_core.macro-hygiene-env-empty
+        macro-a
+        (tc_core.tc-context-pools (tc_core.tc-global-shared-view ctx-a)))]
     [macro-a-handle : ci.InternSourceNameSessionHandle
       (tc_core.tc-macro-state-source-names macro-a)]
     [macro-b-handle : ci.InternSourceNameSessionHandle
@@ -5661,7 +5688,7 @@
       (tc_core.tc-macro-state-source-names
         (tc_core.tc-job-state-macro-state body-a.job-state))]
     [ctx-a-handle : ci.InternSourceNameSessionHandle
-      (tc_core.tc-context-source-names ctx-a)]
+      (tc_core.tc-context-source-names (tc_core.tc-global-shared-view ctx-a))]
     [hygiene-a-handle : ci.InternSourceNameSessionHandle
       (tc_core.tc-macro-state-source-names hygiene-a.state)]
     [session-a : cis.InternStructuralSessionHandle
@@ -5678,7 +5705,7 @@
     (begin
       ;; Keep B installed while macro expansion and ordinary typecheck views
       ;; owned by A canonicalize, grow, and decode A's structural records.
-      (ci.intern-compat-state-install! intern-b)
+      (ci.intern-compat-state-install! (tc_core.tc-global-shared-view intern-b))
       (let
         [a-pair : cis.InternStructuralKey
           (cis.intern-structural-session-composite-pair-key session-a 71 81)]
@@ -5787,7 +5814,7 @@
                 (ci.intern-active-table-id)
                 (ci.intern-compat-state-table-id intern-b))))))
       (ci.intern-compat-state-install! installed)
-      (ci.intern-compat-state-reset-to! intern-a 0)
+      (ci.intern-compat-state-reset-to! (&mut intern-a) 0)
       (let
         [stale-before-rebind : bool
           (not (cis.intern-structural-session-valid? session-a))]

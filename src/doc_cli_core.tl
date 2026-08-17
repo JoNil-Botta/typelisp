@@ -538,7 +538,8 @@
             manifest-path
             has-manifest
             (let
-              [next-roots : doc_svec.Vec stdlib-roots]
+              [next-roots : doc_svec.Vec
+                (owned_view.compiler-owned-shared-view stdlib-roots)]
               (begin
                 (doc_svec.push-ref! (&mut next-roots) value)
                 next-roots))
@@ -593,7 +594,8 @@
                 (+ idx 1)
                 count
                 (let
-                  [next-paths : doc_svec.Vec input-paths]
+                  [next-paths : doc_svec.Vec
+                    (owned_view.compiler-owned-shared-view input-paths)]
                   (begin
                     (doc_svec.push-ref! (&mut next-paths) current)
                     next-paths))
@@ -744,7 +746,8 @@
             output-path
             manifest-path
             (let
-              [next-roots : doc_svec.Vec stdlib-roots]
+              [next-roots : doc_svec.Vec
+                (owned_view.compiler-owned-shared-view stdlib-roots)]
               (begin
                 (doc_svec.push-ref! (&mut next-roots) value)
                 next-roots)))]
@@ -786,7 +789,8 @@
                 (+ idx 1)
                 count
                 (let
-                  [next-paths : doc_svec.Vec input-paths]
+                  [next-paths : doc_svec.Vec
+                    (owned_view.compiler-owned-shared-view input-paths)]
                   (begin
                     (doc_svec.push-ref! (&mut next-paths) current)
                     next-paths))

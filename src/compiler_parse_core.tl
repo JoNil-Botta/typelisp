@@ -3173,7 +3173,7 @@
         [(reader.SexprView.Sym head)
           (let
             [rest : reader.Sexpr rest-box]
-            [head-id : i64 head]
+            [head-id : i64 (ci.intern-syntax-id-value head)]
             [tag : i64
               (compiler-parse-dispatch-tag-id
                 (compiler-parse-place-shared-view dispatch)
@@ -3185,7 +3185,7 @@
                 (parse-ast-resolved-nominal-type dispatch pools rest true)]
               [(= head-id (cbi.compiler-builtin-ctfe-ref 107))
                 (parse-ast-resolved-nominal-type dispatch pools rest false)]
-              [(= head (cbi.compiler-builtin-ctfe-ref 179))
+              [(= head-id (cbi.compiler-builtin-ctfe-ref 179))
                 (ResultAstType.Err
                   "parse: :consume has been removed; by-value parameters move non-Copy values")]
               [(= tag (compiler-parse-tag-ty-func))
@@ -3402,7 +3402,8 @@
   [end : reader.Sexpr]) : ResultAstParam
   (match (reader.sexpr-view (compiler-parse-place-shared-view end))
     [(reader.SexprView.Nil)
-      (ResultAstParam.Ok (ast.ast-param-id name ty false))]
+      (ResultAstParam.Ok
+        (ast.ast-param-id (ci.intern-syntax-id-value name) ty false))]
     [_ (ResultAstParam.Err (parse-ast-param-metadata-error end))]))
 
 (define (parse-ast-param-metadata-error [end : reader.Sexpr]) : String
@@ -3412,10 +3413,13 @@
         [(reader.SexprView.Cons key-node _)
           (match (reader.sexpr-view key-node)
             [(reader.SexprView.Sym key)
-              (if (= key (cbi.compiler-builtin-ctfe-ref 179))
+              (if (=
+                (ci.intern-syntax-id-value key)
+                (cbi.compiler-builtin-ctfe-ref 179))
                 "parse: :consume has been removed; by-value parameters move non-Copy values"
                 (let
-                  [key-text : String (ci.intern-str key)]
+                  [key-text : String
+                    (ci.intern-str (ci.intern-syntax-id-value key))]
                   (if (and
                     (> (string.string-length key-text) 0)
                     (= (string.string-ref key-text 0) ':'))
@@ -3656,7 +3660,9 @@
     [(reader.SexprView.Cons head tail)
       (match (reader.sexpr-view head)
         [(reader.SexprView.Sym tag)
-          (if (= tag (cbi.compiler-builtin-ctfe-ref 221))
+          (if (=
+            (ci.intern-syntax-id-value tag)
+            (cbi.compiler-builtin-ctfe-ref 221))
             (match (reader.sexpr-view (compiler-parse-place-shared-view tail))
               [(reader.SexprView.Nil)
                 (ResultAstMacroTypeKindList.Err
@@ -5300,17 +5306,22 @@
         [(reader.SpannedSexprView.Cons replacement-node end _)
           (match (reader.spanned-sexpr-view end)
             [(reader.SpannedSexprView.Nil _)
-              (match (parse-ast-expr-with-pools dispatch pools place-node)
+              (match (parse-ast-expr-with-pools
+                (compiler-parse-place-shared-view dispatch)
+                (compiler-parse-place-shared-view pools)
+                place-node)
                 [(ResultAstExpr.Ok place-id)
-                  (if (parse-ast-replace-place? pools place-id)
+                  (if (parse-ast-replace-place?
+                    (compiler-parse-place-shared-view pools)
+                    place-id)
                     (match (parse-ast-expr-with-pools
-                      dispatch
-                      pools
+                      (compiler-parse-place-shared-view dispatch)
+                      (compiler-parse-place-shared-view pools)
                       replacement-node)
                       [(ResultAstExpr.Ok replacement-id)
                         (ResultAstExpr.Ok
                           (ast.ast-expr-replace-with-pools
-                            pools
+                            (compiler-parse-place-shared-view pools)
                             place-id
                             replacement-id))]
                       [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])
@@ -7805,7 +7816,7 @@
         [(=
             (compiler-parse-dispatch-tag
               (compiler-parse-place-shared-view dispatch)
-              op)
+              (ci.intern-syntax-id-value op))
             (compiler-parse-tag-expr-init))
           (match (reader.spanned-sexpr-view
             (compiler-parse-place-shared-view rest))
@@ -7821,7 +7832,7 @@
             [tag : i64
               (compiler-parse-dispatch-tag
                 (compiler-parse-place-shared-view dispatch)
-                op)]
+                (ci.intern-syntax-id-value op))]
             (cond
               [(= tag (compiler-parse-tag-expr-ptr-addr-of))
                 (parse-ast-ptr-addr-of dispatch pools rest)]
@@ -7891,7 +7902,8 @@
               (compiler-parse-place-shared-view pools)
               (ast.ast-node-pool-context-expr-push
                 (compiler-parse-place-shared-view pools)
-                (ast.AstExpr.Literal (ast.AstLiteral.String string-id)))
+                (ast.AstExpr.Literal
+                  (ast.AstLiteral.String (ci.intern-id-value string-id))))
               (compiler-parse-place-shared-view s)))]
         [(reader.SpannedSexprView.Char c _)
           (ResultAstExpr.Ok
@@ -7903,7 +7915,7 @@
               (compiler-parse-place-shared-view s)))]
         [(reader.SpannedSexprView.Sym name _)
           (let
-            [name-id : i64 name]
+            [name-id : i64 (ci.intern-syntax-id-value name)]
             [tag : i64
               (compiler-parse-dispatch-tag-id
                 (compiler-parse-place-shared-view dispatch)
@@ -7945,7 +7957,9 @@
           (match (reader.spanned-sexpr-view
             (compiler-parse-place-shared-view head))
             [(reader.SpannedSexprView.Sym op _)
-              (if (= op (cbi.compiler-builtin-ctfe-ref 243))
+              (if (=
+                (ci.intern-syntax-id-value op)
+                (cbi.compiler-builtin-ctfe-ref 243))
                 (match (parse-ast-cfg-expr
                   (compiler-parse-place-shared-view dispatch)
                   (compiler-parse-place-shared-view pools)
@@ -8051,7 +8065,9 @@
           (let
             [next : ast.AstSpmdParamClassList
               (compiler-parse-place-shared-view out)]
-            (if (= name (cbi.compiler-builtin-ctfe-ref 244))
+            (if (=
+              (ci.intern-syntax-id-value name)
+              (cbi.compiler-builtin-ctfe-ref 244))
               (begin
                 (ast.ast-spmd-param-class-list-push
                   (&mut next)
@@ -10223,7 +10239,7 @@
                 [tag : i64
                   (compiler-parse-dispatch-tag
                     (compiler-parse-place-shared-view dispatch)
-                    head)]
+                    (ci.intern-syntax-id-value head))]
                 (cond
                   [(= tag (compiler-parse-tag-decl-define))
                     (parse-ast-define
@@ -10282,7 +10298,7 @@
                       (compiler-parse-place-shared-view pools)
                       (compiler-parse-place-shared-view rest))]
                   [(parse-ast-removed-declaration-name?
-                      (compiler-parse-place-shared-view head))
+                      (ci.intern-syntax-id-value head))
                     (ResultAstDecl.Err (parse-ast-removed-declaration-message))]
                   [(= tag (compiler-parse-tag-expr-unsafe))
                     (parse-ast-unsafe-decl
@@ -10298,7 +10314,7 @@
                         (reader.spanned-sexpr-span
                           (compiler-parse-place-shared-view s))))]
                   [(compiler-parse-policy-form?
-                      (compiler-parse-place-shared-view head))
+                      (ci.intern-syntax-id-value head))
                     (ResultAstDecl.Err
                       (compiler-parse-abstraction-policy-message))]
                   [else
@@ -10556,7 +10572,7 @@
               [tag : i64
                 (compiler-parse-dispatch-tag
                   (compiler-parse-place-shared-view dispatch)
-                  head)]
+                  (ci.intern-syntax-id-value head))]
               (cond
                 [(=
                     (ci.intern-syntax-id-value head)

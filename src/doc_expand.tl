@@ -957,7 +957,7 @@
   (if (>= index count)
     unit
     (begin
-      (doc_item_vec.push
+      (doc_item_vec.push-ref!
         out
         (doc_extract.doc-item-list-ref
           (owned_view.compiler-owned-shared-view items)

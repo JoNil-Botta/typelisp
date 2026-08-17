@@ -167,19 +167,21 @@
 ;; threaded accumulators become loop state.
 (define (lower-skip-runtime-until-next-module
   [decls : compiler_ast_types.AstDeclList]) : compiler_ast_types.AstDeclList
-  (match (compiler_ast_types.ast-decl-list-step decls)
+  (match (compiler_ast_types.ast-decl-list-step
+    (owned_view.compiler-owned-shared-view decls))
     [(compiler_ast_types.AstDeclListStep.Nil)
       (compiler_ast_types.ast-decl-list-new)]
     [(compiler_ast_types.AstDeclListStep.Cons decl rest)
       (let
         [rest : compiler_ast_types.AstDeclList rest]
-        (match decl
+        (match (owned_view.compiler-owned-shared-view decl)
           [(compiler_ast_types.AstDecl.Module _) decls]
           [_
             (let
               [kept-rest : compiler_ast_types.AstDeclList
                 (lower-skip-runtime-until-next-module rest)]
-              (if (compiler_lower.lower-type-decl? decl)
+              (if (compiler_lower.lower-type-decl?
+                (owned_view.compiler-owned-shared-view decl))
                 (compiler_ast_types.ast-decl-list-prepend-builder
                   decl
                   kept-rest)
@@ -5762,7 +5764,10 @@
   [name : String]
   [call-name : String]) : i64
   (+
-    (lower-test-function-call-count funcs name call-name)
+    (lower-test-function-call-count
+      (owned_view.compiler-owned-shared-view funcs)
+      (owned_view.compiler-owned-shared-view name)
+      (owned_view.compiler-owned-shared-view call-name))
     (lower-test-function-tail-call-count funcs name call-name)))
 
 (define (lower-test-function-store-ptr-count
@@ -11515,13 +11520,16 @@
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (and
-            (=
-              (lower-test-function-vector-load-count functions "fill")
-              vector-loads)
-            (=
-              (lower-test-function-predicated-load-count functions "fill")
-              predicated-loads))])]
+          (let
+            [actual-vector-loads : i64
+              (lower-test-function-vector-load-count
+                (owned_view.compiler-owned-shared-view functions)
+                "fill")]
+            [actual-predicated-loads : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            (and
+              (= actual-vector-loads vector-loads)
+              (= actual-predicated-loads predicated-loads)))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-masked-load-cache-tests-ok?) : bool
@@ -15228,58 +15236,74 @@
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [module-a : i64 (ci.intern-compat-state-intern intern-a "owner-a")]
-    [cleanup-a : i64 (ci.intern-compat-state-intern intern-a "cleanup-a")]
-    [_module-b : i64 (ci.intern-compat-state-intern intern-b "decoy-b")]
-    [_cleanup-b : i64 (ci.intern-compat-state-intern intern-b "cleanup-b")]
+    [module-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "owner-a")]
+    [cleanup-a : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "cleanup-a")]
+    [_module-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "decoy-b")]
+    [_cleanup-b : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "cleanup-b")]
     [pools-a : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 8 1)]
     [pools-b : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 8 1)]
     [lower-a : compiler_lower.CompilerLowerState
-      (compiler_lower.compiler-lower-state-new-with-intern-state intern-a)]
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (owned_view.compiler-owned-shared-view intern-a))]
     [generated-b-before : i64 (ci.intern-compat-state-generated-count intern-b)]
     [expr-b-before : i64
       (compiler_ast_types.ast-node-pool-context-expr-len pools-b)]
     [ok : bool false]
     (begin
-      (ci.intern-compat-state-install! intern-b)
-      (compiler_ast_types.ast-node-pool-context-install! pools-b)
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view intern-b))
+      (compiler_ast_types.ast-node-pool-context-install!
+        (owned_view.compiler-owned-shared-view pools-b))
       (let
         [_active-generated-b : i64
-          (ci.intern-compat-state-generated-name intern-b "decoy-generated-b")]
+          (ci.intern-compat-state-generated-name
+            (&mut intern-b)
+            "decoy-generated-b")]
         [generated-b-after : i64
           (ci.intern-compat-state-generated-count intern-b)]
-        [param-a : i64 (compiler_lower.lower-struct-cleanup-param-id lower-a)]
+        [param-a : i64
+          (compiler_lower.lower-struct-cleanup-param-id
+            (owned_view.compiler-owned-shared-view lower-a))]
         [param-again-a : i64
-          (compiler_lower.lower-struct-cleanup-param-id lower-a)]
+          (compiler_lower.lower-struct-cleanup-param-id
+            (owned_view.compiler-owned-shared-view lower-a))]
         [payload-a : i64
-          (compiler_lower.lower-enum-cleanup-payload-id lower-a 0)]
+          (compiler_lower.lower-enum-cleanup-payload-id
+            (owned_view.compiler-owned-shared-view lower-a)
+            0)]
         [payload-again-a : i64
-          (compiler_lower.lower-enum-cleanup-payload-id lower-a 0)]
+          (compiler_lower.lower-enum-cleanup-payload-id
+            (owned_view.compiler-owned-shared-view lower-a)
+            0)]
         [qualified-a : i64
           (ci.intern-compat-state-generated-canonical-qualified-name
-            intern-a
+            (&mut intern-a)
             "owner-a/cleanup-a"
             module-a
             cleanup-a)]
         [_enum-call-a : i64
           (compiler_lower.lower-enum-cleanup-call-expr
-            pools-a
+            (owned_view.compiler-owned-shared-view pools-a)
             cleanup-a
             payload-a)]
         [_struct-call-a : i64
           (compiler_lower.lower-struct-cleanup-call-expr
-            pools-a
+            (owned_view.compiler-owned-shared-view pools-a)
             cleanup-a
             param-a
             cleanup-a)]
+        [lower-a-interns : ci.InternCompatState
+          (compiler_lower.compiler-lower-state-interns
+            (owned_view.compiler-owned-shared-view lower-a))]
         (set!
           ok
           (and
             (=
-              (ci.intern-compat-state-table-id
-                (compiler_lower.compiler-lower-state-interns lower-a))
+              (ci.intern-compat-state-table-id (& lower-a-interns))
               (ci.intern-compat-state-table-id intern-a))
             (= param-a param-again-a)
             (= payload-a payload-again-a)
@@ -15334,18 +15358,18 @@
     [state : cbi.CompilerBuiltinIdsState (cbi.state-new)]
     (begin
       (cbi.state-set-generation!
-        state
+        (&mut state)
         (ci.intern-compat-state-generation intern-state))
       (cbi.state-set-metadata!
-        state
+        (&mut state)
         (ci.intern-compat-state-table-id intern-state)
         (ci.intern-compat-state-pool-len intern-state)
         true)
-      (cbi.state-set! state 90 comptime-id)
-      (cbi.state-set! state 91 comptime-error-id)
-      (cbi.state-set! state 94 bare-id)
-      (cbi.state-set! state 149 stdlib-comptime-id)
-      (cbi.state-set! state 150 stdlib-error-id)
+      (cbi.state-set! (&mut state) 90 comptime-id)
+      (cbi.state-set! (&mut state) 91 comptime-error-id)
+      (cbi.state-set! (&mut state) 94 bare-id)
+      (cbi.state-set! (&mut state) 149 stdlib-comptime-id)
+      (cbi.state-set! (&mut state) 150 stdlib-error-id)
       state)))
 
 ;; Cache identity is the pair `(table-id, reset generation)`, not a numeric ID
@@ -15359,36 +15383,45 @@
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-decoy : ci.InternCompatState (ci.intern-compat-state-new)]
-    [a-bare : i64 (ci.intern-compat-state-intern intern-a "comptime-error")]
+    [a-bare : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "comptime-error")]
     [a-comptime : i64
-      (ci.intern-compat-state-intern intern-a "comptime.comptime-error")]
-    [a-error : i64 (ci.intern-compat-state-intern intern-a "comptime.error")]
+      (ci.intern-compat-state-intern (&mut intern-a) "comptime.comptime-error")]
+    [a-error : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "comptime.error")]
     [a-stdlib-comptime : i64
-      (ci.intern-compat-state-intern intern-a "stdlib.comptime.comptime-error")]
+      (ci.intern-compat-state-intern
+        (&mut intern-a)
+        "stdlib.comptime.comptime-error")]
     [a-stdlib-error : i64
-      (ci.intern-compat-state-intern intern-a "stdlib.comptime.error")]
-    [b-decoy : i64 (ci.intern-compat-state-intern intern-b "owner-b-decoy")]
+      (ci.intern-compat-state-intern (&mut intern-a) "stdlib.comptime.error")]
+    [b-decoy : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy")]
     [_b-decoy-2 : i64
-      (ci.intern-compat-state-intern intern-b "owner-b-decoy-2")]
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-2")]
     [_b-decoy-3 : i64
-      (ci.intern-compat-state-intern intern-b "owner-b-decoy-3")]
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-3")]
     [_b-decoy-4 : i64
-      (ci.intern-compat-state-intern intern-b "owner-b-decoy-4")]
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-4")]
     [_b-decoy-5 : i64
-      (ci.intern-compat-state-intern intern-b "owner-b-decoy-5")]
-    [b-bare : i64 (ci.intern-compat-state-intern intern-b "comptime-error")]
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-5")]
+    [b-bare : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "comptime-error")]
     [b-comptime : i64
-      (ci.intern-compat-state-intern intern-b "comptime.comptime-error")]
-    [b-error : i64 (ci.intern-compat-state-intern intern-b "comptime.error")]
+      (ci.intern-compat-state-intern (&mut intern-b) "comptime.comptime-error")]
+    [b-error : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "comptime.error")]
     [b-stdlib-comptime : i64
-      (ci.intern-compat-state-intern intern-b "stdlib.comptime.comptime-error")]
+      (ci.intern-compat-state-intern
+        (&mut intern-b)
+        "stdlib.comptime.comptime-error")]
     [b-stdlib-error : i64
-      (ci.intern-compat-state-intern intern-b "stdlib.comptime.error")]
+      (ci.intern-compat-state-intern (&mut intern-b) "stdlib.comptime.error")]
     [decoy-id : i64
-      (ci.intern-compat-state-intern intern-decoy "installed-decoy")]
+      (ci.intern-compat-state-intern (&mut intern-decoy) "installed-decoy")]
     [builtins-a : cbi.CompilerBuiltinIdsState
       (compiler-lower-comptime-error-test-builtins
-        intern-a
+        (owned_view.compiler-owned-shared-view intern-a)
         a-comptime
         a-error
         a-bare
@@ -15396,7 +15429,7 @@
         a-stdlib-error)]
     [builtins-b : cbi.CompilerBuiltinIdsState
       (compiler-lower-comptime-error-test-builtins
-        intern-b
+        (owned_view.compiler-owned-shared-view intern-b)
         b-comptime
         b-error
         b-bare
@@ -15404,65 +15437,90 @@
         b-stdlib-error)]
     [builtins-decoy : cbi.CompilerBuiltinIdsState
       (compiler-lower-comptime-error-test-builtins
-        intern-decoy
+        (owned_view.compiler-owned-shared-view intern-decoy)
         decoy-id
         decoy-id
         decoy-id
         decoy-id
         decoy-id)]
     [lower-a : compiler_lower.CompilerLowerState
-      (compiler_lower.compiler-lower-state-new-with-intern-state intern-a)]
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (owned_view.compiler-owned-shared-view intern-a))]
     [lower-b : compiler_lower.CompilerLowerState
-      (compiler_lower.compiler-lower-state-new-with-intern-state intern-b)]
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (owned_view.compiler-owned-shared-view intern-b))]
     [initial-a : compiler_lower.CompilerLowerStateObservation
-      (compiler_lower.compiler-lower-state-observe lower-a)]
+      (compiler_lower.compiler-lower-state-observe
+        (owned_view.compiler-owned-shared-view lower-a))]
     [ok : bool false]
     (begin
-      (ci.intern-compat-state-install! intern-decoy)
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view intern-decoy))
       (cbi.state-install! builtins-decoy)
-      (compiler_lower.lower-comptime-error-ids-ensure! lower-a builtins-a)
-      (compiler_lower.lower-comptime-error-ids-ensure! lower-b builtins-b)
+      (compiler_lower.lower-comptime-error-ids-ensure!
+        (owned_view.compiler-owned-shared-view lower-a)
+        (owned_view.compiler-owned-shared-view builtins-a))
+      (compiler_lower.lower-comptime-error-ids-ensure!
+        (owned_view.compiler-owned-shared-view lower-b)
+        (owned_view.compiler-owned-shared-view builtins-b))
       (let
         [b-before-reuse : compiler_lower.CompilerLowerStateObservation
-          (compiler_lower.compiler-lower-state-observe lower-b)]
+          (compiler_lower.compiler-lower-state-observe
+            (owned_view.compiler-owned-shared-view lower-b))]
         [old-generation : i64 (ci.intern-compat-state-generation intern-a)]
         (begin
-          (compiler_lower.compiler-lower-state-reset! lower-a)
+          (compiler_lower.compiler-lower-state-reset!
+            (owned_view.compiler-owned-shared-view lower-a))
           (let
             [reset-ok? : bool
-              (compiler_lower.compiler-lower-state-reset? lower-a)]
+              (compiler_lower.compiler-lower-state-reset?
+                (owned_view.compiler-owned-shared-view lower-a))]
             (begin
-              (ci.intern-compat-state-reset! intern-a)
+              (ci.intern-compat-state-reset! (&mut intern-a))
               (let
                 [_a-new-decoy-1 : i64
-                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-1")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "owner-a-new-decoy-1")]
                 [_a-new-decoy-2 : i64
-                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-2")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "owner-a-new-decoy-2")]
                 [_a-new-decoy-3 : i64
-                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-3")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "owner-a-new-decoy-3")]
                 [_a-new-decoy-4 : i64
-                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-4")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "owner-a-new-decoy-4")]
                 [_a-new-decoy-5 : i64
-                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-5")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "owner-a-new-decoy-5")]
                 [a-new-bare : i64
-                  (ci.intern-compat-state-intern intern-a "comptime-error")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "comptime-error")]
                 [a-new-comptime : i64
                   (ci.intern-compat-state-intern
-                    intern-a
+                    (&mut intern-a)
                     "comptime.comptime-error")]
                 [a-new-error : i64
-                  (ci.intern-compat-state-intern intern-a "comptime.error")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "comptime.error")]
                 [a-new-stdlib-comptime : i64
                   (ci.intern-compat-state-intern
-                    intern-a
+                    (&mut intern-a)
                     "stdlib.comptime.comptime-error")]
                 [a-new-stdlib-error : i64
                   (ci.intern-compat-state-intern
-                    intern-a
+                    (&mut intern-a)
                     "stdlib.comptime.error")]
                 [builtins-a-reused : cbi.CompilerBuiltinIdsState
                   (compiler-lower-comptime-error-test-builtins
-                    intern-a
+                    (owned_view.compiler-owned-shared-view intern-a)
                     a-new-comptime
                     a-new-error
                     a-new-bare
@@ -15470,7 +15528,7 @@
                     a-new-stdlib-error)]
                 (begin
                   (compiler_lower.lower-comptime-error-ids-ensure!
-                    lower-a
+                    (owned_view.compiler-owned-shared-view lower-a)
                     builtins-a-reused)
                   (set!
                     ok
@@ -15485,20 +15543,21 @@
                       (not
                         (compiler_lower.compiler-lower-state-observation-eq?
                           initial-a
-                          (compiler_lower.compiler-lower-state-observe lower-a)))
+                          (compiler_lower.compiler-lower-state-observe
+                            (owned_view.compiler-owned-shared-view lower-a))))
                       (compiler_lower.lower-comptime-error-call-id?
-                        lower-a
+                        (owned_view.compiler-owned-shared-view lower-a)
                         a-new-bare)
                       (not
                         (compiler_lower.lower-comptime-error-call-id?
-                          lower-a
+                          (owned_view.compiler-owned-shared-view lower-a)
                           a-bare))
                       (compiler_lower.lower-comptime-error-call-id?
-                        lower-b
+                        (owned_view.compiler-owned-shared-view lower-b)
                         b-bare)
                       (not
                         (compiler_lower.lower-comptime-error-call-id?
-                          lower-b
+                          (owned_view.compiler-owned-shared-view lower-b)
                           b-decoy))
                       reset-ok?
                       (not
@@ -15507,7 +15566,8 @@
                           (ci.intern-compat-state-generation intern-a)))
                       (compiler_lower.compiler-lower-state-observation-eq?
                         b-before-reuse
-                        (compiler_lower.compiler-lower-state-observe lower-b))
+                        (compiler_lower.compiler-lower-state-observe
+                          (owned_view.compiler-owned-shared-view lower-b)))
                       (=
                         (ci.intern-active-table-id)
                         (ci.intern-compat-state-table-id intern-decoy))

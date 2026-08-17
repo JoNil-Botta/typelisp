@@ -82,11 +82,9 @@
       (while (and (< __eq_i ,length-expr) __eq_same)
         (let
           [__eq_left_item
-            (stdlib.eq.eq-shared-view
-              (__tl_array-ref __eq_left __eq_i))]
+            (stdlib.eq.eq-shared-view (__tl_array-ref __eq_left __eq_i))]
           [__eq_right_item
-            (stdlib.eq.eq-shared-view
-              (__tl_array-ref __eq_right __eq_i))]
+            (stdlib.eq.eq-shared-view (__tl_array-ref __eq_right __eq_i))]
           (begin
             (if (stdlib.eq.inline-eq
               ,element-type
@@ -168,10 +166,8 @@
               [payload-type : comptime.Expr
                 (enum-variant-payload-type T variant-index payload-index)]
               `(let
-                [__eq_left_payload
-                  (stdlib.eq.eq-shared-view ,left-value)]
-                [__eq_right_payload
-                  (stdlib.eq.eq-shared-view ,right-value)]
+                [__eq_left_payload (stdlib.eq.eq-shared-view ,left-value)]
+                [__eq_right_payload (stdlib.eq.eq-shared-view ,right-value)]
                 (if (stdlib.eq.inline-eq
                   ,payload-type
                   __eq_left_payload

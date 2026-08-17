@@ -101,7 +101,8 @@
                 manifest-path
                 has-manifest
                 (let
-                  [next-roots : cli_svec.Vec stdlib-roots]
+                  [next-roots : cli_svec.Vec
+                    (owned_view.compiler-owned-shared-view stdlib-roots)]
                   (begin
                     (cli_svec.push-ref! (&mut next-roots) value)
                     next-roots))
@@ -120,7 +121,8 @@
                 target
                 has-target
                 (let
-                  [next-cfg-names : cli_svec.Vec cfg-names]
+                  [next-cfg-names : cli_svec.Vec
+                    (owned_view.compiler-owned-shared-view cfg-names)]
                   (begin
                     (cli_svec.push-ref! (&mut next-cfg-names) value)
                     next-cfg-names)))]

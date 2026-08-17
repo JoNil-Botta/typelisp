@@ -1009,7 +1009,9 @@
     (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
 
 ;: Rebuild a channel handle from a raw `i64` array at `offset`.
-(define (i64-channel-load-raw [src : (& src (__tl_dyn-array i64))] [offset : i64]) : SyncI64Channel
+(define (i64-channel-load-raw
+  [src : (& src (__tl_dyn-array i64))]
+  [offset : i64]) : SyncI64Channel
   (SyncI64Channel
     (array-ref src offset)
     (array-ref src (+ offset 1))

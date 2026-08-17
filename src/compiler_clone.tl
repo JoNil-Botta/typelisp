@@ -67,12 +67,15 @@
   [roots : CloneRootEntries]) : unit
   (let
     [index : i64 0]
-    [count : i64 (clone-root-entries-len roots)]
+    [count : i64 (clone-root-entries-len (clone-shared-view roots))]
     (while (< index count)
       (begin
         (clone-helper-name-id-materialize-for-key!
-          (clone-root-entries-key-id-at-or roots index -1)
-          (clone-root-entries-helper-id-at-or roots index -1))
+          (clone-root-entries-key-id-at-or (clone-shared-view roots) index -1)
+          (clone-root-entries-helper-id-at-or
+            (clone-shared-view roots)
+            index
+            -1))
         (set! index (+ index 1))))))
 
 (define (clone-root-module-id) : i64
@@ -858,11 +861,18 @@
         (clone-root-entries-add-id (clone-shared-view empty) first-qualified)
         second-qualified)]
     [first-qualified-helper : i64
-      (clone-root-entries-helper-id-or qualified first-qualified -1)]
+      (clone-root-entries-helper-id-or
+        (clone-shared-view qualified)
+        first-qualified
+        -1)]
     [second-qualified-helper : i64
-      (clone-root-entries-helper-id-or qualified second-qualified -1)]
+      (clone-root-entries-helper-id-or
+        (clone-shared-view qualified)
+        second-qualified
+        -1)]
     [_materialize-qualified : unit
-      (clone-root-entries-materialize-helper-names! qualified)]
+      (clone-root-entries-materialize-helper-names!
+        (clone-shared-view qualified))]
     [unique-root : CloneRootEntries
       (clone-root-entries-add-id (clone-shared-view empty) unique-qualified)]
     (and
@@ -1577,7 +1587,16 @@
   [decls : (& decls ast.AstDeclList)]
   [able : (& able CloneNameSet)]
   [roots : CloneRootEntries]) : CloneRootEntries
-  (clone-root-expand pools decls able (clone-shared-view roots) roots))
+  (let
+    [expanded : CloneRootEntries
+      (clone-root-expand pools decls able (clone-shared-view roots) roots)]
+    (begin
+      ;; Clone helper identities stay structural while dependencies expand.
+      ;; The declaration macro still emits textual syntax, so publish each
+      ;; helper spelling once at this handoff before validation and lowering.
+      (clone-root-entries-materialize-helper-names!
+        (clone-shared-view expanded))
+      expanded)))
 
 (define (clone-helper-decl-count-in-module
   [decls : ast.AstDeclList]
@@ -1597,11 +1616,9 @@
         [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
           (+
             (if (and
-              (=
-                module-id
-                (if (clone-name-key-qualified? root-key-id)
-                  (clone-name-key-module-id root-key-id)
-                  cbi.compiler-builtin-id-fix-empty))
+              (if (clone-name-key-qualified? root-key-id)
+                (= module-id (clone-name-key-module-id root-key-id))
+                (clone-module-id-root? module-id))
               ;; The declaration macro still constructs syntax from text. At
               ;; this boundary validate its spelling in the matching module;
               ;; lowering then aliases that syntax identity to the structural

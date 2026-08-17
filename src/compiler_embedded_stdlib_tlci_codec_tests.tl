@@ -344,8 +344,9 @@
         (let
           [payload : (__tl_dyn-array u8)
             (tlci-codec-test-match-payload 6 10 27 128)]
+          [truncated-length : i64 (- (array-length payload) 1)]
           (tlci-codec-test-rejects?
-            (tlci-codec-test-take payload (- (array-length payload) 1))
+            (tlci-codec-test-take payload truncated-length)
             64
             "embedded stdlib tlci envelope: truncated bitstream")))
       19]

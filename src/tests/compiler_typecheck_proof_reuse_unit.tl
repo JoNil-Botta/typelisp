@@ -5,6 +5,7 @@
 (import compiler_symbols as csym)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -74,10 +75,15 @@
   [kind : String]) : bool
   (let
     [family-first-id : i64
-      (compiler-typecheck-proof-reuse-family-first-identity-id generator item)]
-    [identity-slot : i64 (tc_core.slot-id (tc_core.lookup-key-id identity))]
+      (compiler-typecheck-proof-reuse-family-first-identity-id
+        (tc_core.tc-global-shared-view generator)
+        (tc_core.tc-global-shared-view item))]
+    [identity-slot : i64
+      (tc_core.slot-id
+        (tc_core.lookup-key-id (tc_core.tc-global-shared-view identity)))]
     [identity-count : i64
-      (compiler-typecheck-proof-reuse-identity-count identity)]
+      (compiler-typecheck-proof-reuse-identity-count
+        (tc_core.tc-global-shared-view identity))]
     (and
       (= family-first-id identity-id)
       (= identity-count 1)
@@ -178,8 +184,8 @@
         [cross-table-proof : String "tc-self-cross-table-proof"]
         (begin
           (tc_core.reset-result)
-          (tc_core.record-count cross-table-proof)
-          (if (tc_core.complete-key cross-table-proof)
+          (tc_core.record-count (tc_core.tc-global-shared-view cross-table-proof))
+          (if (tc_core.complete-key (tc_core.tc-global-shared-view cross-table-proof))
             unit
             (set! ok false))
           (if (=
@@ -188,10 +194,10 @@
             (set! ok false)
             unit)
           (ci.intern-compat-state-install! fresh-state)
-          (if (tc_core.complete-key cross-table-proof)
+          (if (tc_core.complete-key (tc_core.tc-global-shared-view cross-table-proof))
             unit
             (set! ok false))
-          (match (ci.intern-lookup cross-table-proof)
+          (match (ci.intern-lookup (tc_core.tc-global-shared-view cross-table-proof))
             [(InternLookupMissing) unit]
             [(InternLookupFound _) (set! ok false)])
           (ci.intern-compat-state-install! home-state)
@@ -453,29 +459,32 @@
         [owned-type-key : String "tc-self-owned-type-key-novel"]
         [owned-kind : String "tc-self-owned-kind-novel"]
         [owned-identity-id : i64
-          (tc_core.tc-generated-module-name-id owned-identity)]
+          (tc_core.tc-generated-module-name-id
+            (tc_core.tc-global-shared-view owned-identity))]
         [owned-module-id : i64 (ci.intern "tc-self-owned-module")]
         [source-mark : i64 (ci.intern-pool-len)]
         (begin
           (tc_core.record-slot
-            owned-generator
-            owned-item
-            owned-identity
+            (tc_core.tc-global-shared-view owned-generator)
+            (tc_core.tc-global-shared-view owned-item)
+            (tc_core.tc-global-shared-view owned-identity)
             owned-module-id
             (ast.ast-decl-fallback))
           (tc_core.scratch-reset-context)
-          (tc_core.scratch-plan-result owned-type-key owned-kind)
-          (tc_core.identity-remap owned-identity)
+          (tc_core.scratch-plan-result
+            (tc_core.tc-global-shared-view owned-type-key)
+            (tc_core.tc-global-shared-view owned-kind))
+          (tc_core.identity-remap (tc_core.tc-global-shared-view owned-identity))
           (if (= source-mark (ci.intern-pool-len))
             unit
             (set! ok false))
           (if (compiler-typecheck-proof-reuse-owned-metadata-ok?
-            owned-generator
-            owned-item
-            owned-identity
+            (tc_core.tc-global-shared-view owned-generator)
+            (tc_core.tc-global-shared-view owned-item)
+            (tc_core.tc-global-shared-view owned-identity)
             owned-identity-id
-            owned-type-key
-            owned-kind)
+            (tc_core.tc-global-shared-view owned-type-key)
+            (tc_core.tc-global-shared-view owned-kind))
             unit
             (set! ok false))
           (tc_core.macro-expand-scratch-clear-owned-caches!
@@ -484,12 +493,12 @@
             unit
             (set! ok false))
           (if (compiler-typecheck-proof-reuse-owned-metadata-ok?
-            owned-generator
-            owned-item
-            owned-identity
+            (tc_core.tc-global-shared-view owned-generator)
+            (tc_core.tc-global-shared-view owned-item)
+            (tc_core.tc-global-shared-view owned-identity)
             owned-identity-id
-            owned-type-key
-            owned-kind)
+            (tc_core.tc-global-shared-view owned-type-key)
+            (tc_core.tc-global-shared-view owned-kind))
             unit
             (set! ok false))
           (tc_core.compiler-typecheck-clear-macro-expanded-source-caches!)
@@ -497,12 +506,12 @@
             unit
             (set! ok false))
           (if (compiler-typecheck-proof-reuse-owned-metadata-ok?
-            owned-generator
-            owned-item
-            owned-identity
+            (tc_core.tc-global-shared-view owned-generator)
+            (tc_core.tc-global-shared-view owned-item)
+            (tc_core.tc-global-shared-view owned-identity)
             owned-identity-id
-            owned-type-key
-            owned-kind)
+            (tc_core.tc-global-shared-view owned-type-key)
+            (tc_core.tc-global-shared-view owned-kind))
             unit
             (set! ok false))))
       ;; Intra-program cache/arena cleanup must not discard proof-reuse state
@@ -745,14 +754,15 @@
                             cbi.compiler-builtin-id-fix-empty
                             (ast.ast-node-pool-context-capture-active))]
                         [pools : ast.AstNodePoolContext
-                          (tc_core.tc-context-pools ctx)]
+                          (tc_core.tc-context-pools
+                            (tc_core.tc-global-shared-view ctx))]
                         [dyn-i64 : ast.AstType
                           (ast.ast-ty-dyn-array-with-pools
-                            pools
+                            (ast.ast-node-pool-context-shared-view (& pools))
                             (ast.AstType.I64))]
                         [dyn-u8 : ast.AstType
                           (ast.ast-ty-dyn-array-with-pools
-                            pools
+                            (ast.ast-node-pool-context-shared-view (& pools))
                             (ast.AstType.U8))]
                         [helper-base-id : i64 (ci.intern "tc-exact-helper")]
                         [first-helper-id : i64
@@ -767,19 +777,19 @@
                             helper-base-id)]
                         [first-body-id : i64
                           (ast.ast-node-pool-context-expr-push
-                            pools
+                            (ast.ast-node-pool-context-shared-view (& pools))
                             (ast.AstExpr.Var first-helper-id))]
                         [next-body-id : i64
                           (ast.ast-node-pool-context-expr-push
-                            pools
+                            (ast.ast-node-pool-context-shared-view (& pools))
                             (ast.AstExpr.Var next-helper-id))]
                         [literal-body-id : i64
                           (ast.ast-node-pool-context-expr-push
-                            pools
+                            (ast.ast-node-pool-context-shared-view (& pools))
                             (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
                         [macro-body-id : i64
                           (ast.ast-node-pool-context-expr-push
-                            pools
+                            (ast.ast-node-pool-context-shared-view (& pools))
                             (ast.AstExpr.MacroExpansion literal-body-id 17 23))]
                         [first-reference-decl : ast.AstDecl
                           (ast.ast-decl-def-id
@@ -800,8 +810,10 @@
                               (tc_core.lookup-key-id "tc-exact-first")
                               (tc_core.lookup-key-id "tc-exact-next"))
                             (tc_core.tc-proof-reuse-session-ast-expr-exact?
-                              ctx
-                              (tc_core.tc-context-expr-get ctx macro-body-id)
+                              (tc_core.tc-global-shared-view ctx)
+                              (tc_core.tc-context-expr-get
+                                (tc_core.tc-global-shared-view ctx)
+                                macro-body-id)
                               (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))
                             unit
                             (set! ok false))
@@ -811,9 +823,11 @@
                               (tc_core.lookup-key-id "tc-exact-first")
                               (tc_core.lookup-key-id "tc-exact-next"))
                             (tc_core.tc-proof-reuse-session-ast-expr-exact?
-                              ctx
+                              (tc_core.tc-global-shared-view ctx)
                               (ast.AstExpr.Literal (ast.AstLiteral.Bool true))
-                              (tc_core.tc-context-expr-get ctx macro-body-id)))
+                              (tc_core.tc-context-expr-get
+                                (tc_core.tc-global-shared-view ctx)
+                                macro-body-id)))
                             unit
                             (set! ok false))
                           ;; The declaration names themselves may carry the
@@ -825,14 +839,14 @@
                             (tc_core.lookup-key-id "tc-exact-first")
                             (tc_core.lookup-key-id "tc-exact-next"))
                             (if (tc_core.tc-proof-reuse-session-ast-decl-exact?
-                              ctx
+                              (tc_core.tc-global-shared-view ctx)
                               first-reference-decl
                               next-reference-decl)
                               (set! ok false)
                               unit)
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.U8))
                             unit
@@ -852,13 +866,13 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             dyn-i64
                             dyn-u8)
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.Bool))
                             (set! ok false)
@@ -871,7 +885,7 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.I64))
                             unit
@@ -897,7 +911,7 @@
                             (set! ok false)
                             unit)
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.I64))
                             (set! ok false)
@@ -917,7 +931,7 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.U8))
                             unit
@@ -938,7 +952,7 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.U8))
                             unit
@@ -979,7 +993,7 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.Bool))
                             unit
@@ -1000,13 +1014,13 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.U8))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-expr-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstExpr.Binary (ast.AstBinOp.Add) -1 -1)
                             (ast.AstExpr.Binary (ast.AstBinOp.Add) -1 -1))
                             unit
@@ -1021,13 +1035,13 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.U8))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-expr-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstExpr.Binary (ast.AstBinOp.Shl) -1 -1)
                             (ast.AstExpr.Binary (ast.AstBinOp.Shl) -1 -1))
                             unit
@@ -1042,13 +1056,13 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.U8))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-expr-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstExpr.Binary (ast.AstBinOp.Eq) -1 -1)
                             (ast.AstExpr.Binary (ast.AstBinOp.Eq) -1 -1))
                             unit
@@ -1063,7 +1077,7 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.U8))
                             unit
@@ -1086,7 +1100,7 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.F64)
                             (ast.AstType.F32))
                             unit
@@ -1107,7 +1121,7 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.String)
                             (ast.AstType.Bool))
                             unit
@@ -1130,7 +1144,7 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.I64))
                             unit
@@ -1154,7 +1168,7 @@
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
-                            ctx
+                            (tc_core.tc-global-shared-view ctx)
                             (ast.AstType.I64)
                             (ast.AstType.U8))
                             unit
@@ -1225,10 +1239,11 @@
               [(csym.ResultCompilerSymbols.Ok symbols)
                 (match (csym.build-compiler-registries program)
                   [(csym.ResultCompilerRegistries.Ok registries)
-                    (match program
+                    (match (tc_core.tc-global-shared-view program)
                       [(ast.AstProgram.Program decls-box)
                         (let
-                          [decls : ast.AstDeclList (__tl-box-place decls-box)]
+                          [decls : ast.AstDeclList
+                            (owned_view.compiler-owned-box-shared-view decls-box)]
                           [decl-count : i64 (ast.ast-decl-list-len (& decls))]
                           (if (or
                             (< first-module-index 0)
@@ -1248,9 +1263,11 @@
                                   [(ast.AstDecl.ModuleBody _ next-body-box)
                                     (let
                                       [first-body : ast.AstDeclList
-                                        (__tl-box-place first-body-box)]
+                                        (owned_view.compiler-owned-box-shared-view
+                                          first-body-box)]
                                       [next-body : ast.AstDeclList
-                                        (__tl-box-place next-body-box)]
+                                        (owned_view.compiler-owned-box-shared-view
+                                          next-body-box)]
                                       [first-count : i64
                                         (ast.ast-decl-list-len (& first-body))]
                                       [next-count : i64
@@ -1289,19 +1306,19 @@
                                                 (tc_core.lookup-key-id
                                                   "tc-walker-next"))
                                                 (tc_core.tc-proof-reuse-session-ast-decl-exact?
-                                                  ctx
-                                                  first-decl
-                                                  next-decl)
+                                                  (tc_core.tc-global-shared-view ctx)
+                                                  (tc_core.tc-global-shared-view first-decl)
+                                                  (tc_core.tc-global-shared-view next-decl))
                                                 false))]
                                           [safe-ok : bool
                                             (tc_core.tc-proof-reuse-decl-safe-substitution-ids?
-                                              ctx
+                                              (tc_core.tc-global-shared-view ctx)
                                               (tc_core.lookup-key-id
                                                 "tc-walker-first")
                                               (tc_core.lookup-key-id
                                                 "tc-walker-next")
-                                              first-decl
-                                              next-decl)]
+                                              (tc_core.tc-global-shared-view first-decl)
+                                              (tc_core.tc-global-shared-view next-decl))]
                                           (begin
                                             (tc_core.scratch-reset-functions)
                                             (and
@@ -1352,10 +1369,11 @@
               [(csym.ResultCompilerSymbols.Ok symbols)
                 (match (csym.build-compiler-registries program)
                   [(csym.ResultCompilerRegistries.Ok registries)
-                    (match program
+                    (match (tc_core.tc-global-shared-view program)
                       [(ast.AstProgram.Program decls-box)
                         (let
-                          [decls : ast.AstDeclList (__tl-box-place decls-box)]
+                          [decls : ast.AstDeclList
+                            (owned_view.compiler-owned-box-shared-view decls-box)]
                           [decl-count : i64 (ast.ast-decl-list-len (& decls))]
                           (if (or
                             (< first-module-index 0)
@@ -1375,9 +1393,11 @@
                                   [(ast.AstDecl.ModuleBody _ next-body-box)
                                     (let
                                       [first-body : ast.AstDeclList
-                                        (__tl-box-place first-body-box)]
+                                        (owned_view.compiler-owned-box-shared-view
+                                          first-body-box)]
                                       [next-body : ast.AstDeclList
-                                        (__tl-box-place next-body-box)]
+                                        (owned_view.compiler-owned-box-shared-view
+                                          next-body-box)]
                                       [first-count : i64
                                         (ast.ast-decl-list-len (& first-body))]
                                       [next-count : i64
@@ -1416,9 +1436,9 @@
                                                 (tc_core.lookup-key-id
                                                   "tc-walker-next"))
                                                 (tc_core.tc-proof-reuse-session-ast-decl-exact?
-                                                  ctx
-                                                  first-decl
-                                                  next-decl)
+                                                  (tc_core.tc-global-shared-view ctx)
+                                                  (tc_core.tc-global-shared-view first-decl)
+                                                  (tc_core.tc-global-shared-view next-decl))
                                                 false))]
                                           [context-ok : bool
                                             (=
@@ -2269,10 +2289,11 @@
             [(csym.ResultCompilerSymbols.Ok symbols)
               (match (csym.build-compiler-registries program)
                 [(csym.ResultCompilerRegistries.Ok registries)
-                  (match program
+                  (match (tc_core.tc-global-shared-view program)
                     [(ast.AstProgram.Program decls-box)
                       (let
-                        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+                        [decls : ast.AstDeclList
+                          (owned_view.compiler-owned-box-shared-view decls-box)]
                         [first-module : ast.AstDecl
                           (ast.ast-decl-list-get
                             (& decls)
@@ -2289,9 +2310,9 @@
                               [(ast.AstDecl.ModuleBody _ next-box)
                                 (let
                                   [first-body : ast.AstDeclList
-                                    (__tl-box-place first-box)]
+                                    (owned_view.compiler-owned-box-shared-view first-box)]
                                   [next-body : ast.AstDeclList
-                                    (__tl-box-place next-box)]
+                                    (owned_view.compiler-owned-box-shared-view next-box)]
                                   [first-decl : ast.AstDecl
                                     (ast.ast-decl-list-get
                                       (& first-body)
@@ -2323,9 +2344,9 @@
                                       unit
                                       (set! ok false))
                                     (if (tc_core.tc-proof-reuse-session-ast-decl-exact?
-                                      ctx
-                                      first-decl
-                                      next-decl)
+                                      (tc_core.tc-global-shared-view ctx)
+                                      (tc_core.tc-global-shared-view first-decl)
+                                      (tc_core.tc-global-shared-view next-decl))
                                       (set! ok false)
                                       unit)
                                     (if (tc_core.tc-macro-proof-field
@@ -2338,12 +2359,12 @@
                                     ;; otherwise well-shaped.
                                     (tc_core.tc-macro-abstract-proof-reset!)
                                     (if (tc_core.tc-proof-reuse-decl-safe-substitution-ids?
-                                      ctx
+                                      (tc_core.tc-global-shared-view ctx)
                                       (tc_core.lookup-key-id
                                         "tc-walker-missing")
                                       (tc_core.lookup-key-id "tc-walker-next")
-                                      first-decl
-                                      next-decl)
+                                      (tc_core.tc-global-shared-view first-decl)
+                                      (tc_core.tc-global-shared-view next-decl))
                                       (set! ok false)
                                       unit)
                                     ;; A conflicting second note poisons the
@@ -2358,11 +2379,11 @@
                                     (tc_core.scratch-plan-result "bool" "bool")
                                     (tc_core.identity-remap "tc-walker-first")
                                     (if (tc_core.tc-proof-reuse-decl-safe-substitution-ids?
-                                      ctx
+                                      (tc_core.tc-global-shared-view ctx)
                                       (tc_core.lookup-key-id "tc-walker-first")
                                       (tc_core.lookup-key-id "tc-walker-next")
-                                      first-decl
-                                      next-decl)
+                                      (tc_core.tc-global-shared-view first-decl)
+                                      (tc_core.tc-global-shared-view next-decl))
                                       (set! ok false)
                                       unit)))]
                               [_ (set! ok false)])]

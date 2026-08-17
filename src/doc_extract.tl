@@ -103,7 +103,7 @@
   (if (>= index count)
     unit
     (begin
-      (doc_item_vec.push
+      (doc_item_vec.push-ref!
         out
         (owned_view.compiler-owned-array-element-shared-view items index))
       (doc-item-array-copy-to-list out items (+ index 1) count))))

@@ -310,7 +310,8 @@
               manifest-path
               has-manifest
               (let
-                [next-roots : lint_svec.Vec stdlib-roots]
+                [next-roots : lint_svec.Vec
+                  (owned_view.compiler-owned-shared-view stdlib-roots)]
                 (begin
                   (lint_svec.push-ref! (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
@@ -346,7 +347,8 @@
             (+ idx 1)
             count
             (let
-              [next-paths : lint_svec.Vec input-paths]
+              [next-paths : lint_svec.Vec
+                (owned_view.compiler-owned-shared-view input-paths)]
               (begin
                 (lint_svec.push-ref! (&mut next-paths) current)
                 next-paths))
@@ -1814,7 +1816,7 @@
     (owned_view.compiler-owned-shared-view name))
     roots
     (let
-      [next-roots : lint_svec.Vec roots]
+      [next-roots : lint_svec.Vec (owned_view.compiler-owned-shared-view roots)]
       (begin
         (lint_svec.push-ref! (&mut next-roots) name)
         next-roots))))
@@ -1982,7 +1984,7 @@
     (owned_view.compiler-owned-shared-view name))
     refs
     (let
-      [next-refs : lint_svec.Vec refs]
+      [next-refs : lint_svec.Vec (owned_view.compiler-owned-shared-view refs)]
       (begin
         (lint_svec.push-ref! (&mut next-refs) name)
         next-refs))))
@@ -3272,7 +3274,7 @@
     (let
       [value : String (lint_svec.get (& source) index "")]
       [owned : String (clone value)]
-      [next : lint_svec.Vec items]
+      [next : lint_svec.Vec (owned_view.compiler-owned-shared-view items)]
       (begin
         (lint_svec.push-ref! (&mut next) owned)
         (selfhost-lint-dead-clone-string-vec-from source (+ index 1) next)))))
@@ -3673,7 +3675,8 @@
         (owned_view.compiler-owned-shared-view source-root)))
       stdlib-roots
       (let
-        [roots : lint_svec.Vec stdlib-roots]
+        [roots : lint_svec.Vec
+          (owned_view.compiler-owned-shared-view stdlib-roots)]
         (begin
           (lint_svec.push-ref! (&mut roots) source-root)
           roots)))))
@@ -4179,7 +4182,7 @@
         (ResultSelfhostLintDeadSourceList.Err diag)]
       [(ResultSelfhostLintDeadImportList.Ok imports)
         (let
-          [next : lint_svec.Vec queue]
+          [next : lint_svec.Vec (owned_view.compiler-owned-shared-view queue)]
           [_append : unit
             (begin
               (let

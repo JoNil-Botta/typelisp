@@ -1025,7 +1025,9 @@
                 (unsafe
                   (ptr-read (ptr-addr-of base))))
               suffix-span)]
-          [field : i64 (ci.intern-source-slice text start (- end start))]
+          [field : ci.InternSyntaxId
+            (ci.intern-syntax-id-from-renderable
+              (ci.intern-source-slice-id text start (- end start)))]
           [projected : SpannedSexpr
             (spanned-sexpr-list3
               (SpannedSexpr.Sym
@@ -1324,12 +1326,12 @@
   (match (lexer.spanned-result "(alpha alpha)")
     [(lexer.ResultSpannedTokens.Ok toks)
       (let
-        [first-id : i64
+        [first-id : ci.InternId
           (token.sym-id
             (token.spanned-token-token
               (unsafe
                 (ptr-read (ptr-offset (array-data toks) 1)))))]
-        [second-id : i64
+        [second-id : ci.InternId
           (token.sym-id
             (token.spanned-token-token
               (unsafe

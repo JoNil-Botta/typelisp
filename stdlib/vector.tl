@@ -609,7 +609,9 @@
                   (if (>= index (len v))
                     unit
                     (begin
-                      (push out (mapper (clone (array-ref (slots v) index))))
+                      (push-ref!
+                        out
+                        (mapper (clone (array-ref (slots v) index))))
                       (map-build-from v (+ index 1) out mapper))))
                 (define (map-from
                   [v : (& v ,vec-name)]

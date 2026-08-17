@@ -103,7 +103,7 @@
   [end : i64]) : svec.Vec
   (let
     [idx : i64 start]
-    [cur : svec.Vec out]
+    [cur : svec.Vec (owned_view.compiler-owned-shared-view out)]
     (begin
       (while (< idx end)
         (begin
@@ -125,7 +125,7 @@
           out
           0
           slot))
-      (svec.push (&mut out) value)
+      (svec.push-ref! (&mut out) value)
       (set!
         out
         (package-source-vec-copy-range
@@ -1231,16 +1231,16 @@
           [collision-right : svec.Vec (svec.new)]
           [renamed-sources : svec.Vec (svec.new)]
           (begin
-            (svec.push (&mut reversed) (string.copy (& b)))
-            (svec.push (&mut reversed) (string.copy (& a)))
+            (svec.push-ref! (&mut reversed) (string.copy (& b)))
+            (svec.push-ref! (&mut reversed) (string.copy (& a)))
             (match (package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view root)
                 reversed))
               [(ResultPackageSourceDigest.Err _) unit]
               [_ (io.panic "package-source: reversed source list was accepted")])
-            (svec.push (&mut duplicate) (string.copy (& a)))
-            (svec.push (&mut duplicate) (string.copy (& a)))
+            (svec.push-ref! (&mut duplicate) (string.copy (& a)))
+            (svec.push-ref! (&mut duplicate) (string.copy (& a)))
             (match (package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view root)
@@ -1271,8 +1271,8 @@
               [(io.OkIoUnit) unit]
               [(io.ErrIoUnit _)
                 (io.panic "package-source: rename fixture failed")])
-            (svec.push (&mut renamed-sources) (string.copy (& a)))
-            (svec.push (&mut renamed-sources) (string.copy (& renamed)))
+            (svec.push-ref! (&mut renamed-sources) (string.copy (& a)))
+            (svec.push-ref! (&mut renamed-sources) (string.copy (& renamed)))
             (match (package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view root)
@@ -1349,9 +1349,13 @@
           [outside-sources : svec.Vec (svec.new)]
           [outside : String (package-source-root-join root "../outside.tl")]
           (begin
-            (svec.push (&mut target-sources) (string.copy (& target-source)))
-            (svec.push (&mut nested-sources) (string.copy (& nested-source)))
-            (svec.push (&mut outside-sources) outside)
+            (svec.push-ref!
+              (&mut target-sources)
+              (string.copy (& target-source)))
+            (svec.push-ref!
+              (&mut nested-sources)
+              (string.copy (& nested-source)))
+            (svec.push-ref! (&mut outside-sources) outside)
             (match (package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 (owned_view.compiler-owned-shared-view root)

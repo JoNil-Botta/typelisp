@@ -11,6 +11,7 @@
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as cdiag)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 (import sym_i64_env)
 (import stdlib.string)
 (import stdlib.option)
@@ -2555,10 +2556,11 @@
     (begin
       (while (< index count)
         (begin
-          (ast.ast-decl-path-list-push-with-owner-id
+          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
             (&mut out)
             (string.copy (& path))
-            owner-id)
+            owner-id
+            provenance-id)
           (set! index (+ index 1))))
       out)))
 
@@ -2823,7 +2825,7 @@
       (array-ref owner-module-ids target))))
 
 (define (compiler-symbols-provenance-id-at-index-or
-  [symbols : CompilerSymbols]
+  [symbols : (& symbols CompilerSymbols)]
   [target : i64]
   [fallback : i64]) : i64
   (let
@@ -3072,7 +3074,7 @@
                       (compiler-decl-list-index-count
                         (ast.ast-place-shared-view body))]
                     [body-paths : ast.AstDeclPathList
-                      (compiler-symbol-path-list-repeat
+                      (compiler-symbol-path-list-repeat-with-provenance
                         (ast.ast-place-shared-view body)
                         decl-path
                         (ast.ast-decl-path-list-owner-id
@@ -6174,7 +6176,9 @@
           (let
             [rewritten : ast.AstDeclPathList
               (ast.ast-decl-path-list-with-modules paths modules)]
-            (match (build-compiler-symbols-with-paths program rewritten)
+            (match (build-compiler-symbols-with-paths
+              program
+              (owned_view.compiler-owned-shared-view rewritten))
               [(ResultCompilerSymbols.Ok symbols)
                 (and
                   (=

@@ -567,7 +567,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (svec.push out (clone (array-ref items.slots i)))
+        (svec.push-ref! out (clone (array-ref items.slots i)))
         (set! i (+ i 1))))))
 
 ;: Copy `items` into a fresh generated string vector, preserving list order.

@@ -1287,7 +1287,11 @@
     [(compiler_ast_types.AstExpr.TupleRef target index)
       (let
         [target-opened : i64
-          (embedded-native-template-ops params target ops ops-count)]
+          (embedded-native-template-ops
+            params
+            target
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< target-opened 0)
           -1
           (begin
@@ -1458,23 +1462,35 @@
     [(compiler_ast_types.AstExpr.ArrayTake target live index)
       (let
         [target-opened : i64
-          (embedded-native-template-ops params target ops ops-count)]
+          (embedded-native-template-ops
+            params
+            target
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< target-opened 0)
           -1
           (let
             [live-opened : i64
-              (embedded-native-template-ops params live ops ops-count)]
+              (embedded-native-template-ops
+                params
+                live
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< live-opened 0)
               -1
               (let
                 [index-opened : i64
-                  (embedded-native-template-ops params index ops ops-count)]
+                  (embedded-native-template-ops
+                    params
+                    index
+                    (owned_view.compiler-owned-shared-view ops)
+                    (owned_view.compiler-owned-shared-view ops-count))]
                 (if (< index-opened 0)
                   -1
                   (begin
                     (embedded-native-template-push!
-                      ops
-                      ops-count
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count)
                       (tlci_core.tlci-host-callback-name-shared-view
                         tlci_core.tlci-host-callback-name-expr-array-take)
                       "0"
@@ -1482,7 +1498,7 @@
                       "0")
                     (+ target-opened live-opened index-opened 1))))))))]
     [(compiler_ast_types.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
+      (match (compiler_ast_types.ast-let-box-shared-view let-box)
         [(compiler_ast_types.AstLet.Let bindings body)
           (begin
             (embedded-native-template-push!
@@ -1724,12 +1740,20 @@
       (if (= field (compiler_ast_types.ast-expr-unquote-set-target-field-id))
         (let
           [target-opened : i64
-            (embedded-native-template-ops params target-node ops ops-count)]
+            (embedded-native-template-ops
+              params
+              target-node
+              (owned_view.compiler-owned-shared-view ops)
+              (owned_view.compiler-owned-shared-view ops-count))]
           (if (< target-opened 0)
             -1
             (let
               [value-opened : i64
-                (embedded-native-template-ops params value-node ops ops-count)]
+                (embedded-native-template-ops
+                  params
+                  value-node
+                  (owned_view.compiler-owned-shared-view ops)
+                  (owned_view.compiler-owned-shared-view ops-count))]
               (if (< value-opened 0)
                 -1
                 (begin
@@ -1945,7 +1969,11 @@
     [(compiler_ast_types.AstExpr.Replace place-node replacement-node)
       (let
         [place-opened : i64
-          (embedded-native-template-ops params place-node ops ops-count)]
+          (embedded-native-template-ops
+            params
+            place-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< place-opened 0)
           -1
           (let
@@ -1953,14 +1981,14 @@
               (embedded-native-template-ops
                 params
                 replacement-node
-                ops
-                ops-count)]
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
             (if (< replacement-opened 0)
               -1
               (begin
                 (embedded-native-template-push!
-                  ops
-                  ops-count
+                  (owned_view.compiler-owned-shared-view ops)
+                  (owned_view.compiler-owned-shared-view ops-count)
                   (tlci_core.tlci-host-callback-name-shared-view
                     tlci_core.tlci-host-callback-name-expr-replace)
                   "0"
@@ -2153,7 +2181,9 @@
         "0"
         "0")
       (while (and ok (< index count))
-        (match (array-ref arms.slots index)
+        (match (owned_view.compiler-owned-array-element-shared-view
+          arms.slots
+          index)
           [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
             (let
               [pat-opened : i64
@@ -2567,20 +2597,21 @@
         ops-count)]
     [(compiler_ast_types.AstType.Tuple elems-box)
       (let
-        [elems : compiler_ast_types.AstTypeList (__tl-box-place elems-box)]
+        [elems : compiler_ast_types.AstTypeList
+          (compiler_ast_types.ast-type-list-box-shared-view elems-box)]
         [elem-opened : i64
           (embedded-native-template-type-list-ops
             params
             (& elems)
             0
-            ops
-            ops-count)]
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
         (if (< elem-opened 0)
           -1
           (begin
             (embedded-native-template-push!
-              ops
-              ops-count
+              (owned_view.compiler-owned-shared-view ops)
+              (owned_view.compiler-owned-shared-view ops-count)
               (tlci_core.tlci-host-callback-name-shared-view
                 tlci_core.tlci-host-callback-name-type-tuple)
               (string.int->string
@@ -2680,8 +2711,8 @@
               types
               index
               (compiler_ast_types.ast-type-id-fallback)))
-          ops
-          ops-count)]
+          (owned_view.compiler-owned-shared-view ops)
+          (owned_view.compiler-owned-shared-view ops-count))]
       (if (< head-opened 0)
         -1
         (let
@@ -3284,8 +3315,8 @@
                         (embedded-native-computed-expr-ops
                           params
                           (compiler_ast_types.ast-expr-list-get (& args) 0 0)
-                          ops
-                          ops-count)]
+                          (owned_view.compiler-owned-shared-view ops)
+                          (owned_view.compiler-owned-shared-view ops-count))]
                       (if (< opened 0)
                         -1
                         (begin
@@ -4649,19 +4680,23 @@
         (str_cat.str-cat
           cond-value.open
           "  (let ["
-          result
+          (owned_view.compiler-owned-shared-view result)
           " : i64 0]\n"
           "  (let ["
-          status
+          (owned_view.compiler-owned-shared-view status)
           " : i64\n"
           "  (if (= "
           cond-value.text
           " 1)\n"
-          (embedded-native-data-store-status-code then-value result)
-          (embedded-native-data-store-status-code else-value result)
+          (embedded-native-data-store-status-code
+            then-value
+            (owned_view.compiler-owned-shared-view result))
+          (embedded-native-data-store-status-code
+            else-value
+            (owned_view.compiler-owned-shared-view result))
           ")]\n"
           "  (if (not (= "
-          status
+          (owned_view.compiler-owned-shared-view status)
           " 0)) "
           status
           "\n"
@@ -4682,58 +4717,64 @@
       (array.make-array String embedded-native-ops-cap)]
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [scrutinee-opened : i64
-      (embedded-native-computed-expr-ops params scrutinee ops ops-count)]
+      (embedded-native-computed-expr-ops
+        params
+        scrutinee
+        (owned_view.compiler-owned-shared-view ops)
+        (owned_view.compiler-owned-shared-view ops-count))]
     (if (< scrutinee-opened 0)
       (embedded-native-data-value-none)
       (let
-        [result : String (embedded-native-temp-name!)]
-        [status : String (embedded-native-temp-name!)]
-        (EmbeddedNativeDataValue
-          (str_cat.str-cat
-            cond-value.open
-            "  (let ["
-            (owned_view.compiler-owned-shared-view result)
-            " : i64 0]\n"
-            "  (let ["
-            (owned_view.compiler-owned-shared-view status)
-            " : i64\n"
-            "  (if (= "
-            cond-value.text
-            " 1)\n"
-            (embedded-native-data-store-status-code
-              then-value
-              (owned_view.compiler-owned-shared-view result))
-            (embedded-native-data-store-status-code
-              else-value
-              (owned_view.compiler-owned-shared-view result))
-            ")]\n"
-            "  (if (not (= "
-            (owned_view.compiler-owned-shared-view status)
-            " 0)) "
-            status
-            "\n"
-            "  (begin\n")
-          result
-          (+ cond-value.opens 2))))))
+        [literal : String (ci.intern-str sid)]
+        (begin
+          (embedded-native-template-push!
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count)
+            (tlci_core.tlci-host-callback-name-shared-view
+              tlci_core.tlci-host-callback-name-string-value)
+            (embedded-native-name-arg
+              (embedded-native-escape-string
+                (owned_view.compiler-owned-shared-view literal)))
+            (string.int->string (string.string-length literal))
+            "0")
+          (if (>= (array-ref ops-count 0) embedded-native-ops-cap)
+            (embedded-native-data-value-none)
+            (let
+              [result : String (embedded-native-temp-name!)]
+              (EmbeddedNativeDataValue
+                (str_cat.str-cat
+                  (embedded-native-ops-open-text ops (array-ref ops-count 0))
+                  (embedded-native-data-probe-open
+                    (owned_view.compiler-owned-shared-view result)
+                    (tlci_core.tlci-host-callback-name-shared-view
+                      tlci_core.tlci-host-callback-name-string-eq)
+                    "0"
+                    "0"))
+                result
+                (+ scrutinee-opened 2)))))))))
 
-;; The boolean Expr.Var match used by the scoped string concatenator is a pure
-;; shape test. Lower it directly to the corresponding operand/local data probe
-;; when it has exactly `[Var _ => true] [_ => false]`. Refs #5656.
+;; Lower an ordered String-literal/wildcard match whose bodies are scalar data
+;; values. This is the compile-time shape used by stdlib.sort/vec and
+;; stdlib.serialize/serialize to classify reflected type keys. Unsupported
+;; patterns or bodies still fail closed to the registered fallback shell.
 (define (embedded-native-data-var-match-value
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [scrutinee : i64]
   [arms : (& arms compiler_ast_types.AstMatchArmList)]) : EmbeddedNativeDataValue
   (if (not (= arms.len 2))
     (embedded-native-data-value-none)
-    (match (array-ref arms.slots 0)
+    (match (owned_view.compiler-owned-array-element-shared-view arms.slots 0)
       [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
-        (match (array-ref arms.slots 1)
+        (match (owned_view.compiler-owned-array-element-shared-view
+          arms.slots
+          1)
           [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
             (match first-pattern
               [(compiler_ast_types.AstPattern.Variant name-id args-box)
                 (let
                   [args : compiler_ast_types.AstPatternList
-                    (__tl-box-place args-box)]
+                    (compiler_ast_types.ast-pattern-list-box-shared-view
+                      args-box)]
                   (if (and
                     (string.eq
                       (embedded-native-expr-variant-name name-id)
@@ -4768,9 +4809,13 @@
     [(compiler_ast_types.AstMatch.Match scrutinee arms)
       (if (not (= arms.len 2))
         (embedded-native-data-value-none)
-        (match (array-ref arms.slots 0)
+        (match (owned_view.compiler-owned-array-element-shared-view
+          arms.slots
+          0)
           [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
-            (match (array-ref arms.slots 1)
+            (match (owned_view.compiler-owned-array-element-shared-view
+              arms.slots
+              1)
               [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
                 (match first-pattern
                   [(compiler_ast_types.AstPattern.Variant name-id args-box)
@@ -6087,7 +6132,7 @@
   [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
     [(compiler_ast_types.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
+      (match (compiler_ast_types.ast-let-box-shared-view let-box)
         [(compiler_ast_types.AstLet.Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
@@ -6400,7 +6445,9 @@
   [final : String]) : String
   (if (>= index arms.len)
     "  0\n"
-    (match (array-ref arms.slots index)
+    (match (owned_view.compiler-owned-array-element-shared-view
+      arms.slots
+      index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Variant name-id args-box)
@@ -6435,15 +6482,18 @@
   [final : String]) : String
   (if (not (= arms.len 2))
     ""
-    (match (array-ref arms.slots 0)
+    (match (owned_view.compiler-owned-array-element-shared-view arms.slots 0)
       [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
-        (match (array-ref arms.slots 1)
+        (match (owned_view.compiler-owned-array-element-shared-view
+          arms.slots
+          1)
           [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
             (match first-pattern
               [(compiler_ast_types.AstPattern.Variant name-id args-box)
                 (let
                   [args : compiler_ast_types.AstPatternList
-                    (__tl-box-place args-box)]
+                    (compiler_ast_types.ast-pattern-list-box-shared-view
+                      args-box)]
                   (if (or
                     (not
                       (string.eq
@@ -6475,7 +6525,7 @@
                               (embedded-native-computed-expr-code
                                 params
                                 first-body
-                                final))]
+                                (owned_view.compiler-owned-shared-view final)))]
                           [_restore-arm : unit
                             (set!
                               (array-ref embedded-native-local-len 0)
@@ -6486,7 +6536,7 @@
                               (embedded-native-computed-expr-code
                                 params
                                 second-body
-                                final))]
+                                (owned_view.compiler-owned-shared-view final)))]
                           [scrut-code : String
                             (if (< scrut-slot 0)
                               ""
@@ -6513,16 +6563,16 @@
                                 " 0)) vm"
                                 (string.int->string scrut-slot)
                                 "\n  (let ["
-                                probe
+                                (owned_view.compiler-owned-shared-view probe)
                                 " : i64 (comptime-host-local-expr-var? host session "
                                 (string.int->string scrut-slot)
                                 " 0 0)]\n  (if (< "
-                                probe
+                                (owned_view.compiler-owned-shared-view probe)
                                 " 0)\n  "
                                 (string.int->string
                                   tlci_core.tlci-host-callback-status-bad-request)
                                 "\n  (if (= "
-                                probe
+                                (owned_view.compiler-owned-shared-view probe)
                                 " 1)\n"
                                 "  (let [vb"
                                 (string.int->string bind-slot)
@@ -6562,15 +6612,18 @@
   [final : String]) : String
   (if (not (= arms.len 2))
     ""
-    (match (array-ref arms.slots 0)
+    (match (owned_view.compiler-owned-array-element-shared-view arms.slots 0)
       [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
-        (match (array-ref arms.slots 1)
+        (match (owned_view.compiler-owned-array-element-shared-view
+          arms.slots
+          1)
           [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
             (match first-pattern
               [(compiler_ast_types.AstPattern.Variant name-id args-box)
                 (let
                   [args : compiler_ast_types.AstPatternList
-                    (__tl-box-place args-box)]
+                    (compiler_ast_types.ast-pattern-list-box-shared-view
+                      args-box)]
                   (if (or
                     (not
                       (string.eq
@@ -6602,7 +6655,7 @@
                               (embedded-native-computed-expr-code
                                 params
                                 first-body
-                                final))]
+                                (owned_view.compiler-owned-shared-view final)))]
                           [_restore-arm : unit
                             (set!
                               (array-ref embedded-native-local-len 0)
@@ -6613,7 +6666,7 @@
                               (embedded-native-computed-expr-code
                                 params
                                 second-body
-                                final))]
+                                (owned_view.compiler-owned-shared-view final)))]
                           [scrut-code : String
                             (if (< scrut-slot 0)
                               ""
@@ -6640,18 +6693,18 @@
                                 " 0)) pm"
                                 (string.int->string scrut-slot)
                                 "\n  (let ["
-                                probe
+                                (owned_view.compiler-owned-shared-view probe)
                                 " : i64 (comptime-host-"
                                 probe-op
                                 " host session "
                                 (string.int->string scrut-slot)
                                 " 0 0)]\n  (if (< "
-                                probe
+                                (owned_view.compiler-owned-shared-view probe)
                                 " 0)\n  "
                                 (string.int->string
                                   tlci_core.tlci-host-callback-status-bad-request)
                                 "\n  (if (= "
-                                probe
+                                (owned_view.compiler-owned-shared-view probe)
                                 " 1)\n"
                                 "  (let [pb"
                                 (string.int->string bind-slot)
@@ -6688,21 +6741,26 @@
   [final : String]) : String
   (if (>= index arms.len)
     "  0\n"
-    (match (array-ref arms.slots index)
+    (match (owned_view.compiler-owned-array-element-shared-view
+      arms.slots
+      index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Literal
               (compiler_ast_types.AstLiteral.Int literal _))
             (let
               [arm-code : String
-                (embedded-native-computed-expr-code params body-node final)]
+                (embedded-native-computed-expr-code
+                  params
+                  body-node
+                  (owned_view.compiler-owned-shared-view final))]
               [rest-code : String
                 (embedded-native-computed-int-match-arms-code
                   params
                   arms
                   (+ index 1)
-                  value
-                  final)]
+                  (owned_view.compiler-owned-shared-view value)
+                  (owned_view.compiler-owned-shared-view final))]
               (if (or (string.eq arm-code "") (string.eq rest-code ""))
                 ""
                 (str_cat.str-cat
@@ -6759,7 +6817,7 @@
               params
               scrutinee
               (& arms)
-              final)
+              (owned_view.compiler-owned-shared-view final))
             (embedded-native-computed-var-match-arms-code
               params
               (& arms)
@@ -6779,7 +6837,7 @@
                   tlci_core.tlci-host-callback-name-local-expr-begin?)
                 (tlci_core.tlci-host-callback-name-shared-view
                   tlci_core.tlci-host-callback-name-local-expr-begin-items)
-                final)]
+                (owned_view.compiler-owned-shared-view final))]
             (if (not (string.eq payload-text ""))
               payload-text
               (let
@@ -6788,7 +6846,7 @@
                     params
                     scrutinee
                     (& arms)
-                    final)]
+                    (owned_view.compiler-owned-shared-view final))]
                 (if (not (string.eq int-text ""))
                   int-text
                   (embedded-native-computed-string-match-code
@@ -6850,7 +6908,9 @@
   [final : String]) : String
   (if (>= index arms.len)
     "  0\n"
-    (match (array-ref arms.slots index)
+    (match (owned_view.compiler-owned-array-element-shared-view
+      arms.slots
+      index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Literal
@@ -6948,14 +7008,18 @@
   [final : String]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
     [(compiler_ast_types.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
+      (match (compiler_ast_types.ast-let-box-shared-view let-box)
         [(compiler_ast_types.AstLet.Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
             [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
             [opens : (__tl_dyn-array i64) (__tl_make-array 0)]
             [open-code : String
-              (embedded-native-let-bindings-open params (& bindings) 0 opens)]
+              (embedded-native-let-bindings-open
+                params
+                (& bindings)
+                0
+                (owned_view.compiler-owned-shared-view opens))]
             (if (string.eq open-code "\x01")
               (begin
                 (set! (array-ref embedded-native-local-len 0) saved)
@@ -6986,7 +7050,7 @@
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
     [(compiler_ast_types.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
+      (match (compiler_ast_types.ast-let-box-shared-view let-box)
         [(compiler_ast_types.AstLet.Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
@@ -7042,6 +7106,7 @@
             (embedded-native-let-binding-open
               params
               name
+              maybe-ty
               init
               (owned_view.compiler-owned-shared-view opens))]
           (if (string.eq binding-code "\x01")
@@ -7176,7 +7241,9 @@
   ;; counts it; a dispatch that does end in a wildcard never reaches here.
   (if (>= index arms.len)
     (embedded-native-global-shared-view embedded-native-interpreted-arm-code)
-    (match (array-ref arms.slots index)
+    (match (owned_view.compiler-owned-array-element-shared-view
+      arms.slots
+      index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Literal
@@ -7617,7 +7684,9 @@
   (if (>= index arms.len)
     "  0
 "
-    (match (array-ref arms.slots index)
+    (match (owned_view.compiler-owned-array-element-shared-view
+      arms.slots
+      index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Variant name-id args-box)
@@ -7800,7 +7869,9 @@
   [name : String]) : String
   (if (>= index arms.len)
     "  0\n"
-    (match (array-ref arms.slots index)
+    (match (owned_view.compiler-owned-array-element-shared-view
+      arms.slots
+      index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Literal

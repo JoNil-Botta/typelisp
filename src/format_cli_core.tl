@@ -225,15 +225,18 @@
               (ResultFmtConfig.Err
                 (str_cat.str-cat "fmt: unknown flag " current))]
             [else
-              (begin
-                (fmt_svec.push-ref! (&mut paths) current)
-                (fmt-parse-args
-                  (+ idx 1)
-                  count
-                  check
-                  paths
-                  manifest-path
-                  has-manifest))])]))))
+              (let
+                [out : fmt_svec.Vec
+                  (owned_view.compiler-owned-shared-view paths)]
+                (begin
+                  (fmt_svec.push-ref! (&mut out) current)
+                  (fmt-parse-args
+                    (+ idx 1)
+                    count
+                    check
+                    out
+                    manifest-path
+                    has-manifest)))])]))))
 
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
   (begin
@@ -262,21 +265,22 @@
   [lines : fmt_svec.Vec]) : fmt_svec.Vec
   (let
     [len : i64 (string.string-length source)]
+    [out : fmt_svec.Vec (owned_view.compiler-owned-shared-view lines)]
     (if (> start len)
-      lines
+      out
       (let
         [nl : i64 (string.index-of-byte source start (cast 10 : u8))]
         (if (< nl 0)
           (begin
             (fmt_svec.push-ref!
-              (&mut lines)
+              (&mut out)
               (string.substring source start (- len start)))
-            lines)
+            out)
           (begin
             (fmt_svec.push-ref!
-              (&mut lines)
+              (&mut out)
               (string.substring source start (- nl start)))
-            (fmt-split-lines-into source (+ nl 1) lines)))))))
+            (fmt-split-lines-into source (+ nl 1) out)))))))
 
 (define (fmt-common-prefix-lines
   [a : fmt_svec.Vec]

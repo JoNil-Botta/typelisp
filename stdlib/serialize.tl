@@ -66,9 +66,7 @@
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
-(defmacro (serialize-array-element-shared-view
-  [items : Expr]
-  [index : Expr]) : Expr
+(defmacro (serialize-array-element-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-offset (array-data ,items) ,index))))
 
@@ -653,7 +651,8 @@
               `(let
                 [__serialize_value ,value]
                 [__serialize_items (,empty-hook)]
-                [__serialize_i : i64 (- (__tl_array-length __serialize_value) 1)]
+                [__serialize_i : i64
+                  (- (__tl_array-length __serialize_value) 1)]
                 (begin
                   (while (>= __serialize_i 0)
                     (begin
@@ -905,26 +904,28 @@
                     ,(comptime.expr-string type-name)
                     ,err-ctor)
                   (let
-                  [__serialize_tag_value
-                    (,field-value-hook
-                      (stdlib.serialize.serialize-shared-view __serialize_value)
-                      ,(comptime.expr-string "tag")
-                      ,err-ctor)]
-                  [__serialize_payload_value
-                    (,field-value-hook
-                      (stdlib.serialize.serialize-shared-view __serialize_value)
-                      ,(comptime.expr-string "payload")
-                      ,err-ctor)]
-                  [__serialize_tag : String
-                    (,decode-string-hook __serialize_tag_value ,err-ctor)]
-                  (stdlib.serialize.decode-enum-variants
-                    ,format-expr
-                    ,value-type
-                    ,nested-alias
-                    __serialize_payload_value
-                    ,err-ctor
-                    __serialize_tag
-                    0)))))]
+                    [__serialize_tag_value
+                      (,field-value-hook
+                        (stdlib.serialize.serialize-shared-view
+                          __serialize_value)
+                        ,(comptime.expr-string "tag")
+                        ,err-ctor)]
+                    [__serialize_payload_value
+                      (,field-value-hook
+                        (stdlib.serialize.serialize-shared-view
+                          __serialize_value)
+                        ,(comptime.expr-string "payload")
+                        ,err-ctor)]
+                    [__serialize_tag : String
+                      (,decode-string-hook __serialize_tag_value ,err-ctor)]
+                    (stdlib.serialize.decode-enum-variants
+                      ,format-expr
+                      ,value-type
+                      ,nested-alias
+                      __serialize_payload_value
+                      ,err-ctor
+                      __serialize_tag
+                      0)))))]
           [_
             (comptime.comptime-error
               (comptime.string-append "serialize: unsupported type " value-key))])])))

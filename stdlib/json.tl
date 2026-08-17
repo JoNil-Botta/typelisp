@@ -348,9 +348,7 @@
 
 ;; Return an owned element for generated decoders that must move the lookup
 ;; result out of a boxed sequence.
-(define (list-get-index-owned
-  [items : (& items JsonSeq)]
-  [index : i64]) : JsonLookup
+(define (list-get-index-owned [items : (& items JsonSeq)] [index : i64]) : JsonLookup
   (if (or (< index 0) (>= index items.len))
     JsonMissing
     (JsonFound (clone (array-ref items.slots index)))))
@@ -1383,10 +1381,9 @@
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
         [(stdlib.json.JsonArray items)
-          (match
-            (stdlib.json.list-get-index-owned
-              (& (__tl-box-place items))
-              ,index)
+          (match (stdlib.json.list-get-index-owned
+            (& (__tl-box-place items))
+            ,index)
             [(stdlib.json.JsonFound found) (stdlib.json.JsonValue found)]
             [(stdlib.json.JsonMissing)
               (return (,err-ctor "json: missing array element"))])]

@@ -120,7 +120,7 @@
 
 (define (source-tool-cfg-names-add [names : SourceToolCfgNames] [name : String]) : SourceToolCfgNames
   (let
-    [next : SourceToolCfgNames names]
+    [next : SourceToolCfgNames (owned_view.compiler-owned-shared-view names)]
     (begin
       (source-tool-cfg-names-push! (&mut next) name)
       next)))

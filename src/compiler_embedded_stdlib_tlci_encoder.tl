@@ -57,13 +57,13 @@
   (bits i64))
 
 (define (compiler-embedded-stdlib-tlci-encoder-byte
-  [data : String]
+  [data : (& data str)]
   [index : i64]) : i64
   (cast (string.string-ref data index) : i64))
 
 (define (compiler-embedded-stdlib-tlci-encoder-prefix?
-  [data : String]
-  [prefix : String]) : bool
+  [data : (& data str)]
+  [prefix : (& prefix str)]) : bool
   (let
     [index : i64 0]
     [prefix-len : i64 (string.string-length prefix)]
@@ -79,12 +79,12 @@
           (set! index (+ index 1))))
       matches)))
 
-(define (compiler-embedded-stdlib-tlci-encoder-count [lzss : String]) : ResultCompilerEmbeddedStdlibTlciEncoderFrequencies
+(define (compiler-embedded-stdlib-tlci-encoder-count [lzss : (& lzss str)]) : ResultCompilerEmbeddedStdlibTlciEncoderFrequencies
   (let
     [prefix : String (compiler-embedded-stdlib-tlci-encoder-lzss-prefix)]
     [prefix-len : i64 (string.string-length prefix)]
     [lzss-len : i64 (string.string-length lzss)]
-    (if (not (compiler-embedded-stdlib-tlci-encoder-prefix? lzss prefix))
+    (if (not (compiler-embedded-stdlib-tlci-encoder-prefix? lzss (& prefix)))
       (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
         "embedded stdlib tlci encoder: bad lzss prefix")
       (let
@@ -513,7 +513,7 @@
     unit))
 
 (define (compiler-embedded-stdlib-tlci-encoder-encode-tokens
-  [lzss : String]
+  [lzss : (& lzss str)]
   [frequencies : (& frequencies CompilerEmbeddedStdlibTlciEncoderFrequencies)]
   [main-codes : (& main-codes CompilerEmbeddedStdlibTlciEncoderCodes)]
   [distance-codes : (& distance-codes CompilerEmbeddedStdlibTlciEncoderCodes)]
@@ -650,7 +650,7 @@
 (define (compiler-embedded-stdlib-tlci-encoder-encode [source : String]) : ResultCompilerEmbeddedStdlibTlciEncoderBytes
   (let
     [lzss : String (ctfe.ctfe-embedded-stdlib-binary-data-bytes source)]
-    (match (compiler-embedded-stdlib-tlci-encoder-count lzss)
+    (match (compiler-embedded-stdlib-tlci-encoder-count (& lzss))
       [(ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err message)
         (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err message)]
       [(ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Ok frequencies)
@@ -673,7 +673,7 @@
                     (let
                       [writer : CompilerEmbeddedStdlibTlciEncoderBitWriter
                         (compiler-embedded-stdlib-tlci-encoder-encode-tokens
-                          lzss
+                          (& lzss)
                           (& frequencies)
                           (& main-codes)
                           (& distance-codes)

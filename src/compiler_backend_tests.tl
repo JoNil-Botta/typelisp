@@ -15375,9 +15375,7 @@
     [caller : arena.Arena (arena.current)]
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
     [name-id : i64
-      (ci.intern-compat-state-intern
-        (&mut intern-state)
-        "emission_arena_6274")]
+      (ci.intern-compat-state-intern (&mut intern-state) "emission_arena_6274")]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-state)]
     [owner-symbol : String
@@ -15501,9 +15499,7 @@
     [function-b : i64
       (ci.intern-compat-state-intern (&mut intern-state) "debug_owner_b")]
     [path-a : i64
-      (ci.intern-compat-state-intern
-        (&mut intern-state)
-        "src/debug_owner_a.tl")]
+      (ci.intern-compat-state-intern (&mut intern-state) "src/debug_owner_a.tl")]
     [path-b : i64
       (ci.intern-compat-state-generated-name
         (&mut intern-state)
@@ -15708,25 +15704,21 @@
     [builtin-before : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [_install-a : unit
-      (ci.intern-compat-state-install!
-        (ci.intern-global-shared-view intern-a))]
+      (ci.intern-compat-state-install! (ci.intern-global-shared-view intern-a))]
     [_reset-a : unit (cbi.compiler-builtin-reset!)]
     [_init-a : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [_capture-a : unit
       (ci.intern-compat-state-capture-from-globals! (&mut intern-a))]
-    [name-a : i64
-      (ci.intern-compat-state-intern (&mut intern-a) "route_a")]
+    [name-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "route_a")]
     [builtin-a : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
     [_install-b : unit
-      (ci.intern-compat-state-install!
-        (ci.intern-global-shared-view intern-b))]
+      (ci.intern-compat-state-install! (ci.intern-global-shared-view intern-b))]
     [_reset-b : unit (cbi.compiler-builtin-reset!)]
     [_init-b : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [_capture-b : unit
       (ci.intern-compat-state-capture-from-globals! (&mut intern-b))]
-    [name-b : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "route_b")]
+    [name-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "route_b")]
     [builtin-b : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [state-a : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-a)]
@@ -37848,10 +37840,8 @@
       (ci.intern-compat-state-capture-active)]
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [id-a : i64
-      (ci.intern-compat-state-intern (&mut intern-a) "persistent/a")]
-    [id-b : i64
-      (ci.intern-compat-state-intern (&mut intern-b) "persistent/b")]
+    [id-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "persistent/a")]
+    [id-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "persistent/b")]
     [state-a : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-a)]
     [state-b : compiler_backend.CompilerBackendState
@@ -37996,8 +37986,7 @@
       [backend-intern : ci.InternCompatState
         (compiler_backend.compiler-backend-state-intern backend-state)]
       [_capture-path : unit
-        (ci.intern-compat-state-capture-from-globals!
-          (&mut backend-intern))]
+        (ci.intern-compat-state-capture-from-globals! (&mut backend-intern))]
       [_reset : unit
         (compiler_backend.compiler-backend-state-user-symbol-cache-reset!
           backend-state)]
@@ -38017,8 +38006,7 @@
           backend-state)]
       [main-id : i64 (ci.intern "main")]
       [_capture-main : unit
-        (ci.intern-compat-state-capture-from-globals!
-          (&mut backend-intern))]
+        (ci.intern-compat-state-capture-from-globals! (&mut backend-intern))]
       [main-symbol-first : String
         (compiler_backend.compiler-backend-state-user-symbol-id
           backend-state
@@ -38058,8 +38046,7 @@
     [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
     [id-a : i64
       (begin
-        (ci.intern-compat-state-install!
-          (ci.intern-global-shared-view state-a))
+        (ci.intern-compat-state-install! (ci.intern-global-shared-view state-a))
         (ci.intern-reset!)
         (ci.intern "first-state-name"))]
     [symbol-a : String
@@ -38071,8 +38058,7 @@
           id-a))]
     [id-b : i64
       (begin
-        (ci.intern-compat-state-install!
-          (ci.intern-global-shared-view state-b))
+        (ci.intern-compat-state-install! (ci.intern-global-shared-view state-b))
         (ci.intern-reset!)
         (ci.intern "second-state-name"))]
     [symbol-b : String

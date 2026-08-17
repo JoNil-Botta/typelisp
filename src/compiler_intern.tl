@@ -78,6 +78,10 @@
   `(unsafe
     (ptr-read (ptr-offset (int->ptr ,address : (Ptr i64)) ,index))))
 
+(defmacro (intern-active-u8-ref [address : Expr] [index : Expr]) : u8
+  `(unsafe
+    (ptr-read (ptr-offset (int->ptr ,address : (Ptr u8)) ,index))))
+
 (defmacro (intern-active-i64-set!
   [address : Expr]
   [index : Expr]
@@ -259,11 +263,17 @@
 (defmacro (intern-composite-pair-id? [id : Expr]) : bool
   `(let
     [structural-id : i64 ,id]
+    [encoded-index : i64 (- structural-id intern-active-structural-prefix)]
     (and
-      (> structural-id intern-active-structural-prefix)
-      (<=
-        structural-id
-        (+ intern-active-structural-prefix intern-active-structural-len)))))
+      (> encoded-index 0)
+      (<= encoded-index intern-active-structural-len)
+      (=
+        (cast
+          (intern-active-u8-ref
+            intern-active-structural-kinds-address
+            (- encoded-index 1))
+          : i64)
+        (intern-structural-kind-pair)))))
 
 (defmacro (intern-composite-left-id-unchecked [id : Expr]) : i64
   `(intern-active-i64-ref
@@ -346,11 +356,17 @@
 (defmacro (intern-composite-triple-id? [id : Expr]) : bool
   `(let
     [structural-id : i64 ,id]
-    [triple-prefix : i64
-      (+ intern-active-structural-prefix (intern-structural-key-kind-stride))]
+    [encoded-index : i64 (- structural-id intern-active-structural-prefix)]
     (and
-      (> structural-id triple-prefix)
-      (<= structural-id (+ triple-prefix intern-active-structural-len)))))
+      (> encoded-index 0)
+      (<= encoded-index intern-active-structural-len)
+      (=
+        (cast
+          (intern-active-u8-ref
+            intern-active-structural-kinds-address
+            (- encoded-index 1))
+          : i64)
+        (intern-structural-kind-triple)))))
 
 (defmacro (intern-renderable-id? [id : Expr]) : bool
   `(let
@@ -692,17 +708,47 @@
 (define (intern-structural-key-owner-stride) : i64
   2147483648)
 
-(define (intern-structural-key-kind-stride) : i64
-  1073741824)
-
 (define (intern-structural-key-index-mask) : i64
-  1073741823)
+  2147483647)
 
 (define (intern-structural-kind-pair) : i64
   1)
 
 (define (intern-structural-kind-triple) : i64
   2)
+
+;; These kind assignments reserve the migration targets split from #5210.
+;; Handles do not encode this value: ownership selects a record, and the
+;; record's u8 kind lane is authoritative. The table accepts the full non-zero
+;; u8 range so later identity families do not require another handle-layout
+;; transition.
+(define (intern-structural-kind-template-source) : i64
+  3)
+
+(define (intern-structural-kind-fresh-local) : i64
+  4)
+
+(define (intern-structural-kind-macro-global) : i64
+  5)
+
+(define (intern-structural-kind-macro-local) : i64
+  6)
+
+(define (intern-structural-kind-lower-private) : i64
+  7)
+
+(define (intern-structural-kind-arena-phase) : i64
+  8)
+
+(define (intern-structural-kind-valid? [kind : i64]) : bool
+  (and (> kind 0) (<= kind 255)))
+
+(define (intern-structural-record-slot-bytes) : i64
+  (+
+    25
+    (+
+      (comptime (size-of (type String)))
+      (comptime (size-of (type InternSlotId))))))
 
 (define (intern-structural-pair-cache-capacity) : i64
   131072)
@@ -766,6 +812,9 @@
   (__tl-project-field (array-ref intern-structural-table-cell 0) owner))
 (define intern-active-structural-len : i64
   0)
+(define intern-active-structural-kinds-address : u64
+  (intern-i64-array-address
+    (__tl-project-field (array-ref intern-structural-table-cell 0) kinds)))
 (define intern-active-structural-lefts-address : u64
   (intern-i64-array-address
     (__tl-project-field (array-ref intern-structural-table-cell 0) lefts)))
@@ -794,6 +843,9 @@
       (set! intern-active-structural-owner table.owner)
       (set! intern-active-structural-len table.len)
       (set!
+        intern-active-structural-kinds-address
+        (intern-i64-array-address table.kinds))
+      (set!
         intern-active-structural-lefts-address
         (intern-i64-array-address table.lefts))
       (set!
@@ -806,15 +858,10 @@
         intern-active-structural-cache-raws-address
         (intern-i64-array-address table.structural-cache-raws)))))
 
-(defmacro (intern-structural-raw-for-index
-  [owner : Expr]
-  [kind : Expr]
-  [index : Expr]) : i64
+(defmacro (intern-structural-raw-for-index [owner : Expr] [index : Expr]) : i64
   `(+
     (intern-structural-key-base)
-    (+
-      (* ,owner (intern-structural-key-owner-stride))
-      (+ (* (- ,kind 1) (intern-structural-key-kind-stride)) (+ ,index 1)))))
+    (+ (* ,owner (intern-structural-key-owner-stride)) (+ ,index 1))))
 
 (defmacro (intern-structural-hash
   [kind : Expr]
@@ -927,6 +974,9 @@
           (if (= table.owner intern-active-structural-owner)
             (begin
               (set!
+                intern-active-structural-kinds-address
+                (intern-i64-array-address next-kinds))
+              (set!
                 intern-active-structural-lefts-address
                 (intern-i64-array-address next-lefts))
               (set!
@@ -975,6 +1025,9 @@
     [searching? : bool true]
     [found : i64 -1]
     (begin
+      (if (intern-structural-kind-valid? kind)
+        unit
+        (tl_oob_abort))
       (while searching?
         (let
           [encoded : i64 (intern-active-i64-ref slots-address slot)]
@@ -992,7 +1045,7 @@
                 (set! searching? false))]
             [else (set! slot (bit-and (+ slot 1) mask))])))
       (if (>= found 0)
-        (intern-structural-raw-for-index table.owner kind found)
+        (intern-structural-raw-for-index table.owner found)
         (begin
           (if (>= table.len (array-length table.kinds))
             (intern-structural-table-grow-records! cell arena)
@@ -1014,7 +1067,7 @@
               (set! next-table.len (+ index 1))
               (intern-structural-table-map-put-index! next-table index)
               (set! (array-ref cell 0) next-table)
-              (intern-structural-raw-for-index next-table.owner kind index))))))))
+              (intern-structural-raw-for-index next-table.owner index))))))))
 
 (define (intern-structural-table-reset!
   [cell : (__tl_dyn-array InternStructuralTable)]) : unit
@@ -2607,18 +2660,27 @@
   (let
     [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
     [prefix : i64 (intern-compat-state-structural-prefix state)]
-    (and (> id prefix) (<= id (+ prefix table.len)))))
+    [encoded-index : i64 (- id prefix)]
+    (and
+      (> encoded-index 0)
+      (<= encoded-index table.len)
+      (=
+        (cast (array-ref table.kinds (- encoded-index 1)) : i64)
+        (intern-structural-kind-pair)))))
 
 (define (intern-compat-state-composite-triple-id?
   [state : InternCompatState]
   [id : i64]) : bool
   (let
     [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
-    [prefix : i64
-      (+
-        (intern-compat-state-structural-prefix state)
-        (intern-structural-key-kind-stride))]
-    (and (> id prefix) (<= id (+ prefix table.len)))))
+    [prefix : i64 (intern-compat-state-structural-prefix state)]
+    [encoded-index : i64 (- id prefix)]
+    (and
+      (> encoded-index 0)
+      (<= encoded-index table.len)
+      (=
+        (cast (array-ref table.kinds (- encoded-index 1)) : i64)
+        (intern-structural-kind-triple)))))
 
 (define (intern-compat-state-composite-left-id-unchecked
   [state : InternCompatState]

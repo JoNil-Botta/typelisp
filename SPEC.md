@@ -1966,6 +1966,42 @@ Lifetime argument type-use rules:
   function parameters and returns, `let` annotations, struct fields, enum
   payloads, tuple elements, arrays, boxes, pointers, and references.
 
+`stdlib.arena/Arena` is the one builtin nominal exception to the declaration
+arity rules. Bare `arena.Arena` remains the legacy, unbranded one-word handle,
+while `(arena.Arena r)` is the same one-word handle carrying the checker-only
+brand `r`. Exactly zero or one lifetime argument is accepted; two or more are
+rejected. The brand is phantom and does not change layout, calling convention,
+field projection, or code generation.
+
+An unannotated, direct zero-argument call to the canonical `arena.make` or
+`arena.make-atomic` function produces `(arena.Arena fresh)`, where `fresh` is a
+new unnameable lifetime identity for that call expression. Canonical calls
+through a module alias have the same behavior. A shadowing local function named
+`make` or `make-atomic` is an ordinary call and creates no brand. Rechecking the
+same expression recovers the same identity, while two distinct call expressions
+always receive different identities. The ordinary/atomic owner class is stored
+with the generated brand so it remains available when the handle is moved into
+a lifetime-parameterized aggregate.
+
+Branded Arena handles obey the ordinary input-tied function-lifetime and
+nominal substitution rules, with these capability restrictions:
+
+- `(arena.Arena r)` is move-only and strictly invariant in `r`. Assignment,
+  aggregate construction, closure capture, branch joins, and calls cannot copy,
+  shorten, or unify distinct brands.
+- A branded handle may erase to bare `arena.Arena` for legacy read-only helpers.
+  Erasure is one-way: a bare handle cannot be coerced to `(arena.Arena r)`, and
+  erasure discards the ordinary/atomic proof.
+- The erasure alone does not qualify an alias, parameter, or aggregate field as
+  a direct owner for checked rewind/destroy. Safe invalidation requires the
+  separate owner-place rules in section 5.16.
+- A source-written symbolic `r` carries no atomic-owner proof merely because it
+  appears in `(arena.Arena r)`. Only a fresh brand produced by canonical
+  `arena.make-atomic` has that proof.
+- The normal return rule still applies. A function cannot invent a return-only
+  `(arena.Arena r)` lifetime; `r` must be tied to an input (or be `program`).
+  There is no existential Arena return type.
+
 Declaration lifetime parameters are substituted by position. If
 `RefPair` declares `(:lifetimes a b)`, then the field type `(& a i64)` becomes
 `(& x i64)` in `(RefPair x y)`, and `(& b str)` becomes `(& y str)`.
@@ -5170,9 +5206,10 @@ allocations.
 
 **First-class arena escape:** `(with-escape arena-expr body ...)` is a
 separate scoped form for first-class scratch arenas. `arena-expr` must
-typecheck as `arena.Arena` from `stdlib.arena`, such as a handle created by
-`arena.make` or `arena.make-atomic`; it is not a lexical region binder and does
-not conflict with `with-arena`. A raw `i64` does not satisfy this requirement.
+typecheck as bare `arena.Arena` or branded `(arena.Arena r)` from
+`stdlib.arena`, such as a handle created by `arena.make` or
+`arena.make-atomic`; it is not a lexical region binder and does not conflict
+with `with-arena`. A raw `i64` does not satisfy this requirement.
 
 The body is a non-empty expression sequence evaluated with that arena as the
 active allocation target. On exit, the result is cloned into the enclosing
@@ -5197,7 +5234,8 @@ arenas and `with-scratch` for one-shot scratch work.
 
 **First-class arena target:** `(in-arena arena-expr body ...)` is the safe
 dynamic allocation-target form for first-class arena handles. `arena-expr` must
-typecheck as `arena.Arena` from `stdlib.arena`. The body is a non-empty
+typecheck as bare `arena.Arena` or branded `(arena.Arena r)` from
+`stdlib.arena`. The body is a non-empty
 expression sequence evaluated with that arena as the active allocation target;
 the previous active arena is restored on normal exit and function-local early
 exit. The form does not mark, rewind, destroy, or clone. Its result type is the
@@ -6818,15 +6856,20 @@ not as an independently quantified region. The owner classes are:
   reserved lifetime name `program` for that storage, but there is no source
   binder to introduce.
 - **Ordinary first-class arena owners:** handles returned by `arena.make`
-  name single-thread allocation homes. They are not lexical binders, and
-  source code cannot write a lifetime name for them directly. Safe code may
-  use them through `with-escape` and `in-arena`, but concurrent allocation
-  into one ordinary arena is not defined.
+  name single-thread allocation homes. An unannotated canonical call carries a
+  fresh `(arena.Arena r)` brand; source code may propagate `r` through ordinary
+  input-tied signatures and lifetime-parameterized aggregates but cannot write
+  the generated identity directly. Safe code may use these handles through
+  `with-escape` and `in-arena`, but concurrent allocation into one ordinary
+  arena is not defined.
 - **Atomic first-class arena owners:** handles returned by the
   `arena.make-atomic` wrapper over `tl_arena_make_atomic` name allocation
-  homes whose lifetime may span multiple threads. Multiple threads may make
-  the same atomic arena current and allocate into it concurrently, subject
-  to the selection and lifetime rules below.
+  homes whose lifetime may span multiple threads. An unannotated canonical
+  call's fresh brand retains that atomic-owner proof through nominal aggregate
+  storage. A source-written symbolic lifetime does not manufacture the proof,
+  and conversion to bare `arena.Arena` erases it. Multiple threads may make the
+  same atomic arena current and allocate into it concurrently, subject to the
+  selection and lifetime rules below.
 
 The outlives relation is lexical. An owner outlives itself. An owner
 introduced by an outer parameter, `let` binding, or `with-arena` outlives

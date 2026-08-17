@@ -8159,6 +8159,31 @@
           ref
           1)))))
 
+;; Arena's optional checker brand is a phantom nominal argument. Pin the
+;; backend's bare and branded nominal arms to the same one-word ABI.
+(define (compiler-backend-branded-arena-abi-ok?) : bool
+  (let
+    [lifetimes : compiler_ast_types.AstLifetimeList
+      (compiler_ast_types.ast-lifetime-list-new)]
+    (begin
+      (compiler_ast_types.ast-lifetime-list-push
+        (&mut lifetimes)
+        (ci.intern-generated-canonical-name "arena-brand/test#1"))
+      (and
+        (=
+          (compiler_backend.compiler-backend-type-size
+            0
+            (compiler_ast_types.AstType.Struct
+              cbi.compiler-builtin-id-arena-type))
+          8)
+        (=
+          (compiler_backend.compiler-backend-type-size
+            0
+            (compiler_ast_types.AstType.StructArgs
+              cbi.compiler-builtin-id-arena-type
+              (box lifetimes)))
+          8)))))
+
 ;; Emitted-source witness for the internal borrowed-slice ABI.  A borrowed
 ;; Slice reference is two integer words (data pointer then signed length), so
 ;; the identity function must capture both incoming words and return both in
@@ -46909,6 +46934,7 @@ b_keep:
         (compiler-backend-private-abi-signature-seeding-ok?)
         (compiler-backend-private-memory-transport-ok?)
         (compiler-backend-slice-reference-abi-classifiers-ok?)
+        (compiler-backend-branded-arena-abi-ok?)
         (compiler-backend-slice-reference-abi-registers-ok?)
         (compiler-backend-pack-immediate-word-shape-ok?)
         (compiler-backend-descriptor-pair-ok?)

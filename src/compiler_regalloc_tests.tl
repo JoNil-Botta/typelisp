@@ -1225,6 +1225,880 @@
             (= (reg.compiler-reg-call-hole-split-vars split) vars)
             (= (reg.compiler-reg-call-hole-split-temp-start split) (- 0 1)))]))))
 
+;; --- P3c loop-boundary parking ----------------------------------------------
+;; Two fixtures carry the whole round.
+;;
+;; `loop_park_direct` is the plain shape: a dedicated preheader, a natural loop
+;; whose single exit target has no other predecessor, one value live ACROSS the
+;; loop and used after it (%1, the through value), one value referenced INSIDE
+;; it (%2, a resident) and one referenced in it only as a header-phi INPUT (%8,
+;; defined in the preheader) -- the case the edge-precise `-nophi!` use list
+;; would miss and admit as a through value.
+;;
+;; `loop_park_splice` adds the placements that need a spliced block: the exit
+;; target has a predecessor from outside the loop and opens with a phi whose
+;; loop-side input is a value the reload has to restore first, and a second exit
+;; leaves the loop for a `Return` block, where nothing the round parks is live.
+(cfg
+  test
+  (define (compiler-reg-loop-park-direct-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "loop_park_direct")
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "bound" (compiler-reg-i64-ty) 0)
+        ir.CompilerIrParamList.Nil)
+      (ast.AstType.I64)
+      9
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              1
+              (ir.CompilerIrValue.I64 100)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                2
+                (ir.CompilerIrValue.I64 200)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "preheader"))
+                ir.CompilerIrInstrList.Nil))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "preheader")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                8
+                (ir.CompilerIrValue.I64 7)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "header")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Phi
+                  3
+                  (ir.compiler-ir-phi-input-cons
+                    (ir.CompilerIrValue.Var 8)
+                    (ir.compiler-ir-label "preheader")
+                    (ir.compiler-ir-phi-input-cons
+                      (ir.CompilerIrValue.Var 6)
+                      (ir.compiler-ir-label "latch")
+                      ir.CompilerIrPhiInputList.Nil))
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    5
+                    (ir.CompilerIrBinOp.Lt)
+                    (ir.CompilerIrValue.Var 3)
+                    (ir.CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Branch
+                      (ir.CompilerIrValue.Var 5)
+                      (ir.compiler-ir-label "body")
+                      (ir.compiler-ir-label "exit"))
+                    ir.CompilerIrInstrList.Nil))))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "body")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    4
+                    (ir.CompilerIrBinOp.Add)
+                    (ir.CompilerIrValue.Var 3)
+                    (ir.CompilerIrValue.Var 2)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                    ir.CompilerIrInstrList.Nil)))
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  (ir.compiler-ir-label "latch")
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.BinOp
+                      6
+                      (ir.CompilerIrBinOp.Add)
+                      (ir.CompilerIrValue.Var 3)
+                      (ir.CompilerIrValue.I64 1)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+                      ir.CompilerIrInstrList.Nil)))
+                (ir.compiler-ir-block-cons
+                  (ir.compiler-ir-block
+                    (ir.compiler-ir-label "exit")
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.BinOp
+                        7
+                        (ir.CompilerIrBinOp.Add)
+                        (ir.CompilerIrValue.Var 1)
+                        (ir.CompilerIrValue.Var 3)
+                        (compiler-reg-i64-ty))
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Return
+                          (ir.CompilerIrMaybeValue.Some
+                            (ir.CompilerIrValue.Var 7)))
+                        ir.CompilerIrInstrList.Nil)))
+                  ir.CompilerIrBlockList.Nil)))))))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-park-splice-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "loop_park_splice")
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "bound" (compiler-reg-i64-ty) 0)
+        ir.CompilerIrParamList.Nil)
+      (ast.AstType.I64)
+      11
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              1
+              (ir.CompilerIrValue.I64 100)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                2
+                (ir.CompilerIrValue.I64 200)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  10
+                  (ir.CompilerIrBinOp.Lt)
+                  (ir.CompilerIrValue.Var 0)
+                  (ir.CompilerIrValue.I64 5)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Branch
+                    (ir.CompilerIrValue.Var 10)
+                    (ir.compiler-ir-label "preheader")
+                    (ir.compiler-ir-label "other"))
+                  ir.CompilerIrInstrList.Nil)))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "other")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                8
+                (ir.CompilerIrValue.I64 9)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "preheader")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "header")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Phi
+                    3
+                    (ir.compiler-ir-phi-input-cons
+                      (ir.CompilerIrValue.I64 0)
+                      (ir.compiler-ir-label "preheader")
+                      (ir.compiler-ir-phi-input-cons
+                        (ir.CompilerIrValue.Var 6)
+                        (ir.compiler-ir-label "latch")
+                        ir.CompilerIrPhiInputList.Nil))
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.BinOp
+                      5
+                      (ir.CompilerIrBinOp.Lt)
+                      (ir.CompilerIrValue.Var 3)
+                      (ir.CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Branch
+                        (ir.CompilerIrValue.Var 5)
+                        (ir.compiler-ir-label "body")
+                        (ir.compiler-ir-label "exit"))
+                      ir.CompilerIrInstrList.Nil))))
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  (ir.compiler-ir-label "body")
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.BinOp
+                      4
+                      (ir.CompilerIrBinOp.Add)
+                      (ir.CompilerIrValue.Var 3)
+                      (ir.CompilerIrValue.Var 2)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                      ir.CompilerIrInstrList.Nil)))
+                (ir.compiler-ir-block-cons
+                  (ir.compiler-ir-block
+                    (ir.compiler-ir-label "latch")
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.BinOp
+                        6
+                        (ir.CompilerIrBinOp.Add)
+                        (ir.CompilerIrValue.Var 3)
+                        (ir.CompilerIrValue.I64 1)
+                        (compiler-reg-i64-ty))
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Var 5)
+                          (ir.compiler-ir-label "header")
+                          (ir.compiler-ir-label "ret_blk"))
+                        ir.CompilerIrInstrList.Nil)))
+                  (ir.compiler-ir-block-cons
+                    (ir.compiler-ir-block
+                      (ir.compiler-ir-label "ret_blk")
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Return
+                          (ir.CompilerIrMaybeValue.Some
+                            (ir.CompilerIrValue.Var 4)))
+                        ir.CompilerIrInstrList.Nil))
+                    (ir.compiler-ir-block-cons
+                      (ir.compiler-ir-block
+                        (ir.compiler-ir-label "exit")
+                        (ir.compiler-ir-instr-cons
+                          (ir.CompilerIrInstr.Phi
+                            7
+                            (ir.compiler-ir-phi-input-cons
+                              (ir.CompilerIrValue.Var 3)
+                              (ir.compiler-ir-label "header")
+                              (ir.compiler-ir-phi-input-cons
+                                (ir.CompilerIrValue.Var 8)
+                                (ir.compiler-ir-label "other")
+                                ir.CompilerIrPhiInputList.Nil))
+                            (compiler-reg-i64-ty))
+                          (ir.compiler-ir-instr-cons
+                            (ir.CompilerIrInstr.BinOp
+                              9
+                              (ir.CompilerIrBinOp.Add)
+                              (ir.CompilerIrValue.Var 1)
+                              (ir.CompilerIrValue.Var 7)
+                              (compiler-reg-i64-ty))
+                            (ir.compiler-ir-instr-cons
+                              (ir.CompilerIrInstr.Return
+                                (ir.CompilerIrMaybeValue.Some
+                                  (ir.CompilerIrValue.Var 9)))
+                              ir.CompilerIrInstrList.Nil))))
+                      ir.CompilerIrBlockList.Nil)))))))))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-park-block-index
+    [seq : ir.CompilerIrBlockSeq]
+    [name : String]) : i64
+    (let
+      [want : i64 (ir.compiler-ir-label name)]
+      [count : i64 (ir.compiler-ir-block-seq-count seq)]
+      [index : i64 0]
+      (begin
+        (while (< index count)
+          (begin
+            (when
+              (= (reg.compiler-reg-loop-park-block-label seq index) want)
+              (return index))
+            (set! index (+ index 1))))
+        (- 0 1)))))
+
+;; Loop structure and residency. The through value is the one the loop never
+;; mentions; a value used in the loop, a value that is only a header-phi INPUT
+;; there, and the loop's own phi result are all residents.
+(cfg
+  test
+  (define (compiler-reg-loop-park-detect-ok?) : bool
+    (match (compiler-reg-loop-park-direct-function)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        (let
+          [seq : ir.CompilerIrBlockSeq
+            (live.compiler-live-ir-block-list-to-seq blocks)]
+          [count : i64 (ir.compiler-ir-block-seq-count seq)]
+          [nest : reg.CompilerRegLoopNest
+            (reg.compiler-reg-loop-nest-build-seq seq)]
+          [header : i64 (compiler-reg-loop-park-block-index seq "header")]
+          [entry : i64 (compiler-reg-loop-park-block-index seq "entry")]
+          [pre : i64 (compiler-reg-loop-park-block-index seq "preheader")]
+          [total : i64
+            (reg.compiler-reg-loop-nest-header-members! nest header 1)]
+          [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
+          [weights : (__tl_dyn-array i64) (array.make-array i64 count)]
+          [stamp : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [refs : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [residents : (__tl_dyn-array i64) (array.make-array i64 32)]
+          [cursor : (__tl_dyn-array i64) (array.make-array i64 2)]
+          [index : i64 0]
+          (begin
+            (while (< index count)
+              (begin
+                (set! (array-ref weights index) 1)
+                (set! index (+ index 1))))
+            (reg.compiler-reg-loop-park-mark-residents!
+              seq
+              nest
+              header
+              total
+              1
+              weights
+              vars
+              stamp
+              refs
+              residents
+              cursor)
+            (and
+              ;; the loop is {header, body, latch}, entered only at the header
+              (= total 2)
+              (= (reg.compiler-reg-loop-nest-outside-pred nest header 1) pre)
+              (reg.compiler-reg-loop-park-dedicated-preheader?
+                seq
+                pre
+                (reg.compiler-reg-loop-park-block-label seq header))
+              ;; the entry block jumps to the preheader, not to the header
+              (not
+                (reg.compiler-reg-loop-park-dedicated-preheader?
+                  seq
+                  entry
+                  (reg.compiler-reg-loop-park-block-label seq header)))
+              (reg.compiler-reg-loop-park-single-entry? nest header total 1)
+              ;; residents: used in the loop (%2), phi result (%3), phi INPUT
+              ;; whose def is outside the loop (%8), and the bound (%0)
+              (= (array-ref stamp 2) 1)
+              (= (array-ref stamp 3) 1)
+              (= (array-ref stamp 8) 1)
+              (= (array-ref stamp 0) 1)
+              ;; through: live across the loop, never mentioned in it
+              (not (= (array-ref stamp 1) 1))
+              ;; and defined after it, so not live into it either
+              (not (= (array-ref stamp 7) 1))
+              (> (array-ref cursor 1) 0))))])))
+
+;; Through-value eligibility: a REGISTER home admits, a spill home declines (it
+;; has no register to give up), a missing home declines, and the planner's
+;; ineligible set declines even a register-homed value.
+(cfg
+  test
+  (define (compiler-reg-loop-park-eligible-ok?) : bool
+    (let
+      [assignments : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignments-prepend
+          (reg.CompilerRegAssignment
+            0
+            (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+          (reg.compiler-reg-assignments-prepend
+            (reg.CompilerRegAssignment
+              1
+              (reg.CompilerRegLocation.Spill
+                (reg.compiler-reg-stack-slot-offset 1)))
+            (reg.compiler-reg-assignments-prepend
+              (reg.CompilerRegAssignment
+                3
+                (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r13))
+              (reg.compiler-reg-assignment-table-empty))))]
+      [type-info : reg.CompilerRegVarTypes
+        (reg.compiler-reg-function-var-types
+          (compiler-reg-loop-park-direct-function))]
+      [ineligible : live.CompilerLiveI64Set
+        (live.compiler-live-set-insert (live.compiler-live-set-empty) 3)]
+      [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+      (and
+        (reg.compiler-reg-loop-park-through-eligible?
+          bases
+          type-info
+          assignments
+          (live.compiler-live-set-empty)
+          0)
+        (not
+          (reg.compiler-reg-loop-park-through-eligible?
+            bases
+            type-info
+            assignments
+            (live.compiler-live-set-empty)
+            1))
+        (not
+          (reg.compiler-reg-loop-park-through-eligible?
+            bases
+            type-info
+            assignments
+            (live.compiler-live-set-empty)
+            2))
+        (not
+          (reg.compiler-reg-loop-park-through-eligible?
+            bases
+            type-info
+            assignments
+            ineligible
+            3))))))
+
+;; Reload SITES. The plain fixture's single exit target has no predecessor
+;; outside the loop and no phi, so the reload goes at its head; the splice
+;; fixture's does, so its edge is spliced, and its second exit -- a `Return`
+;; block -- is a site at which nothing the round parks is live.
+(cfg
+  test
+  (define (compiler-reg-loop-park-sites-ok?) : bool
+    (let
+      [direct-func : ir.CompilerIrFunction
+        (compiler-reg-loop-park-direct-function)]
+      [splice-func : ir.CompilerIrFunction
+        (compiler-reg-loop-park-splice-function)]
+      [direct-seq : ir.CompilerIrBlockSeq
+        (live.compiler-live-ir-block-list-to-seq
+          (match direct-func
+            [(ir.CompilerIrFunction.Function _ _ _ _ blocks) blocks]))]
+      [splice-seq : ir.CompilerIrBlockSeq
+        (live.compiler-live-ir-block-list-to-seq
+          (match splice-func
+            [(ir.CompilerIrFunction.Function _ _ _ _ blocks) blocks]))]
+      [direct-nest : reg.CompilerRegLoopNest
+        (reg.compiler-reg-loop-nest-build-seq direct-seq)]
+      [splice-nest : reg.CompilerRegLoopNest
+        (reg.compiler-reg-loop-nest-build-seq splice-seq)]
+      [direct-live : live.CompilerFunctionLiveness
+        (live.compiler-live-analyze-function-edge-precise direct-func)]
+      [splice-live : live.CompilerFunctionLiveness
+        (live.compiler-live-analyze-function-edge-precise splice-func)]
+      [weights : (__tl_dyn-array i64) (array.make-array i64 16)]
+      [from : (__tl_dyn-array i64) (array.make-array i64 8)]
+      [to : (__tl_dyn-array i64) (array.make-array i64 8)]
+      [kind : (__tl_dyn-array i64) (array.make-array i64 8)]
+      [weight : (__tl_dyn-array i64) (array.make-array i64 8)]
+      [scratch : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [dh : i64 (compiler-reg-loop-park-block-index direct-seq "header")]
+      [de : i64 (compiler-reg-loop-park-block-index direct-seq "exit")]
+      [sh : i64 (compiler-reg-loop-park-block-index splice-seq "header")]
+      [sl : i64 (compiler-reg-loop-park-block-index splice-seq "latch")]
+      [se : i64 (compiler-reg-loop-park-block-index splice-seq "exit")]
+      [sr : i64 (compiler-reg-loop-park-block-index splice-seq "ret_blk")]
+      [direct-total : i64
+        (reg.compiler-reg-loop-nest-header-members! direct-nest dh 1)]
+      [direct-count : i64
+        (reg.compiler-reg-loop-park-collect-sites!
+          direct-seq
+          direct-nest
+          direct-live
+          dh
+          direct-total
+          1
+          weights
+          from
+          to
+          kind
+          weight
+          scratch)]
+      [direct-kind : i64 (array-ref kind 0)]
+      [direct-to : i64 (array-ref to 0)]
+      [splice-total : i64
+        (reg.compiler-reg-loop-nest-header-members! splice-nest sh 1)]
+      [splice-count : i64
+        (reg.compiler-reg-loop-park-collect-sites!
+          splice-seq
+          splice-nest
+          splice-live
+          sh
+          splice-total
+          1
+          weights
+          from
+          to
+          kind
+          weight
+          scratch)]
+      (and
+        ;; one exit, served at the head of its target
+        (= direct-count 1)
+        (= direct-kind (reg.compiler-reg-loop-park-site-direct))
+        (= direct-to de)
+        ;; the through value is live at that target and the in-loop value is not
+        (reg.compiler-reg-loop-park-needs-reload?
+          direct-seq
+          direct-live
+          (reg.compiler-reg-loop-park-site-direct)
+          dh
+          de
+          1)
+        (not
+          (reg.compiler-reg-loop-park-needs-reload?
+            direct-seq
+            direct-live
+            (reg.compiler-reg-loop-park-site-direct)
+            dh
+            de
+            2))
+        ;; two exits: the phi-headed merge is spliced, the Return block is not
+        (= splice-count 2)
+        (= (array-ref kind 0) (reg.compiler-reg-loop-park-site-splice))
+        (= (array-ref from 0) sh)
+        (= (array-ref to 0) se)
+        (= (array-ref kind 1) (reg.compiler-reg-loop-park-site-direct))
+        (= (array-ref to 1) sr)
+        ;; %3 is not live-in at the merge -- it is an EDGE use, the phi's
+        ;; loop-side input -- and still needs the reload
+        (reg.compiler-reg-loop-park-needs-reload?
+          splice-seq
+          splice-live
+          (reg.compiler-reg-loop-park-site-splice)
+          sh
+          se
+          3)
+        ;; nothing but the returned value is live into the Return block, so the
+        ;; through value needs no reload there
+        (not
+          (reg.compiler-reg-loop-park-needs-reload?
+            splice-seq
+            splice-live
+            (reg.compiler-reg-loop-park-site-direct)
+            sl
+            sr
+            1))
+        (reg.compiler-reg-loop-park-needs-reload?
+          splice-seq
+          splice-live
+          (reg.compiler-reg-loop-park-site-splice)
+          sh
+          se
+          1)))))
+
+;; The rewrite shape, driven from a hand-built decision so the assertions are
+;; about the emitter and not about the planner.
+(cfg
+  test
+  (define (compiler-reg-loop-park-mov?
+    [instr : ir.CompilerIrInstr]
+    [dst : i64]
+    [src : i64]) : bool
+    (match instr
+      [(ir.CompilerIrInstr.Mov d value _)
+        (and
+          (= d dst)
+          (match value
+            [(ir.CompilerIrValue.Var v) (= v src)]
+            [_ false]))]
+      [_ false])))
+
+(cfg
+  test
+  (define (compiler-reg-loop-park-phi-keyed-on?
+    [instr : ir.CompilerIrInstr]
+    [var : i64]
+    [label : i64]) : bool
+    (match instr
+      [(ir.CompilerIrInstr.Phi _ inputs _)
+        (reg.compiler-reg-loop-park-phi-input-on-edge? inputs label var)]
+      [_ false])))
+
+(cfg
+  test
+  (define (compiler-reg-loop-park-branch-false [instr : ir.CompilerIrInstr]) : i64
+    (match instr
+      [(ir.CompilerIrInstr.Branch _ _ f) f]
+      [_ (- 0 1)])))
+
+(cfg
+  test
+  (define (compiler-reg-loop-park-direct-rewrite-ok?) : bool
+    (match (compiler-reg-loop-park-direct-function)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        (let
+          [seq : ir.CompilerIrBlockSeq
+            (live.compiler-live-ir-block-list-to-seq blocks)]
+          [count : i64 (ir.compiler-ir-block-seq-count seq)]
+          [type-info : reg.CompilerRegVarTypes
+            (reg.compiler-reg-function-var-types
+              (compiler-reg-loop-park-direct-function))]
+          [pre : i64 (compiler-reg-loop-park-block-index seq "preheader")]
+          [exit : i64 (compiler-reg-loop-park-block-index seq "exit")]
+          [pk : reg.CompilerRegLoopParkPlan
+            (reg.compiler-reg-loop-park-plan-make count vars)]
+          (begin
+            (reg.compiler-reg-loop-park-plan-reset! pk)
+            (set! (array-ref pk.park-var 0) 1)
+            (set! (array-ref pk.park-carrier 0) vars)
+            (set! (array-ref pk.park-loop 0) 0)
+            (set! (array-ref pk.park-pre 0) pre)
+            (set!
+              (array-ref pk.park-store-at 0)
+              (reg.compiler-reg-loop-park-store-position seq pre 1))
+            (set! (array-ref pk.pre-mask pre) 1)
+            (set! (array-ref pk.direct-mask exit) 1)
+            (set! (array-ref pk.site-from 0) (- 0 1))
+            (set! (array-ref pk.site-to 0) exit)
+            (set!
+              (array-ref pk.site-kind 0)
+              (reg.compiler-reg-loop-park-site-direct))
+            (set! (array-ref pk.site-mask 0) 1)
+            (set! (array-ref pk.site-label 0) (ir.compiler-ir-label-none))
+            (set! (array-ref pk.site-weight 0) 1)
+            (set! (array-ref pk.loop-header 0) 0)
+            (set! (array-ref pk.counts 0) 1)
+            (set! (array-ref pk.counts 1) 1)
+            (set! (array-ref pk.counts 2) 1)
+            (let
+              [out : ir.CompilerIrBlockSeq
+                (live.compiler-live-ir-block-list-to-seq
+                  (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info))]
+              (and
+                ;; a direct reload adds no block
+                (= (ir.compiler-ir-block-seq-count out) count)
+                ;; the store is the preheader FIRST instruction: as early as the
+                ;; block allows, so the register it gives up is free for the
+                ;; values defined below it
+                (= (array-ref pk.park-store-at 0) 0)
+                (compiler-reg-loop-park-mov?
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out pre)
+                    0)
+                  vars
+                  1)
+                (=
+                  (ir.compiler-ir-instr-seq-count
+                    (reg.compiler-reg-loop-park-block-instrs out pre))
+                  3)
+                ;; the reload is the exit target first instruction
+                (compiler-reg-loop-park-mov?
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out exit)
+                    0)
+                  1
+                  vars)
+                (=
+                  (ir.compiler-ir-instr-seq-count
+                    (reg.compiler-reg-loop-park-block-instrs out exit))
+                  3)))))])))
+
+(cfg
+  test
+  (define (compiler-reg-loop-park-splice-rewrite-ok?) : bool
+    (match (compiler-reg-loop-park-splice-function)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        (let
+          [seq : ir.CompilerIrBlockSeq
+            (live.compiler-live-ir-block-list-to-seq blocks)]
+          [count : i64 (ir.compiler-ir-block-seq-count seq)]
+          [type-info : reg.CompilerRegVarTypes
+            (reg.compiler-reg-function-var-types
+              (compiler-reg-loop-park-splice-function))]
+          [pre : i64 (compiler-reg-loop-park-block-index seq "preheader")]
+          [header : i64 (compiler-reg-loop-park-block-index seq "header")]
+          [exit : i64 (compiler-reg-loop-park-block-index seq "exit")]
+          [splice-label : i64
+            (reg.compiler-reg-loop-park-splice-label seq header 0)]
+          [pk : reg.CompilerRegLoopParkPlan
+            (reg.compiler-reg-loop-park-plan-make count vars)]
+          (begin
+            (reg.compiler-reg-loop-park-plan-reset! pk)
+            (set! (array-ref pk.park-var 0) 1)
+            (set! (array-ref pk.park-carrier 0) vars)
+            (set! (array-ref pk.park-loop 0) 0)
+            (set! (array-ref pk.park-pre 0) pre)
+            (set!
+              (array-ref pk.park-store-at 0)
+              (reg.compiler-reg-loop-park-store-position seq pre 1))
+            (set! (array-ref pk.pre-mask pre) 1)
+            (set! (array-ref pk.site-from 0) header)
+            (set! (array-ref pk.site-to 0) exit)
+            (set!
+              (array-ref pk.site-kind 0)
+              (reg.compiler-reg-loop-park-site-splice))
+            (set! (array-ref pk.site-mask 0) 1)
+            (set! (array-ref pk.site-label 0) splice-label)
+            (set! (array-ref pk.site-weight 0) 1)
+            (set! (array-ref pk.loop-header 0) 0)
+            (set! (array-ref pk.counts 0) 1)
+            (set! (array-ref pk.counts 1) 1)
+            (set! (array-ref pk.counts 2) 1)
+            (let
+              [out : ir.CompilerIrBlockSeq
+                (live.compiler-live-ir-block-list-to-seq
+                  (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info))]
+              [spliced : i64
+                (compiler-reg-loop-park-block-index
+                  out
+                  (ir.compiler-ir-label-text splice-label))]
+              (and
+                ;; exactly one block is added, and it is APPENDED, so every
+                ;; existing block keeps its layout position
+                (= (ir.compiler-ir-block-seq-count out) (+ count 1))
+                (= spliced count)
+                ;; store in the preheader
+                (compiler-reg-loop-park-mov?
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out pre)
+                    0)
+                  vars
+                  1)
+                ;; the spliced block reloads, then jumps to the original target
+                (compiler-reg-loop-park-mov?
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out spliced)
+                    0)
+                  1
+                  vars)
+                (=
+                  (ir.compiler-ir-instr-seq-count
+                    (reg.compiler-reg-loop-park-block-instrs out spliced))
+                  2)
+                ;; the loop exit edge now goes through it ...
+                (=
+                  (compiler-reg-loop-park-branch-false
+                    (ir.compiler-ir-instr-seq-ref
+                      (reg.compiler-reg-loop-park-block-instrs out header)
+                      2))
+                  splice-label)
+                ;; ... and the merge phi loop-side input is re-keyed to it, so
+                ;; it reads the value the reload has just restored
+                (compiler-reg-loop-park-phi-keyed-on?
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out exit)
+                    0)
+                  3
+                  splice-label)
+                (not
+                  (compiler-reg-loop-park-phi-keyed-on?
+                    (ir.compiler-ir-instr-seq-ref
+                      (reg.compiler-reg-loop-park-block-instrs out exit)
+                      0)
+                    3
+                    (reg.compiler-reg-loop-park-block-label seq header)))
+                ;; the other predecessor input is untouched
+                (compiler-reg-loop-park-phi-keyed-on?
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out exit)
+                    0)
+                  8
+                  (ir.compiler-ir-label "other"))))))])))
+
+;; The verify side: a parked loop whose previously spilled residents the replan
+;; left in memory is dropped and its header recorded, while one that rescued a
+;; resident survives.
+(cfg
+  test
+  (define (compiler-reg-loop-park-verify-ok?) : bool
+    (let
+      [pk : reg.CompilerRegLoopParkPlan
+        (reg.compiler-reg-loop-park-plan-make 8 6)]
+      [plan : reg.CompilerRegPlan
+        (reg.CompilerRegPlan.Plan
+          (reg.compiler-reg-assignments-prepend
+            (reg.CompilerRegAssignment
+              2
+              (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+            (reg.compiler-reg-assignments-prepend
+              (reg.CompilerRegAssignment
+                4
+                (reg.CompilerRegLocation.Spill
+                  (reg.compiler-reg-stack-slot-offset 1)))
+              (reg.compiler-reg-assignment-table-empty)))
+          (live.compiler-live-set-empty)
+          (reg.compiler-reg-interval-seq-empty)
+          (reg.compiler-reg-var-types-empty)
+          (reg.compiler-reg-call-split-empty)
+          (reg.compiler-reg-split-plan-empty))]
+      [dropped : (__tl_dyn-array bool) (array.make-array bool 8)]
+      (begin
+        (reg.compiler-reg-loop-park-plan-reset! pk)
+        ;; loop 0 targets var 2, which the replan registerised; loop 1 targets
+        ;; var 4, which it did not
+        (set! (array-ref pk.resident-mask 2) 1)
+        (set! (array-ref pk.resident-mask 4) 2)
+        (set! (array-ref pk.loop-header 0) 3)
+        (set! (array-ref pk.loop-header 1) 5)
+        (set! (array-ref pk.counts 2) 2)
+        (and
+          (= (reg.compiler-reg-loop-park-drop-failed! pk plan 6 dropped) 1)
+          (not (array-ref dropped 3))
+          (array-ref dropped 5))))))
+
+;; End to end. The round is handed a plan that homes the through value in a
+;; register and leaves the loop's resident in memory, which is exactly the shape
+;; it exists for: it parks the through value, replans, finds the estimate lower
+;; and keeps the rewrite -- one carrier, minted at the old watermark, forced to
+;; the stack.
+(cfg
+  test
+  (define (compiler-reg-loop-park-round-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-loop-park-direct-function)]
+      [type-info : reg.CompilerRegVarTypes
+        (reg.compiler-reg-function-var-types func)]
+      [plan : reg.CompilerRegPlan
+        (reg.CompilerRegPlan.Plan
+          (reg.compiler-reg-assignments-prepend
+            (reg.CompilerRegAssignment
+              1
+              (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+            (reg.compiler-reg-assignments-prepend
+              (reg.CompilerRegAssignment
+                2
+                (reg.CompilerRegLocation.Spill
+                  (reg.compiler-reg-stack-slot-offset 1)))
+              (reg.compiler-reg-assignment-table-empty)))
+          (live.compiler-live-set-empty)
+          (reg.compiler-reg-interval-seq-empty)
+          (reg.compiler-reg-var-types-empty)
+          (reg.compiler-reg-call-split-empty)
+          (reg.compiler-reg-split-plan-empty))]
+      [split : reg.CompilerRegCallHoleSplit
+        (reg.compiler-reg-loop-park-rewrite-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          cabi.CompilerRegTargetAbi.Linux
+          func
+          type-info
+          plan
+          (- 0 1)
+          false)]
+      (match func
+        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+          (and
+            (= (reg.compiler-reg-call-hole-split-vars split) (+ vars 1))
+            (= (reg.compiler-reg-call-hole-split-temp-start split) vars)
+            (reg.compiler-reg-cold-call-carriers-stack?
+              (reg.compiler-reg-call-hole-split-plan split)
+              vars
+              (+ vars 1)))]))))
+
+;; And the revert: a plan with nothing in memory presents no rescue, so the
+;; round hands back its input -- same watermark, same threshold.
+(cfg
+  test
+  (define (compiler-reg-loop-park-declines-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-loop-park-direct-function)]
+      [type-info : reg.CompilerRegVarTypes
+        (reg.compiler-reg-function-var-types func)]
+      [plan : reg.CompilerRegPlan
+        (reg.CompilerRegPlan.Plan
+          (reg.compiler-reg-assignments-prepend
+            (reg.CompilerRegAssignment
+              1
+              (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+            (reg.compiler-reg-assignment-table-empty))
+          (live.compiler-live-set-empty)
+          (reg.compiler-reg-interval-seq-empty)
+          (reg.compiler-reg-var-types-empty)
+          (reg.compiler-reg-call-split-empty)
+          (reg.compiler-reg-split-plan-empty))]
+      [split : reg.CompilerRegCallHoleSplit
+        (reg.compiler-reg-loop-park-rewrite-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          cabi.CompilerRegTargetAbi.Linux
+          func
+          type-info
+          plan
+          (- 0 1)
+          false)]
+      (match func
+        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+          (and
+            (= (reg.compiler-reg-call-hole-split-vars split) vars)
+            (= (reg.compiler-reg-call-hole-split-temp-start split) (- 0 1)))]))))
+
 ;; Fast scalar backend plan: keep type discovery for emission decisions, but
 ;; leave values in their stack slots instead of spending compile time on liveness
 ;; and register assignment. AVX/vector backend modes still use full regalloc.
@@ -15135,6 +16009,30 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-call-hole-declines-ok?"
       (cfg test (compiler-reg-call-hole-declines-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-detect-ok?"
+      (cfg test (compiler-reg-loop-park-detect-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-eligible-ok?"
+      (cfg test (compiler-reg-loop-park-eligible-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-sites-ok?"
+      (cfg test (compiler-reg-loop-park-sites-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-direct-rewrite-ok?"
+      (cfg test (compiler-reg-loop-park-direct-rewrite-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-splice-rewrite-ok?"
+      (cfg test (compiler-reg-loop-park-splice-rewrite-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-verify-ok?"
+      (cfg test (compiler-reg-loop-park-verify-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-round-ok?"
+      (cfg test (compiler-reg-loop-park-round-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-declines-ok?"
+      (cfg test (compiler-reg-loop-park-declines-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-call-live-ok?"
       (compiler-reg-scalar-call-live-ok?))

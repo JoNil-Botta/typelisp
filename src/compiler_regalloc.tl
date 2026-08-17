@@ -19737,6 +19737,2125 @@
                           (compiler-reg-call-hole-max-selected))
                         0)))))))))]))
 
+;; ---------------------------------------------------------------------------
+;; P3c -- loop-boundary parking: a region split for the values a hot loop never
+;; touches.
+;;
+;; The greedy gives one home per value for its WHOLE interval, so in a function
+;; whose inner loop needs more registers than are free the values that lose are
+;; the lowest TOTAL-weight ones -- not the ones that are cold INSIDE that loop.
+;; A value live ACROSS an inner loop but never referenced in it (a "through"
+;; value) therefore keeps its register through the loop while the loop's own
+;; residents spill or scavenge. The ranking ladder is what makes that the
+;; DEFAULT rather than the exception: `compiler-reg-loop-depth-weight` is
+;; 2^depth, so three references in the enclosing loop already outrank one
+;; reference in the inner one, while the real frequency ratio is a trip count.
+;;
+;; LLVM's greedy allocator region-splits instead. This round realises that shape
+;; as an IR rewrite between the P3 call-hole round and the leaf-CSR round: for a
+;; qualifying loop L and a through value V,
+;;
+;;     preheader(L):  Mov S_V <- V
+;;     ... L, in which V is now DEAD, so its register serves L's residents ...
+;;     exit edge:     Mov V <- S_V          (one per exit V is live on)
+;;
+;; and then REPLAN. V's live range acquires a hole over L -- the interval index
+;; is segment-precise (`compiler-reg-live-interval-selection`) and the occupancy
+;; test reads those segments, so the hole is a register L's residents may take.
+;;
+;; The carriers are minted contiguously above the P3 carriers, so ONE
+;; `forced-spill-from` threshold forces every carrier family into memory, and the
+;; replan is the same `compiler-reg-plan-function-scalar-forced-spill-with-types`
+;; entry P3 uses. `cold-split?` is threaded from the backend rather than pinned
+;; false: this rewrite adds and removes no call at all, so whatever claim the
+;; plan it improves on was made with still holds.
+;;
+;; ADMISSION, and why each clause is needed for SOUNDNESS rather than for profit:
+;;
+;;   * DEDICATED PREHEADER. L's header h must have exactly one predecessor from
+;;     outside L, and that block must end in `Jump h` -- so it has h as its only
+;;     successor, it is the preheader of no other loop, and every entry into L
+;;     runs the store. LICM's `preheaders` pass makes these; loops without one
+;;     are skipped rather than given one here.
+;;
+;;   * SINGLE ENTRY. `compiler-reg-loop-nest-header-members!` closes BACKWARD
+;;     from the latches, which in an IRREDUCIBLE CFG can collect a member that is
+;;     itself reachable from outside L without passing h -- and the store would
+;;     then not dominate it. So every member other than h is re-proved to have
+;;     all of its predecessors inside L, on the nest's own predecessor CSR
+;;     (which counts the unnamed fall-through edge as well).
+;;
+;;   * RESIDENTS. residents(L) is every var MENTIONED in a block of L: uses,
+;;     defs, phi inputs and phi results alike (`compiler-live-instr-use-ids!`
+;;     reports phi inputs, unlike the edge-precise `-nophi!` variant). A through
+;;     value is one that is not a resident, so it is not a header-phi input
+;;     either, and a `Return`/`TailCall` inside L uses its operands, so a
+;;     returned value can never be parked.
+;;
+;;   * EXIT COVERAGE. Every exit EDGE (b in L, t outside L) on which V is needed
+;;     gets a reload, and "needed" is edge-precise: V live-in at t, OR V an input
+;;     of a phi in t keyed on b (an edge use the block live-in deliberately does
+;;     not carry). The reload goes at the head of t when every predecessor of t
+;;     lies in L and t does not open with a phi; otherwise a block is SPLICED
+;;     onto the edge and t's phi inputs keyed on b are re-keyed to it -- which is
+;;     also what makes the phi-input case correct, since the reload then runs
+;;     before the phi reads V. Return and TailCall exits have no successor and
+;;     need no reload.
+;;
+;; The cost model is P3's 8^depth weight (`compiler-reg-call-hole-block-weight`):
+;; parking V costs W(preheader) + the weights of its reload sites, and the
+;; preheader sits one level outside L, so that is 1/8 of ONE reference by an
+;; L-resident. Through values are parked coldest-first against the loop's
+;; hottest spilled residents, one register per resident.
+;;
+;; The rewrite is KEPT when `compiler-reg-call-hole-plan-cost` -- the same
+;; block-weighted count of the references a plan leaves in memory, measured the
+;; same way on both sides -- comes out strictly lower on the replanned function.
+;; The parking movs pay for themselves inside that estimate without a separate
+;; term, because their carriers are memory-homed and the estimate charges every
+;; reference to a memory-homed value.
+;;
+;; "Did the replan registerise a previously spilled resident of this loop" drives
+;; the RETRY rather than the accept, and that is a deliberate weakening of the
+;; packet's rule, on evidence. The register a park frees frequently reaches the
+;; loop's residents through the LATER rescues -- P11b's loop-scope eviction and
+;; the loop-split homing both run after this round, on the split view -- and not
+;; through the replan itself. On the packet's own micro the replan leaves both
+;; byte-loop base pointers in memory while the loop-split rescue then homes one
+;; of them in exactly the register parking freed, taking the inner loop from ten
+;; instructions to eight (and the whole micro from 2,107,647 to 1,601,661 Ir);
+;; requiring the REPLAN to show the rescue declines that case outright. The
+;; estimate stays the guard -- a park that buys nothing is still refused -- and a
+;; set that does not pay for itself is retried without the loops whose residents
+;; the replan left in memory.
+;; ---------------------------------------------------------------------------
+;; Parked values per function. Each one costs a store at its loop's entry
+;; frequency plus one reload per live exit, and the mask that tracks them is one
+;; i64 word.
+(define (compiler-reg-loop-park-max-parked) : i64
+  32)
+
+;; Parked values per loop. A loop that wants more registers than this is not the
+;; tight inner loop the round is for.
+(define (compiler-reg-loop-park-max-per-loop) : i64
+  8)
+
+;; Reload sites per function and per loop. The per-loop bound is also what lets
+;; one i64 hold "which of this loop's sites does V need" during selection.
+(define (compiler-reg-loop-park-max-sites) : i64
+  64)
+
+(define (compiler-reg-loop-park-max-loop-sites) : i64
+  32)
+
+;; Loops that may park in one function; the verify mask is one i64 word.
+(define (compiler-reg-loop-park-max-loops) : i64
+  32)
+
+;; Loop headers examined per function -- the compile-time bound, since every
+;; header costs a backward member walk.
+(define (compiler-reg-loop-park-max-headers) : i64
+  64)
+
+;; Rewrite attempts after dropping the loops whose residents did not registerise.
+(define (compiler-reg-loop-park-max-rounds) : i64
+  3)
+
+;; Reload site kinds.
+(define (compiler-reg-loop-park-site-direct) : i64
+  0)
+
+(define (compiler-reg-loop-park-site-splice) : i64
+  1)
+
+;; The decision this round hands to its rewrite. Everything is a dense array
+;; because the round is re-run from scratch when a loop is dropped.
+(defstruct CompilerRegLoopParkPlan
+  ;; per parked slot
+  (park-var (__tl_dyn-array i64))
+  (park-carrier (__tl_dyn-array i64))
+  (park-loop (__tl_dyn-array i64))
+  ;; the preheader block the store goes in, and the instruction index in it the
+  ;; store goes BEFORE
+  (park-pre (__tl_dyn-array i64))
+  (park-store-at (__tl_dyn-array i64))
+  ;; per reload site
+  (site-from (__tl_dyn-array i64))
+  (site-to (__tl_dyn-array i64))
+  (site-kind (__tl_dyn-array i64))
+  (site-mask (__tl_dyn-array i64))
+  (site-label (__tl_dyn-array i64))
+  (site-weight (__tl_dyn-array i64))
+  ;; per block: the parked slots whose store goes before this block terminator
+  (pre-mask (__tl_dyn-array i64))
+  ;; per block: the parked slots reloaded at this block head
+  (direct-mask (__tl_dyn-array i64))
+  ;; per var: the parked LOOPS this var is a targeted spilled resident of
+  (resident-mask (__tl_dyn-array i64))
+  ;; per parked loop slot: its header block
+  (loop-header (__tl_dyn-array i64))
+  ;; 0 = parked values, 1 = sites, 2 = parked loops
+  (counts (__tl_dyn-array i64)))
+
+(define (compiler-reg-loop-park-plan-make [blocks : i64] [vars : i64]) : CompilerRegLoopParkPlan
+  (CompilerRegLoopParkPlan
+    (array.make-array i64 (compiler-reg-loop-park-max-parked))
+    (array.make-array i64 (compiler-reg-loop-park-max-parked))
+    (array.make-array i64 (compiler-reg-loop-park-max-parked))
+    (array.make-array i64 (compiler-reg-loop-park-max-parked))
+    (array.make-array i64 (compiler-reg-loop-park-max-parked))
+    (array.make-array i64 (compiler-reg-loop-park-max-sites))
+    (array.make-array i64 (compiler-reg-loop-park-max-sites))
+    (array.make-array i64 (compiler-reg-loop-park-max-sites))
+    (array.make-array i64 (compiler-reg-loop-park-max-sites))
+    (array.make-array i64 (compiler-reg-loop-park-max-sites))
+    (array.make-array i64 (compiler-reg-loop-park-max-sites))
+    (array.make-array i64 blocks)
+    (array.make-array i64 blocks)
+    (array.make-array i64 vars)
+    (array.make-array i64 (compiler-reg-loop-park-max-loops))
+    (array.make-array i64 3)))
+
+(define (compiler-reg-loop-park-plan-reset! [pk : CompilerRegLoopParkPlan]) : unit
+  (begin
+    (compiler-reg-fill-i64-array pk.pre-mask 0)
+    (compiler-reg-fill-i64-array pk.direct-mask 0)
+    (compiler-reg-fill-i64-array pk.resident-mask 0)
+    (compiler-reg-fill-i64-array pk.counts 0)))
+
+(define (compiler-reg-loop-park-parked-count [pk : CompilerRegLoopParkPlan]) : i64
+  (array-ref pk.counts 0))
+
+(define (compiler-reg-loop-park-site-count [pk : CompilerRegLoopParkPlan]) : i64
+  (array-ref pk.counts 1))
+
+(define (compiler-reg-loop-park-loop-count [pk : CompilerRegLoopParkPlan]) : i64
+  (array-ref pk.counts 2))
+
+(define (compiler-reg-loop-park-block-label
+  [seq : ir.CompilerIrBlockSeq]
+  [index : i64]) : i64
+  (match (ir.compiler-ir-block-seq-ref seq index)
+    [(ir.CompilerIrBlock.Block label _) label]))
+
+(define (compiler-reg-loop-park-block-instrs
+  [seq : ir.CompilerIrBlockSeq]
+  [index : i64]) : ir.CompilerIrInstrSeq
+  (match (ir.compiler-ir-block-seq-ref seq index)
+    [(ir.CompilerIrBlock.Block _ instrs) instrs]))
+
+;; A dedicated preheader is a block whose LAST instruction is `Jump h`: one
+;; successor, so it is nobody else preheader and the store has an unambiguous
+;; place to go (just before that jump).
+(define (compiler-reg-loop-park-dedicated-preheader?
+  [seq : ir.CompilerIrBlockSeq]
+  [pred : i64]
+  [header-label : i64]) : bool
+  (let
+    [instrs : ir.CompilerIrInstrSeq
+      (compiler-reg-loop-park-block-instrs seq pred)]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (<= count 0)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Jump target) (= target header-label)]
+        [_ false]))))
+
+;; Every member other than the header has all of its predecessors inside L.
+;; In a reducible CFG this is free; in an irreducible one it is the claim that
+;; the preheader store dominates the whole region, and the nest backward closure
+;; does not establish it on its own.
+(define (compiler-reg-loop-park-single-entry?
+  [nest : CompilerRegLoopNest]
+  [header : i64]
+  [total : i64]
+  [generation : i64]) : bool
+  (let
+    [members : (__tl_dyn-array i64) nest.members]
+    [pred-offsets : (__tl_dyn-array i64) nest.pred-offsets]
+    [pred-sources : (__tl_dyn-array i64) nest.pred-sources]
+    [index : i64 0]
+    (begin
+      (while (< index total)
+        (let
+          [m : i64 (array-ref members index)]
+          [edge : i64 (array-ref pred-offsets m)]
+          [stop : i64 (array-ref pred-offsets (+ m 1))]
+          (begin
+            (unless
+              (= m header)
+              (while (< edge stop)
+                (begin
+                  (unless
+                    (compiler-reg-loop-nest-member?
+                      nest
+                      (array-ref pred-sources edge)
+                      generation)
+                    (return false))
+                  (set! edge (+ edge 1)))))
+            (set! index (+ index 1)))))
+      true)))
+
+;; Mention one var of L: stamp it a resident and charge this block weight to its
+;; in-loop reference total. The stamp doubles as the reset, so no array is
+;; cleared per loop.
+(define (compiler-reg-loop-park-note-resident!
+  [var : i64]
+  [vars : i64]
+  [weight : i64]
+  [stamp : (__tl_dyn-array i64)]
+  [refs : (__tl_dyn-array i64)]
+  [residents : (__tl_dyn-array i64)]
+  [cursor : (__tl_dyn-array i64)]
+  [generation : i64]) : unit
+  (when
+    (and (>= var 0) (< var vars))
+    (begin
+      (unless
+        (= (array-ref stamp var) generation)
+        (begin
+          (set! (array-ref stamp var) generation)
+          (set! (array-ref refs var) 0)
+          (let
+            [count : i64 (array-ref cursor 1)]
+            (when
+              (< count (array-length residents))
+              (begin
+                (set! (array-ref residents count) var)
+                (set! (array-ref cursor 1) (+ count 1)))))))
+      (set! (array-ref refs var) (+ (array-ref refs var) weight)))))
+
+(define (compiler-reg-loop-park-note-resident-ids!
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [vars : i64]
+  [weight : i64]
+  [stamp : (__tl_dyn-array i64)]
+  [refs : (__tl_dyn-array i64)]
+  [residents : (__tl_dyn-array i64)]
+  [cursor : (__tl_dyn-array i64)]
+  [generation : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index id-count)
+      (begin
+        (compiler-reg-loop-park-note-resident!
+          (array-ref ids index)
+          vars
+          weight
+          stamp
+          refs
+          residents
+          cursor
+          generation)
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-loop-park-note-resident-set!
+  [set : live.CompilerLiveI64Set]
+  [vars : i64]
+  [weight : i64]
+  [stamp : (__tl_dyn-array i64)]
+  [refs : (__tl_dyn-array i64)]
+  [residents : (__tl_dyn-array i64)]
+  [cursor : (__tl_dyn-array i64)]
+  [generation : i64]) : unit
+  (let
+    [words : i64 (live.compiler-live-set-word-count set)]
+    [word : i64 0]
+    (while (< word words)
+      (begin
+        (let
+          [bits : i64 (live.compiler-live-set-word-at-bounded set word)]
+          [base : i64 (* word (live.compiler-live-set-word-bits))]
+          (while (not (= bits 0))
+            (begin
+              (compiler-reg-loop-park-note-resident!
+                (+ base (compiler-reg-low-bit-index32 bits))
+                vars
+                weight
+                stamp
+                refs
+                residents
+                cursor
+                generation)
+              (set! bits (bit-and bits (- bits 1))))))
+        (set! word (+ word 1))))))
+
+;; residents(L) and their in-L weighted reference totals, in one walk over the
+;; loop blocks. Phi inputs count (`compiler-live-instr-use-ids!` reports them),
+;; so a value carried into L by a header phi is a resident and never a through
+;; value.
+(define (compiler-reg-loop-park-mark-residents!
+  [seq : ir.CompilerIrBlockSeq]
+  [nest : CompilerRegLoopNest]
+  [header : i64]
+  [total : i64]
+  [generation : i64]
+  [weights : (__tl_dyn-array i64)]
+  [vars : i64]
+  [stamp : (__tl_dyn-array i64)]
+  [refs : (__tl_dyn-array i64)]
+  [residents : (__tl_dyn-array i64)]
+  [cursor : (__tl_dyn-array i64)]) : unit
+  (let
+    [members : (__tl_dyn-array i64) nest.members]
+    [index : i64 (- 0 1)]
+    (while (< index total)
+      (begin
+        (let
+          [b : i64
+            (if (< index 0)
+              header
+              (array-ref members index))]
+          [instrs : ir.CompilerIrInstrSeq
+            (compiler-reg-loop-park-block-instrs seq b)]
+          [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+          [weight : i64 (array-ref weights b)]
+          [count : i64 instrs.len]
+          [i : i64 0]
+          (while (< i count)
+            (begin
+              (let
+                [instr : ir.CompilerIrInstr (array-ref slots i)]
+                [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+                [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+                (begin
+                  (if (< id-count 0)
+                    (compiler-reg-loop-park-note-resident-set!
+                      (live.compiler-live-instr-uses instr)
+                      vars
+                      weight
+                      stamp
+                      refs
+                      residents
+                      cursor
+                      generation)
+                    (compiler-reg-loop-park-note-resident-ids!
+                      ids
+                      id-count
+                      vars
+                      weight
+                      stamp
+                      refs
+                      residents
+                      cursor
+                      generation))
+                  (compiler-reg-loop-park-note-resident!
+                    (live.compiler-live-instr-def-var instr)
+                    vars
+                    weight
+                    stamp
+                    refs
+                    residents
+                    cursor
+                    generation)))
+              (set! i (+ i 1)))))
+        (set! index (+ index 1))))))
+
+;; Does `t` open with a phi? Nothing may be inserted above a phi, so such a
+;; block cannot host a reload at its head and its exit edges are spliced. An
+;; empty block answers true, so it is never chosen as a direct target either.
+(define (compiler-reg-loop-park-opens-with-phi?
+  [seq : ir.CompilerIrBlockSeq]
+  [t : i64]) : bool
+  (let
+    [instrs : ir.CompilerIrInstrSeq (compiler-reg-loop-park-block-instrs seq t)]
+    (if (<= (ir.compiler-ir-instr-seq-count instrs) 0)
+      true
+      (match (ir.compiler-ir-instr-seq-ref instrs 0)
+        [(ir.CompilerIrInstr.Phi _ _ _) true]
+        [_ false]))))
+
+(define (compiler-reg-loop-park-all-preds-inside?
+  [nest : CompilerRegLoopNest]
+  [t : i64]
+  [generation : i64]) : bool
+  (let
+    [pred-offsets : (__tl_dyn-array i64) nest.pred-offsets]
+    [pred-sources : (__tl_dyn-array i64) nest.pred-sources]
+    [edge : i64 (array-ref pred-offsets t)]
+    [stop : i64 (array-ref pred-offsets (+ t 1))]
+    (begin
+      (when (= edge stop) (return false))
+      (while (< edge stop)
+        (begin
+          (unless
+            (compiler-reg-loop-nest-member?
+              nest
+              (array-ref pred-sources edge)
+              generation)
+            (return false))
+          (set! edge (+ edge 1))))
+      true)))
+
+;; Is `var` an input of some phi of block `t` keyed on `from-label`? That is an
+;; EDGE use: the edge-precise analysis charges it to the predecessor live-out and
+;; keeps it out of `t` live-in, so the reload placement has to ask for it
+;; separately.
+(define (compiler-reg-loop-park-phi-input-on-edge?
+  [inputs : ir.CompilerIrPhiInputList]
+  [from-label : i64]
+  [var : i64]) : bool
+  (let
+    [seq : ir.CompilerIrPhiInputSeq
+      (ir.compiler-ir-phi-input-seq-from-list inputs)]
+    [slots : (__tl_dyn-array ir.CompilerIrPhiInput) seq.slots]
+    [count : i64 seq.len]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (let
+            [input : ir.CompilerIrPhiInput (array-ref slots index)]
+            (when
+              (= input.label from-label)
+              (match input.value
+                [(ir.CompilerIrValue.Var v) (when (= v var) (return true))]
+                [_ unit])))
+          (set! index (+ index 1))))
+      false)))
+
+;; The phi prefix of `t` runs from instruction zero to the first non-phi, so the
+;; scan stops there.
+(define (compiler-reg-loop-park-phi-use-on-edge?
+  [seq : ir.CompilerIrBlockSeq]
+  [t : i64]
+  [from-label : i64]
+  [var : i64]) : bool
+  (let
+    [instrs : ir.CompilerIrInstrSeq (compiler-reg-loop-park-block-instrs seq t)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref slots index)
+            [(ir.CompilerIrInstr.Phi _ inputs _)
+              (when
+                (compiler-reg-loop-park-phi-input-on-edge?
+                  inputs
+                  from-label
+                  var)
+                (return true))]
+            [_ (return false)])
+          (set! index (+ index 1))))
+      false)))
+
+;; Is `var` live-in at the block labelled `label`? A label the analysis does not
+;; know answers TRUE, so an unresolvable target keeps its reload.
+(define (compiler-reg-loop-park-live-in?
+  [liveness : live.CompilerFunctionLiveness]
+  [label : i64]
+  [var : i64]) : bool
+  (match (live.compiler-live-function-find-block liveness label)
+    [(live.CompilerLiveMaybeBlock.No) true]
+    [(live.CompilerLiveMaybeBlock.Some block)
+      (live.compiler-live-set-contains?
+        (live.compiler-live-block-live-in block)
+        var)]))
+
+;; A through value needs a reload at a site iff it is live-in at the site target
+;; OR it is a phi input there keyed on the site source block. Direct sites cover
+;; every edge into their target and their target has no phi, so only the live-in
+;; half applies to them.
+(define (compiler-reg-loop-park-needs-reload?
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [kind : i64]
+  [from : i64]
+  [to : i64]
+  [var : i64]) : bool
+  (or
+    (compiler-reg-loop-park-live-in?
+      liveness
+      (compiler-reg-loop-park-block-label seq to)
+      var)
+    (and
+      (= kind (compiler-reg-loop-park-site-splice))
+      (compiler-reg-loop-park-phi-use-on-edge?
+        seq
+        to
+        (compiler-reg-loop-park-block-label seq from)
+        var))))
+
+;; A through value is one the plan gave a single GP REGISTER to. A register PAIR
+;; is a two-word group and would need a two-word carrier, and a `Remat` home has
+;; no register to hand over, so both decline here.
+(define (compiler-reg-loop-park-through-eligible?
+  [type-segment-bases : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentTable]
+  [ineligible : live.CompilerLiveI64Set]
+  [var : i64]) : bool
+  (if (live.compiler-live-set-contains? ineligible var)
+    false
+    (match (compiler-reg-assignment-lookup assignments var)
+      [(CompilerRegMaybeLocation.No) false]
+      [(CompilerRegMaybeLocation.Some location)
+        (match location
+          [(CompilerRegLocation.Register _)
+            (match (compiler-reg-var-types-lookup type-info var)
+              [(CompilerRegMaybeType.No) false]
+              [(CompilerRegMaybeType.Some ty)
+                (compiler-reg-cold-call-protectable-type?
+                  type-segment-bases
+                  type-info.representations
+                  ty)])]
+          [_ false])])))
+
+;; A spliced block runs at most as often as either end of the edge it sits on,
+;; so the tighter of the two weights is the honest price. A direct reload sits
+;; IN its target and is charged the target weight.
+(define (compiler-reg-loop-park-min-weight [left : i64] [right : i64]) : i64
+  (if (< left right)
+    left
+    right))
+
+(define (compiler-reg-loop-park-splice-label
+  [seq : ir.CompilerIrBlockSeq]
+  [from : i64]
+  [index : i64]) : i64
+  (ir.compiler-ir-label
+    (str_cat.str-cat
+      (ir.compiler-ir-label-text (compiler-reg-loop-park-block-label seq from))
+      ".park"
+      (string.int->string index))))
+
+;; Find (or append) this loop own row for one exit edge. Direct rows are keyed
+;; by TARGET alone -- one reload at the head of `t` serves every edge into it --
+;; and spliced rows by (source, target). Returns the row index, or -1 when the
+;; per-loop budget is exhausted.
+(define (compiler-reg-loop-park-loop-site!
+  [lsite-from : (__tl_dyn-array i64)]
+  [lsite-to : (__tl_dyn-array i64)]
+  [lsite-kind : (__tl_dyn-array i64)]
+  [lsite-weight : (__tl_dyn-array i64)]
+  [count : i64]
+  [kind : i64]
+  [from : i64]
+  [to : i64]
+  [weight : i64]
+  [out-count : (__tl_dyn-array i64)]) : i64
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (when
+            (and
+              (= (array-ref lsite-kind index) kind)
+              (= (array-ref lsite-to index) to)
+              (or
+                (= kind (compiler-reg-loop-park-site-direct))
+                (= (array-ref lsite-from index) from)))
+            (begin
+              (set! (array-ref out-count 0) count)
+              (return index)))
+          (set! index (+ index 1))))
+      (when
+        (>= count (compiler-reg-loop-park-max-loop-sites))
+        (begin
+          (set! (array-ref out-count 0) count)
+          (return (- 0 1))))
+      (set! (array-ref lsite-from count) from)
+      (set! (array-ref lsite-to count) to)
+      (set! (array-ref lsite-kind count) kind)
+      (set! (array-ref lsite-weight count) weight)
+      (set! (array-ref out-count 0) (+ count 1))
+      count)))
+
+;; Every exit EDGE of L, reduced to reload sites. Returns the number of sites,
+;; or -1 to refuse the loop (an unresolvable successor label, or more sites than
+;; the per-loop budget).
+(define (compiler-reg-loop-park-collect-sites!
+  [seq : ir.CompilerIrBlockSeq]
+  [nest : CompilerRegLoopNest]
+  [liveness : live.CompilerFunctionLiveness]
+  [header : i64]
+  [total : i64]
+  [generation : i64]
+  [weights : (__tl_dyn-array i64)]
+  [lsite-from : (__tl_dyn-array i64)]
+  [lsite-to : (__tl_dyn-array i64)]
+  [lsite-kind : (__tl_dyn-array i64)]
+  [lsite-weight : (__tl_dyn-array i64)]
+  [scratch : (__tl_dyn-array i64)]) : i64
+  (let
+    [members : (__tl_dyn-array i64) nest.members]
+    [index : i64 (- 0 1)]
+    [count : i64 0]
+    (begin
+      (while (< index total)
+        (begin
+          (let
+            [b : i64
+              (if (< index 0)
+                header
+                (array-ref members index))]
+            [succs : live.CompilerLiveLabelSet
+              (live.compiler-live-block-successors
+                (ir.compiler-ir-block-seq-ref seq b))]
+            [more : bool true]
+            (while more
+              (match succs
+                [(live.CompilerLiveLabelSet.Nil) (set! more false)]
+                [(live.CompilerLiveLabelSet.Dense _ _)
+                  (begin
+                    (let
+                      [t : i64
+                        (live.compiler-live-function-block-index
+                          liveness
+                          (live.compiler-live-label-set-ref succs 0))]
+                      (begin
+                        (when (< t 0) (return (- 0 1)))
+                        (unless
+                          (compiler-reg-loop-nest-member? nest t generation)
+                          (let
+                            [direct? : bool
+                              (and
+                                (compiler-reg-loop-park-all-preds-inside?
+                                  nest
+                                  t
+                                  generation)
+                                (not
+                                  (compiler-reg-loop-park-opens-with-phi? seq t)))]
+                            [kind : i64
+                              (if direct?
+                                (compiler-reg-loop-park-site-direct)
+                                (compiler-reg-loop-park-site-splice))]
+                            ;; A spliced edge has to be redirectable at its
+                            ;; source; the one position that is not is a
+                            ;; `TotalEnumSwitch` trap edge, which carries the
+                            ;; late total-switch pass exhaustiveness proof.
+                            [_splice-ok : unit
+                              (when
+                                (and
+                                  (not direct?)
+                                  (not
+                                    (compiler-reg-loop-park-redirectable?
+                                      seq
+                                      b
+                                      (compiler-reg-loop-park-block-label seq t))))
+                                (return (- 0 1)))]
+                            [weight : i64
+                              (if direct?
+                                (array-ref weights t)
+                                (compiler-reg-loop-park-min-weight
+                                  (array-ref weights b)
+                                  (array-ref weights t)))]
+                            [row : i64
+                              (compiler-reg-loop-park-loop-site!
+                                lsite-from
+                                lsite-to
+                                lsite-kind
+                                lsite-weight
+                                count
+                                kind
+                                b
+                                t
+                                weight
+                                scratch)]
+                            (begin
+                              (set! count (array-ref scratch 0))
+                              (when (< row 0) (return (- 0 1))))))))
+                    (set! succs (live.compiler-live-label-set-tail succs)))])))
+          (set! index (+ index 1))))
+      count)))
+
+;; The reload mask and the total price of parking `var` around this loop.
+;; Returns the cost; the mask lands in `out` slot 0.
+(define (compiler-reg-loop-park-var-cost
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [lsite-from : (__tl_dyn-array i64)]
+  [lsite-to : (__tl_dyn-array i64)]
+  [lsite-kind : (__tl_dyn-array i64)]
+  [lsite-weight : (__tl_dyn-array i64)]
+  [site-count : i64]
+  [pre-weight : i64]
+  [var : i64]
+  [out : (__tl_dyn-array i64)]) : i64
+  (let
+    [index : i64 0]
+    [mask : i64 0]
+    [cost : i64 pre-weight]
+    (begin
+      (while (< index site-count)
+        (begin
+          (when
+            (compiler-reg-loop-park-needs-reload?
+              seq
+              liveness
+              (array-ref lsite-kind index)
+              (array-ref lsite-from index)
+              (array-ref lsite-to index)
+              var)
+            (begin
+              (set! mask (bit-or mask (shl 1 index)))
+              (set! cost (+ cost (array-ref lsite-weight index)))))
+          (set! index (+ index 1))))
+      (set! (array-ref out 0) mask)
+      cost)))
+
+;; The coldest through value of L not already picked: minimum whole-function
+;; reference weight over the vars live into the header that L never mentions.
+;; Parking the coldest first is what keeps the boundary movs cheap.
+(define (compiler-reg-loop-park-coldest-through
+  [live-in : live.CompilerLiveI64Set]
+  [type-segment-bases : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentTable]
+  [ineligible : live.CompilerLiveI64Set]
+  [benefit : (__tl_dyn-array i64)]
+  [resident-stamp : (__tl_dyn-array i64)]
+  [generation : i64]
+  [taken : (__tl_dyn-array bool)]
+  [picked : (__tl_dyn-array bool)]
+  [threshold : i64]) : i64
+  (let
+    [words : i64 (live.compiler-live-set-word-count live-in)]
+    [word : i64 0]
+    [best : i64 (- 0 1)]
+    [best-weight : i64 0]
+    (begin
+      (while (< word words)
+        (begin
+          (let
+            [bits : i64 (live.compiler-live-set-word-at-bounded live-in word)]
+            [base : i64 (* word (live.compiler-live-set-word-bits))]
+            (while (not (= bits 0))
+              (begin
+                (let
+                  [var : i64 (+ base (compiler-reg-low-bit-index32 bits))]
+                  (when
+                    (and
+                      (>= var 0)
+                      (< var threshold)
+                      (not (array-ref taken var))
+                      (not (array-ref picked var))
+                      (not (= (array-ref resident-stamp var) generation))
+                      (compiler-reg-loop-park-through-eligible?
+                        type-segment-bases
+                        type-info
+                        assignments
+                        ineligible
+                        var))
+                    (when
+                      (or (< best 0) (< (array-ref benefit var) best-weight))
+                      (begin
+                        (set! best var)
+                        (set! best-weight (array-ref benefit var))))))
+                (set! bits (bit-and bits (- bits 1))))))
+          (set! word (+ word 1))))
+      best)))
+
+;; Find (or append) the FUNCTION-wide row for one of this loop reload sites.
+;; The same edge can leave two nested loops at once, and both loops parked
+;; values are then reloaded in the same place; the mask is the union.
+;; Returns the row index, or -1 when the per-function budget is exhausted.
+(define (compiler-reg-loop-park-global-site!
+  [pk : CompilerRegLoopParkPlan]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [kind : i64]
+  [from : i64]
+  [to : i64]
+  [weight : i64]) : i64
+  (let
+    [count : i64 (array-ref pk.counts 1)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (when
+            (and
+              (= (array-ref pk.site-kind index) kind)
+              (= (array-ref pk.site-to index) to)
+              (or
+                (= kind (compiler-reg-loop-park-site-direct))
+                (= (array-ref pk.site-from index) from)))
+            (return index))
+          (set! index (+ index 1))))
+      (when (>= count (compiler-reg-loop-park-max-sites)) (return (- 0 1)))
+      (let
+        [label : i64
+          (if (= kind (compiler-reg-loop-park-site-direct))
+            (ir.compiler-ir-label-none)
+            (compiler-reg-loop-park-splice-label seq from count))]
+        (begin
+          ;; A minted label that already names a block would silently merge two
+          ;; regions, so the round declines instead.
+          (unless
+            (= kind (compiler-reg-loop-park-site-direct))
+            (when
+              (>= (live.compiler-live-function-block-index liveness label) 0)
+              (return (- 0 1))))
+          (set! (array-ref pk.site-from count) from)
+          (set! (array-ref pk.site-to count) to)
+          (set! (array-ref pk.site-kind count) kind)
+          (set! (array-ref pk.site-mask count) 0)
+          (set! (array-ref pk.site-label count) label)
+          (set! (array-ref pk.site-weight count) weight)
+          (set! (array-ref pk.counts 1) (+ count 1))
+          count)))))
+
+;; Reserve a function-wide row for every loop site the chosen values use, before
+;; any of them is committed: a park whose reloads cannot all be placed must not
+;; be placed at all. Returns false when the budget refuses one.
+(define (compiler-reg-loop-park-reserve-sites!
+  [pk : CompilerRegLoopParkPlan]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [lsite-from : (__tl_dyn-array i64)]
+  [lsite-to : (__tl_dyn-array i64)]
+  [lsite-kind : (__tl_dyn-array i64)]
+  [lsite-weight : (__tl_dyn-array i64)]
+  [lsite-global : (__tl_dyn-array i64)]
+  [site-count : i64]
+  [used : i64]) : bool
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index site-count)
+        (begin
+          (set! (array-ref lsite-global index) (- 0 1))
+          (when
+            (not (= (bit-and (shr used index) 1) 0))
+            (let
+              [row : i64
+                (compiler-reg-loop-park-global-site!
+                  pk
+                  seq
+                  liveness
+                  (array-ref lsite-kind index)
+                  (array-ref lsite-from index)
+                  (array-ref lsite-to index)
+                  (array-ref lsite-weight index))]
+              (begin
+                (when (< row 0) (return false))
+                (set! (array-ref lsite-global index) row))))
+          (set! index (+ index 1))))
+      true)))
+
+;; Everything the per-loop decision reads, gathered once per function.
+(defstruct CompilerRegLoopParkContext
+  (type-segment-bases i64)
+  (seq ir.CompilerIrBlockSeq)
+  (nest CompilerRegLoopNest)
+  (liveness live.CompilerFunctionLiveness)
+  (type-info CompilerRegVarTypes)
+  (assignments CompilerRegAssignmentTable)
+  (ineligible live.CompilerLiveI64Set)
+  (weights (__tl_dyn-array i64))
+  (benefit (__tl_dyn-array i64))
+  ;; per var: the plan left it in memory AND it is a GP register-eligible
+  ;; scalar -- P3's own candidate test, so both rounds mean the same thing by
+  ;; "a value the plan left in memory".
+  (spilled (__tl_dyn-array bool))
+  (vars i64)
+  (threshold i64))
+
+;; Everything it writes to. All of it is reused across loops and across rounds;
+;; the per-loop state is stamped rather than cleared.
+;; Everything it writes to. All of it is reused across loops and across rounds;
+;; the per-loop state is stamped rather than cleared.
+;; Everything it writes to. All of it is reused across loops and across rounds;
+;; the per-loop state is stamped rather than cleared.
+(defstruct CompilerRegLoopParkScratch
+  (resident-stamp (__tl_dyn-array i64))
+  (resident-refs (__tl_dyn-array i64))
+  (residents (__tl_dyn-array i64))
+  (taken (__tl_dyn-array bool))
+  (picked (__tl_dyn-array bool))
+  (chosen (__tl_dyn-array bool))
+  (lsite-from (__tl_dyn-array i64))
+  (lsite-to (__tl_dyn-array i64))
+  (lsite-kind (__tl_dyn-array i64))
+  (lsite-weight (__tl_dyn-array i64))
+  (lsite-global (__tl_dyn-array i64))
+  (pick-var (__tl_dyn-array i64))
+  (pick-mask (__tl_dyn-array i64))
+  (pick-resident (__tl_dyn-array i64))
+  ;; 0 = a callee out-parameter, 1 = the resident-list cursor
+  (tmp (__tl_dyn-array i64)))
+
+;; Residents recorded per loop. Overflowing the list can only cost the loop a
+;; rescue candidate -- membership itself is the stamp, which is complete -- so
+;; the bound is a compile-time choice and not a correctness one.
+(define (compiler-reg-loop-park-max-residents) : i64
+  1024)
+
+(define (compiler-reg-loop-park-scratch-make [vars : i64]) : CompilerRegLoopParkScratch
+  (CompilerRegLoopParkScratch
+    (array.make-array i64 vars)
+    (array.make-array i64 vars)
+    (array.make-array i64 (compiler-reg-loop-park-max-residents))
+    (array.make-array bool vars)
+    (array.make-array bool vars)
+    (array.make-array bool vars)
+    (array.make-array i64 (compiler-reg-loop-park-max-loop-sites))
+    (array.make-array i64 (compiler-reg-loop-park-max-loop-sites))
+    (array.make-array i64 (compiler-reg-loop-park-max-loop-sites))
+    (array.make-array i64 (compiler-reg-loop-park-max-loop-sites))
+    (array.make-array i64 (compiler-reg-loop-park-max-loop-sites))
+    (array.make-array i64 (compiler-reg-loop-park-max-per-loop))
+    (array.make-array i64 (compiler-reg-loop-park-max-per-loop))
+    (array.make-array i64 (compiler-reg-loop-park-max-per-loop))
+    (array.make-array i64 2)))
+
+(define (compiler-reg-loop-park-scratch-reset!
+  [sc : CompilerRegLoopParkScratch]) : unit
+  (begin
+    (compiler-reg-fill-i64-array sc.resident-stamp 0)
+    (compiler-reg-loop-park-fill-bool-array sc.taken false)
+    (compiler-reg-loop-park-fill-bool-array sc.picked false)
+    (compiler-reg-loop-park-fill-bool-array sc.chosen false)))
+
+;; Undo the two per-loop mark arrays. Only the entries this loop set are
+;; touched, so the cost is the size of the decision and not the size of the
+;; function.
+(define (compiler-reg-loop-park-clear-marks!
+  [sc : CompilerRegLoopParkScratch]
+  [picks : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index picks)
+      (begin
+        (set! (array-ref sc.picked (array-ref sc.pick-var index)) false)
+        (set! (array-ref sc.chosen (array-ref sc.pick-resident index)) false)
+        (set! index (+ index 1))))))
+
+;; The hottest spilled resident of L not already chosen.
+;;
+;; This is the value the next parked register is FOR, and it is a resident
+;; rather than any spilled value live over L for a structural reason: the
+;; register a parked value gives up is free over L and nowhere else, so only a
+;; value whose live range lies INSIDE L can take it. A spilled value that merely
+;; passes through L still needs a register outside L as well and is no
+;; competitor for this one.
+(define (compiler-reg-loop-park-hottest-spilled
+  [ctx : CompilerRegLoopParkContext]
+  [sc : CompilerRegLoopParkScratch]
+  [resident-count : i64]) : i64
+  (let
+    [index : i64 0]
+    [best : i64 (- 0 1)]
+    [best-weight : i64 0]
+    (begin
+      (while (< index resident-count)
+        (begin
+          (let
+            [var : i64 (array-ref sc.residents index)]
+            (when
+              (and
+                (< var ctx.threshold)
+                (not (array-ref sc.chosen var))
+                (array-ref ctx.spilled var))
+              (when
+                (or (< best 0) (> (array-ref sc.resident-refs var) best-weight))
+                (begin
+                  (set! best var)
+                  (set! best-weight (array-ref sc.resident-refs var))))))
+          (set! index (+ index 1))))
+      best)))
+
+;; Pair the loop's hottest spilled residents against its coldest through values,
+;; one register per resident, and stop as soon as a resident no longer pays for
+;; the value that would free a register for it. Returns how many pairs were
+;; taken; the pairs themselves are in `pick-*`.
+(define (compiler-reg-loop-park-pair!
+  [ctx : CompilerRegLoopParkContext]
+  [sc : CompilerRegLoopParkScratch]
+  [pk : CompilerRegLoopParkPlan]
+  [live-in : live.CompilerLiveI64Set]
+  [resident-count : i64]
+  [site-count : i64]
+  [pre-weight : i64]
+  [generation : i64]) : i64
+  (let
+    [parked : i64 (compiler-reg-loop-park-parked-count pk)]
+    [picks : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (if (or
+          (>= picks (compiler-reg-loop-park-max-per-loop))
+          (>= (+ parked picks) (compiler-reg-loop-park-max-parked)))
+          (set! done true)
+          (let
+            [resident : i64
+              (compiler-reg-loop-park-hottest-spilled ctx sc resident-count)]
+            [through : i64
+              (if (< resident 0)
+                (- 0 1)
+                (compiler-reg-loop-park-coldest-through
+                  live-in
+                  ctx.type-segment-bases
+                  ctx.type-info
+                  ctx.assignments
+                  ctx.ineligible
+                  ctx.benefit
+                  sc.resident-stamp
+                  generation
+                  sc.taken
+                  sc.picked
+                  ctx.threshold))]
+            (if (or (< resident 0) (< through 0))
+              (set! done true)
+              (let
+                [cost : i64
+                  (compiler-reg-loop-park-var-cost
+                    ctx.seq
+                    ctx.liveness
+                    sc.lsite-from
+                    sc.lsite-to
+                    sc.lsite-kind
+                    sc.lsite-weight
+                    site-count
+                    pre-weight
+                    through
+                    sc.tmp)]
+                (if (<= (array-ref sc.resident-refs resident) cost)
+                  (set! done true)
+                  (begin
+                    (set! (array-ref sc.pick-var picks) through)
+                    (set! (array-ref sc.pick-mask picks) (array-ref sc.tmp 0))
+                    (set! (array-ref sc.pick-resident picks) resident)
+                    (set! (array-ref sc.picked through) true)
+                    (set! (array-ref sc.chosen resident) true)
+                    (set! picks (+ picks 1)))))))))
+      picks)))
+
+;; Where in the preheader V's store goes: BEFORE this instruction index.
+;;
+;; As early as the preheader allows, which is what makes the parked register
+;; usable at all. The residents the round exists to rescue are typically DEFINED
+;; in the preheader -- a loop's base pointers are the hoisted `base + offset`
+;; addresses -- and a store parked at the preheader's terminator would keep V
+;; live ACROSS those defs, so V's register would still interfere with exactly
+;; the values it was parked for. The floor is the end of the phi prefix (nothing
+;; may be inserted above a phi) and the instruction after V's last definition
+;; here; the terminator is the ceiling, and it defines nothing, so a position
+;; always exists.
+(define (compiler-reg-loop-park-store-position
+  [seq : ir.CompilerIrBlockSeq]
+  [pre : i64]
+  [var : i64]) : i64
+  (let
+    [instrs : ir.CompilerIrInstrSeq
+      (compiler-reg-loop-park-block-instrs seq pre)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    [floor : i64 0]
+    [phis : bool true]
+    (begin
+      (while (< index (- count 1))
+        (begin
+          (let
+            [instr : ir.CompilerIrInstr (array-ref slots index)]
+            (begin
+              (when
+                phis
+                (match instr
+                  [(ir.CompilerIrInstr.Phi _ _ _) (set! floor (+ index 1))]
+                  [_ (set! phis false)]))
+              (when
+                (= (live.compiler-live-instr-def-var instr) var)
+                (set! floor (+ index 1)))))
+          (set! index (+ index 1))))
+      floor)))
+
+;; Write one loop's accepted pairs into the function-wide plan: a carrier per
+;; parked value, its store in the preheader, its bit in every reload site it
+;; needs, and every spilled resident of the loop in the loop's verify mask.
+(define (compiler-reg-loop-park-commit!
+  [ctx : CompilerRegLoopParkContext]
+  [sc : CompilerRegLoopParkScratch]
+  [pk : CompilerRegLoopParkPlan]
+  [header : i64]
+  [pre : i64]
+  [picks : i64]
+  [site-count : i64]
+  [resident-count : i64]) : unit
+  (let
+    [loop-slot : i64 (array-ref pk.counts 2)]
+    [index : i64 0]
+    (begin
+      (set! (array-ref pk.loop-header loop-slot) header)
+      ;; The verify mask is EVERY spilled resident of L, not just the ones the
+      ;; pairing priced against: the replan is free to hand the freed registers
+      ;; to whichever of them it ranks highest, and any of them coming out of
+      ;; memory is the rescue this loop was parked for.
+      (while (< index resident-count)
+        (begin
+          (let
+            [var : i64 (array-ref sc.residents index)]
+            (when
+              (and (< var ctx.threshold) (array-ref ctx.spilled var))
+              (set!
+                (array-ref pk.resident-mask var)
+                (bit-or (array-ref pk.resident-mask var) (shl 1 loop-slot)))))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index picks)
+        (let
+          [slot : i64 (array-ref pk.counts 0)]
+          [var : i64 (array-ref sc.pick-var index)]
+          [mask : i64 (array-ref sc.pick-mask index)]
+          [site : i64 0]
+          (begin
+            (set! (array-ref pk.park-var slot) var)
+            (set! (array-ref pk.park-carrier slot) (+ ctx.vars slot))
+            (set! (array-ref pk.park-loop slot) loop-slot)
+            (set! (array-ref pk.park-pre slot) pre)
+            (set!
+              (array-ref pk.park-store-at slot)
+              (compiler-reg-loop-park-store-position ctx.seq pre var))
+            (set!
+              (array-ref pk.pre-mask pre)
+              (bit-or (array-ref pk.pre-mask pre) (shl 1 slot)))
+            (while (< site site-count)
+              (begin
+                (when
+                  (not (= (bit-and (shr mask site) 1) 0))
+                  (let
+                    [row : i64 (array-ref sc.lsite-global site)]
+                    (begin
+                      (set!
+                        (array-ref pk.site-mask row)
+                        (bit-or (array-ref pk.site-mask row) (shl 1 slot)))
+                      (when
+                        (=
+                          (array-ref pk.site-kind row)
+                          (compiler-reg-loop-park-site-direct))
+                        (let
+                          [target : i64 (array-ref pk.site-to row)]
+                          (set!
+                            (array-ref pk.direct-mask target)
+                            (bit-or
+                              (array-ref pk.direct-mask target)
+                              (shl 1 slot))))))))
+                (set! site (+ site 1))))
+            (set! (array-ref sc.taken var) true)
+            (set! (array-ref pk.counts 0) (+ slot 1))
+            (set! index (+ index 1)))))
+      (set! (array-ref pk.counts 2) (+ loop-slot 1)))))
+
+;; One loop's whole decision. Returns how many values it parked.
+(define (compiler-reg-loop-park-try-loop!
+  [ctx : CompilerRegLoopParkContext]
+  [sc : CompilerRegLoopParkScratch]
+  [pk : CompilerRegLoopParkPlan]
+  [header : i64]
+  [generation : i64]) : i64
+  (let
+    [seq : ir.CompilerIrBlockSeq ctx.seq]
+    [nest : CompilerRegLoopNest ctx.nest]
+    [total : i64
+      (compiler-reg-loop-nest-header-members! nest header generation)]
+    [header-label : i64 (compiler-reg-loop-park-block-label seq header)]
+    [pre : i64 (compiler-reg-loop-nest-outside-pred nest header generation)]
+    (begin
+      ;; -1 is an entry-block header and -2 a loop no single place dominates.
+      (when (or (< pre 0) (>= pre nest.count)) (return 0))
+      (unless
+        (compiler-reg-loop-park-dedicated-preheader? seq pre header-label)
+        (return 0))
+      (unless
+        (compiler-reg-loop-park-single-entry? nest header total generation)
+        (return 0))
+      (when
+        (>=
+          (compiler-reg-loop-park-loop-count pk)
+          (compiler-reg-loop-park-max-loops))
+        (return 0))
+      (set! (array-ref sc.tmp 1) 0)
+      (compiler-reg-loop-park-mark-residents!
+        seq
+        nest
+        header
+        total
+        generation
+        ctx.weights
+        ctx.vars
+        sc.resident-stamp
+        sc.resident-refs
+        sc.residents
+        sc.tmp)
+      (let
+        [resident-count : i64 (array-ref sc.tmp 1)]
+        [site-count : i64
+          (compiler-reg-loop-park-collect-sites!
+            seq
+            nest
+            ctx.liveness
+            header
+            total
+            generation
+            ctx.weights
+            sc.lsite-from
+            sc.lsite-to
+            sc.lsite-kind
+            sc.lsite-weight
+            sc.tmp)]
+        [live-in : live.CompilerLiveI64Set
+          (match (live.compiler-live-function-find-block
+            ctx.liveness
+            header-label)
+            [(live.CompilerLiveMaybeBlock.No) (live.compiler-live-set-empty)]
+            [(live.CompilerLiveMaybeBlock.Some block)
+              (live.compiler-live-block-live-in block)])]
+        (begin
+          (when (< site-count 0) (return 0))
+          (let
+            [picks : i64
+              (compiler-reg-loop-park-pair!
+                ctx
+                sc
+                pk
+                live-in
+                resident-count
+                site-count
+                (array-ref ctx.weights pre)
+                generation)]
+            [used : i64 0]
+            [index : i64 0]
+            [site-base : i64 (compiler-reg-loop-park-site-count pk)]
+            (begin
+              (when
+                (= picks 0)
+                (begin
+                  (compiler-reg-loop-park-clear-marks! sc picks)
+                  (return 0)))
+              (while (< index picks)
+                (begin
+                  (set! used (bit-or used (array-ref sc.pick-mask index)))
+                  (set! index (+ index 1))))
+              ;; Reserve every reload site BEFORE any value is committed: a park
+              ;; whose reloads cannot all be placed must not be placed at all.
+              (unless
+                (compiler-reg-loop-park-reserve-sites!
+                  pk
+                  seq
+                  ctx.liveness
+                  sc.lsite-from
+                  sc.lsite-to
+                  sc.lsite-kind
+                  sc.lsite-weight
+                  sc.lsite-global
+                  site-count
+                  used)
+                (begin
+                  (set! (array-ref pk.counts 1) site-base)
+                  (compiler-reg-loop-park-clear-marks! sc picks)
+                  (return 0)))
+              (compiler-reg-loop-park-commit!
+                ctx
+                sc
+                pk
+                header
+                pre
+                picks
+                site-count
+                resident-count)
+              (compiler-reg-loop-park-clear-marks! sc picks)
+              picks)))))))
+
+;; Loop headers innermost-first: a header depth is the number of loops that
+;; contain it, so ordering by it descending hands the registers to the innermost
+;; loop first. Ties are sibling loops, which do not interact.
+(define (compiler-reg-loop-park-order-headers!
+  [nest : CompilerRegLoopNest]
+  [depths : (__tl_dyn-array i64)]
+  [order : (__tl_dyn-array i64)]
+  [used : (__tl_dyn-array bool)]) : i64
+  (let
+    [headers : i64 nest.header-count]
+    [cap : i64
+      (if (< headers (compiler-reg-loop-park-max-headers))
+        headers
+        (compiler-reg-loop-park-max-headers))]
+    [out : i64 0]
+    (begin
+      (while (< out cap)
+        (let
+          [index : i64 0]
+          [best : i64 (- 0 1)]
+          [best-depth : i64 0]
+          (begin
+            (while (< index headers)
+              (begin
+                (unless
+                  (array-ref used index)
+                  (let
+                    [h : i64 (array-ref nest.headers index)]
+                    (when
+                      (or (< best 0) (> (array-ref depths h) best-depth))
+                      (begin
+                        (set! best index)
+                        (set! best-depth (array-ref depths h))))))
+                (set! index (+ index 1))))
+            (when (< best 0) (return out))
+            (set! (array-ref used best) true)
+            (set! (array-ref order out) (array-ref nest.headers best))
+            (set! out (+ out 1)))))
+      out)))
+
+;; Every loop decision for one round, innermost-first. Returns how many values
+;; were parked in total.
+(define (compiler-reg-loop-park-analyze!
+  [ctx : CompilerRegLoopParkContext]
+  [sc : CompilerRegLoopParkScratch]
+  [pk : CompilerRegLoopParkPlan]
+  [order : (__tl_dyn-array i64)]
+  [order-count : i64]
+  [dropped : (__tl_dyn-array bool)]
+  [gen-base : i64]) : i64
+  (let
+    [index : i64 0]
+    [generation : i64 gen-base]
+    (begin
+      (compiler-reg-loop-park-plan-reset! pk)
+      (compiler-reg-loop-park-scratch-reset! sc)
+      (while (< index order-count)
+        (begin
+          (let
+            [h : i64 (array-ref order index)]
+            (unless
+              (array-ref dropped h)
+              (let
+                [_parked : i64
+                  (begin
+                    (set! generation (+ generation 1))
+                    (compiler-reg-loop-park-try-loop! ctx sc pk h generation))]
+                unit)))
+          (set! index (+ index 1))))
+      (compiler-reg-loop-park-parked-count pk))))
+
+(define (compiler-reg-loop-park-fill-bool-array
+  [items : (__tl_dyn-array bool)]
+  [value : bool]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (array-length items)]
+    (while (< index count)
+      (begin
+        (set! (array-ref items index) value)
+        (set! index (+ index 1))))))
+
+;; ---------------------------------------------------------------------------
+;; The rewrite.
+;; ---------------------------------------------------------------------------
+;; Does `b` terminator name `target-label` in a position this pass can point at
+;; a spliced block? A `TotalEnumSwitch` TRAP edge is deliberately excluded: the
+;; late total-switch pass stores that block explicitly as its exhaustiveness
+;; proof, so it is left exactly where it is and a loop that would have to
+;; redirect it is refused instead. (It cannot arise in practice -- a trap block
+;; aborts, so nothing is live into it -- but the refusal is what makes that a
+;; fact about the code rather than about the optimizer.)
+(define (compiler-reg-loop-park-cases-name?
+  [cases : ir.CompilerIrSwitchCaseList]
+  [target-label : i64]) : bool
+  (let
+    [seq : ir.CompilerIrSwitchCaseSeq
+      (ir.compiler-ir-switch-case-seq-from-list cases)]
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) seq.slots]
+    [count : i64 seq.len]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref slots index)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (when (= label target-label) (return true))])
+          (set! index (+ index 1))))
+      false)))
+
+(define (compiler-reg-loop-park-redirectable?
+  [seq : ir.CompilerIrBlockSeq]
+  [b : i64]
+  [target-label : i64]) : bool
+  (let
+    [instrs : ir.CompilerIrInstrSeq (compiler-reg-loop-park-block-instrs seq b)]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (<= count 0)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Jump t) (= t target-label)]
+        [(ir.CompilerIrInstr.Branch _ t f)
+          (or (= t target-label) (= f target-label))]
+        [(ir.CompilerIrInstr.TotalEnumBranch _ t f)
+          (or (= t target-label) (= f target-label))]
+        [(ir.CompilerIrInstr.Switch _ _ cases default)
+          (or
+            (= default target-label)
+            (compiler-reg-loop-park-cases-name? cases target-label))]
+        [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases default trap)
+          (and
+            (not (= trap target-label))
+            (or
+              (= default target-label)
+              (compiler-reg-loop-park-cases-name? cases target-label)))]
+        [_ false]))))
+
+;; The spliced block that now carries the reloads of edge (b -> label), or
+;; `label` itself when this edge is not spliced.
+(define (compiler-reg-loop-park-subst-label
+  [pk : CompilerRegLoopParkPlan]
+  [seq : ir.CompilerIrBlockSeq]
+  [b : i64]
+  [label : i64]) : i64
+  (let
+    [count : i64 (compiler-reg-loop-park-site-count pk)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (when
+            (and
+              (=
+                (array-ref pk.site-kind index)
+                (compiler-reg-loop-park-site-splice))
+              (= (array-ref pk.site-from index) b)
+              (=
+                (compiler-reg-loop-park-block-label
+                  seq
+                  (array-ref pk.site-to index))
+                label))
+            (return (array-ref pk.site-label index)))
+          (set! index (+ index 1))))
+      label)))
+
+(define (compiler-reg-loop-park-redirect-cases
+  [pk : CompilerRegLoopParkPlan]
+  [seq : ir.CompilerIrBlockSeq]
+  [b : i64]
+  [cases : ir.CompilerIrSwitchCaseList]) : ir.CompilerIrSwitchCaseList
+  (let
+    [cseq : ir.CompilerIrSwitchCaseSeq
+      (ir.compiler-ir-switch-case-seq-from-list cases)]
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cseq.slots]
+    [count : i64 cseq.len]
+    [out : (__tl_dyn-array ir.CompilerIrSwitchCase)
+      (array.make-array ir.CompilerIrSwitchCase count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref slots index)
+            [(ir.CompilerIrSwitchCase.Case tag label)
+              (set!
+                (array-ref out index)
+                (ir.CompilerIrSwitchCase.Case
+                  tag
+                  (compiler-reg-loop-park-subst-label pk seq b label)))])
+          (set! index (+ index 1))))
+      (ir.CompilerIrSwitchCaseList.Array (ir.CompilerIrSwitchCaseSeq out count)))))
+
+(define (compiler-reg-loop-park-redirect-instr
+  [pk : CompilerRegLoopParkPlan]
+  [seq : ir.CompilerIrBlockSeq]
+  [b : i64]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Jump t)
+      (ir.CompilerIrInstr.Jump (compiler-reg-loop-park-subst-label pk seq b t))]
+    [(ir.CompilerIrInstr.Branch cond t f)
+      (ir.CompilerIrInstr.Branch
+        cond
+        (compiler-reg-loop-park-subst-label pk seq b t)
+        (compiler-reg-loop-park-subst-label pk seq b f))]
+    [(ir.CompilerIrInstr.TotalEnumBranch cond t f)
+      (ir.CompilerIrInstr.TotalEnumBranch
+        cond
+        (compiler-reg-loop-park-subst-label pk seq b t)
+        (compiler-reg-loop-park-subst-label pk seq b f))]
+    [(ir.CompilerIrInstr.Switch value width cases default)
+      (ir.CompilerIrInstr.Switch
+        value
+        width
+        (compiler-reg-loop-park-redirect-cases pk seq b cases)
+        (compiler-reg-loop-park-subst-label pk seq b default))]
+    [(ir.CompilerIrInstr.TotalEnumSwitch value width cases default trap)
+      (ir.CompilerIrInstr.TotalEnumSwitch
+        value
+        width
+        (compiler-reg-loop-park-redirect-cases pk seq b cases)
+        (compiler-reg-loop-park-subst-label pk seq b default)
+        trap)]
+    [_ instr]))
+
+;; A phi input keyed on a predecessor whose edge into this block was spliced now
+;; arrives from the spliced block instead, and reads the value the reload there
+;; has just restored.
+(define (compiler-reg-loop-park-rekey-label
+  [pk : CompilerRegLoopParkPlan]
+  [seq : ir.CompilerIrBlockSeq]
+  [t : i64]
+  [label : i64]) : i64
+  (let
+    [count : i64 (compiler-reg-loop-park-site-count pk)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (when
+            (and
+              (=
+                (array-ref pk.site-kind index)
+                (compiler-reg-loop-park-site-splice))
+              (= (array-ref pk.site-to index) t)
+              (=
+                (compiler-reg-loop-park-block-label
+                  seq
+                  (array-ref pk.site-from index))
+                label))
+            (return (array-ref pk.site-label index)))
+          (set! index (+ index 1))))
+      label)))
+
+(define (compiler-reg-loop-park-rekey-instr
+  [pk : CompilerRegLoopParkPlan]
+  [seq : ir.CompilerIrBlockSeq]
+  [t : i64]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Phi dst inputs ty)
+      (let
+        [pseq : ir.CompilerIrPhiInputSeq
+          (ir.compiler-ir-phi-input-seq-from-list inputs)]
+        [slots : (__tl_dyn-array ir.CompilerIrPhiInput) pseq.slots]
+        [count : i64 pseq.len]
+        [out : (__tl_dyn-array ir.CompilerIrPhiInput)
+          (array.make-array ir.CompilerIrPhiInput count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (let
+                [input : ir.CompilerIrPhiInput (array-ref slots index)]
+                (set!
+                  (array-ref out index)
+                  (ir.CompilerIrPhiInput
+                    input.value
+                    (compiler-reg-loop-park-rekey-label pk seq t input.label))))
+              (set! index (+ index 1))))
+          (ir.CompilerIrInstr.Phi
+            dst
+            (ir.CompilerIrPhiInputList.Array
+              (ir.CompilerIrPhiInputSeq out count))
+            ty)))]
+    [_ instr]))
+
+(define (compiler-reg-loop-park-push-reloads!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [pk : CompilerRegLoopParkPlan]
+  [type-info : CompilerRegVarTypes]
+  [mask : i64]) : unit
+  (let
+    [count : i64 (compiler-reg-loop-park-parked-count pk)]
+    [slot : i64 0]
+    (while (< slot count)
+      (begin
+        (when
+          (not (= (bit-and (shr mask slot) 1) 0))
+          (let
+            [var : i64 (array-ref pk.park-var slot)]
+            (match (compiler-reg-var-types-lookup type-info var)
+              [(CompilerRegMaybeType.No) unit]
+              [(CompilerRegMaybeType.Some ty)
+                (ir.compiler-ir-instr-builder-push!
+                  builder
+                  (compiler-reg-carrier-reload-mov
+                    var
+                    (array-ref pk.park-carrier slot)
+                    ty))])))
+        (set! slot (+ slot 1))))))
+
+(define (compiler-reg-loop-park-push-stores!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [pk : CompilerRegLoopParkPlan]
+  [type-info : CompilerRegVarTypes]
+  [mask : i64]
+  [at : i64]) : unit
+  (let
+    [count : i64 (compiler-reg-loop-park-parked-count pk)]
+    [slot : i64 0]
+    (while (< slot count)
+      (begin
+        (when
+          (and
+            (not (= (bit-and (shr mask slot) 1) 0))
+            (= (array-ref pk.park-store-at slot) at))
+          (let
+            [var : i64 (array-ref pk.park-var slot)]
+            (match (compiler-reg-var-types-lookup type-info var)
+              [(CompilerRegMaybeType.No) unit]
+              [(CompilerRegMaybeType.Some ty)
+                (ir.compiler-ir-instr-builder-push!
+                  builder
+                  (compiler-reg-carrier-store-mov
+                    (array-ref pk.park-carrier slot)
+                    var
+                    ty))])))
+        (set! slot (+ slot 1))))))
+
+(define (compiler-reg-loop-park-block-touched?
+  [pk : CompilerRegLoopParkPlan]
+  [index : i64]) : bool
+  (let
+    [count : i64 (compiler-reg-loop-park-site-count pk)]
+    [site : i64 0]
+    (begin
+      (unless (= (array-ref pk.pre-mask index) 0) (return true))
+      (unless (= (array-ref pk.direct-mask index) 0) (return true))
+      (while (< site count)
+        (begin
+          (when
+            (and
+              (=
+                (array-ref pk.site-kind site)
+                (compiler-reg-loop-park-site-splice))
+              (or
+                (= (array-ref pk.site-from site) index)
+                (= (array-ref pk.site-to site) index)))
+            (return true))
+          (set! site (+ site 1))))
+      false)))
+
+(define (compiler-reg-loop-park-rewrite-block
+  [pk : CompilerRegLoopParkPlan]
+  [seq : ir.CompilerIrBlockSeq]
+  [type-info : CompilerRegVarTypes]
+  [index : i64]) : ir.CompilerIrBlock
+  (if (not (compiler-reg-loop-park-block-touched? pk index))
+    (ir.compiler-ir-block-seq-ref seq index)
+    (match (ir.compiler-ir-block-seq-ref seq index)
+      [(ir.CompilerIrBlock.Block label instrs)
+        (let
+          [direct : i64 (array-ref pk.direct-mask index)]
+          [stores : i64 (array-ref pk.pre-mask index)]
+          [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+          [count : i64 instrs.len]
+          [last : i64 (- count 1)]
+          [builder : ir.CompilerIrInstrBuilder
+            (ir.compiler-ir-instr-builder-with-capacity
+              (+ count (compiler-reg-loop-park-max-parked)))]
+          [i : i64 0]
+          (begin
+            ;; Reloads go at the very head; admission proved this block does not
+            ;; open with a phi whenever `direct` is nonzero.
+            (compiler-reg-loop-park-push-reloads!
+              (&mut builder)
+              pk
+              type-info
+              direct)
+            (while (< i count)
+              (begin
+                ;; Each store sits as early in the preheader as its own value
+                ;; allows (see `compiler-reg-loop-park-store-position`), so the
+                ;; emission is per instruction index rather than one block at
+                ;; the terminator.
+                (when
+                  (not (= stores 0))
+                  (compiler-reg-loop-park-push-stores!
+                    (&mut builder)
+                    pk
+                    type-info
+                    stores
+                    i))
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (if (= i last)
+                    (compiler-reg-loop-park-redirect-instr
+                      pk
+                      seq
+                      index
+                      (array-ref slots i))
+                    (compiler-reg-loop-park-rekey-instr
+                      pk
+                      seq
+                      index
+                      (array-ref slots i))))
+                (set! i (+ i 1))))
+            (ir.CompilerIrBlock.Block
+              label
+              (ir.compiler-ir-instr-builder-to-seq builder))))])))
+
+(define (compiler-reg-loop-park-splice-block
+  [pk : CompilerRegLoopParkPlan]
+  [seq : ir.CompilerIrBlockSeq]
+  [type-info : CompilerRegVarTypes]
+  [row : i64]) : ir.CompilerIrBlock
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (+ 1 (compiler-reg-loop-park-max-parked)))]
+    (begin
+      (compiler-reg-loop-park-push-reloads!
+        (&mut builder)
+        pk
+        type-info
+        (array-ref pk.site-mask row))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Jump
+          (compiler-reg-loop-park-block-label seq (array-ref pk.site-to row))))
+      (ir.CompilerIrBlock.Block
+        (array-ref pk.site-label row)
+        (ir.compiler-ir-instr-builder-to-seq builder)))))
+
+;; Spliced blocks are APPENDED, never interleaved: every existing block keeps
+;; its layout position, so the fall-through relation the emitter reads is
+;; exactly the one the input had.
+(define (compiler-reg-loop-park-splice-count [pk : CompilerRegLoopParkPlan]) : i64
+  (let
+    [count : i64 (compiler-reg-loop-park-site-count pk)]
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (when
+            (=
+              (array-ref pk.site-kind index)
+              (compiler-reg-loop-park-site-splice))
+            (set! total (+ total 1)))
+          (set! index (+ index 1))))
+      total)))
+
+(define (compiler-reg-loop-park-rewrite-blocks
+  [pk : CompilerRegLoopParkPlan]
+  [seq : ir.CompilerIrBlockSeq]
+  [type-info : CompilerRegVarTypes]) : ir.CompilerIrBlockList
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [splices : i64 (compiler-reg-loop-park-splice-count pk)]
+    [sites : i64 (compiler-reg-loop-park-site-count pk)]
+    [out : (__tl_dyn-array ir.CompilerIrBlock)
+      (array.make-array ir.CompilerIrBlock (+ count splices))]
+    [index : i64 0]
+    [write : i64 count]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref out index)
+            (compiler-reg-loop-park-rewrite-block pk seq type-info index))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index sites)
+        (begin
+          (when
+            (=
+              (array-ref pk.site-kind index)
+              (compiler-reg-loop-park-site-splice))
+            (begin
+              (set!
+                (array-ref out write)
+                (compiler-reg-loop-park-splice-block pk seq type-info index))
+              (set! write (+ write 1))))
+          (set! index (+ index 1))))
+      (ir.CompilerIrBlockList.Array
+        (ir.CompilerIrBlockSeq out (+ count splices))))))
+
+;; ---------------------------------------------------------------------------
+;; The round: analyse, rewrite, replan, verify.
+;; ---------------------------------------------------------------------------
+;; Drop every parked loop whose targeted spilled residents are ALL still in
+;; memory: its parking movs would be pure overhead. Reports how many were
+;; dropped, so the caller knows whether to retry.
+(define (compiler-reg-loop-park-drop-failed!
+  [pk : CompilerRegLoopParkPlan]
+  [plan : CompilerRegPlan]
+  [vars : i64]
+  [dropped : (__tl_dyn-array bool)]) : i64
+  (let
+    [assignments : CompilerRegAssignmentTable
+      (compiler-reg-plan-assignments plan)]
+    [loops : i64 (compiler-reg-loop-park-loop-count pk)]
+    [rescued : i64 0]
+    [var : i64 0]
+    [failed : i64 0]
+    (begin
+      (while (< var vars)
+        (begin
+          (let
+            [mask : i64 (array-ref pk.resident-mask var)]
+            (when
+              (and
+                (not (= mask 0))
+                (compiler-reg-call-hole-register-homed? assignments var))
+              (set! rescued (bit-or rescued mask))))
+          (set! var (+ var 1))))
+      (let
+        [k : i64 0]
+        (while (< k loops)
+          (begin
+            (when
+              (= (bit-and (shr rescued k) 1) 0)
+              (begin
+                (set! (array-ref dropped (array-ref pk.loop-header k)) true)
+                (set! failed (+ failed 1))))
+            (set! k (+ k 1)))))
+      failed)))
+
+;; The parts of the round that do not change between retries.
+(defstruct CompilerRegLoopParkRound
+  (type-segment-bases i64)
+  (target-abi cabi.CompilerRegTargetAbi)
+  (func ir.CompilerIrFunction)
+  (plan CompilerRegPlan)
+  (type-info CompilerRegVarTypes)
+  (temp-start i64)
+  (threshold i64)
+  (cold-split bool)
+  (base-cost i64)
+  (vars i64)
+  (headers i64))
+
+(define (compiler-reg-loop-park-round
+  [rd : CompilerRegLoopParkRound]
+  [ctx : CompilerRegLoopParkContext]
+  [sc : CompilerRegLoopParkScratch]
+  [pk : CompilerRegLoopParkPlan]
+  [order : (__tl_dyn-array i64)]
+  [order-count : i64]
+  [dropped : (__tl_dyn-array bool)]
+  [round : i64]) : CompilerRegCallHoleSplit
+  (let
+    [none : CompilerRegCallHoleSplit
+      (compiler-reg-call-hole-split-none
+        rd.func
+        rd.vars
+        rd.plan
+        rd.type-info
+        rd.temp-start)]
+    (if (>= round (compiler-reg-loop-park-max-rounds))
+      none
+      (let
+        ;; Generations must never repeat across rounds: `member?` reads the
+        ;; stamp, so a number reused after a different loop wrote it would make
+        ;; that loop blocks look like members of this one.
+        [parked : i64
+          (compiler-reg-loop-park-analyze!
+            ctx
+            sc
+            pk
+            order
+            order-count
+            dropped
+            (+ rd.headers (+ 1 (* round (+ order-count 1)))))]
+        (if (= parked 0)
+          none
+          (match rd.func
+            [(ir.CompilerIrFunction.Function name params ret-ty _ _)
+              (let
+                [park-blocks : ir.CompilerIrBlockList
+                  (compiler-reg-loop-park-rewrite-blocks
+                    pk
+                    ctx.seq
+                    rd.type-info)]
+                [park-vars : i64 (+ rd.vars parked)]
+                [park-func : ir.CompilerIrFunction
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    park-vars
+                    park-blocks)]
+                [park-types : CompilerRegVarTypes
+                  (compiler-reg-function-var-types-with-representations
+                    park-func
+                    rd.type-info.representations)]
+                [park-plan : CompilerRegPlan
+                  (compiler-reg-plan-function-scalar-forced-spill-with-types
+                    rd.type-segment-bases
+                    rd.target-abi
+                    park-func
+                    rd.threshold
+                    rd.cold-split
+                    park-types
+                    (compiler-reg-assignment-table-empty))]
+                ;; The rewrite adds blocks, so the parked function gets its own
+                ;; weights; they agree with the input on every original block,
+                ;; because splicing a block onto an edge moves no loop
+                ;; membership.
+                [park-cost : i64
+                  (compiler-reg-call-hole-plan-cost
+                    (live.compiler-live-ir-block-list-to-seq park-blocks)
+                    (compiler-reg-call-hole-block-weights park-blocks)
+                    park-vars
+                    park-plan)]
+                (if (< park-cost rd.base-cost)
+                  (CompilerRegCallHoleSplit.Split
+                    park-func
+                    park-vars
+                    park-plan
+                    park-types
+                    rd.threshold)
+                  ;; The set did not pay for itself. Drop the loops whose
+                  ;; previously spilled residents the replan left in memory --
+                  ;; those are the parks with nothing to show for the boundary
+                  ;; movs -- and try the smaller set. With none to drop there is
+                  ;; no smaller set and the round declines.
+                  (let
+                    [failed : i64
+                      (compiler-reg-loop-park-drop-failed!
+                        pk
+                        park-plan
+                        rd.vars
+                        dropped)]
+                    (if (> failed 0)
+                      (compiler-reg-loop-park-round
+                        rd
+                        ctx
+                        sc
+                        pk
+                        order
+                        order-count
+                        dropped
+                        (+ round 1))
+                      none))))]))))))
+
+;; The whole round: loop structure and the current plan in, a further split view
+;; out. Declines to its input -- same function, same watermark, same plan, same
+;; threshold -- whenever it cannot prove the rewrite is downhill.
+(define (compiler-reg-loop-park-rewrite-function
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]
+  [temp-start : i64]
+  [cold-split : bool]) : CompilerRegCallHoleSplit
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      (let
+        [none : CompilerRegCallHoleSplit
+          (compiler-reg-call-hole-split-none
+            func
+            vars
+            plan
+            type-info
+            temp-start)]
+        [threshold : i64
+          (if (>= temp-start 0)
+            temp-start
+            vars)]
+        (if (or
+          (< threshold 1)
+          (not
+            (compiler-reg-assignment-table-has-spill?
+              (compiler-reg-plan-assignments plan))))
+          none
+          (let
+            [seq : ir.CompilerIrBlockSeq
+              (live.compiler-live-ir-block-list-to-seq blocks)]
+            [count : i64 (ir.compiler-ir-block-seq-count seq)]
+            [nest : CompilerRegLoopNest (compiler-reg-loop-nest-build-seq seq)]
+            (if (or
+              (< count 2)
+              (= (compiler-reg-loop-nest-header-count nest) 0))
+              none
+              (let
+                [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
+                [_depths : unit (compiler-reg-loop-nest-depths! nest depths)]
+                [weights : (__tl_dyn-array i64) (array.make-array i64 count)]
+                [order : (__tl_dyn-array i64)
+                  (array.make-array i64 (compiler-reg-loop-park-max-headers))]
+                [used : (__tl_dyn-array bool)
+                  (array.make-array bool nest.header-count)]
+                [index : i64 0]
+                (begin
+                  (while (< index count)
+                    (begin
+                      (set!
+                        (array-ref weights index)
+                        (compiler-reg-call-hole-block-weight
+                          (array-ref depths index)))
+                      (set! index (+ index 1))))
+                  (let
+                    [order-count : i64
+                      (compiler-reg-loop-park-order-headers!
+                        nest
+                        depths
+                        order
+                        used)]
+                    (if (= order-count 0)
+                      none
+                      (let
+                        [benefit : (__tl_dyn-array i64)
+                          (array.make-array i64 vars)]
+                        [_benefit : unit
+                          (compiler-reg-call-hole-ref-weights!
+                            benefit
+                            seq
+                            weights)]
+                        [ineligible : live.CompilerLiveI64Set
+                          (compiler-reg-ineligible-vars-non-params
+                            type-segment-bases
+                            func
+                            type-info
+                            target-abi)]
+                        [spilled : (__tl_dyn-array bool)
+                          (array.make-array bool vars)]
+                        [spilled-count : i64
+                          (compiler-reg-call-hole-mark-eligible!
+                            type-segment-bases
+                            type-info
+                            (compiler-reg-plan-assignments plan)
+                            ineligible
+                            threshold
+                            spilled)]
+                        [ctx : CompilerRegLoopParkContext
+                          (CompilerRegLoopParkContext
+                            type-segment-bases
+                            seq
+                            nest
+                            ;; Edge-precise: a phi input belongs to its own
+                            ;; predecessor edge, which is what makes "live-in at
+                            ;; the header" and "live on this exit edge" mean the
+                            ;; SSA facts the placement rests on.
+                            (live.compiler-live-analyze-function-edge-precise
+                              func)
+                            type-info
+                            (compiler-reg-plan-assignments plan)
+                            ineligible
+                            weights
+                            benefit
+                            spilled
+                            vars
+                            threshold)]
+                        (if (= spilled-count 0)
+                          none
+                          (compiler-reg-loop-park-round
+                            (CompilerRegLoopParkRound
+                              type-segment-bases
+                              target-abi
+                              func
+                              plan
+                              type-info
+                              temp-start
+                              threshold
+                              cold-split
+                              (compiler-reg-call-hole-plan-cost
+                                seq
+                                weights
+                                vars
+                                plan)
+                              vars
+                              nest.header-count)
+                            ctx
+                            (compiler-reg-loop-park-scratch-make vars)
+                            (compiler-reg-loop-park-plan-make count vars)
+                            order
+                            order-count
+                            (array.make-array bool count)
+                            0)))))))))))]))
+
 (define (compiler-reg-call-region-root
   [parents : (__tl_dyn-array i64)]
   [n : i64]

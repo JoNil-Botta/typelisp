@@ -67400,28 +67400,73 @@
               reg-plan
               walk-types
               cold-call-temp-start))]
+        ;; The P3 view. P3c below consumes it and produces the FURTHER split
+        ;; view everything downstream reads; when P3c declines, the two are the
+        ;; same values.
+        [hole-func : compiler_ir_types.CompilerIrFunction
+          (compiler_regalloc.compiler-reg-call-hole-split-function
+            call-hole-split)]
+        [hole-vars : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-vars call-hole-split)]
+        [hole-types : compiler_regalloc.CompilerRegVarTypes
+          (compiler_regalloc.compiler-reg-call-hole-split-types call-hole-split)]
+        [hole-reg-plan : compiler_regalloc.CompilerRegPlan
+          (compiler_regalloc.compiler-reg-call-hole-split-plan call-hole-split)]
+        ;; One forced-spill threshold over EVERY carrier family: the cold-call
+        ;; carriers occupy [cold-call-temp-start, walk-vars), the call-hole
+        ;; carriers [walk-vars, hole-vars) and the loop-parking carriers
+        ;; [hole-vars, split-vars), contiguously.
+        [hole-temp-start : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-temp-start
+            call-hole-split)]
+        ;; P3c: the greedy homes a value for its WHOLE interval, so a value that
+        ;; is live ACROSS a hot inner loop but never referenced in it keeps its
+        ;; register through that loop while the loop's own residents spill or
+        ;; scavenge. Park such a value at the loop boundary -- store to a
+        ;; stack-only carrier in the preheader, reload on the exits -- so its
+        ;; range has a hole over the loop, and REPLAN. Like P3 the round keeps
+        ;; the rewrite only when the replanned function's estimated cost is
+        ;; strictly lower, so it can only ever remove frame traffic.
+        ;;
+        ;; `cold-call-split?` is passed through rather than pinned false: the
+        ;; rewrite adds and removes no call, so the claim the plan it improves on
+        ;; was already made with still holds, and the replan stays consistent
+        ;; with the plan it is compared against.
+        [loop-park-split : compiler_regalloc.CompilerRegCallHoleSplit
+          (if scalar-plan?
+            (compiler_regalloc.compiler-reg-loop-park-rewrite-function
+              type-segment-bases
+              fn-abi
+              hole-func
+              hole-types
+              hole-reg-plan
+              hole-temp-start
+              cold-call-split?)
+            (compiler_regalloc.compiler-reg-call-hole-split-none
+              hole-func
+              hole-vars
+              hole-reg-plan
+              hole-types
+              hole-temp-start))]
         ;; Everything downstream of the initial plan consumes the SPLIT view:
         ;; the leaf-CSR round, its replan, the carrier self-check, the
         ;; caller-save/loop-split/remat rewrites, storage coloring and emission.
-        ;; When the round declines, these are the pre-split values unchanged.
+        ;; When both rounds decline, these are the pre-split values unchanged.
         [split-func : compiler_ir_types.CompilerIrFunction
           (compiler_regalloc.compiler-reg-call-hole-split-function
-            call-hole-split)]
+            loop-park-split)]
         [split-blocks : compiler_ir_types.CompilerIrBlockList
           (compiler_regalloc.compiler-reg-call-hole-split-blocks
-            call-hole-split)]
+            loop-park-split)]
         [split-vars : i64
-          (compiler_regalloc.compiler-reg-call-hole-split-vars call-hole-split)]
+          (compiler_regalloc.compiler-reg-call-hole-split-vars loop-park-split)]
         [split-types : compiler_regalloc.CompilerRegVarTypes
-          (compiler_regalloc.compiler-reg-call-hole-split-types call-hole-split)]
+          (compiler_regalloc.compiler-reg-call-hole-split-types loop-park-split)]
         [split-reg-plan : compiler_regalloc.CompilerRegPlan
-          (compiler_regalloc.compiler-reg-call-hole-split-plan call-hole-split)]
-        ;; One forced-spill threshold over BOTH carrier families: the cold-call
-        ;; carriers occupy [cold-call-temp-start, walk-vars) and the call-hole
-        ;; carriers [walk-vars, split-vars), contiguously.
+          (compiler_regalloc.compiler-reg-call-hole-split-plan loop-park-split)]
         [split-temp-start : i64
           (compiler_regalloc.compiler-reg-call-hole-split-temp-start
-            call-hole-split)]
+            loop-park-split)]
         ;; A call-free natural loop can leave one volatile register dead before
         ;; the loop and another dead inside it while the whole-range greedy pays
         ;; for a callee-saved home. Detect that shape against the initial plan,

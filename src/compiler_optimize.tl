@@ -69648,37 +69648,63 @@
       blocks)
       [(OptBlockListPassResult.Result next _) next])))
 
-;; --- late compare duplication ----------------------------------------------
+;; --- late compare sinking and duplication ------------------------------------
 ;;
-;; GVN unifies textually identical comparisons, so one compare can end up
-;; feeding several conditional branches. The backend then materialises that
-;; boolean instead of fusing it, because its fusion gate is not "single use"
-;; but "every use is free": a compare folds into `cmp`/`jcc` only when the
-;; condition var's total use count equals its count of branch uses whose
-;; IMMEDIATELY PRECEDING instruction is a compare defining that var
+;; The backend folds a comparison into `cmp`/`jcc` only when the boolean it
+;; defines is never needed as a VALUE: its fusion gate is not "single use" but
+;; "every use is free" -- the condition var's total use count must equal its
+;; count of branch uses whose IMMEDIATELY PRECEDING instruction defines it
 ;; (`compiler-backend-var-fuse-safe?` over the tally
-;; `compiler-backend-fuse-free-branch-var` builds). A branch reading the same
-;; boolean from another block is not such a use, so BOTH sites lose fusion and
-;; the pair costs `cmp`/`setcc`/`movzbq`/`test`/`jcc` plus `test`/`jcc` -- seven
-;; instructions where two fused pairs would spend four.
+;; `compiler-backend-fuse-free-branch-var` builds, which accepts a comparison
+;; and a boolean `not`). A branch that reads the boolean from ANOTHER BLOCK is
+;; not such a use, so the boolean is materialised -- `cmp`/`setcc`/`movzbq`, in
+;; a hot frame also a spill store -- and every site still pays a `test` or
+;; `cmp [rsp+..],0` ahead of its `jcc`.
 ;;
-;; Give each branch its own copy of the compare and every site fuses again.
-;; This is the measured cure for three separately recorded regressions of the
-;; same family: an inlined accessor's guard merging with its caller's loop test,
-;; a bit-test head compare losing single-use status, and a late-rotation guard
-;; clone CSE'ing with the versioning guard.
+;; Two shapes leave such a reader behind, and one rewrite fixes both: put a copy
+;; of the condition immediately ahead of every branch that reads it.
 ;;
-;; Placement is the whole design. The pass must run BELOW every CSE/GVN round
-;; or the copies are folded straight back together -- the same interlock that
-;; forced loop rotation below `global_gvn`. It therefore sits at the very bottom
-;; of the pipeline, next to the `dce` that retires an original whose every
-;; reader took a copy.
+;;   * SEVERAL branches share one GVN-unified comparison. The pair then costs
+;;     `cmp`/`setcc`/`movzbq`/`test`/`jcc` plus `test`/`jcc` -- seven
+;;     instructions where two fused pairs spend four. This is the measured cure
+;;     for three separately recorded regressions of the same family: an inlined
+;;     accessor's guard merging with its caller's loop test, a bit-test head
+;;     compare losing single-use status, and a late-rotation guard clone CSE'ing
+;;     with the versioning guard.
+;;   * ONE branch reads a condition computed in a different block -- the shape
+;;     LICM leaves whenever it hoists a loop-invariant guard condition into the
+;;     preheader or the entry block. Here the copy is a SINK, not a duplication:
+;;     it takes the only reader, so the original is dead and the `dce` below
+;;     retires it together with the whole materialisation, its spill slot and
+;;     its function-long live range, while the branch site keeps paying exactly
+;;     two instructions -- the site's `test`/`cmp [rsp+..],0` is replaced
+;;     one-for-one by the copy's `cmp`, at any execution count. LLVM's
+;;     CodeGenPrepare sinks compares into their branch's block for the same
+;;     reason (`sinkCmpExpression`). What the sink cannot do for free is hand
+;;     the register allocator MORE values to keep alive across the gap it
+;;     closes, so it is admitted only when the exchange is one-for-one
+;;     (`opt-cmp-dup-recipe-var-count`).
 ;;
-;; Only compares whose uses are ALL branch conditions duplicate. With any other
-;; reader (a stored bool, a phi input, arithmetic on the bool) the boolean is
-;; materialised regardless, so a copy merely trades the site's `test` for a
-;; `cmp` -- instruction-count neutral, and it lengthens both operand live
-;; ranges. Phi inputs are never rewritten: only branch conditions are.
+;; LICM is left alone deliberately: hoisting the condition is what lets the
+;; passes above fold on it, and this is the backend-facing half of the fix.
+;;
+;; Placement is the whole design. The pass must run BELOW every CSE/GVN round or
+;; the copies are folded straight back together -- the same interlock that
+;; forced loop rotation below `global_gvn`. Inside the pipeline that is not
+;; achievable: `optimize-function-fixed-pass-with-summaries` feeds a changed body
+;; back through the WHOLE pipeline again, so a copy made at the pipeline's bottom
+;; still meets the next iteration's `gvn`, which re-unifies it and strands the
+;; copy as dead code -- and a dead compare ahead of a branch reads as an impure
+;; link to the classifier-chain pass, which measurably truncated
+;; `benchmarks/lex_source`'s symbol-class bitmask. So the pass runs from
+;; `opt-cmp-dup-final-pass`, below the fixpoint AND below the final CFG passes,
+;; with the `dce` that retires an original whose every reader took a copy.
+;;
+;; Only conditions whose uses are ALL branch conditions are rewritten. With any
+;; other LIVE reader (a stored bool, a phi input, arithmetic on the bool) the
+;; boolean is materialised regardless, so a copy merely trades the site's `test`
+;; for a `cmp` -- instruction-count neutral, and it lengthens every operand live
+;; range. Phi inputs are never rewritten: only branch conditions are.
 ;; The condition var of a conditional branch, or -1. `TotalEnumBranch` is the
 ;; same shape to the backend (`compiler-ir-instr-scalar-fact` maps it onto
 ;; `Branch`) and fuses through the same path.
@@ -69694,19 +69720,43 @@
         [_ (- 0 1)])]
     [_ (- 0 1)]))
 
-;; The branch at `index` already owns its compare: the instruction right before
-;; it defines the condition with a comparison. This is exactly the adjacency the
-;; backend counts as a free branch use, so such a site needs no copy.
+;; `instr` defines `var` in a form the backend can fold into a following branch:
+;; a comparison, or a boolean `not` (which fuses by exchanging the branch's two
+;; labels). Mirrors `compiler-backend-fuse-free-branch-var`'s two accepted defs
+;; exactly, float compares included -- what that tally counts is what decides
+;; whether a site is already free, and whether COPYING one pays is the separate
+;; question `opt-cmp-dup-recipe?` answers.
+(define (opt-cmp-dup-fusible-def? [instr : ir.CompilerIrInstr] [var : i64]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.BinOp dst op _ _ _)
+      (and (= dst var) (opt-bool-branch-compare-op? op))]
+    [(ir.CompilerIrInstr.UnOp dst (ir.CompilerIrUnOp.Not) _ (ast.AstType.Bool))
+      (= dst var)]
+    [_ false]))
+
+;; The condition forms worth copying. A float comparison is refused: the backend
+;; materialises it whatever the use pattern, so a copy of one is pure cost.
+(define (opt-cmp-dup-recipe? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.BinOp _ op _ _ ty)
+      (and (opt-bool-branch-compare-op? op) (not (opt-float-type? ty)))]
+    [(ir.CompilerIrInstr.UnOp _ (ir.CompilerIrUnOp.Not) _ (ast.AstType.Bool))
+      true]
+    [_ false]))
+
+;; The branch at `index` already owns its condition: the instruction right
+;; before it defines the condition in a fusible form. This is exactly the
+;; adjacency the backend counts as a free branch use, so such a site needs no
+;; copy.
 (define (opt-cmp-dup-fused-here?
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [cond-var : i64]) : bool
   (if (<= index 0)
     false
-    (match (ir.compiler-ir-instr-seq-ref instrs (- index 1))
-      [(ir.CompilerIrInstr.BinOp dst op _ _ _)
-        (and (= dst cond-var) (opt-bool-branch-compare-op? op))]
-      [_ false])))
+    (opt-cmp-dup-fusible-def?
+      (ir.compiler-ir-instr-seq-ref instrs (- index 1))
+      cond-var)))
 
 ;; Cheap allocation-free prefilter: unless some branch reads a condition it did
 ;; not just compute, no copy can help and the frame-sized analysis below is pure
@@ -69755,18 +69805,15 @@
           found))]))
 
 ;; One walk fills every array the candidate test reads: definition counts, the
-;; comparison recipe behind each var, branch-use counts, and how many of those
-;; branch uses are not already fused.
+;; instruction to copy behind each condition var, branch-use counts, and how
+;; many of those branch uses are not already fused.
 (define (opt-cmp-dup-scan-instrs!
   [instrs : ir.CompilerIrInstrSeq]
   [defs : (__tl_dyn-array i64)]
   [branch-uses : (__tl_dyn-array i64)]
   [loose : (__tl_dyn-array i64)]
   [marks : (__tl_dyn-array i64)]
-  [ops : (__tl_dyn-array ir.CompilerIrBinOp)]
-  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [tys : (__tl_dyn-array ast.AstType)]) : unit
+  [recipes : (__tl_dyn-array ir.CompilerIrInstr)]) : unit
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [frame : i64 (array-length defs)]
@@ -69781,26 +69828,15 @@
             (match (opt-instr-def-var instr)
               [(option_i64.Some dst)
                 (if (and (>= dst 0) (< dst frame))
-                  (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
+                  (begin
+                    (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
+                    (if (opt-cmp-dup-recipe? instr)
+                      (begin
+                        (set! (array-ref marks dst) 1)
+                        (set! (array-ref recipes dst) instr))
+                      unit))
                   unit)]
               [(option_i64.None) unit])
-            (match instr
-              [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-                (if (and
-                  (>= dst 0)
-                  (< dst frame)
-                  (opt-bool-branch-compare-op? op)
-                  ;; Float compares never fuse in the backend, so a copy of one
-                  ;; is pure cost.
-                  (not (opt-float-type? ty)))
-                  (begin
-                    (set! (array-ref marks dst) 1)
-                    (set! (array-ref ops dst) op)
-                    (set! (array-ref lhss dst) lhs)
-                    (set! (array-ref rhss dst) rhs)
-                    (set! (array-ref tys dst) ty))
-                  unit)]
-              [_ unit])
             (if (and (>= cond-var 0) (< cond-var frame))
               (begin
                 (set!
@@ -69821,10 +69857,7 @@
   [branch-uses : (__tl_dyn-array i64)]
   [loose : (__tl_dyn-array i64)]
   [marks : (__tl_dyn-array i64)]
-  [ops : (__tl_dyn-array ir.CompilerIrBinOp)]
-  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [tys : (__tl_dyn-array ast.AstType)]) : unit
+  [recipes : (__tl_dyn-array ir.CompilerIrInstr)]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -69837,20 +69870,14 @@
               branch-uses
               loose
               marks
-              ops
-              lhss
-              rhss
-              tys)
+              recipes)
             (opt-cmp-dup-scan-blocks!
               (__tl-box-place rest)
               defs
               branch-uses
               loose
               marks
-              ops
-              lhss
-              rhss
-              tys))])]
+              recipes))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -69866,10 +69893,7 @@
                     branch-uses
                     loose
                     marks
-                    ops
-                    lhss
-                    rhss
-                    tys)])
+                    recipes)])
               (set! index (+ index 1))))
           unit))]))
 
@@ -69893,6 +69917,52 @@
         (= (array-ref defs v) 1))]
     [_ true]))
 
+;; Every operand the copy re-reads has to be admissible, whichever of the two
+;; recipe shapes it is. Anything else is not a recipe at all and refuses.
+(define (opt-cmp-dup-recipe-ok?
+  [instr : ir.CompilerIrInstr]
+  [self : i64]
+  [defs : (__tl_dyn-array i64)]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (and
+        (opt-cmp-dup-operand-ok? lhs self defs)
+        (opt-cmp-dup-operand-ok? rhs self defs))]
+    [(ir.CompilerIrInstr.UnOp _ _ src _)
+      (opt-cmp-dup-operand-ok? src self defs)]
+    [_ false]))
+
+;; How many DISTINCT variables the recipe reads. A copy exchanges the boolean's
+;; live range for its operands': at every program point the boolean used to
+;; cross, the copy's operands have to be available instead. With ONE variable
+;; operand (the other a literal) that exchange is one-for-one and the copy
+;; cannot raise register pressure anywhere. With two it raises it by one across
+;; the whole gap, and when a hot loop sits in that gap the loop pays for it:
+;; sinking intern_table's `le %322, %329` out of the entry block into its guard
+;; chain took `rbx` from the inlined byte-compare loop, which then scavenged its
+;; second array base through a spill slot every trip (+3 instructions x 15.2M
+;; trips, far past the materialisation the sink retired).
+(define (opt-cmp-dup-recipe-var-count [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (match lhs
+        [(ir.CompilerIrValue.Var a)
+          (match rhs
+            [(ir.CompilerIrValue.Var b)
+              (if (= a b)
+                1
+                2)]
+            [_ 1])]
+        [_
+          (match rhs
+            [(ir.CompilerIrValue.Var _) 1]
+            [_ 0])])]
+    [(ir.CompilerIrInstr.UnOp _ _ src _)
+      (match src
+        [(ir.CompilerIrValue.Var _) 1]
+        [_ 0])]
+    [_ 2]))
+
 (define (opt-cmp-dup-candidate?
   [v : i64]
   [uses : (__tl_dyn-array i64)]
@@ -69900,19 +69970,32 @@
   [loose : (__tl_dyn-array i64)]
   [defs : (__tl_dyn-array i64)]
   [marks : (__tl_dyn-array i64)]
-  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [rhss : (__tl_dyn-array ir.CompilerIrValue)]) : bool
+  [recipes : (__tl_dyn-array ir.CompilerIrInstr)]) : bool
   (and
     (= (array-ref marks v) 1)
+    ;; SSA is single-def by construction, but the clone-producing passes above
+    ;; (loop rotation, bounds-check versioning) are exactly the ones this pass
+    ;; runs behind, so the invariant is TESTED rather than assumed: with two
+    ;; definitions no placement is known to reproduce the recipe's value, and
+    ;; the condition is left alone.
     (= (array-ref defs v) 1)
-    (>= (array-ref uses v) 2)
     ;; Every reader is a branch condition: only then does the copy retire the
-    ;; boolean materialisation instead of just moving work around.
+    ;; boolean materialisation instead of just moving work around. A SINGLE
+    ;; branch use is the strongest case, not a weaker one -- that copy takes the
+    ;; last reader, so the original becomes dead code.
     (= (array-ref uses v) (array-ref branch-uses v))
     ;; At least one of those readers does not already have its own compare.
     (>= (array-ref loose v) 1)
-    (opt-cmp-dup-operand-ok? (array-ref lhss v) v defs)
-    (opt-cmp-dup-operand-ok? (array-ref rhss v) v defs)))
+    ;; A boolean SHARED by several branches keeps the rule this pass was
+    ;; measured with: the materialisation it retires is paid for once and read
+    ;; from every site, so the copies are worth one more value across the gap.
+    ;; A boolean with a SINGLE branch reader is admitted on the strength of the
+    ;; copy being free, so it is held to exactly that: the live-range exchange
+    ;; must be one-for-one.
+    (or
+      (>= (array-ref branch-uses v) 2)
+      (<= (opt-cmp-dup-recipe-var-count (array-ref recipes v)) 1))
+    (opt-cmp-dup-recipe-ok? (array-ref recipes v) v defs)))
 
 ;; Reduce `marks` to the final candidate set in place and report whether any
 ;; survived. Budget whole comparison families, never individual branch sites:
@@ -69924,8 +70007,7 @@
   [loose : (__tl_dyn-array i64)]
   [defs : (__tl_dyn-array i64)]
   [marks : (__tl_dyn-array i64)]
-  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [recipes : (__tl_dyn-array ir.CompilerIrInstr)]
   [copies : i64]) : bool
   (let
     [count : i64 (array-length marks)]
@@ -69943,8 +70025,7 @@
               loose
               defs
               marks
-              lhss
-              rhss)
+              recipes)
               (let
                 [needed : i64 (array-ref loose index)]
                 (if (<= needed remaining)
@@ -69957,10 +70038,13 @@
           (set! index (+ index 1))))
       found)))
 
-;; A duplicated compare is one extra instruction, so the cap only exists to
-;; bound pathological functions; nothing in the corpus approaches it.
+;; A duplicated compare is one extra instruction and a sunk one is none, so the
+;; cap only exists to bound pathological functions. Sinking made every hoisted
+;; guard condition in a function a candidate, so the bound is stated per
+;; function rather than per family and sits well above the largest compiler
+;; function's guard count.
 (define (opt-cmp-dup-budget) : i64
-  64)
+  256)
 
 (define (opt-cmp-dup-retarget [instr : ir.CompilerIrInstr] [fresh : i64]) : ir.CompilerIrInstr
   (match instr
@@ -69970,17 +70054,26 @@
       (ir.CompilerIrInstr.TotalEnumBranch (ir.CompilerIrValue.Var fresh) yes no)]
     [_ instr]))
 
-;; Emit one input instruction, expanding a branch that needs its own compare
-;; into `compare; branch`. Adjacency is what the backend's fusion gate reads, so
-;; the copy is pushed immediately ahead of its consumer.
+;; The copy is the recipe with a fresh destination and every other field reused,
+;; so the two instructions are textually identical apart from that destination.
+;; `marks` admits only the two recipe shapes, so the fallthrough is unreachable;
+;; it re-emits the instruction unchanged rather than inventing a definition.
+(define (opt-cmp-dup-clone-recipe [instr : ir.CompilerIrInstr] [fresh : i64]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+      (ir.CompilerIrInstr.BinOp fresh op lhs rhs ty)]
+    [(ir.CompilerIrInstr.UnOp _ op src ty)
+      (ir.CompilerIrInstr.UnOp fresh op src ty)]
+    [_ instr]))
+
+;; Emit one input instruction, expanding a branch that needs its own condition
+;; into `condition; branch`. Adjacency is what the backend's fusion gate reads,
+;; so the copy is pushed immediately ahead of its consumer.
 (define (opt-cmp-dup-push-instr!
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [cands : (__tl_dyn-array i64)]
-  [ops : (__tl_dyn-array ir.CompilerIrBinOp)]
-  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [tys : (__tl_dyn-array ast.AstType)]
+  [recipes : (__tl_dyn-array ir.CompilerIrInstr)]
   [cell : (__tl_dyn-array i64)]
   [budget : (__tl_dyn-array i64)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
@@ -69999,12 +70092,7 @@
           (set! (array-ref budget 0) (- (array-ref budget 0) 1))
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
-            (ir.CompilerIrInstr.BinOp
-              fresh
-              (array-ref ops cond-var)
-              (array-ref lhss cond-var)
-              (array-ref rhss cond-var)
-              (array-ref tys cond-var)))
+            (opt-cmp-dup-clone-recipe (array-ref recipes cond-var) fresh))
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (opt-cmp-dup-retarget instr fresh))))
@@ -70013,10 +70101,7 @@
 (define (opt-cmp-dup-rewrite-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
   [cands : (__tl_dyn-array i64)]
-  [ops : (__tl_dyn-array ir.CompilerIrBinOp)]
-  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [tys : (__tl_dyn-array ast.AstType)]
+  [recipes : (__tl_dyn-array ir.CompilerIrInstr)]
   [cell : (__tl_dyn-array i64)]
   [budget : (__tl_dyn-array i64)]) : ir.CompilerIrInstrSeq
   (let
@@ -70031,10 +70116,7 @@
             instrs
             index
             cands
-            ops
-            lhss
-            rhss
-            tys
+            recipes
             cell
             budget
             (&mut builder))
@@ -70044,10 +70126,7 @@
 (define (opt-cmp-dup-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
   [cands : (__tl_dyn-array i64)]
-  [ops : (__tl_dyn-array ir.CompilerIrBinOp)]
-  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [tys : (__tl_dyn-array ast.AstType)]
+  [recipes : (__tl_dyn-array ir.CompilerIrInstr)]
   [cell : (__tl_dyn-array i64)]
   [budget : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
   (match blocks
@@ -70058,22 +70137,11 @@
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block
               label
-              (opt-cmp-dup-rewrite-instr-seq
-                instrs
-                cands
-                ops
-                lhss
-                rhss
-                tys
-                cell
-                budget))
+              (opt-cmp-dup-rewrite-instr-seq instrs cands recipes cell budget))
             (opt-cmp-dup-rewrite-blocks
               (__tl-box-place rest)
               cands
-              ops
-              lhss
-              rhss
-              tys
+              recipes
               cell
               budget))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -70094,10 +70162,7 @@
                       (opt-cmp-dup-rewrite-instr-seq
                         instrs
                         cands
-                        ops
-                        lhss
-                        rhss
-                        tys
+                        recipes
                         cell
                         budget)))])
               (set! index (+ index 1))))
@@ -70110,24 +70175,30 @@
   [func : ir.CompilerIrFunction]
   [copies : i64]) : ir.CompilerIrFunction
   (match func
-    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-      (if (or (<= copies 0) (not (opt-cmp-dup-blocks-want-pass? blocks)))
+    [(ir.CompilerIrFunction.Function name params ret-ty frame input-blocks)
+      (if (or (<= copies 0) (not (opt-cmp-dup-blocks-want-pass? input-blocks)))
         func
         (let
+          ;; Admission counts READERS, so a reader that is itself dead would
+          ;; veto a rewrite that costs nothing -- and the passes above do strand
+          ;; them (`successor_sink` leaves a `mov %c : bool` copy of a condition
+          ;; it rematerialised in the block it emptied). Run the same `dce`
+          ;; fixpoint that follows this pass over the input first: it produces
+          ;; exactly the IR that `dce` would produce below anyway, so nothing
+          ;; downstream sees a difference, and on the way its `not (cmp a b)`
+          ;; fold turns an adjacent negated comparison into the plain inverted
+          ;; comparison that this pass can then sink. The prefilter above keeps
+          ;; functions with nothing to gain out of it.
+          [blocks : ir.CompilerIrBlockList
+            (opt-dce-block-list-array-fixpoint frame input-blocks 8)]
           [uses : (__tl_dyn-array i64)
             (opt-collect-blocks-uses-array frame blocks)]
           [defs : (__tl_dyn-array i64) (array.make-array i64 frame)]
           [branch-uses : (__tl_dyn-array i64) (array.make-array i64 frame)]
           [loose : (__tl_dyn-array i64) (array.make-array i64 frame)]
           [marks : (__tl_dyn-array i64) (array.make-array i64 frame)]
-          [ops : (__tl_dyn-array ir.CompilerIrBinOp)
-            (array.make-array ir.CompilerIrBinOp frame)]
-          [lhss : (__tl_dyn-array ir.CompilerIrValue)
-            (array.make-array ir.CompilerIrValue frame)]
-          [rhss : (__tl_dyn-array ir.CompilerIrValue)
-            (array.make-array ir.CompilerIrValue frame)]
-          [tys : (__tl_dyn-array ast.AstType)
-            (array.make-array ast.AstType frame)]
+          [recipes : (__tl_dyn-array ir.CompilerIrInstr)
+            (array.make-array ir.CompilerIrInstr frame)]
           ;; Parameters are definitions too, and the most stable operands a
           ;; copied compare can read; the seeding walk is shared with gep-split.
           [_defs : unit
@@ -70139,10 +70210,7 @@
                 branch-uses
                 loose
                 marks
-                ops
-                lhss
-                rhss
-                tys))]
+                recipes))]
           [any? : bool
             (opt-cmp-dup-candidates!
               uses
@@ -70150,9 +70218,11 @@
               loose
               defs
               marks
-              lhss
-              rhss
+              recipes
               copies)]
+          ;; Nothing to rewrite: hand back the ORIGINAL function. The `dce`
+          ;; below repeats the sweep, so keeping its result here would only
+          ;; commit this pass to an edit that is not its own.
           (if (not any?)
             func
             (let
@@ -70161,15 +70231,7 @@
               [budget : (__tl_dyn-array i64) (array.make-array i64 1)]
               [_budget : unit (set! (array-ref budget 0) copies)]
               [next-blocks : ir.CompilerIrBlockList
-                (opt-cmp-dup-rewrite-blocks
-                  blocks
-                  marks
-                  ops
-                  lhss
-                  rhss
-                  tys
-                  cell
-                  budget)]
+                (opt-cmp-dup-rewrite-blocks blocks marks recipes cell budget)]
               [next : ir.CompilerIrFunction
                 (ir.CompilerIrFunction.Function
                   name
@@ -75801,42 +75863,17 @@
                             name
                             _t-ubound)
                           unit)]
-                      ;; Give every branch reading a GVN-unified comparison its
-                      ;; own copy, so each site fuses to `cmp`/`jcc` instead of
-                      ;; sharing one materialised boolean. Last in the pipeline
-                      ;; on purpose: any CSE round below it would fold the
-                      ;; copies straight back together. The `dce` that follows
-                      ;; retires an original whose every reader took a copy.
-                      [_t-cmp-dup : i64
-                        (cfg compile-profile (profile.now-ms) 0)]
-                      [cmp-dup-function : ir.CompilerIrFunction
-                        (opt-cmp-dup-function
-                          (ir.CompilerIrFunction.Function
-                            name
-                            params
-                            ret-ty
-                            ubound-frame
-                            ubound))]
-                      [cmp-dup : ir.CompilerIrBlockList
-                        (compiler-opt-debug-observe-blocks
-                          type-segment-bases
-                          "cmp_dup"
-                          name
-                          params
-                          ret-ty
-                          (opt-function-frame cmp-dup-function)
-                          (opt-function-blocks cmp-dup-function))]
-                      [cmp-dup-frame : i64
-                        (opt-function-frame cmp-dup-function)]
-                      [_p-cmp-dup : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            summaries.profile-state
-                            "cmp_dup"
-                            name
-                            _t-cmp-dup)
-                          unit)]
+                      ;; The compare/branch fusion pass that used to sit here
+                      ;; now runs BELOW the whole pipeline fixpoint
+                      ;; (`opt-cmp-dup-final-pass`). Its copies exist only to be
+                      ;; adjacent to their branch, and this position is inside
+                      ;; the body `optimize-function-fixed-pass-with-summaries`
+                      ;; feeds back into another full iteration, whose `gvn`
+                      ;; folds them back onto one var and leaves the copy behind
+                      ;; as dead code -- which then reads as an impure link to
+                      ;; the classifier-chain pass and truncated
+                      ;; `benchmarks/lex_source`'s symbol-class bitmask by three
+                      ;; links (+2.09%).
                       [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [dced : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
@@ -75845,10 +75882,10 @@
                           name
                           params
                           ret-ty
-                          cmp-dup-frame
+                          ubound-frame
                           (opt-dce-block-list-array-fixpoint
-                            cmp-dup-frame
-                            cmp-dup
+                            ubound-frame
+                            ubound
                             8))]
                       [_p-dce : unit
                         (cfg
@@ -75875,8 +75912,8 @@
                           name
                           params
                           ret-ty
-                          cmp-dup-frame
-                          (opt-load-sink-blocks cmp-dup-frame dced))]
+                          ubound-frame
+                          (opt-load-sink-blocks ubound-frame dced))]
                       [_p-load-sink : unit
                         (cfg
                           compile-profile
@@ -75890,7 +75927,7 @@
                         name
                         params
                         ret-ty
-                        cmp-dup-frame
+                        ubound-frame
                         load-sink))]))]))])))
 
 (define (optimize-function-once
@@ -76121,6 +76158,40 @@
     remaining
     (opt-loop-bce-empty-summaries)))
 
+;; Compare/branch fusion, run BELOW the pipeline fixpoint and below every final
+;; CFG pass, which is the only position where "no CSE round runs after it" is
+;; actually true: `optimize-function-fixed-pass-with-summaries` feeds a changed
+;; body back into a second full iteration, so a copy made inside the pipeline is
+;; re-unified by that iteration's `gvn` and left behind as dead code. Being last
+;; also means no later pass can separate a copy from its branch, which is the
+;; whole point of making it.
+;;
+;; `dce` retires an original whose every reader took a copy, and `load_sink`
+;; re-pairs a `gep`/`load` whose only consumer is a comparison that just moved to
+;; another block. Both are skipped when nothing was copied: the pass allocates a
+;; fresh var per copy and returns its input untouched otherwise, so the frame is
+;; an exact change test.
+(define (opt-cmp-dup-final-pass
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match (opt-cmp-dup-function func)
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (<= frame (opt-function-frame func))
+        (OptFunctionPassResult.Result func false)
+        (OptFunctionPassResult.Result
+          (compiler-opt-debug-observe-function
+            type-segment-bases
+            "cmp_dup"
+            (ir.CompilerIrFunction.Function
+              name
+              params
+              ret-ty
+              frame
+              (opt-load-sink-blocks
+                frame
+                (opt-dce-block-list-array-fixpoint frame blocks 8))))
+          true))]))
+
 (define (opt-if-convert-final-pass
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
@@ -76170,12 +76241,19 @@
       ;; reserved for the release-quality level below; compare/test lowering
       ;; remains part of this single optimizer pass.
       (let
-        [next : ir.CompilerIrFunction
+        [once : ir.CompilerIrFunction
           (optimize-function-once-level2-with-summaries
             pools
             type-segment-bases
             func
             summaries)]
+        ;; Level 1 runs the pipeline exactly once, so the fusion pass has no
+        ;; second iteration to be undone by -- but it still has to sit below the
+        ;; pipeline's own `dce`/`load_sink`, so it runs from the same place as at
+        ;; level 2.
+        [next : ir.CompilerIrFunction
+          (match (opt-cmp-dup-final-pass type-segment-bases once)
+            [(OptFunctionPassResult.Result fused _) fused])]
         [changed : bool (not (opt-function-eq type-segment-bases func next))]
         (OptFunctionPassResult.Result
           (if changed
@@ -76199,23 +76277,30 @@
                     (opt-licm-unswitch-final type-segment-bases final))]
                 [unswitch-changed : bool
                   (not (opt-function-eq type-segment-bases final unswitched))]
-                ;; Last position in the pipeline on purpose: the arm blocks this
-                ;; removes are lowering artifacts, but versioning, unrolling and
-                ;; unswitching all clone blocks after the last CFG cleanup, so
-                ;; running anywhere earlier would leave their copies behind.
+                ;; Last CFG pass in the pipeline on purpose: the arm blocks
+                ;; this removes are lowering artifacts, but versioning,
+                ;; unrolling and unswitching all clone blocks after the last CFG
+                ;; cleanup, so running anywhere earlier would leave their copies
+                ;; behind. Only compare/branch fusion runs below it, and that
+                ;; moves instructions inside blocks, never blocks.
                 (match (opt-cfg-straighten-final-pass
                   type-segment-bases
                   unswitched)
                   [(OptFunctionPassResult.Result
                       straightened
                       straighten-changed)
-                    (OptFunctionPassResult.Result
-                      straightened
-                      (or
-                        fixed-changed
-                        if-convert-changed
-                        unswitch-changed
-                        straighten-changed))]))])]))))
+                    (match (opt-cmp-dup-final-pass
+                      type-segment-bases
+                      straightened)
+                      [(OptFunctionPassResult.Result fused cmp-dup-changed)
+                        (OptFunctionPassResult.Result
+                          fused
+                          (or
+                            fixed-changed
+                            if-convert-changed
+                            unswitch-changed
+                            straighten-changed
+                            cmp-dup-changed))])]))])]))))
 
 (define (optimize-function-with-level-and-summaries
   [pools : ast.AstNodePoolContext]

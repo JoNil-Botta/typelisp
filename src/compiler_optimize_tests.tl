@@ -7564,6 +7564,17 @@
     (compiler_ir_types.CompilerIrValue.Var 1)
     (compiler_ast_types.AstType.I64)))
 
+;; The same comparison against a LITERAL right operand. One variable operand
+;; means a copy exchanges the boolean's live range for that variable's
+;; one-for-one, which is what admits a SINGLE-reader sink.
+(define (opt-cmp-dup-test-compare-lit [lhs : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    5
+    (compiler_ir_types.CompilerIrBinOp.Lt)
+    lhs
+    (compiler_ir_types.CompilerIrValue.I64 7)
+    (compiler_ast_types.AstType.I64)))
+
 (define (opt-cmp-dup-test-branch [cond-var : i64] [yes : String] [no : String]) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.Branch
     (compiler_ir_types.CompilerIrValue.Var cond-var)
@@ -7631,6 +7642,98 @@
             (opt-cmp-dup-test-return-block "exit" 1)
             compiler_ir_types.CompilerIrBlockList.Nil))))))
 
+;; The single-reader shape LICM leaves behind: `entry` computes the condition
+;; and jumps, and the ONLY reader is the branch in `mid`. The copy `mid` takes
+;; is a SINK -- it takes the last reader, so the original is dead and the `dce`
+;; below the pass retires it (this pass leaves it in place, which is what the
+;; assertions on `entry` state). `entry-head` prefixes `entry` and `mid-head`
+;; prefixes `mid`, which is how the dead-reader and multiply-defined-operand
+;; fixtures add their extra instruction.
+(define (opt-cmp-dup-sink-blocks
+  [entry-head : compiler_ir_types.CompilerIrInstrList]
+  [mid-head : compiler_ir_types.CompilerIrInstrList]
+  [compare : compiler_ir_types.CompilerIrInstr]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-cmp-dup-instr-list-append
+        entry-head
+        (compiler_ir_types.compiler-ir-instr-cons
+          compare
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "mid"))
+            compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "mid")
+        (opt-cmp-dup-instr-list-append
+          mid-head
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-cmp-dup-test-branch 5 "tail" "exit")
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-cmp-dup-test-return-block "tail" 0)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-cmp-dup-test-return-block "exit" 1)
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; `add` on the two parameters, used as the definition -- or, twice over, as the
+;; MULTIPLE definitions -- of the comparison's left operand.
+(define (opt-cmp-dup-operand-def [rhs : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    6
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    (compiler_ir_types.CompilerIrValue.Var rhs)
+    (compiler_ast_types.AstType.I64)))
+
+;; One instruction on its own list, the shape the fixture heads want.
+(define (opt-cmp-dup-one-instr [instr : compiler_ir_types.CompilerIrInstr]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    instr
+    compiler_ir_types.CompilerIrInstrList.Nil))
+
+;; The negation shape the backend fuses by exchanging the branch's two labels.
+;; `%5` is read by the entry branch AND by the negation, so it is refused; the
+;; negation's own single reader is the branch in `other`, which therefore takes
+;; a copy of the `not`. The comparison is not adjacent to the negation and not
+;; single-use, so the `not (cmp a b)` fold cannot reach it either -- the copy is
+;; the only thing that fuses this branch.
+(define (opt-cmp-dup-not-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-cmp-dup-test-compare (compiler_ir_types.CompilerIrValue.Var 0))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-cmp-dup-test-branch 5 "mid" "exit")
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "mid")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.UnOp
+            6
+            (compiler_ir_types.CompilerIrUnOp.Not)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "other"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "other")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-cmp-dup-test-branch 6 "tail" "exit")
+            compiler_ir_types.CompilerIrInstrList.Nil))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-cmp-dup-test-return-block "tail" 0)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-cmp-dup-test-return-block "exit" 1)
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
 (define (opt-cmp-dup-block-at
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [index : i64]) : compiler_ir_types.CompilerIrBlock
@@ -7654,6 +7757,29 @@
   (and
     (= (opt-block-instr-count block) 2)
     (opt-instr-compare-dst? (opt-block-instr-at block 0) expect-dst)
+    (match (opt-block-instr-at block 1)
+      [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
+        (match cond
+          [(compiler_ir_types.CompilerIrValue.Var v) (= v expect-dst)]
+          [_ false])]
+      [_ false])))
+
+;; True when the block is exactly `not; branch-on-that-negation` over `src`, the
+;; second def shape the backend's fusion gate accepts.
+(define (opt-cmp-dup-block-not-fused?
+  [block : compiler_ir_types.CompilerIrBlock]
+  [expect-dst : i64]
+  [src : i64]) : bool
+  (and
+    (= (opt-block-instr-count block) 2)
+    (match (opt-block-instr-at block 0)
+      [(compiler_ir_types.CompilerIrInstr.UnOp
+          dst
+          (compiler_ir_types.CompilerIrUnOp.Not)
+          value
+          (compiler_ast_types.AstType.Bool))
+        (and (= dst expect-dst) (compiler_optimize.opt-value-is-var? value src))]
+      [_ false])
     (match (opt-block-instr-at block 1)
       [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
         (match cond
@@ -7716,7 +7842,14 @@
                 (compiler_ir_types.compiler-ir-label "entry")
                 (compiler_ir_types.CompilerIrPhiInputList.Nil))
               (compiler_ast_types.AstType.Bool))
-            compiler_ir_types.CompilerIrInstrList.Nil)
+            ;; The phi's own result is stored, so the phi is a LIVE reader.
+            ;; A dead one is retired by the pass's own `dce` sweep and does
+            ;; not refuse anything -- `cmp_dup_dead_reader` states that.
+            (opt-cmp-dup-one-instr
+              (compiler_ir_types.CompilerIrInstr.StorePtr
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ast_types.AstType.Bool))))
           (compiler_ir_types.CompilerIrValue.Var 0)
           false)
         64)]
@@ -7751,6 +7884,78 @@
           (compiler_ir_types.CompilerIrValue.Var 0)
           true)
         64)]
+    ;; The single-reader shape: one branch, in another block, is the whole use
+    ;; list. The copy it takes is a sink, so the family is admitted with ONE
+    ;; branch use.
+    [sunk : compiler_ir_types.CompilerIrFunction
+      (opt-cmp-dup-run
+        "cmp_dup_sunk"
+        (opt-cmp-dup-sink-blocks
+          compiler_ir_types.CompilerIrInstrList.Nil
+          compiler_ir_types.CompilerIrInstrList.Nil
+          (opt-cmp-dup-test-compare-lit
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        64)]
+    [sunk-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks sunk)]
+    ;; A reader that is itself DEAD is not a reason to refuse -- `successor_sink`
+    ;; strands exactly this `mov` copy of a condition it rematerialised. The
+    ;; pass sweeps its input with the same `dce` that follows it, so the sink
+    ;; still fires and the stranded copy is gone from the result.
+    [dead-reader : compiler_ir_types.CompilerIrFunction
+      (opt-cmp-dup-run
+        "cmp_dup_dead_reader"
+        (opt-cmp-dup-sink-blocks
+          compiler_ir_types.CompilerIrInstrList.Nil
+          (opt-cmp-dup-one-instr
+            (compiler_ir_types.CompilerIrInstr.Mov
+              6
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.Bool)))
+          (opt-cmp-dup-test-compare-lit
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        64)]
+    ;; Control for the multiple-definition arm below: the same fixture with the
+    ;; operand defined ONCE sinks.
+    [one-def-operand : compiler_ir_types.CompilerIrFunction
+      (opt-cmp-dup-run
+        "cmp_dup_one_def_operand"
+        (opt-cmp-dup-sink-blocks
+          (opt-cmp-dup-one-instr (opt-cmp-dup-operand-def 1))
+          compiler_ir_types.CompilerIrInstrList.Nil
+          (opt-cmp-dup-test-compare-lit
+            (compiler_ir_types.CompilerIrValue.Var 6)))
+        64)]
+    ;; Two definitions of that operand and nothing else changes: the copy would
+    ;; have no point at which the recipe is known to hold, so the family is
+    ;; refused. SSA makes this unreachable in the pipeline; the pass tests it
+    ;; rather than trusting the clone-producing passes above it.
+    [multi-def-operand : compiler_ir_types.CompilerIrFunction
+      (opt-cmp-dup-run
+        "cmp_dup_multi_def_operand"
+        (opt-cmp-dup-sink-blocks
+          (opt-cmp-dup-one-instr (opt-cmp-dup-operand-def 1))
+          (opt-cmp-dup-one-instr (opt-cmp-dup-operand-def 0))
+          (opt-cmp-dup-test-compare-lit
+            (compiler_ir_types.CompilerIrValue.Var 6)))
+        64)]
+    ;; TWO variable operands and a single branch reader: the copy would put both
+    ;; operands where one boolean used to be, so the sink is refused. The
+    ;; `shared` fixture above is the same comparison with a second branch reader
+    ;; and IS rewritten -- a shared boolean pays for the extra value.
+    [two-var-single-reader : compiler_ir_types.CompilerIrFunction
+      (opt-cmp-dup-run
+        "cmp_dup_two_var_single_reader"
+        (opt-cmp-dup-sink-blocks
+          compiler_ir_types.CompilerIrInstrList.Nil
+          compiler_ir_types.CompilerIrInstrList.Nil
+          (opt-cmp-dup-test-compare (compiler_ir_types.CompilerIrValue.Var 0)))
+        64)]
+    ;; The boolean negation the backend fuses by exchanging the branch labels.
+    [not-sunk : compiler_ir_types.CompilerIrFunction
+      (opt-cmp-dup-run "cmp_dup_not" (opt-cmp-dup-not-blocks) 64)]
+    [not-sunk-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks not-sunk)]
     (begin
       ;; The already-adjacent site is left alone and the remote one gained its
       ;; own copy of the same comparison.
@@ -7834,6 +8039,69 @@
               [_ false])]
           [_ false])
         (return 16))
+      ;; The remote branch took its own copy of the comparison, and the copy is
+      ;; adjacent to it -- the backend's fusion gate reads exactly that.
+      (unless (= (compiler_optimize.opt-function-frame sunk) 17) (return 17))
+      (unless
+        (opt-cmp-dup-block-fused? (opt-cmp-dup-block-at sunk-blocks 1) 16)
+        (return 18))
+      (unless
+        (match (opt-block-instr-at (opt-cmp-dup-block-at sunk-blocks 1) 0)
+          [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs rhs _)
+            (and
+              (compiler_optimize.opt-value-is-var? lhs 0)
+              (match rhs
+                [(compiler_ir_types.CompilerIrValue.I64 n) (= n 7)]
+                [_ false]))]
+          [_ false])
+        (return 19))
+      ;; The original is left exactly where it was: retiring it is the job of
+      ;; the `dce` that runs under the pass in `opt-cmp-dup-final-pass`.
+      (unless
+        (and
+          (= (opt-block-instr-count (opt-cmp-dup-block-at sunk-blocks 0)) 2)
+          (opt-instr-compare-dst?
+            (opt-block-instr-at (opt-cmp-dup-block-at sunk-blocks 0) 0)
+            5))
+        (return 20))
+      ;; The dead `mov` reader neither blocks the sink nor survives it.
+      (unless
+        (= (compiler_optimize.opt-function-frame dead-reader) 17)
+        (return 21))
+      (unless
+        (opt-cmp-dup-block-fused?
+          (opt-cmp-dup-block-at
+            (compiler_optimize.opt-function-blocks dead-reader)
+            1)
+          16)
+        (return 22))
+      ;; Operand definition counts, at the pass level this time: one definition
+      ;; sinks, two refuse, and nothing else differs between the two fixtures.
+      (unless
+        (= (compiler_optimize.opt-function-frame one-def-operand) 17)
+        (return 23))
+      (unless
+        (= (compiler_optimize.opt-function-frame multi-def-operand) 16)
+        (return 24))
+      ;; The live-range exchange has to be one-for-one for a single reader.
+      (unless
+        (= (compiler_optimize.opt-function-frame two-var-single-reader) 16)
+        (return 25))
+      ;; The negation is copied onto its branch as a negation; the comparison it
+      ;; reads keeps its own already-fused site and is itself refused, because
+      ;; the negation is a non-branch reader of it.
+      (unless
+        (= (compiler_optimize.opt-function-frame not-sunk) 17)
+        (return 26))
+      (unless
+        (opt-cmp-dup-block-not-fused?
+          (opt-cmp-dup-block-at not-sunk-blocks 2)
+          16
+          5)
+        (return 27))
+      (unless
+        (opt-cmp-dup-block-fused? (opt-cmp-dup-block-at not-sunk-blocks 0) 5)
+        (return 28))
       42)))
 
 (define (opt-successor-sink-test-function

@@ -4082,7 +4082,8 @@
   [ends : (__tl_dyn-array i64)]
   [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
   [segment-starts : (__tl_dyn-array i64)]
-  [segment-ends : (__tl_dyn-array i64)]) : i64
+  [segment-ends : (__tl_dyn-array i64)]
+  [seed-live-in? : bool]) : i64
   (match blocks
     [(ir.CompilerIrBlockList.Nil) point]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -4094,14 +4095,16 @@
             [live-afters : live.CompilerLiveInstrSetVec
               (compiler-reg-live-maybe-block-afters live-block)]
             [_live-in : unit
-              (compiler-reg-segment-live-in!
-                starts
-                ends
-                segments
-                segment-starts
-                segment-ends
-                (compiler-reg-live-maybe-block-live-in live-block)
-                (compiler-reg-live-in-block-point point))]
+              (if seed-live-in?
+                (compiler-reg-segment-live-in!
+                  starts
+                  ends
+                  segments
+                  segment-starts
+                  segment-ends
+                  (compiler-reg-live-maybe-block-live-in live-block)
+                  (compiler-reg-live-in-block-point point))
+                unit)]
             (compiler-reg-live-interval-selection-blocks
               (__tl-box-place rest)
               liveness
@@ -4118,7 +4121,8 @@
               ends
               segments
               segment-starts
-              segment-ends))])]
+              segment-ends
+              seed-live-in?))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -4135,14 +4139,16 @@
                     [live-afters : live.CompilerLiveInstrSetVec
                       (compiler-reg-live-maybe-block-afters live-block)]
                     [_live-in : unit
-                      (compiler-reg-segment-live-in!
-                        starts
-                        ends
-                        segments
-                        segment-starts
-                        segment-ends
-                        (compiler-reg-live-maybe-block-live-in live-block)
-                        (compiler-reg-live-in-block-point out-point))]
+                      (if seed-live-in?
+                        (compiler-reg-segment-live-in!
+                          starts
+                          ends
+                          segments
+                          segment-starts
+                          segment-ends
+                          (compiler-reg-live-maybe-block-live-in live-block)
+                          (compiler-reg-live-in-block-point out-point))
+                        unit)]
                     (set!
                       out-point
                       (compiler-reg-live-interval-selection-instr-seq
@@ -4160,6 +4166,30 @@
 (define (compiler-reg-live-interval-selection
   [func : ir.CompilerIrFunction]
   [liveness : live.CompilerFunctionLiveness]) : CompilerRegIntervalSelection
+  (compiler-reg-live-interval-selection-with-live-in func liveness true))
+
+;; Segmented interval build with the block-entry live-in bridge switchable.
+;;
+;; The bridge exists for the ALLOCATOR (see compiler-reg-live-in-block-point):
+;; it keeps a hull/segment start from being mistaken for the value's own
+;; definition under a block layout that puts a flow-in block ahead of the
+;; defining one. A consumer that only asks "is this register carrying a live
+;; value AT this instruction" -- the backend's scavenge occupancy -- needs the
+;; opposite: no interval may start one point BELOW a block, because that point
+;; belongs to the previous block in the emission order and would report an
+;; unrelated instruction's registers occupied.
+;;
+;; With the bridge off, the coarse starts/ends this returns are exactly the ones
+;; `compiler-reg-live-intervals` produces: both walks visit the same blocks in
+;; the same order at the same points, and `compiler-reg-extend-segment-touch!` /
+;; `compiler-reg-extend-segment-after-words!` apply the same
+;; `compiler-reg-extend-interval` calls (def/use at `point`, live-after at
+;; `point + 1`) that `compiler-reg-extend-instr` does. Only the extra per-var
+;; segment rows are new.
+(define (compiler-reg-live-interval-selection-with-live-in
+  [func : ir.CompilerIrFunction]
+  [liveness : live.CompilerFunctionLiveness]
+  [seed-live-in? : bool]) : CompilerRegIntervalSelection
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
@@ -4182,7 +4212,8 @@
             ends
             segments
             segment-starts
-            segment-ends)
+            segment-ends
+            seed-live-in?)
           (let
             [index : i64 0]
             (while (< index vars)

@@ -304,6 +304,7 @@
                   starts
                   ends
                   assignment-index
+                  (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
                   slot-vars)
                 slot-vars))])))))
 
@@ -44159,6 +44160,7 @@
             starts
             ends
             assignment-index
+            (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
             5)]
         (and
           (= (array-length masks) 5)
@@ -44213,6 +44215,173 @@
               (bit-or
                 (compiler_backend.compiler-backend-scavenge-reg-bit "%r11")
                 (compiler_backend.compiler-backend-scavenge-reg-bit "%xmm2")))))))))
+
+;; --- P3d: the occupancy table honours liveness HOLES ------------------------
+;; Two values legitimately share one register when their SEGMENTS are disjoint
+;; (that is the interference rule the allocator itself uses). Asked through the
+;; coarse hulls, that register then reads occupied across the hole between them,
+;; and in a merged body every register reads occupied everywhere -- so every
+;; scratch demand, including a spilled array base's reload, degrades to the
+;; emergency save/reload/restore tier. These pin the three properties the fix
+;; rests on: the hole is reported free, the live segments are still reported
+;; occupied, and a var with NO segment row keeps its hull.
+(define (compiler-backend-scavenge-segment-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        0
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r10))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r11))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
+    2))
+
+;; var 0: hull [0,16] made of segments [0,4] and [12,16] -- dead over 6..10.
+;; var 1: hull [0,16] with no segment row at all, the shape the const-hoist and
+;; scratch-plan pseudo-vars have once they are appended past the emitted
+;; function's own var count.
+(define (compiler-backend-scavenge-segment-masks [rows : i64]) : (__tl_dyn-array
+    i64)
+  (let
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)
+      (array.make-array compiler_regalloc.CompilerRegIntervalSeq rows)]
+    (begin
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref ends 0) 16)
+      (set! (array-ref starts 1) 0)
+      (set! (array-ref ends 1) 16)
+      (if (> rows 0)
+        (set!
+          (array-ref segments 0)
+          (compiler_regalloc.compiler-reg-interval-seq-prepend
+            (compiler_regalloc.CompilerRegInterval 0 0 4)
+            (compiler_regalloc.compiler-reg-interval-seq-prepend
+              (compiler_regalloc.CompilerRegInterval 0 12 16)
+              (compiler_regalloc.compiler-reg-interval-seq-empty))))
+        unit)
+      (compiler_backend.compiler-backend-scavenge-occupancy-build
+        starts
+        ends
+        (compiler-backend-scavenge-segment-assignments)
+        segments
+        2))))
+
+(define (compiler-backend-scavenge-segment-subset-ok?
+  [hull : (__tl_dyn-array i64)]
+  [segmented : (__tl_dyn-array i64)]
+  [index : i64]) : bool
+  (if (>= index (array-length hull))
+    true
+    (and
+      (=
+        (bit-and
+          (array-ref segmented index)
+          (bit-xor (array-ref hull index) -1))
+        0)
+      (compiler-backend-scavenge-segment-subset-ok? hull segmented (+ index 1)))))
+
+(define (compiler-backend-scavenge-segment-occupancy-ok?) : bool
+  (let
+    [hull : (__tl_dyn-array i64) (compiler-backend-scavenge-segment-masks 0)]
+    [segmented : (__tl_dyn-array i64)
+      (compiler-backend-scavenge-segment-masks 2)]
+    [r10 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r10")]
+    [r11 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r11")]
+    (and
+      (= (array-length hull) 9)
+      (= (array-length segmented) 9)
+      ;; hull: %r10 busy right across the hole (instruction index 4 = point 8)
+      (not (= (bit-and (array-ref hull 4) r10) 0))
+      ;; segments: the hole reads free ...
+      (= (bit-and (array-ref segmented 4) r10) 0)
+      ;; ... while both live segments still read busy
+      (not (= (bit-and (array-ref segmented 0) r10) 0))
+      (not (= (bit-and (array-ref segmented 2) r10) 0))
+      (not (= (bit-and (array-ref segmented 6) r10) 0))
+      (not (= (bit-and (array-ref segmented 8) r10) 0))
+      ;; var 1 has no segment row: its hull answer is retained everywhere
+      (not (= (bit-and (array-ref segmented 4) r11) 0))
+      (not (= (bit-and (array-ref hull 4) r11) 0))
+      ;; monotone: the table can only LOSE bits, never gain one
+      (compiler-backend-scavenge-segment-subset-ok? hull segmented 0))))
+
+;; The consequence at the pick. With every candidate reading occupied the picker
+;; runs off the end of the pool and returns its emergency fallback with a pending
+;; save (the emitter then brackets the reload with a save and a restore). With
+;; the hole exposed it returns the free register outright and nothing is pending,
+;; so the reload is a plain `mov`.
+(define (compiler-backend-scavenge-segment-pick-busy-mask) : i64
+  (bit-or
+    (compiler_backend.compiler-backend-scavenge-reg-bit "%r9")
+    (bit-or
+      (compiler_backend.compiler-backend-scavenge-reg-bit "%r8")
+      (bit-or
+        (compiler_backend.compiler-backend-scavenge-reg-bit "%r12")
+        (bit-or
+          (compiler_backend.compiler-backend-scavenge-reg-bit "%r13")
+          (bit-or
+            (compiler_backend.compiler-backend-scavenge-reg-bit "%r14")
+            (bit-or
+              (compiler_backend.compiler-backend-scavenge-reg-bit "%r15")
+              (bit-or
+                (compiler_backend.compiler-backend-scavenge-reg-bit "%rbx")
+                (bit-or
+                  (compiler_backend.compiler-backend-scavenge-reg-bit "%rsi")
+                  (compiler_backend.compiler-backend-scavenge-reg-bit "%rdi"))))))))))
+
+(define (compiler-backend-scavenge-segment-pick-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [function-state : compiler_backend.CompilerBackendFunctionState
+      (compiler_backend.compiler-backend-state-function-state backend-state)]
+    ;; %rax/%rdx/%rcx are the fixed-register exclude every arithmetic site uses.
+    [exclude : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-binop-scavenge-exclude-build)]
+    [hull : (__tl_dyn-array i64) (compiler-backend-scavenge-segment-masks 0)]
+    [segmented : (__tl_dyn-array i64)
+      (compiler-backend-scavenge-segment-masks 2)]
+    [busy : i64
+      (bit-or
+        (array-ref hull 4)
+        (compiler-backend-scavenge-segment-pick-busy-mask))]
+    [hull-pick : String
+      (compiler_backend.compiler-backend-scavenge-pick-with-mask
+        function-state
+        busy
+        exclude
+        5
+        "%r8")]
+    [hull-pending? : bool
+      (compiler_backend.compiler-backend-function-scratch-bool?
+        function-state
+        compiler_backend.compiler-backend-scratch-bool-emergency-pending)]
+    [segment-pick : String
+      (compiler_backend.compiler-backend-scavenge-pick-with-mask
+        function-state
+        (bit-or
+          (array-ref segmented 4)
+          (compiler-backend-scavenge-segment-pick-busy-mask))
+        exclude
+        5
+        "%r8")]
+    (and
+      ;; Everything reads occupied, so no candidate is usable and the picker
+      ;; drops into the emergency tier: it returns the first NON-EXCLUDED pool
+      ;; candidate (%r9, itself occupied) and marks it pending, which is what
+      ;; makes the emitter bracket the reload with a save and a restore.
+      (string.eq hull-pick "%r9")
+      hull-pending?
+      ;; The hole frees %r10, so the picker hands it back directly -- the reload
+      ;; is a plain `mov` with nothing to preserve.
+      (string.eq segment-pick "%r10"))))
 
 (define (compiler-backend-scavenge-loop-live-through-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -44540,6 +44709,7 @@
               starts
               ends
               assignment-index
+              (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
               3)
             3)])
       (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
@@ -44769,6 +44939,7 @@
         (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
           assignments
           vars)
+        (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
         0
         vars))))
 
@@ -47467,6 +47638,8 @@ b_keep:
         (compiler-backend-shrinkwrap-admission-state-ok?)
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
+        (compiler-backend-scavenge-segment-occupancy-ok?)
+        (compiler-backend-scavenge-segment-pick-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)
         (compiler-backend-phi-rotated-back-edge-ok?)
         (compiler-backend-divmod-live-dividend-src-ok?)

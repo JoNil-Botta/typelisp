@@ -61869,11 +61869,56 @@
             (set! bit-index (+ bit-index 1)))))
       count)))
 
+;; ---------------------------------------------------------------------------
+;; SEGMENT-PRECISE SCAVENGE OCCUPANCY.
+;;
+;; The occupancy table below answers "which registers carry a live value at
+;; instruction i" for every scratch pick the emitter makes. It used to be built
+;; from each var's COARSE HULL [starts[v], ends[v]] -- one contiguous range per
+;; var -- because that is all `compiler-reg-interval-index-build` produces.
+;;
+;; A hull is not liveness. The allocator itself decides interference on the
+;; SEGMENTED intervals (compiler-reg-vars-interfere-segmented-index?), so it
+;; legitimately homes two values in one register whenever their hulls overlap
+;; but their live segments do not. Read back through hulls, that same register
+;; then looks occupied across the union of both hulls -- including the hole
+;; where neither value is live. In a small function the difference is noise; in
+;; a merged/inlined body it is fatal: any register holding one long-hulled value
+;; anywhere reads occupied everywhere, so the union the pick queries saturates
+;; to "every register busy" and EVERY scratch demand -- including a spilled
+;; array base's reload, which needs a register and cannot be a memory operand --
+;; falls to the emergency tier, which saves an occupant, reloads, and restores
+;; it: four instructions where two would do.
+;;
+;; Measured on the widened-inline harness (target/wsl/patches/widen-inline-
+;; experiment.py, cfg_domloops): every one of the 67 emergency picks in that
+;; binary -- 61 of them inside the merged `cfg-function` -- reported the same
+;; occupied mask 0x387FF, i.e. all eleven pooled GP registers plus rax/rsi/rdi,
+;; and the hot loop paid a save/restore pair around each of its four base
+;; reloads. With the segments those 61 sites all find a free register.
+;;
+;; Using the segments makes the answer exact rather than merely cheap, and it
+;; can only REMOVE bits: a segment set covers a subset of its own hull. Every
+;; other guard the pick applies is untouched -- the instruction's operand/def
+;; reserved mask, the explicit exclude list, the callee-saved plan-mask rule and
+;; the forward staging window all still hold, so a register is handed out only
+;; when nothing live occupies it. Vars with no segment row (the synthetic
+;; const-hoist and scratch-plan pseudo-vars appended past the function's var
+;; count) keep the hull, which for a single-range synthetic interval is the same
+;; answer.
+(define (compiler-backend-scavenge-var-segment-count
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
+  [var : i64]) : i64
+  (if (or (< var 0) (>= var (array-length segments)))
+    0
+    (compiler_regalloc.compiler-reg-interval-seq-count (array-ref segments var))))
+
 (define (compiler-backend-scavenge-occupancy-event-capacity
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
   [present : (__tl_dyn-array i64)]
   [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)]
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
   [limit : i64]
   [vars : i64]
   [instr-count : i64]) : i64
@@ -61897,12 +61942,25 @@
                 (if (>= raw-end-i instr-count)
                   (- instr-count 1)
                   raw-end-i)]
+              [ranges : i64
+                (let
+                  [count : i64
+                    (compiler-backend-scavenge-var-segment-count segments v)]
+                  (if (< count 1)
+                    1
+                    count))]
               (if (and (not (= loc-mask 0)) (<= start-i end-i))
+                ;; One open/close pair per occupied bit per RANGE. A segmented
+                ;; var contributes one range per segment; the count is an upper
+                ;; bound (an empty or out-of-window segment simply goes unused),
+                ;; which is all this sizing pass has to be.
                 (set!
                   events
                   (+
                     events
-                    (* 2 (compiler-backend-scavenge-mask-bit-count loc-mask))))
+                    (*
+                      ranges
+                      (* 2 (compiler-backend-scavenge-mask-bit-count loc-mask)))))
                 unit))
             unit)
           (set! v (+ v 1))))
@@ -62062,10 +62120,52 @@
           (set! bit-index (+ bit-index 1))))
       mask)))
 
+(define (compiler-backend-scavenge-occupancy-add-var-segments!
+  [heads : (__tl_dyn-array i64)]
+  [event-bits : (__tl_dyn-array i64)]
+  [event-deltas : (__tl_dyn-array i64)]
+  [event-next : (__tl_dyn-array i64)]
+  [rows : compiler_regalloc.CompilerRegIntervalSeq]
+  [count : i64]
+  [instr-count : i64]
+  [loc-mask : i64]
+  [used : i64]) : i64
+  (let
+    [index : i64 0]
+    [event-used : i64 used]
+    (begin
+      (while (< index count)
+        (let
+          [row : compiler_regalloc.CompilerRegInterval
+            (compiler_regalloc.compiler-reg-interval-seq-ref rows index)]
+          [start-i : i64 (/ row.start 2)]
+          [raw-end-i : i64 (/ row.end 2)]
+          [end-i : i64
+            (if (>= raw-end-i instr-count)
+              (- instr-count 1)
+              raw-end-i)]
+          (begin
+            (if (and (>= row.start 0) (>= row.end 0) (<= start-i end-i))
+              (set!
+                event-used
+                (compiler-backend-scavenge-occupancy-add-range!
+                  heads
+                  event-bits
+                  event-deltas
+                  event-next
+                  start-i
+                  end-i
+                  loc-mask
+                  event-used))
+              unit)
+            (set! index (+ index 1)))))
+      event-used)))
+
 (define (compiler-backend-scavenge-occupancy-build
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
   [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
   [vars : i64]) : (__tl_dyn-array i64)
   (let
     [instr-count : i64
@@ -62082,6 +62182,7 @@
         ends
         present
         items
+        segments
         limit
         vars
         instr-count)]
@@ -62112,18 +62213,33 @@
                 (if (>= raw-end-i instr-count)
                   (- instr-count 1)
                   raw-end-i)]
+              [seg-count : i64
+                (compiler-backend-scavenge-var-segment-count segments v)]
               (if (and (not (= loc-mask 0)) (<= start-i end-i))
-                (set!
-                  event-used
-                  (compiler-backend-scavenge-occupancy-add-range!
-                    heads
-                    event-bits
-                    event-deltas
-                    event-next
-                    start-i
-                    end-i
-                    loc-mask
-                    event-used))
+                (if (< seg-count 1)
+                  (set!
+                    event-used
+                    (compiler-backend-scavenge-occupancy-add-range!
+                      heads
+                      event-bits
+                      event-deltas
+                      event-next
+                      start-i
+                      end-i
+                      loc-mask
+                      event-used))
+                  (set!
+                    event-used
+                    (compiler-backend-scavenge-occupancy-add-var-segments!
+                      heads
+                      event-bits
+                      event-deltas
+                      event-next
+                      (array-ref segments v)
+                      seg-count
+                      instr-count
+                      loc-mask
+                      event-used)))
                 unit))
             unit)
           (set! v (+ v 1))))
@@ -62383,6 +62499,7 @@
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
   [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
   [plan-mask : i64]
   [vars : i64]) : unit
   (let
@@ -62391,6 +62508,7 @@
         starts
         ends
         assignment-index
+        segments
         vars)]
     (compiler-backend-set-scavenge-ctx-ready!
       function-state
@@ -62401,6 +62519,9 @@
       occupied-masks
       vars)))
 
+;; Hull-only entry for the fixtures and the empty-plan path: an absent segment
+;; row means "use this var's hull", so passing no rows reproduces the original
+;; coarse table exactly.
 (define (compiler-backend-set-scavenge-ctx!
   [function-state : CompilerBackendFunctionState]
   [starts : (__tl_dyn-array i64)]
@@ -62414,6 +62535,7 @@
         starts
         ends
         assignment-index
+        (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
         plan-mask
         vars)]))
 
@@ -62471,6 +62593,7 @@
   [slot-vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [intervals : compiler_regalloc.CompilerRegIntervalSeq]
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
   [backend-state : CompilerBackendState]) : unit
   (let
     [abi-mask : i64
@@ -62489,6 +62612,7 @@
               (__tl_make-array i64 0)
               (__tl_make-array i64 0)
               assignment-index
+              segments
               (bit-or plan-mask abi-mask)
               0)])
         (match (compiler-backend-scavenge-assignments-build
@@ -62512,6 +62636,7 @@
                   starts
                   ends
                   assignment-index
+                  segments
                   slot-vars)
                 slot-vars))])))))
 
@@ -63118,7 +63243,17 @@
     [vars : i64]
     [point : i64]
     [reg : String]) : unit
+    ;; The oracle is the installed occupancy TABLE, not the coarse hull arrays:
+    ;; that table is what every pick consults, it is segment-precise (see
+    ;; compiler-backend-scavenge-var-segment-count), and a hull re-derivation
+    ;; would flag a legitimately free register inside a resident's liveness hole
+    ;; as a violation. `starts`/`ends`/`assignment-index`/`vars` stay in the
+    ;; signature because the used-var and live-through self-checks below still
+    ;; read them as their independent liveness oracle.
     (if (or
+      (compiler-backend-scavenge-reg-free-in-mask?
+        (compiler-backend-scavenge-occupied-mask-at-point function-state point)
+        reg)
       (compiler-backend-scavenge-free-for-instr?
         starts
         ends
@@ -68117,14 +68252,22 @@
             ;; the frame merely by numbering temporary register intervals.
             [(compiler_regalloc.CompilerRegColoring.None) remat-vars]
             [(compiler_regalloc.CompilerRegColoring.Remap _ slots) slots])]
-        [scavenge-intervals
-          : compiler_regalloc.CompilerRegIntervalSeq
+        [scavenge-selection
+          : compiler_regalloc.CompilerRegIntervalSelection
           ;; Scavenge occupancy must be keyed to the FINAL emitted IR at
           ;; instruction precision. The allocator plan intervals predate
           ;; call-save/remat rewrites and frame slot compaction, and the cheap
           ;; block interval builder can miss within-block live-through scratch
           ;; hazards. The full live-after intervals are the source of truth for
           ;; register-owned values that must not be scavenged.
+          ;;
+          ;; The SEGMENTED build is used (one walk, same liveness): its coarse
+          ;; starts/ends are identical to the plain hull builder's -- the
+          ;; block-entry live-in bridge is off, see
+          ;; compiler-reg-live-interval-selection-with-live-in -- and its per-var
+          ;; segment rows give the occupancy table the allocator's own notion of
+          ;; where a register actually carries a live value, instead of a hull
+          ;; that saturates every register in a merged body.
           (if (compiler-backend-assignments-have-register-home?
             scavenge-assignments)
             (let
@@ -68135,10 +68278,24 @@
                   ret-ty
                   scratch-vars
                   emit-blocks-list)]
-              (compiler_regalloc.compiler-reg-live-intervals
+              (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
                 scavenge-func
-                (compiler_liveness.compiler-live-analyze-function scavenge-func)))
-            (compiler_regalloc.compiler-reg-interval-seq-empty))]
+                (compiler_liveness.compiler-live-analyze-function scavenge-func)
+                false))
+            (compiler_regalloc.CompilerRegIntervalSelection.Selection
+              (compiler_regalloc.compiler-reg-interval-seq-empty)
+              (compiler_regalloc.compiler-reg-interval-index-build
+                (compiler_regalloc.compiler-reg-interval-seq-empty)
+                0)))]
+        [scavenge-intervals : compiler_regalloc.CompilerRegIntervalSeq
+          (match scavenge-selection
+            [(compiler_regalloc.CompilerRegIntervalSelection.Selection hulls _)
+              hulls])]
+        [scavenge-segments : (__tl_dyn-array
+          compiler_regalloc.CompilerRegIntervalSeq)
+          (match scavenge-selection
+            [(compiler_regalloc.CompilerRegIntervalSelection.Selection _ index)
+              index.segments])]
         [types : compiler_regalloc.CompilerRegVarTypes
           (match coloring
             [(compiler_regalloc.CompilerRegColoring.None) plan-types]
@@ -68411,6 +68568,10 @@
                 scratch-plan
                 scavenge-base-vars
                 scavenge-base-intervals)
+              ;; Rows exist only for the emitted function's own vars; the
+              ;; const-hoist and scratch-plan pseudo-vars appended above sit past
+              ;; the end of this array and fall back to their single-range hulls.
+              scavenge-segments
               program-index.backend-state)
             (compiler-backend-function-scratch-set-i64-array!
               function-state

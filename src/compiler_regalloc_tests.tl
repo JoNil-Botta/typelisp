@@ -2099,6 +2099,240 @@
             (= (reg.compiler-reg-call-hole-split-vars split) vars)
             (= (reg.compiler-reg-call-hole-split-temp-start split) (- 0 1)))]))))
 
+;; --- P3d scavenge occupancy: segmented liveness, not the coarse hull ---------
+;; The backend's scratch picker asks "which registers carry a live value at this
+;; instruction" through an occupancy table built from these intervals. Built from
+;; each var's coarse HULL that answer saturates in a merged body: the allocator
+;; homes two values in one register exactly when their SEGMENTS are disjoint, and
+;; the union of their hulls then covers the hole between them, so every register
+;; reads occupied everywhere and every spilled-base reload -- which needs a real
+;; register and cannot become a memory operand -- falls to the emergency
+;; save/reload/restore tier.
+;;
+;; Two properties the backend depends on are pinned here.
+;;
+;; (1) With the block-entry live-in bridge OFF, the coarse starts/ends are
+;;     BIT-IDENTICAL to `compiler-reg-live-intervals`, so nothing that reads the
+;;     hull arrays (divmod own-src election, value-live-after queries) changes;
+;;     and a var dead across a middle block gets more than one segment, with no
+;;     segment covering that block -- the hole the occupancy table must expose.
+;; (2) The bridge itself still does its job when it is ON. It exists so a hull
+;;     start is not mistaken for the value's own definition under a block layout
+;;     that puts a flow-in block ahead of the defining one (see
+;;     compiler-reg-live-in-block-point), and it must stay OFF for the scavenge
+;;     table because the point one below a block belongs to the PREVIOUS block in
+;;     emission order. The rotated fixture below is exactly that layout: `latch`
+;;     reads var 1 and is laid out before `body`, which defines it.
+(cfg
+  test
+  (define (compiler-reg-scavenge-hole-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "scavenge_segment_hole")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      4
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 7)
+              (ast.AstType.I64))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                1
+                (ir.CompilerIrValue.Var 0)
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "middle"))
+                ir.CompilerIrInstrList.Nil))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "middle")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                2
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 1)
+                (ir.CompilerIrValue.I64 1)
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "tail"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "tail")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Mov
+                  0
+                  (ir.CompilerIrValue.I64 9)
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    3
+                    (ir.CompilerIrBinOp.Add)
+                    (ir.CompilerIrValue.Var 0)
+                    (ir.CompilerIrValue.Var 2)
+                    (ast.AstType.I64))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Return
+                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
+                    ir.CompilerIrInstrList.Nil))))
+            ir.CompilerIrBlockList.Nil))))))
+
+;; Rotated layout: entry -> body -> latch -> {body, exit}. Var 1 is READ in
+;; `latch` (laid out second) and DEFINED in `body` (laid out third).
+(cfg
+  test
+  (define (compiler-reg-scavenge-rotated-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "scavenge_segment_rotated")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      3
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body"))
+            ir.CompilerIrInstrList.Nil))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "latch")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                2
+                (ir.CompilerIrBinOp.Lt)
+                (ir.CompilerIrValue.Var 1)
+                (ir.CompilerIrValue.I64 10)
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Var 2)
+                  (ir.compiler-ir-label "body")
+                  (ir.compiler-ir-label "exit"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "body")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Mov
+                  1
+                  (ir.CompilerIrValue.I64 7)
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                  ir.CompilerIrInstrList.Nil)))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "exit")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
+                  ir.CompilerIrInstrList.Nil))
+              ir.CompilerIrBlockList.Nil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-scavenge-hull-arrays-eq?
+    [left : reg.CompilerRegIntervalIndex]
+    [right : reg.CompilerRegIntervalIndex]
+    [vars : i64]
+    [var : i64]) : bool
+    (if (>= var vars)
+      true
+      (and
+        (= (array-ref left.starts var) (array-ref right.starts var))
+        (= (array-ref left.ends var) (array-ref right.ends var))
+        (compiler-reg-scavenge-hull-arrays-eq? left right vars (+ var 1))))))
+
+(cfg
+  test
+  (define (compiler-reg-scavenge-segments-cover?
+    [segments : reg.CompilerRegIntervalSeq]
+    [point : i64]
+    [index : i64]) : bool
+    (if (>= index (reg.compiler-reg-interval-seq-count segments))
+      false
+      (let
+        [row : reg.CompilerRegInterval
+          (reg.compiler-reg-interval-seq-ref segments index)]
+        (or
+          (and (<= row.start point) (<= point row.end))
+          (compiler-reg-scavenge-segments-cover? segments point (+ index 1)))))))
+
+(cfg
+  test
+  (define (compiler-reg-scavenge-segment-hulls-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-scavenge-hole-function)]
+      [liveness : live.CompilerFunctionLiveness
+        (live.compiler-live-analyze-function func)]
+      [hull-only : reg.CompilerRegIntervalIndex
+        (reg.compiler-reg-interval-index-build
+          (reg.compiler-reg-live-intervals func liveness)
+          4)]
+      [unseeded : reg.CompilerRegIntervalSelection
+        (reg.compiler-reg-live-interval-selection-with-live-in
+          func
+          liveness
+          false)]
+      [rotated : ir.CompilerIrFunction (compiler-reg-scavenge-rotated-function)]
+      [rotated-liveness : live.CompilerFunctionLiveness
+        (live.compiler-live-analyze-function rotated)]
+      [rotated-unseeded : reg.CompilerRegIntervalSelection
+        (reg.compiler-reg-live-interval-selection-with-live-in
+          rotated
+          rotated-liveness
+          false)]
+      [rotated-seeded : reg.CompilerRegIntervalSelection
+        (reg.compiler-reg-live-interval-selection rotated rotated-liveness)]
+      (match unseeded
+        [(reg.CompilerRegIntervalSelection.Selection _ index)
+          (match rotated-unseeded
+            [(reg.CompilerRegIntervalSelection.Selection _ rotated-index)
+              (match rotated-seeded
+                [(reg.CompilerRegIntervalSelection.Selection
+                    _
+                    rotated-seeded-index)
+                  (and
+                    ;; (1a) the coarse arrays are the hull builder's, unchanged
+                    (compiler-reg-scavenge-hull-arrays-eq? hull-only index 4 0)
+                    ;; (1b) var 0 is defined and consumed in `entry`, untouched
+                    ;; in `middle`, then redefined and consumed in `tail`
+                    (>=
+                      (reg.compiler-reg-interval-seq-count
+                        (array-ref index.segments 0))
+                      2)
+                    ;; ... and the hole is real: `middle`'s two instructions sit
+                    ;; at points 6 and 8, inside var 0's hull [0, 12]
+                    (= (array-ref index.starts 0) 0)
+                    (= (array-ref index.ends 0) 12)
+                    (compiler-reg-scavenge-segments-cover?
+                      (array-ref index.segments 0)
+                      0
+                      0)
+                    (compiler-reg-scavenge-segments-cover?
+                      (array-ref index.segments 0)
+                      10
+                      0)
+                    (not
+                      (compiler-reg-scavenge-segments-cover?
+                        (array-ref index.segments 0)
+                        6
+                        0))
+                    (not
+                      (compiler-reg-scavenge-segments-cover?
+                        (array-ref index.segments 0)
+                        8
+                        0))
+                    ;; (2) the bridge is what the flag switches: var 1 flows into
+                    ;; `latch` (block point 2) from the later-laid-out `body`, so
+                    ;; with the bridge on its interval opens at 1 instead of 2
+                    (= (array-ref rotated-index.starts 1) 2)
+                    (= (array-ref rotated-seeded-index.starts 1) 1))])])]))))
+
 ;; Fast scalar backend plan: keep type discovery for emission decisions, but
 ;; leave values in their stack slots instead of spending compile time on liveness
 ;; and register assignment. AVX/vector backend modes still use full regalloc.
@@ -16033,6 +16267,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-park-declines-ok?"
       (cfg test (compiler-reg-loop-park-declines-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-scavenge-segment-hulls-ok?"
+      (cfg test (compiler-reg-scavenge-segment-hulls-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-call-live-ok?"
       (compiler-reg-scalar-call-live-ok?))

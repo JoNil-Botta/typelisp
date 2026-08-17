@@ -445,7 +445,9 @@
         outs
         next
         (compiler_optimize.opt-ssa-env-bind
-          (compiler_optimize.OptSsaRenameEnv.Nil)
+          (compiler_optimize.opt-ssa-env-register
+            (compiler_optimize.opt-ssa-env-with-capacity (+ next 1) 1 1)
+            next)
           next
           (+ 1000 next)))
       (+ next 1)
@@ -453,7 +455,7 @@
 
 (define (opt-dense-test-ssa-block-out-newest?
   [outs : compiler_optimize.OptSsaBlockOuts]) : bool
-  (match (compiler_optimize.opt-ssa-env-lookup
+  (match (compiler_optimize.opt-ssa-env-snapshot-lookup
     (compiler_optimize.opt-ssa-block-out-lookup outs 4)
     99)
     [(option_i64.Some current) (= current 123)]
@@ -467,6 +469,116 @@
     [(compiler_optimize.OptSsaDenseEntry.BlockOut label _)
       (= label expected-label)]
     [_ false]))
+
+(define (opt-dense-test-ssa-env-register-range
+  [env : compiler_optimize.OptSsaRenameEnv (:consume)]
+  [next : i64]
+  [last : i64]) : compiler_optimize.OptSsaRenameEnv
+  (if (> next last)
+    env
+    (opt-dense-test-ssa-env-register-range
+      (compiler_optimize.opt-ssa-env-register env next)
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-ssa-env-bind-range
+  [env : compiler_optimize.OptSsaRenameEnv (:consume)]
+  [next : i64]
+  [last : i64]) : compiler_optimize.OptSsaRenameEnv
+  (if (> next last)
+    env
+    (opt-dense-test-ssa-env-bind-range
+      (compiler_optimize.opt-ssa-env-bind env next (+ 100 next))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-ssa-env-value?
+  [env : compiler_optimize.OptSsaRenameEnv]
+  [var : i64]
+  [expected : i64]) : bool
+  (match (compiler_optimize.opt-ssa-env-lookup env var)
+    [(option_i64.Some current) (= current expected)]
+    [(option_i64.None) false]))
+
+(define (opt-dense-test-ssa-env-missing?
+  [env : compiler_optimize.OptSsaRenameEnv]
+  [var : i64]) : bool
+  (match (compiler_optimize.opt-ssa-env-lookup env var)
+    [(option_i64.Some _) false]
+    [(option_i64.None) true]))
+
+(define (opt-dense-test-ssa-snapshot-value?
+  [outs : compiler_optimize.OptSsaBlockOuts]
+  [label : i64]
+  [var : i64]
+  [expected : i64]) : bool
+  (match (compiler_optimize.opt-ssa-env-snapshot-lookup
+    (compiler_optimize.opt-ssa-block-out-lookup outs label)
+    var)
+    [(option_i64.Some current) (= current expected)]
+    [(option_i64.None) false]))
+
+(define (opt-dense-test-ssa-snapshot-missing?
+  [outs : compiler_optimize.OptSsaBlockOuts]
+  [label : i64]
+  [var : i64]) : bool
+  (match (compiler_optimize.opt-ssa-env-snapshot-lookup
+    (compiler_optimize.opt-ssa-block-out-lookup outs label)
+    var)
+    [(option_i64.Some _) false]
+    [(option_i64.None) true]))
+
+(define (opt-dense-test-ssa-env-indexed-rollback?) : bool
+  (let
+    ;; Thirteen registered candidates cross the former small fixture sizes.
+    ;; The first twelve are live at the checkpoint; var 12 distinguishes an
+    ;; absent registered slot from an unregistered/out-of-range vreg.
+    [registered : compiler_optimize.OptSsaRenameEnv
+      (opt-dense-test-ssa-env-register-range
+        (compiler_optimize.opt-ssa-env-with-capacity 16 13 20)
+        0
+        12)]
+    [registered-count : i64 registered.entry-count]
+    [base : compiler_optimize.OptSsaRenameEnv
+      (opt-dense-test-ssa-env-bind-range registered 0 11)]
+    [checkpoint : i64 (compiler_optimize.opt-ssa-env-checkpoint base)]
+    [branch-a : compiler_optimize.OptSsaRenameEnv
+      (compiler_optimize.opt-ssa-env-bind
+        (compiler_optimize.opt-ssa-env-bind base 3 303)
+        12
+        312)]
+    [outs-a : compiler_optimize.OptSsaBlockOuts
+      (compiler_optimize.opt-ssa-block-outs-prepend
+        (compiler_optimize.opt-ssa-block-outs-new)
+        10
+        branch-a)]
+    [restored : compiler_optimize.OptSsaRenameEnv
+      (compiler_optimize.opt-ssa-env-rollback branch-a checkpoint)]
+    [restored-ok? : bool
+      (and
+        (opt-dense-test-ssa-env-value? restored 0 100)
+        (opt-dense-test-ssa-env-value? restored 3 103)
+        (opt-dense-test-ssa-env-value? restored 11 111)
+        (opt-dense-test-ssa-env-missing? restored 12)
+        (opt-dense-test-ssa-env-missing? restored 15)
+        (opt-dense-test-ssa-env-missing? restored (- 0 1))
+        (opt-dense-test-ssa-env-missing? restored 16))]
+    [branch-b : compiler_optimize.OptSsaRenameEnv
+      (compiler_optimize.opt-ssa-env-bind
+        (compiler_optimize.opt-ssa-env-bind restored 3 403)
+        12
+        412)]
+    [outs : compiler_optimize.OptSsaBlockOuts
+      (compiler_optimize.opt-ssa-block-outs-prepend outs-a 20 branch-b)]
+    (and
+      (= checkpoint 12)
+      (= registered-count 13)
+      restored-ok?
+      (opt-dense-test-ssa-snapshot-value? outs 10 3 303)
+      (opt-dense-test-ssa-snapshot-value? outs 10 12 312)
+      (opt-dense-test-ssa-snapshot-value? outs 20 3 403)
+      (opt-dense-test-ssa-snapshot-value? outs 20 12 412)
+      (opt-dense-test-ssa-snapshot-missing? outs 99 3))))
 
 (define (opt-dense-test-ssa-var-block-index) : compiler_optimize.OptCfgIndex
   (compiler_optimize.opt-cfg-index-build
@@ -626,7 +738,9 @@
           8)
         4
         (compiler_optimize.opt-ssa-env-bind
-          (compiler_optimize.OptSsaRenameEnv.Nil)
+          (compiler_optimize.opt-ssa-env-register
+            (compiler_optimize.opt-ssa-env-with-capacity 100 1 1)
+            99)
           99
           123))]
     [ssa-var-block-index : compiler_optimize.OptCfgIndex
@@ -834,7 +948,7 @@
       [(not (opt-dense-test-ssa-block-out-newest? ssa-outs)) 48]
       [(not (opt-dense-test-ssa-block-out-is? ssa-outs 1 8)) 49]
       [(not (opt-dense-test-ssa-block-out-is? ssa-outs 8 1)) 50]
-      [(match (compiler_optimize.opt-ssa-env-lookup
+      [(match (compiler_optimize.opt-ssa-env-snapshot-lookup
           (compiler_optimize.opt-ssa-block-out-lookup ssa-outs-independent 1)
           1)
           [(option_i64.Some _) true]
@@ -879,6 +993,7 @@
                 (- 0 1)))
             0))
         59]
+      [(not (opt-dense-test-ssa-env-indexed-rollback?)) 60]
       [else 42])))
 
 ;; --- self-test ---------------------------------------------------------------

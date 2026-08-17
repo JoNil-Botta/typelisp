@@ -316,10 +316,8 @@
           (load.CompilerLoadDependencyCatalogFailure.Malformed
             (compiler-dependency-tlci-own-text message)))]
       [(package_source.ResultPackageSourceDigest.Ok source-digest)
-        (if (cfg
-          dependency-tlci-verification
-          (compiler-dependency-tlci-verification-force-source?)
-          false)
+        (if (load.compiler-load-session-state-dependency-tlci-force-source?
+          state)
           (compiler-dependency-tlci-record-unavailable!
             state
             (compiler-dependency-tlci-base-key
@@ -444,6 +442,12 @@
   (let
     [items : load.CompilerPkgDepList (load.compiler-pkg-deps-list deps)]
     (begin
+      (load.compiler-load-session-state-set-dependency-tlci-force-source!
+        state
+        (cfg
+          dependency-tlci-verification
+          (compiler-dependency-tlci-verification-force-source?)
+          false))
       (compiler-dependency-tlci-prepare-deps-from! state manifest-dir items 0)
       (cfg
         dependency-tlci-verification

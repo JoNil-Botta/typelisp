@@ -3125,6 +3125,10 @@
       (compiler_optimize_tests.compiler-optimize-bounds-dom-slice-word-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bounds-run-self-test"
+      (compiler_optimize_tests.compiler-optimize-bounds-run-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-dom-cmp-rule-a-self-test"
       (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-self-test)
       42)
@@ -3262,6 +3266,10 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-mask-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-mask-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-pipeline-self-test"

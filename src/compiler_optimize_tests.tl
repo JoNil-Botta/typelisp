@@ -11109,6 +11109,261 @@
       [(not (compiler_optimize.opt-cfg-successor-targets-known? after)) 5]
       [else 42])))
 
+;; --- constant-offset runs: widening + ordered subsumption --------------------
+;;
+;; Six shapes over ONE base (`idx`, param 1) and two lengths (`len`, `len2`),
+;; driving `opt-bounds-dom-blocks-with-context` end to end: the reordering
+;; peephole and the bracket subsumption are two halves of one rule, so the
+;; fixtures state what the pass must leave behind rather than which half acted.
+;;
+;;   0 increasing run idx, idx+1, idx+2 against `len` -- the `gvn-run-block`
+;;     shape. The widest check (and its Add) move to the run's front and the
+;;     middle check goes: TWO checks left, an Add first in the block.
+;;   1 the same run with a STORE between its first two checks. Reordering a trap
+;;     across an observable effect is exactly what the rule forbids, so all
+;;     THREE stay.
+;;   2 the same run against TWO lengths: no pair of facts brackets anything and
+;;     all three stay.
+;;   3 decreasing run idx+2, idx+1, idx -- `it-hash-words`' word loader. The
+;;     narrowest check moves up beside the widest one: TWO left.
+;;   4 a two-member run, idx+1 then idx, with the base's sign unknown: the lower
+;;     bracket is missing and nothing is retired.
+;;   5 shape 4 behind a dominating `idx >= 0`: the nonneg route supplies the
+;;     lower bracket and the second check goes.
+(define (opt-bounds-run-check
+  [index : compiler_ir_types.CompilerIrValue]
+  [length : compiler_ir_types.CompilerIrValue]
+  [label : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BoundsCheck
+    index
+    length
+    (compiler_ir_types.compiler-ir-label label)))
+
+(define (opt-bounds-run-add [dst : i64] [offset : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ir_types.CompilerIrValue.I64 offset)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-bounds-run-return) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var 1)))
+    (compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-bounds-run-append
+  [head : compiler_ir_types.CompilerIrInstrList]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (match head
+    [(compiler_ir_types.CompilerIrInstrList.Nil) tail]
+    [(compiler_ir_types.CompilerIrInstrList.Cons instr rest)
+      (compiler_ir_types.compiler-ir-instr-cons
+        instr
+        (opt-bounds-run-append (__tl-box-place rest) tail))]))
+
+;; `gep len, 0` + `store_ptr`: the observable effect variant 1 puts between the
+;; run's checks.
+(define (opt-bounds-run-store) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      6
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 6)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bounds-run-length [variant : i64]) : compiler_ir_types.CompilerIrValue
+  (if (= variant 2)
+    (compiler_ir_types.CompilerIrValue.Var 3)
+    (compiler_ir_types.CompilerIrValue.Var 2)))
+
+(define (opt-bounds-run-increasing
+  [variant : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-bounds-run-check
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      "run_ok0")
+    (opt-bounds-run-append
+      (if (= variant 1)
+        (opt-bounds-run-store)
+        (compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-bounds-run-add 4 1)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-bounds-run-check
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (opt-bounds-run-length variant)
+            "run_ok1")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-bounds-run-add 5 2)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-bounds-run-check
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (opt-bounds-run-length variant)
+                "run_ok2")
+              tail)))))))
+
+(define (opt-bounds-run-decreasing
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-bounds-run-add 5 2)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-bounds-run-check
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        "run_ok2")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-bounds-run-add 4 1)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-bounds-run-check
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            "run_ok1")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-bounds-run-check
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              "run_ok0")
+            tail))))))
+
+(define (opt-bounds-run-pair [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-bounds-run-add 4 1)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-bounds-run-check
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        "run_ok1")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-bounds-run-check
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          "run_ok0")
+        tail))))
+
+(define (opt-bounds-run-instrs
+  [variant : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (cond
+    [(<= variant 2) (opt-bounds-run-increasing variant tail)]
+    [(= variant 3) (opt-bounds-run-decreasing tail)]
+    [else (opt-bounds-run-pair tail)]))
+
+;; Variant 5 puts the run behind a dominating `idx >= 0` edge, which is the only
+;; way the offset-0 check of a two-member run can go.
+(define (opt-bounds-run-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (if (= variant 5)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            7
+            (compiler_ir_types.CompilerIrBinOp.Ge)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ir_types.compiler-ir-label "guarded")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "guarded")
+          (opt-bounds-run-instrs
+            variant
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "exit"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-bounds-run-return))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-bounds-run-instrs variant (opt-bounds-run-return)))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-bounds-run-rewrite [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-bounds-run-test-blocks variant)]
+    (compiler_optimize.opt-bounds-dom-blocks-with-context
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build blocks)
+      (opt-bounds-dom-test-params)
+      16
+      blocks)))
+
+(define (opt-bounds-run-checks [variant : i64]) : i64
+  (compiler_optimize.opt-count-bounds-blocks (opt-bounds-run-rewrite variant)))
+
+;; Did the widening hoist the run's other bracket ahead of its first check? The
+;; Add that computes the widest index is then the block's first instruction.
+(define (opt-bounds-run-hoisted-add?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (if (< (compiler_ir_types.compiler-ir-instr-seq-count instrs) 1)
+            false
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+              [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ rhs _)
+                (and
+                  (compiler_optimize.opt-binop-eq
+                    op
+                    (compiler_ir_types.CompilerIrBinOp.Add))
+                  (match rhs
+                    [(compiler_ir_types.CompilerIrValue.I64 offset)
+                      (= offset 2)]
+                    [_ false]))]
+              [_ false]))])]))
+
+(define (compiler-optimize-bounds-run-self-test) : i64
+  (cond
+    ;; the increasing run: two checks left, widest bracket hoisted to the front
+    [(not (= (opt-bounds-run-checks 0) 2)) 1]
+    [(not (opt-bounds-run-hoisted-add? (opt-bounds-run-rewrite 0) "entry")) 2]
+    ;; an observable effect between the checks forbids the reordering
+    [(not (= (opt-bounds-run-checks 1) 3)) 3]
+    [(opt-bounds-run-hoisted-add? (opt-bounds-run-rewrite 1) "entry") 4]
+    ;; two lengths: no bracket pair exists
+    [(not (= (opt-bounds-run-checks 2) 3)) 5]
+    ;; the decreasing run
+    [(not (= (opt-bounds-run-checks 3) 2)) 6]
+    ;; two members, unknown sign: the lower bracket is missing
+    [(not (= (opt-bounds-run-checks 4) 2)) 7]
+    ;; the same pair under a dominating `idx >= 0`
+    [(not (= (opt-bounds-run-checks 5) 1)) 8]
+    [else 42]))
+
+(test
+  bounds-dom-constant-offset-run-widening
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-run-self-test)
+    42
+    "a constant-offset run against one length keeps only its two bracketing checks with the widest bracket hoisted to the run's front, while a store between the checks blocks the reordering, two lengths bracket nothing, and an offset below the run needs a dominating nonnegative fact"))
+
 ;; --- rule (a): a dominating fact decides a dominated compare -----------------
 ;;
 ;; The probes below drive `opt-dom-cmp-lookup` with a single fact in scope and
@@ -34406,6 +34661,332 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (opt-bce-version-test-block-binop-count-from instrs 0 op 0)])]))
+
+;; --- masked index with a loop-invariant mask ---------------------------------
+;;
+;; Five shapes over the shared `(n, len, base)` params, where `base` plays the
+;; MASK. Two drive the single-block pass, three the multi-block one; all go
+;; through `opt-bce-version-function`, so what they state is the pass verdict
+;; (guard block present, fast clone check-free) rather than an internal.
+;;
+;;   0 single-block self-loop indexing `(i * 7) & mask` -- the m3 micro shape.
+;;     One unsigned conjunct, `mask <u len`, and a check-free clone.
+;;   1 the same loop with BOTH bit-and operands defined in the loop: no
+;;     invariant mask, so nothing derives and the loop stays alone.
+;;   2 a two-block probe loop with NO canonical counter (its exit test is an
+;;     equality, its latch a plain jump) whose cursor is a header phi seeded
+;;     with `n & mask` and stepped with `(cursor + 1) & mask`. The counter-free
+;;     shape admits it; the seed tightens to the same mask, so ONE conjunct
+;;     covers the phi and the clone is check-free.
+;;   3 the same probe with a loop-VARIANT mask on the latch input: no bound, no
+;;     versioning.
+;;   4 the same probe seeded with the bare `n` instead of `n & mask`: two
+;;     conjuncts for one removed check, which the counter-free economics gate
+;;     refuses.
+(define (opt-bce-mask-test-binop
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty))
+
+(define (opt-bce-mask-test-i64
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (opt-bce-mask-test-binop dst op lhs rhs (compiler_ast_types.AstType.I64)))
+
+(define (opt-bce-mask-test-check [index : i64] [label : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BoundsCheck
+    (compiler_ir_types.CompilerIrValue.Var index)
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ir_types.compiler-ir-label label)))
+
+;; loop: i = phi(0, i + 1); scaled = i * 7; [variant 1: variant-mask = i + 5];
+;; masked = scaled & mask; check masked; latch test i + 1 < n.
+(define (opt-bce-mask-single-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            3
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ir_types.compiler-ir-label "loop")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-bce-mask-test-i64
+              4
+              (compiler_ir_types.CompilerIrBinOp.Mul)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.I64 7))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-bce-mask-test-i64
+                8
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 5))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-bce-mask-test-i64
+                  5
+                  (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (if (= variant 1)
+                    (compiler_ir_types.CompilerIrValue.Var 8)
+                    (compiler_ir_types.CompilerIrValue.Var 2)))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-bce-mask-test-check 5 "mask_single_ok")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (opt-bce-mask-test-i64
+                      6
+                      (compiler_ir_types.CompilerIrBinOp.Add)
+                      (compiler_ir_types.CompilerIrValue.Var 3)
+                      (compiler_ir_types.CompilerIrValue.I64 1))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (opt-bce-mask-test-binop
+                        7
+                        (compiler_ir_types.CompilerIrBinOp.Lt)
+                        (compiler_ir_types.CompilerIrValue.Var 6)
+                        (compiler_ir_types.CompilerIrValue.Var 0)
+                        (compiler_ast_types.AstType.Bool))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Branch
+                          (compiler_ir_types.CompilerIrValue.Var 7)
+                          (compiler_ir_types.compiler-ir-label "loop")
+                          (compiler_ir_types.compiler-ir-label "exit"))
+                        (compiler_ir_types.CompilerIrInstrList.Nil))))))))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "exit")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              10
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "loop")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 10)))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; entry (seed) -> header (cursor phi, check, equality exit test) -> latch
+;; (cursor + 1 masked, jump header) -> exit.
+(define (opt-bce-mask-probe-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-bce-mask-test-i64
+          4
+          (compiler_ir_types.CompilerIrBinOp.BitAnd)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 2))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            5
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              ;; variant 4 seeds with the bare `n`, so the phi carries TWO
+              ;; distinct bounds for one removed check.
+              (if (= variant 4)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.Var 4))
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 7)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-bce-mask-test-check 5 "mask_probe_ok")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-bce-mask-test-binop
+                9
+                (compiler_ir_types.CompilerIrBinOp.Eq)
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.CompilerIrValue.I64 7)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 9)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "latch")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-bce-mask-test-i64
+              6
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.CompilerIrValue.I64 1))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-bce-mask-test-i64
+                8
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.CompilerIrValue.I64 3))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-bce-mask-test-i64
+                  7
+                  (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  ;; variant 3 masks with an in-loop value: no invariant mask.
+                  (if (= variant 3)
+                    (compiler_ir_types.CompilerIrValue.Var 8)
+                    (compiler_ir_types.CompilerIrValue.Var 2)))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "header"))
+                  (compiler_ir_types.CompilerIrInstrList.Nil))))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Phi
+                10
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "header")
+                  (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 10)))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-bce-mask-test-function [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_mask_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    24
+    (if (<= variant 1)
+      (opt-bce-mask-single-blocks variant)
+      (opt-bce-mask-probe-blocks variant))))
+
+(define (opt-bce-mask-rewrite [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-bce-version-function
+      (opt-bce-mask-test-function variant))))
+
+(define (opt-bce-mask-block-checks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) -1]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (compiler_optimize.opt-bce-version-check-count
+            instrs
+            0
+            (compiler_ir_types.compiler-ir-instr-seq-count instrs)
+            0)])]))
+
+(define (opt-bce-mask-has-block?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some _) true]))
+
+;; Exactly one unsigned `mask <u len` conjunct in the guard block, and no other
+;; comparison: the whole point of reading the bound unsigned is that it needs no
+;; companion sign condition.
+(define (opt-bce-mask-guard-conjuncts
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) -1]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (compiler_optimize.opt-bce-mb-guard-compare-count instrs 0 0)])]))
+
+(define (compiler-optimize-bce-mask-self-test) : i64
+  (cond
+    ;; single-block, invariant variable mask: versioned, clone check-free, and
+    ;; the guard states one unsigned conjunct
+    [(not (opt-bce-mask-has-block? (opt-bce-mask-rewrite 0) "loop__bce_guard"))
+      1]
+    [(not
+        (=
+          (opt-bce-mask-block-checks (opt-bce-mask-rewrite 0) "loop__bce_fast")
+          0))
+      2]
+    [(not
+        (=
+          (opt-bce-mask-guard-conjuncts
+            (opt-bce-mask-rewrite 0)
+            "loop__bce_guard")
+          1))
+      3]
+    ;; both operands defined in the loop: no invariant mask, no versioning
+    [(opt-bce-mask-has-block? (opt-bce-mask-rewrite 1) "loop__bce_guard") 4]
+    ;; the counter-free probe loop
+    [(not
+        (opt-bce-mask-has-block? (opt-bce-mask-rewrite 2) "header__bce_guard"))
+      5]
+    [(not
+        (=
+          (opt-bce-mask-block-checks
+            (opt-bce-mask-rewrite 2)
+            "header__bce_fast")
+          0))
+      6]
+    [(not
+        (=
+          (opt-bce-mask-guard-conjuncts
+            (opt-bce-mask-rewrite 2)
+            "header__bce_guard")
+          1))
+      7]
+    ;; loop-variant mask
+    [(opt-bce-mask-has-block? (opt-bce-mask-rewrite 3) "header__bce_guard") 8]
+    ;; two conjuncts for one removed check: the economics gate refuses
+    [(opt-bce-mask-has-block? (opt-bce-mask-rewrite 4) "header__bce_guard") 9]
+    [else 42]))
+
+(test
+  bce-version-invariant-variable-mask
+  (test.assert-i64-eq
+    (compiler-optimize-bce-mask-self-test)
+    42
+    "a masked index with a loop-invariant VARIABLE mask versions off one unsigned conjunct in both the single-block and the counter-free multi-block pass, leaving a check-free clone, while a loop-variant mask derives nothing and a two-conjunct guard for one removed check is refused on economics"))
 
 (define (compiler-optimize-bce-version-self-test) : i64
   (let

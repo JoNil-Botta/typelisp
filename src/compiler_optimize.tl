@@ -40347,6 +40347,699 @@
       (opt-bounds-dom-len-positive? type-segment-bases cmp-facts len)
       (opt-bounds-dom-masked-or-phi? defs phi-defs copies len idx 4))))
 
+;; --- constant-offset runs against one length ----------------------------------
+;;
+;; A straight-line access run -- `xs[i]`, `xs[i+1]` ... `xs[i+k]` in one block or
+;; one dominator chain -- lowers to k+1 checks of the SAME length whose indexes
+;; differ by a literal. `opt-bounds-contains` above retires only the EXACT pair,
+;; so every offset paid its own cmp+jb: `gvn-run-block`'s instruction fetch reads
+;; six token slots per iteration and checked all six (24.1M Ir in the running
+;; benchmark), and `it-hash-words`' word loader checks eight.
+;;
+;; TWO of them imply the rest. Write the run's indexes as `base + j`; the adds
+;; WRAP like all TypeLisp integer arithmetic, so `base + j` denotes
+;; `(base + j) mod 2^64`. Suppose checks of `base + a` and `base + b` with
+;; a <= j <= b have passed at dominating points. A passed check is an unsigned
+;; `v <u len` whose length operand is a runtime container length, so it proves
+;; `0 <= v < len <= i64 MAX` in the SIGNED domain -- the premise
+;; `opt-bounds-index-checked?` already states and the fact recording below
+;; already relies on. Write A and B for the two values those checks compared,
+;; both in [0, len).
+;;
+;;   B = (A + (b - a)) mod 2^64, and both offsets are literals bounded by
+;;   `opt-bounds-dom-offset-max`, so the mathematical sum A + (b - a) is below
+;;   2^63 + 2^31 < 2^64 and the unsigned addition cannot wrap: B IS
+;;   A + (b - a) as an integer. `B >= 0` then says A + (b - a) <= i64 MAX, so
+;;   the intermediate A + (j - a) neither wraps nor leaves [A, B]:
+;;
+;;       0 <= A <= A + (j - a) <= B < len
+;;
+;;   and `base + j` -- which IS A + (j - a) -- passes its check. No power of two,
+;;   no monotonicity, no trip range: two facts and literal offsets.
+;;
+;; The LOWER bracket may also come from `base >= 0` together with `j >= 0`: the
+;; same argument reads with A = base and a = 0, and `opt-bounds-dom-nonneg?` is
+;; what proves the premise (a dominating `>= 0` guard, a zero extension, a
+;; counter induction).
+;;
+;; Facts flow down the dominator tree, so a run spread over a dominator chain
+;; (each access behind its own `if`) is covered exactly like a run inside one
+;; block. Nothing here cares whether the accesses read or write: a check
+;; constrains its index.
+(define (opt-bounds-dom-offset-max) : i64
+  1073741824)
+
+;; An index read as `base + offset` with a literal offset.
+(defstruct OptBoundsDomTerm
+  (base ir.CompilerIrValue)
+  (offset i64))
+
+(defenum OptBoundsDomOffset
+  (No)
+  (Some ir.CompilerIrValue i64))
+
+;; The literal-offset split of one Add/Sub, in either operand order for Add.
+;; `Sub base, MIN` is refused because negating the literal would overflow.
+(define (opt-bounds-dom-affine-parts
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : OptBoundsDomOffset
+  (cond
+    [(opt-binop-eq op (ir.CompilerIrBinOp.Add))
+      (match (opt-affine-var-const lhs rhs)
+        [(OptAffineOperands.Some base offset)
+          (OptBoundsDomOffset.Some (ir.CompilerIrValue.Var base) offset)]
+        [(OptAffineOperands.No) (OptBoundsDomOffset.No)])]
+    [(opt-binop-eq op (ir.CompilerIrBinOp.Sub))
+      (match lhs
+        [(ir.CompilerIrValue.Var base)
+          (match rhs
+            [(ir.CompilerIrValue.I64 k)
+              (if (= k (- (- 0 9223372036854775807) 1))
+                (OptBoundsDomOffset.No)
+                (OptBoundsDomOffset.Some (ir.CompilerIrValue.Var base) (- 0 k)))]
+            [_ (OptBoundsDomOffset.No)])]
+        [_ (OptBoundsDomOffset.No)])]
+    [else (OptBoundsDomOffset.No)]))
+
+;; Copy resolution plus the same-width reinterpret strip every value identity in
+;; this pass goes through, so a check operand and a dominating fact speak one
+;; spelling.
+(define (opt-bounds-dom-canon
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-bounds-dom-strip-int-cast
+    type-segment-bases
+    phi-defs
+    copies
+    (opt-bounds-dom-resolve copies value)))
+
+(define (opt-bounds-dom-term-ok?
+  [sources : opt_i64_i64_map.Map]
+  [base : ir.CompilerIrValue]
+  [offset : i64]) : bool
+  (and
+    (<= offset (opt-bounds-dom-offset-max))
+    (>= offset (- 0 (opt-bounds-dom-offset-max)))
+    (opt-gvn-value-stable? sources base)))
+
+;; `value` split as `base + offset`. Falls back to `(value, 0)` -- always a
+;; correct reading, just a weaker one -- for anything that is not a 64-bit
+;; literal-offset Add/Sub over a STABLE base within the offset cap. Stability is
+;; the pass-wide requirement that a var names one runtime value; the cap is what
+;; keeps the wrap argument above exact.
+(define (opt-bounds-dom-term
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : OptBoundsDomTerm
+  (let
+    [self : OptBoundsDomTerm (OptBoundsDomTerm value 0)]
+    (match value
+      [(ir.CompilerIrValue.Var var)
+        (match (opt-bool-branch-def defs var)
+          [(OptBoolBranchDef.No) self]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                (if (not (opt-affine-64bit-type? ty))
+                  self
+                  (match (opt-bounds-dom-affine-parts op lhs rhs)
+                    [(OptBoundsDomOffset.No) self]
+                    [(OptBoundsDomOffset.Some raw-base offset)
+                      (let
+                        [base : ir.CompilerIrValue
+                          (opt-bounds-dom-canon
+                            type-segment-bases
+                            phi-defs
+                            copies
+                            raw-base)]
+                        (if (opt-bounds-dom-term-ok? sources base offset)
+                          (OptBoundsDomTerm base offset)
+                          self))]))]
+              [_ self])])]
+      [_ self])))
+
+(define (opt-bounds-dom-bracket-bits
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [fact : OptBoundsFact]
+  [base : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]
+  [offset : i64]
+  [acc : i64]) : i64
+  (match fact
+    [(OptBoundsFact.Fact fact-index fact-length)
+      (if (not
+        (opt-value-eq
+          (opt-bounds-dom-canon type-segment-bases phi-defs copies fact-length)
+          len))
+        acc
+        (let
+          [term : OptBoundsDomTerm
+            (opt-bounds-dom-term
+              type-segment-bases
+              defs
+              phi-defs
+              copies
+              sources
+              (opt-bounds-dom-canon
+                type-segment-bases
+                phi-defs
+                copies
+                fact-index))]
+          (if (not (opt-value-eq term.base base))
+            acc
+            (bit-or
+              acc
+              (bit-or
+                (if (<= term.offset offset)
+                  1
+                  0)
+                (if (>= term.offset offset)
+                  2
+                  0))))))]))
+
+;; The bracket bits the facts in scope supply for `base + offset`: 1 for a passed
+;; check at or below this offset, 2 for one at or above it.
+(define (opt-bounds-dom-bracket-mask
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [facts : OptBoundsFacts]
+  [base : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]
+  [offset : i64]
+  [acc : i64]) : i64
+  (cond
+    [(= acc 3) 3]
+    [else
+      (match facts
+        [(OptBoundsFacts.Nil) acc]
+        [(OptBoundsFacts.Cons fact rest)
+          (opt-bounds-dom-bracket-mask
+            type-segment-bases
+            defs
+            phi-defs
+            copies
+            sources
+            (deref rest)
+            base
+            len
+            offset
+            (opt-bounds-dom-bracket-bits
+              type-segment-bases
+              defs
+              phi-defs
+              copies
+              sources
+              fact
+              base
+              len
+              offset
+              acc))])]))
+
+;; The lower bracket: a passed check at or below this offset, or a nonnegative
+;; base under a nonnegative offset.
+(define (opt-bounds-dom-run-lower-ok?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [mask : i64]
+  [base : ir.CompilerIrValue]
+  [offset : i64]) : bool
+  (cond
+    [(not (= (bit-and mask 1) 0)) true]
+    [(< offset 0) false]
+    [else
+      (opt-bounds-dom-nonneg?
+        type-segment-bases
+        index
+        doms
+        defs
+        phi-defs
+        copies
+        cmp-facts
+        base)]))
+
+;; Is this check implied by dominating checks of the same base and length
+;; bracketing its offset?
+(define (opt-bounds-dom-run-in-range?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [facts : OptBoundsFacts]
+  [idx : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]) : bool
+  (let
+    [term : OptBoundsDomTerm
+      (opt-bounds-dom-term type-segment-bases defs phi-defs copies sources idx)]
+    [mask : i64
+      (opt-bounds-dom-bracket-mask
+        type-segment-bases
+        defs
+        phi-defs
+        copies
+        sources
+        facts
+        term.base
+        len
+        term.offset
+        0)]
+    (and
+      (not (= (bit-and mask 2) 0))
+      (opt-bounds-dom-run-lower-ok?
+        type-segment-bases
+        index
+        doms
+        defs
+        phi-defs
+        copies
+        cmp-facts
+        mask
+        term.base
+        term.offset))))
+
+;; --- run widening: bringing the brackets to the front -------------------------
+;;
+;; Subsumption needs the two bracketing checks to DOMINATE the ones it retires,
+;; and a source-order run does not deliver that: `gvn-run-block` checks offsets
+;; 0,1,2,3,4,5 in that order, so only the widest one is ever implied (by
+;; itself), while `it-hash-words` checks 7,6,...,0 and only the narrowest one is.
+;; This peephole reorders each block before the fact walk: the run's
+;; minimum-offset and maximum-offset checks move to the run's FIRST check
+;; position, together with the index arithmetic they read. Nothing is deleted
+;; here and no instruction, var, or label is created -- the two checks are the
+;; run's own instructions with their own ok-labels -- and the fact walk then
+;; retires the rest.
+;;
+;; THE SEMANTIC RULE, exactly. Reordering can only move a trap EARLIER, so it
+;; must preserve (1) which runs trap at all and (2) every observable effect a
+;; trapping run performed before it trapped.
+;;
+;; (1) The moved checks are members of the run, so they are checks the original
+;; performed too: no new trap. And if `base + j` fails for a retired j, the
+;; implication above read in contrapositive says one of the two brackets fails as
+;; well, so the widened program still traps.
+;;
+;; (2) is what the barrier rule buys. A run ends at the first instruction between
+;; its checks that is not side-effect-free and non-trapping
+;; (`opt-bce-mb-pair-barrier?`: `compiler-ir-instr-effect` plus the Div/Mod/shift
+;; BinOps that are classed Pure but carry a language-level abort), and a
+;; BoundsCheck of a DIFFERENT (base, length) pair ends it too -- that check is
+;; itself a trap site, and an abort must not move across it. So everything the
+;; reorder can skip on a trapping run is a register computation or a load, and a
+;; load in the skipped region is one of the run's own guarded reads: its check is
+;; retired only where the brackets prove exactly what it proved. No store, no
+;; call, no print, and no second trap site ever moves.
+;;
+;; What is NOT preserved is WHICH failing index the abort reports: a run that
+;; would have aborted at `base + 2` now aborts at whichever bracket fails. The
+;; abort is the same runtime call at the same point in the observable-effect
+;; sequence; only the located variant's (index, length) pair and source span
+;; differ, and no execution can observe those without aborting.
+(defenum OptBoundsDomRun
+  (No)
+  ;; first check position, minimum-offset position, maximum-offset position
+  (Some i64 i64 i64))
+
+;; Positions in this block that must move ahead of the run for a check to be
+;; evaluated there: the index's defining Add/Sub/Cast/Mov chain, ascending, -1
+;; for an unused slot. `No` when the chain is longer than two links or reads a
+;; value the run itself defines.
+(defenum OptBoundsDomChain
+  (No)
+  (Some i64 i64))
+
+(define (opt-bounds-dom-def-pos
+  [instrs : ir.CompilerIrInstrSeq]
+  [var : i64]
+  [pos : i64]) : i64
+  (cond
+    [(>= pos (ir.compiler-ir-instr-seq-count instrs)) -1]
+    [(= (opt-gvn-instr-dst (ir.compiler-ir-instr-seq-ref instrs pos)) var) pos]
+    [else (opt-bounds-dom-def-pos instrs var (+ pos 1))]))
+
+(define (opt-bounds-dom-chain-add [chain : OptBoundsDomChain] [pos : i64]) : OptBoundsDomChain
+  (match chain
+    [(OptBoundsDomChain.No) (OptBoundsDomChain.No)]
+    [(OptBoundsDomChain.Some a b)
+      (cond
+        [(>= b 0) (OptBoundsDomChain.No)]
+        ;; `a` defines an operand of `pos`, so a < pos and the pair stays
+        ;; ascending.
+        [(>= a 0) (OptBoundsDomChain.Some a pos)]
+        [else (OptBoundsDomChain.Some pos -1)])]))
+
+(define (opt-bounds-dom-move-chain-def
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [instr : ir.CompilerIrInstr]
+  [def-pos : i64]
+  [depth : i64]) : OptBoundsDomChain
+  (match instr
+    [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+      (if (not (opt-affine-64bit-type? ty))
+        (OptBoundsDomChain.No)
+        (match (opt-bounds-dom-affine-parts op lhs rhs)
+          [(OptBoundsDomOffset.No) (OptBoundsDomChain.No)]
+          [(OptBoundsDomOffset.Some base _)
+            (opt-bounds-dom-chain-add
+              (opt-bounds-dom-move-chain instrs first base (- depth 1))
+              def-pos)]))]
+    [(ir.CompilerIrInstr.Cast _ src from-ty to-ty)
+      (if (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+        (opt-bounds-dom-chain-add
+          (opt-bounds-dom-move-chain instrs first src (- depth 1))
+          def-pos)
+        (OptBoundsDomChain.No))]
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (opt-bounds-dom-chain-add
+        (opt-bounds-dom-move-chain instrs first src (- depth 1))
+        def-pos)]
+    [_ (OptBoundsDomChain.No)]))
+
+(define (opt-bounds-dom-move-chain
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [value : ir.CompilerIrValue]
+  [depth : i64]) : OptBoundsDomChain
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (let
+        [def-pos : i64 (opt-bounds-dom-def-pos instrs var 0)]
+        (cond
+          ;; -1 (defined in another block) or already ahead of the run.
+          [(< def-pos first) (OptBoundsDomChain.Some -1 -1)]
+          [(<= depth 0) (OptBoundsDomChain.No)]
+          [else
+            (opt-bounds-dom-move-chain-def
+              instrs
+              first
+              (ir.compiler-ir-instr-seq-ref instrs def-pos)
+              def-pos
+              depth)]))]
+    [_ (OptBoundsDomChain.Some -1 -1)]))
+
+(define (opt-bounds-dom-chain-ok? [chain : OptBoundsDomChain]) : bool
+  (match chain
+    [(OptBoundsDomChain.No) false]
+    [(OptBoundsDomChain.Some _ _) true]))
+
+(define (opt-bounds-dom-check-index
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]) : ir.CompilerIrValue
+  (match (ir.compiler-ir-instr-seq-ref instrs pos)
+    [(ir.CompilerIrInstr.BoundsCheck idx _ _) idx]
+    [_ (ir.CompilerIrValue.Unit)]))
+
+(define (opt-bounds-dom-check-movable?
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [pos : i64]) : bool
+  (opt-bounds-dom-chain-ok?
+    (opt-bounds-dom-move-chain
+      instrs
+      first
+      (opt-bounds-dom-check-index instrs pos)
+      3)))
+
+;; The run headed by the check at `start`: its members are the later checks of
+;; the same (base, length) reached without crossing a barrier. Answers `Some`
+;; only for a run of three or more whose brackets are not already its first two
+;; checks and whose index arithmetic can move.
+(define (opt-bounds-dom-run-from
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [start : i64]) : OptBoundsDomRun
+  (match (ir.compiler-ir-instr-seq-ref instrs start)
+    [(ir.CompilerIrInstr.BoundsCheck raw-index raw-length _)
+      (let
+        [len : ir.CompilerIrValue
+          (opt-bounds-dom-canon type-segment-bases phi-defs copies raw-length)]
+        [head : OptBoundsDomTerm
+          (opt-bounds-dom-term
+            type-segment-bases
+            defs
+            phi-defs
+            copies
+            sources
+            (opt-bounds-dom-canon type-segment-bases phi-defs copies raw-index))]
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [members : i64 1]
+        [second-pos : i64 -1]
+        [min-pos : i64 start]
+        [min-offset : i64 head.offset]
+        [max-pos : i64 start]
+        [max-offset : i64 head.offset]
+        [pos : i64 (+ start 1)]
+        [open? : bool true]
+        (begin
+          (while (and open? (< pos count))
+            (let
+              [instr : ir.CompilerIrInstr
+                (ir.compiler-ir-instr-seq-ref instrs pos)]
+              (match instr
+                [(ir.CompilerIrInstr.BoundsCheck other-index other-length _)
+                  (let
+                    [other-len : ir.CompilerIrValue
+                      (opt-bounds-dom-canon
+                        type-segment-bases
+                        phi-defs
+                        copies
+                        other-length)]
+                    [other : OptBoundsDomTerm
+                      (opt-bounds-dom-term
+                        type-segment-bases
+                        defs
+                        phi-defs
+                        copies
+                        sources
+                        (opt-bounds-dom-canon
+                          type-segment-bases
+                          phi-defs
+                          copies
+                          other-index))]
+                    (if (and
+                      (opt-value-eq other-len len)
+                      (opt-value-eq other.base head.base))
+                      (begin
+                        (set! members (+ members 1))
+                        (if (< second-pos 0)
+                          (set! second-pos pos)
+                          unit)
+                        (if (< other.offset min-offset)
+                          (begin
+                            (set! min-offset other.offset)
+                            (set! min-pos pos))
+                          unit)
+                        (if (> other.offset max-offset)
+                          (begin
+                            (set! max-offset other.offset)
+                            (set! max-pos pos))
+                          unit)
+                        (set! pos (+ pos 1)))
+                      (set! open? false)))]
+                [_
+                  (if (opt-bce-mb-pair-barrier? instr)
+                    (set! open? false)
+                    (set! pos (+ pos 1)))])))
+          (cond
+            [(< members 3) (OptBoundsDomRun.No)]
+            [(= min-pos max-pos) (OptBoundsDomRun.No)]
+            ;; Already bracketed by its first two checks: nothing to reorder,
+            ;; which is also what makes the rewrite idempotent.
+            [(and (= min-pos start) (= max-pos second-pos))
+              (OptBoundsDomRun.No)]
+            [(and (= max-pos start) (= min-pos second-pos))
+              (OptBoundsDomRun.No)]
+            [(not (opt-bounds-dom-check-movable? instrs start min-pos))
+              (OptBoundsDomRun.No)]
+            [(not (opt-bounds-dom-check-movable? instrs start max-pos))
+              (OptBoundsDomRun.No)]
+            [else (OptBoundsDomRun.Some start min-pos max-pos)])))]
+    [_ (OptBoundsDomRun.No)]))
+
+(define (opt-bounds-dom-run-scan
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]) : OptBoundsDomRun
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    (OptBoundsDomRun.No)
+    (match (opt-bounds-dom-run-from
+      type-segment-bases
+      defs
+      phi-defs
+      copies
+      sources
+      instrs
+      pos)
+      [(OptBoundsDomRun.Some first min-pos max-pos)
+        (OptBoundsDomRun.Some first min-pos max-pos)]
+      [(OptBoundsDomRun.No)
+        (opt-bounds-dom-run-scan
+          type-segment-bases
+          defs
+          phi-defs
+          copies
+          sources
+          instrs
+          (+ pos 1))])))
+
+(define (opt-bounds-dom-widen-mark!
+  [moved : (__tl_dyn-array bool)]
+  [chain : OptBoundsDomChain]) : unit
+  (match chain
+    [(OptBoundsDomChain.No) unit]
+    [(OptBoundsDomChain.Some a b)
+      (begin
+        (if (>= a 0)
+          (set! (array-ref moved a) true)
+          unit)
+        (if (>= b 0)
+          (set! (array-ref moved b) true)
+          unit))]))
+
+;; Rebuild the block with the two bracket checks (and the marked index
+;; arithmetic) hoisted to the run's first check position. Marked defs keep their
+;; relative order, so an operand defined by another marked def still precedes it;
+;; every other marked-def operand was proven to live ahead of the run.
+(define (opt-bounds-dom-widen-rebuild
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [min-pos : i64]
+  [max-pos : i64]
+  [moved : (__tl_dyn-array bool)]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [pos : i64 0]
+    (begin
+      (while (< pos first)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.compiler-ir-instr-seq-ref instrs pos))
+          (set! pos (+ pos 1))))
+      (set! pos first)
+      (while (< pos count)
+        (begin
+          (if (array-ref moved pos)
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.compiler-ir-instr-seq-ref instrs pos))
+            unit)
+          (set! pos (+ pos 1))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.compiler-ir-instr-seq-ref
+          instrs
+          (if (< min-pos max-pos)
+            min-pos
+            max-pos)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.compiler-ir-instr-seq-ref
+          instrs
+          (if (< min-pos max-pos)
+            max-pos
+            min-pos)))
+      (set! pos first)
+      (while (< pos count)
+        (begin
+          (if (or (array-ref moved pos) (= pos min-pos) (= pos max-pos))
+            unit
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.compiler-ir-instr-seq-ref instrs pos)))
+          (set! pos (+ pos 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-bounds-dom-widen-run
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [min-pos : i64]
+  [max-pos : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [moved : (__tl_dyn-array bool)
+      (array.make-array bool (ir.compiler-ir-instr-seq-count instrs))]
+    [_mark-min : unit
+      (opt-bounds-dom-widen-mark!
+        moved
+        (opt-bounds-dom-move-chain
+          instrs
+          first
+          (opt-bounds-dom-check-index instrs min-pos)
+          3))]
+    [_mark-max : unit
+      (opt-bounds-dom-widen-mark!
+        moved
+        (opt-bounds-dom-move-chain
+          instrs
+          first
+          (opt-bounds-dom-check-index instrs max-pos)
+          3))]
+    (opt-bounds-dom-widen-rebuild instrs first min-pos max-pos moved)))
+
+;; Widen every run of this block, one rewrite at a time. `fuel` bounds the
+;; rewrites; each one leaves its run bracketed at the front, which the scan then
+;; skips, so the loop makes progress and a block with no run pays one walk.
+(define (opt-bounds-dom-widen-instrs
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [fuel : i64]) : ir.CompilerIrInstrSeq
+  (if (<= fuel 0)
+    instrs
+    (match (opt-bounds-dom-run-scan
+      type-segment-bases
+      defs
+      phi-defs
+      copies
+      sources
+      instrs
+      0)
+      [(OptBoundsDomRun.No) instrs]
+      [(OptBoundsDomRun.Some first min-pos max-pos)
+        (opt-bounds-dom-widen-instrs
+          type-segment-bases
+          defs
+          phi-defs
+          copies
+          sources
+          (opt-bounds-dom-widen-run instrs first min-pos max-pos)
+          (- fuel 1))])))
+
 (define (opt-bounds-dom-instrs-from
   [type-segment-bases : i64]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
@@ -40416,6 +41109,18 @@
                       clen)]
                   (if (or
                     (opt-bounds-contains cur-facts cidx fact-len)
+                    (opt-bounds-dom-run-in-range?
+                      type-segment-bases
+                      cfg-index
+                      doms
+                      defs
+                      phi-defs
+                      copies
+                      sources
+                      cur-cmp-facts
+                      cur-facts
+                      sidx
+                      (opt-bounds-dom-slice-length-key slice-lengths slen))
                     (opt-bounds-dom-mask-in-range?
                       type-segment-bases
                       defs
@@ -40982,45 +41687,59 @@
           [(OptMaybeBlock.No) unit]
           [(OptMaybeBlock.Some block)
             (match block
-              [(ir.CompilerIrBlock.Block _ instrs)
-                (match (opt-bounds-dom-instrs-from
-                  type-segment-bases
-                  defs
-                  phi-defs
-                  terms
-                  index
-                  context.doms
-                  label
-                  id
-                  cmp-facts
-                  facts
-                  sources
-                  copies
-                  slice-lengths
-                  instrs
-                  0)
-                  [(OptBoundsDomWalk.Walk rewritten out-facts out-cmp-facts)
-                    (begin
-                      (set!
-                        (array-ref out id)
-                        (OptGvnBlockResult.SomeBlock
-                          (ir.CompilerIrBlock.Block label rewritten)))
-                      (opt-bounds-dom-rewrite-children
-                        type-segment-bases
-                        context
-                        children
-                        defs
-                        phi-defs
-                        terms
-                        sources
-                        copies
-                        slice-lengths
-                        out-cmp-facts
-                        out-facts
-                        blocks
-                        out
-                        id
-                        instrs))])])]))
+              [(ir.CompilerIrBlock.Block _ raw-instrs)
+                ;; Bring each constant-offset run's brackets to its front before
+                ;; the fact walk, so the walk's subsumption can retire the rest
+                ;; (see the widening rule above). Reordering only; the walk is
+                ;; what deletes.
+                (let
+                  [instrs : ir.CompilerIrInstrSeq
+                    (opt-bounds-dom-widen-instrs
+                      type-segment-bases
+                      defs
+                      phi-defs
+                      copies
+                      sources
+                      raw-instrs
+                      4)]
+                  (match (opt-bounds-dom-instrs-from
+                    type-segment-bases
+                    defs
+                    phi-defs
+                    terms
+                    index
+                    context.doms
+                    label
+                    id
+                    cmp-facts
+                    facts
+                    sources
+                    copies
+                    slice-lengths
+                    instrs
+                    0)
+                    [(OptBoundsDomWalk.Walk rewritten out-facts out-cmp-facts)
+                      (begin
+                        (set!
+                          (array-ref out id)
+                          (OptGvnBlockResult.SomeBlock
+                            (ir.CompilerIrBlock.Block label rewritten)))
+                        (opt-bounds-dom-rewrite-children
+                          type-segment-bases
+                          context
+                          children
+                          defs
+                          phi-defs
+                          terms
+                          sources
+                          copies
+                          slice-lengths
+                          out-cmp-facts
+                          out-facts
+                          blocks
+                          out
+                          id
+                          instrs))]))])]))
       unit)))
 
 ;; The number of predecessors a block has, straight off the CFG index rows.
@@ -56662,6 +57381,278 @@
                   [_ (OptBceVersionGuardAcc.No)]))]
             [_ (OptBceVersionGuardAcc.No)])))]))
 
+;; --- masked index with a loop-invariant mask ----------------------------------
+;;
+;; `idx = x & M` with a loop-invariant M -- every open-addressing probe in the
+;; corpus indexes with `key & (cap - 1)` or `(cursor + 1) & (cap - 1)` -- needs
+;; ONE guard conjunct and no trip-range argument at all:
+;;
+;;     M <u len          (UNSIGNED)
+;;
+;; because `x & M <=u M` for EVERY pair of bit patterns: bit-and only clears
+;; bits, so the result's unsigned value cannot exceed the mask's. Chaining the
+;; two gives `idx <u len`, which IS the comparison `BoundsCheck` performs. Read
+;; unsigned, the conjunct needs no companion sign condition either: a mask with
+;; its sign bit set is >=u 2^63, above every container length, so the conjunct is
+;; simply false there and the fast path is not selected. That is cheaper than the
+;; signed pair `M >= 0 && M < len` the pass used to document for a LITERAL mask,
+;; and it assumes nothing about the length's sign.
+;;
+;; The same reading covers a loop-INVARIANT index reaching a phi: its own value
+;; is the bound, and `v <u len` is then literally the check the loop would have
+;; performed. So one notion serves both -- an invariant value B with
+;; `idx <=u B` on the iterations that input is selected -- and the guard states
+;; `B <u len` once per distinct B.
+;;
+;; A NEGATIVE literal bound is refused rather than emitted: `k <u len` is false
+;; for every length, so the clone could never be entered and the guard would be
+;; pure loss.
+;;
+;; The conjunct is counter-INDEPENDENT: it says nothing about a trip range, so a
+;; probe loop whose counter advances only on some arms -- not a canonical counted
+;; loop at all -- qualifies (see the counter-free shape at
+;; `opt-bce-mb-loop-shape-with-preheader`). The mask must be invariant because
+;; the guard block evaluates it once, ahead of the loop.
+(define (opt-bce-version-mask-cond
+  [cell : (__tl_dyn-array i64)]
+  [mask : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [acc : OptBceVersionGuardAcc (:consume)]) : OptBceVersionGuardAcc
+  (opt-bce-version-cond-typed
+    cell
+    (ir.CompilerIrBinOp.Lt)
+    mask
+    length-value
+    (ast.AstType.U64)
+    acc))
+
+;; The distinct invariant bounds collected off one index expression. A phi merges
+;; several, so the set is what the guard states, once per member.
+(defenum OptBceMaskList
+  (Nil)
+  (Cons ir.CompilerIrValue (Box OptBceMaskList)))
+
+(defenum OptBceMaskSet
+  (No)
+  (Some OptBceMaskList i64))
+
+;; A cursor merged through the arms of a `cond` carries one bound per arm; more
+;; than a handful would be a guard nobody can pay for.
+(define (opt-bce-mask-set-max) : i64
+  4)
+
+(define (opt-bce-mask-list-contains?
+  [masks : OptBceMaskList]
+  [value : ir.CompilerIrValue]) : bool
+  (match masks
+    [(OptBceMaskList.Nil) false]
+    [(OptBceMaskList.Cons mask rest)
+      (if (opt-value-eq mask value)
+        true
+        (opt-bce-mask-list-contains? (deref rest) value))]))
+
+(define (opt-bce-mask-set-add
+  [set : OptBceMaskSet]
+  [value : ir.CompilerIrValue]) : OptBceMaskSet
+  (match set
+    [(OptBceMaskSet.No) (OptBceMaskSet.No)]
+    [(OptBceMaskSet.Some masks count)
+      (cond
+        [(opt-bce-mask-list-contains? masks value)
+          (OptBceMaskSet.Some masks count)]
+        [(>= count (opt-bce-mask-set-max)) (OptBceMaskSet.No)]
+        [else
+          (OptBceMaskSet.Some
+            (OptBceMaskList.Cons value (box masks))
+            (+ count 1))])]))
+
+;; An invariant bound is usable only when it can pass: a negative literal never
+;; can (see the head comment).
+(define (opt-bce-mask-bound-ok? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 k) (>= k 0)]
+    [(ir.CompilerIrValue.Var _) true]
+    [_ false]))
+
+(define (opt-bce-mask-conds
+  [cell : (__tl_dyn-array i64)]
+  [masks : OptBceMaskList]
+  [length-value : ir.CompilerIrValue]
+  [acc : OptBceVersionGuardAcc (:consume)]) : OptBceVersionGuardAcc
+  (match masks
+    [(OptBceMaskList.Nil) acc]
+    [(OptBceMaskList.Cons mask rest)
+      (opt-bce-mask-conds
+        cell
+        (deref rest)
+        length-value
+        (opt-bce-version-mask-cond cell mask length-value acc))]))
+
+;; Either operand of a `bit-and`, whichever is loop-invariant. The operation is
+;; commutative, so the sides are tried in order and the first invariant one wins.
+(define (opt-bce-version-mask-operand
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (match (opt-bce-version-invariant-operand instrs phi-count last defs rhs)
+    [(ir.CompilerIrMaybeValue.Some mask) (ir.CompilerIrMaybeValue.Some mask)]
+    [(ir.CompilerIrMaybeValue.No)
+      (opt-bce-version-invariant-operand instrs phi-count last defs lhs)]))
+
+;; The invariant bounds of one value: itself when it is loop-invariant, its mask
+;; when it is a `bit-and` by an invariant operand, the union over the inputs when
+;; it is a phi. `depth` bounds the phi recursion -- phis may reference each other
+;; cyclically, so the counter is what guarantees termination.
+(define (opt-bce-version-mask-collect
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match set
+    [(OptBceMaskSet.No) (OptBceMaskSet.No)]
+    [(OptBceMaskSet.Some _ _)
+      (match (opt-bce-version-invariant-operand
+        instrs
+        phi-count
+        last
+        defs
+        value)
+        [(ir.CompilerIrMaybeValue.Some bound)
+          (if (opt-bce-mask-bound-ok? bound)
+            (opt-bce-mask-set-add set bound)
+            (OptBceMaskSet.No))]
+        [(ir.CompilerIrMaybeValue.No)
+          (opt-bce-version-mask-collect-def
+            instrs
+            phi-count
+            last
+            defs
+            value
+            depth
+            set)])]))
+
+(define (opt-bce-version-mask-collect-def
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match value
+    [(ir.CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+        [def-index : i64 (opt-unroll-def-index slots 0 last id)]
+        (if (< def-index 0)
+          (OptBceMaskSet.No)
+          (match (array-ref slots def-index)
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not
+                (and
+                  (opt-binop-eq op (ir.CompilerIrBinOp.BitAnd))
+                  (opt-affine-64bit-type? ty)))
+                (OptBceMaskSet.No)
+                (match (opt-bce-version-mask-operand
+                  instrs
+                  phi-count
+                  last
+                  defs
+                  lhs
+                  rhs)
+                  [(ir.CompilerIrMaybeValue.No) (OptBceMaskSet.No)]
+                  [(ir.CompilerIrMaybeValue.Some mask)
+                    (if (opt-bce-mask-bound-ok? mask)
+                      (opt-bce-mask-set-add set mask)
+                      (OptBceMaskSet.No))]))]
+            [(ir.CompilerIrInstr.Phi _ inputs pty)
+              (if (or (<= depth 0) (not (opt-affine-64bit-type? pty)))
+                (OptBceMaskSet.No)
+                (opt-bce-version-mask-collect-inputs
+                  instrs
+                  phi-count
+                  last
+                  defs
+                  inputs
+                  (- depth 1)
+                  set))]
+            [_ (OptBceMaskSet.No)])))]
+    [_ (OptBceMaskSet.No)]))
+
+(define (opt-bce-version-mask-collect-inputs
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [inputs : ir.CompilerIrPhiInputList]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match inputs
+    [(ir.CompilerIrPhiInputList.Nil) (OptBceMaskSet.No)]
+    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+      (let
+        [next : OptBceMaskSet
+          (opt-bce-version-mask-collect
+            instrs
+            phi-count
+            last
+            defs
+            value
+            depth
+            set)]
+        (match (__tl-box-place rest)
+          [(ir.CompilerIrPhiInputList.Nil) next]
+          [_
+            (opt-bce-version-mask-collect-inputs
+              instrs
+              phi-count
+              last
+              defs
+              (__tl-box-place rest)
+              depth
+              next)]))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bce-version-mask-collect-inputs
+        instrs
+        phi-count
+        last
+        defs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        depth
+        set)]))
+
+;; The masked-index derivation for one check: collect the index's invariant
+;; bounds and state each one against this length.
+(define (opt-bce-version-masked-guard
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc (:consume)]) : OptBceVersionGuardAcc
+  (match (opt-bce-version-mask-collect
+    instrs
+    phi-count
+    last
+    defs
+    value
+    4
+    (OptBceMaskSet.Some (OptBceMaskList.Nil) 0))
+    [(OptBceMaskSet.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceMaskSet.Some masks count)
+      (if (< count 1)
+        (OptBceVersionGuardAcc.No)
+        (opt-bce-mask-conds cell masks length-value acc))]))
+
 ;; Derive the sufficient invariant condition for one check's index operand.
 (define (opt-bce-version-derive-index
   [instrs : ir.CompilerIrInstrSeq]
@@ -56743,7 +57734,18 @@
                                 length-value
                                 acc)
                               (OptBceVersionGuardAcc.No))]
-                          [(OptAffineOperands.No) (OptBceVersionGuardAcc.No)])]
+                          ;; A VARIABLE mask: the loop-invariant one bounds the
+                          ;; index unsigned, whichever side it is on.
+                          [(OptAffineOperands.No)
+                            (opt-bce-version-masked-guard
+                              instrs
+                              phi-count
+                              last
+                              defs
+                              (ir.CompilerIrValue.Var id)
+                              length-value
+                              cell
+                              acc)])]
                       [_
                         (match (opt-bce-version-counter-affine
                           instrs
@@ -56806,8 +57808,19 @@
                           pred-label
                           id
                           inputs)
+                          ;; Not an induction: a loop-carried MASKED cursor is
+                          ;; the other phi this loop family indexes with, and
+                          ;; its bounds need no trip range.
                           [(OptBceDerivedInduction.No)
-                            (OptBceVersionGuardAcc.No)]
+                            (opt-bce-version-masked-guard
+                              instrs
+                              phi-count
+                              last
+                              defs
+                              (ir.CompilerIrValue.Var id)
+                              length-value
+                              cell
+                              acc)]
                           [(OptBceDerivedInduction.Some derived-seed step)
                             (opt-bce-version-derived-guard
                               seed
@@ -58358,7 +59371,12 @@
   ;; This candidate was admitted on the REGION budget -- an outermost nest
   ;; bigger than an ordinary nest may be -- so the derivation must show an
   ;; inner-loop check among the ones it removes before the clone is emitted.
-  (region? bool))
+  (region? bool)
+  ;; Does this shape carry a canonical counter? A COUNTER-FREE shape (see
+  ;; `opt-bce-mb-loop-shape-free`) has none: `iphi` is -1, the seed/bound/step
+  ;; fields are inert placeholders, and only the counter-INDEPENDENT
+  ;; derivations may fire. Everything that reads the trip range tests this.
+  (counted? bool))
 
 (defenum OptBceMbMaybeShape
   (No)
@@ -59589,8 +60607,77 @@
                     wrap-step
                     uncovered
                     inner
-                    region?))
+                    region?
+                    true))
                 (OptBceMbMaybeShape.No))])])]))
+
+;; --- the counter-free shape ---------------------------------------------------
+;;
+;; Not every eliminable check needs a trip range. A masked index with a
+;; loop-invariant mask is bounded by ONE unsigned conjunct
+;; (`opt-bce-version-mask-cond`) that mentions no counter at all, and so is a
+;; loop-invariant index; the cross-array fusion likewise transfers a dominating
+;; check's own fact. Every open-addressing probe in the corpus is exactly that
+;; shape AND has no canonical counter: `walked` advances only on the arms that
+;; keep probing, so the back-edge value is a merge phi rather than `iphi + k`
+;; and the counter recovery refuses the loop -- taking the mask derivation down
+;; with it, for no reason the derivation itself needs.
+;;
+;; So a loop whose counter recovery failed is still offered, with a shape that
+;; states plainly that it has no counter: `iphi = -1` (no var id can equal it, so
+;; every counter-keyed test simply misses), inert seed/bound/step placeholders
+;; that `opt-bce-mb-counter-range` passes through without emitting anything, an
+;; EMPTY uncovered set (there is no counter compare whose dominance would divide
+;; the body, and the surviving derivations hold at every point of the loop), and
+;; `counted? = false`, which is what the guard assembly and the exit-check sink
+;; read to stay out. `opt-bce-version-guard-finish` emits its once-only seed
+;; conditions only when a counter-cased derivation set `counter-seen`, and none
+;; can here, so the guard is exactly the conjuncts the surviving derivations
+;; asked for.
+;;
+;; Everything else is the counted shape's requirement, unchanged: a natural loop
+;; with a single dedicated preheader, header phis split as (preheader, latch),
+;; the clonable whitelist, the budgets, and at least one check to remove.
+(define (opt-bce-mb-loop-shape-free
+  [blocks : ir.CompilerIrBlockList]
+  [header : i64]
+  [latch : i64]
+  [pred : i64]
+  [body-labels : OptLabelSet]
+  [body-blocks : ir.CompilerIrBlockList]
+  [inner : OptLabelSet]
+  [region? : bool]) : OptBceMbMaybeShape
+  (match (opt-cfg-find-block blocks header)
+    [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
+    [(OptMaybeBlock.Some header-block)
+      (match header-block
+        [(ir.CompilerIrBlock.Block _ header-instrs)
+          (if (and
+            (opt-bce-mb-header-phis-ok?
+              header-instrs
+              0
+              (opt-unroll-phi-prefix-count header-instrs 0)
+              latch
+              pred)
+            (>= (opt-bce-mb-body-checks body-blocks 0) 1))
+            (OptBceMbMaybeShape.Some
+              (OptBceMbShape
+                header
+                latch
+                pred
+                body-labels
+                body-blocks
+                -1
+                (ir.CompilerIrValue.I64 0)
+                (ir.CompilerIrValue.I64 0)
+                1
+                0
+                1
+                (OptLabelSet.Nil)
+                inner
+                region?
+                false))
+            (OptBceMbMaybeShape.No))])]))
 
 ;; Does another natural loop's header sit inside this candidate's body? A
 ;; nest is admitted (the clone is just more blocks -- see the nest note on
@@ -59657,6 +60744,7 @@
   [blocks : ir.CompilerIrBlockList]
   [loops : OptNaturalLoopList]
   [nested? : bool]
+  [free? : bool]
   [header : i64]
   [latch : i64]
   [body : OptLoopBody]
@@ -59695,58 +60783,91 @@
       (not (opt-bce-mb-fast-labels-fresh? blocks body-labels))
       (not (opt-bce-mb-fallthroughs-ok? blocks body-labels)))
       (OptBceMbMaybeShape.No)
-      (match (opt-cfg-find-block blocks latch)
-        [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
-        [(OptMaybeBlock.Some latch-block)
-          (let
-            [defs : opt_i64_i64_map.Map
-              (opt-bce-mb-collect-defs
-                body-blocks
-                (opt_i64_i64_map.with-capacity 64))]
-            (match (opt-bce-mb-latch-branch latch-block header body-labels)
-              [(OptBceMbMaybeLatch.No)
-                (opt-bce-mb-loop-shape-top
-                  blocks
+      (if free?
+        ;; The COUNTER-FREE phase (see opt-bce-mb-loops-scan-phased): every
+        ;; candidate is offered the counter-free shape, whatever its counter
+        ;; recovery would have said. The counted phases already had their turn,
+        ;; and the counter-free derivation set is a subset of the counted one, so
+        ;; this can only add loops a trip-range condition refused -- never take a
+        ;; slot a counted shape would have used better.
+        ;;
+        ;; OUTERMOST ONLY, the same clause `region?` uses. A counter-free guard
+        ;; carries no trip-range clause, so its whole price is per ENTRY, and an
+        ;; entry inside another loop is paid once per enclosing iteration against
+        ;; derivations that are the weakest set the pass has. gvn_table's
+        ;; `gvn-facts-grow` rehash is the measured case: its insert probe sits
+        ;; inside the walk over the old table, so a two-conjunct guard ran once
+        ;; per rehashed key to remove one check from a probe that averages about
+        ;; one iteration -- +2,614,752 on that benchmark. Outside every loop the
+        ;; guard is paid once per call instead.
+        (if (opt-bce-mb-preheader-outside-loops? loops pred)
+          (opt-bce-mb-loop-shape-free
+            blocks
+            header
+            latch
+            pred
+            body-labels
+            body-blocks
+            inner
+            region?)
+          (OptBceMbMaybeShape.No))
+        (match (opt-cfg-find-block blocks latch)
+          [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
+          [(OptMaybeBlock.Some latch-block)
+            (let
+              [defs : opt_i64_i64_map.Map
+                (opt-bce-mb-collect-defs
                   body-blocks
-                  defs
-                  latch-block
-                  header
-                  latch
-                  pred
-                  body-labels
-                  inner
-                  region?)]
-              [(OptBceMbMaybeLatch.Some cond-var _)
-                (match (opt-bce-mb-loop-shape-finish
-                  blocks
-                  header
-                  latch
-                  pred
-                  body-labels
-                  body-blocks
-                  inner
-                  region?
-                  ;; the latch compare covers the whole body: it bounds the
-                  ;; NEXT iteration's counter and the guard bounds the first
-                  (OptLabelSet.Nil)
-                  (opt-bce-mb-counter-step body-blocks defs latch pred cond-var))
-                  [(OptBceMbMaybeShape.Some shape)
-                    (OptBceMbMaybeShape.Some shape)]
-                  ;; a latch branch that closes the back edge but does NOT
-                  ;; carry the counter compare (a bottom-tested flag test) is
-                  ;; still a top-tested loop for the chain walk
-                  [(OptBceMbMaybeShape.No)
-                    (opt-bce-mb-loop-shape-top
-                      blocks
+                  (opt_i64_i64_map.with-capacity 64))]
+              (match (opt-bce-mb-latch-branch latch-block header body-labels)
+                [(OptBceMbMaybeLatch.No)
+                  (opt-bce-mb-loop-shape-top
+                    blocks
+                    body-blocks
+                    defs
+                    latch-block
+                    header
+                    latch
+                    pred
+                    body-labels
+                    inner
+                    region?)]
+                [(OptBceMbMaybeLatch.Some cond-var _)
+                  (match (opt-bce-mb-loop-shape-finish
+                    blocks
+                    header
+                    latch
+                    pred
+                    body-labels
+                    body-blocks
+                    inner
+                    region?
+                    ;; the latch compare covers the whole body: it bounds the
+                    ;; NEXT iteration's counter and the guard bounds the first
+                    (OptLabelSet.Nil)
+                    (opt-bce-mb-counter-step
                       body-blocks
                       defs
-                      latch-block
-                      header
                       latch
                       pred
-                      body-labels
-                      inner
-                      region?)])]))]))))
+                      cond-var))
+                    [(OptBceMbMaybeShape.Some shape)
+                      (OptBceMbMaybeShape.Some shape)]
+                    ;; a latch branch that closes the back edge but does NOT
+                    ;; carry the counter compare (a bottom-tested flag test) is
+                    ;; still a top-tested loop for the chain walk
+                    [(OptBceMbMaybeShape.No)
+                      (opt-bce-mb-loop-shape-top
+                        blocks
+                        body-blocks
+                        defs
+                        latch-block
+                        header
+                        latch
+                        pred
+                        body-labels
+                        inner
+                        region?)])]))])))))
 
 (define (opt-bce-mb-loop-shape-top
   [blocks : ir.CompilerIrBlockList]
@@ -59768,6 +60889,9 @@
     latch
     pred
     body-labels)
+    ;; No canonical counter anywhere. The counter-FREE shape is what admits such
+    ;; a loop, and it is offered from its own scan phase rather than here, so a
+    ;; counted candidate always gets the slot first.
     [(OptBceMbMaybeChain.No) (OptBceMbMaybeShape.No)]
     [(OptBceMbMaybeChain.Some counter chain)
       (opt-bce-mb-loop-shape-finish
@@ -59791,6 +60915,7 @@
   [loops : OptNaturalLoopList]
   [entry-label : i64]
   [nested? : bool]
+  [free? : bool]
   [loop : OptNaturalLoop]) : OptBceMbMaybeShape
   (match loop
     [(OptNaturalLoop.Loop header latch body preheader)
@@ -59812,6 +60937,7 @@
                 blocks
                 loops
                 nested?
+                free?
                 header
                 latch
                 body
@@ -63004,6 +64130,177 @@
     (opt-bce-mb-seeds-match? all-blocks seed init)
     (opt-bce-mb-bounded-value? body-blocks phi-var back 8)))
 
+;; Either operand of a `bit-and`, whichever is loop-invariant across the whole
+;; multi-block body (see the single-block twin at
+;; `opt-bce-version-mask-operand`).
+(define (opt-bce-mb-mask-operand
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (match (opt-bce-mb-invariant-operand body-blocks defs rhs)
+    [(ir.CompilerIrMaybeValue.Some mask) (ir.CompilerIrMaybeValue.Some mask)]
+    [(ir.CompilerIrMaybeValue.No)
+      (opt-bce-mb-invariant-operand body-blocks defs lhs)]))
+
+;; An invariant value that is ITSELF masked by an invariant mask contributes the
+;; MASK as its bound rather than itself. The probe seed is exactly that --
+;; `hash & M` computed in the preheader -- and reading it as `M` collapses the
+;; cursor phi bound set to the ONE conjunct its loop-carried inputs already
+;; need, which is what the economics gate at `opt-bce-mb-guard-conds-ranged`
+;; then measures. The def is searched over the WHOLE function because an
+;; invariant value is by definition defined outside the loop; the mask it reads
+;; is an operand of that definition, so it dominates the guard block for the
+;; same reason the definition itself does.
+(define (opt-bce-mb-mask-tighten
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (opt-bce-mb-find-def all-blocks var)
+        [(OptBceMbMaybeInstr.No) value]
+        [(OptBceMbMaybeInstr.Some instr)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not
+                (and
+                  (opt-binop-eq op (ir.CompilerIrBinOp.BitAnd))
+                  (opt-affine-64bit-type? ty)))
+                value
+                (match (opt-bce-mb-mask-operand body-blocks defs lhs rhs)
+                  [(ir.CompilerIrMaybeValue.No) value]
+                  [(ir.CompilerIrMaybeValue.Some mask) mask]))]
+            [_ value])])]
+    [_ value]))
+
+;; The invariant bounds of one value, multi-block: itself when loop-invariant,
+;; its mask when it is a `bit-and` by an invariant operand, the union over the
+;; inputs when it is a phi. The probe cursor is the phi case -- the preheader
+;; seeds `hash & M` and each continuing arm feeds `(cursor + 1) & M`, so the
+;; index is a header phi whose every input carries its own invariant bound, and
+;; the phi selects an input only on an iteration that arrived by that edge.
+(define (opt-bce-mb-mask-collect
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match set
+    [(OptBceMaskSet.No) (OptBceMaskSet.No)]
+    [(OptBceMaskSet.Some _ _)
+      (match (opt-bce-mb-invariant-operand body-blocks defs value)
+        [(ir.CompilerIrMaybeValue.Some raw-bound)
+          (let
+            [bound : ir.CompilerIrValue
+              (opt-bce-mb-mask-tighten all-blocks body-blocks defs raw-bound)]
+            (if (opt-bce-mask-bound-ok? bound)
+              (opt-bce-mask-set-add set bound)
+              (OptBceMaskSet.No)))]
+        [(ir.CompilerIrMaybeValue.No)
+          (opt-bce-mb-mask-collect-def
+            all-blocks
+            body-blocks
+            defs
+            value
+            depth
+            set)])]))
+
+(define (opt-bce-mb-mask-collect-def
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match value
+    [(ir.CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+        (match (opt-bce-mb-find-def body-blocks id)
+          [(OptBceMbMaybeInstr.No) (OptBceMaskSet.No)]
+          [(OptBceMbMaybeInstr.Some instr)
+            (match instr
+              [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                (if (not
+                  (and
+                    (opt-binop-eq op (ir.CompilerIrBinOp.BitAnd))
+                    (opt-affine-64bit-type? ty)))
+                  (OptBceMaskSet.No)
+                  (match (opt-bce-mb-mask-operand body-blocks defs lhs rhs)
+                    [(ir.CompilerIrMaybeValue.No) (OptBceMaskSet.No)]
+                    [(ir.CompilerIrMaybeValue.Some mask)
+                      (if (opt-bce-mask-bound-ok? mask)
+                        (opt-bce-mask-set-add set mask)
+                        (OptBceMaskSet.No))]))]
+              [(ir.CompilerIrInstr.Phi _ inputs pty)
+                (if (or (<= depth 0) (not (opt-affine-64bit-type? pty)))
+                  (OptBceMaskSet.No)
+                  (opt-bce-mb-mask-collect-inputs
+                    all-blocks
+                    body-blocks
+                    defs
+                    inputs
+                    (- depth 1)
+                    set))]
+              [_ (OptBceMaskSet.No)])]))]
+    [_ (OptBceMaskSet.No)]))
+
+(define (opt-bce-mb-mask-collect-inputs
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [inputs : ir.CompilerIrPhiInputList]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match inputs
+    [(ir.CompilerIrPhiInputList.Nil) (OptBceMaskSet.No)]
+    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+      (let
+        [next : OptBceMaskSet
+          (opt-bce-mb-mask-collect all-blocks body-blocks defs value depth set)]
+        (match (__tl-box-place rest)
+          [(ir.CompilerIrPhiInputList.Nil) next]
+          [_
+            (opt-bce-mb-mask-collect-inputs
+              all-blocks
+              body-blocks
+              defs
+              (__tl-box-place rest)
+              depth
+              next)]))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-mask-collect-inputs
+        all-blocks
+        body-blocks
+        defs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        depth
+        set)]))
+
+(define (opt-bce-mb-masked-guard
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc (:consume)]) : OptBceVersionGuardAcc
+  (match (opt-bce-mb-mask-collect
+    all-blocks
+    body-blocks
+    defs
+    value
+    4
+    (OptBceMaskSet.Some (OptBceMaskList.Nil) 0))
+    [(OptBceMaskSet.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceMaskSet.Some masks count)
+      (if (< count 1)
+        (OptBceVersionGuardAcc.No)
+        (opt-bce-mask-conds cell masks length-value acc))]))
+
 (define (opt-bce-mb-derive-index
   [all-blocks : ir.CompilerIrBlockList]
   [body-blocks : ir.CompilerIrBlockList]
@@ -63048,8 +64345,11 @@
               length-value
               cell
               acc)]
-          [(not (opt-used-contains defs id))
-            ;; loop-invariant index: exactly its own range check, hoisted.
+          ;; loop-invariant index: exactly its own range check, hoisted. TWO
+          ;; conjuncts, so like the fusion above it stays a counted-shape rule --
+          ;; the counter-free relaxation is scoped to the one-conjunct masked
+          ;; family (see opt-bce-mb-derive-check).
+          [(and (>= iphi 0) (not (opt-used-contains defs id)))
             (opt-bce-version-cond
               cell
               (ir.CompilerIrBinOp.Lt)
@@ -63080,7 +64380,17 @@
                                 length-value
                                 acc)
                               (OptBceVersionGuardAcc.No))]
-                          [(OptAffineOperands.No) (OptBceVersionGuardAcc.No)])]
+                          ;; A VARIABLE mask: the loop-invariant one bounds the
+                          ;; index unsigned, whichever side it is on.
+                          [(OptAffineOperands.No)
+                            (opt-bce-mb-masked-guard
+                              all-blocks
+                              body-blocks
+                              defs
+                              (ir.CompilerIrValue.Var id)
+                              length-value
+                              cell
+                              acc)])]
                       [_
                         (match (opt-bce-mb-counter-affine
                           body-blocks
@@ -63183,15 +64493,21 @@
                                                   init
                                                   back
                                                   pred-label)
-                                                (if (opt-bce-mb-bounded-phi?
-                                                  all-blocks
-                                                  body-blocks
-                                                  preheader
-                                                  pred-label
-                                                  seed
-                                                  init
-                                                  core
-                                                  back)
+                                                ;; The bounded-phi rule reads the
+                                                ;; counter's range, so a
+                                                ;; counter-free shape (iphi < 0,
+                                                ;; inert seed) must not enter it.
+                                                (if (and
+                                                  (>= iphi 0)
+                                                  (opt-bce-mb-bounded-phi?
+                                                    all-blocks
+                                                    body-blocks
+                                                    preheader
+                                                    pred-label
+                                                    seed
+                                                    init
+                                                    core
+                                                    back))
                                                   (opt-bce-version-fan-admit
                                                     fan
                                                     seed
@@ -63233,48 +64549,78 @@
                     ;; inputs): same seed as the counter, back-edge value within
                     ;; {sphi, sphi+1} through any merge. The counter's conditions
                     ;; then cover its whole range, recorded as the literal-base
-                    ;; fan's offset 0 like the counter itself.
+                    ;; fan's offset 0 like the counter itself. A phi that is
+                    ;; neither -- the loop-carried MASKED probe cursor -- falls
+                    ;; through to the counter-independent mask rule, which is
+                    ;; also the ONLY rule a counter-free shape (iphi < 0) may
+                    ;; use: every other one reads the trip range.
                     (match pty
                       [(ast.AstType.I64)
-                        (match (opt-unroll-split-phi-inputs inputs latch)
-                          [(OptUnrollPhiSplit.Split init back pred-label)
-                            (if (opt-bce-mb-bounded-phi?
-                              all-blocks
-                              body-blocks
-                              preheader
-                              pred-label
-                              seed
-                              init
-                              id
-                              back)
-                              (opt-bce-version-fan-admit
-                                fan
+                        (if (< iphi 0)
+                          (opt-bce-mb-masked-guard
+                            all-blocks
+                            body-blocks
+                            defs
+                            (ir.CompilerIrValue.Var id)
+                            length-value
+                            cell
+                            acc)
+                          (match (opt-unroll-split-phi-inputs inputs latch)
+                            [(OptUnrollPhiSplit.Split init back pred-label)
+                              (if (opt-bce-mb-bounded-phi?
+                                all-blocks
+                                body-blocks
+                                preheader
+                                pred-label
                                 seed
-                                bound
-                                (ir.CompilerIrValue.I64 0)
-                                0
-                                length-value
-                                cell
-                                acc)
-                              (match (opt-bce-mb-derived-induction
+                                init
+                                id
+                                back)
+                                (opt-bce-version-fan-admit
+                                  fan
+                                  seed
+                                  bound
+                                  (ir.CompilerIrValue.I64 0)
+                                  0
+                                  length-value
+                                  cell
+                                  acc)
+                                (match (opt-bce-mb-derived-induction
+                                  body-blocks
+                                  defs
+                                  latch
+                                  preheader
+                                  id
+                                  inputs)
+                                  [(OptBceDerivedInduction.No)
+                                    (opt-bce-mb-masked-guard
+                                      all-blocks
+                                      body-blocks
+                                      defs
+                                      (ir.CompilerIrValue.Var id)
+                                      length-value
+                                      cell
+                                      acc)]
+                                  [(OptBceDerivedInduction.Some
+                                      derived-seed
+                                      step)
+                                    (opt-bce-version-derived-guard
+                                      seed
+                                      bound
+                                      derived-seed
+                                      step
+                                      length-value
+                                      cell
+                                      acc)]))]
+                            [(OptUnrollPhiSplit.No)
+                              (opt-bce-mb-masked-guard
+                                all-blocks
                                 body-blocks
                                 defs
-                                latch
-                                preheader
-                                id
-                                inputs)
-                                [(OptBceDerivedInduction.No)
-                                  (OptBceVersionGuardAcc.No)]
-                                [(OptBceDerivedInduction.Some derived-seed step)
-                                  (opt-bce-version-derived-guard
-                                    seed
-                                    bound
-                                    derived-seed
-                                    step
-                                    length-value
-                                    cell
-                                    acc)]))]
-                          [(OptUnrollPhiSplit.No) (OptBceVersionGuardAcc.No)])]
+                                (ir.CompilerIrValue.Var id)
+                                length-value
+                                cell
+                                acc)]))]
                       [_ (OptBceVersionGuardAcc.No)])]
                   [_ (OptBceVersionGuardAcc.No)])])]))]
     [_ (OptBceVersionGuardAcc.No)]))
@@ -63697,16 +65043,34 @@
       [(OptBceVersionGuardAcc.No)
         ;; No single-array derivation: try the cross-array fusion fallback,
         ;; which keeps the check when it finds no dominating anchor either.
-        (opt-bce-mb-derive-fused
-          doms
-          body-blocks
-          defs
-          cell
-          label
-          index
-          index-value
-          length-invariant
-          state)]
+        ;;
+        ;; COUNTED SHAPES ONLY. Fusion states one conjunct per pair of arrays the
+        ;; walk touches, and the checks it removes fire only on the iterations
+        ;; that reach them, so it needs the trip-count evidence a counted shape
+        ;; carries. Offered to a counter-free bucket walk it inverts: measured on
+        ;; gvn_table, `gvn-table-lookup`'s chain walk took a SIX-conjunct guard
+        ;; (12 instructions per call, one per node array) to remove checks that
+        ;; only the matching-key iterations execute, +18.6M on the benchmark. The
+        ;; counter-free relaxation exists for the masked-index family, whose
+        ;; guard is one unsigned conjunct per (mask, length) pair and whose
+        ;; removal fires on EVERY iteration; nothing else rides along.
+        (if (< iphi 0)
+          (OptBceMbDerive
+            state.guard
+            (opt-bce-mb-keep-cons label index state.keep)
+            state.derived
+            state.hoists
+            state.fused)
+          (opt-bce-mb-derive-fused
+            doms
+            body-blocks
+            defs
+            cell
+            label
+            index
+            index-value
+            length-invariant
+            state))]
       [(OptBceVersionGuardAcc.Some _ _ _)
         (OptBceMbDerive
           derived-guard
@@ -63776,16 +65140,22 @@
                 state.guard
                 state)]
             [(ir.CompilerIrMaybeValue.No)
-              (match (opt-bce-mb-descriptor-length
-                descriptor
-                stable?
-                all-blocks
-                body-blocks
-                defs
-                length-value
-                state.hoists
-                cell
-                state.guard)
+              ;; A hoisted descriptor length costs a gep+load in the guard for
+              ;; the whole loop, which is priced against a trip range; a
+              ;; counter-free shape has none, so it keeps such a check (the same
+              ;; scoping the fusion and invariant-index rules take).
+              (match (if (< iphi 0)
+                (OptBceMbMaybeLength.No)
+                (opt-bce-mb-descriptor-length
+                  descriptor
+                  stable?
+                  all-blocks
+                  body-blocks
+                  defs
+                  length-value
+                  state.hoists
+                  cell
+                  state.guard))
                 [(OptBceMbMaybeLength.No)
                   (OptBceMbDerive
                     state.guard
@@ -64635,7 +66005,10 @@
   [step : i64]
   [seeded : OptBceVersionGuardAcc]) : OptBceMbGuardOut
   (let
-    [ascending-exact? : bool (and (> shape.step 0) (= shape.delta 0))]
+    ;; A counter-free shape has no seed/bound pair a dominating branch could
+    ;; have decided, so the once-only lookups below are not even asked.
+    [ascending-exact? : bool
+      (and shape.counted? (> shape.step 0) (= shape.delta 0))]
     [fan : OptBceVersionFan (opt-bce-version-fan-new)]
     [dr : OptBceMbDerive
       (opt-bce-mb-derive-blocks
@@ -64725,20 +66098,44 @@
             dr.guard)))
         [(OptBceVersionGuardResult.No) (OptBceMbGuardOut.No)]
         [(OptBceVersionGuardResult.Some guard-instrs guard-value)
-          (OptBceMbGuardOut.Some
-            guard-instrs
-            guard-value
-            dr.keep
-            (OptBceFoldFacts
-              (opt-bce-fold-collect
-                guard-instrs
-                guard-value
-                (opt-bce-fold-conjunct-fuel)
-                (opt-bce-fold-cond-list-new))
-              all-blocks
-              shape.body-blocks
-              shape.iphi
-              counter-seen))]))))
+          ;; COUNTER-FREE ECONOMICS: one conjunct per removed check, at most.
+          ;;
+          ;; A conjunct costs a compare and a branch ONCE per loop entry; a
+          ;; removed check saves a compare and a branch once per iteration that
+          ;; reaches it. A counter-free clone therefore repays its guard as soon
+          ;; as the loop runs more than `conjuncts / removed` iterations, and the
+          ;; only static statement worth making is that the ratio is at most one
+          ;; -- break-even at a single trip. A counted shape needs no such gate:
+          ;; its trip-range clauses are themselves the evidence that the loop
+          ;; iterates, and its own floors (opt-bce-mb-call-clone-min-derived, the
+          ;; scale-1 census) price the rest.
+          ;;
+          ;; The corpus pins it from the losing side. intern_table's
+          ;; `it-map-insert-from` probe takes TWO conjuncts -- the invariant seed
+          ;; cursor and the mask -- to remove ONE check from a loop that averages
+          ;; ~1.15 iterations per call: measured +281,442 on that benchmark, with
+          ;; the same shape again inside `it-grow!`. The masked micro this
+          ;; relaxation exists for (target/wsl/research/gvn_table/micro/m3.tl)
+          ;; sits on the other side at one conjunct for one check, and its
+          ;; check-free clone then unrolls x16.
+          (if (and
+            (not shape.counted?)
+            (> (opt-bce-mb-guard-compare-count guard-instrs 0 0) dr.derived))
+            (OptBceMbGuardOut.No)
+            (OptBceMbGuardOut.Some
+              guard-instrs
+              guard-value
+              dr.keep
+              (OptBceFoldFacts
+                (opt-bce-fold-collect
+                  guard-instrs
+                  guard-value
+                  (opt-bce-fold-conjunct-fuel)
+                  (opt-bce-fold-cond-list-new))
+                all-blocks
+                shape.body-blocks
+                shape.iphi
+                counter-seen)))]))))
 
 ;; --- guard-dominated compare folding --------------------------------------------
 ;;
@@ -64969,6 +66366,28 @@
   (match acc
     [(OptBceVersionGuardAcc.No) false]
     [(OptBceVersionGuardAcc.Some _ _ counter-seen) (deref counter-seen)]))
+
+;; How many conjuncts a finished guard states: its comparisons, each of which
+;; lowers to a compare plus a branch. That is what the counter-free economics
+;; gate at `opt-bce-mb-guard-conds-ranged` prices against the checks the clone
+;; removes. Counted over the emitted stream rather than the accumulator, because
+;; a counter-free guard emits nothing else -- no range shift, no fan extremes,
+;; no descriptor hoist -- so the comparison count IS the conjunct count.
+(define (opt-bce-mb-guard-compare-count
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-bce-mb-guard-compare-count
+      instrs
+      (+ index 1)
+      (match (ir.compiler-ir-instr-seq-ref instrs index)
+        [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+          (if (ir.compiler-ir-binop-compare? op)
+            (+ acc 1)
+            acc)]
+        [_ acc]))))
 
 ;; The comparisons the fold reasons about. BitTest* forms are deliberately out:
 ;; the guard never emits one, and R1 is about ordered i64 compares.
@@ -66844,9 +68263,11 @@
               ;; crossing (opt-bce-mb-bounded-value?). That relation is written
               ;; for an ascending counter and says nothing about a descending
               ;; one, whose seed is the range's top; a descending shape skips
-              ;; the sink rather than reinterpret it.
+              ;; the sink rather than reinterpret it. A COUNTER-FREE shape has
+              ;; no counter for a phi to track and no real seed to match, so it
+              ;; skips the sink for the same reason.
               [bounded : i64
-                (if (< shape.step 0)
+                (if (or (not shape.counted?) (< shape.step 0))
                   -1
                   (opt-bce-mb-find-bounded-phi
                     shape.body-blocks
@@ -66905,7 +68326,8 @@
       shape.wrap-step
       shape.uncovered
       shape.inner
-      shape.region?)
+      shape.region?
+      shape.counted?)
     (opt-bce-mb-collect-defs clone-blocks (opt_i64_i64_map.with-capacity 64))
     cell
     frame))
@@ -67077,6 +68499,7 @@
   [entry-label : i64]
   [nested? : bool]
   [regions-only? : bool]
+  [free? : bool]
   [rejected : OptLabelSet]
   [frame : i64]) : OptBceVersionScan
   (match loops
@@ -67094,9 +68517,16 @@
           entry-label
           nested?
           regions-only?
+          free?
           rejected
           frame)
-        (match (opt-bce-mb-loop-shape blocks all-loops entry-label nested? loop)
+        (match (opt-bce-mb-loop-shape
+          blocks
+          all-loops
+          entry-label
+          nested?
+          free?
+          loop)
           [(OptBceMbMaybeShape.Some shape)
             (match (if (and regions-only? (not shape.region?))
               (OptUnrollResult.Result blocks frame false)
@@ -67118,6 +68548,7 @@
                     entry-label
                     nested?
                     regions-only?
+                    free?
                     rejected
                     frame))])]
           [(OptBceMbMaybeShape.No)
@@ -67131,6 +68562,7 @@
               entry-label
               nested?
               regions-only?
+              free?
               rejected
               frame)]))]))
 
@@ -67158,6 +68590,68 @@
 ;; the edge loop instead of the region costs +24.8M -- 3.5% of the benchmark.
 ;; Ordering it explicitly is what makes that a decision rather than a side
 ;; effect of whichever cap happened to refuse the inner nest first.
+;;
+;; COUNTED SHAPES BEFORE COUNTER-FREE ONES -- phases 0-2, then the same three
+;; for `opt-bce-mb-loop-shape-free`. A counter-free candidate can only derive
+;; the counter-INDEPENDENT rules (a masked index, an invariant index, the
+;; cross-array fusion), which is a SUBSET of what the same loop's counted shape
+;; derives, so it must never take a slot a counted candidate could use. Offering
+;; both in one phase does exactly that, and it is measurable: a counter-free
+;; list walk in cfg_domloops' `cfg-idom-iterate` displaced the 12-check region
+;; the ordering above exists to protect, +56.0M on that benchmark (+8.0%), and
+;; lex_source lost 19.0M the same way. The separation costs one extra scan per
+;; round, and only in the rounds where no counted candidate applied at all.
+(define (opt-bce-mb-scan-phase-count) : i64
+  6)
+
+(define (opt-bce-mb-scan-phase-nested? [phase : i64]) : bool
+  (cond [(= phase 0) false] [(= phase 3) false] [else true]))
+
+(define (opt-bce-mb-scan-phase-regions-only? [phase : i64]) : bool
+  (or (= phase 1) (= phase 4)))
+
+(define (opt-bce-mb-scan-phase-free? [phase : i64]) : bool
+  (>= phase 3))
+
+(define (opt-bce-mb-loops-scan-phased-from
+  [descriptor : OptBceMbDescriptor]
+  [pred-map : OptPredMap]
+  [doms : OptDomInfo]
+  [blocks : ir.CompilerIrBlockList]
+  [all-loops : OptNaturalLoopList]
+  [entry-label : i64]
+  [rejected : OptLabelSet]
+  [frame : i64]
+  [phase : i64]) : OptBceVersionScan
+  (if (>= phase (opt-bce-mb-scan-phase-count))
+    (OptBceVersionScan.Scan blocks frame false (ir.compiler-ir-label-none))
+    (match (opt-bce-mb-loops-scan
+      descriptor
+      pred-map
+      doms
+      blocks
+      all-loops
+      all-loops
+      entry-label
+      (opt-bce-mb-scan-phase-nested? phase)
+      (opt-bce-mb-scan-phase-regions-only? phase)
+      (opt-bce-mb-scan-phase-free? phase)
+      rejected
+      frame)
+      [(OptBceVersionScan.Scan next-blocks next-frame changed applied)
+        (if changed
+          (OptBceVersionScan.Scan next-blocks next-frame true applied)
+          (opt-bce-mb-loops-scan-phased-from
+            descriptor
+            pred-map
+            doms
+            blocks
+            all-loops
+            entry-label
+            rejected
+            frame
+            (+ phase 1)))])))
+
 (define (opt-bce-mb-loops-scan-phased
   [descriptor : OptBceMbDescriptor]
   [pred-map : OptPredMap]
@@ -67167,56 +68661,16 @@
   [entry-label : i64]
   [rejected : OptLabelSet]
   [frame : i64]) : OptBceVersionScan
-  (match (opt-bce-mb-loops-scan
+  (opt-bce-mb-loops-scan-phased-from
     descriptor
     pred-map
     doms
     blocks
     all-loops
-    all-loops
     entry-label
-    false
-    false
     rejected
-    frame)
-    [(OptBceVersionScan.Scan flat-blocks flat-frame flat-changed flat-applied)
-      (if flat-changed
-        (OptBceVersionScan.Scan flat-blocks flat-frame true flat-applied)
-        (match (opt-bce-mb-loops-scan
-          descriptor
-          pred-map
-          doms
-          blocks
-          all-loops
-          all-loops
-          entry-label
-          true
-          true
-          rejected
-          frame)
-          [(OptBceVersionScan.Scan
-              region-blocks
-              region-frame
-              region-changed
-              region-applied)
-            (if region-changed
-              (OptBceVersionScan.Scan
-                region-blocks
-                region-frame
-                true
-                region-applied)
-              (opt-bce-mb-loops-scan
-                descriptor
-                pred-map
-                doms
-                blocks
-                all-loops
-                all-loops
-                entry-label
-                true
-                false
-                rejected
-                frame))]))]))
+    frame
+    0))
 
 ;; --- prescan ---------------------------------------------------------------------
 (define (opt-bce-mb-blocks-have-check? [blocks : ir.CompilerIrBlockList]) : bool
@@ -76344,8 +77798,11 @@
                             _t-gvn)
                           unit)]
                       ;; Dominated bounds-check dedup rides the same context:
-                      ;; it only deletes mid-block BoundsCheck instructions, so
-                      ;; the CFG (and ssa-context) stay valid for sccp below.
+                      ;; it only deletes mid-block BoundsCheck instructions and
+                      ;; REORDERS a constant-offset run's checks (plus the index
+                      ;; arithmetic they read) inside one block, so the block set,
+                      ;; every terminator, and therefore the CFG (and
+                      ;; ssa-context) stay valid for sccp below.
                       ;; VERIFIER-GATED like GVN: in a fallback (non-SSA)
                       ;; function a textually-single-def var inside a loop
                       ;; still changes value across iterations (loop-carried

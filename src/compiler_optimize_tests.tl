@@ -38220,13 +38220,17 @@
 ;;   0  the plain shape: the flag only ever clears, gates the loop, and dies at
 ;;      the exit phi -- this converts, and is the enabled control every negative
 ;;      variant below is one edit away from
-;;   1  the gate reads `not flag` instead of the flag (it-map-insert-from's
-;;      shape: the flag is consumed by a merge), so no branch tests a closure
-;;      var and C3 rejects
+;;   1  the gate reads `not flag` instead of the flag -- how
+;;      `(while (and (< i n) (not done)) ...)` lowers, and the shape
+;;      it-map-insert-from and gvn_table's probe loops have -- so C3 takes the
+;;      arms the other way round and converts, and the `not` goes with the
+;;      branch it fed
 ;;   2  the loop counter is read after the loop (ls-scan-symbol-end's shape:
-;;      a scan returning its counter), so C8 rejects
+;;      a scan returning its counter) from a position the gate's exit arm does
+;;      NOT dominate, so C8 rejects
 ;;   3  the flag itself is returned rather than reaching an exit phi
-;;      (pl-ranges-eq?'s shape), so C4 rejects
+;;      (pl-ranges-eq?'s shape): the gate's arm collapses onto the return block
+;;      and C8 mints the exit phi that carries the answer
 ;;   4  a call sits on the path the redirect would skip (pl-run-chunk's shape),
 ;;      so C6 rejects
 ;;   5  the gate's exit arm has a second predecessor (gd-dijkstra's shape), so
@@ -38237,8 +38241,10 @@
 ;;      shared merge -- the shape a loop that tests the flag BEFORE the counter
 ;;      lowers to (`opt-symbol-leaf-matches-from?`) -- so C7's separation clause
 ;;      rejects
-;; Variants 1-5 each keep every other condition satisfied, so a variant that
-;; stopped rejecting would convert rather than silently pass.
+;;   8  the gate reads `eq flag, true`, C3's other helper shape, which selects
+;;      the arms exactly as the bare flag does and converts
+;; Variants 2-5 and 7 each keep every other condition satisfied, so a variant
+;; that stopped rejecting would convert rather than silently pass.
 (define (opt-flag-exit-test-entry-instrs) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
     (compiler_ir_types.CompilerIrInstr.Jump
@@ -38287,33 +38293,50 @@
             (compiler_ir_types.compiler-ir-label "done_full"))
           (compiler_ir_types.CompilerIrInstrList.Nil))))))
 
-;; Variant 1 routes the flag through a `not` on the way to the branch, so no
-;; branch condition is a closure var at all.
+;; Variant 1 routes the flag through a `not` on the way to the branch, which
+;; swaps which arm the cleared flag selects; variant 8 routes it through
+;; `eq flag, true`, which does not.
 (define (opt-flag-exit-test-gate-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
-  (if (= variant 1)
-    (compiler_ir_types.compiler-ir-instr-cons
-      (compiler_ir_types.CompilerIrInstr.UnOp
-        18
-        (compiler_ir_types.CompilerIrUnOp.Not)
-        (compiler_ir_types.CompilerIrValue.Var 11)
-        (compiler_ast_types.AstType.Bool))
+  (cond
+    [(= variant 1)
       (compiler_ir_types.compiler-ir-instr-cons
-        (compiler_ir_types.CompilerIrInstr.Branch
-          (compiler_ir_types.CompilerIrValue.Var 18)
-          (compiler_ir_types.compiler-ir-label "done_early")
-          (compiler_ir_types.compiler-ir-label "body"))
-        (compiler_ir_types.CompilerIrInstrList.Nil)))
-    (compiler_ir_types.compiler-ir-instr-cons
-      (if (= variant 6)
-        (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrInstr.UnOp
+          18
+          (compiler_ir_types.CompilerIrUnOp.Not)
           (compiler_ir_types.CompilerIrValue.Var 11)
-          (compiler_ir_types.compiler-ir-label "done_early")
-          (compiler_ir_types.compiler-ir-label "body"))
-        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 18)
+            (compiler_ir_types.compiler-ir-label "done_early")
+            (compiler_ir_types.compiler-ir-label "body"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))]
+    [(= variant 8)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          18
+          (compiler_ir_types.CompilerIrBinOp.Eq)
           (compiler_ir_types.CompilerIrValue.Var 11)
-          (compiler_ir_types.compiler-ir-label "body")
-          (compiler_ir_types.compiler-ir-label "done_early")))
-      (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 18)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "done_early"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))]
+    [else
+      (compiler_ir_types.compiler-ir-instr-cons
+        (if (= variant 6)
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.compiler-ir-label "done_early")
+            (compiler_ir_types.compiler-ir-label "body"))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "done_early")))
+        (compiler_ir_types.CompilerIrInstrList.Nil))]))
 
 (define (opt-flag-exit-test-body-instrs) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
@@ -38713,6 +38736,18 @@
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
         label)]))
 
+(define (opt-flag-exit-test-instr-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (compiler_ir_types.compiler-ir-instr-seq-count instrs)])]))
+
 (define (opt-flag-exit-test-unchanged? [variant : i64]) : bool
   (compiler_optimize.opt-block-list-eq
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -38745,6 +38780,15 @@
     [set-true : compiler_ir_types.CompilerIrFunction (opt-flag-exit-test-run 6)]
     [set-true-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks set-true)]
+    [negated : compiler_ir_types.CompilerIrFunction (opt-flag-exit-test-run 1)]
+    [negated-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks negated)]
+    [compared : compiler_ir_types.CompilerIrFunction (opt-flag-exit-test-run 8)]
+    [compared-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks compared)]
+    [returned : compiler_ir_types.CompilerIrFunction (opt-flag-exit-test-run 3)]
+    [returned-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks returned)]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -38775,12 +38819,70 @@
       [(not (= (opt-flag-exit-test-phi-bool blocks "latch" 13 "match") 1)) 11]
       ;; idempotence: the next pipeline iteration finds nothing left to convert
       [(not (compiler_optimize.opt-block-list-eq bases blocks twice)) 12]
-      ;; C3: the flag reaches the branch through a `not`, so no branch tests it
-      [(not (opt-flag-exit-test-rejects? 1)) 13]
+      ;; C3: a `not` between the flag and the branch swaps the arms and the
+      ;; helper goes with the branch it fed -- the gate block is left with its
+      ;; jump alone
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function negated)))
+        26]
+      [(not (opt-flag-exit-test-jumps-to? negated-blocks "gate" "body")) 13]
+      [(not (= (opt-flag-exit-test-instr-count negated-blocks "gate") 1)) 27]
+      [(not
+          (opt-flag-exit-test-jumps-to? negated-blocks "mismatch" "done_early"))
+        28]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-bool negated-blocks "exit" 20 "done_early")
+            0))
+        29]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-bool negated-blocks "exit" 20 "done_full")
+            1))
+        30]
+      ;; C3: `eq flag, true` keeps the arms as the bare flag has them
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function compared)))
+        31]
+      [(not (opt-flag-exit-test-jumps-to? compared-blocks "gate" "body")) 32]
+      [(not (= (opt-flag-exit-test-instr-count compared-blocks "gate") 1)) 33]
+      [(not
+          (opt-flag-exit-test-jumps-to? compared-blocks "mismatch" "done_early"))
+        34]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-bool compared-blocks "exit" 20 "done_early")
+            0))
+        35]
       ;; C8: the loop counter is read after the loop
       [(not (opt-flag-exit-test-rejects? 2)) 14]
-      ;; C4: the flag itself is returned
-      [(not (opt-flag-exit-test-rejects? 3)) 15]
+      ;; C8: the flag itself is returned, so the exit phi minted at the
+      ;; collapsed arm carries it -- cleared on the redirected edge, still set
+      ;; on the counter-exhausted one
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function returned)))
+        15]
+      [(not (opt-flag-exit-test-jumps-to? returned-blocks "gate" "body")) 36]
+      [(not (opt-flag-exit-test-jumps-to? returned-blocks "mismatch" "exit"))
+        37]
+      [(not
+          (=
+            (opt-flag-exit-test-instr-count returned-blocks "done_early")
+            (- 0 1)))
+        38]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-bool returned-blocks "exit" 23 "mismatch")
+            0))
+        39]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-var returned-blocks "exit" 23 "done_full")
+            11))
+        40]
       ;; C6: a call sits on the path the redirect skips
       [(not (opt-flag-exit-test-rejects? 4)) 16]
       ;; C7: the gate's exit arm has a second predecessor
@@ -38821,6 +38923,473 @@
     (compiler-optimize-flag-exit-self-test)
     42
     "a loop-carried bool that only clears becomes a direct exit jump at the clear site, adds no exit predecessor, and rejects every shape that could observe the retired flag"))
+
+;; --- generalized monotone-flag conversion self-tests --------------------------
+;; The merged shape the inliner produces and the probe loops intern_table and
+;; gvn_table are built from: the counter test leaves the loop through the SAME
+;; block the gate's exit arm is, that block carries phis, and the loop's
+;; accumulator is read after it. The variant selector perturbs one thing at a
+;; time:
+;;   0  the plain generalized shape -- X has phis and a second (in-loop)
+;;      predecessor, and a header phi is read from X -- so C7 fills X's phi on
+;;      the redirected edge and C8 mints an exit phi for the accumulator
+;;   1  the clear edge leaves its predecessor on one arm of a Branch rather than
+;;      on a Jump, so only that arm is retargeted
+;;   2  X reads the loop COUNTER instead of the accumulator, and the counter's
+;;      value at the gate is an `add` the redirect would skip, so C8 rejects
+;;   3  X's phi reads a header phi whose latch input is an `add` rather than a
+;;      phi or a Mov, so the value the redirected edge would have to name does
+;;      not exist and C7 rejects
+;;   4  an empty block sits between the gate and X, which is how a lowered
+;;      `while` reaches this pass; the arm collapses through it onto X and the
+;;      spacer goes with the branch that reached it
+(define (opt-flag-exit-gen-clear-pred [variant : i64]) : String
+  (if (= variant 1)
+    "body"
+    "mismatch"))
+
+(define (opt-flag-exit-gen-entry-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Jump
+      (compiler_ir_types.compiler-ir-label "loop"))
+    (compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-flag-exit-gen-loop-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      10
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 14)
+          (compiler_ir_types.compiler-ir-label "latch")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        11
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 13)
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          19
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 23)
+              (compiler_ir_types.compiler-ir-label "latch")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            12
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 12)
+              (compiler_ir_types.compiler-ir-label "gate")
+              (compiler_ir_types.compiler-ir-label "out"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+(define (opt-flag-exit-gen-arm [variant : i64]) : String
+  (if (= variant 4)
+    "spacer"
+    "out"))
+
+(define (opt-flag-exit-gen-out-pred [variant : i64]) : String
+  (if (= variant 4)
+    "spacer"
+    "gate"))
+
+(define (opt-flag-exit-gen-gate-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Branch
+      (compiler_ir_types.CompilerIrValue.Var 11)
+      (compiler_ir_types.compiler-ir-label "body")
+      (compiler_ir_types.compiler-ir-label (opt-flag-exit-gen-arm variant)))
+    (compiler_ir_types.CompilerIrInstrList.Nil)))
+
+;; Variant 1 clears on the false arm of the body's own Branch, so the clear
+;; predecessor has a second successor the redirect must leave alone.
+(define (opt-flag-exit-gen-body-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      15
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 10)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        16
+        (compiler_ir_types.CompilerIrValue.Var 15)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          17
+          (compiler_ir_types.CompilerIrBinOp.Eq)
+          (compiler_ir_types.CompilerIrValue.Var 16)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 17)
+            (compiler_ir_types.compiler-ir-label "match")
+            (compiler_ir_types.compiler-ir-label
+              (if (= variant 1)
+                "latch"
+                "mismatch")))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+;; Variant 3 carries the accumulator round the back edge through an `add`
+;; instead of a phi, so the redirected edge has no name for its next value.
+(define (opt-flag-exit-gen-latch-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      13
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.Bool false)
+        (compiler_ir_types.compiler-ir-label
+          (opt-flag-exit-gen-clear-pred variant))
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label "match")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.Bool))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (if (= variant 3)
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          23
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 19)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Phi
+          23
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 16)
+            (compiler_ir_types.compiler-ir-label
+              (opt-flag-exit-gen-clear-pred variant))
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 19)
+              (compiler_ir_types.compiler-ir-label "match")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          14
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+;; Variant 3 puts a loop value the redirect cannot name straight into X's phi;
+;; every other variant lets the flag reach it and reads the accumulator (the
+;; counter, for variant 2) from X's own block.
+(define (opt-flag-exit-gen-out-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (= variant 3)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        20
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 19)
+          (compiler_ir_types.compiler-ir-label "gate")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 19)
+            (compiler_ir_types.compiler-ir-label "loop")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          25
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 20)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 25)))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        20
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label
+            (opt-flag-exit-gen-out-pred variant))
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.compiler-ir-label "loop")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          24
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (if (= variant 2)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 19))
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            25
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 24)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              26
+              (compiler_ir_types.CompilerIrBinOp.And)
+              (compiler_ir_types.CompilerIrValue.Var 20)
+              (compiler_ir_types.CompilerIrValue.Var 25)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 26)))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))))))
+
+(define (opt-flag-exit-gen-tail-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "latch")
+      (opt-flag-exit-gen-latch-instrs variant))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "out")
+        (opt-flag-exit-gen-out-instrs variant))
+      (if (= variant 4)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-flag-exit-test-jump-block "spacer" "out")
+          (compiler_ir_types.CompilerIrBlockList.Nil))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-flag-exit-gen-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-flag-exit-gen-entry-instrs))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-flag-exit-gen-loop-instrs))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "gate")
+          (opt-flag-exit-gen-gate-instrs variant))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-flag-exit-gen-body-instrs variant))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-flag-exit-test-jump-block "match" "latch")
+            (if (= variant 1)
+              (opt-flag-exit-gen-tail-blocks variant)
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-flag-exit-test-jump-block "mismatch" "latch")
+                (opt-flag-exit-gen-tail-blocks variant)))))))))
+
+(define (opt-flag-exit-gen-function [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "flag_exit_general")
+    (opt-flag-exit-test-params)
+    (compiler_ast_types.AstType.Bool)
+    32
+    (opt-flag-exit-gen-blocks variant)))
+
+(define (opt-flag-exit-gen-run [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-flag-exit-function
+    (opt-flag-exit-gen-function variant)))
+
+(define (opt-flag-exit-gen-rejects? [variant : i64]) : bool
+  (and
+    (compiler_optimize.opt-verify-ok?
+      (compiler_optimize.opt-verify-function
+        (opt-flag-exit-gen-function variant)))
+    (compiler_optimize.opt-block-list-eq
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-function-blocks (opt-flag-exit-gen-run variant))
+      (opt-flag-exit-gen-blocks variant))))
+
+;; The var a phi's input on `pred` names, or -1 when the input is missing or is
+;; not a var.
+(define (opt-flag-exit-test-phi-var
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [dst : i64]
+  [pred : String]) : i64
+  (match (compiler_optimize.opt-thread-phi-input-value
+    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (compiler_ir_types.compiler-ir-label pred))
+    [(compiler_ir_types.CompilerIrMaybeValue.No) (- 0 1)]
+    [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+      (match value
+        [(compiler_ir_types.CompilerIrValue.Var var) var]
+        [_ (- 0 1)])]))
+
+(define (opt-flag-exit-test-binop-lhs-scan
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [pos : i64]
+  [dst : i64]) : i64
+  (if (>= pos (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    (- 0 1)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs pos)
+      [(compiler_ir_types.CompilerIrInstr.BinOp found _ lhs _ _)
+        (if (= found dst)
+          (match lhs
+            [(compiler_ir_types.CompilerIrValue.Var var) var]
+            [_ (- 0 1)])
+          (opt-flag-exit-test-binop-lhs-scan instrs (+ pos 1) dst))]
+      [_ (opt-flag-exit-test-binop-lhs-scan instrs (+ pos 1) dst)])))
+
+(define (opt-flag-exit-test-binop-lhs
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [dst : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-flag-exit-test-binop-lhs-scan instrs 0 dst)])]))
+
+;; The label a block's terminating Branch takes on its false arm, or -1 when it
+;; does not end in one.
+(define (opt-flag-exit-test-branch-false
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (match (opt-flag-exit-test-last-instr blocks label)
+    [(compiler_optimize.OptFlagExitMaybeInstr.No) (- 0 1)]
+    [(compiler_optimize.OptFlagExitMaybeInstr.Some instr)
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.Branch _ _ false-label) false-label]
+        [_ (- 0 1)])]))
+
+(define (opt-flag-exit-test-branch-true
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (match (opt-flag-exit-test-last-instr blocks label)
+    [(compiler_optimize.OptFlagExitMaybeInstr.No) (- 0 1)]
+    [(compiler_optimize.OptFlagExitMaybeInstr.Some instr)
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.Branch _ true-label _) true-label]
+        [_ (- 0 1)])]))
+
+(define (compiler-optimize-flag-exit-general-self-test) : i64
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [converted : compiler_ir_types.CompilerIrFunction (opt-flag-exit-gen-run 0)]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks converted)]
+    [twice : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-flag-exit-function converted))]
+    [armed : compiler_ir_types.CompilerIrFunction (opt-flag-exit-gen-run 1)]
+    [armed-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks armed)]
+    [spaced : compiler_ir_types.CompilerIrFunction (opt-flag-exit-gen-run 4)]
+    [spaced-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks spaced)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function converted)))
+        1]
+      ;; the gate stopped testing the flag and the clear site leaves directly,
+      ;; even though X carries phis and keeps its counter-exit predecessor
+      [(not (opt-flag-exit-test-jumps-to? blocks "gate" "body")) 2]
+      [(not (opt-flag-exit-test-jumps-to? blocks "mismatch" "out")) 3]
+      [(not (= (opt-flag-exit-test-pred-count blocks "out") 2)) 4]
+      ;; X's phi swapped its gate input for the redirected edge's literal and
+      ;; kept the counter exit's
+      [(not (= (opt-flag-exit-test-phi-input-count blocks "out" 20) 2)) 5]
+      [(not (= (opt-flag-exit-test-phi-bool blocks "out" 20 "mismatch") 0)) 6]
+      [(not (= (opt-flag-exit-test-phi-var blocks "out" 20 "loop") 11)) 7]
+      ;; the accumulator got an exit phi: itself on the surviving edge, and the
+      ;; value the skipped run would have carried on the redirected one
+      [(not (= (opt-flag-exit-test-phi-input-count blocks "out" 32) 2)) 8]
+      [(not (= (opt-flag-exit-test-phi-var blocks "out" 32 "loop") 19)) 9]
+      [(not (= (opt-flag-exit-test-phi-var blocks "out" 32 "mismatch") 16)) 10]
+      ;; and the read under X went to it
+      [(not (= (opt-flag-exit-test-binop-lhs blocks "out" 24) 32)) 11]
+      ;; the clear edge is gone from both latch phis
+      [(not (= (opt-flag-exit-test-phi-input-count blocks "latch" 13) 1)) 12]
+      [(not (= (opt-flag-exit-test-phi-input-count blocks "latch" 23) 1)) 13]
+      ;; the flag's own definitions are pinned to the continuing constant
+      [(not (= (opt-flag-exit-test-phi-bool blocks "loop" 11 "entry") 1)) 14]
+      [(not (= (opt-flag-exit-test-phi-bool blocks "loop" 11 "latch") 1)) 15]
+      ;; idempotence
+      [(not (compiler_optimize.opt-block-list-eq bases blocks twice)) 16]
+      ;; a clear edge on one arm of a Branch: that arm alone is retargeted
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function armed)))
+        17]
+      [(not (opt-flag-exit-test-jumps-to? armed-blocks "gate" "body")) 18]
+      [(not
+          (=
+            (opt-flag-exit-test-branch-false armed-blocks "body")
+            (compiler_ir_types.compiler-ir-label "out")))
+        19]
+      [(not
+          (=
+            (opt-flag-exit-test-branch-true armed-blocks "body")
+            (compiler_ir_types.compiler-ir-label "match")))
+        20]
+      [(not (= (opt-flag-exit-test-phi-bool armed-blocks "out" 20 "body") 0))
+        21]
+      [(not (= (opt-flag-exit-test-phi-var armed-blocks "out" 32 "body") 16))
+        22]
+      ;; an empty block between the gate and X: the arm collapses through it,
+      ;; the redirect lands on X itself, and the spacer is deleted
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function spaced)))
+        23]
+      [(not (opt-flag-exit-test-jumps-to? spaced-blocks "gate" "body")) 24]
+      [(not (opt-flag-exit-test-jumps-to? spaced-blocks "mismatch" "out")) 25]
+      [(not (= (opt-flag-exit-test-instr-count spaced-blocks "spacer") (- 0 1)))
+        26]
+      [(not (= (opt-flag-exit-test-phi-input-count spaced-blocks "out" 20) 2))
+        27]
+      [(not
+          (= (opt-flag-exit-test-phi-bool spaced-blocks "out" 20 "mismatch") 0))
+        28]
+      [(not
+          (= (opt-flag-exit-test-phi-var spaced-blocks "out" 32 "mismatch") 16))
+        29]
+      [(not (= (opt-flag-exit-test-binop-lhs spaced-blocks "out" 24) 32)) 30]
+      ;; C8: the counter's value at the gate is an `add` the redirect skips
+      [(not (opt-flag-exit-gen-rejects? 2)) 31]
+      ;; C7: X's phi names a loop value whose next value is an `add`, not a phi
+      [(not (opt-flag-exit-gen-rejects? 3)) 32]
+      [else 42])))
+
+(test
+  flag-exit-generalized-loop-exit
+  (test.assert-i64-eq
+    (compiler-optimize-flag-exit-general-self-test)
+    42
+    "a gate whose exit arm carries phis and a second predecessor converts, the redirected edge carries the value the skipped run would have delivered, a Branch clear edge moves only its own arm, and a value the run cannot name still refuses"))
 
 ;; --- dead phi elimination self-tests ------------------------------------------
 ;; The fixture is the shape SSA construction produces for a mutable local whose

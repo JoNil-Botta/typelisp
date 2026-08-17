@@ -70118,8 +70118,14 @@
 ;; addend dies with the Adds, level when it does not. It is only additive when
 ;; a base outlives the Geps rewritten here, so a base with any other in-loop use
 ;; disqualifies the whole Add. The addend gate is the same rule from the other
-;; side: a surviving addend is admitted only when k >= 2, where the removed Add
-;; still pays for the one extra live value.
+;; side: a surviving addend is admitted only when k >= 2, where the removed Adds
+;; still pay for the one extra live value. `k` counts the rewritten ACCESSES of
+;; the family sharing that addend, not the distinct bases one Add feeds: an
+;; unrolled body reads `base[I + i]`, `base[I + i + 1]`, ... through four Adds
+;; that each feed ONE Gep on ONE base, and those four accesses share the single
+;; derived base `T` exactly as two bases would share the addend. Counting bases
+;; alone vetoed the whole unrolled shape whenever `I` also fed the version
+;; guard.
 ;;
 ;; The pressure gates read use counts collected over the PROVISIONALLY accepted
 ;; Adds. Rejecting one Add can leave those counts high for another Add sharing a
@@ -70130,7 +70136,9 @@
 ;; no dedicated preheader (`opt-natural-loop-safe-preheader-block?` wants a sole
 ;; successor). Loops that carry a candidate get one synthesized first, reusing
 ;; `opt-loop-preheaders-synthesize-loop` a loop at a time so that only the loops
-;; this pass actually rewrites pay for a block.
+;; this pass actually rewrites pay for a block. Synthesis can also DECLINE, and a
+;; declined loop only skips itself: see
+;; `opt-gep-offset-synthesize-first-candidate`.
 ;; preheader-label, derived dst, base, invariant index, element type.
 (defenum OptGepOffsetDerived
   (Derived i64 i64 ir.CompilerIrValue ir.CompilerIrValue ast.AstType))
@@ -70665,22 +70673,37 @@
     def-block
     (opt-natural-loop-body-info loop)))
 
-;; The first loop that carries a candidate but has no dedicated preheader.
-(define (opt-gep-offset-first-preheaderless
+;; The first loop that carries a candidate, has no dedicated preheader, and
+;; ACCEPTS a synthesized one. The attempt is part of the scan: a loop whose
+;; synthesis DECLINES is skipped, and the scan continues down the list.
+;;
+;; That skip is load-bearing. `opt-loop-preheaders-header-compatible?` refuses a
+;; header whose phis take different values from two different outside
+;; predecessors, because one preheader cannot carry two incoming values -- and
+;; that is exactly an unrolled loop's REMAINDER header (its counter phi reads 0
+;; from the unroll guard and the unrolled counter from the unroll body). Ending
+;; the round at the first refusal left every LATER loop in the list without a
+;; preheader, and `opt-gep-offset-plan-loop` bails on a preheaderless loop, so
+;; one refused remainder loop early in the block order silently disabled the
+;; pass for the unrolled bodies behind it -- the `base[row + i]` scans this pass
+;; exists to split.
+(define (opt-gep-offset-synthesize-first-candidate
   [loops : OptNaturalLoopList]
   [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
   [uses : (__tl_dyn-array i64)]
   [gep-uses : (__tl_dyn-array i64)]
   [poison : (__tl_dyn-array i64)]
-  [def-block : (__tl_dyn-array i64)]) : OptMaybeNaturalLoop
+  [def-block : (__tl_dyn-array i64)]) : OptBlockListPassResult
   (match loops
-    [(OptNaturalLoopList.Nil) (OptMaybeNaturalLoop.No)]
+    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
       (match (opt-natural-loop-preheader loop)
         [(OptLoopPreheader.Some _)
-          (opt-gep-offset-first-preheaderless
+          (opt-gep-offset-synthesize-first-candidate
             (__tl-box-place rest)
             blocks
+            context
             uses
             gep-uses
             poison
@@ -70693,10 +70716,22 @@
             gep-uses
             poison
             def-block)
-            (OptMaybeNaturalLoop.Some loop)
-            (opt-gep-offset-first-preheaderless
+            (match (opt-loop-preheaders-synthesize-loop blocks context loop)
+              [(OptBlockListPassResult.Result next synthesized)
+                (if synthesized
+                  (OptBlockListPassResult.Result next true)
+                  (opt-gep-offset-synthesize-first-candidate
+                    (__tl-box-place rest)
+                    blocks
+                    context
+                    uses
+                    gep-uses
+                    poison
+                    def-block))])
+            (opt-gep-offset-synthesize-first-candidate
               (__tl-box-place rest)
               blocks
+              context
               uses
               gep-uses
               poison
@@ -70704,6 +70739,8 @@
 
 ;; One synthesis per round: the CFG (and therefore `context`) is stale straight
 ;; afterwards, exactly as `opt-loop-preheaders-blocks-fixed-result` handles it.
+;; Rounds end when a whole pass over the loop list synthesizes nothing, not at
+;; the first loop that refuses one.
 (define (opt-gep-offset-prepare-preheaders
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -70733,27 +70770,24 @@
           poison
           base0
           multi-base)]
-      (match (opt-gep-offset-first-preheaderless
+      (match (opt-gep-offset-synthesize-first-candidate
         (opt-cfg-natural-loops-with-context blocks context)
         blocks
+        context
         uses
         gep-uses
         poison
         def-block)
-        [(OptMaybeNaturalLoop.No)
-          (OptGepOffsetPreheaderResult.Result blocks context changed)]
-        [(OptMaybeNaturalLoop.Some loop)
-          (match (opt-loop-preheaders-synthesize-loop blocks context loop)
-            [(OptBlockListPassResult.Result next synthesized)
-              (if synthesized
-                (opt-gep-offset-prepare-preheaders
-                  type-segment-bases
-                  next
-                  (opt-cfg-context-build next)
-                  frame
-                  (- remaining 1)
-                  true)
-                (OptGepOffsetPreheaderResult.Result blocks context changed))])]))))
+        [(OptBlockListPassResult.Result next synthesized)
+          (if synthesized
+            (opt-gep-offset-prepare-preheaders
+              type-segment-bases
+              next
+              (opt-cfg-context-build next)
+              frame
+              (- remaining 1)
+              true)
+            (OptGepOffsetPreheaderResult.Result blocks context changed))]))))
 
 ;; --- per-loop plan ------------------------------------------------------------
 ;; Provisional acceptance: shape plus the all-uses-are-Gep-indices gate.
@@ -70898,12 +70932,16 @@
 
 ;; In-loop uses that the rewrite removes: a base named by a surviving
 ;; candidate's Gep, and the invariant operand of a surviving candidate Add.
+;; `addend-geps` is the same Gep walk keyed by the ADDEND instead of the base:
+;; the number of accesses the addend's derived bases serve in this loop, which is
+;; the `k` the surviving-addend gate needs.
 (define (opt-gep-offset-count-split-uses-instrs!
   [instrs : ir.CompilerIrInstrSeq]
   [cand : (__tl_dyn-array i64)]
   [cand-inv : (__tl_dyn-array i64)]
   [base-split : (__tl_dyn-array i64)]
-  [addend-split : (__tl_dyn-array i64)]) : unit
+  [addend-split : (__tl_dyn-array i64)]
+  [addend-geps : (__tl_dyn-array i64)]) : unit
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [cursor : i64 0]
@@ -70921,14 +70959,24 @@
                       (>= idx 0)
                       (< idx (array-length cand))
                       (= (array-ref cand idx) 1))
-                      (match base
-                        [(ir.CompilerIrValue.Var b)
-                          (if (and (>= b 0) (< b (array-length base-split)))
+                      (begin
+                        (match base
+                          [(ir.CompilerIrValue.Var b)
+                            (if (and (>= b 0) (< b (array-length base-split)))
+                              (set!
+                                (array-ref base-split b)
+                                (+ (array-ref base-split b) 1))
+                              unit)]
+                          [_ unit])
+                        (let
+                          [inv : i64 (array-ref cand-inv idx)]
+                          (if (and
+                            (>= inv 0)
+                            (< inv (array-length addend-geps)))
                             (set!
-                              (array-ref base-split b)
-                              (+ (array-ref base-split b) 1))
-                            unit)]
-                        [_ unit])
+                              (array-ref addend-geps inv)
+                              (+ (array-ref addend-geps inv) 1))
+                            unit)))
                       unit)]
                   [_ unit])]
               [_ unit])
@@ -70954,7 +71002,8 @@
   [cand : (__tl_dyn-array i64)]
   [cand-inv : (__tl_dyn-array i64)]
   [base-split : (__tl_dyn-array i64)]
-  [addend-split : (__tl_dyn-array i64)]) : unit
+  [addend-split : (__tl_dyn-array i64)]
+  [addend-geps : (__tl_dyn-array i64)]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -70966,29 +71015,36 @@
               cand
               cand-inv
               base-split
-              addend-split)
+              addend-split
+              addend-geps)
             (opt-gep-offset-count-split-uses-blocks!
               (__tl-box-place rest)
               cand
               cand-inv
               base-split
-              addend-split))])]
+              addend-split
+              addend-geps))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-gep-offset-count-split-uses-blocks!
         (ir.compiler-ir-block-seq-to-list seq)
         cand
         cand-inv
         base-split
-        addend-split)]))
+        addend-split
+        addend-geps)]))
 
 ;; Pressure gates. A base that outlives the rewritten Geps would add a live
 ;; value outright, so it rejects its Add; a surviving addend is admitted only
-;; when the Add feeds two or more distinct bases.
+;; when the split rewrites two or more accesses (`k >= 2`), counted over the
+;; whole family that shares the addend -- one Add feeding two distinct bases and
+;; four unrolled Adds feeding one base are both k >= 2, and the loop trades
+;; `{addend, base}` for `{addend, derived}` either way.
 (define (opt-gep-offset-apply-pressure-gates-instrs!
   [instrs : ir.CompilerIrInstrSeq]
   [loop-uses : (__tl_dyn-array i64)]
   [base-split : (__tl_dyn-array i64)]
   [addend-split : (__tl_dyn-array i64)]
+  [addend-geps : (__tl_dyn-array i64)]
   [multi-base : (__tl_dyn-array i64)]
   [cand : (__tl_dyn-array i64)]
   [cand-inv : (__tl_dyn-array i64)]) : unit
@@ -71033,6 +71089,10 @@
                       (= (array-ref multi-base dst) 1)
                       (and
                         (>= inv 0)
+                        (< inv (array-length addend-geps))
+                        (>= (array-ref addend-geps inv) 2))
+                      (and
+                        (>= inv 0)
                         (< inv (array-length loop-uses))
                         (=
                           (array-ref loop-uses inv)
@@ -71048,6 +71108,7 @@
   [loop-uses : (__tl_dyn-array i64)]
   [base-split : (__tl_dyn-array i64)]
   [addend-split : (__tl_dyn-array i64)]
+  [addend-geps : (__tl_dyn-array i64)]
   [multi-base : (__tl_dyn-array i64)]
   [cand : (__tl_dyn-array i64)]
   [cand-inv : (__tl_dyn-array i64)]) : unit
@@ -71062,6 +71123,7 @@
               loop-uses
               base-split
               addend-split
+              addend-geps
               multi-base
               cand
               cand-inv)
@@ -71070,6 +71132,7 @@
               loop-uses
               base-split
               addend-split
+              addend-geps
               multi-base
               cand
               cand-inv))])]
@@ -71079,6 +71142,7 @@
         loop-uses
         base-split
         addend-split
+        addend-geps
         multi-base
         cand
         cand-inv)]))
@@ -71285,6 +71349,7 @@
             [cand-var : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [base-split : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [addend-split : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [addend-geps : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [derived-var : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [derived-inv : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [derived-ty : (__tl_dyn-array ast.AstType)
@@ -71315,13 +71380,15 @@
                 cand
                 cand-inv
                 base-split
-                addend-split)]
+                addend-split
+                addend-geps)]
             [_gates : unit
               (opt-gep-offset-apply-pressure-gates-blocks!
                 body-blocks
                 loop-uses
                 base-split
                 addend-split
+                addend-geps
                 multi-base
                 cand
                 cand-inv)]

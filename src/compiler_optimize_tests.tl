@@ -40685,6 +40685,638 @@
     42
     "invariant-offset Gep splitting hoists one derived base per (base, type), gates on all-uses and register pressure, synthesizes a missing preheader, and is idempotent"))
 
+;; --- invariant-offset Gep splitting: the nested / unrolled shapes ------------
+;; `liveness_storage/recompute!`'s inner scan, which is how every 2-D walk in
+;; the corpus indexes: an OUTER loop derives the row base in its landing block
+;; and the INNER loop reads `data[row + i]`, entered from a two-successor guard
+;; so its header has no dedicated preheader. The variant selector perturbs one
+;; gate at a time:
+;;   0  one access, and the addend is defined in the ENCLOSING loop -- invariant
+;;      for the loop being processed wherever it is defined, so this splits
+;;   1  TWO accesses on ONE base sharing that addend (the unroll clone shape)
+;;      while the addend ALSO feeds an in-loop non-address use: k >= 2 accesses
+;;      pay for the surviving addend, and both Geps adopt the SAME derived base
+;;   2  the same surviving addend with only ONE access: k = 1 does not pay for
+;;      it, so the pressure gate rejects
+;;   3  the Gep base is LOADED in the outer loop's landing block: a load outside
+;;      the inner loop is still invariant for it, so this splits
+(define (opt-gep-nested-test-latch-tail) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      30
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 20)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        31
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 30)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 31)
+          (compiler_ir_types.compiler-ir-label "inner")
+          (compiler_ir_types.compiler-ir-label "latch"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+;; A non-address in-loop reader of the invariant addend, kept live by a store so
+;; the dead-use settling cannot retire it: the addend outlives the rewrite, which
+;; is exactly what the k >= 2 gate judges.
+(define (opt-gep-nested-test-addend-use [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (or (= variant 1) (= variant 2))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        28
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        (compiler_ir_types.CompilerIrValue.Var 13)
+        (compiler_ir_types.CompilerIrValue.I64 3)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 22)
+          (compiler_ir_types.CompilerIrValue.Var 28)
+          (compiler_ast_types.AstType.I64))
+        (opt-gep-nested-test-latch-tail)))
+    (opt-gep-nested-test-latch-tail)))
+
+;; Variant 1's second access: the unroll clone's `data[row + i + 1]`, a second
+;; Add on the same base and the same addend at the next counter offset.
+(define (opt-gep-nested-test-second-access
+  [variant : i64]
+  [base : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstrList
+  (if (= variant 1)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        25
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          24
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 13)
+          (compiler_ir_types.CompilerIrValue.Var 25)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            26
+            base
+            (compiler_ir_types.CompilerIrValue.Var 24)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              27
+              (compiler_ir_types.CompilerIrValue.Var 26)
+              (compiler_ast_types.AstType.I64))
+            (opt-gep-nested-test-addend-use variant)))))
+    (opt-gep-nested-test-addend-use variant)))
+
+(define (opt-gep-nested-test-inner-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [base : compiler_ir_types.CompilerIrValue
+      (if (= variant 3)
+        (compiler_ir_types.CompilerIrValue.Var 15)
+        (compiler_ir_types.CompilerIrValue.Var 1))]
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        20
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.compiler-ir-label "iguard")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 30)
+            (compiler_ir_types.compiler-ir-label "inner")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          21
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 13)
+          (compiler_ir_types.CompilerIrValue.Var 20)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            22
+            base
+            (compiler_ir_types.CompilerIrValue.Var 21)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              23
+              (compiler_ir_types.CompilerIrValue.Var 22)
+              (compiler_ast_types.AstType.I64))
+            (opt-gep-nested-test-second-access variant base)))))))
+
+;; The outer loop's landing block: the row base the inner loop indexes from, and
+;; the descriptor load that variant 3 uses as the Gep base.
+(define (opt-gep-nested-test-land-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      12
+      (compiler_ir_types.CompilerIrBinOp.Mul)
+      (compiler_ir_types.CompilerIrValue.Var 10)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        13
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 12)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          14
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            15
+            (compiler_ir_types.CompilerIrValue.Var 14)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "iguard"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+(define (opt-gep-nested-test-outer-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      10
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 40)
+          (compiler_ir_types.compiler-ir-label "latch")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        11
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label "land")
+          (compiler_ir_types.compiler-ir-label "exit"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-gep-nested-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "outer"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "outer")
+        (opt-gep-nested-test-outer-instrs))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "land")
+          (opt-gep-nested-test-land-instrs))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "iguard")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 11)
+                (compiler_ir_types.compiler-ir-label "inner")
+                (compiler_ir_types.compiler-ir-label "latch"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "inner")
+              (opt-gep-nested-test-inner-instrs variant))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    40
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    (compiler_ir_types.CompilerIrValue.Var 10)
+                    (compiler_ir_types.CompilerIrValue.I64 1)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "outer"))
+                    (compiler_ir_types.CompilerIrInstrList.Nil))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "exit")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.I64 0)))
+                    (compiler_ir_types.CompilerIrInstrList.Nil)))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (opt-gep-nested-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "descriptor"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "data"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "words"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "word-base"
+            (compiler_ast_types.AstType.I64)
+            3)
+          (compiler_ir_types.CompilerIrParamList.Nil))))))
+
+(define (opt-gep-nested-test-function [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "gep_offset_nested")
+    (opt-gep-nested-test-params)
+    (compiler_ast_types.AstType.I64)
+    48
+    (opt-gep-nested-test-blocks variant)))
+
+(define (opt-gep-nested-test-run [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-gep-offset-function
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-gep-nested-test-function variant)))
+
+(define (opt-gep-nested-test-nth-gep-base
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [skip : i64]) : compiler_ir_types.CompilerIrValue
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
+        (if (= skip 0)
+          base
+          (opt-gep-nested-test-nth-gep-base instrs (+ index 1) (- skip 1)))]
+      [_ (opt-gep-nested-test-nth-gep-base instrs (+ index 1) skip)])))
+
+;; The offset / base operand of the nth Gep in the block that carries `label`.
+(define (opt-gep-nested-test-gep-offset-in
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [nth : i64]) : compiler_ir_types.CompilerIrValue
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.CompilerIrValue.I64 (- 0 1))]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-gep-offset-test-nth-gep-offset instrs 0 nth)])]))
+
+(define (opt-gep-nested-test-gep-base-in
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [nth : i64]) : compiler_ir_types.CompilerIrValue
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.CompilerIrValue.I64 (- 0 1))]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-gep-nested-test-nth-gep-base instrs 0 nth)])]))
+
+(define (opt-gep-nested-test-unchanged? [variant : i64]) : bool
+  (compiler_optimize.opt-block-list-eq
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-function-blocks (opt-gep-nested-test-run variant))
+    (opt-gep-nested-test-blocks variant)))
+
+(define (compiler-optimize-gep-offset-nested-self-test) : i64
+  (let
+    [inner-label : i64 (compiler_ir_types.compiler-ir-label "inner")]
+    [pre-label : i64 (compiler_ir_types.compiler-ir-label "inner__preheader")]
+    [outer-addend : compiler_ir_types.CompilerIrFunction
+      (opt-gep-nested-test-run 0)]
+    [outer-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks outer-addend)]
+    [family : compiler_ir_types.CompilerIrFunction (opt-gep-nested-test-run 1)]
+    [family-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks family)]
+    [landing : compiler_ir_types.CompilerIrFunction (opt-gep-nested-test-run 3)]
+    [landing-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks landing)]
+    (cond
+      ;; an addend defined in the ENCLOSING loop is invariant for this one, and
+      ;; the two-successor guard gets a synthesized preheader for the split
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function outer-addend)))
+        1]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count outer-blocks) 8))
+        2]
+      [(not (= (opt-gep-offset-test-geps-in outer-blocks pre-label) 1)) 3]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-gep-nested-test-gep-offset-in outer-blocks pre-label 0)
+            (compiler_ir_types.CompilerIrValue.Var 13)))
+        4]
+      [(not (= (opt-gep-offset-test-geps-in outer-blocks inner-label) 1)) 5]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-gep-nested-test-gep-offset-in outer-blocks inner-label 0)
+            (compiler_ir_types.CompilerIrValue.Var 20)))
+        6]
+      [(not (= (compiler_optimize.opt-function-frame outer-addend) 49)) 7]
+      ;; two accesses sharing one base and one addend are one family: k >= 2
+      ;; pays for the surviving addend and ONE derived base serves both
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function family)))
+        8]
+      [(not (= (opt-gep-offset-test-geps-in family-blocks pre-label) 1)) 9]
+      [(not (= (opt-gep-offset-test-geps-in family-blocks inner-label) 2)) 10]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-gep-nested-test-gep-offset-in family-blocks inner-label 0)
+            (compiler_ir_types.CompilerIrValue.Var 20)))
+        11]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-gep-nested-test-gep-offset-in family-blocks inner-label 1)
+            (compiler_ir_types.CompilerIrValue.Var 25)))
+        12]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-gep-nested-test-gep-base-in family-blocks inner-label 0)
+            (opt-gep-nested-test-gep-base-in family-blocks inner-label 1)))
+        13]
+      [(not (= (compiler_optimize.opt-function-frame family) 49)) 14]
+      ;; one access does NOT pay for a surviving addend
+      [(not (opt-gep-nested-test-unchanged? 2)) 15]
+      ;; a base LOADED in the outer loop's landing block is invariant here
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function landing)))
+        16]
+      [(not (= (opt-gep-offset-test-geps-in landing-blocks pre-label) 1)) 17]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-gep-nested-test-gep-base-in landing-blocks pre-label 0)
+            (compiler_ir_types.CompilerIrValue.Var 15)))
+        18]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-gep-nested-test-gep-offset-in landing-blocks inner-label 0)
+            (compiler_ir_types.CompilerIrValue.Var 20)))
+        19]
+      [else 42])))
+
+(test
+  gep-offset-nested-invariant-addend
+  (test.assert-i64-eq
+    (compiler-optimize-gep-offset-nested-self-test)
+    42
+    "an outer-loop-defined addend, a family of Adds sharing one base and one addend, and a base loaded in the landing block all split; one access does not pay for a surviving addend"))
+
+;; --- invariant-offset Gep splitting: a refused preheader is not fatal --------
+;; Two candidate loops. `rem` comes first in block order and its header phi takes
+;; DIFFERENT values from its two outside predecessors, so
+;; `opt-loop-preheaders-header-compatible?` cannot fold them into one preheader
+;; and synthesis refuses -- the shape every unrolled loop's REMAINDER header has
+;; (the unroll guard supplies 0, the unroll body supplies the counter). `loopb`
+;; behind it is an ordinary preheaderless candidate. Ending the synthesis round
+;; at `rem` left `loopb` without a preheader and the pass rewrote nothing.
+(define (opt-gep-starved-test-rem-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      10
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "apre1")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.compiler-ir-label "apre2")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 13)
+            (compiler_ir_types.compiler-ir-label "rem")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        11
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          12
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            14
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              13
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 10)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                15
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 13)
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 15)
+                  (compiler_ir_types.compiler-ir-label "rem")
+                  (compiler_ir_types.compiler-ir-label "bguard"))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+
+(define (opt-gep-starved-test-loopb-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      20
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "bguard")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 23)
+          (compiler_ir_types.compiler-ir-label "loopb")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        21
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          22
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.Var 21)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            24
+            (compiler_ir_types.CompilerIrValue.Var 22)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              23
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 20)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                25
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 23)
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 25)
+                  (compiler_ir_types.compiler-ir-label "loopb")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+
+(define (opt-gep-starved-test-jump-to-rem) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Jump
+      (compiler_ir_types.compiler-ir-label "rem"))
+    (compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-gep-starved-test-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          6
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.compiler-ir-label "apre1")
+            (compiler_ir_types.compiler-ir-label "apre2"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "apre1")
+        (opt-gep-starved-test-jump-to-rem))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "apre2")
+          (opt-gep-starved-test-jump-to-rem))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "rem")
+            (opt-gep-starved-test-rem-instrs))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "bguard")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "loopb")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "loopb")
+                (opt-gep-starved-test-loopb-instrs))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "exit")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.I64 0)))
+                    (compiler_ir_types.CompilerIrInstrList.Nil)))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (opt-gep-starved-test-run) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-gep-offset-function
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "gep_offset_starved")
+      (opt-gep-nested-test-params)
+      (compiler_ast_types.AstType.I64)
+      32
+      (opt-gep-starved-test-blocks))))
+
+(define (compiler-optimize-gep-offset-starved-self-test) : i64
+  (let
+    [split : compiler_ir_types.CompilerIrFunction (opt-gep-starved-test-run)]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks split)]
+    [pre-label : i64 (compiler_ir_types.compiler-ir-label "loopb__preheader")]
+    [loopb-label : i64 (compiler_ir_types.compiler-ir-label "loopb")]
+    [rem-label : i64 (compiler_ir_types.compiler-ir-label "rem")]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function split)))
+        1]
+      ;; the second loop got its preheader even though the first refused one
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count blocks) 8)) 2]
+      [(not (= (opt-gep-offset-test-geps-in blocks pre-label) 1)) 3]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-gep-nested-test-gep-offset-in blocks pre-label 0)
+            (compiler_ir_types.CompilerIrValue.Var 3)))
+        4]
+      [(not (= (opt-gep-offset-test-geps-in blocks loopb-label) 1)) 5]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-gep-nested-test-gep-offset-in blocks loopb-label 0)
+            (compiler_ir_types.CompilerIrValue.Var 20)))
+        6]
+      ;; the refused loop is left exactly as it was
+      [(not (= (opt-gep-offset-test-geps-in blocks rem-label) 1)) 7]
+      [(not
+          (compiler_optimize.opt-value-eq
+            (opt-gep-nested-test-gep-offset-in blocks rem-label 0)
+            (compiler_ir_types.CompilerIrValue.Var 11)))
+        8]
+      [(not (= (compiler_optimize.opt-function-frame split) 33)) 9]
+      [else 42])))
+
+(test
+  gep-offset-refused-preheader-not-fatal
+  (test.assert-i64-eq
+    (compiler-optimize-gep-offset-starved-self-test)
+    42
+    "a loop whose preheader cannot be synthesized only skips itself: later candidate loops still get theirs and split"))
+
 ;; --- monotone-flag loop-exit conversion self-tests ----------------------------
 ;; One `(while (and (< i n) ok) ... (set! ok false))` loop in the shape
 ;; `it-slice-eq?` reaches the pass with, with the variant selector perturbing

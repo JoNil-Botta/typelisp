@@ -457,16 +457,20 @@
     [items : load.CompilerPkgDepList (load.compiler-pkg-deps-list deps)]
     (begin
       (load.compiler-load-session-state-set-dependency-tlci-force-source!
-        state
+        (owned_view.compiler-owned-shared-view state)
         (cfg
           dependency-tlci-verification
           (compiler-dependency-tlci-verification-force-source?)
           false))
-      (compiler-dependency-tlci-prepare-deps-from! state manifest-dir items 0)
+      (compiler-dependency-tlci-prepare-deps-from!
+        (owned_view.compiler-owned-shared-view state)
+        manifest-dir
+        (owned_view.compiler-owned-shared-view items)
+        0)
       (cfg
         dependency-tlci-verification
         (compiler-dependency-tlci-verification-record!
-          state
+          (owned_view.compiler-owned-shared-view state)
           "prepared"
           (load.compiler-pkg-dep-list-count items))
         unit))))

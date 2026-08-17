@@ -17641,7 +17641,7 @@
   [functions : compiler_ir_types.CompilerIrFunctionList]
   [program-index : CompilerBackendProgramIndex]
   [line-tables : bool]) : String
-  (match functions
+  (match (compiler-backend-global-shared-view functions)
     [(compiler_ir_types.CompilerIrFunctionList.Nil) ""]
     [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
       (match func
@@ -21667,20 +21667,29 @@
 
 (define (compiler-backend-global-types-fill
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [ids : backend_i64_i64_map.Map (:consume)]
+  [ids : backend_i64_i64_map.Map]
   [values : (__tl_dyn-array compiler_ast_types.AstType)]
   [index : i64]) : backend_i64_i64_map.Map
   (if (>= index globals.len)
     ids
-    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref
+      (compiler-backend-global-shared-view globals)
+      index)
       [(compiler_ir_types.CompilerIrGlobal.Global name ty _)
-        (begin
-          (set! (array-ref values index) ty)
-          (backend_i64_i64_map.insert-ref!
-            (&mut ids)
-            (compiler_ir_types.compiler-ir-symbol-id name)
-            index)
-          (compiler-backend-global-types-fill globals ids values (+ index 1)))])))
+        (let
+          [next-ids : backend_i64_i64_map.Map
+            (compiler-backend-global-shared-view ids)]
+          (begin
+            (set! (array-ref values index) ty)
+            (backend_i64_i64_map.insert-ref!
+              (&mut next-ids)
+              (compiler_ir_types.compiler-ir-symbol-id name)
+              index)
+            (compiler-backend-global-types-fill
+              globals
+              next-ids
+              values
+              (+ index 1))))])))
 
 (define (compiler-backend-global-types
   [globals : compiler_ir_types.CompilerIrGlobalSeq]) : CompilerBackendGlobalTypeTable
@@ -37948,7 +37957,7 @@
 ;; Share the function/block traversal while keeping each instruction
 ;; sequence leaf direct, avoiding a callback or tagged dispatch per instruction.
 (define (compiler-backend-collect-block-shared
-  [state : CompilerBackendCollectState (:consume)]
+  [state : CompilerBackendCollectState]
   [block : compiler_ir_types.CompilerIrBlock]) : CompilerBackendCollectState
   (match block
     [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
@@ -37958,7 +37967,7 @@
             (compiler-backend-collect-instr-seq-collections collections instrs))])]))
 
 (define (compiler-backend-collect-block-seq-shared
-  [state : CompilerBackendCollectState (:consume)]
+  [state : CompilerBackendCollectState]
   [seq : compiler_ir_types.CompilerIrBlockSeq]
   [index : i64]) : CompilerBackendCollectState
   (if (>=
@@ -37976,14 +37985,14 @@
       (+ index 1))))
 
 (define (compiler-backend-collect-blocks-shared
-  [state : CompilerBackendCollectState (:consume)]
+  [state : CompilerBackendCollectState]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendCollectState
   (match (compiler-backend-global-shared-view blocks)
     [(compiler_ir_types.CompilerIrBlockList.Nil) state]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (compiler-backend-collect-blocks-shared
         (compiler-backend-collect-block-shared state block)
-        (__tl-box-place rest))]
+        (compiler_ir_types.compiler-ir-box-shared-view rest))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-collect-block-seq-shared state seq 0)]))
 
@@ -38020,7 +38029,7 @@
     [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
       (compiler-backend-collect-functions-shared
         (compiler-backend-collect-function-shared state func)
-        (__tl-box-place rest))]
+        (compiler_ir_types.compiler-ir-box-shared-view rest))]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (compiler-backend-collect-function-seq-shared state seq 0)]))
 
@@ -38146,7 +38155,7 @@
         0)]
     [extern-link-references : backend_i64_i64_map.Map
       (compiler-backend-program-index-extern-links-into
-        externs
+        (compiler-backend-global-shared-view externs)
         (backend_i64_i64_map.with-capacity (+ (* extern-count 2) 1))
         (owned_view.compiler-owned-shared-view extern-link-symbols)
         (owned_view.compiler-owned-shared-view extern-provided)
@@ -38788,32 +38797,39 @@
 (define (compiler-backend-validate-global-symbols-from
   [backend-state : CompilerBackendState]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [seen : backend_string_i64_map.Map (:consume)]
+  [seen : backend_string_i64_map.Map]
   [index : i64]) : ResultCompilerBackendSymbolValidation
   (if (>= index globals.len)
     (ResultCompilerBackendSymbolValidation.Ok seen)
-    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref
+      (compiler-backend-global-shared-view globals)
+      index)
       [(compiler_ir_types.CompilerIrGlobal.Global name _ _)
         (let
           [symbol : String
             (compiler-backend-state-user-symbol-id backend-state name)]
-          (if (backend_string_i64_map.contains? (& seen) symbol)
+          (if (backend_string_i64_map.contains?
+            (& seen)
+            (compiler-backend-global-shared-view symbol))
             (compiler-backend-symbol-validation-error
               (str_cat.str-cat
                 "backend: duplicate emitted global symbol "
-                symbol))
-            (begin
-              (backend_string_i64_map.insert-ref! (&mut seen) symbol 1)
-              (compiler-backend-validate-global-symbols-from
-                backend-state
-                globals
-                seen
-                (+ index 1)))))])))
+                (compiler-backend-global-shared-view symbol)))
+            (let
+              [next-seen : backend_string_i64_map.Map
+                (compiler-backend-global-shared-view seen)]
+              (begin
+                (backend_string_i64_map.insert-ref! (&mut next-seen) symbol 1)
+                (compiler-backend-validate-global-symbols-from
+                  backend-state
+                  globals
+                  next-seen
+                  (+ index 1))))))])))
 
 (define (compiler-backend-validate-global-symbols-into
   [backend-state : CompilerBackendState]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [seen : backend_string_i64_map.Map (:consume)]) : ResultCompilerBackendSymbolValidation
+  [seen : backend_string_i64_map.Map]) : ResultCompilerBackendSymbolValidation
   (compiler-backend-validate-global-symbols-from backend-state globals seen 0))
 
 (define (compiler-backend-runtime-prelude-string-helper-export?
@@ -39070,7 +39086,8 @@
         (*
           (+
             (compiler_ir_types.compiler-ir-global-seq-count globals)
-            (compiler-backend-function-list-count functions))
+            (compiler-backend-function-list-count
+              (compiler-backend-global-shared-view functions)))
           2)
         1)))
     [(ResultCompilerBackendSymbolValidation.Ok seen)
@@ -47199,7 +47216,7 @@
         (compiler-backend-global-shared-view ty)
         dst
         (compiler-backend-global-shared-view src))
-      (compiler-backend-emit-group-copy
+      (compiler-backend-emit-group-copy-with-plan
         type-segment-bases
         assignments
         dst
@@ -47207,6 +47224,8 @@
         vars
         (compiler-backend-global-shared-view ty)
         (compiler-backend-global-shared-view program-index)
+        planned0
+        planned1
         backend-state)]
     [(compiler-backend-value-same-home?
         backend-state
@@ -71660,7 +71679,8 @@
             (compiler_regalloc.compiler-reg-cold-call-rewrite-function-with-representations
               type-segment-bases
               early-exit-func
-              program-index.representations)
+              (compiler-backend-global-shared-view
+                program-index.representations))
             (compiler_regalloc.CompilerRegColdCallRewrite.Rewrite
               early-exit-func
               (- 0 1)))]
@@ -71723,10 +71743,12 @@
         [walk-types : compiler_regalloc.CompilerRegVarTypes
           (if scalar-plan?
             (compiler_regalloc.compiler-reg-function-var-types-with-representations
-              walk-func
-              program-index.representations)
+              (compiler-backend-global-shared-view walk-func)
+              (compiler-backend-global-shared-view
+                program-index.representations))
             (compiler_regalloc.compiler-reg-var-types-empty-with-representations
-              program-index.representations))]
+              (compiler-backend-global-shared-view
+                program-index.representations)))]
         [reg-plan : compiler_regalloc.CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if scalar-registers-enabled
@@ -71735,21 +71757,24 @@
                 fn-abi
                 (compiler-backend-global-shared-view walk-func)
                 cold-call-temp-start
-                walk-types)
+                (compiler-backend-global-shared-view walk-types))
               (compiler_regalloc.compiler-reg-plan-function-stack-only-with-representations
-                walk-func
-                program-index.representations))
+                (compiler-backend-global-shared-view walk-func)
+                (compiler-backend-global-shared-view
+                  program-index.representations)))
             (if (compiler-backend-mode-avx2? mode)
               (compiler_regalloc.compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations
                 type-segment-bases
                 fn-abi
-                walk-func
-                program-index.representations)
+                (compiler-backend-global-shared-view walk-func)
+                (compiler-backend-global-shared-view
+                  program-index.representations))
               (compiler_regalloc.compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations
                 type-segment-bases
                 fn-abi
-                walk-func
-                program-index.representations)))]
+                (compiler-backend-global-shared-view walk-func)
+                (compiler-backend-global-shared-view
+                  program-index.representations))))]
         ;; A call-free natural loop can leave one volatile register dead before
         ;; the loop and another dead inside it while the whole-range greedy pays
         ;; for a callee-saved home. Detect that shape against the initial plan,
@@ -74909,18 +74934,21 @@
   [collections : CompilerBackendProgramCollections]
   [functions : compiler_ir_types.CompilerIrFunctionList]) : CompilerBackendProgramCollections
   (match (compiler-backend-collect-functions-shared
-    (CompilerBackendCollectState.Collections collections)
+    (CompilerBackendCollectState.Collections
+      (compiler-backend-global-shared-view collections))
     functions)
     [(CompilerBackendCollectState.Collections out) out]
     [_ collections]))
 
 (define (compiler-backend-collect-global-collections-from
-  [collections : CompilerBackendProgramCollections (:consume)]
+  [collections : CompilerBackendProgramCollections]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [index : i64]) : CompilerBackendProgramCollections
   (if (>= index globals.len)
     collections
-    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref
+      (compiler-backend-global-shared-view globals)
+      index)
       [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
         (compiler-backend-collect-global-collections-from
           (compiler-backend-collect-value-collections collections value)
@@ -74928,7 +74956,7 @@
           (+ index 1))])))
 
 (define (compiler-backend-collect-global-collections
-  [collections : CompilerBackendProgramCollections (:consume)]
+  [collections : CompilerBackendProgramCollections]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]) : CompilerBackendProgramCollections
   (compiler-backend-collect-global-collections-from collections globals 0))
 
@@ -75360,8 +75388,10 @@
     (match (compiler-backend-emit-global
       type-segment-bases
       target
-      (compiler_ir_types.compiler-ir-global-seq-ref globals index)
-      program-index)
+      (compiler_ir_types.compiler-ir-global-seq-ref
+        (compiler-backend-global-shared-view globals)
+        index)
+      (compiler-backend-global-shared-view program-index))
       [(ResultCompilerBackend.Ok head)
         (compiler-backend-emit-globals-buffer-from
           type-segment-bases
@@ -75412,18 +75442,22 @@
           "    movq %rax, "
           (compiler-backend-global-shared-view symbol)
           "(%rip)\n    movq %rdx, "
-          symbol
+          (compiler-backend-global-shared-view symbol)
           "+8(%rip)\n"
           "")
         (if (compiler-backend-float-type?
           (compiler-backend-global-shared-view ty))
           (str_cat.str-cat
             "    "
-            (compiler-backend-float-move ty)
+            (compiler-backend-float-move
+              (compiler-backend-global-shared-view ty))
             " %xmm0, "
-            symbol
+            (compiler-backend-global-shared-view symbol)
             "(%rip)\n")
-          (str_cat.str-cat "    movq %rax, " symbol "(%rip)\n")))
+          (str_cat.str-cat
+            "    movq %rax, "
+            (compiler-backend-global-shared-view symbol)
+            "(%rip)\n")))
       "")))
 
 (define (compiler-backend-global-initializers-from
@@ -75433,7 +75467,9 @@
   [index : i64]) : String
   (if (>= index globals.len)
     ""
-    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref
+      (compiler-backend-global-shared-view globals)
+      index)
       [(compiler_ir_types.CompilerIrGlobal.Global name ty value)
         (str_cat.str-cat
           (match value
@@ -75443,7 +75479,7 @@
                 name
                 init
                 ty
-                program-index)]
+                (compiler-backend-global-shared-view program-index))]
             [_ ""])
           (compiler-backend-global-initializers-from
             type-segment-bases
@@ -76890,8 +76926,9 @@
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-source-path-strings
         program-index.backend-state
-        (compiler-backend-collect-program-collections program)
-        spans)]
+        (compiler-backend-collect-program-collections
+          (compiler-backend-global-shared-view program))
+        (compiler-backend-global-shared-view spans))]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions
         (compiler-backend-global-shared-view collections))]
@@ -80358,7 +80395,9 @@
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index globals.len)
     parts
-    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref
+      (compiler-backend-global-shared-view globals)
+      index)
       [(compiler_ir_types.CompilerIrGlobal.Global name ty value)
         (let
           [symbol : String
@@ -80366,28 +80405,32 @@
               program-index.backend-state
               name)]
           (compiler-backend-object-globals-from
-            (if (compiler-backend-runtime-global? ty value)
+            (if (compiler-backend-runtime-global?
+              (compiler-backend-global-shared-view ty)
+              (compiler-backend-global-shared-view value))
               (object_target.compiler-backend-object-add-bss
                 (object_target.compiler-backend-object-add-bss
                   (object_target.compiler-backend-object-symbol-export-section
                     parts
-                    symbol
+                    (compiler-backend-global-shared-view symbol)
                     (cobj.CompilerObjectSectionKind.Bss)
                     (cobj.CompilerObjectSymbolKind.Data))
-                  (cobj.CompilerObjectDataRecord.Label symbol))
+                  (cobj.CompilerObjectDataRecord.Label
+                    (compiler-backend-global-shared-view symbol)))
                 (cobj.CompilerObjectDataRecord.Zero 8))
               (compiler-backend-object-global-value
                 (object_target.compiler-backend-object-add-data
                   (object_target.compiler-backend-object-symbol-export-section
                     parts
-                    symbol
+                    (compiler-backend-global-shared-view symbol)
                     (cobj.CompilerObjectSectionKind.Data)
                     (cobj.CompilerObjectSymbolKind.Data))
-                  (cobj.CompilerObjectDataRecord.Label symbol))
-                symbol
+                  (cobj.CompilerObjectDataRecord.Label
+                    (compiler-backend-global-shared-view symbol)))
+                (compiler-backend-global-shared-view symbol)
                 ty
                 value
-                program-index))
+                (compiler-backend-global-shared-view program-index)))
             target
             globals
             program-index
@@ -81149,7 +81192,9 @@
     (begin
       (while (< index globals.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+          (match (compiler_ir_types.compiler-ir-global-seq-ref
+            (compiler-backend-global-shared-view globals)
+            index)
             [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
               (when
                 (not (compiler-backend-object-semantic-value-supported? value))

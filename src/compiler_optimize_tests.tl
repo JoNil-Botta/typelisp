@@ -45582,7 +45582,8 @@
       (set! (array-ref items 0) (OptLicmCompatDirectHolder 1))
       (let
         [alias : (__tl_dyn-array OptLicmCompatDirectHolder)
-          (opt-licm-compat-alias-direct items)]
+          (opt-licm-compat-alias-direct
+            (compiler_ir_types.compiler-ir-global-shared-view items))]
         (opt-licm-compat-overwrite-and-read
           (& (array-ref items 0))
           (&mut alias))))))
@@ -45605,7 +45606,10 @@
     (begin
       (while (< i 1)
         (begin
-          (set! (array-ref holders 0) (OptLicmCompatNestedHolder replacement))
+          (set!
+            (array-ref holders 0)
+            (OptLicmCompatNestedHolder
+              (compiler_ir_types.compiler-ir-global-shared-view replacement)))
           (set! result (array-ref view.items 0))
           (set! i (+ i 1))))
       result)))
@@ -45622,7 +45626,8 @@
       (set! (array-ref holders 0) (OptLicmCompatNestedHolder old-items))
       (let
         [alias : (__tl_dyn-array OptLicmCompatNestedHolder)
-          (opt-licm-compat-alias-nested holders)]
+          (opt-licm-compat-alias-nested
+            (compiler_ir_types.compiler-ir-global-shared-view holders))]
         (opt-licm-compat-replace-and-read-inner
           (& (array-ref holders 0))
           (&mut alias)

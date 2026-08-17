@@ -324,7 +324,7 @@
           (BigNum r.limbs 0))))))
 
 ;: Compare BigNums a and b; -1 if a<b, 0 if equal, 1 if a>b.
-(define (bn-cmp [a : BigNum] [b : BigNum]) : i64
+(define (bn-cmp [a : (& a BigNum)] [b : (& b BigNum)]) : i64
   (let
     [la : i64 a.len]
     [lb : i64 b.len]
@@ -355,7 +355,7 @@
             res))))))
 
 ;: Limb count of arr with high zero limbs trimmed, starting from hint.
-(define (bn-norm-len [arr : (__tl_dyn-array u64)] [hint : i64]) : i64
+(define (bn-norm-len [arr : (& arr (__tl_dyn-array u64))] [hint : i64]) : i64
   (let
     [i : i64 hint]
     (begin
@@ -364,7 +364,7 @@
       i)))
 
 ;: Sum of BigNums a and b.
-(define (bn-add [a : BigNum] [b : BigNum]) : BigNum
+(define (bn-add [a : (& a BigNum)] [b : (& b BigNum)]) : BigNum
   (let
     [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.format.ftoa-cap)]
     [la : i64 a.len]
@@ -396,10 +396,12 @@
         (begin
           (set! (array-ref r i) carry)
           (set! n (+ n 1))))
-      (BigNum r (bn-norm-len r n)))))
+      (let
+        [norm : i64 (bn-norm-len (& r) n)]
+        (BigNum r norm)))))
 
 ;: Product of BigNum a and a value m that fits in 32 bits.
-(define (bn-mul-u32 [a : BigNum] [m : u64]) : BigNum
+(define (bn-mul-u32 [a : (& a BigNum)] [m : u64]) : BigNum
   (let
     [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.format.ftoa-cap)]
     [la : i64 a.len]
@@ -418,7 +420,9 @@
           (set! (array-ref r i) (bit-and carry stdlib.format.ftoa-mask32))
           (set! carry (shr carry 32))
           (set! i (+ i 1))))
-      (BigNum r (bn-norm-len r i)))))
+      (let
+        [norm : i64 (bn-norm-len (& r) i)]
+        (BigNum r norm)))))
 
 ;: BigNum a shifted left by n bits.
 (define (bn-shl-bits [a : BigNum] [n : i64]) : BigNum
@@ -451,17 +455,21 @@
         (when
           (and (not (= bit-shift 0)) (> carry (cast 0 : u64)))
           (set! (array-ref r (+ la limb-shift)) carry))
-        (BigNum r (bn-norm-len r (+ la (+ limb-shift 1))))))))
+        (let
+          [norm : i64 (bn-norm-len (& r) (+ la (+ limb-shift 1)))]
+          (BigNum r norm))))))
 
 ;: Product of BigNum a and the 64-bit value m.
-(define (bn-mul-u64 [a : BigNum] [m : u64]) : BigNum
+(define (bn-mul-u64 [a : (& a BigNum)] [m : u64]) : BigNum
   (let
     [lo : u64 (bit-and m stdlib.format.ftoa-mask32)]
     [hi : u64 (shr m 32)]
     [low : BigNum (bn-mul-u32 a lo)]
     (if (= hi (cast 0 : u64))
       low
-      (bn-add low (bn-shl-bits (bn-mul-u32 a hi) 32)))))
+      (let
+        [high : BigNum (bn-shl-bits (bn-mul-u32 a hi) 32)]
+        (bn-add (& low) (& high))))))
 
 ;: BigNum a multiplied by ten raised to p.
 (define (bn-mul-pow10 [a : BigNum] [p : i64]) : BigNum
@@ -471,12 +479,12 @@
     (begin
       (while (< i p)
         (begin
-          (set! r (bn-mul-u32 r (cast 10 : u64)))
+          (set! r (bn-mul-u32 (& r) (cast 10 : u64)))
           (set! i (+ i 1))))
       r)))
 
 ;: floor(num/den) as u64, assuming the quotient fits in 60 bits.
-(define (bn-div-floor-u64 [num : BigNum] [den : BigNum]) : u64
+(define (bn-div-floor-u64 [num : (& num BigNum)] [den : (& den BigNum)]) : u64
   (let
     [q : u64 (cast 0 : u64)]
     [bit : i64 59]
@@ -486,7 +494,7 @@
           [cand : u64 (+ q (shl (cast 1 : u64) bit))]
           [prod : BigNum (bn-mul-u64 den cand)]
           (begin
-            (if (<= (bn-cmp prod num) 0)
+            (if (<= (bn-cmp (& prod) num) 0)
               (set! q cand)
               unit)
             (set! bit (- bit 1)))))
@@ -653,13 +661,13 @@
                       (set! num (stdlib.format.bn-mul-pow10 num p))
                       (set! den (stdlib.format.bn-mul-pow10 den (- 0 p))))
                     (let
-                      [q : u64 (stdlib.format.bn-div-floor-u64 num den)]
+                      [q : u64 (stdlib.format.bn-div-floor-u64 (& num) (& den))]
                       [two-num : BigNum (stdlib.format.bn-shl-bits num 1)]
                       [t : BigNum
                         (stdlib.format.bn-mul-u64
-                          den
+                          (& den)
                           (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
-                      [c : i64 (stdlib.format.bn-cmp two-num t)]
+                      [c : i64 (stdlib.format.bn-cmp (& two-num) (& t))]
                       (begin
                         (set! d q)
                         (if (> c 0)

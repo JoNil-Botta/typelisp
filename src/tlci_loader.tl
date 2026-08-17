@@ -778,13 +778,13 @@
   [owner-arena : i64]
   [bytes : (__tl_dyn-array u8)]
   [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
-  (match (tlci.tlci-parse-image (tlci-loader-global-shared-view bytes))
+  (match (tlci.tlci-parse-image (owned_view.compiler-owned-shared-view bytes))
     [(tlci.ResultTlciImage.Err message) (ResultTlciLoadedImage.Err message)]
     [(tlci.ResultTlciImage.Ok parsed)
       (let
         [native-table : i64 (tlci-loader-native-table-offset parsed)]
         (match (tlci-loader-load-parsed
-          (tlci-loader-global-shared-view bytes)
+          (owned_view.compiler-owned-shared-view bytes)
           parsed
           (& host-table))
           [(ResultTlciLoadedImage.Err message)
@@ -793,7 +793,7 @@
             (if (>= native-table 0)
               (tlci-loader-install-native-table
                 owner-arena
-                (tlci-loader-global-shared-view bytes)
+                (owned_view.compiler-owned-shared-view bytes)
                 loaded
                 host-table
                 native-table)
@@ -973,7 +973,7 @@
     0))
 
 (define (tlci-loader-load-from-bytes [bytes : (__tl_dyn-array u8)]) : ResultTlciLoadedImage
-  (match (tlci.tlci-parse-image (tlci-loader-global-shared-view bytes))
+  (match (tlci.tlci-parse-image (owned_view.compiler-owned-shared-view bytes))
     [(tlci.ResultTlciImage.Err message) (ResultTlciLoadedImage.Err message)]
     [(tlci.ResultTlciImage.Ok image)
       (let
@@ -2142,7 +2142,7 @@
         [bound : bool
           (match (tlci-loader-load-from-bytes-with-host
             (tlci-loader-test-owner-arena)
-            (tlci-loader-global-shared-view bytes)
+            (owned_view.compiler-owned-shared-view bytes)
             (tlci-loader-test-host-table "fuel-check" 4096))
             [(ResultTlciLoadedImage.Err _) false]
             [(ResultTlciLoadedImage.Ok loaded)
@@ -2156,7 +2156,7 @@
           (tlci-loader-test-rejects?
             (tlci-loader-load-from-bytes-with-host
               (tlci-loader-test-owner-arena)
-              (tlci-loader-global-shared-view bytes)
+              (owned_view.compiler-owned-shared-view bytes)
               (tlci-loader-test-host-table "other" 8192))
             "tlci loader: image `demo@0.1.0` has unresolved host import `fuel-check`")]
         [bad-slot-bytes : (__tl_dyn-array u8) (tlci.tlci-copy-bytes bytes)]

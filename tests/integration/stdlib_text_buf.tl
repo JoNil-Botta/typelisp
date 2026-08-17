@@ -69,7 +69,7 @@
           (set! base (text_buf.append base "o"))
           (set! i (+ i 1))))
       (let
-        [outer-arena : arena.Arena (arena.make)]
+        [outer-arena (arena.make)]
         [child-ok : bool
           (with-escape
             outer-arena
@@ -82,7 +82,8 @@
           (with-escape
             outer-arena
             (let
-              [sibling : text_buf.TextBuf (text_buf.append (clone base) "-sibling")]
+              [sibling : text_buf.TextBuf
+                (text_buf.append (clone base) "-sibling")]
               (string.eq
                 (text_buf.render sibling)
                 "oooooooooooooooooooooooooooooooo-sibling")))]
@@ -175,7 +176,7 @@
           (set! base (text_buf_borrowed.append base (& source)))
           (set! index (+ index 1))))
       (let
-        [outer-arena : arena.Arena (arena.make)]
+        [outer-arena (arena.make)]
         (with-escape
           outer-arena
           (let

@@ -1948,7 +1948,7 @@
     (begin
       (compiler_backend.compiler-backend-state-set-representations!
         backend-state
-        representations)
+        (owned_view.compiler-owned-shared-view representations))
       representations)))
 
 (define (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
@@ -1974,14 +1974,14 @@
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
-        pools
-        program
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
         profile-state
         (compiler-driver-representation-index-for-backend
-          pools
-          program
+          (owned_view.compiler-owned-shared-view pools)
+          (owned_view.compiler-owned-shared-view program)
           backend-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
@@ -2067,14 +2067,14 @@
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
-        pools
-        program
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
         profile-state
         (compiler-driver-representation-index-for-backend
-          pools
-          program
+          (owned_view.compiler-owned-shared-view pools)
+          (owned_view.compiler-owned-shared-view program)
           backend-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
@@ -2167,14 +2167,14 @@
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
-        pools
-        program
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
         profile-state
         (compiler-driver-representation-index-for-backend
-          pools
-          program
+          (owned_view.compiler-owned-shared-view pools)
+          (owned_view.compiler-owned-shared-view program)
           backend-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
@@ -2305,14 +2305,14 @@
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
-        pools
-        program
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
         profile-state
         (compiler-driver-representation-index-for-backend
-          pools
-          program
+          (owned_view.compiler-owned-shared-view pools)
+          (owned_view.compiler-owned-shared-view program)
           backend-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
@@ -2482,14 +2482,14 @@
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
-        pools
-        program
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
         profile-state
         (compiler-driver-representation-index-for-backend
-          pools
-          program
+          (owned_view.compiler-owned-shared-view pools)
+          (owned_view.compiler-owned-shared-view program)
           backend-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized

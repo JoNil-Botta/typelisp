@@ -2446,7 +2446,7 @@
                     (ast.AstMaybeImportAlias.Some alias)
                     _))
                 (compiler-symbols-add-selected-item-alias
-                  cur-symbols
+                  (compiler-symbols-shared-view cur-symbols)
                   target-module
                   item
                   cur-module-id

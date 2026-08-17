@@ -762,34 +762,46 @@
       (compiler-load-session-state-i64-cell 0)]
     [lazy-qualified-observer : CompilerLoadLazyQualifiedObserverState
       (compiler-load-lazy-qualified-observer-state-new)]
-    (CompilerLoadSessionState
-      (compiler-load-session-state-flags-new)
-      (compiler-load-session-state-bool-cell true)
-      (compiler-load-session-state-i64-cell 0)
-      (compiler-load-session-state-i64-cell 0)
-      (compiler-load-session-state-i64-cell 0)
-      (__tl_make-array CompilerLoadProgramCacheSlot 256)
-      (__tl_make-array CompilerLoadProgramAdmissionSlot 256)
-      (compiler-load-session-state-bool-cell false)
-      (compiler-load-session-state-bool-cell false)
-      (compiler-load-session-state-i64-cell 0)
-      (compiler-load-session-state-i64-cell 0)
-      (compiler-load-session-state-i64-cell 0)
-      (__tl_make-array CompilerLoadPreludeCacheSlot 16)
-      (compiler-load-session-state-bool-cell false)
-      (__tl_make-array bool compiler-load-dotted-path-cache-capacity)
-      (__tl_make-array i64 compiler-load-dotted-path-cache-capacity)
-      (__tl_make-array String compiler-load-dotted-path-cache-capacity)
-      (compiler-load-session-state-i64-cell 0)
-      surface-summaries
-      surface-summary-load-depth
-      lazy-import-skip-record-count
-      lazy-qualified-observer
-      (compiler-load-dependency-catalog-registry-new)
-      (compiler-load-session-state-bool-cell false)
-      (array.make-array ci.InternCompatState 1)
-      (compiler-load-session-state-bool-cell false)
-      (compiler-load-session-state-bool-cell standalone-reset-safe))))
+    [initial : CompilerLoadSessionState
+      (CompilerLoadSessionState
+        (compiler-load-session-state-flags-new)
+        (compiler-load-session-state-bool-cell true)
+        (compiler-load-session-state-i64-cell 0)
+        (compiler-load-session-state-i64-cell 0)
+        (compiler-load-session-state-i64-cell 0)
+        (__tl_make-array CompilerLoadProgramCacheSlot 256)
+        (__tl_make-array CompilerLoadProgramAdmissionSlot 256)
+        (compiler-load-session-state-bool-cell false)
+        (compiler-load-session-state-bool-cell false)
+        (compiler-load-session-state-i64-cell 0)
+        (compiler-load-session-state-i64-cell 0)
+        (compiler-load-session-state-i64-cell 0)
+        (__tl_make-array CompilerLoadPreludeCacheSlot 16)
+        (compiler-load-session-state-bool-cell false)
+        (__tl_make-array bool compiler-load-dotted-path-cache-capacity)
+        (__tl_make-array i64 compiler-load-dotted-path-cache-capacity)
+        (__tl_make-array String compiler-load-dotted-path-cache-capacity)
+        (compiler-load-session-state-i64-cell 0)
+        surface-summaries
+        surface-summary-load-depth
+        lazy-import-skip-record-count
+        lazy-qualified-observer
+        (compiler-load-dependency-catalog-registry-new)
+        (compiler-load-session-state-bool-cell false)
+        (array.make-array ci.InternCompatState 1)
+        (compiler-load-session-state-bool-cell false)
+        (compiler-load-session-state-bool-cell standalone-reset-safe)
+        0)]
+    [cell : (__tl_dyn-array CompilerLoadSessionState) (__tl_make-array initial)]
+    [address : u64
+      (unsafe
+        (ptr->int (array-data cell)))]
+    [canonical : CompilerLoadSessionState
+      (compiler-load-global-array-element-shared-view cell 0)]
+    (begin
+      (set! canonical.shared-address address)
+      (set! (array-ref cell 0) canonical)
+      (compiler-load-global-array-element-shared-view cell 0))))
 
 (define (compiler-load-session-state-new) : CompilerLoadSessionState
   (compiler-load-session-state-new-with-standalone-reset-safety false))
@@ -809,7 +821,7 @@
     force-source))
 
 (define (compiler-load-session-state-dependency-tlci-force-source?
-  [state : CompilerLoadSessionState]) : bool
+  [state : (& state CompilerLoadSessionState)]) : bool
   (compiler-load-session-state-bool-cell-get state.dependency-tlci-force-source))
 
 (define (compiler-load-session-state-dependency-catalog-handle
@@ -1133,36 +1145,51 @@
           [(CompilerLoadDependencyCatalogStatus.TrustedMetadataOnly)
             CompilerLoadDependencyCatalogLookup.MetadataOnly]
           [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
-            (match (tlci_loader_support.tlci-loader-resolve-macro-entry
-              (& loaded)
-              identity)
-              [(tlci_loader_support.TlciMacroEntryLookup.Resolved resolved)
-                (CompilerLoadDependencyCatalogLookup.Resolved
-                  (CompilerLoadDependencyCatalogCapability
-                    handle
-                    slot
-                    entry.key
-                    (compiler-load-dependency-catalog-handle-generation handle)
-                    (ci.intern entry.key.package-name)
-                    (ci.intern entry.key.package-version)
-                    (ci.intern entry.key.artifact-path)
-                    resolved))]
-              [(tlci_loader_support.TlciMacroEntryLookup.Shell resolved)
-                (CompilerLoadDependencyCatalogLookup.Shell
-                  (CompilerLoadDependencyCatalogCapability
-                    handle
-                    slot
-                    entry.key
-                    (compiler-load-dependency-catalog-handle-generation handle)
-                    (ci.intern entry.key.package-name)
-                    (ci.intern entry.key.package-version)
-                    (ci.intern entry.key.artifact-path)
-                    resolved))]
-              [(tlci_loader_support.TlciMacroEntryLookup.Missing)
-                CompilerLoadDependencyCatalogLookup.Missing]
-              [(tlci_loader_support.TlciMacroEntryLookup.Err message)
-                (CompilerLoadDependencyCatalogLookup.Unavailable
-                  (CompilerLoadDependencyCatalogFailure.MappingFailure message))])])))))
+            (let
+              [generation : i64
+                (compiler-load-dependency-catalog-handle-generation handle)]
+              [package-name-id : i64
+                (ci.intern
+                  (owned_view.compiler-owned-shared-view entry.key.package-name))]
+              [package-version-id : i64
+                (ci.intern
+                  (owned_view.compiler-owned-shared-view
+                    entry.key.package-version))]
+              [artifact-path-id : i64
+                (ci.intern
+                  (owned_view.compiler-owned-shared-view
+                    entry.key.artifact-path))]
+              (match (tlci_loader_support.tlci-loader-resolve-macro-entry
+                (& loaded)
+                identity)
+                [(tlci_loader_support.TlciMacroEntryLookup.Resolved resolved)
+                  (CompilerLoadDependencyCatalogLookup.Resolved
+                    (CompilerLoadDependencyCatalogCapability
+                      handle
+                      slot
+                      entry.key
+                      generation
+                      package-name-id
+                      package-version-id
+                      artifact-path-id
+                      resolved))]
+                [(tlci_loader_support.TlciMacroEntryLookup.Shell resolved)
+                  (CompilerLoadDependencyCatalogLookup.Shell
+                    (CompilerLoadDependencyCatalogCapability
+                      handle
+                      slot
+                      entry.key
+                      generation
+                      package-name-id
+                      package-version-id
+                      artifact-path-id
+                      resolved))]
+                [(tlci_loader_support.TlciMacroEntryLookup.Missing)
+                  CompilerLoadDependencyCatalogLookup.Missing]
+                [(tlci_loader_support.TlciMacroEntryLookup.Err message)
+                  (CompilerLoadDependencyCatalogLookup.Unavailable
+                    (CompilerLoadDependencyCatalogFailure.MappingFailure
+                      message))]))])))))
 
 (define (compiler-load-dependency-catalog-capability-error
   [capability : CompilerLoadDependencyCatalogCapability]
@@ -1193,9 +1220,14 @@
       (and
         (>= capability.slot 0)
         (< capability.slot items.len)
-        (compiler-load-dependency-catalog-key-eq?
-          (array-ref items.slots capability.slot).key
-          capability.key)))))
+        (let
+          [entry : CompilerLoadDependencyCatalogEntry
+            (owned_view.compiler-owned-array-element-shared-view
+              items.slots
+              capability.slot)]
+          (compiler-load-dependency-catalog-key-eq?
+            (owned_view.compiler-owned-shared-view entry.key)
+            capability.key))))))
 
 ;; Revalidate the complete registry capability immediately before entering
 ;; mapped code. No loaded-image value crosses this API boundary.
@@ -1203,17 +1235,21 @@
   [capability : CompilerLoadDependencyCatalogCapability]
   [identity : String]
   [session-cookie : i64]) : tlci_loader_support.ResultTlciMacroDispatch
-  (if (not (compiler-load-dependency-catalog-capability-current? capability))
+  (if (not
+    (compiler-load-dependency-catalog-capability-current?
+      (compiler-load-global-shared-view capability)))
     (tlci_loader_support.ResultTlciMacroDispatch.Err
       (compiler-load-dependency-catalog-capability-error
-        capability
-        identity
+        (compiler-load-global-shared-view capability)
+        (compiler-load-global-shared-view identity)
         "selected catalog capability is stale"))
     (let
       [items : CompilerLoadDependencyCatalogList
         (compiler-load-dependency-catalog-handle-items capability.handle)]
       [entry : CompilerLoadDependencyCatalogEntry
-        (array-ref items.slots capability.slot)]
+        (owned_view.compiler-owned-array-element-shared-view
+          items.slots
+          capability.slot)]
       (match entry.status
         [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
           (match (tlci_loader_support.tlci-loader-dispatch-resolved-macro
@@ -1227,30 +1263,34 @@
             [(tlci_loader_support.ResultTlciMacroDispatch.Err message)
               (tlci_loader_support.ResultTlciMacroDispatch.Err
                 (compiler-load-dependency-catalog-capability-error
-                  capability
-                  identity
+                  (compiler-load-global-shared-view capability)
+                  (compiler-load-global-shared-view identity)
                   message))])]
         [_
           (tlci_loader_support.ResultTlciMacroDispatch.Err
             (compiler-load-dependency-catalog-capability-error
-              capability
-              identity
+              (compiler-load-global-shared-view capability)
+              (compiler-load-global-shared-view identity)
               "selected catalog is no longer executable"))]))))
 
 (define (compiler-load-dependency-catalog-capability-mark-shell!
   [capability : CompilerLoadDependencyCatalogCapability]
   [identity : String]) : tlci_loader_support.ResultTlciLoaderUnit
-  (if (not (compiler-load-dependency-catalog-capability-current? capability))
+  (if (not
+    (compiler-load-dependency-catalog-capability-current?
+      (compiler-load-global-shared-view capability)))
     (tlci_loader_support.ResultTlciLoaderUnit.Err
       (compiler-load-dependency-catalog-capability-error
-        capability
-        identity
+        (compiler-load-global-shared-view capability)
+        (compiler-load-global-shared-view identity)
         "selected catalog capability is stale"))
     (let
       [items : CompilerLoadDependencyCatalogList
         (compiler-load-dependency-catalog-handle-items capability.handle)]
       [entry : CompilerLoadDependencyCatalogEntry
-        (array-ref items.slots capability.slot)]
+        (owned_view.compiler-owned-array-element-shared-view
+          items.slots
+          capability.slot)]
       (match entry.status
         [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
           (match (tlci_loader_support.tlci-loader-mark-macro-entry-shell!
@@ -1261,14 +1301,14 @@
             [(tlci_loader_support.ResultTlciLoaderUnit.Err message)
               (tlci_loader_support.ResultTlciLoaderUnit.Err
                 (compiler-load-dependency-catalog-capability-error
-                  capability
-                  identity
+                  (compiler-load-global-shared-view capability)
+                  (compiler-load-global-shared-view identity)
                   message))])]
         [_
           (tlci_loader_support.ResultTlciLoaderUnit.Err
             (compiler-load-dependency-catalog-capability-error
-              capability
-              identity
+              (compiler-load-global-shared-view capability)
+              (compiler-load-global-shared-view identity)
               "selected catalog is no longer executable"))]))))
 
 (define (compiler-load-dependency-catalog-admitted-image
@@ -3048,8 +3088,9 @@
 
 (define (compiler-load-resolved-source-exists? [path : String]) : bool
   (or
-    (io.file-exists? path)
-    (match (compiler-load-embedded-stdlib-source-for-path path)
+    (io.file-exists? (owned_view.compiler-owned-shared-view path))
+    (match (compiler-load-embedded-stdlib-source-for-path
+      (owned_view.compiler-owned-shared-view path))
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource _)
         true]
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource) false])))
@@ -3070,13 +3111,17 @@
   [kind : ast.AstImportKind]
   [module-name : String]
   [alias : ast.AstMaybeImportAlias]) : ResultCompilerLoadResolvedImport
-  (ResultCompilerLoadResolvedImport.Ok
-    (CompilerLoadResolvedImport
-      resolved
-      kind
-      module-name
-      (ast.AstMaybeModuleName.Some (compiler-load-import-module-id module-name))
-      alias)))
+  (let
+    [module-id : i64
+      (compiler-load-import-module-id
+        (owned_view.compiler-owned-shared-view module-name))]
+    (ResultCompilerLoadResolvedImport.Ok
+      (CompilerLoadResolvedImport
+        resolved
+        kind
+        module-name
+        (ast.AstMaybeModuleName.Some module-id)
+        alias))))
 
 (define (compiler-load-invalid-selected-import-message
   [import-path : String]
@@ -3285,15 +3330,18 @@
   [alias : ast.AstMaybeImportAlias]
   [stdlib-roots : svec.Vec]) : ResultCompilerLoadResolvedImport
   (let
-    [candidate-id : i64 (compiler-load-import-module-id candidate)]
+    [candidate-id : i64
+      (compiler-load-import-module-id
+        (owned_view.compiler-owned-shared-view candidate))]
     (match (compiler-load-resolve-dotted-import-spec-with-roots
-      importer-path
-      import-root
-      candidate
+      (owned_view.compiler-owned-shared-view importer-path)
+      (owned_view.compiler-owned-shared-view import-root)
+      (owned_view.compiler-owned-shared-view candidate)
       (ast.AstMaybeModuleName.Some candidate-id)
-      stdlib-roots)
+      (owned_view.compiler-owned-shared-view stdlib-roots))
       [(ResultPkgResolve.Ok resolved)
-        (if (compiler-load-resolved-source-exists? resolved)
+        (if (compiler-load-resolved-source-exists?
+          (owned_view.compiler-owned-shared-view resolved))
           (if (= remaining-segments 1)
             (compiler-load-resolved-import
               resolved
@@ -3305,7 +3353,9 @@
                 original-import-path
                 candidate)))
           (let
-            [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
+            [dot : i64
+              (compiler-load-dotted-module-last-dot
+                (owned_view.compiler-owned-shared-view candidate))]
             (if (< dot 0)
               (ResultCompilerLoadResolvedImport.Err "")
               (compiler-load-search-import-prefix-with-roots
@@ -3319,7 +3369,9 @@
                 stdlib-roots))))]
       [(ResultPkgResolve.Err _)
         (let
-          [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
+          [dot : i64
+            (compiler-load-dotted-module-last-dot
+              (owned_view.compiler-owned-shared-view candidate))]
           (if (< dot 0)
             (ResultCompilerLoadResolvedImport.Err "")
             (compiler-load-search-import-prefix-with-roots
@@ -3343,11 +3395,11 @@
   (match kind
     [(ast.AstImportKind.ModuleAll)
       (match (compiler-load-resolve-dotted-import-spec-with-roots
-        importer-path
-        import-root
-        import-path
-        expected-module
-        stdlib-roots)
+        (owned_view.compiler-owned-shared-view importer-path)
+        (owned_view.compiler-owned-shared-view import-root)
+        (owned_view.compiler-owned-shared-view import-path)
+        (owned_view.compiler-owned-shared-view expected-module)
+        (owned_view.compiler-owned-shared-view stdlib-roots))
         [(ResultPkgResolve.Ok resolved)
           (compiler-load-resolved-import
             resolved
@@ -3358,11 +3410,11 @@
           (ResultCompilerLoadResolvedImport.Err message)])]
     [(ast.AstImportKind.ModuleItem _)
       (match (compiler-load-resolve-dotted-import-spec-with-roots
-        importer-path
-        import-root
-        import-path
-        expected-module
-        stdlib-roots)
+        (owned_view.compiler-owned-shared-view importer-path)
+        (owned_view.compiler-owned-shared-view import-root)
+        (owned_view.compiler-owned-shared-view import-path)
+        (owned_view.compiler-owned-shared-view expected-module)
+        (owned_view.compiler-owned-shared-view stdlib-roots))
         [(ResultPkgResolve.Ok resolved)
           (compiler-load-resolved-import resolved kind import-path alias)]
         [(ResultPkgResolve.Err message)
@@ -3371,21 +3423,24 @@
       (let
         [original : ResultPkgResolve
           (compiler-load-resolve-dotted-import-spec-with-roots
-            importer-path
-            import-root
-            import-path
-            expected-module
-            stdlib-roots)]
+            (owned_view.compiler-owned-shared-view importer-path)
+            (owned_view.compiler-owned-shared-view import-root)
+            (owned_view.compiler-owned-shared-view import-path)
+            (owned_view.compiler-owned-shared-view expected-module)
+            (owned_view.compiler-owned-shared-view stdlib-roots))]
         (match original
           [(ResultPkgResolve.Ok resolved)
-            (if (compiler-load-resolved-source-exists? resolved)
+            (if (compiler-load-resolved-source-exists?
+              (owned_view.compiler-owned-shared-view resolved))
               (compiler-load-resolved-import
                 resolved
                 ast.AstImportKind.Module
                 import-path
                 alias)
               (let
-                [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
+                [dot : i64
+                  (compiler-load-dotted-module-last-dot
+                    (owned_view.compiler-owned-shared-view import-path))]
                 (if (< dot 0)
                   (compiler-load-resolved-import
                     resolved
@@ -3395,22 +3450,31 @@
                   (let
                     [item-text : String
                       (string.substring
-                        import-path
+                        (owned_view.compiler-owned-shared-view import-path)
                         (+ dot 1)
-                        (- (string.string-length import-path) (+ dot 1)))]
+                        (-
+                          (string.string-length
+                            (owned_view.compiler-owned-shared-view import-path))
+                          (+ dot 1)))]
                     (match (compiler-load-search-import-prefix-with-roots
-                      importer-path
-                      import-root
-                      import-path
-                      (string.substring import-path 0 dot)
+                      (owned_view.compiler-owned-shared-view importer-path)
+                      (owned_view.compiler-owned-shared-view import-root)
+                      (owned_view.compiler-owned-shared-view import-path)
+                      (string.substring
+                        (owned_view.compiler-owned-shared-view import-path)
+                        0
+                        dot)
                       (compiler-load-selected-item-id expected-module item-text)
                       1
-                      alias
-                      stdlib-roots)
+                      (owned_view.compiler-owned-shared-view alias)
+                      (owned_view.compiler-owned-shared-view stdlib-roots))
                       [(ResultCompilerLoadResolvedImport.Ok selected)
                         (ResultCompilerLoadResolvedImport.Ok selected)]
                       [(ResultCompilerLoadResolvedImport.Err message)
-                        (if (= (string.string-length message) 0)
+                        (if (=
+                          (string.string-length
+                            (owned_view.compiler-owned-shared-view message))
+                          0)
                           (compiler-load-resolved-import
                             resolved
                             ast.AstImportKind.Module
@@ -3419,20 +3483,28 @@
                           (ResultCompilerLoadResolvedImport.Err message))])))))]
           [(ResultPkgResolve.Err original-message)
             (let
-              [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
+              [dot : i64
+                (compiler-load-dotted-module-last-dot
+                  (owned_view.compiler-owned-shared-view import-path))]
               (if (< dot 0)
                 (ResultCompilerLoadResolvedImport.Err original-message)
                 (let
                   [item-text : String
                     (string.substring
-                      import-path
+                      (owned_view.compiler-owned-shared-view import-path)
                       (+ dot 1)
-                      (- (string.string-length import-path) (+ dot 1)))]
+                      (-
+                        (string.string-length
+                          (owned_view.compiler-owned-shared-view import-path))
+                        (+ dot 1)))]
                   (match (compiler-load-search-import-prefix-with-roots
-                    importer-path
-                    import-root
-                    import-path
-                    (string.substring import-path 0 dot)
+                    (owned_view.compiler-owned-shared-view importer-path)
+                    (owned_view.compiler-owned-shared-view import-root)
+                    (owned_view.compiler-owned-shared-view import-path)
+                    (string.substring
+                      (owned_view.compiler-owned-shared-view import-path)
+                      0
+                      dot)
                     (compiler-load-selected-item-id expected-module item-text)
                     1
                     alias
@@ -3440,7 +3512,10 @@
                     [(ResultCompilerLoadResolvedImport.Ok selected)
                       (ResultCompilerLoadResolvedImport.Ok selected)]
                     [(ResultCompilerLoadResolvedImport.Err message)
-                      (if (= (string.string-length message) 0)
+                      (if (=
+                        (string.string-length
+                          (owned_view.compiler-owned-shared-view message))
+                        0)
                         (ResultCompilerLoadResolvedImport.Err original-message)
                         (ResultCompilerLoadResolvedImport.Err message))]))))]))]
     [(ast.AstImportKind.Macro _ _)
@@ -3596,16 +3671,19 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerLoadResolvedImport
   (let
-    [candidate-id : i64 (compiler-load-import-module-id candidate)]
+    [candidate-id : i64
+      (compiler-load-import-module-id
+        (owned_view.compiler-owned-shared-view candidate))]
     (match (compiler-load-resolve-package-module-import
-      candidate
+      (owned_view.compiler-owned-shared-view candidate)
       (ast.AstMaybeModuleName.Some candidate-id)
-      importer-path
-      manifest-dir
-      deps
-      stdlib-roots)
+      (owned_view.compiler-owned-shared-view importer-path)
+      (owned_view.compiler-owned-shared-view manifest-dir)
+      (owned_view.compiler-owned-shared-view deps)
+      (owned_view.compiler-owned-shared-view stdlib-roots))
       [(ResultPkgResolve.Ok resolved)
-        (if (compiler-load-resolved-source-exists? resolved)
+        (if (compiler-load-resolved-source-exists?
+          (owned_view.compiler-owned-shared-view resolved))
           (if (= remaining-segments 1)
             (compiler-load-resolved-import
               resolved
@@ -3617,7 +3695,9 @@
                 original-import-path
                 candidate)))
           (let
-            [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
+            [dot : i64
+              (compiler-load-dotted-module-last-dot
+                (owned_view.compiler-owned-shared-view candidate))]
             (if (< dot 0)
               (ResultCompilerLoadResolvedImport.Err "")
               (compiler-load-search-package-import-prefix
@@ -3632,7 +3712,9 @@
                 deps))))]
       [(ResultPkgResolve.Err _)
         (let
-          [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
+          [dot : i64
+            (compiler-load-dotted-module-last-dot
+              (owned_view.compiler-owned-shared-view candidate))]
           (if (< dot 0)
             (ResultCompilerLoadResolvedImport.Err "")
             (compiler-load-search-package-import-prefix
@@ -3658,12 +3740,12 @@
   (match kind
     [(ast.AstImportKind.ModuleAll)
       (match (compiler-load-resolve-package-module-import
-        import-path
-        expected-module
-        importer-path
-        manifest-dir
-        deps
-        stdlib-roots)
+        (owned_view.compiler-owned-shared-view import-path)
+        (owned_view.compiler-owned-shared-view expected-module)
+        (owned_view.compiler-owned-shared-view importer-path)
+        (owned_view.compiler-owned-shared-view manifest-dir)
+        (owned_view.compiler-owned-shared-view deps)
+        (owned_view.compiler-owned-shared-view stdlib-roots))
         [(ResultPkgResolve.Ok resolved)
           (compiler-load-resolved-import
             resolved
@@ -3674,12 +3756,12 @@
           (ResultCompilerLoadResolvedImport.Err message)])]
     [(ast.AstImportKind.ModuleItem _)
       (match (compiler-load-resolve-package-module-import
-        import-path
-        expected-module
-        importer-path
-        manifest-dir
-        deps
-        stdlib-roots)
+        (owned_view.compiler-owned-shared-view import-path)
+        (owned_view.compiler-owned-shared-view expected-module)
+        (owned_view.compiler-owned-shared-view importer-path)
+        (owned_view.compiler-owned-shared-view manifest-dir)
+        (owned_view.compiler-owned-shared-view deps)
+        (owned_view.compiler-owned-shared-view stdlib-roots))
         [(ResultPkgResolve.Ok resolved)
           (compiler-load-resolved-import resolved kind import-path alias)]
         [(ResultPkgResolve.Err message)
@@ -3688,22 +3770,25 @@
       (let
         [original : ResultPkgResolve
           (compiler-load-resolve-package-module-import
-            import-path
-            expected-module
-            importer-path
-            manifest-dir
-            deps
-            stdlib-roots)]
+            (owned_view.compiler-owned-shared-view import-path)
+            (owned_view.compiler-owned-shared-view expected-module)
+            (owned_view.compiler-owned-shared-view importer-path)
+            (owned_view.compiler-owned-shared-view manifest-dir)
+            (owned_view.compiler-owned-shared-view deps)
+            (owned_view.compiler-owned-shared-view stdlib-roots))]
         (match original
           [(ResultPkgResolve.Ok resolved)
-            (if (compiler-load-resolved-source-exists? resolved)
+            (if (compiler-load-resolved-source-exists?
+              (owned_view.compiler-owned-shared-view resolved))
               (compiler-load-resolved-import
                 resolved
                 ast.AstImportKind.Module
                 import-path
                 alias)
               (let
-                [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
+                [dot : i64
+                  (compiler-load-dotted-module-last-dot
+                    (owned_view.compiler-owned-shared-view import-path))]
                 (if (< dot 0)
                   (compiler-load-resolved-import
                     resolved
@@ -3713,23 +3798,32 @@
                   (let
                     [item-text : String
                       (string.substring
-                        import-path
+                        (owned_view.compiler-owned-shared-view import-path)
                         (+ dot 1)
-                        (- (string.string-length import-path) (+ dot 1)))]
+                        (-
+                          (string.string-length
+                            (owned_view.compiler-owned-shared-view import-path))
+                          (+ dot 1)))]
                     (match (compiler-load-search-package-import-prefix
-                      importer-path
-                      import-path
-                      (string.substring import-path 0 dot)
+                      (owned_view.compiler-owned-shared-view importer-path)
+                      (owned_view.compiler-owned-shared-view import-path)
+                      (string.substring
+                        (owned_view.compiler-owned-shared-view import-path)
+                        0
+                        dot)
                       (compiler-load-selected-item-id expected-module item-text)
                       1
-                      alias
-                      stdlib-roots
-                      manifest-dir
-                      deps)
+                      (owned_view.compiler-owned-shared-view alias)
+                      (owned_view.compiler-owned-shared-view stdlib-roots)
+                      (owned_view.compiler-owned-shared-view manifest-dir)
+                      (owned_view.compiler-owned-shared-view deps))
                       [(ResultCompilerLoadResolvedImport.Ok selected)
                         (ResultCompilerLoadResolvedImport.Ok selected)]
                       [(ResultCompilerLoadResolvedImport.Err message)
-                        (if (= (string.string-length message) 0)
+                        (if (=
+                          (string.string-length
+                            (owned_view.compiler-owned-shared-view message))
+                          0)
                           (compiler-load-resolved-import
                             resolved
                             ast.AstImportKind.Module
@@ -3738,29 +3832,40 @@
                           (ResultCompilerLoadResolvedImport.Err message))])))))]
           [(ResultPkgResolve.Err original-message)
             (let
-              [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
+              [dot : i64
+                (compiler-load-dotted-module-last-dot
+                  (owned_view.compiler-owned-shared-view import-path))]
               (if (< dot 0)
                 (ResultCompilerLoadResolvedImport.Err original-message)
                 (let
                   [item-text : String
                     (string.substring
-                      import-path
+                      (owned_view.compiler-owned-shared-view import-path)
                       (+ dot 1)
-                      (- (string.string-length import-path) (+ dot 1)))]
+                      (-
+                        (string.string-length
+                          (owned_view.compiler-owned-shared-view import-path))
+                        (+ dot 1)))]
                   (match (compiler-load-search-package-import-prefix
-                    importer-path
-                    import-path
-                    (string.substring import-path 0 dot)
+                    (owned_view.compiler-owned-shared-view importer-path)
+                    (owned_view.compiler-owned-shared-view import-path)
+                    (string.substring
+                      (owned_view.compiler-owned-shared-view import-path)
+                      0
+                      dot)
                     (compiler-load-selected-item-id expected-module item-text)
                     1
-                    alias
-                    stdlib-roots
-                    manifest-dir
-                    deps)
+                    (owned_view.compiler-owned-shared-view alias)
+                    (owned_view.compiler-owned-shared-view stdlib-roots)
+                    (owned_view.compiler-owned-shared-view manifest-dir)
+                    (owned_view.compiler-owned-shared-view deps))
                     [(ResultCompilerLoadResolvedImport.Ok selected)
                       (ResultCompilerLoadResolvedImport.Ok selected)]
                     [(ResultCompilerLoadResolvedImport.Err message)
-                      (if (= (string.string-length message) 0)
+                      (if (=
+                        (string.string-length
+                          (owned_view.compiler-owned-shared-view message))
+                        0)
                         (ResultCompilerLoadResolvedImport.Err original-message)
                         (ResultCompilerLoadResolvedImport.Err message))]))))]))]
     [(ast.AstImportKind.Macro _ _)
@@ -4953,7 +5058,7 @@
           [decl : ast.AstDecl
             (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
           (begin
-            (match decl
+            (match (ast.ast-place-shared-view decl)
               [(ast.AstDecl.Module name) (when (= name want) (return true))]
               [(ast.AstDecl.ModuleBody name body-box)
                 (when
@@ -5055,7 +5160,8 @@
         [(CompilerLoadSomeSurfaceSummary summary)
           (ast.AstMaybeModuleName.Some summary.declaration-module-id)]
         [(CompilerLoadNoSurfaceSummary)
-          (if (compiler-load-decl-list-has-module? imported-decls)
+          (if (compiler-load-decl-list-has-module?
+            (ast.ast-place-shared-view imported-decls))
             (ast.AstMaybeModuleName.Some
               (compiler-load-decls-source-module-id imported-decls))
             expected)])]
@@ -5066,7 +5172,8 @@
         [(CompilerLoadSomeSurfaceSummary summary)
           (ast.AstMaybeModuleName.Some summary.declaration-module-id)]
         [(CompilerLoadNoSurfaceSummary)
-          (if (compiler-load-decl-list-has-module? imported-decls)
+          (if (compiler-load-decl-list-has-module?
+            (ast.ast-place-shared-view imported-decls))
             (ast.AstMaybeModuleName.Some
               (compiler-load-decls-source-module-id imported-decls))
             expected)])]
@@ -5115,7 +5222,8 @@
               (if (sym_i64_env.sym-i64-contains-id seen key)
                 (if (=
                   (sym_i64_env.sym-i64-lookup-id-or seen key -1)
-                  (ci.intern import-name))
+                  (ci.intern
+                    (owned_view.compiler-owned-shared-view import-name)))
                   (compiler-load-duplicate-dotted-import-alias-loop
                     rest
                     current-module
@@ -5223,7 +5331,7 @@
           name
           source-module
           name
-          path
+          (owned_view.compiler-owned-shared-view path)
           span)
           [(CompilerLoadUnqualifiedImportStep.Ok)
             (compiler-load-unqualified-import-note-variants
@@ -5315,7 +5423,7 @@
         name
         source-module
         name
-        path
+        (owned_view.compiler-owned-shared-view path)
         span)
         [(CompilerLoadUnqualifiedImportStep.Ok)
           (compiler-load-unqualified-import-note-variants
@@ -5335,7 +5443,7 @@
         name
         source-module
         name
-        path
+        (owned_view.compiler-owned-shared-view path)
         span)
         [(CompilerLoadUnqualifiedImportStep.Ok)
           (compiler-load-unqualified-import-note-variants
@@ -5364,9 +5472,10 @@
     (begin
       (while (< index count)
         (let
-          [decl : ast.AstDecl (array-ref decls.slots (+ decls.offset index))]
+          [decl : ast.AstDecl
+            (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
           (begin
-            (match decl
+            (match (ast.ast-place-shared-view decl)
               [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
               [_
                 (when
@@ -5376,7 +5485,7 @@
                     importer-module
                     source-module
                     decl
-                    path
+                    (owned_view.compiler-owned-shared-view path)
                     span)
                     [(CompilerLoadUnqualifiedImportStep.Ok) unit]
                     [(CompilerLoadUnqualifiedImportStep.Collision collision)
@@ -5403,12 +5512,16 @@
 
 (define (compiler-load-unqualified-import-collision-result
   [collision : CompilerLoadUnqualifiedImportCollision]) : ResultCompilerLoadAliasCheck
-  (ResultCompilerLoadAliasCheck.Err
-    (box
-      (cdiag.compiler-diagnostic-from-ast-span
-        collision.path
-        collision.span
-        (compiler-load-unqualified-import-collision-message collision)))))
+  (let
+    [message : String
+      (compiler-load-unqualified-import-collision-message
+        (owned_view.compiler-owned-shared-view collision))]
+    (ResultCompilerLoadAliasCheck.Err
+      (box
+        (cdiag.compiler-diagnostic-from-ast-span
+          collision.path
+          collision.span
+          message)))))
 
 (define (compiler-load-check-unqualified-import-collisions
   [fallback-path : String]
@@ -5425,9 +5538,13 @@
     (begin
       (while (< index count)
         (let
-          [decl : ast.AstDecl (array-ref decls.slots (+ decls.offset index))]
+          [decl : ast.AstDecl
+            (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
           [path : String
-            (ast.ast-decl-path-list-get (& paths) index fallback-path)]
+            (ast.ast-decl-path-list-get
+              (& paths)
+              index
+              (owned_view.compiler-owned-shared-view fallback-path))]
           (begin
             (match decl
               [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
@@ -5441,7 +5558,7 @@
                     span))
                 (match (compiler-load-unqualified-import-note-wildcard
                   (&mut state)
-                  decls
+                  (ast.ast-place-shared-view decls)
                   cur-module
                   source-module
                   path
@@ -9321,9 +9438,10 @@
     (begin
       (while (< index count)
         (let
-          [decl : ast.AstDecl (array-ref decls.slots (+ decls.offset index))]
+          [decl : ast.AstDecl
+            (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
           (begin
-            (match decl
+            (match (ast.ast-place-shared-view decl)
               [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
               [_
                 (when
@@ -9634,13 +9752,13 @@
                 [(ResultCompilerLoadWithPaths.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])
               (match (compiler-load-resolve-import-spec-with-roots-classified
-                importer-path
-                import-root
-                kind
-                import-path
-                expected-module
-                alias
-                stdlib-roots)
+                (owned_view.compiler-owned-shared-view importer-path)
+                (owned_view.compiler-owned-shared-view import-root)
+                (owned_view.compiler-owned-shared-view kind)
+                (owned_view.compiler-owned-shared-view import-path)
+                (owned_view.compiler-owned-shared-view expected-module)
+                (owned_view.compiler-owned-shared-view alias)
+                (owned_view.compiler-owned-shared-view stdlib-roots))
                 [(ResultCompilerLoadResolvedImport.Ok import)
                   (let
                     [resolved : String import.resolved]
@@ -9649,7 +9767,9 @@
                     [expected-module : ast.AstMaybeModuleName
                       import.expected-module]
                     [alias : ast.AstMaybeImportAlias import.alias]
-                    [resolved-id : i64 (compiler-load-source-path-id resolved)]
+                    [resolved-id : i64
+                      (compiler-load-source-path-id
+                        (owned_view.compiler-owned-shared-view resolved))]
                     [preload-candidate : bool
                       (compiler-load-session-state-lazy-import-preload-candidate?
                         (compiler-load-session-state-shared-view
@@ -9733,39 +9853,48 @@
                               import-seen)]
                           [validated-module : ast.AstMaybeModuleName
                             (compiler-load-after-import-expected-module
-                              traversal.load-state
+                              (compiler-load-session-state-shared-view
+                                (& traversal.load-state))
                               resolved-id
-                              kind
-                              expected-module
-                              alias
-                              imported-decls)]
+                              (owned_view.compiler-owned-shared-view kind)
+                              (owned_view.compiler-owned-shared-view
+                                expected-module)
+                              (owned_view.compiler-owned-shared-view alias)
+                              (ast.ast-place-shared-view imported-decls))]
                           (begin
                             (when
                               (not
                                 (or
                                   (compiler-load-expected-module-seen?
-                                    seen
-                                    validated-module)
+                                    (sym_i64_env.sym-i64-shared-view (& seen))
+                                    (owned_view.compiler-owned-shared-view
+                                      validated-module))
                                   (compiler-load-selected-item-present?
-                                    kind
-                                    validated-module
-                                    imported-decls)))
+                                    (owned_view.compiler-owned-shared-view kind)
+                                    (owned_view.compiler-owned-shared-view
+                                      validated-module)
+                                    (ast.ast-place-shared-view imported-decls))))
                               (return
                                 (ResultCompilerLoadWithPaths.Err
                                   (box
                                     (cdiag.compiler-diagnostic-from-ast-span
-                                      importer-path
+                                      (owned_view.compiler-owned-shared-view
+                                        importer-path)
                                       (__tl-box-place span)
                                       (compiler-load-missing-selected-item-message
-                                        import-path
-                                        kind))))))
+                                        (owned_view.compiler-owned-shared-view
+                                          import-path)
+                                        (owned_view.compiler-owned-shared-view
+                                          kind)))))))
                             (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                              traversal
+                              (ast.ast-place-shared-view traversal)
                               rest
-                              importer-path
+                              (owned_view.compiler-owned-shared-view
+                                importer-path)
                               importer-module
                               importer-module-id
-                              importer-source-module
+                              (owned_view.compiler-owned-shared-view
+                                importer-source-module)
                               importer-source-module-id
                               after-import-seen
                               stdlib-roots
@@ -9782,12 +9911,16 @@
                                     validated-module]
                                   [after-import-alias : ast.AstMaybeImportAlias
                                     (compiler-load-after-import-alias
-                                      traversal.load-state
+                                      (compiler-load-session-state-shared-view
+                                        (& traversal.load-state))
                                       resolved-id
-                                      kind
-                                      expected-module
-                                      alias
-                                      imported-decls)]
+                                      (owned_view.compiler-owned-shared-view
+                                        kind)
+                                      (owned_view.compiler-owned-shared-view
+                                        expected-module)
+                                      (owned_view.compiler-owned-shared-view
+                                        alias)
+                                      (ast.ast-place-shared-view imported-decls))]
                                   (if lazy-skip
                                     (begin
                                       (compiler-load-session-state-lazy-import-record-skip!
@@ -9797,7 +9930,8 @@
                                           kind
                                           resolved
                                           after-import-expected
-                                          after-import-alias
+                                          (owned_view.compiler-owned-shared-view
+                                            after-import-alias)
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
@@ -9816,36 +9950,48 @@
                                           (ast.ast-decl-list-new)
                                           rest-modules)
                                         rest-seen))
-                                    (ResultCompilerLoadWithPaths.Ok
-                                      (compiler-load-decl-list-append-onto
-                                        imported-decls
+                                    (let
+                                      [after-decls : ast.AstDeclList
                                         (compiler-load-decls-after-import
                                           kind
                                           resolved
                                           after-import-expected
-                                          after-import-alias
+                                          (owned_view.compiler-owned-shared-view
+                                            after-import-alias)
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
-                                          imported-decls
-                                          rest-decls))
-                                      (compiler-load-decl-path-list-append-onto
-                                        imported-paths
+                                          (ast.ast-place-shared-view
+                                            imported-decls)
+                                          rest-decls)]
+                                      [after-paths : ast.AstDeclPathList
                                         (compiler-load-paths-after-import
                                           importer-path
                                           traversal.importer-path-id
                                           traversal.importer-decl-owner-id
-                                          after-import-alias
-                                          imported-decls
-                                          rest-paths))
-                                      (compiler-load-decl-module-list-append-onto
-                                        imported-modules
+                                          (owned_view.compiler-owned-shared-view
+                                            after-import-alias)
+                                          (ast.ast-place-shared-view
+                                            imported-decls)
+                                          rest-paths)]
+                                      [after-modules : ast.AstDeclModuleList
                                         (compiler-load-modules-after-import
                                           importer-source-module-id
                                           after-import-alias
+                                          (ast.ast-place-shared-view
+                                            imported-decls)
+                                          rest-modules)]
+                                      (ResultCompilerLoadWithPaths.Ok
+                                        (compiler-load-decl-list-append-onto
                                           imported-decls
-                                          rest-modules))
-                                      rest-seen)))]
+                                          after-decls)
+                                        (compiler-load-decl-path-list-append-onto
+                                          imported-paths
+                                          after-paths)
+                                        (compiler-load-decl-module-list-append-onto
+                                          imported-modules
+                                          after-modules)
+                                        rest-seen))))]
                               [(ResultCompilerLoadWithPaths.Err diag)
                                 (ResultCompilerLoadWithPaths.Err diag)])))]
                       [(ResultCompilerLoadWithPaths.Err diag)
@@ -10305,9 +10451,9 @@
         (match loaded
           [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
             (match (compiler-load-check-unqualified-import-collisions
-              source-path
-              decls
-              paths)
+              (owned_view.compiler-owned-shared-view source-path)
+              (ast.ast-place-shared-view decls)
+              (ast.ast-place-shared-view paths))
               [(ResultCompilerLoadAliasCheck.Ok)
                 (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)]
               [(ResultCompilerLoadAliasCheck.Err diag)
@@ -12553,14 +12699,14 @@
                 [(ResultCompilerLoadWithPaths.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])
               (match (compiler-load-resolve-package-import-spec-classified
-                importer-path
-                kind
-                import-path
-                expected-module
-                alias
-                stdlib-roots
-                manifest-dir
-                deps)
+                (owned_view.compiler-owned-shared-view importer-path)
+                (owned_view.compiler-owned-shared-view kind)
+                (owned_view.compiler-owned-shared-view import-path)
+                (owned_view.compiler-owned-shared-view expected-module)
+                (owned_view.compiler-owned-shared-view alias)
+                (owned_view.compiler-owned-shared-view stdlib-roots)
+                (owned_view.compiler-owned-shared-view manifest-dir)
+                (owned_view.compiler-owned-shared-view deps))
                 [(ResultCompilerLoadResolvedImport.Ok import)
                   (let
                     [resolved : String import.resolved]
@@ -12683,37 +12829,45 @@
                             (compiler-load-after-import-expected-module
                               (compiler-load-active-session-state-shared-view)
                               resolved-id
-                              kind
-                              expected-module
-                              alias
-                              imported-decls)]
+                              (owned_view.compiler-owned-shared-view kind)
+                              (owned_view.compiler-owned-shared-view
+                                expected-module)
+                              (owned_view.compiler-owned-shared-view alias)
+                              (ast.ast-place-shared-view imported-decls))]
                           (begin
                             (when
                               (not
                                 (or
                                   (compiler-load-expected-module-seen?
-                                    seen
-                                    validated-module)
+                                    (sym_i64_env.sym-i64-shared-view (& seen))
+                                    (owned_view.compiler-owned-shared-view
+                                      validated-module))
                                   (compiler-load-selected-item-present?
-                                    kind
-                                    validated-module
-                                    imported-decls)))
+                                    (owned_view.compiler-owned-shared-view kind)
+                                    (owned_view.compiler-owned-shared-view
+                                      validated-module)
+                                    (ast.ast-place-shared-view imported-decls))))
                               (return
                                 (ResultCompilerLoadWithPaths.Err
                                   (box
                                     (cdiag.compiler-diagnostic-from-ast-span
-                                      importer-path
+                                      (owned_view.compiler-owned-shared-view
+                                        importer-path)
                                       (__tl-box-place span)
                                       (compiler-load-missing-selected-item-message
-                                        import-path
-                                        kind))))))
+                                        (owned_view.compiler-owned-shared-view
+                                          import-path)
+                                        (owned_view.compiler-owned-shared-view
+                                          kind)))))))
                             (match (compiler-load-package-decls-with-module-and-roots
                               rest
-                              importer-path
+                              (owned_view.compiler-owned-shared-view
+                                importer-path)
                               importer-path-id
                               importer-module
                               importer-module-id
-                              importer-source-module
+                              (owned_view.compiler-owned-shared-view
+                                importer-source-module)
                               importer-source-module-id
                               after-import-seen
                               stdlib-roots
@@ -12732,10 +12886,13 @@
                                     (compiler-load-after-import-alias
                                       (compiler-load-active-session-state-shared-view)
                                       resolved-id
-                                      kind
-                                      expected-module
-                                      alias
-                                      imported-decls)]
+                                      (owned_view.compiler-owned-shared-view
+                                        kind)
+                                      (owned_view.compiler-owned-shared-view
+                                        expected-module)
+                                      (owned_view.compiler-owned-shared-view
+                                        alias)
+                                      (ast.ast-place-shared-view imported-decls))]
                                   (if lazy-skip
                                     (begin
                                       (compiler-load-lazy-import-record-skip!)
@@ -12754,7 +12911,8 @@
                                           importer-path
                                           importer-path-id
                                           importer-path-id
-                                          after-import-alias
+                                          (owned_view.compiler-owned-shared-view
+                                            after-import-alias)
                                           (ast.ast-decl-list-new)
                                           rest-paths)
                                         (compiler-load-modules-after-import
@@ -12763,36 +12921,48 @@
                                           (ast.ast-decl-list-new)
                                           rest-modules)
                                         rest-seen))
-                                    (ResultCompilerLoadWithPaths.Ok
-                                      (compiler-load-decl-list-append-onto
-                                        imported-decls
+                                    (let
+                                      [after-decls : ast.AstDeclList
                                         (compiler-load-decls-after-import
                                           kind
                                           resolved
                                           after-import-expected
-                                          after-import-alias
+                                          (owned_view.compiler-owned-shared-view
+                                            after-import-alias)
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
-                                          imported-decls
-                                          rest-decls))
-                                      (compiler-load-decl-path-list-append-onto
-                                        imported-paths
+                                          (ast.ast-place-shared-view
+                                            imported-decls)
+                                          rest-decls)]
+                                      [after-paths : ast.AstDeclPathList
                                         (compiler-load-paths-after-import
                                           importer-path
                                           importer-path-id
                                           importer-path-id
-                                          after-import-alias
-                                          imported-decls
-                                          rest-paths))
-                                      (compiler-load-decl-module-list-append-onto
-                                        imported-modules
+                                          (owned_view.compiler-owned-shared-view
+                                            after-import-alias)
+                                          (ast.ast-place-shared-view
+                                            imported-decls)
+                                          rest-paths)]
+                                      [after-modules : ast.AstDeclModuleList
                                         (compiler-load-modules-after-import
                                           importer-module-id
                                           after-import-alias
+                                          (ast.ast-place-shared-view
+                                            imported-decls)
+                                          rest-modules)]
+                                      (ResultCompilerLoadWithPaths.Ok
+                                        (compiler-load-decl-list-append-onto
                                           imported-decls
-                                          rest-modules))
-                                      rest-seen)))]
+                                          after-decls)
+                                        (compiler-load-decl-path-list-append-onto
+                                          imported-paths
+                                          after-paths)
+                                        (compiler-load-decl-module-list-append-onto
+                                          imported-modules
+                                          after-modules)
+                                        rest-seen))))]
                               [(ResultCompilerLoadWithPaths.Err diag)
                                 (ResultCompilerLoadWithPaths.Err diag)])))]
                       [(ResultCompilerLoadWithPaths.Err diag)
@@ -13141,9 +13311,9 @@
         (match loaded
           [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
             (match (compiler-load-check-unqualified-import-collisions
-              source-path
-              decls
-              paths)
+              (owned_view.compiler-owned-shared-view source-path)
+              (ast.ast-place-shared-view decls)
+              (ast.ast-place-shared-view paths))
               [(ResultCompilerLoadAliasCheck.Ok)
                 (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)]
               [(ResultCompilerLoadAliasCheck.Err diag)
@@ -14517,7 +14687,10 @@
             (if (and
               (string.eq (ci.intern-str module-name) target-module)
               (= alias cbi.compiler-builtin-id-fix-empty)
-              (> (ast.ast-source-span-start-line (__tl-box-place span)) 0))
+              (>
+                (ast.ast-source-span-start-line
+                  (ast.ast-source-span-box-shared-view span))
+                0))
               true
               (compiler-load-decl-list-has-wildcard-import? rest target-module))]
           [_ (compiler-load-decl-list-has-wildcard-import? rest target-module)]))]))
@@ -14545,7 +14718,10 @@
               (string.eq (ci.intern-str module-name) target-module)
               (string.eq (ci.intern-str item-id) item)
               (string.eq (ci.intern-str alias) alias-name)
-              (> (ast.ast-source-span-start-line (__tl-box-place span)) 0))
+              (>
+                (ast.ast-source-span-start-line
+                  (ast.ast-source-span-box-shared-view span))
+                0))
               true
               (compiler-load-decl-list-has-selected-import?
                 rest
@@ -14563,7 +14739,9 @@
   (let
     [root : String "target/cl_import_suffix_root"]
     [pkg-root : String "target/cl_import_suffix_root/pkg"]
-    [roots : svec.Vec (compiler-load-string-vec-one root)]
+    [roots : svec.Vec
+      (compiler-load-string-vec-one
+        (owned_view.compiler-owned-shared-view root))]
     (begin
       (compiler-load-test-mkdir root)
       (compiler-load-test-mkdir pkg-root)
@@ -14616,17 +14794,19 @@
         (match (compiler-load-file-with-paths-and-roots
           "target/cl_import_suffix_entry.tl"
           (sym_i64_env.sym-i64-empty)
-          roots)
+          (ast.ast-place-shared-view roots))
           [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
             (and
-              (compiler-load-decl-list-has-wildcard-import? decls "pkg.shared")
+              (compiler-load-decl-list-has-wildcard-import?
+                (ast.ast-place-shared-view decls)
+                "pkg.shared")
               (compiler-load-decl-list-has-selected-import?
-                decls
+                (ast.ast-place-shared-view decls)
                 "pkg.shared"
                 "value"
                 "chosen")
               (compiler-load-decl-list-has-selected-import?
-                decls
+                (ast.ast-place-shared-view decls)
                 "pkg.shared"
                 "Some"
                 "chosen-some"))]
@@ -14634,10 +14814,11 @@
         (match (compiler-load-file-with-paths-and-roots
           "target/cl_import_suffix_missing.tl"
           (sym_i64_env.sym-i64-empty)
-          roots)
+          (ast.ast-place-shared-view roots))
           [(ResultCompilerLoadWithPaths.Err diag)
             (let
-              [value : cdiag.CompilerDiagnostic (__tl-box-place diag)]
+              [value : cdiag.CompilerDiagnostic
+                (cdiag.compiler-diagnostic-box-shared-view diag)]
               (and
                 (string.eq
                   (cdiag.compiler-diagnostic-message value)
@@ -14647,10 +14828,11 @@
         (match (compiler-load-file-with-paths-and-roots
           "target/cl_import_suffix_invalid.tl"
           (sym_i64_env.sym-i64-empty)
-          roots)
+          (ast.ast-place-shared-view roots))
           [(ResultCompilerLoadWithPaths.Err diag)
             (let
-              [value : cdiag.CompilerDiagnostic (__tl-box-place diag)]
+              [value : cdiag.CompilerDiagnostic
+                (cdiag.compiler-diagnostic-box-shared-view diag)]
               (and
                 (string.eq
                   (cdiag.compiler-diagnostic-message value)
@@ -14660,10 +14842,11 @@
         (match (compiler-load-file-with-paths-and-roots
           "target/cl_import_suffix_collision.tl"
           (sym_i64_env.sym-i64-empty)
-          roots)
+          (ast.ast-place-shared-view roots))
           [(ResultCompilerLoadWithPaths.Err diag)
             (let
-              [value : cdiag.CompilerDiagnostic (__tl-box-place diag)]
+              [value : cdiag.CompilerDiagnostic
+                (cdiag.compiler-diagnostic-box-shared-view diag)]
               (and
                 (string.eq
                   (cdiag.compiler-diagnostic-path value)
@@ -19002,9 +19185,11 @@
         (compiler-load-global-shared-view state))]
     [checks : (__tl_dyn-array bool) (__tl_make-array false)]
     (begin
-      (compiler-load-session-state-set-dependency-tlci-force-source! state true)
       (compiler-load-session-state-set-dependency-tlci-force-source!
-        other-state
+        (compiler-load-global-shared-view state)
+        true)
+      (compiler-load-session-state-set-dependency-tlci-force-source!
+        (compiler-load-global-shared-view other-state)
         false)
       (in-arena
         (arena.Arena owner)
@@ -19106,7 +19291,10 @@
               (compiler-load-global-shared-view state)
               metadata-entry)]
           [nested-provenance : i64
-            (ci.intern (compiler-load-join-root-path nested-root "src/lib.tl"))]
+            (ci.intern
+              (compiler-load-join-root-path
+                (compiler-load-global-shared-view nested-root)
+                "src/lib.tl"))]
           [outer-provenance : i64
             (ci.intern (compiler-load-join-root-path outer-root "src/lib.tl"))]
           [sibling-provenance : i64
@@ -19135,7 +19323,7 @@
               (=
                 (compiler-load-dependency-catalog-find-key-slot
                   (compiler-load-global-shared-view state)
-                  nested-key)
+                  (compiler-load-global-shared-view nested-key))
                 nested-slot)
               (=
                 (compiler-load-dependency-catalog-slot-for-provenance-id
@@ -19194,21 +19382,25 @@
           (let
             [capability : CompilerLoadDependencyCatalogCapability
               (CompilerLoadDependencyCatalogCapability
-                (compiler-load-session-state-dependency-catalog-handle state)
+                (compiler-load-session-state-dependency-catalog-handle
+                  (compiler-load-global-shared-view state))
                 nested-slot
-                nested-key
+                (compiler-load-global-shared-view nested-key)
                 (array-ref state.dependency-catalog.generation 0)
-                (ci.intern nested-key.package-name)
-                (ci.intern nested-key.package-version)
-                (ci.intern nested-key.artifact-path)
+                (ci.intern
+                  (compiler-load-global-shared-view nested-key.package-name))
+                (ci.intern
+                  (compiler-load-global-shared-view nested-key.package-version))
+                (ci.intern
+                  (compiler-load-global-shared-view nested-key.artifact-path))
                 (tlci_loader_support.TlciResolvedMacroEntry 0 0))]
             [replacement-key : CompilerLoadDependencyCatalogKey
               (CompilerLoadDependencyCatalogKey
-                nested-root
+                (compiler-load-global-shared-view nested-root)
                 "nested"
                 "2.0.0"
                 (compiler-load-join-root-path
-                  nested-root
+                  (compiler-load-global-shared-view nested-root)
                   "target/nested-next.tlci")
                 21
                 222
@@ -19228,9 +19420,9 @@
                 (and
                   (array-ref checks 0)
                   (compiler-load-dependency-catalog-capability-current?
-                    capability)))
+                    (compiler-load-global-shared-view capability))))
               (compiler-load-dependency-catalog-record-owned!
-                state
+                (compiler-load-global-shared-view state)
                 replacement-entry)
               (set!
                 (array-ref checks 0)
@@ -19238,7 +19430,7 @@
                   (array-ref checks 0)
                   (not
                     (compiler-load-dependency-catalog-capability-current?
-                      capability))))))))
+                      (compiler-load-global-shared-view capability)))))))))
       (let
         [release-ok : bool
           (match (compiler-load-session-state-dependency-catalog-release!

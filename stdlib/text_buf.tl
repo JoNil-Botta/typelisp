@@ -232,7 +232,7 @@
               (set! base (stdlib.text_buf.append base "o"))
               (set! i (+ i 1))))
           (let
-            [outer-arena : arena.Arena (arena.make)]
+            [outer-arena (arena.make)]
             [child-ok : bool
               (with-escape
                 outer-arena

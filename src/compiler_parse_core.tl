@@ -8519,7 +8519,8 @@
     [(reader.SpannedSexprView.Cons first tail _)
       (if (sexpr-colon?
         (reader.spanned-sexpr-form (compiler-parse-place-shared-view first)))
-        (match (reader.spanned-sexpr-view tail)
+        (match (reader.spanned-sexpr-view
+          (compiler-parse-place-shared-view tail))
           [(reader.SpannedSexprView.Cons ret body-tail _)
             (match (parse-ast-type-spanned
               (compiler-parse-place-shared-view dispatch)
@@ -8994,7 +8995,8 @@
     [(reader.SpannedSexprView.Cons head tail _)
       (if (sexpr-colon?
         (reader.spanned-sexpr-form (compiler-parse-place-shared-view head)))
-        (match (reader.spanned-sexpr-view tail)
+        (match (reader.spanned-sexpr-view
+          (compiler-parse-place-shared-view tail))
           [(reader.SpannedSexprView.Cons ty end _)
             (match (reader.spanned-sexpr-view end)
               [(reader.SpannedSexprView.Nil _)
@@ -9923,8 +9925,10 @@
       (parse-ast-dotted-import-name-valid?
         (compiler-parse-place-shared-view module-name)))
       (ResultAstDecl.Err "parse: invalid dotted import module name")
-      (if (parse-ast-dotted-import-wildcard? module-name)
-        (match (reader.spanned-sexpr-view tail)
+      (if (parse-ast-dotted-import-wildcard?
+        (compiler-parse-place-shared-view module-name))
+        (match (reader.spanned-sexpr-view
+          (compiler-parse-place-shared-view tail))
           [(reader.SpannedSexprView.Nil _)
             (let
               [target-id : i64 (ci.intern-dotted-prefix-id module-name-id)]
@@ -9937,7 +9941,8 @@
           [_
             (ResultAstDecl.Err
               "parse: wildcard import cannot use as; import a selected item instead")])
-        (match (reader.spanned-sexpr-view tail)
+        (match (reader.spanned-sexpr-view
+          (compiler-parse-place-shared-view tail))
           [(reader.SpannedSexprView.Nil _)
             (parse-ast-import-spec
               (ast.AstImportKind.Module)
@@ -11528,7 +11533,7 @@
   (match (parse-ast-source "(import stdlib.core_macros.*)")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import

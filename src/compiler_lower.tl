@@ -7174,8 +7174,16 @@
     [target-key : i64 (lower-module-name-key-id-by-id target-module-id item-id)]
     [alias-key : i64
       (lower-module-name-key-id-by-id importer-module-id alias-id)]
-    [logical-id : i64 (lower-name-env-lookup-logical-id names target-key -1)]
-    [symbol-id : i64 (lower-name-env-lookup-symbol-id names target-key -1)]
+    [logical-id : i64
+      (lower-name-env-lookup-logical-id
+        (lower-global-shared-view names)
+        target-key
+        -1)]
+    [symbol-id : i64
+      (lower-name-env-lookup-symbol-id
+        (lower-global-shared-view names)
+        target-key
+        -1)]
     (if (or (< logical-id 0) (< symbol-id 0))
       names
       (lower-name-env-add-import-alias-binding-symbol-id
@@ -7383,7 +7391,7 @@
                         cur-names
                         (lower-name-env-add-selected-item-alias-cache
                           cur-names
-                          base-cache
+                          (lower-global-shared-view base-cache)
                           target-current-module-id
                           target-module
                           item
@@ -16539,7 +16547,7 @@
             (let
               [object-name : i64
                 (lower-nullary-variant-object-symbol
-                  intern-state
+                  (lower-global-shared-view intern-state)
                   enum-name-id
                   variant-name)]
               (ir.compiler-ir-global-builder-push!
@@ -74619,11 +74627,11 @@
                               logical-module-id
                               name))
                           (lower-current-decl-logical-name-cache-id
-                            decl-name-cache
-                            logical-module
+                            (lower-global-shared-view decl-name-cache)
+                            (lower-global-shared-view logical-module)
                             (tc_core.tc-env-key-name-text name)
                             name)
-                          variants
+                          (lower-global-shared-view variants)
                           0
                           (&mut cur-globals)))
                       (match (lower-enum-cleanup-decl
@@ -74702,11 +74710,11 @@
                               logical-module-id
                               name))
                           (lower-current-decl-logical-name-cache-id
-                            decl-name-cache
-                            logical-module
+                            (lower-global-shared-view decl-name-cache)
+                            (lower-global-shared-view logical-module)
                             (tc_core.tc-env-key-name-text name)
                             name)
-                          variants
+                          (lower-global-shared-view variants)
                           0
                           (&mut cur-globals)))
                       (match (lower-enum-cleanup-decl

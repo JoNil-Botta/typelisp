@@ -6659,13 +6659,22 @@
         alias)]
     (and
       (=
-        (compiler_lower.lower-name-env-lookup-logical-id aliased alias-key -1)
+        (compiler_lower.lower-name-env-lookup-logical-id
+          (compiler_lower.lower-global-shared-view aliased)
+          alias-key
+          -1)
         target-key)
       (=
-        (compiler_lower.lower-name-env-lookup-symbol-id aliased alias-key -1)
+        (compiler_lower.lower-name-env-lookup-symbol-id
+          (compiler_lower.lower-global-shared-view aliased)
+          alias-key
+          -1)
         symbol-id)
       (=
-        (compiler_lower.lower-name-env-lookup-symbol-id aliased target-key -1)
+        (compiler_lower.lower-name-env-lookup-symbol-id
+          (compiler_lower.lower-global-shared-view aliased)
+          target-key
+          -1)
         symbol-id))))
 
 (define (compiler-lower-dotted-import-default-alias-source) : String

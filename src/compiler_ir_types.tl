@@ -3633,8 +3633,10 @@
           (set!
             (array-ref slots index)
             (compiler-ir-clone-global
-              pools
-              (compiler-ir-global-seq-ref globals index)))
+              (compiler-ir-global-shared-view pools)
+              (compiler-ir-global-seq-ref
+                (compiler-ir-global-shared-view globals)
+                index)))
           (set! index (+ index 1))))
       (CompilerIrGlobalSeq slots globals.len))))
 
@@ -3740,7 +3742,9 @@
   (match (compiler-ir-global-shared-view program)
     [(CompilerIrProgram.Program globals functions externs)
       (CompilerIrProgram.Program
-        (compiler-ir-clone-global-seq pools globals)
+        (compiler-ir-clone-global-seq
+          (compiler-ir-global-shared-view pools)
+          globals)
         (compiler-ir-clone-function-list-shell functions)
         (compiler-ir-clone-extern-list
           (compiler-ir-global-shared-view pools)
@@ -5159,7 +5163,9 @@
               out
               (compiler-ir-global-render
                 type-segment-bases
-                (compiler-ir-global-seq-ref globals index))))
+                (compiler-ir-global-seq-ref
+                  (compiler-ir-global-shared-view globals)
+                  index))))
           (set! index (+ index 1))))
       out)))
 
@@ -6995,7 +7001,8 @@
     [(CompilerIrProgram.Program globals functions externs)
       (CompilerIrSummary.Summary
         (compiler-ir-global-seq-count globals)
-        (compiler-ir-function-list-count functions)
+        (compiler-ir-function-list-count
+          (compiler-ir-global-shared-view functions))
         (compiler-ir-extern-list-count externs)
         (compiler-ir-function-list-block-count
           (compiler-ir-global-shared-view functions))
@@ -8201,7 +8208,10 @@
   (let
     [prefix : String "__tl_internal_abi_group_m"]
     [prefix-len : i64 (string.string-length prefix)]
-    (if (not (compiler-ir-representation-name-prefix? name prefix))
+    (if (not
+      (compiler-ir-representation-name-prefix?
+        (compiler-ir-global-shared-view name)
+        prefix))
       -1
       (let
         [n : i64 (string.string-length name)]
@@ -8260,13 +8270,15 @@
         "__tl_internal_abi_"))))
 
 (define (compiler-ir-representation-index-merge-group
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [key : i64]
   [word-count : i64]
   [class-mask : i64]) : CompilerIrRepresentationIndex
   (let
-    [counts : ir_i64_i64_map.Map index.word-counts]
-    [masks : ir_i64_i64_map.Map index.class-masks]
+    [counts : ir_i64_i64_map.Map
+      (compiler-ir-global-shared-view index.word-counts)]
+    [masks : ir_i64_i64_map.Map
+      (compiler-ir-global-shared-view index.class-masks)]
     (if (< word-count 2)
       (begin
         ;; A malformed group is explicit unresolved evidence, not a one-word
@@ -8296,12 +8308,13 @@
                 (CompilerIrRepresentationIndex counts masks))])]))))
 
 (define (compiler-ir-representation-index-merge-one-word
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [key : i64]) : CompilerIrRepresentationIndex
   (if (ir_i64_i64_map.contains? (& index.word-counts) key)
     index
     (let
-      [counts : ir_i64_i64_map.Map index.word-counts]
+      [counts : ir_i64_i64_map.Map
+        (compiler-ir-global-shared-view index.word-counts)]
       (begin
         (ir_i64_i64_map.insert-ref! (&mut counts) key 1)
         (CompilerIrRepresentationIndex counts index.class-masks)))))
@@ -8319,7 +8332,8 @@
 (define (compiler-ir-representation-param-types!
   [params : CompilerIrParamList]
   [types : CompilerIrRepresentationVarTypes]) : unit
-  (match (compiler-ir-param-list-force-cons params)
+  (match (compiler-ir-param-list-force-cons
+    (compiler-ir-global-shared-view params))
     [(CompilerIrParamList.Nil) unit]
     [(CompilerIrParamList.Array seq)
       (compiler-ir-representation-param-types!
@@ -8329,9 +8343,12 @@
       (match param
         [(CompilerIrParam.Param _ ty var)
           (begin
-            (compiler-ir-representation-var-type-set! types var ty)
+            (compiler-ir-representation-var-type-set!
+              (compiler-ir-global-shared-view types)
+              var
+              ty)
             (compiler-ir-representation-param-types!
-              (__tl-box-place rest)
+              (compiler-ir-box-shared-view rest)
               types))])]))
 
 (define (compiler-ir-representation-instr-def-type!
@@ -8381,30 +8398,36 @@
       (begin
         (compiler-ir-representation-instr-def-type!
           (compiler-ir-instr-seq-ref instrs i)
-          types)
+          (compiler-ir-global-shared-view types))
         (set! i (+ i 1))))))
 
 (define (compiler-ir-representation-block-types!
   [blocks : CompilerIrBlockList]
   [types : CompilerIrRepresentationVarTypes]) : unit
-  (match blocks
+  (match (compiler-ir-global-shared-view blocks)
     [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (begin
-            (compiler-ir-representation-instr-types! instrs types)
+            (compiler-ir-representation-instr-types!
+              instrs
+              (compiler-ir-global-shared-view types))
             (compiler-ir-representation-block-types!
-              (__tl-box-place rest)
+              (compiler-ir-box-shared-view rest)
               types))])]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
         (while (< i (compiler-ir-block-seq-count seq))
           (begin
-            (match (compiler-ir-block-seq-ref seq i)
+            (match (compiler-ir-block-seq-ref
+              (compiler-ir-global-shared-view seq)
+              i)
               [(CompilerIrBlock.Block _ instrs)
-                (compiler-ir-representation-instr-types! instrs types)])
+                (compiler-ir-representation-instr-types!
+                  instrs
+                  (compiler-ir-global-shared-view types))])
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-representation-function-var-types
@@ -8417,8 +8440,12 @@
             (array.make-array i64 vars)
             (array.make-array ast.AstType vars))]
         (begin
-          (compiler-ir-representation-param-types! params types)
-          (compiler-ir-representation-block-types! blocks types)
+          (compiler-ir-representation-param-types!
+            params
+            (compiler-ir-global-shared-view types))
+          (compiler-ir-representation-block-types!
+            blocks
+            (compiler-ir-global-shared-view types))
           types))]))
 
 (define (compiler-ir-representation-float-type? [ty : ast.AstType]) : bool
@@ -8430,14 +8457,15 @@
 (define (compiler-ir-representation-pack-word-sse?
   [types : CompilerIrRepresentationVarTypes]
   [value : CompilerIrValue]) : bool
-  (match value
+  (match (compiler-ir-global-shared-view value)
     [(CompilerIrValue.F64 _) true]
     [(CompilerIrValue.Var var)
       (and
         (>= var 0)
         (< var (array-length types.present))
         (not (= (array-ref types.present var) 0))
-        (compiler-ir-representation-float-type? (array-ref types.items var)))]
+        (compiler-ir-representation-float-type?
+          (compiler-ir-array-shared-view types.items var)))]
     [_ false]))
 
 (define (compiler-ir-representation-pack-class-mask
@@ -8445,20 +8473,23 @@
   [words : CompilerIrValueList]
   [position : i64]
   [mask : i64]) : i64
-  (match (compiler-ir-value-list-force-cons words)
+  (match (compiler-ir-value-list-force-cons
+    (compiler-ir-global-shared-view words))
     [(CompilerIrValueList.Nil) mask]
     [(CompilerIrValueList.Array seq)
       (compiler-ir-representation-pack-class-mask
-        types
+        (compiler-ir-global-shared-view types)
         (compiler-ir-value-seq-to-list seq)
         position
         mask)]
     [(CompilerIrValueList.Cons value rest)
       (compiler-ir-representation-pack-class-mask
-        types
-        (__tl-box-place rest)
+        (compiler-ir-global-shared-view types)
+        (compiler-ir-box-shared-view rest)
         (+ position 1)
-        (if (compiler-ir-representation-pack-word-sse? types value)
+        (if (compiler-ir-representation-pack-word-sse?
+          (compiler-ir-global-shared-view types)
+          value)
           (bit-or
             mask
             (if (= position 0)
@@ -8468,7 +8499,7 @@
 
 (define (compiler-ir-representation-merge-group-type
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [ty : ast.AstType]
   [word-count : i64]
   [class-mask : i64]) : CompilerIrRepresentationIndex
@@ -8483,11 +8514,13 @@
 
 (define (compiler-ir-representation-collect-signature-type
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [ty : ast.AstType]) : CompilerIrRepresentationIndex
   (let
     [mask : i64
-      (compiler-ir-representation-abi-group-mask type-segment-bases ty)]
+      (compiler-ir-representation-abi-group-mask
+        type-segment-bases
+        (compiler-ir-global-shared-view ty))]
     (if (< mask 0)
       index
       (compiler-ir-representation-merge-group-type
@@ -8499,9 +8532,10 @@
 
 (define (compiler-ir-representation-collect-signature-params
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [params : CompilerIrParamList]) : CompilerIrRepresentationIndex
-  (match (compiler-ir-param-list-force-cons params)
+  (match (compiler-ir-param-list-force-cons
+    (compiler-ir-global-shared-view params))
     [(CompilerIrParamList.Nil) index]
     [(CompilerIrParamList.Array seq)
       (compiler-ir-representation-collect-signature-params
@@ -8517,40 +8551,47 @@
               type-segment-bases
               index
               ty)
-            (__tl-box-place rest))])]))
+            (compiler-ir-box-shared-view rest))])]))
 
 (define (compiler-ir-representation-collect-group-instrs-from
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [types : CompilerIrRepresentationVarTypes]
   [instrs : CompilerIrInstrSeq]
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position (compiler-ir-instr-seq-count instrs))
     index
-    (match (compiler-ir-instr-seq-ref instrs position)
+    (match (compiler-ir-instr-seq-ref
+      (compiler-ir-global-shared-view instrs)
+      position)
       [(CompilerIrInstr.Pack _ words ty)
         (compiler-ir-representation-collect-group-instrs-from
           type-segment-bases
           (compiler-ir-representation-merge-group-type
             type-segment-bases
             index
-            ty
-            (compiler-ir-value-list-count words)
-            (compiler-ir-representation-pack-class-mask types words 0 0))
-          types
-          instrs
+            (compiler-ir-global-shared-view ty)
+            (compiler-ir-value-list-count
+              (compiler-ir-global-shared-view words))
+            (compiler-ir-representation-pack-class-mask
+              (compiler-ir-global-shared-view types)
+              words
+              0
+              0))
+          (compiler-ir-global-shared-view types)
+          (compiler-ir-global-shared-view instrs)
           (+ position 1))]
       [_
         (compiler-ir-representation-collect-group-instrs-from
           type-segment-bases
           index
-          types
-          instrs
+          (compiler-ir-global-shared-view types)
+          (compiler-ir-global-shared-view instrs)
           (+ position 1))])))
 
 (define (compiler-ir-representation-collect-group-instrs
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [types : CompilerIrRepresentationVarTypes]
   [instrs : CompilerIrInstrSeq]) : CompilerIrRepresentationIndex
   (compiler-ir-representation-collect-group-instrs-from
@@ -8562,31 +8603,35 @@
 
 (define (compiler-ir-representation-collect-group-block-seq-from
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [types : CompilerIrRepresentationVarTypes]
   [blocks : CompilerIrBlockSeq]
   [position : i64]) : CompilerIrRepresentationIndex
-  (if (>= position (compiler-ir-block-seq-count blocks))
+  (if (>=
+    position
+    (compiler-ir-block-seq-count (compiler-ir-global-shared-view blocks)))
     index
-    (match (compiler-ir-block-seq-ref blocks position)
+    (match (compiler-ir-block-seq-ref
+      (compiler-ir-global-shared-view blocks)
+      position)
       [(CompilerIrBlock.Block _ instrs)
         (compiler-ir-representation-collect-group-block-seq-from
           type-segment-bases
           (compiler-ir-representation-collect-group-instrs
             type-segment-bases
             index
-            types
+            (compiler-ir-global-shared-view types)
             instrs)
-          types
-          blocks
+          (compiler-ir-global-shared-view types)
+          (compiler-ir-global-shared-view blocks)
           (+ position 1))])))
 
 (define (compiler-ir-representation-collect-group-blocks
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [types : CompilerIrRepresentationVarTypes]
   [blocks : CompilerIrBlockList]) : CompilerIrRepresentationIndex
-  (match blocks
+  (match (compiler-ir-global-shared-view blocks)
     [(CompilerIrBlockList.Nil) index]
     [(CompilerIrBlockList.Cons block rest)
       (match block
@@ -8596,10 +8641,10 @@
             (compiler-ir-representation-collect-group-instrs
               type-segment-bases
               index
-              types
+              (compiler-ir-global-shared-view types)
               instrs)
-            types
-            (__tl-box-place rest))])]
+            (compiler-ir-global-shared-view types)
+            (compiler-ir-box-shared-view rest))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-representation-collect-group-block-seq-from
         type-segment-bases
@@ -8610,13 +8655,14 @@
 
 (define (compiler-ir-representation-collect-group-function
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [func : CompilerIrFunction]) : CompilerIrRepresentationIndex
-  (match func
+  (match (compiler-ir-global-shared-view func)
     [(CompilerIrFunction.Function _ params ret-ty _ blocks)
       (let
         [types : CompilerIrRepresentationVarTypes
-          (compiler-ir-representation-function-var-types func)]
+          (compiler-ir-representation-function-var-types
+            (compiler-ir-global-shared-view func))]
         (compiler-ir-representation-collect-group-blocks
           type-segment-bases
           (compiler-ir-representation-collect-signature-type
@@ -8631,25 +8677,29 @@
 
 (define (compiler-ir-representation-collect-group-function-seq-from
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [functions : CompilerIrFunctionSeq]
   [position : i64]) : CompilerIrRepresentationIndex
-  (if (>= position (compiler-ir-function-seq-count functions))
+  (if (>=
+    position
+    (compiler-ir-function-seq-count (compiler-ir-global-shared-view functions)))
     index
     (compiler-ir-representation-collect-group-function-seq-from
       type-segment-bases
       (compiler-ir-representation-collect-group-function
         type-segment-bases
         index
-        (compiler-ir-function-seq-ref functions position))
-      functions
+        (compiler-ir-function-seq-ref
+          (compiler-ir-global-shared-view functions)
+          position))
+      (compiler-ir-global-shared-view functions)
       (+ position 1))))
 
 (define (compiler-ir-representation-collect-group-functions
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [functions : CompilerIrFunctionList]) : CompilerIrRepresentationIndex
-  (match functions
+  (match (compiler-ir-global-shared-view functions)
     [(CompilerIrFunctionList.Nil) index]
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-representation-collect-group-functions
@@ -8658,7 +8708,7 @@
           type-segment-bases
           index
           func)
-        (__tl-box-place rest))]
+        (compiler-ir-box-shared-view rest))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-representation-collect-group-function-seq-from
         type-segment-bases
@@ -8668,7 +8718,7 @@
 
 (define (compiler-ir-representation-collect-one-type-list-from
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [types : ast.AstTypeList]
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position types.len)
@@ -8686,7 +8736,7 @@
 
 (define (compiler-ir-representation-collect-one-type-list
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [types : ast.AstTypeList]) : CompilerIrRepresentationIndex
   (compiler-ir-representation-collect-one-type-list-from
     type-segment-bases
@@ -8696,32 +8746,34 @@
 
 (define (compiler-ir-representation-collect-one-type
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [ty : ast.AstType]) : CompilerIrRepresentationIndex
   (let
     [with-nominal : CompilerIrRepresentationIndex
-      (match (ast.ast-aggregate-type-key type-segment-bases ty)
+      (match (ast.ast-aggregate-type-key
+        type-segment-bases
+        (compiler-ir-global-shared-view ty))
         [(ast.AstMaybeNominalKey.Some key)
           (if (compiler-ir-representation-internal-transport?
             type-segment-bases
-            ty)
+            (compiler-ir-global-shared-view ty))
             index
             (compiler-ir-representation-index-merge-one-word index key))]
         [(ast.AstMaybeNominalKey.None) index])]
-    (match ty
+    (match (compiler-ir-global-shared-view ty)
       [(ast.AstType.Func args ret)
         (compiler-ir-representation-collect-one-type
           type-segment-bases
           (compiler-ir-representation-collect-one-type-list
             type-segment-bases
             with-nominal
-            (__tl-box-place args))
+            (compiler-ir-box-shared-view args))
           (ast.ast-type-segment-bases-get type-segment-bases ret))]
       [(ast.AstType.Tuple items)
         (compiler-ir-representation-collect-one-type-list
           type-segment-bases
           with-nominal
-          (__tl-box-place items))]
+          (compiler-ir-box-shared-view items))]
       [(ast.AstType.Array elem _)
         (compiler-ir-representation-collect-one-type
           type-segment-bases
@@ -8768,9 +8820,10 @@
 
 (define (compiler-ir-representation-collect-one-param-list
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [params : CompilerIrParamList]) : CompilerIrRepresentationIndex
-  (match (compiler-ir-param-list-force-cons params)
+  (match (compiler-ir-param-list-force-cons
+    (compiler-ir-global-shared-view params))
     [(CompilerIrParamList.Nil) index]
     [(CompilerIrParamList.Array seq)
       (compiler-ir-representation-collect-one-param-list
@@ -8786,11 +8839,11 @@
               type-segment-bases
               index
               ty)
-            (__tl-box-place rest))])]))
+            (compiler-ir-box-shared-view rest))])]))
 
 (define (compiler-ir-representation-collect-one-instr
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [instr : CompilerIrInstr]) : CompilerIrRepresentationIndex
   (match instr
     [(CompilerIrInstr.Mov _ _ ty)
@@ -8851,7 +8904,7 @@
 
 (define (compiler-ir-representation-collect-one-instrs-from
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [instrs : CompilerIrInstrSeq]
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position (compiler-ir-instr-seq-count instrs))
@@ -8867,7 +8920,7 @@
 
 (define (compiler-ir-representation-collect-one-instrs
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [instrs : CompilerIrInstrSeq]) : CompilerIrRepresentationIndex
   (compiler-ir-representation-collect-one-instrs-from
     type-segment-bases
@@ -8877,12 +8930,16 @@
 
 (define (compiler-ir-representation-collect-one-block-seq-from
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [blocks : CompilerIrBlockSeq]
   [position : i64]) : CompilerIrRepresentationIndex
-  (if (>= position (compiler-ir-block-seq-count blocks))
+  (if (>=
+    position
+    (compiler-ir-block-seq-count (compiler-ir-global-shared-view blocks)))
     index
-    (match (compiler-ir-block-seq-ref blocks position)
+    (match (compiler-ir-block-seq-ref
+      (compiler-ir-global-shared-view blocks)
+      position)
       [(CompilerIrBlock.Block _ instrs)
         (compiler-ir-representation-collect-one-block-seq-from
           type-segment-bases
@@ -8890,14 +8947,14 @@
             type-segment-bases
             index
             instrs)
-          blocks
+          (compiler-ir-global-shared-view blocks)
           (+ position 1))])))
 
 (define (compiler-ir-representation-collect-one-blocks
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [blocks : CompilerIrBlockList]) : CompilerIrRepresentationIndex
-  (match blocks
+  (match (compiler-ir-global-shared-view blocks)
     [(CompilerIrBlockList.Nil) index]
     [(CompilerIrBlockList.Cons block rest)
       (match block
@@ -8908,7 +8965,7 @@
               type-segment-bases
               index
               instrs)
-            (__tl-box-place rest))])]
+            (compiler-ir-box-shared-view rest))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-representation-collect-one-block-seq-from
         type-segment-bases
@@ -8918,7 +8975,7 @@
 
 (define (compiler-ir-representation-collect-one-function
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [func : CompilerIrFunction]) : CompilerIrRepresentationIndex
   (match func
     [(CompilerIrFunction.Function _ params ret-ty _ blocks)
@@ -8935,25 +8992,29 @@
 
 (define (compiler-ir-representation-collect-one-function-seq-from
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [functions : CompilerIrFunctionSeq]
   [position : i64]) : CompilerIrRepresentationIndex
-  (if (>= position (compiler-ir-function-seq-count functions))
+  (if (>=
+    position
+    (compiler-ir-function-seq-count (compiler-ir-global-shared-view functions)))
     index
     (compiler-ir-representation-collect-one-function-seq-from
       type-segment-bases
       (compiler-ir-representation-collect-one-function
         type-segment-bases
         index
-        (compiler-ir-function-seq-ref functions position))
-      functions
+        (compiler-ir-function-seq-ref
+          (compiler-ir-global-shared-view functions)
+          position))
+      (compiler-ir-global-shared-view functions)
       (+ position 1))))
 
 (define (compiler-ir-representation-collect-one-functions
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [functions : CompilerIrFunctionList]) : CompilerIrRepresentationIndex
-  (match functions
+  (match (compiler-ir-global-shared-view functions)
     [(CompilerIrFunctionList.Nil) index]
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-representation-collect-one-functions
@@ -8962,7 +9023,7 @@
           type-segment-bases
           index
           func)
-        (__tl-box-place rest))]
+        (compiler-ir-box-shared-view rest))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-representation-collect-one-function-seq-from
         type-segment-bases
@@ -8972,12 +9033,16 @@
 
 (define (compiler-ir-representation-collect-one-globals-from
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [globals : CompilerIrGlobalSeq]
   [position : i64]) : CompilerIrRepresentationIndex
-  (if (>= position (compiler-ir-global-seq-count globals))
+  (if (>=
+    position
+    (compiler-ir-global-seq-count (compiler-ir-global-shared-view globals)))
     index
-    (match (compiler-ir-global-seq-ref globals position)
+    (match (compiler-ir-global-seq-ref
+      (compiler-ir-global-shared-view globals)
+      position)
       [(CompilerIrGlobal.Global _ ty _)
         (compiler-ir-representation-collect-one-globals-from
           type-segment-bases
@@ -8985,12 +9050,12 @@
             type-segment-bases
             index
             ty)
-          globals
+          (compiler-ir-global-shared-view globals)
           (+ position 1))])))
 
 (define (compiler-ir-representation-collect-one-globals
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [globals : CompilerIrGlobalSeq]) : CompilerIrRepresentationIndex
   (compiler-ir-representation-collect-one-globals-from
     type-segment-bases
@@ -9000,9 +9065,9 @@
 
 (define (compiler-ir-representation-collect-one-externs
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [externs : CompilerIrExternList]) : CompilerIrRepresentationIndex
-  (match externs
+  (match (compiler-ir-global-shared-view externs)
     [(CompilerIrExternList.Nil) index]
     [(CompilerIrExternList.Cons extern rest)
       (match extern
@@ -9013,7 +9078,7 @@
               type-segment-bases
               index
               ty)
-            (__tl-box-place rest))])]
+            (compiler-ir-box-shared-view rest))])]
     [(CompilerIrExternList.Array seq)
       (compiler-ir-representation-collect-one-externs
         type-segment-bases
@@ -9034,7 +9099,7 @@
           (compiler-ir-representation-collect-group-functions
             type-segment-bases
             (compiler-ir-representation-index-empty)
-            functions)]
+            (compiler-ir-global-shared-view functions))]
         (compiler-ir-representation-collect-one-externs
           type-segment-bases
           (compiler-ir-representation-collect-one-functions

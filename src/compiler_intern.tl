@@ -1059,30 +1059,49 @@
                 (set! found (- encoded 1))
                 (set! searching? false))]
             [else (set! slot (bit-and (+ slot 1) mask))])))
-      (if (>= found 0)
-        (intern-structural-raw-for-index table.owner found)
-        (begin
-          (if (>= table.len (array-length table.kinds))
-            (intern-structural-table-grow-records! cell arena)
-            unit)
-          (if (>= (* (+ table.len 1) 4) (* (array-length table.map-slots) 3))
-            (intern-structural-table-grow-map! cell arena)
-            unit)
-          (let
-            [next-table : InternStructuralTable (array-ref cell 0)]
-            [index : i64 next-table.len]
-            (begin
-              (if (>= index (intern-structural-key-index-mask))
-                (tl_oob_abort)
-                unit)
-              (set! (array-ref next-table.kinds index) (cast kind : u8))
-              (set! (array-ref next-table.lefts index) left)
-              (set! (array-ref next-table.middles index) middle)
-              (set! (array-ref next-table.rights index) right)
-              (set! next-table.len (+ index 1))
-              (intern-structural-table-map-put-index! next-table index)
-              (set! (array-ref cell 0) next-table)
-              (intern-structural-raw-for-index next-table.owner index))))))))
+      (InternStructuralProbe
+        found
+        table.owner
+        (>= table.len (array-length table.kinds))
+        (>= (* (+ table.len 1) 4) (* (array-length table.map-slots) 3))))))
+
+(define (intern-structural-table-intern
+  [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]
+  [arena : i64]
+  [kind : i64]
+  [left : i64]
+  [middle : i64]
+  [right : i64]) : i64
+  (let
+    [probe : InternStructuralProbe
+      (intern-structural-table-probe cell kind left middle right)]
+    (if (>= probe.found 0)
+      (intern-structural-raw-for-index probe.owner probe.found)
+      (begin
+        (if probe.grow-records?
+          (intern-structural-table-grow-records! cell arena)
+          unit)
+        (if probe.grow-map?
+          (intern-structural-table-grow-map! cell arena)
+          unit)
+        (let
+          [next-table : (&mut cell InternStructuralTable)
+            (&mut (array-ref cell 0))]
+          [index : i64 next-table.len]
+          (begin
+            (if (>= index (intern-structural-key-index-mask))
+              (tl_oob_abort)
+              unit)
+            (set! (array-ref next-table.kinds index) (cast kind : u8))
+            (set! (array-ref next-table.lefts index) left)
+            (set! (array-ref next-table.middles index) middle)
+            (set! (array-ref next-table.rights index) right)
+            (set!
+              (array-ref next-table.generated-symbol-handles index)
+              (intern-id-slot-empty))
+            (set! next-table.len (+ index 1))
+            (intern-structural-table-map-put-index! next-table index)
+            (intern-structural-raw-for-index next-table.owner index)))))))
 
 (define (intern-structural-table-reset!
   [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]) : unit
@@ -1098,6 +1117,9 @@
       (while (< index table.len)
         (begin
           (set! (array-ref table.rendered-names index) "")
+          (set!
+            (array-ref table.generated-symbol-handles index)
+            (intern-id-slot-empty))
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index (array-length table.structural-cache-raws))
@@ -2698,7 +2720,8 @@
   [state : (& state InternCompatState)]
   [id : i64]) : bool
   (let
-    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    [table : (& state InternStructuralTable)
+      (& (array-ref state.structural-table-cell 0))]
     [prefix : i64 (intern-compat-state-structural-prefix state)]
     [encoded-index : i64 (- id prefix)]
     (and

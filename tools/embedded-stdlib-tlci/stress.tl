@@ -283,7 +283,7 @@
   (let
     [expr : compiler_ast_types.AstExpr
       (compiler_ast_types.ast-node-pool-context-expr-get pools node)]
-    (match expr
+    (match (clone expr)
       [(compiler_ast_types.AstExpr.Spanned inner _)
         (stress-expr-get pools inner)]
       [_ expr])))
@@ -293,9 +293,9 @@
 ;; origin and the argument stays the very node passed in.
 (define (stress-operand-node [pools : compiler_ast_types.AstNodePoolContext]) : i64
   (compiler_ast_types.ast-expr-spanned-with-pools
-    pools
+    (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
     (compiler_ast_types.ast-node-pool-context-expr-push
-      pools
+      (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
       (compiler_ast_types.AstExpr.Var (ci.intern "xs")))
     (compiler_ast_types.ast-source-span 900 7 900 9)))
 
@@ -306,10 +306,14 @@
   [operand-node : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (stress-expr-get pools node)
+      (match (stress-expr-get
+        (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+        node)
         [(compiler_ast_types.AstExpr.Call callee-id args)
           (and
-            (match (stress-expr-get pools callee-id)
+            (match (stress-expr-get
+              (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+              callee-id)
               [(compiler_ast_types.AstExpr.Var name-id)
                 (=
                   name-id

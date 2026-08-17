@@ -7801,9 +7801,17 @@
     (and
       (opt-global-eq
         type-segment-bases
-        (ir.compiler-ir-global-seq-ref a index)
-        (ir.compiler-ir-global-seq-ref b index))
-      (opt-global-seq-eq-at type-segment-bases a b (+ index 1)))))
+        (ir.compiler-ir-global-seq-ref
+          (compiler-opt-global-shared-view a)
+          index)
+        (ir.compiler-ir-global-seq-ref
+          (compiler-opt-global-shared-view b)
+          index))
+      (opt-global-seq-eq-at
+        type-segment-bases
+        (compiler-opt-global-shared-view a)
+        (compiler-opt-global-shared-view b)
+        (+ index 1)))))
 
 (define (opt-global-seq-eq
   [type-segment-bases : i64]
@@ -93882,7 +93890,7 @@
 
 (define (opt-reach-globals
   [index : OptFunctionIndex]
-  [state : OptReachState (:consume)]
+  [state : OptReachState]
   [globals : ir.CompilerIrGlobalSeq]) : OptReachState
   (opt-reach-global-seq index state globals 0))
 
@@ -93966,8 +93974,10 @@
         (begin
           (let
             [global : ir.CompilerIrGlobal
-              (ir.compiler-ir-global-seq-ref globals index)]
-            (match global
+              (ir.compiler-ir-global-seq-ref
+                (compiler-opt-global-shared-view globals)
+                index)]
+            (match (compiler-opt-global-shared-view global)
               [(ir.CompilerIrGlobal.Global name ty value)
                 (when
                   (or
@@ -94119,7 +94129,8 @@
       [reachable-globals : opt_i64_i64_map.Map
         (opt_i64_i64_map.with-capacity
           (opt-function-index-capacity
-            (ir.compiler-ir-global-seq-count globals)))]
+            (ir.compiler-ir-global-seq-count
+              (compiler-opt-global-shared-view globals))))]
       (match (opt-reach-process
         (compiler-opt-global-shared-view index)
         (opt-reach-globals
@@ -96499,7 +96510,7 @@
 (define (opt-const-globals-from-globals
   [globals : ir.CompilerIrGlobalSeq]
   [disq : opt_i64_i64_map.Map]
-  [map : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  [map : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (opt-const-globals-from-global-seq globals 0 disq map))
 
 (define (opt-const-globals-from-global-seq
@@ -96526,12 +96537,15 @@
                   (& disq)
                   (ir.compiler-ir-symbol-id name)))
                 map
-                (begin
-                  (opt_i64_i64_map.insert-ref!
-                    (&mut map)
-                    (ir.compiler-ir-symbol-id name)
-                    n)
-                  map))]
+                (let
+                  [next-map : opt_i64_i64_map.Map
+                    (compiler-opt-global-shared-view map)]
+                  (begin
+                    (opt_i64_i64_map.insert-ref!
+                      (&mut next-map)
+                      (ir.compiler-ir-symbol-id name)
+                      n)
+                    next-map)))]
             [_ map])]))))
 
 (define (opt-const-divisors-build
@@ -96539,7 +96553,9 @@
   [functions : ir.CompilerIrFunctionList]) : opt_i64_i64_map.Map
   (let
     [capacity : i64
-      (opt-function-index-capacity (ir.compiler-ir-global-seq-count globals))]
+      (opt-function-index-capacity
+        (ir.compiler-ir-global-seq-count
+          (compiler-opt-global-shared-view globals)))]
     [disq : opt_i64_i64_map.Map
       (opt-const-globals-disqualified
         (opt_i64_i64_map.with-capacity capacity)
@@ -97185,24 +97201,27 @@
 (define (opt-global-cell-scan-ref [scan : OptGlobalCellScan] [name : i64]) : OptGlobalCellScan
   (match scan
     [(OptGlobalCellScan refs ref-list stores calls)
-      (match (opt_i64_i64_map.get (& refs) name)
-        [(opt_i64_i64_map.LookupFound seen)
-          (begin
-            (opt_i64_i64_map.insert-ref!
-              (&mut refs)
-              name
-              (if (< seen (opt-global-cell-ref-count-cap))
-                (+ seen 1)
-                seen))
-            (OptGlobalCellScan refs ref-list stores calls))]
-        [(opt_i64_i64_map.LookupMissing)
-          (begin
-            (opt_i64_i64_map.insert-ref! (&mut refs) name 1)
-            (OptGlobalCellScan
-              refs
-              (OptI64List.Cons name (box ref-list))
-              stores
-              calls))])]))
+      (let
+        [out-refs : opt_i64_i64_map.Map
+          (compiler-opt-global-shared-view refs)]
+        (match (opt_i64_i64_map.get (& out-refs) name)
+          [(opt_i64_i64_map.LookupFound seen)
+            (begin
+              (opt_i64_i64_map.insert-ref!
+                (&mut out-refs)
+                name
+                (if (< seen (opt-global-cell-ref-count-cap))
+                  (+ seen 1)
+                  seen))
+              (OptGlobalCellScan out-refs ref-list stores calls))]
+          [(opt_i64_i64_map.LookupMissing)
+            (begin
+              (opt_i64_i64_map.insert-ref! (&mut out-refs) name 1)
+              (OptGlobalCellScan
+                out-refs
+                (OptI64List.Cons name (box ref-list))
+                stores
+                calls))]))]))
 
 (define (opt-global-cell-scan-store [scan : OptGlobalCellScan] [name : i64]) : OptGlobalCellScan
   (match scan
@@ -97668,20 +97687,29 @@
 
 (define (opt-global-cell-types-fill
   [globals : ir.CompilerIrGlobalSeq]
-  [type-index : opt_i64_i64_map.Map (:consume)]
+  [type-index : opt_i64_i64_map.Map]
   [types : (__tl_dyn-array ast.AstType)]
   [index : i64]) : opt_i64_i64_map.Map
   (if (>= index globals.len)
     type-index
-    (match (ir.compiler-ir-global-seq-ref globals index)
+    (match (ir.compiler-ir-global-seq-ref
+      (compiler-opt-global-shared-view globals)
+      index)
       [(ir.CompilerIrGlobal.Global name ty _)
-        (begin
-          (set! (array-ref types index) ty)
-          (opt_i64_i64_map.insert-ref!
-            (&mut type-index)
-            (ir.compiler-ir-symbol-id name)
-            index)
-          (opt-global-cell-types-fill globals type-index types (+ index 1)))])))
+        (let
+          [next-index : opt_i64_i64_map.Map
+            (compiler-opt-global-shared-view type-index)]
+          (begin
+            (set! (array-ref types index) ty)
+            (opt_i64_i64_map.insert-ref!
+              (&mut next-index)
+              (ir.compiler-ir-symbol-id name)
+              index)
+            (opt-global-cell-types-fill
+              globals
+              next-index
+              types
+              (+ index 1))))])))
 
 (define (opt-global-cell-type-lookup [cell : OptGlobalCellSummary] [name : i64]) : OptMaybeAstType
   (match (opt_i64_i64_map.get
@@ -97702,28 +97730,33 @@
   [globals : ir.CompilerIrGlobalSeq]
   [disq : opt_i64_i64_map.Map]
   [stores : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map (:consume)]
+  [out : opt_i64_i64_map.Map]
   [index : i64]) : opt_i64_i64_map.Map
   (if (>= index globals.len)
     out
-    (match (ir.compiler-ir-global-seq-ref globals index)
+    (match (ir.compiler-ir-global-seq-ref
+      (compiler-opt-global-shared-view globals)
+      index)
       [(ir.CompilerIrGlobal.Global name _ _)
         (opt-global-cell-addr-taken-fill
-          globals
-          disq
-          stores
+          (compiler-opt-global-shared-view globals)
+          (compiler-opt-global-shared-view disq)
+          (compiler-opt-global-shared-view stores)
           (if (and
             (opt_i64_i64_map.contains? (& disq) (ir.compiler-ir-symbol-id name))
             (not
               (opt_i64_i64_map.contains?
                 (& stores)
                 (ir.compiler-ir-symbol-id name))))
-            (begin
-              (opt_i64_i64_map.insert-ref!
-                (&mut out)
-                (ir.compiler-ir-symbol-id name)
-                1)
-              out)
+            (let
+              [next-out : opt_i64_i64_map.Map
+                (compiler-opt-global-shared-view out)]
+              (begin
+                (opt_i64_i64_map.insert-ref!
+                  (&mut next-out)
+                  (ir.compiler-ir-symbol-id name)
+                  1)
+                next-out))
             out)
           (+ index 1))])))
 
@@ -97734,14 +97767,16 @@
   [count : i64]) : i64
   (if (>= index globals.len)
     count
-    (match (ir.compiler-ir-global-seq-ref globals index)
+    (match (ir.compiler-ir-global-seq-ref
+      (compiler-opt-global-shared-view globals)
+      index)
       [(ir.CompilerIrGlobal.Global name ty _)
         (opt-global-cell-word-count
-          globals
-          addr-taken
+          (compiler-opt-global-shared-view globals)
+          (compiler-opt-global-shared-view addr-taken)
           (+ index 1)
           (if (and
-            (opt-global-cell-word-type? ty)
+            (opt-global-cell-word-type? (compiler-opt-global-shared-view ty))
             (not
               (opt_i64_i64_map.contains?
                 (& addr-taken)
@@ -97756,7 +97791,9 @@
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]) : OptGlobalCellSummary
   (let
-    [count : i64 (ir.compiler-ir-global-seq-count globals)]
+    [count : i64
+      (ir.compiler-ir-global-seq-count
+        (compiler-opt-global-shared-view globals))]
     (if (= count 0)
       (opt-global-cell-summary-empty)
       (let
@@ -97786,7 +97823,11 @@
           (compiler-opt-global-shared-view addr-taken)
           type-index
           types
-          (opt-global-cell-word-count globals addr-taken 0 0))))))
+          (opt-global-cell-word-count
+            globals
+            (compiler-opt-global-shared-view addr-taken)
+            0
+            0))))))
 
 ;; --- condition (a): stores a later read can OBSERVE ---------------------------
 ;;
@@ -99219,9 +99260,10 @@
                   (opt-prune-unreachable-program
                     (compiler-opt-global-shared-view globals)
                     reachable-functions
-                    externs)]
+                    (compiler-opt-global-shared-view externs))]
                 [pruned-globals : ir.CompilerIrGlobalSeq
-                  (opt-pruned-program-globals pruned)]
+                  (opt-pruned-program-globals
+                    (compiler-opt-global-shared-view pruned))]
                 [pruned-functions : ir.CompilerIrFunctionList
                   (opt-pruned-program-functions pruned)]
                 [summaries : OptLoopBceSummaries
@@ -99267,9 +99309,10 @@
                       (opt-prune-unreachable-program
                         (compiler-opt-global-shared-view globals)
                         optimized-functions
-                        externs)]
+                        (compiler-opt-global-shared-view externs))]
                     [final-globals : ir.CompilerIrGlobalSeq
-                      (opt-pruned-program-globals final-pruned)]
+                      (opt-pruned-program-globals
+                        (compiler-opt-global-shared-view final-pruned))]
                     [final-functions : ir.CompilerIrFunctionList
                       (opt-pruned-program-functions final-pruned)]
                     [late-functions : ir.CompilerIrFunctionList
@@ -99628,7 +99671,7 @@
   [level : i64]
   [profile-state : profile_state.CompilerProfileState]
   [_representations : ir.CompilerIrRepresentationIndex]) : CompilerOptimizedProgram
-  (match program
+  (match (compiler-opt-global-shared-view program)
     [(ir.CompilerIrProgram.Program globals functions externs)
       (if (= level 0)
         (CompilerOptimizedProgram.Program
@@ -99697,9 +99740,10 @@
                       (opt-prune-unreachable-program
                         (compiler-opt-global-shared-view globals)
                         reachable-functions
-                        externs)]
+                        (compiler-opt-global-shared-view externs))]
                     [pruned-globals : ir.CompilerIrGlobalSeq
-                      (opt-pruned-program-globals pruned)]
+                      (opt-pruned-program-globals
+                        (compiler-opt-global-shared-view pruned))]
                     [pruned-functions : ir.CompilerIrFunctionList
                       (opt-pruned-program-functions pruned)]
                     ;; Copy the surviving functions out of the inline arena and
@@ -99785,9 +99829,10 @@
                           (opt-prune-unreachable-program
                             (compiler-opt-global-shared-view globals)
                             optimized-functions
-                            externs)]
+                            (compiler-opt-global-shared-view externs))]
                         [final-globals : ir.CompilerIrGlobalSeq
-                          (opt-pruned-program-globals final-pruned)]
+                          (opt-pruned-program-globals
+                            (compiler-opt-global-shared-view final-pruned))]
                         [final-functions : ir.CompilerIrFunctionList
                           (opt-pruned-program-functions final-pruned)]
                         [late-functions : ir.CompilerIrFunctionList
@@ -99824,11 +99869,13 @@
   (optimize-program-with-spans-and-reader-context-and-level-and-profile-state-and-representations
     pools
     type-segment-bases
-    program
+    (compiler-opt-global-shared-view program)
     spans
     level
     profile-state
-    (ir.compiler-ir-representation-index-build type-segment-bases program)))
+    (ir.compiler-ir-representation-index-build
+      type-segment-bases
+      (compiler-opt-global-shared-view program))))
 
 (define (optimize-program-with-spans-and-reader-context-and-level
   [pools : ast.AstNodePoolContext]
@@ -99891,7 +99938,7 @@
   [profile-state : profile_state.CompilerProfileState]
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerOptimizedProgram
   (optimize-program-with-spans-and-reader-context-and-level-and-profile-state-and-representations
-    pools
+    (compiler-opt-global-shared-view pools)
     (ast.ast-node-pool-context-type-segment-bases pools)
     program
     spans

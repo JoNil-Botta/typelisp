@@ -210,7 +210,7 @@
     [(ast.AstImportKind.ModuleAll) false]
     [(ast.AstImportKind.ModuleItem _) false]))
 
-(define (clone-name-set-for-decls [decls : ast.AstDeclList]) : CloneNameSet
+(define (clone-name-set-for-decls [decls : (& decls ast.AstDeclList)]) : CloneNameSet
   (let
     [aliases : clone_id_map.Map (clone_id_map.with-capacity 64)]
     [current-module-id : i64 (clone-root-module-id)]

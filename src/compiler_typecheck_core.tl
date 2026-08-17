@@ -16044,22 +16044,34 @@
         (tc-bind-comptime-helper-aliases
           out
           (cbi.compiler-builtin-ctfe-ref 285)
-          (tc-fn2 (ast.AstType.String) (ast.AstType.String) expr)))
+          (tc-fn2
+            (ast.AstType.String)
+            (ast.AstType.String)
+            (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
           (cbi.compiler-builtin-ctfe-ref 286)
-          (tc-fn2 expr expr (ast.AstType.Bool))))
+          (tc-fn2
+            (tc-global-shared-view expr)
+            (tc-global-shared-view expr)
+            (ast.AstType.Bool))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
           out
           (cbi.compiler-builtin-ctfe-ref 287)
-          (tc-fn2 expr expr expr)))
+          (tc-fn2
+            (tc-global-shared-view expr)
+            (tc-global-shared-view expr)
+            (tc-global-shared-view expr))))
       (set!
         out
-        (tc-bind-id out (cbi.compiler-builtin-ctfe-ref 218) (tc-fn1 expr expr)))
+        (tc-bind-id
+          out
+          (cbi.compiler-builtin-ctfe-ref 218)
+          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
       (set!
         out
         (tc-bind-comptime-helper-aliases
@@ -25668,10 +25680,12 @@
   (match (tc-nominal-lifetimes-id ctx name-id)
     [(ResultTcLifetimeList.Ok params)
       (if (or
-        (= (tc-lifetime-list-count params) (tc-lifetime-list-count lifetimes))
+        (=
+          (tc-lifetime-list-count params)
+          (tc-lifetime-list-count (tc-global-shared-view lifetimes)))
         (and
           (tc-arena-nominal-name-id? name-id)
-          (= (tc-lifetime-list-count lifetimes) 1)))
+          (= (tc-lifetime-list-count (tc-global-shared-view lifetimes)) 1)))
         ResultTcUnit.Ok
         (ResultTcUnit.Err "typecheck: nominal lifetime argument arity mismatch"))]
     [(ResultTcLifetimeList.Err message)
@@ -28340,16 +28354,20 @@
             (TcVariance.TcVarianceInvariant)
             (tc-variance-compose
               position
-              (tc-nominal-lifetime-variance-at ctx name-id index stack)))
+              (tc-nominal-lifetime-variance-at
+                (tc-global-shared-view ctx)
+                name-id
+                index
+                (tc-global-shared-view stack))))
           (TcVariance.TcVarianceBivariant))]
       (tc-variance-merge
         head
         (tc-nominal-args-lifetime-variance-at
           (tc-global-shared-view ctx)
           name-id
-          lifetimes
+          (tc-global-shared-view lifetimes)
           lifetime-id
-          stack
+          (tc-global-shared-view stack)
           position
           (+ index 1))))))
 
@@ -28518,13 +28536,16 @@
     true
     (and
       (tc-lifetime-coercible-for-variance?
-        env
-        (tc-nominal-lifetime-coercion-variance-at ctx name-id index)
+        (tc-global-shared-view env)
+        (tc-nominal-lifetime-coercion-variance-at
+          (tc-global-shared-view ctx)
+          name-id
+          index)
         (ast.ast-lifetime-list-get expected index (ast.ast-lifetime-fallback))
         (ast.ast-lifetime-list-get actual index (ast.ast-lifetime-fallback)))
       (tc-nominal-lifetime-args-coercible-at?
-        ctx
-        env
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
         name-id
         expected
         actual
@@ -28708,6 +28729,18 @@
                 (ast.ast-lifetime-list-box-shared-view expected-lifetimes)
                 (ast.ast-lifetime-list-box-shared-view actual-lifetimes)))]
           [_ false])]
+      ;; A branded Arena may be deliberately erased to the legacy bare handle
+      ;; for read-only/compatibility helpers. This is one-way: the converse case
+      ;; remains unmatched, so a copied bare handle cannot regain authority over
+      ;; a generated brand.
+      [(ast.AstType.Struct expected-name)
+        (match actual
+          [(ast.AstType.StructArgs actual-name actual-lifetimes)
+            (tc-branded-arena-erases-to-bare?
+              expected-name
+              actual-name
+              (ast.ast-lifetime-list-box-shared-view actual-lifetimes))]
+          [_ false])]
       [(ast.AstType.StructArgs expected-name expected-lifetimes)
         (match actual
           [(ast.AstType.StructArgs actual-name actual-lifetimes)
@@ -28754,161 +28787,17 @@
               ctx
               env
               (ast.ty-node-get expected-inner)
-              (ast.ty-node-get actual-inner)))]
-        [_
-          (tc-type-coercible-core?
-            ctx
-            env
-            (ast.ty-node-get expected-inner)
-            actual)])]
-    [_
-      (match actual
-        [(ast.AstType.Region _ actual-inner)
-          (tc-type-coercible-core?
-            ctx
-            env
-            expected
-            (ast.ty-node-get actual-inner))]
-        [_
-          (if (tc-type-eq expected actual)
-            true
-            (match expected
-              [(ast.AstType.Func expected-params expected-ret)
-                (match actual
-                  [(ast.AstType.Func actual-params actual-ret)
-                    (and
-                      (tc-type-list-coercible?
-                        ctx
-                        env
-                        (__tl-box-place expected-params)
-                        (__tl-box-place actual-params)
-                        true)
-                      (tc-type-coercible-core?
-                        ctx
-                        env
-                        (ast.ty-node-get expected-ret)
-                        (ast.ty-node-get actual-ret)))]
-                  [_ false])]
-              [(ast.AstType.Tuple expected-elems)
-                (match actual
-                  [(ast.AstType.Tuple actual-elems)
-                    (tc-type-list-coercible?
-                      ctx
-                      env
-                      (__tl-box-place expected-elems)
-                      (__tl-box-place actual-elems)
-                      false)]
-                  [_ false])]
-              [(ast.AstType.Array expected-elem expected-len)
-                (match actual
-                  [(ast.AstType.Array actual-elem actual-len)
-                    (and
-                      (= expected-len actual-len)
-                      (tc-type-coercible-core?
-                        ctx
-                        env
-                        (ast.ty-node-get expected-elem)
-                        (ast.ty-node-get actual-elem)))]
-                  [_ false])]
-              [(ast.AstType.Slice expected-elem)
-                (match actual
-                  [(ast.AstType.Slice actual-elem)
-                    (tc-type-coercible-core?
-                      ctx
-                      env
-                      (ast.ty-node-get expected-elem)
-                      (ast.ty-node-get actual-elem))]
-                  [_ false])]
-              [(ast.AstType.Box expected-elem)
-                (match actual
-                  [(ast.AstType.Box actual-elem)
-                    (tc-type-coercible-core?
-                      ctx
-                      env
-                      (ast.ty-node-get expected-elem)
-                      (ast.ty-node-get actual-elem))]
-                  [_ false])]
-              [(ast.AstType.Ptr expected-elem)
-                (match actual
-                  [(ast.AstType.Ptr actual-elem)
-                    (tc-type-coercible-core?
-                      ctx
-                      env
-                      (ast.ty-node-get expected-elem)
-                      (ast.ty-node-get actual-elem))]
-                  [_ false])]
-              [(ast.AstType.Ref expected-lifetime expected-inner)
-                (match actual
-                  [(ast.AstType.Ref actual-lifetime actual-inner)
-                    (and
-                      (tc-lifetime-outlives-lifetime-id?
-                        env
-                        actual-lifetime
-                        expected-lifetime)
-                      (tc-type-coercible-core?
-                        ctx
-                        env
-                        (ast.ty-node-get expected-inner)
-                        (ast.ty-node-get actual-inner)))]
-                  [_ false])]
-              [(ast.AstType.MutRef expected-lifetime expected-inner)
-                (match actual
-                  [(ast.AstType.MutRef actual-lifetime actual-inner)
-                    (and
-                      (tc-lifetime-outlives-lifetime-id?
-                        env
-                        actual-lifetime
-                        expected-lifetime)
-                      (tc-type-eq
-                        (ast.ty-node-get expected-inner)
-                        (ast.ty-node-get actual-inner)))]
-                  [_ false])]
-              [(ast.AstType.EnumArgs expected-name expected-lifetimes)
-                (match actual
-                  [(ast.AstType.EnumArgs actual-name actual-lifetimes)
-                    (and
-                      (tc-nominal-name-id-eq? expected-name actual-name)
-                      (tc-nominal-lifetime-args-coercible?
-                        ctx
-                        env
-                        expected-name
-                        (__tl-box-place expected-lifetimes)
-                        (__tl-box-place actual-lifetimes)))]
-                  [_ false])]
-              ;; A branded Arena may be deliberately erased to the legacy bare
-              ;; handle for read-only/compatibility helpers. This is one-way:
-              ;; the converse case remains unmatched, so a copied bare handle
-              ;; can never regain authority over a generated brand.
-              [(ast.AstType.Struct expected-name)
-                (match actual
-                  [(ast.AstType.StructArgs actual-name actual-lifetimes)
-                    (tc-branded-arena-erases-to-bare?
-                      expected-name
-                      actual-name
-                      (__tl-box-place actual-lifetimes))]
-                  [_ false])]
-              [(ast.AstType.StructArgs expected-name expected-lifetimes)
-                (match actual
-                  [(ast.AstType.StructArgs actual-name actual-lifetimes)
-                    (and
-                      (tc-nominal-name-id-eq? expected-name actual-name)
-                      (tc-nominal-lifetime-args-coercible?
-                        ctx
-                        env
-                        expected-name
-                        (__tl-box-place expected-lifetimes)
-                        (__tl-box-place actual-lifetimes)))]
-                  [_ false])]
-              [(ast.AstType.Consume expected-inner)
-                (match actual
-                  [(ast.AstType.Consume actual-inner)
-                    (tc-type-coercible-core?
-                      ctx
-                      env
-                      (ast.ty-node-get expected-inner)
-                      (ast.ty-node-get actual-inner))]
-                  [_ false])]
-              [_ false]))])]))
+              actual)])]
+      [(TcTypeRegionProbe.No)
+        (match actual-region
+          [(TcTypeRegionProbe.Some _ actual-inner)
+            (tc-type-coercible-core?
+              ctx
+              env
+              expected
+              (ast.ty-node-get actual-inner))]
+          [(TcTypeRegionProbe.No)
+            (tc-type-coercible-nonregion-core? ctx env expected actual)])])))
 
 (define (tc-type-coercible?
   [ctx : TcContext]
@@ -28998,14 +28887,17 @@
       [source : i64
         (ast.ast-lifetime-list-get (& actual) index (ast.ast-lifetime-fallback))]
       [variance : TcVariance
-        (tc-nominal-lifetime-coercion-variance-at ctx name-id index)]
+        (tc-nominal-lifetime-coercion-variance-at
+          (tc-global-shared-view ctx)
+          name-id
+          index)]
       (if (= required source)
         (tc-nominal-lifetime-coercion-failure-detail-at
-          ctx
-          env
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
           name-id
-          expected
-          actual
+          (tc-global-shared-view expected)
+          (tc-global-shared-view actual)
           (+ index 1))
         (match variance
           [(TcVariance.TcVarianceBivariant) ""]
@@ -29784,15 +29676,14 @@
         (ast.ast-lifetime-list-new)
         stack)]
     [(ast.AstType.StructArgs name lifetimes)
-      (if (and
-        (tc-arena-nominal-name-id? name)
-        (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0))
-        (TcMoveKind.MoveOnly)
-        (tc-type-move-kind-nominal-with-stack
-          ctx
-          name
-          (__tl-box-place lifetimes)
-          stack))]
+      (let
+        [args : ast.AstLifetimeList
+          (ast.ast-lifetime-list-box-shared-view lifetimes)]
+        (if (and
+          (tc-arena-nominal-name-id? name)
+          (> (tc-lifetime-list-count (tc-global-shared-view args)) 0))
+          (TcMoveKind.MoveOnly)
+          (tc-type-move-kind-nominal-with-stack ctx name args stack)))]
     ;; Unresolved names and invalid type variables must never accidentally
     ;; become Copyable.
     [(ast.AstType.Var _) (TcMoveKind.MoveOnly)]
@@ -31318,7 +31209,8 @@
     [prefix-id : i64]
     [expected : bool]) : bool
     (let
-      [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
+      [env : TcTypeEnv
+        (tc-type-env-scoped-carrier-env (tc-global-shared-view carrier))]
       [runtime-save : TcTypeEnvScopedRuntimeSave
         (tc-type-env-scoped-runtime-enter! carrier)]
       [actual : bool
@@ -31472,18 +31364,28 @@
       [callback-ty : ast.AstType (tc-fn0 (ast.AstType.I64))]
       [structural-base : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id (tc-empty-env) structural-key callback-ty))]
+          (tc-bind-c-abi-fnptr-id
+            (tc-empty-env)
+            structural-key
+            (tc-global-shared-view callback-ty)))]
       [structural-layer : TcTypeEnv
         (tc-env-with-cache-layer-over-explicit
           (tc-bind-id structural-base layer-id (ast.AstType.Bool)))]
       [qualified-raw : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id (tc-empty-env) qualified-id callback-ty))]
+          (tc-bind-c-abi-fnptr-id
+            (tc-empty-env)
+            qualified-id
+            (tc-global-shared-view callback-ty)))]
       [local-raw : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id (tc-empty-env) local-id callback-ty))]
+          (tc-bind-c-abi-fnptr-id
+            (tc-empty-env)
+            local-id
+            (tc-global-shared-view callback-ty)))]
       [tail-carrier : TcTypeEnvScopedCarrier
-        (tc-type-env-scoped-carrier-from-env structural-layer)]
+        (tc-type-env-scoped-carrier-from-env
+          (tc-global-shared-view structural-layer))]
       [scoped-carrier : TcTypeEnvScopedCarrier
         (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
           (tc-type-env-scoped-carrier-from-env (tc-empty-env))
@@ -31491,11 +31393,16 @@
           callback-ty)]
       [was-active : bool (tc-type-env-scoped-runtime-active?)]
       [runtime-save : TcTypeEnvScopedRuntimeSave
-        (tc-type-env-scoped-runtime-enter! tail-carrier)]
+        (tc-type-env-scoped-runtime-enter! (tc-global-shared-view tail-carrier))]
       [runtime-ok : bool
         (and
-          (tc-binding-c-abi-fnptr-id? structural-layer structural-key)
-          (not (tc-binding-c-abi-fnptr-id? structural-layer qualified-id)))]
+          (tc-binding-c-abi-fnptr-id?
+            (tc-global-shared-view structural-layer)
+            structural-key)
+          (not
+            (tc-binding-c-abi-fnptr-id?
+              (tc-global-shared-view structural-layer)
+              qualified-id)))]
       (begin
         (tc-type-env-scoped-runtime-restore! runtime-save)
         (and
@@ -31503,26 +31410,37 @@
           (ci.intern-qualified? qualified-id)
           (= structural-key normalized-key)
           (not (= structural-key qualified-id))
-          (tc-env-cache-explicit-head? structural-layer)
-          (tc-type-env-cache-partial-head? structural-layer)
-          (tc-binding-c-abi-fnptr-id? structural-layer structural-key)
-          (not (tc-binding-c-abi-fnptr-id? structural-layer qualified-id))
-          (tc-binding-c-abi-fnptr-id? qualified-raw qualified-id)
-          (not (tc-binding-c-abi-fnptr-id? qualified-raw normalized-key))
+          (tc-env-cache-explicit-head? (tc-global-shared-view structural-layer))
+          (tc-type-env-cache-partial-head?
+            (tc-global-shared-view structural-layer))
+          (tc-binding-c-abi-fnptr-id?
+            (tc-global-shared-view structural-layer)
+            structural-key)
+          (not
+            (tc-binding-c-abi-fnptr-id?
+              (tc-global-shared-view structural-layer)
+              qualified-id))
+          (tc-binding-c-abi-fnptr-id?
+            (tc-global-shared-view qualified-raw)
+            qualified-id)
+          (not
+            (tc-binding-c-abi-fnptr-id?
+              (tc-global-shared-view qualified-raw)
+              normalized-key))
           (tc-binding-c-abi-fnptr-id? local-raw local-id)
           (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
-            tail-carrier
+            (tc-global-shared-view tail-carrier)
             structural-key)
           (not
             (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
-              tail-carrier
+              (tc-global-shared-view tail-carrier)
               qualified-id))
           (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
-            scoped-carrier
+            (tc-global-shared-view scoped-carrier)
             structural-key)
           (not
             (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
-              scoped-carrier
+              (tc-global-shared-view scoped-carrier)
               qualified-id))
           runtime-ok)))))
 
@@ -34615,7 +34533,7 @@
                 ty)))))]
     [(ResultTcType.Err _)
       (let
-        [symbols : csym.CompilerSymbols (tc-context-symbols ctx)]
+        [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
         (if (or
           (csym.compiler-symbols-handle-found?
             (csym.compiler-symbols-lookup-type-in-module-id-or
@@ -34682,13 +34600,15 @@
                     alias)]
                 [seen-key : i64
                   (tc-import-alias-materialized-key-id alias-key target-module)]
-                (if (tc-import-alias-materialized? seen-aliases seen-key)
+                (if (tc-import-alias-materialized?
+                  (tc-global-shared-view seen-aliases)
+                  seen-key)
                   unit
                   (begin
                     (tc_i64_i64_map.insert-ref! (&mut seen-aliases) seen-key 1)
                     (match (tc-bind-selected-import-item
-                      ctx
-                      cur-env
+                      (tc-global-shared-view ctx)
+                      (tc-global-shared-view cur-env)
                       cur-module-id
                       target-module
                       item
@@ -34724,7 +34644,7 @@
                         (tc-global-shared-view ctx)
                         (& summary-index)
                         (tc-global-shared-view all-decls)
-                        cur-env
+                        (tc-global-shared-view cur-env)
                         target-module
                         alias-key
                         cur-module-id
@@ -39786,8 +39706,8 @@
     (cond
       [(or
           (tc-arena-source-call-base-id?
-            ctx
-            env
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
             source-id
             cbi.compiler-builtin-id-arena-make-atomic)
           (tc-arena-canonical-call-base-id?
@@ -39796,8 +39716,8 @@
         (tc-arena-owner-kind-atomic)]
       [(or
           (tc-arena-source-call-base-id?
-            ctx
-            env
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
             source-id
             cbi.compiler-builtin-id-arena-make)
           (tc-arena-canonical-call-base-id?
@@ -39905,7 +39825,7 @@
           (tc-arena-branded-type (tc-arena-owner-kind-ordinary) 101)]
         [atomic-ty : ast.AstType
           (tc-arena-branded-type (tc-arena-owner-kind-atomic) 101)]
-        [rendered : String (tc-type-render ordinary-ty)]
+        [rendered : String (tc-type-render (tc-global-shared-view ordinary-ty))]
         [ordinary-prefix : String (tc-arena-brand-ordinary-prefix)]
         [env : TcTypeEnv (tc-empty-env)]
         (and
@@ -39914,12 +39834,24 @@
           (not (= ordinary-a atomic-a))
           (tc-generated-ordinary-arena-brand-id? ordinary-a)
           (tc-generated-atomic-arena-brand-id? atomic-a)
-          (tc-lifetime-visible-id? env ordinary-a)
-          (tc-ordinary-arena-owner-active-id? env ordinary-a)
-          (tc-atomic-arena-owner-active-id? env atomic-a)
-          (not (tc-atomic-arena-owner-active-id? env ordinary-a))
-          (not (tc-type-regions-all-atomic-arena-owners? env ordinary-ty))
-          (tc-type-regions-all-atomic-arena-owners? env atomic-ty)
+          (tc-lifetime-visible-id? (tc-global-shared-view env) ordinary-a)
+          (tc-ordinary-arena-owner-active-id?
+            (tc-global-shared-view env)
+            ordinary-a)
+          (tc-atomic-arena-owner-active-id?
+            (tc-global-shared-view env)
+            atomic-a)
+          (not
+            (tc-atomic-arena-owner-active-id?
+              (tc-global-shared-view env)
+              ordinary-a))
+          (not
+            (tc-type-regions-all-atomic-arena-owners?
+              (tc-global-shared-view env)
+              ordinary-ty))
+          (tc-type-regions-all-atomic-arena-owners?
+            (tc-global-shared-view env)
+            atomic-ty)
           (string.contains (& rendered) (& ordinary-prefix)))))))
 
 (cfg
@@ -39984,7 +39916,11 @@
         (if (>= nid 0)
           (let
             [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
-            [lookup-id : i64 (tc-arena-call-lookup-id ctx env source-id)]
+            [lookup-id : i64
+              (tc-arena-call-lookup-id
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view env)
+                source-id)]
             (tc-arena-owner-call-kind-ids ctx env source-id lookup-id args.len))
           (tc-arena-owner-kind-none)))]
     [_ (tc-arena-owner-kind-none)]))
@@ -40006,12 +39942,12 @@
               [lookup-id : i64
                 (tc-arena-call-lookup-id
                   (tc-global-shared-view ctx)
-                  env
+                  (tc-global-shared-view env)
                   source-id)]
               (if (=
                 (tc-arena-safe-call-kind-id
                   (tc-global-shared-view ctx)
-                  env
+                  (tc-global-shared-view env)
                   source-id
                   lookup-id)
                 (tc-arena-safe-call-kind-phase))
@@ -40019,8 +39955,12 @@
                   [oid : i64 (tc-expr-var-name-id owner-expr)]
                   (if (>= oid 0)
                     (if (or
-                      (tc-ordinary-arena-owner-active-id? env oid)
-                      (tc-atomic-arena-owner-active-id? env oid))
+                      (tc-ordinary-arena-owner-active-id?
+                        (tc-global-shared-view env)
+                        oid)
+                      (tc-atomic-arena-owner-active-id?
+                        (tc-global-shared-view env)
+                        oid))
                       (TcMaybeNameId.Some oid)
                       (TcMaybeNameId.No))
                     (TcMaybeNameId.No)))
@@ -40036,32 +39976,40 @@
   [ty : ast.AstType]
   [init : ast.AstExpr]) : TcTypeEnv
   (let
-    [kind : i64 (tc-arena-owner-call-kind ctx env init)]
+    [kind : i64
+      (tc-arena-owner-call-kind
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (tc-global-shared-view init))]
     [brand-env : TcTypeEnv
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+      (match (tc-type-strip-region
+        (tc-resolve-type (tc-global-shared-view ctx) (tc-global-shared-view ty)))
         [(ast.AstType.StructArgs arena-name lifetimes)
-          (if (and
-            (tc-arena-nominal-name-id? arena-name)
-            (= (tc-lifetime-list-count (__tl-box-place lifetimes)) 1))
-            (let
-              [brand : i64
-                (ast.ast-lifetime-list-get
-                  (& (__tl-box-place lifetimes))
-                  0
-                  (ast.ast-lifetime-fallback))]
-              [brand-kind : i64
-                (if (tc-generated-atomic-arena-brand-id? brand)
-                  (tc-arena-owner-kind-atomic)
-                  (if (tc-generated-ordinary-arena-brand-id? brand)
-                    (tc-arena-owner-kind-ordinary)
-                    kind))]
-              (tc-bind-id
-                (if (= brand-kind (tc-arena-owner-kind-atomic))
-                  (tc-bind-atomic-arena-owner env brand)
-                  (tc-bind-ordinary-arena-owner env brand))
-                brand
-                (ast.AstType.Var brand)))
-            env)]
+          (let
+            [args : ast.AstLifetimeList
+              (ast.ast-lifetime-list-box-shared-view lifetimes)]
+            (if (and
+              (tc-arena-nominal-name-id? arena-name)
+              (= (tc-lifetime-list-count (tc-global-shared-view args)) 1))
+              (let
+                [brand : i64
+                  (ast.ast-lifetime-list-get
+                    (& args)
+                    0
+                    (ast.ast-lifetime-fallback))]
+                [brand-kind : i64
+                  (if (tc-generated-atomic-arena-brand-id? brand)
+                    (tc-arena-owner-kind-atomic)
+                    (if (tc-generated-ordinary-arena-brand-id? brand)
+                      (tc-arena-owner-kind-ordinary)
+                      kind))]
+                (tc-bind-id
+                  (if (= brand-kind (tc-arena-owner-kind-atomic))
+                    (tc-bind-atomic-arena-owner env brand)
+                    (tc-bind-ordinary-arena-owner env brand))
+                  brand
+                  (ast.AstType.Var brand)))
+              env))]
         [_ env])]
     (cond
       [(= kind (tc-arena-owner-kind-atomic))
@@ -40075,7 +40023,10 @@
   [env : TcTypeEnv]
   [name : i64]
   [init : ast.AstExpr]) : TcTypeEnv
-  (match (tc-phase-call-owner ctx env init)
+  (match (tc-phase-call-owner
+    (tc-global-shared-view ctx)
+    (tc-global-shared-view env)
+    (tc-global-shared-view init))
     [(TcMaybeNameId.Some owner-id)
       (tc-bind-arena-phase-token env name owner-id)]
     [(TcMaybeNameId.No) env]))
@@ -40089,10 +40040,17 @@
   (let
     [owner-env : TcTypeEnv
       (if (or
-        (tc-type-eq (tc-type-strip-region ty) (ast.AstType.I64))
-        (tc-arena-type? ctx ty))
-        (tc-bind-arena-owner-if-needed-id ctx env name ty init)
-        env)]
+        (tc-type-eq
+          (tc-type-strip-region (tc-global-shared-view ty))
+          (ast.AstType.I64))
+        (tc-arena-type? (tc-global-shared-view ctx) (tc-global-shared-view ty)))
+        (tc-bind-arena-owner-if-needed-id
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          name
+          (tc-global-shared-view ty)
+          (tc-global-shared-view init))
+        (tc-global-shared-view env))]
     [phase-env : TcTypeEnv
       (tc-bind-arena-phase-if-needed-id
         (tc-global-shared-view ctx)
@@ -40103,7 +40061,7 @@
       (tc-c-abi-fnptr-type? (tc-global-shared-view ty))
       (tc-expr-c-abi-fnptr?
         (tc-global-shared-view ctx)
-        env
+        (tc-global-shared-view env)
         (tc-global-shared-view init)))
       (tc-bind-c-abi-fnptr-id phase-env name ty)
       (tc-bind-id phase-env name ty))))
@@ -41153,6 +41111,10 @@
   [owner-proof : bool]) : TcThreadTransferClass
   (let
     [resolved : ast.AstType (tc-resolve-type (tc-global-shared-view ctx) ty)]
+    [atomic-owner-regions : bool
+      (tc-type-regions-all-atomic-arena-owners?
+        (tc-global-shared-view env)
+        (tc-global-shared-view resolved))]
     (match resolved
       [(ast.AstType.Region region inner)
         (cond
@@ -41223,9 +41185,12 @@
           owner-proof)]
       [(ast.AstType.StructArgs name lifetimes)
         (if (and
-          (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)
+          (>
+            (tc-lifetime-list-count
+              (ast.ast-lifetime-list-box-shared-view lifetimes))
+            0)
           (not owner-proof)
-          (not (tc-type-regions-all-atomic-arena-owners? env resolved)))
+          (not atomic-owner-regions))
           (tc-thread-transfer-region-reject)
           (tc-thread-transfer-struct-class
             ctx
@@ -41233,9 +41198,7 @@
             (tc-nominal-name-id-display name)
             name
             stack
-            (or
-              owner-proof
-              (tc-type-regions-all-atomic-arena-owners? env resolved))))]
+            (or owner-proof atomic-owner-regions)))]
       [(ast.AstType.Enum name)
         (tc-thread-transfer-enum-class
           ctx
@@ -41246,9 +41209,12 @@
           owner-proof)]
       [(ast.AstType.EnumArgs name lifetimes)
         (if (and
-          (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)
+          (>
+            (tc-lifetime-list-count
+              (ast.ast-lifetime-list-box-shared-view lifetimes))
+            0)
           (not owner-proof)
-          (not (tc-type-regions-all-atomic-arena-owners? env resolved)))
+          (not atomic-owner-regions))
           (tc-thread-transfer-region-reject)
           (tc-thread-transfer-enum-class
             ctx
@@ -41256,9 +41222,7 @@
             (tc-nominal-name-id-display name)
             name
             stack
-            (or
-              owner-proof
-              (tc-type-regions-all-atomic-arena-owners? env resolved))))]
+            (or owner-proof atomic-owner-regions)))]
       [(ast.AstType.Func _ _)
         (tc-thread-transfer-reject
           "function value transfer requires a direct no-capture function symbol")]
@@ -42471,9 +42435,15 @@
   ;; Preserve ordinary lookup, arity, and shadowing diagnostics. Only a call
   ;; that really resolves to the canonical zero-argument constructor gets its
   ;; otherwise-bare result refined with the call-site brand.
-  (match (tc-call-expr-ordinary-id ctx env func-id args)
+  (match (tc-call-expr-ordinary-id
+    (tc-global-shared-view ctx)
+    (tc-global-shared-view env)
+    func-id
+    args)
     [(ResultTcType.Ok ty)
-      (if (tc-arena-type? ctx ty)
+      (if (tc-arena-type?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view ty))
         (ResultTcType.Ok (tc-arena-branded-type kind func-id))
         (ResultTcType.Ok ty))]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
@@ -43870,18 +43840,22 @@
               args)
             (let
               [arena-call-kind : i64
-                (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
+                (tc-arena-safe-call-kind-id
+                  (tc-global-shared-view ctx)
+                  (tc-global-shared-view env)
+                  name-id
+                  lookup-id)]
               [arena-owner-kind : i64
                 (tc-arena-owner-call-kind-ids
-                  ctx
-                  env
+                  (tc-global-shared-view ctx)
+                  (tc-global-shared-view env)
                   name-id
                   lookup-id
                   args.len)]
               [slice-call-kind : TcSliceViewCallKind
                 (tc-slice-view-call-kind-name
                   (tc-global-shared-view ctx)
-                  env
+                  (tc-global-shared-view env)
                   name-id
                   (tc-global-shared-view name))]
               (cond
@@ -53754,7 +53728,7 @@
                 allow-immutable-reference-captures)
               (ResultTcUnit.Err
                 "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope"))]
-          [(tc-type-contains-reference? ty)
+          [(tc-type-contains-reference? (tc-global-shared-view ty))
             (if (or
               allow-immutable-reference-captures
               ;; Nominal lifetime arguments participate in the general
@@ -53762,8 +53736,8 @@
               ;; spanning owner capability, not a stack borrow; keep its exact
               ;; type for the later structural thread-transfer classifier.
               (tc-type-regions-all-atomic-arena-owners?
-                (tc-type-env-scoped-carrier-env carrier)
-                ty))
+                (tc-type-env-scoped-carrier-env (tc-global-shared-view carrier))
+                (tc-global-shared-view ty)))
               (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
                 expr-bases
                 carrier
@@ -53776,7 +53750,7 @@
           [(tc-type-contains-any-region (tc-global-shared-view ty))
             (if (tc-type-regions-all-atomic-arena-owners?
               (tc-type-env-scoped-carrier-env (tc-global-shared-view carrier))
-              ty)
+              (tc-global-shared-view ty))
               (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
                 expr-bases
                 carrier
@@ -56979,13 +56953,17 @@
   [args : ast.AstLifetimeList]) : ResultTcLifetimeSubst
   (if (and
     (tc-arena-nominal-name-id? name-id)
-    (= (tc-lifetime-list-count args) 1))
+    (= (tc-lifetime-list-count (tc-global-shared-view args)) 1))
     ;; Arena's single checker-only brand is phantom: its one-word runtime
     ;; declaration intentionally has no lifetime parameter or field to rewrite.
     (ResultTcLifetimeSubst.Ok TcLifetimeSubst.Nil)
     (match (tc-nominal-lifetimes-id ctx name-id)
       [(ResultTcLifetimeList.Ok params)
-        (tc-infer-lifetime-list params TcLifetimeSubst.Nil params args)]
+        (tc-infer-lifetime-list
+          (tc-global-shared-view params)
+          TcLifetimeSubst.Nil
+          params
+          args)]
       [(ResultTcLifetimeList.Err message) (ResultTcLifetimeSubst.Err message)])))
 
 (define (tc-struct-field-type-with-args-id
@@ -75186,7 +75164,10 @@
     [(ast.AstType.StructArgs name lifetimes)
       (if (and
         (tc-arena-nominal-name-id? name)
-        (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0))
+        (>
+          (tc-lifetime-list-count
+            (ast.ast-lifetime-list-box-shared-view lifetimes))
+          0))
         false
         (tc-move-global-copyable-nominal? ctx name depth))]
     [(ast.AstType.Var name)
@@ -103741,7 +103722,7 @@
 ;; original definition module. The dense declaration ID is carried with it.
 (define (macro-decl-at-index-with-owner-module
   [_ctx : TcContext]
-  [symbols : csym.CompilerSymbols]
+  [symbols : (& symbols csym.CompilerSymbols)]
   [target : i64]
   [module-id : i64]) : MacroMaybeDecl
   (match (csym.compiler-symbols-decl-at-index symbols target)
@@ -107171,10 +107152,11 @@
         (csym.compiler-composite-pair-key-id? name)
         (csym.compiler-composite-triple-key-id? name))
         (macro-call-decl-from-name
-          ctx
+          (tc-global-shared-view ctx)
           decls
-          (tc-context-module ctx)
-          (macro-source-module-id (tc-context-module-id ctx))
+          (tc-context-module (tc-global-shared-view ctx))
+          (macro-source-module-id
+            (tc-context-module-id (tc-global-shared-view ctx)))
           (tc-nominal-name-id-display name)
           name
           name
@@ -107197,9 +107179,9 @@
             (match (tc-hygiene-global-decode (tc-env-key-name-text name))
               [(TcHygieneGlobalName.Legacy lookup-name)
                 (macro-call-decl-from-hygiene-name
-                  ctx
+                  (tc-global-shared-view ctx)
                   decls
-                  (tc-context-module ctx)
+                  (tc-context-module (tc-global-shared-view ctx))
                   (macro-source-module-id (ci.intern-qualified-module-id name))
                   lookup-name
                   (macro-hygiene-global-source-name-id-or name -1)
@@ -107214,7 +107196,7 @@
                   (macro-hygiene-global-source-name-id-or name -1)
                   call-expr)]))
           (macro-call-decl-from-source-name
-            ctx
+            (tc-global-shared-view ctx)
             decls
             (tc-context-module ctx)
             (macro-source-module-id (tc-context-module-id ctx))
@@ -108121,18 +108103,21 @@
         ;; through the owned context before speculative typechecking starts.
         ;; Publish those nodes first, then retain any expression/type children
         ;; appended by `tc-expr` before allocating the captured-type wrapper.
-        (tc-context-install-pools! ctx)
-        (match (tc-expr ctx env arg)
+        (tc-context-install-pools! (tc-global-shared-view ctx))
+        (match (tc-expr
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          (tc-global-shared-view arg))
           [(ResultTcType.Ok actual)
             (begin
-              (tc-context-capture-active-pools! ctx)
+              (tc-context-capture-active-pools! (tc-global-shared-view ctx))
               (let
                 [captured : ast.AstType
                   (ctfe_support.ctfe-captured-expr-type-with-pools
-                    (tc-context-pools ctx)
-                    (tc-resolve-type ctx actual))]
+                    (tc-context-pools (tc-global-shared-view ctx))
+                    (tc-resolve-type (tc-global-shared-view ctx) actual))]
                 (begin
-                  (tc-context-install-pools! ctx)
+                  (tc-context-install-pools! (tc-global-shared-view ctx))
                   captured)))]
           [(ResultTcType.Err _) (ctfe_support.ctfe-untyped-expr-type)]))
       (ctfe_support.ctfe-untyped-expr-type))
@@ -108937,7 +108922,7 @@
       (tc-global-shared-view decls)
       (tc-global-shared-view fallback-module)
       fallback-module-id
-      type-env
+      (tc-global-shared-view type-env)
       macro-name
       (& params)
       (& args)
@@ -109183,7 +109168,7 @@
   [identity : String]) : cload.CompilerLoadDependencyCatalogLookup
   (cload.compiler-load-dependency-catalog-handle-lookup-macro
     (tc-macro-walk-field
-      (tc-context-macro-state ctx)
+      (tc-context-macro-state (tc-global-shared-view ctx))
       macro-dependency-catalog-handle)
     slot
     identity))
@@ -109195,7 +109180,7 @@
     -1
     (cload.compiler-load-dependency-catalog-handle-slot-for-provenance-id
       (tc-macro-walk-field
-        (tc-context-macro-state ctx)
+        (tc-context-macro-state (tc-global-shared-view ctx))
         macro-dependency-catalog-handle)
       (csym.compiler-symbols-provenance-id-at-index-or
         (tc-context-symbols ctx)
@@ -109230,13 +109215,15 @@
     [identity : String]
     [declaration-id : i64]) : MacroTlciCatalogSelection
     (match (macro-dependency-tlci-catalog-lookup
-      ctx
-      (macro-dependency-tlci-catalog-slot-for-declaration ctx declaration-id)
-      identity)
+      (tc-global-shared-view ctx)
+      (macro-dependency-tlci-catalog-slot-for-declaration
+        (tc-global-shared-view ctx)
+        declaration-id)
+      (tc-global-shared-view identity))
       [(cload.CompilerLoadDependencyCatalogLookup.NoCatalog)
         (if (and
           (tc-macro-walk-field
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             macro-expand-stdlib-tlci-route-active)
           (cload.compiler-load-embedded-stdlib-module-id? definition-module))
           (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
@@ -109254,7 +109241,7 @@
       [(cload.CompilerLoadDependencyCatalogLookup.Resolved capability)
         (begin
           (tc-dependency-tlci-route-counter-add!
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             tc-dependency-tlci-catalog-hits
             1)
           (MacroTlciCatalogSelection.Resolved
@@ -109262,15 +109249,15 @@
       [(cload.CompilerLoadDependencyCatalogLookup.Shell capability)
         (begin
           (tc-dependency-tlci-route-counter-add!
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             tc-dependency-tlci-catalog-hits
             1)
           (tc-dependency-tlci-route-counter-add!
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             tc-dependency-tlci-shell-cache-hits
             1)
           (tc-dependency-tlci-route-counter-add!
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             tc-dependency-tlci-interpreted-fallbacks
             1)
           (MacroTlciCatalogSelection.Shell
@@ -109278,33 +109265,33 @@
       [(cload.CompilerLoadDependencyCatalogLookup.MetadataOnly)
         (begin
           (tc-dependency-tlci-route-counter-add!
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             tc-dependency-tlci-catalog-misses
             1)
           (tc-dependency-tlci-route-counter-add!
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             tc-dependency-tlci-interpreted-fallbacks
             1)
           MacroTlciCatalogSelection.MetadataOnly)]
       [(cload.CompilerLoadDependencyCatalogLookup.Missing)
         (begin
           (tc-dependency-tlci-route-counter-add!
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             tc-dependency-tlci-catalog-misses
             1)
           (tc-dependency-tlci-route-counter-add!
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             tc-dependency-tlci-interpreted-fallbacks
             1)
           MacroTlciCatalogSelection.Missing)]
       [(cload.CompilerLoadDependencyCatalogLookup.Unavailable _)
         (begin
           (tc-dependency-tlci-route-counter-add!
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             tc-dependency-tlci-load-failures
             1)
           (tc-dependency-tlci-route-counter-add!
-            (tc-context-macro-state ctx)
+            (tc-context-macro-state (tc-global-shared-view ctx))
             tc-dependency-tlci-interpreted-fallbacks
             1)
           MacroTlciCatalogSelection.Unavailable)])))
@@ -109416,7 +109403,7 @@
   ;; Symbol lookup hands the executor either a local declaration name or its
   ;; already canonical `module/name` display. Package catalogs are produced
   ;; from the latter, so never qualify an identity a second time.
-  (if (>= (tc-qualified-name-last-slash macro-name) 0)
+  (if (>= (tc-qualified-name-last-slash (tc-global-shared-view macro-name)) 0)
     macro-name
     (csym.compiler-symbol-module-key definition-module macro-name)))
 
@@ -109434,17 +109421,22 @@
       (cfg
         tlci-bootstrap-mutation-witness
         (macro-tlci-bootstrap-mutation-witness-emit!
-          (macro-tlci-catalog-identity definition-module macro-name)
+          (macro-tlci-catalog-identity
+            (tc-global-shared-view definition-module)
+            (tc-global-shared-view macro-name))
           "source"
           "interpreted"))
       (if (and
         (tc-macro-walk-field state macro-expand-stdlib-tlci-route-active)
-        (cload.compiler-load-embedded-stdlib-module-id? definition-module))
+        (cload.compiler-load-embedded-stdlib-module-id?
+          (tc-global-shared-view definition-module)))
         (begin
           (cfg
             embedded-stdlib-tlci
             (match (macro-expand-stdlib-tlci-catalog-lookup-cached
-              (macro-tlci-catalog-identity definition-module macro-name))
+              (macro-tlci-catalog-identity
+                (tc-global-shared-view definition-module)
+                (tc-global-shared-view macro-name)))
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved _)
                 (cfg
                   compile-profile
@@ -109744,7 +109736,8 @@
     [prepared-operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
     [prepared-count : i64]
     [prepared : bool]) : MacroNativeStdlibTlciResult
-    (if (not (macro-tlci-resolved-catalog-open? catalog))
+    (if (not
+      (macro-tlci-resolved-catalog-open? (tc-global-shared-view catalog)))
       MacroNativeStdlibTlciResult.No
       (let
         [count : i64
@@ -109765,7 +109758,7 @@
                 (begin
                   (macro-dependency-tlci-note-if!
                     route-state
-                    catalog
+                    (tc-global-shared-view catalog)
                     tc-dependency-tlci-parameter-name-lookups)
                   (match (ctfe_support.ctfe-env-lookup-id env pname)
                     [(ctfe_support.CtfeMaybeValue.Some value)
@@ -109777,13 +109770,13 @@
             (begin
               (macro-dependency-tlci-note-if!
                 route-state
-                catalog
+                (tc-global-shared-view catalog)
                 tc-dependency-tlci-interpreted-fallbacks)
               MacroNativeStdlibTlciResult.No)
             (begin
               (embedded_tlci.compiler-comptime-host-session-open-with-macro-state!
                 host-pools
-                operands
+                (& operands)
                 count
                 (ctfe_support.ctfe-fuel-limit)
                 (macro-stdlib-tlci-native-cookie)
@@ -109792,23 +109785,25 @@
                 (ctfe_support.ctfe-env-macro-state env))
               (cfg
                 compile-profile
-                (if (macro-tlci-resolved-catalog-dependency? catalog)
+                (if (macro-tlci-resolved-catalog-dependency?
+                  (tc-global-shared-view catalog))
                   unit
                   (compiler-tc-stdlib-tlci-entry-invoke-start!)))
               (macro-dependency-tlci-note-if!
                 route-state
-                catalog
+                (tc-global-shared-view catalog)
                 tc-dependency-tlci-native-dispatches)
               (let
                 [dispatch-result : tlci_loader_support.ResultTlciMacroDispatch
                   (macro-tlci-resolved-catalog-dispatch
-                    catalog
-                    identity
+                    (tc-global-shared-view catalog)
+                    (tc-global-shared-view identity)
                     (macro-stdlib-tlci-native-cookie))]
                 (begin
                   (cfg
                     compile-profile
-                    (if (macro-tlci-resolved-catalog-dependency? catalog)
+                    (if (macro-tlci-resolved-catalog-dependency?
+                      (tc-global-shared-view catalog))
                       unit
                       (compiler-tc-stdlib-tlci-entry-invoke-finish!)))
                   (match dispatch-result
@@ -109818,7 +109813,7 @@
                           (all embedded-stdlib-tlci tlci-native-route-stress)
                           (compiler-tc-tlci-native-stress-catalog-dispatch!
                             host-pools
-                            catalog
+                            (tc-global-shared-view catalog)
                             5
                             9))
                         (embedded_tlci.compiler-comptime-host-session-close!)
@@ -109840,7 +109835,7 @@
                                 (cfg
                                   tlci-bootstrap-mutation-witness
                                   (macro-tlci-bootstrap-mutation-witness-emit!
-                                    identity
+                                    (tc-global-shared-view identity)
                                     "native"
                                     "value"))
                                 (cfg
@@ -109849,10 +109844,12 @@
                                     tlci-native-route-stress)
                                   (compiler-tc-tlci-native-stress-catalog-dispatch!
                                     host-pools
-                                    catalog
-                                    (if (tc-macro-result-module? ret)
+                                    (tc-global-shared-view catalog)
+                                    (if (tc-macro-result-module?
+                                      (tc-global-shared-view ret))
                                       2
-                                      (if (tc-macro-result-decls? ret)
+                                      (if (tc-macro-result-decls?
+                                        (tc-global-shared-view ret))
                                         3
                                         1))
                                     0))
@@ -109860,7 +109857,7 @@
                                 (cfg
                                   compile-profile
                                   (if (macro-tlci-resolved-catalog-dependency?
-                                    catalog)
+                                    (tc-global-shared-view catalog))
                                     unit
                                     (begin
                                       (set!
@@ -109873,13 +109870,15 @@
                                         (+
                                           compiler-tc-macro-stdlib-tlci-native-dispatches
                                           1))
-                                      (if (tc-macro-result-module? ret)
+                                      (if (tc-macro-result-module?
+                                        (tc-global-shared-view ret))
                                         (set!
                                           compiler-tc-macro-stdlib-tlci-native-module-results
                                           (+
                                             compiler-tc-macro-stdlib-tlci-native-module-results
                                             1))
-                                        (if (tc-macro-result-decls? ret)
+                                        (if (tc-macro-result-decls?
+                                          (tc-global-shared-view ret))
                                           (set!
                                             compiler-tc-macro-stdlib-tlci-native-decls-results
                                             (+
@@ -109890,32 +109889,34 @@
                                             (+
                                               compiler-tc-macro-stdlib-tlci-native-expr-results
                                               1)))))))
-                                (if (tc-macro-result-module? ret)
+                                (if (tc-macro-result-module?
+                                  (tc-global-shared-view ret))
                                   (macro-dependency-tlci-note-if!
                                     route-state
-                                    catalog
+                                    (tc-global-shared-view catalog)
                                     tc-dependency-tlci-native-module-results)
-                                  (if (tc-macro-result-decls? ret)
+                                  (if (tc-macro-result-decls?
+                                    (tc-global-shared-view ret))
                                     (macro-dependency-tlci-note-if!
                                       route-state
-                                      catalog
+                                      (tc-global-shared-view catalog)
                                       tc-dependency-tlci-native-decls-results)
                                     (begin
                                       (macro-dependency-tlci-note-if!
                                         route-state
-                                        catalog
+                                        (tc-global-shared-view catalog)
                                         tc-dependency-tlci-native-expr-results)
                                       (if prepared
                                         (macro-dependency-tlci-note-if!
                                           route-state
-                                          catalog
+                                          (tc-global-shared-view catalog)
                                           tc-dependency-tlci-direct-expr-results)
                                         unit))))
                                 (MacroNativeStdlibTlciResult.Value value)))]
                           [(= status 0)
                             (match (macro-tlci-resolved-catalog-mark-shell!
-                              catalog
-                              identity)
+                              (tc-global-shared-view catalog)
+                              (tc-global-shared-view identity))
                               [(tlci_loader_support.ResultTlciLoaderUnit.Ok)
                                 (begin
                                   (cfg
@@ -109924,14 +109925,14 @@
                                       tlci-native-route-stress)
                                     (compiler-tc-tlci-native-stress-catalog-dispatch!
                                       host-pools
-                                      catalog
+                                      (tc-global-shared-view catalog)
                                       4
                                       0))
                                   (embedded_tlci.compiler-comptime-host-session-close!)
                                   (cfg
                                     compile-profile
                                     (if (macro-tlci-resolved-catalog-dependency?
-                                      catalog)
+                                      (tc-global-shared-view catalog))
                                       unit
                                       (set!
                                         compiler-tc-macro-stdlib-tlci-shell-learns
@@ -109940,11 +109941,11 @@
                                           1))))
                                   (macro-dependency-tlci-note-if!
                                     route-state
-                                    catalog
+                                    (tc-global-shared-view catalog)
                                     tc-dependency-tlci-shell-learns)
                                   (macro-dependency-tlci-note-if!
                                     route-state
-                                    catalog
+                                    (tc-global-shared-view catalog)
                                     tc-dependency-tlci-interpreted-fallbacks)
                                   MacroNativeStdlibTlciResult.Shell)]
                               [(tlci_loader_support.ResultTlciLoaderUnit.Err
@@ -109956,7 +109957,7 @@
                                       tlci-native-route-stress)
                                     (compiler-tc-tlci-native-stress-catalog-dispatch!
                                       host-pools
-                                      catalog
+                                      (tc-global-shared-view catalog)
                                       5
                                       9))
                                   (embedded_tlci.compiler-comptime-host-session-close!)
@@ -109977,8 +109978,8 @@
                                 (embedded_tlci.compiler-comptime-host-diagnostic-text)]
                               [message : String
                                 (macro-tlci-resolved-catalog-status-diagnostic
-                                  catalog
-                                  identity
+                                  (tc-global-shared-view catalog)
+                                  (tc-global-shared-view identity)
                                   (if (and
                                     (=
                                       status
@@ -109986,7 +109987,7 @@
                                     (> (string.string-length recorded) 0))
                                     recorded
                                     (tlci_loader_support.tlci-loader-macro-status-diagnostic
-                                      identity
+                                      (tc-global-shared-view identity)
                                       status)))]
                               (begin
                                 (cfg
@@ -110019,20 +110020,22 @@
     [call-expr : ast.AstExpr]) : MacroNativeStdlibTlciResult
     (let
       [identity : String
-        (macro-tlci-catalog-identity definition-module macro-name)]
+        (macro-tlci-catalog-identity
+          (tc-global-shared-view definition-module)
+          (tc-global-shared-view macro-name))]
       (match (macro-tlci-catalog-select
-        ctx
-        definition-module
-        identity
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view definition-module)
+        (tc-global-shared-view identity)
         declaration-id)
         [(MacroTlciCatalogSelection.None) MacroNativeStdlibTlciResult.No]
         [(MacroTlciCatalogSelection.Resolved catalog)
           (macro-try-stdlib-tlci-native-resolved
-            (tc-context-pools ctx)
-            (tc-context-macro-state ctx)
+            (tc-context-pools (tc-global-shared-view ctx))
+            (tc-context-macro-state (tc-global-shared-view ctx))
             identity
             catalog
-            params
+            (tc-global-shared-view params)
             ret
             env
             call-expr
@@ -110183,14 +110186,16 @@
       (let
         [dependency-slot : i64
           (macro-dependency-tlci-catalog-slot-for-declaration
-            ctx
+            (tc-global-shared-view ctx)
             declaration-id)]
         [identity : String
-          (macro-tlci-catalog-identity fallback-module macro-name)]
+          (macro-tlci-catalog-identity
+            (tc-global-shared-view fallback-module)
+            (tc-global-shared-view macro-name))]
         (match (macro-tlci-catalog-select
-          ctx
-          fallback-module
-          identity
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view fallback-module)
+          (tc-global-shared-view identity)
           declaration-id)
           [(MacroTlciCatalogSelection.None) MacroDirectStdlibTlciResult.No]
           [(MacroTlciCatalogSelection.Resolved catalog)
@@ -110246,11 +110251,11 @@
                     (match (let
                       [native-result : MacroNativeStdlibTlciResult
                         (macro-try-stdlib-tlci-native-resolved
-                          syntax-pools
-                          (tc-context-macro-state ctx)
+                          (tc-global-shared-view syntax-pools)
+                          (tc-context-macro-state (tc-global-shared-view ctx))
                           identity
-                          catalog
-                          params
+                          (tc-global-shared-view catalog)
+                          (tc-global-shared-view params)
                           ret
                           (tc-global-shared-view base-env)
                           call-expr
@@ -110270,7 +110275,7 @@
                             compile-profile
                             (begin
                               (if (macro-tlci-resolved-catalog-dependency?
-                                catalog)
+                                (tc-global-shared-view catalog))
                                 unit
                                 (set!
                                   compiler-tc-macro-stdlib-tlci-direct-expr-results
@@ -110304,10 +110309,11 @@
                           (MacroDirectStdlibTlciResult.Err (box diag)))]
                       [(MacroNativeStdlibTlciResult.Shell)
                         (begin
-                          (macro-note-embedded-tlci-resolved-fallback! catalog)
+                          (macro-note-embedded-tlci-resolved-fallback!
+                            (tc-global-shared-view catalog))
                           (macro-dependency-tlci-note-if!
-                            (tc-context-macro-state ctx)
-                            catalog
+                            (tc-context-macro-state (tc-global-shared-view ctx))
+                            (tc-global-shared-view catalog)
                             tc-dependency-tlci-direct-shell-env-folds)
                           (cfg
                             compile-profile
@@ -110326,11 +110332,13 @@
                                 syntax-pools))))]
                       [(MacroNativeStdlibTlciResult.No)
                         (begin
-                          (macro-note-embedded-tlci-resolved-fallback! catalog)
+                          (macro-note-embedded-tlci-resolved-fallback!
+                            (tc-global-shared-view catalog))
                           MacroDirectStdlibTlciResult.BoundFallback)]))]))]
           [(MacroTlciCatalogSelection.Shell catalog)
             (begin
-              (macro-note-embedded-tlci-shell-fallback! catalog)
+              (macro-note-embedded-tlci-shell-fallback!
+                (tc-global-shared-view catalog))
               MacroDirectStdlibTlciResult.BoundFallback)]
           [(MacroTlciCatalogSelection.MetadataOnly)
             (begin
@@ -110361,8 +110369,10 @@
     [_expanded-args : ast.AstExprList]
     [_call-expr : ast.AstExpr]) : MacroDirectStdlibTlciResult
     (match (macro-dependency-tlci-catalog-lookup
-      ctx
-      (macro-dependency-tlci-catalog-slot-for-declaration ctx declaration-id)
+      (tc-global-shared-view ctx)
+      (macro-dependency-tlci-catalog-slot-for-declaration
+        (tc-global-shared-view ctx)
+        declaration-id)
       (macro-tlci-catalog-identity fallback-module macro-name))
       [(cload.CompilerLoadDependencyCatalogLookup.NoCatalog)
         MacroDirectStdlibTlciResult.No]
@@ -110380,13 +110390,17 @@
         (ast.ast-node-pool-context-capture-active)]
       (if (or
         (>
-          (ast.ast-node-pool-context-expr-len owned-pools)
-          (ast.ast-node-pool-context-expr-len active-pools))
+          (ast.ast-node-pool-context-expr-len
+            (tc-global-shared-view owned-pools))
+          (ast.ast-node-pool-context-expr-len
+            (tc-global-shared-view active-pools)))
         (>
-          (ast.ast-node-pool-context-type-len owned-pools)
-          (ast.ast-node-pool-context-type-len active-pools)))
-        (tc-context-install-pools! ctx)
-        (tc-context-capture-active-pools! ctx)))))
+          (ast.ast-node-pool-context-type-len
+            (tc-global-shared-view owned-pools))
+          (ast.ast-node-pool-context-type-len
+            (tc-global-shared-view active-pools))))
+        (tc-context-install-pools! (tc-global-shared-view ctx))
+        (tc-context-capture-active-pools! (tc-global-shared-view ctx))))))
 
 (define (macro-adopt-transformer-env-pools!
   [ctx : TcContext]
@@ -110401,7 +110415,7 @@
       (ast.ast-node-pool-context-adopt-newer!
         (tc-context-pools-live (tc-global-shared-view ctx))
         (ast.ast-node-pool-context-shared-view (& syntax-pools)))
-      (tc-context-install-pools! ctx))))
+      (tc-context-install-pools! (tc-global-shared-view ctx)))))
 
 (define (macro-eval-transformer-interpreted-with-env
   [ctx : TcContext]
@@ -110542,14 +110556,14 @@
         (match (let
           [native-result : MacroNativeStdlibTlciResult
             (macro-try-stdlib-tlci-native
-              ctx
-              fallback-module
+              (tc-global-shared-view ctx)
+              (tc-global-shared-view fallback-module)
               declaration-id
-              macro-name
-              params
-              ret
+              (tc-global-shared-view macro-name)
+              (tc-global-shared-view params)
+              (tc-global-shared-view ret)
               (tc-global-shared-view env)
-              call-expr)]
+              (tc-global-shared-view call-expr))]
           (begin
             (cfg compile-profile (compiler-tc-walk-native-dispatch-finish!))
             native-result))
@@ -110644,11 +110658,11 @@
       type-env
       macro-name-id
       declaration-id
-      macro-name
-      params
-      ret
-      expanded-args
-      call-expr)
+      (tc-global-shared-view macro-name)
+      (tc-global-shared-view params)
+      (tc-global-shared-view ret)
+      (tc-global-shared-view expanded-args)
+      (tc-global-shared-view call-expr))
       [(MacroDirectStdlibTlciResult.Value value) (ResultMacroValue.Ok value)]
       [(MacroDirectStdlibTlciResult.Err diag) (ResultMacroValue.Err diag)]
       [(MacroDirectStdlibTlciResult.PreparedEnv env)
@@ -114583,11 +114597,6 @@
                                           declaration-id
                                           (macro-decl-name-display
                                             macro-name
-                                            definition-module)
-                                          (tc-global-shared-view global-env)
-                                          (tc-global-shared-view macro-name)
-                                          (macro-decl-name-display
-                                            (tc-global-shared-view macro-name)
                                             definition-module)
                                           (tc-global-shared-view params)
                                           (tc-global-shared-view ret)
@@ -118989,23 +118998,27 @@
   [job-state : TcJobState]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [intern-state : ci.InternCompatState]) : ResultMacroExpand
-  (begin
+  [intern-state-input : ci.InternCompatState]) : ResultMacroExpand
+  (let
+    [intern-state : ci.InternCompatState
+      (tc-global-shared-view intern-state-input)]
+    (begin
     (tc-macro-state-bind-source-names!
-      (tc-job-state-macro-state job-state)
-      source-names)
+      (tc-job-state-macro-state (tc-global-shared-view job-state))
+      (tc-global-shared-view source-names))
     (tc-macro-walk-set!
-      (tc-job-state-macro-state job-state)
+      (tc-job-state-macro-state (tc-global-shared-view job-state))
       macro-dependency-catalog-handle
-      (cload.compiler-load-session-state-dependency-catalog-handle load-state))
+      (cload.compiler-load-session-state-dependency-catalog-handle
+        (tc-global-shared-view load-state)))
     (tc-dependency-tlci-route-counters-reset!
-      (tc-job-state-macro-state job-state))
+      (tc-job-state-macro-state (tc-global-shared-view job-state)))
     ;; Legacy macro expansion still reads compatibility globals; bridge the
     ;; compile-owned pool and interner state at the phase boundary.
-    (ast.ast-node-pool-context-install! pools)
-    (ci.intern-compat-state-install! intern-state)
+    (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+    (ci.intern-compat-state-install! (tc-global-shared-view intern-state))
     (macro-expand-program-structural-change-reset!
-      (tc-job-state-macro-state job-state))
+      (tc-job-state-macro-state (tc-global-shared-view job-state)))
     ;; The route is a property of the compiler's embedded image plus the exact
     ;; source provenance observed by this load session. Embedded source marks
     ;; the session directly; byte-identical disk source may mark individual
@@ -119021,126 +119034,133 @@
       macro-expand-stdlib-tlci-route-active
       (cfg
         embedded-stdlib-tlci
-        (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-      (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
-      (cfg
-        (all embedded-stdlib-tlci tlci-native-route-stress)
-        (compiler-tc-tlci-native-stress-pass-start!
+        (or
+          (cload.compiler-load-session-state-embedded-stdlib-source-used?
+            (tc-global-shared-view load-state))
+          (cload.compiler-load-embedded-provenance-noted?))
+        false))
+    (cfg
+      embedded-stdlib-tlci
+      (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+    (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
+    (cfg
+      (all embedded-stdlib-tlci tlci-native-route-stress)
+      (compiler-tc-tlci-native-stress-pass-start!
+        (ast.ast-place-shared-view pools)
+        (tc-macro-walk-field
+          (tc-job-state-macro-state job-state)
+          macro-expand-stdlib-tlci-route-active)))
+    (tc-stdlib-comptime-macro-surface-ok-reset!
+      (tc-job-state-macro-state job-state))
+    (tc-macro-identity-reset-for-state! (tc-job-state-macro-state job-state))
+    (macro-generated-module-memo-reset! (tc-job-state-macro-state job-state))
+    (tc-macro-abstract-proof-reset-for-state!
+      (tc-job-state-macro-state job-state))
+    (macro-generated-decls-memo-reset! (tc-job-state-macro-state job-state))
+    ;; Reset the CTFE base-env cache once per program (plan P2). The pass
+    ;; rebuilds it via macro-expand-ctfe-env-build-once!; it is then reused by
+    ;; every in-pass splice rebuild and by the downstream typecheck/lower
+    ;; comptime, never rebuilt per splice. This is the "build the CTFE-env
+    ;; once, after expansion" boundary. The typecheck entry wraps that boundary
+    ;; in macro-expand-then-build-envs-with-load-state.
+    (compiler-typecheck-ctfe-env-cache-clear!
+      (tc-job-state-macro-state job-state))
+    ;; Reset the live symbols/registries cache once per program (plan P2): the
+    ;; pass rebuilds them and in-pass splice rebuilds reuse or refresh them.
+    (macro-live-symbols-reset! (tc-job-state-macro-state job-state))
+    ;; Reset the hoisted whole-program prescans: computed at
+    ;; pass setup and refreshed only when a generated file import loads new
+    ;; declarations mid-walk.
+    (macro-live-prescan-reset! (tc-job-state-macro-state job-state))
+    (let
+      [macro-result : ResultMacroExpand
+        (macro-expand-program-pass-with-paths-and-pools
+          (tc-global-shared-view load-state)
+          (tc-global-shared-view program)
+          (tc-global-shared-view paths)
           (ast.ast-place-shared-view pools)
-          (tc-macro-walk-field
-            (tc-job-state-macro-state job-state)
-            macro-expand-stdlib-tlci-route-active)))
-      (tc-stdlib-comptime-macro-surface-ok-reset!
-        (tc-job-state-macro-state job-state))
-      (tc-macro-identity-reset-for-state! (tc-job-state-macro-state job-state))
-      (macro-generated-module-memo-reset! (tc-job-state-macro-state job-state))
-      (tc-macro-abstract-proof-reset-for-state!
-        (tc-job-state-macro-state job-state))
-      (macro-generated-decls-memo-reset! (tc-job-state-macro-state job-state))
-      ;; Reset the CTFE base-env cache once per program (plan P2). The pass
-      ;; rebuilds it via macro-expand-ctfe-env-build-once!; it is then reused by
-      ;; every in-pass splice rebuild and by the downstream typecheck/lower
-      ;; comptime, never rebuilt per splice. This is the "build the CTFE-env
-      ;; once, after expansion" boundary. The typecheck entry wraps that boundary
-      ;; in macro-expand-then-build-envs-with-load-state.
-      (compiler-typecheck-ctfe-env-cache-clear!
-        (tc-job-state-macro-state job-state))
-      ;; Reset the live symbols/registries cache once per program (plan P2): the
-      ;; pass rebuilds them and in-pass splice rebuilds reuse or refresh them.
-      (macro-live-symbols-reset! (tc-job-state-macro-state job-state))
-      ;; Reset the hoisted whole-program prescans: computed at
-      ;; pass setup and refreshed only when a generated file import loads new
-      ;; declarations mid-walk.
-      (macro-live-prescan-reset! (tc-job-state-macro-state job-state))
-      (let
-        [macro-result : ResultMacroExpand
-          (macro-expand-program-pass-with-paths-and-pools
-            (tc-global-shared-view load-state)
-            (tc-global-shared-view program)
-            (tc-global-shared-view paths)
-            (ast.ast-place-shared-view pools)
-            (tc-global-shared-view source-names)
-            (tc-global-shared-view job-state)
-            (tc-global-shared-view stdlib-roots)
-            (tc-global-shared-view cfgs))]
-        (begin
-          ;; Publish all legacy macro mutations before inspecting Ok or Err.
-          (ast.ast-node-pool-context-capture-active!
-            (ast.ast-place-shared-view pools))
-          (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
-          (match macro-result
-            [(ResultMacroExpand.Ok expanded expanded-paths)
-              (begin
-                (cfg
-                  embedded-stdlib-tlci
-                  (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-                (cfg
-                  (all embedded-stdlib-tlci tlci-native-route-stress)
-                  (compiler-tc-tlci-native-stress-pass-finish!
-                    (ast.ast-place-shared-view pools)
-                    0))
-                (let
-                  [_profile-owners : unit
-                    (macro-expand-allocation-profile-snapshot!
+          (tc-global-shared-view source-names)
+          (tc-global-shared-view job-state)
+          (tc-global-shared-view stdlib-roots)
+          (tc-global-shared-view cfgs))]
+      (begin
+        ;; Publish all legacy macro mutations before inspecting Ok or Err.
+        (ast.ast-node-pool-context-capture-active!
+          (ast.ast-place-shared-view pools))
+        (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
+        (match macro-result
+          [(ResultMacroExpand.Ok expanded expanded-paths)
+            (begin
+              (cfg
+                embedded-stdlib-tlci
+                (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+              (cfg
+                (all embedded-stdlib-tlci tlci-native-route-stress)
+                (compiler-tc-tlci-native-stress-pass-finish!
+                  (ast.ast-place-shared-view pools)
+                  0))
+              (let
+                [_profile-owners : unit
+                  (macro-expand-allocation-profile-snapshot!
+                    (tc-job-state-macro-state job-state)
+                    0)]
+                [_release-scratch : unit
+                  (begin
+                    (macro-expand-scratch-release!
+                      (tc-job-state-macro-state job-state))
+                    (tc-job-state-reset-derived-caches! job-state))]
+                (if (spec.compiler-specialize-needed-with-pools
+                  (tc-global-shared-view expanded)
+                  (ast.ast-place-shared-view pools))
+                  (begin
+                    (macro-expand-program-structural-change-note!
                       (tc-job-state-macro-state job-state)
-                      0)]
-                  [_release-scratch : unit
-                    (begin
-                      (macro-expand-scratch-release!
-                        (tc-job-state-macro-state job-state))
-                      (tc-job-state-reset-derived-caches! job-state))]
-                  (if (spec.compiler-specialize-needed-with-pools
-                    (tc-global-shared-view expanded)
-                    (ast.ast-place-shared-view pools))
-                    (begin
-                      (macro-expand-program-structural-change-note!
-                        (tc-job-state-macro-state job-state)
-                        8)
-                      (let
-                        [owner : spec.SpecOwnerContext
-                          (spec.spec-owner-context-new
-                            (ast.ast-place-shared-view pools)
-                            (tc-global-shared-view intern-state))]
-                        [normalized-result : spec.ResultGenProgramWithPaths
-                          (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
-                            (tc-global-shared-view expanded)
+                      8)
+                    (let
+                      [owner : spec.SpecOwnerContext
+                        (spec.spec-owner-context-new
+                          (ast.ast-place-shared-view pools)
+                          (tc-global-shared-view intern-state))]
+                      [normalized-result : spec.ResultGenProgramWithPaths
+                        (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+                          (tc-global-shared-view expanded)
+                          (tc-global-shared-view expanded-paths)
+                          (tc-decl-path-list-last
                             (tc-global-shared-view expanded-paths)
-                            (tc-decl-path-list-last
-                              (tc-global-shared-view expanded-paths)
-                              "")
-                            owner)]
-                        (begin
-                          ;; Explicit normalization mutates owner cells directly;
-                          ;; publish them before matching either result.
-                          (ast.ast-node-pool-context-install!
-                            (ast.ast-place-shared-view pools))
-                          (ci.intern-compat-state-install!
-                            (tc-global-shared-view intern-state))
-                          (match normalized-result
-                            [(spec.ResultGenProgramWithPaths.Ok
-                                normalized
-                                normalized-paths)
-                              (ResultMacroExpand.Ok normalized normalized-paths)]
-                            [(spec.ResultGenProgramWithPaths.Err diag)
-                              (ResultMacroExpand.Err diag)]))))
-                    (ResultMacroExpand.Ok expanded expanded-paths))))]
-            [(ResultMacroExpand.Err diag)
-              (begin
-                (cfg
-                  embedded-stdlib-tlci
-                  (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-                (cfg
-                  (all embedded-stdlib-tlci tlci-native-route-stress)
-                  (compiler-tc-tlci-native-stress-pass-finish!
-                    (ast.ast-place-shared-view pools)
-                    1))
-                (macro-expand-allocation-profile-snapshot!
-                  (tc-job-state-macro-state job-state)
-                  0)
-                (macro-expand-scratch-release!
-                  (tc-job-state-macro-state job-state))
-                (tc-job-state-reset-derived-caches! job-state)
-                (ResultMacroExpand.Err diag))]))))))
+                            "")
+                          owner)]
+                      (begin
+                        ;; Explicit normalization mutates owner cells directly;
+                        ;; publish them before matching either result.
+                        (ast.ast-node-pool-context-install!
+                          (ast.ast-place-shared-view pools))
+                        (ci.intern-compat-state-install!
+                          (tc-global-shared-view intern-state))
+                        (match normalized-result
+                          [(spec.ResultGenProgramWithPaths.Ok
+                              normalized
+                              normalized-paths)
+                            (ResultMacroExpand.Ok normalized normalized-paths)]
+                          [(spec.ResultGenProgramWithPaths.Err diag)
+                            (ResultMacroExpand.Err diag)]))))
+                  (ResultMacroExpand.Ok expanded expanded-paths))))]
+          [(ResultMacroExpand.Err diag)
+            (begin
+              (cfg
+                embedded-stdlib-tlci
+                (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+              (cfg
+                (all embedded-stdlib-tlci tlci-native-route-stress)
+                (compiler-tc-tlci-native-stress-pass-finish!
+                  (ast.ast-place-shared-view pools)
+                  1))
+              (macro-expand-allocation-profile-snapshot!
+                (tc-job-state-macro-state job-state)
+                0)
+              (macro-expand-scratch-release!
+                (tc-job-state-macro-state job-state))
+              (tc-job-state-reset-derived-caches! job-state)
+              (ResultMacroExpand.Err diag))]))))))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
   [load-state : cload.CompilerLoadSessionState]
@@ -121728,7 +121748,7 @@
               (cfg
                 compile-profile
                 (compiler-tc-dependency-tlci-route-profile-finish
-                  (tc-context-macro-state ctx)))
+                  (tc-context-macro-state (tc-global-shared-view ctx))))
               (cfg compile-profile (compiler-tc-decl-profile-finish))
               (set!
                 result

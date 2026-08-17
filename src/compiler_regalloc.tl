@@ -1829,15 +1829,21 @@
 (define (compiler-reg-function-var-types-with-representations
   [func : ir.CompilerIrFunction]
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
-  (match func
+  (match (compiler-reg-global-shared-view func)
     [(ir.CompilerIrFunction.Function _ params _ vars blocks)
       (let
         [present : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [types : (__tl_dyn-array ast.AstType)
           (array.make-array ast.AstType vars)]
         (begin
-          (compiler-reg-param-types-array! params present types)
-          (compiler-reg-block-list-types-array! blocks present types)
+          (compiler-reg-param-types-array!
+            params
+            (compiler-reg-global-shared-view present)
+            (compiler-reg-global-shared-view types))
+          (compiler-reg-block-list-types-array!
+            blocks
+            (compiler-reg-global-shared-view present)
+            (compiler-reg-global-shared-view types))
           (CompilerRegVarTypes present types representations)))]))
 
 (define (compiler-reg-function-var-types [func : ir.CompilerIrFunction]) : CompilerRegVarTypes
@@ -5809,8 +5815,8 @@
     ;; groups occupy two ABI slots and keep the legacy stack home; genuinely
     ;; by-reference/address-taken params are excluded upstream by
     ;; base-ineligible (compiler-reg-param-pin-safe?).
-    (compiler-reg-register-eligible-type? ty)
-    (not (compiler-reg-float-type? ty))
+    (compiler-reg-register-eligible-type? (compiler-reg-global-shared-view ty))
+    (not (compiler-reg-float-type? (compiler-reg-global-shared-view ty)))
     (not
       (compiler-reg-type-register-group? type-segment-bases representations ty))))
 
@@ -5829,7 +5835,7 @@
   [representations : ir.CompilerIrRepresentationIndex]
   [ty : ast.AstType]) : bool
   (and
-    (compiler-reg-register-eligible-type? ty)
+    (compiler-reg-register-eligible-type? (compiler-reg-global-shared-view ty))
     (not
       (compiler-reg-type-register-group? type-segment-bases representations ty))))
 
@@ -6101,8 +6107,8 @@
             [is-group : bool
               (compiler-reg-type-register-group?
                 type-segment-bases
-                representations
-                ty)]
+                (compiler-reg-global-shared-view representations)
+                (compiler-reg-global-shared-view ty))]
             [next-int : i64
               (if is-float
                 int-idx
@@ -6122,8 +6128,8 @@
                   (compiler-reg-param-float-reg target-abi float-idx position)
                   (if (compiler-reg-integer-param-type?
                     type-segment-bases
-                    representations
-                    ty)
+                    (compiler-reg-global-shared-view representations)
+                    (compiler-reg-global-shared-view ty))
                     (compiler-reg-param-int-reg target-abi int-idx position)
                     CompilerRegMaybeId.No))
                 CompilerRegMaybeId.No)]
@@ -6202,8 +6208,8 @@
                 ;; call args, ...) are already in both sets and stay excluded.
                 (if (compiler-reg-param-greedy-eligible?
                   type-segment-bases
-                  representations
-                  ty)
+                  (compiler-reg-global-shared-view representations)
+                  (compiler-reg-global-shared-view ty))
                   (compiler-reg-param-assign-walk
                     type-segment-bases
                     representations
@@ -6642,10 +6648,13 @@
   [types : CompilerRegVarTypes]) : bool
   (match (compiler-reg-global-shared-view value)
     [(ir.CompilerIrValue.Var id)
-      (match (compiler-reg-var-types-lookup types id)
+      (match (compiler-reg-var-types-lookup
+        (compiler-reg-global-shared-view types)
+        id)
         [(CompilerRegMaybeType.Some ty)
           (and
-            (not (compiler-reg-float-type? ty))
+            (not
+              (compiler-reg-float-type? (compiler-reg-global-shared-view ty)))
             (not
               (compiler-reg-type-register-group?
                 type-segment-bases
@@ -6724,7 +6733,9 @@
   [types : CompilerRegVarTypes]) : bool
   (match (compiler-reg-global-shared-view value)
     [(ir.CompilerIrValue.Var id)
-      (match (compiler-reg-var-types-lookup types id)
+      (match (compiler-reg-var-types-lookup
+        (compiler-reg-global-shared-view types)
+        id)
         [(CompilerRegMaybeType.Some ty)
           (compiler-reg-float-type? (compiler-reg-global-shared-view ty))]
         [(CompilerRegMaybeType.No) false])]
@@ -6737,7 +6748,9 @@
   [types : CompilerRegVarTypes]) : bool
   (match (compiler-reg-global-shared-view value)
     [(ir.CompilerIrValue.Var id)
-      (match (compiler-reg-var-types-lookup types id)
+      (match (compiler-reg-var-types-lookup
+        (compiler-reg-global-shared-view types)
+        id)
         [(CompilerRegMaybeType.Some ty)
           (compiler-reg-type-register-group?
             type-segment-bases
@@ -19560,8 +19573,8 @@
   [representations : ir.CompilerIrRepresentationIndex]
   [ty : ast.AstType]) : bool
   (and
-    (compiler-reg-register-eligible-type? ty)
-    (not (compiler-reg-float-type? ty))
+    (compiler-reg-register-eligible-type? (compiler-reg-global-shared-view ty))
+    (not (compiler-reg-float-type? (compiler-reg-global-shared-view ty)))
     (not
       (compiler-reg-type-register-group? type-segment-bases representations ty))))
 
@@ -19602,8 +19615,8 @@
               [(CompilerRegMaybeType.Some ty)
                 (if (compiler-reg-cold-call-protectable-type?
                   type-segment-bases
-                  type-info.representations
-                  ty)
+                  (compiler-reg-global-shared-view type-info.representations)
+                  (compiler-reg-global-shared-view ty))
                   (begin
                     (if (< count (array-length selected))
                       (set! (array-ref selected count) v)
@@ -19693,7 +19706,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegColdCallRewrite
-  (match func
+  (match (compiler-reg-global-shared-view func)
     [(ir.CompilerIrFunction.Function name params ret-ty vars blocks)
       (let
         [seq : ir.CompilerIrBlockSeq
@@ -19715,7 +19728,7 @@
               (let
                 [type-info : CompilerRegVarTypes
                   (compiler-reg-function-var-types-with-representations
-                    func
+                    (compiler-reg-global-shared-view func)
                     representations)]
                 [liveness
                   : live.CompilerFunctionLiveness
@@ -24090,7 +24103,9 @@
   [type-segment-bases : i64]
   [types : CompilerRegVarTypes]
   [var : i64]) : bool
-  (match (compiler-reg-var-types-lookup types var)
+  (match (compiler-reg-var-types-lookup
+    (compiler-reg-global-shared-view types)
+    var)
     [(CompilerRegMaybeType.Some ty)
       (compiler-reg-type-register-group-has-sse?
         type-segment-bases
@@ -24119,8 +24134,8 @@
             unit
             (if (compiler-reg-type-register-group?
               type-segment-bases
-              types.representations
-              (array-ref items index))
+              (compiler-reg-global-shared-view types.representations)
+              (compiler-reg-global-array-element-shared-view items index))
               (set! out (live.compiler-live-set-insert out index))
               unit))
           (set! index (+ index 1))))
@@ -29804,11 +29819,13 @@
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
   (let
     [liveness-handle : CompilerRegLivenessHandle
-      (compiler-reg-liveness-handle-make func false)]
+      (compiler-reg-liveness-handle-make
+        (compiler-reg-global-shared-view func)
+        false)]
     [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [type-info : CompilerRegVarTypes
       (compiler-reg-function-var-types-with-representations
-        func
+        (compiler-reg-global-shared-view func)
         representations)]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals
@@ -29868,11 +29885,13 @@
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
   (let
     [liveness-handle : CompilerRegLivenessHandle
-      (compiler-reg-liveness-handle-make func false)]
+      (compiler-reg-liveness-handle-make
+        (compiler-reg-global-shared-view func)
+        false)]
     [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [type-info : CompilerRegVarTypes
       (compiler-reg-function-var-types-with-representations
-        func
+        (compiler-reg-global-shared-view func)
         representations)]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals
@@ -32392,7 +32411,11 @@
     [present : (__tl_dyn-array i64) (array.make-array i64 vars)]
     [items : (__tl_dyn-array ast.AstType) (array.make-array ast.AstType vars)]
     (begin
-      (compiler-reg-color-scatter-types remap present items types)
+      (compiler-reg-color-scatter-types
+        remap
+        (compiler-reg-global-shared-view present)
+        (compiler-reg-global-shared-view items)
+        (compiler-reg-global-shared-view types))
       (CompilerRegVarTypes present items types.representations))))
 
 ;; Spilled scalars are dropped: the id remap re-homes them, so emission's
@@ -36043,7 +36066,9 @@
   [type-segment-bases : i64]
   [types : CompilerRegVarTypes]
   [var : i64]) : bool
-  (match (compiler-reg-var-types-lookup types var)
+  (match (compiler-reg-var-types-lookup
+    (compiler-reg-global-shared-view types)
+    var)
     [(CompilerRegMaybeType.Some ty)
       (compiler-reg-type-register-group?
         type-segment-bases
@@ -36069,9 +36094,12 @@
   (or
     (compiler-reg-type-register-group?
       type-segment-bases
-      types.representations
+      (compiler-reg-global-shared-view types.representations)
       ty)
-    (compiler-reg-scratch-var-group? type-segment-bases types dst)
+    (compiler-reg-scratch-var-group?
+      type-segment-bases
+      (compiler-reg-global-shared-view types)
+      dst)
     (compiler-reg-scratch-value-group? type-segment-bases types src)))
 
 (define (compiler-reg-scratch-var-group-word-sse?
@@ -36079,16 +36107,18 @@
   [types : CompilerRegVarTypes]
   [var : i64]
   [word : i64]) : bool
-  (match (compiler-reg-var-types-lookup types var)
+  (match (compiler-reg-var-types-lookup
+    (compiler-reg-global-shared-view types)
+    var)
     [(CompilerRegMaybeType.Some ty)
       (and
         (compiler-reg-type-register-group?
           type-segment-bases
-          types.representations
-          ty)
+          (compiler-reg-global-shared-view types.representations)
+          (compiler-reg-global-shared-view ty))
         (compiler-reg-type-register-group-word-sse?
           type-segment-bases
-          types.representations
+          (compiler-reg-global-shared-view types.representations)
           ty
           word))]
     [(CompilerRegMaybeType.No) false]))
@@ -36102,14 +36132,17 @@
   [word : i64]) : bool
   (if (compiler-reg-type-register-group?
     type-segment-bases
-    types.representations
-    ty)
+    (compiler-reg-global-shared-view types.representations)
+    (compiler-reg-global-shared-view ty))
     (compiler-reg-type-register-group-word-sse?
       type-segment-bases
-      types.representations
+      (compiler-reg-global-shared-view types.representations)
       ty
       word)
-    (if (compiler-reg-scratch-var-group? type-segment-bases types dst)
+    (if (compiler-reg-scratch-var-group?
+      type-segment-bases
+      (compiler-reg-global-shared-view types)
+      dst)
       (compiler-reg-scratch-var-group-word-sse?
         type-segment-bases
         (compiler-reg-global-shared-view types)
@@ -39438,6 +39471,18 @@
     [(ir.CompilerIrValue.I64 _) true]
     [(ir.CompilerIrValue.Bool _) true]
     [(ir.CompilerIrValue.Char _) true]
+    [_ false]))
+
+(define (compiler-reg-early-scratch-target? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.BinOp _ op _ rhs ty)
+      (and
+        (not (compiler-reg-float-type? (compiler-reg-global-shared-view ty)))
+        (match op
+          [(ir.CompilerIrBinOp.SafeDiv) true]
+          [(ir.CompilerIrBinOp.SafeMod) true]
+          [_ false])
+        (compiler-reg-early-scratch-literal? rhs))]
     [_ false]))
 
 (define (compiler-reg-early-scratch-slot-count [instr : ir.CompilerIrInstr]) : i64

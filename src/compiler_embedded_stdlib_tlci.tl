@@ -239,14 +239,16 @@
   (if (= (compiler-embedded-stdlib-tlci-length) 0)
     (CompilerEmbeddedStdlibTlciSurface.Unavailable
       "embedded stdlib tlci is unavailable in the seed/test build")
-    (match (tlci.tlci-parse-image (compiler-embedded-stdlib-tlci-copy))
-      [(tlci.ResultTlciImage.Err message)
-        (CompilerEmbeddedStdlibTlciSurface.Unavailable message)]
-      [(tlci.ResultTlciImage.Ok image)
-        (CompilerEmbeddedStdlibTlciSurface.Ok
-          image.compiler-build-hash
-          (payload.embedded-stdlib-tlci-source-hash-shared-view)
-          image.rodata)])))
+    (let
+      [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
+      (match (tlci.tlci-parse-image bytes)
+        [(tlci.ResultTlciImage.Err message)
+          (CompilerEmbeddedStdlibTlciSurface.Unavailable message)]
+        [(tlci.ResultTlciImage.Ok image)
+          (CompilerEmbeddedStdlibTlciSurface.Ok
+            image.compiler-build-hash
+            (payload.embedded-stdlib-tlci-source-hash-shared-view)
+            image.rodata)]))))
 
 (define (compiler-embedded-stdlib-tlci-host-table) : tlci.TlciHostCallbackTable
   (compiler-comptime-host-table))
@@ -269,33 +271,38 @@
           ;; to be current on the first embedded-stdlib macro call: this image
           ;; is retained for the rest of the pass and dispatched from
           ;; declarations that outlive any macro-walk generation.
-          (match (loader.tlci-loader-load-from-bytes-with-host
-            (compiler-embedded-stdlib-tlci-session-arena)
-            (compiler-embedded-stdlib-tlci-copy)
-            (compiler-comptime-host-table))
-            [(loader.ResultTlciLoadedImage.Err message)
-              (begin
-                (set!
-                  (array-ref compiler-embedded-stdlib-tlci-session-state 0)
-                  -1)
-                (set!
-                  (array-ref compiler-embedded-stdlib-tlci-session-error 0)
-                  (compiler-embedded-stdlib-tlci-session-own-text message))
-                false)]
-            [(loader.ResultTlciLoadedImage.Ok loaded)
-              (begin
-                (set!
-                  (array-ref compiler-embedded-stdlib-tlci-session-image 0)
-                  loaded)
-                (set!
-                  (array-ref compiler-embedded-stdlib-tlci-session-state 0)
-                  1)
-                (cfg
-                  tlci-native-route-stress
+          (let
+            [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
+            [host : tlci.TlciHostCallbackTable (compiler-comptime-host-table)]
+            (match (loader.tlci-loader-load-from-bytes-with-host
+              (compiler-embedded-stdlib-tlci-session-arena)
+              bytes
+              host)
+              [(loader.ResultTlciLoadedImage.Err message)
+                (begin
                   (set!
-                    compiler-embedded-stdlib-tlci-stress-image-generations
-                    (+ compiler-embedded-stdlib-tlci-stress-image-generations 1)))
-                true)]))])))
+                    (array-ref compiler-embedded-stdlib-tlci-session-state 0)
+                    -1)
+                  (set!
+                    (array-ref compiler-embedded-stdlib-tlci-session-error 0)
+                    (compiler-embedded-stdlib-tlci-session-own-text message))
+                  false)]
+              [(loader.ResultTlciLoadedImage.Ok loaded)
+                (begin
+                  (set!
+                    (array-ref compiler-embedded-stdlib-tlci-session-image 0)
+                    loaded)
+                  (set!
+                    (array-ref compiler-embedded-stdlib-tlci-session-state 0)
+                    1)
+                  (cfg
+                    tlci-native-route-stress
+                    (set!
+                      compiler-embedded-stdlib-tlci-stress-image-generations
+                      (+
+                        compiler-embedded-stdlib-tlci-stress-image-generations
+                        1)))
+                  true)])))])))
 
 (define (compiler-embedded-stdlib-tlci-catalog-lookup [name : String]) : CompilerEmbeddedStdlibTlciLookup
   (if (compiler-embedded-stdlib-tlci-session-open!)
@@ -371,29 +378,33 @@
       "embedded stdlib tlci is unavailable in the seed/test build")
     ;; This image is released before this function returns, so the caller's
     ;; current arena already outlives it and is the honest owner.
-    (match (loader.tlci-loader-load-from-bytes-with-host
-      (arena.tl_arena_current)
-      (compiler-embedded-stdlib-tlci-copy)
-      (compiler-embedded-stdlib-tlci-host-table))
-      [(loader.ResultTlciLoadedImage.Err message)
-        (CompilerEmbeddedStdlibTlciValidation.Err message)]
-      [(loader.ResultTlciLoadedImage.Ok loaded)
-        (let
-          [count : i64 loaded.macro-entry-count]
-          [has-array-length : bool
-            (match (loader.tlci-loader-find-macro-entry
-              (& loaded)
-              "stdlib.array/length")
-              [(loader.ResultTlciMacroEntry.Ok _) true]
-              [(loader.ResultTlciMacroEntry.Err _) false])]
-          (match (loader.tlci-loader-release loaded)
-            [(loader.ResultTlciLoaderUnit.Err message)
-              (CompilerEmbeddedStdlibTlciValidation.Err message)]
-            [(loader.ResultTlciLoaderUnit.Ok)
-              (if (and (> count 0) has-array-length)
-                (CompilerEmbeddedStdlibTlciValidation.Ok count)
-                (CompilerEmbeddedStdlibTlciValidation.Err
-                  "embedded stdlib tlci is missing its macro catalog"))]))])))
+    (let
+      [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
+      [host : tlci.TlciHostCallbackTable
+        (compiler-embedded-stdlib-tlci-host-table)]
+      (match (loader.tlci-loader-load-from-bytes-with-host
+        (arena.tl_arena_current)
+        bytes
+        host)
+        [(loader.ResultTlciLoadedImage.Err message)
+          (CompilerEmbeddedStdlibTlciValidation.Err message)]
+        [(loader.ResultTlciLoadedImage.Ok loaded)
+          (let
+            [count : i64 loaded.macro-entry-count]
+            [has-array-length : bool
+              (match (loader.tlci-loader-find-macro-entry
+                (& loaded)
+                "stdlib.array/length")
+                [(loader.ResultTlciMacroEntry.Ok _) true]
+                [(loader.ResultTlciMacroEntry.Err _) false])]
+            (match (loader.tlci-loader-release loaded)
+              [(loader.ResultTlciLoaderUnit.Err message)
+                (CompilerEmbeddedStdlibTlciValidation.Err message)]
+              [(loader.ResultTlciLoaderUnit.Ok)
+                (if (and (> count 0) has-array-length)
+                  (CompilerEmbeddedStdlibTlciValidation.Ok count)
+                  (CompilerEmbeddedStdlibTlciValidation.Err
+                    "embedded stdlib tlci is missing its macro catalog"))]))]))))
 
 ;; --- compiler-owned native-comptime host session (refs #5212) -----------------
 ;;
@@ -507,7 +518,7 @@
 ;; context; its explicit arguments begin with this cookie.
 (define (compiler-comptime-host-session-open-with-macro-state!
   [pools : ast.AstNodePoolContext]
-  [operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
+  [operands : (& operands (__tl_dyn-array ctfe_support.CompilerCtfeValue))]
   [operand-count : i64]
   [fuel : i64]
   [cookie : i64]
@@ -558,7 +569,7 @@
   [reflections : ctfe_support.CtfeReflectInfoList]) : unit
   (compiler-comptime-host-session-open-with-macro-state!
     pools
-    operands
+    (& operands)
     operand-count
     fuel
     cookie
@@ -566,8 +577,10 @@
     (ci.intern-source-name-session-capture-active-handle)
     (ctfe_support.compiler-ctfe-serial-macro-state)))
 
-(define (compiler-comptime-host-session-macro-state-value) : ctfe_support.CompilerCtfeMacroState
-  (array-ref compiler-comptime-host-session-macro-state 0))
+(defmacro (compiler-comptime-host-session-macro-state-value) : Expr
+  `(compiler-comptime-host-array-element-shared-view
+    compiler-comptime-host-session-macro-state
+    0))
 
 ;; Rebuild the lightweight CTFE adapter used by native callbacks with the
 ;; source-name capability of the transformer being evaluated. In particular,
@@ -1729,51 +1742,53 @@
   [name : String]
   [name-id : i64]
   [query-kind : i64]) : i64
-  (match (ctfe_support.ctfe-module-value-type-id-for-state
-    (compiler-comptime-host-session-macro-state-value)
-    module-id
-    name-id)
-    [(ctfe_support.CtfeMaybeModuleValueType.Some ty)
-      (begin
-        (set!
-          compiler-comptime-host-stack-len
-          (- compiler-comptime-host-stack-len 2))
-        (if (= query-kind 1)
-          (compiler-comptime-host-push!
-            (ctfe_support.CompilerCtfeValue.Type ty))
-          (if (= query-kind 2)
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-node-pool-context-expr-push
-                  (array-ref
-                    (compiler-comptime-host-global-shared-view
-                      compiler-comptime-host-pools)
-                    0)
-                  (ast.AstExpr.Var
-                    (if (string.eq module "")
-                      (ci.intern name)
-                      (ci.intern
-                        (str_cat.str-cat module (str_cat.str-cat "." name))))))
-                (ctfe_support.ctfe-untyped-expr-type)))
-            1)))]
-    [(ctfe_support.CtfeMaybeModuleValueType.None)
-      (if (= query-kind 0)
+  (let
+    [macro-state : ctfe_support.CompilerCtfeMacroState
+      (compiler-comptime-host-session-macro-state-value)]
+    (match (ctfe_support.ctfe-module-value-type-id-for-state
+      macro-state
+      module-id
+      name-id)
+      [(ctfe_support.CtfeMaybeModuleValueType.Some ty)
         (begin
           (set!
             compiler-comptime-host-stack-len
             (- compiler-comptime-host-stack-len 2))
-          0)
-        (begin
-          (set!
-            (array-ref compiler-comptime-host-diagnostic 0)
-            (if (= query-kind 1)
-              (ctfe_support.ctfe-module-value-missing-message module name)
-              (str_cat.str-cat
-                "module-value-expr: module "
-                module
-                " does not define value "
-                name)))
-          tlci.tlci-host-callback-status-diagnostic))]))
+          (if (= query-kind 1)
+            (compiler-comptime-host-push!
+              (ctfe_support.CompilerCtfeValue.Type ty))
+            (if (= query-kind 2)
+              (compiler-comptime-host-push!
+                (ctfe_support.CompilerCtfeValue.Expr
+                  (ast.ast-node-pool-context-expr-push
+                    (compiler-comptime-host-array-element-shared-view
+                      compiler-comptime-host-pools
+                      0)
+                    (ast.AstExpr.Var
+                      (if (string.eq module "")
+                        (ci.intern name)
+                        (ci.intern
+                          (str_cat.str-cat module (str_cat.str-cat "." name))))))
+                  (ctfe_support.ctfe-untyped-expr-type)))
+              1)))]
+      [(ctfe_support.CtfeMaybeModuleValueType.None)
+        (if (= query-kind 0)
+          (begin
+            (set!
+              compiler-comptime-host-stack-len
+              (- compiler-comptime-host-stack-len 2))
+            0)
+          (begin
+            (set!
+              (array-ref compiler-comptime-host-diagnostic 0)
+              (if (= query-kind 1)
+                (ctfe_support.ctfe-module-value-missing-message module name)
+                (str_cat.str-cat
+                  "module-value-expr: module "
+                  module
+                  " does not define value "
+                  name)))
+            tlci.tlci-host-callback-status-diagnostic))])))
 
 ;; `module-value?` is a data callback: 1/0 are the query result, while a
 ;; negative return is a malformed stack request.
@@ -1808,14 +1823,14 @@
               (match name-value
                 [(ctfe_support.CompilerCtfeValue.String name _)
                   (compiler-comptime-host-resolve-module-value!
-                    module
+                    (compiler-comptime-host-global-shared-view module)
                     (ci.intern module)
-                    name
+                    (compiler-comptime-host-global-shared-view name)
                     (ci.intern name)
                     0)]
                 [(ctfe_support.CompilerCtfeValue.Name name name-id)
                   (compiler-comptime-host-resolve-module-value!
-                    module
+                    (compiler-comptime-host-global-shared-view module)
                     (ci.intern module)
                     name
                     name-id
@@ -1827,7 +1842,7 @@
                   (compiler-comptime-host-resolve-module-value!
                     module
                     module-id
-                    name
+                    (compiler-comptime-host-global-shared-view name)
                     (ci.intern name)
                     0)]
                 [(ctfe_support.CompilerCtfeValue.Name name name-id)
@@ -1870,14 +1885,14 @@
                   (match name-value
                     [(ctfe_support.CompilerCtfeValue.String name _)
                       (compiler-comptime-host-resolve-module-value!
-                        module
+                        (compiler-comptime-host-global-shared-view module)
                         (ci.intern module)
-                        name
+                        (compiler-comptime-host-global-shared-view name)
                         (ci.intern name)
                         query-kind)]
                     [(ctfe_support.CompilerCtfeValue.Name name name-id)
                       (compiler-comptime-host-resolve-module-value!
-                        module
+                        (compiler-comptime-host-global-shared-view module)
                         (ci.intern module)
                         name
                         name-id
@@ -1889,7 +1904,7 @@
                       (compiler-comptime-host-resolve-module-value!
                         module
                         module-id
-                        name
+                        (compiler-comptime-host-global-shared-view name)
                         (ci.intern name)
                         query-kind)]
                     [(ctfe_support.CompilerCtfeValue.Name name name-id)
@@ -1943,14 +1958,12 @@
         -3
         (let
           [value-type-value : ctfe_support.CompilerCtfeValue
-            (array-ref
-              (compiler-comptime-host-global-shared-view
-                compiler-comptime-host-stack)
+            (compiler-comptime-host-array-element-shared-view
+              compiler-comptime-host-stack
               (- compiler-comptime-host-stack-len 1))]
           [signature-value : ctfe_support.CompilerCtfeValue
-            (array-ref
-              (compiler-comptime-host-global-shared-view
-                compiler-comptime-host-stack)
+            (compiler-comptime-host-array-element-shared-view
+              compiler-comptime-host-stack
               (- compiler-comptime-host-stack-len 2))]
           (match signature-value
             [(ctfe_support.CompilerCtfeValue.Type signature)
@@ -2203,14 +2216,12 @@
             tlci.tlci-host-callback-status-bad-request
             (let
               [value : ctfe_support.CompilerCtfeValue
-                (array-ref
-                  (compiler-comptime-host-global-shared-view
-                    compiler-comptime-host-stack)
+                (compiler-comptime-host-array-element-shared-view
+                  compiler-comptime-host-stack
                   (- compiler-comptime-host-stack-len 1))]
               [callee : ctfe_support.CompilerCtfeValue
-                (array-ref
-                  (compiler-comptime-host-global-shared-view
-                    compiler-comptime-host-stack)
+                (compiler-comptime-host-array-element-shared-view
+                  compiler-comptime-host-stack
                   (- compiler-comptime-host-stack-len 2))]
               [value-node : i64 (compiler-comptime-host-value-node value)]
               [callee-node : i64 (compiler-comptime-host-value-node callee)]
@@ -2218,9 +2229,8 @@
                 tlci.tlci-host-callback-status-bad-request
                 (let
                   [pools : ast.AstNodePoolContext
-                    (array-ref
-                      (compiler-comptime-host-global-shared-view
-                        compiler-comptime-host-pools)
+                    (compiler-comptime-host-array-element-shared-view
+                      compiler-comptime-host-pools
                       0)]
                   [node : i64
                     (ctfe_support.ctfe-expr-shared-call1-node-with-pools

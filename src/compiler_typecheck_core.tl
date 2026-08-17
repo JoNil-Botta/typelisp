@@ -100680,12 +100680,25 @@
   [arg : ast.AstExpr]) : ast.AstType
   (if (tc-type-eq resolved-expected (ast.AstType.Expr))
     (if capture-expr-types
-      (match (tc-expr ctx env arg)
-        [(ResultTcType.Ok actual)
-          (ctfe_support.ctfe-captured-expr-type-with-pools
-            (tc-context-pools ctx)
-            (tc-resolve-type ctx actual))]
-        [(ResultTcType.Err _) (ctfe_support.ctfe-untyped-expr-type)])
+      (begin
+        ;; Capturing the operand can append caller-origin expression wrappers
+        ;; through the owned context before speculative typechecking starts.
+        ;; Publish those nodes first, then retain any expression/type children
+        ;; appended by `tc-expr` before allocating the captured-type wrapper.
+        (tc-context-install-pools! ctx)
+        (match (tc-expr ctx env arg)
+          [(ResultTcType.Ok actual)
+            (begin
+              (tc-context-capture-active-pools! ctx)
+              (let
+                [captured : ast.AstType
+                  (ctfe_support.ctfe-captured-expr-type-with-pools
+                    (tc-context-pools ctx)
+                    (tc-resolve-type ctx actual))]
+                (begin
+                  (tc-context-install-pools! ctx)
+                  captured)))]
+          [(ResultTcType.Err _) (ctfe_support.ctfe-untyped-expr-type)]))
       (ctfe_support.ctfe-untyped-expr-type))
     resolved-expected))
 

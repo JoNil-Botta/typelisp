@@ -19077,6 +19077,16 @@
 (define (opt-licm-root-disjoint-store?
   [store-root : OptLicmRoot]
   [load-root : OptLicmRoot]) : bool
+  ;; `Fresh` roots come from distinct allocations performed by this function.
+  ;; Provenance deliberately stops at pointer loads from owning descriptors
+  ;; below, so a descriptor root can never hide an edge to another Fresh root.
+  ;; Checked-reference parameters do not carry the same guarantee yet: the
+  ;; transitional ownership model still lets a caller representation-copy an
+  ;; owning handle and form overlapping `&` and `&mut` arguments through the
+  ;; two handles. Keep Exclusive/Shared roots for same-root blocking and
+  ;; call-memory parameter attribution, but never use distinct parameter var
+  ;; ids as noalias evidence. #6215 may restore the stronger rule once affine
+  ;; by-value ownership is enforced and represented explicitly in IR.
   (match store-root
     [(OptLicmRoot.Fresh store-id)
       (match load-root
@@ -19087,8 +19097,8 @@
     [(OptLicmRoot.Exclusive store-id)
       (match load-root
         [(OptLicmRoot.Fresh load-id) (not (= store-id load-id))]
-        [(OptLicmRoot.Exclusive load-id) (not (= store-id load-id))]
-        [(OptLicmRoot.Shared load-id) (not (= store-id load-id))]
+        [(OptLicmRoot.Exclusive _) false]
+        [(OptLicmRoot.Shared _) false]
         [(OptLicmRoot.NoRoot) false])]
     [(OptLicmRoot.Shared _) false]
     [(OptLicmRoot.NoRoot) false]))
@@ -20012,25 +20022,24 @@
           [(ir.CompilerIrValue.Var ptr-var)
             (match (opt-licm-ptr-lookup invalid.ptrs ptr-var)
               [(OptLicmPtrKind.DataSlot object)
-                (opt-licm-store-state-bind-root
-                  (opt-licm-store-state-bind-ptr
-                    invalid
-                    dst
-                    (OptLicmPtrKind.DataBuffer object))
+                ;; The loaded buffer is reachable through `object`, but it may
+                ;; also have an independent Fresh root or be reachable through
+                ;; a compatibility-copied descriptor. Retain its structural
+                ;; DataBuffer class for header-vs-element summaries, but do not
+                ;; turn ownership reachability into a noalias root.
+                (opt-licm-store-state-bind-ptr
+                  invalid
                   dst
-                  (opt-licm-root-env-lookup invalid.roots object))]
+                  (OptLicmPtrKind.DataBuffer object))]
               [_
                 (if (opt-licm-array-header-var?
                   type-segment-bases
                   types
                   ptr-var)
-                  (opt-licm-store-state-bind-root
-                    (opt-licm-store-state-bind-ptr
-                      invalid
-                      dst
-                      (OptLicmPtrKind.DataBuffer ptr-var))
+                  (opt-licm-store-state-bind-ptr
+                    invalid
                     dst
-                    (opt-licm-root-env-lookup invalid.roots ptr-var))
+                    (OptLicmPtrKind.DataBuffer ptr-var))
                   invalid)])]
           [_ invalid])]
       [_ invalid])))

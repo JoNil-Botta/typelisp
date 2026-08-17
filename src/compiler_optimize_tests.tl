@@ -33830,8 +33830,9 @@
               (compiler_ir_types.CompilerIrBinOp.Div))
             1))
         10]
-      ;; The offset family uses the same guard, including its raised minimum
-      ;; seed (the fixture starts at 2 for i-2).
+      ;; The offset family (scale 1, offset -2) takes the scale-1 range guard:
+      ;; `bound <= length - kmax` plus the raised minimum seed `seed >= 2`, with
+      ;; no division anywhere in the guard (the fixture starts at 2 for i-2).
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function offset)))
@@ -33850,7 +33851,7 @@
             (opt-count-binop-op-blocks
               offset-out
               (compiler_ir_types.CompilerIrBinOp.Div))
-            1))
+            0))
         14]
       ;; Decreasing affine expressions are outside this monotone analysis.
       [(not
@@ -34665,7 +34666,7 @@
 ;; The quicksort-partition shape: a counted scan loop (body) whose body splits
 ;; into a swap path (then: store++) and a skip path (else) before merging back
 ;; into the incrementing latch (merge). `variant` mutates one detail each: 1
-;; makes the swap check's index underivable (store+1 used directly) -- which
+;; makes the swap check's index underivable (loaded from memory) -- which
 ;; PARTIALLY versions now (the counter check still derives, the swap check
 ;; stays in the fast clone) -- 2 puts a call in the swap block, 3 makes the
 ;; counter step +2 -- the call must leave the function untouched (its two
@@ -34903,17 +34904,17 @@
                     (compiler_ir_types.compiler-ir-label "merge"))
                   (compiler_ir_types.CompilerIrInstrList.Nil))))))))
     (if (= variant 1)
-      ;; The underivable-but-clean partial case: check store+1, defined before
-      ;; the check. The counter check in "body" still derives, so the loop
-      ;; partially versions and this check STAYS in the fast clone.
+      ;; The underivable-but-clean partial case: check an index LOADED from
+      ;; memory (data-dependent; `store+1` derives since bounded-phi+K
+      ;; derivation landed), defined before the check. The counter check in
+      ;; "body" still derives, so the loop partially versions and this check
+      ;; STAYS in the fast clone.
       (compiler_ir_types.compiler-ir-block
         (compiler_ir_types.compiler-ir-label "then")
         (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.BinOp
+          (compiler_ir_types.CompilerIrInstr.Load
             6
-            (compiler_ir_types.CompilerIrBinOp.Add)
-            (compiler_ir_types.CompilerIrValue.Var 4)
-            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ir_types.CompilerIrValue.Var 2)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.BoundsCheck
@@ -35133,8 +35134,8 @@
 ;; seven forwarders, the shape an `(and a b c)` body lowers to. `pad` sets
 ;; each forwarder's instruction count, so the same fixture drives both sides
 ;; of the instruction budget: pad 1 costs 19 cloned instructions and must
-;; version (block count is not the growth metric), pad 13 costs 103 and must
-;; not (that IS the growth metric).
+;; version (block count is not the growth metric), pad 22 costs 166 and must
+;; not (that IS the growth metric, 160).
 (define (opt-bce-mb-test-chain-blocks [pad : i64]) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (opt-bce-mb-test-jump-block
@@ -37161,13 +37162,13 @@
         (compiler_optimize.opt-bce-version-function
           (opt-bce-mb-test-function (opt-bce-mb-test-blocks 2))))]
     ;; The same nine-block chain the positive fixture versions, with each
-    ;; forwarder padded to fourteen instructions: 103 cloned instructions
-    ;; against a budget of 96, so the growth cap -- and nothing else --
+    ;; forwarder padded to twenty-three instructions: 166 cloned instructions
+    ;; against a budget of 160, so the growth cap -- and nothing else --
     ;; rejects it.
     [too-big : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-bce-version-function
-          (opt-bce-mb-test-chain-function 13)))]
+          (opt-bce-mb-test-chain-function 22)))]
     (cond
       ;; every rejection leaves the function untouched.
       [(not (= (compiler_ir_types.compiler-ir-block-list-count with-call) 6)) 1]
@@ -38206,7 +38207,7 @@
         22]
       [else 42])))
 
-;; Partial versioning: the swap check's store+1 index does not derive, but the
+;; Partial versioning: the swap check's loaded index does not derive, but the
 ;; body's counter check does -- the loop versions, the fast clone drops only
 ;; the counter check and KEEPS the swap check (remapped).
 (define (compiler-optimize-bce-version-mb-partial-self-test) : i64

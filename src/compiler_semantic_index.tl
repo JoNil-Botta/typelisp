@@ -2271,142 +2271,153 @@
       (* symbol.declaration-ordinal -7046029254386353131)
       (* (+ symbol.local-ordinal 2) 2654435761))))
 
-(define (compiler-semantic-canonical-map-slot
-  [slots : (__tl_dyn-array CompilerSemanticCanonicalBuildSlot)]
-  [capacity : i64]
-  [symbol : CompilerSemanticSymbolId]) : i64
-  (let
-    [cursor : i64
-      (bit-and (compiler-semantic-canonical-symbol-hash symbol) (- capacity 1))]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (let
-          [slot : CompilerSemanticCanonicalBuildSlot (array-ref slots cursor)]
-          (if (or
-            (not slot.occupied)
-            (compiler-semantic-symbol-id-eq? slot.symbol symbol))
-            (set! done true)
-            (set! cursor (bit-and (+ cursor 1) (- capacity 1))))))
-      cursor)))
-
-(define (compiler-semantic-canonical-build-add!
-  [slots : (__tl_dyn-array CompilerSemanticCanonicalBuildSlot)]
-  [capacity : i64]
-  [symbols : (__tl_dyn-array String)]
-  [canonical-len : i64]
-  [owner : i64]
-  [scratch : i64]
-  [record : CompilerSemanticRecord]) : i64
-  (let
-    [slot-index : i64
-      (compiler-semantic-canonical-map-slot slots capacity record.symbol)]
-    [slot : CompilerSemanticCanonicalBuildSlot (array-ref slots slot-index)]
-    (if slot.occupied
-      slot.canonical-index
-      (let
-        [parent-symbol : CompilerSemanticSymbolId
-          (CompilerSemanticSymbolId
-            record.symbol.module-id
-            record.symbol.declaration-ordinal
-            -1)]
-        [parent-slot-index : i64
-          (compiler-semantic-canonical-map-slot slots capacity parent-symbol)]
-        [parent-slot : CompilerSemanticCanonicalBuildSlot
-          (array-ref slots parent-slot-index)]
-        [_switch-to-scratch : unit
-          (unsafe
-            (arena.tl_arena_set scratch))]
-        [key : String
-          (if (and (>= record.symbol.local-ordinal 0) parent-slot.occupied)
-            (compiler-semantic-canonical-local-key
-              (array-ref symbols parent-slot.canonical-index)
-              record)
-            (compiler-semantic-canonical-top-key record))]
-        [_restore-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
-        [owned-key : String (string.copy (& key))]
-        (begin
-          (set! (array-ref symbols canonical-len) owned-key)
-          (set!
-            (array-ref slots slot-index)
-            (CompilerSemanticCanonicalBuildSlot
-              true
-              record.symbol
-              canonical-len))
-          canonical-len)))))
-
 (define (compiler-semantic-canonical-build
   [records : (__tl_dyn-array CompilerSemanticRecord)]
   [record-len : i64]) : CompilerSemanticCanonicalBuildResult
   (let
     [capacity : i64 (compiler-semantic-canonical-map-capacity record-len)]
-    ;; Hash slots and framed-key construction are scratch-only. Each completed
-    ;; key is copied once into the source-index owner before scratch teardown.
-    [owner : i64 (arena.tl_arena_current)]
-    [scratch : i64 (arena.tl_arena_make)]
-    [_switch-to-scratch : unit
-      (unsafe
-        (arena.tl_arena_set scratch))]
+    ;; Hash slots and framed-key construction are scratch-only. with-escape
+    ;; clones each completed key into the source-index owner before rewinding.
+    [scratch : arena.Arena (arena.make)]
     [slots : (__tl_dyn-array CompilerSemanticCanonicalBuildSlot)
-      (array.make-array CompilerSemanticCanonicalBuildSlot capacity)]
-    [_restore-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
+      (in-arena
+        scratch
+        (array.make-array CompilerSemanticCanonicalBuildSlot capacity))]
     [symbols : (__tl_dyn-array String) (array.make-array String record-len)]
     [canonical-len : i64 0]
     [record-index : i64 0]
+    [pass : i64 0]
     (begin
       ;; Definitions establish owner-derived keys before any use is assigned.
       ;; Top-level definitions precede their lexical definitions in the record
-      ;; stream, so locals can frame the already-owned declaration key.
-      (while (< record-index record-len)
-        (let
-          [record : CompilerSemanticRecord (array-ref records record-index)]
-          (begin
-            (match record.role
-              [(CompilerSemanticRecordRole.Definition)
-                (let
-                  [assigned : i64
-                    (compiler-semantic-canonical-build-add!
-                      slots
-                      capacity
-                      symbols
-                      canonical-len
-                      owner
-                      scratch
-                      record)]
-                  (if (= assigned canonical-len)
-                    (set! canonical-len (+ canonical-len 1))
-                    unit))]
-              [(CompilerSemanticRecordRole.Use) unit])
-            (set! record-index (+ record-index 1)))))
-      (set! record-index 0)
-      (while (< record-index record-len)
-        (let
-          [record : CompilerSemanticRecord (array-ref records record-index)]
-          [assigned : i64
-            (compiler-semantic-canonical-build-add!
-              slots
-              capacity
-              symbols
-              canonical-len
-              owner
-              scratch
-              record)]
-          (begin
-            (if (= assigned canonical-len)
-              (set! canonical-len (+ canonical-len 1))
-              unit)
-            (set! (array-ref records record-index).canonical-index assigned)
-            (set! record-index (+ record-index 1)))))
+      ;; stream, so locals can frame the already-owned declaration key. Keep
+      ;; the scratch-owned slot table in this function: passing it through an
+      ;; unannotated helper would erase the checker generation that guards it.
+      (while (< pass 2)
+        (begin
+          (set! record-index 0)
+          (while (< record-index record-len)
+            (let
+              [record : CompilerSemanticRecord (array-ref records record-index)]
+              [definition? : bool
+                (match record.role
+                  [(CompilerSemanticRecordRole.Definition) true]
+                  [(CompilerSemanticRecordRole.Use) false])]
+              (begin
+                (if (or (= pass 1) definition?)
+                  (let
+                    [slot-index : i64
+                      (bit-and
+                        (compiler-semantic-canonical-symbol-hash record.symbol)
+                        (- capacity 1))]
+                    [slot-found : bool false]
+                    [assigned : i64 -1]
+                    (begin
+                      (while (not slot-found)
+                        (let
+                          [occupied : bool
+                            (array-ref slots slot-index).occupied]
+                          [module-id : i64
+                            (array-ref slots slot-index).symbol.module-id]
+                          [declaration-ordinal : i64
+                            (array-ref slots slot-index).symbol.declaration-ordinal]
+                          [local-ordinal : i64
+                            (array-ref slots slot-index).symbol.local-ordinal]
+                          (if (or
+                            (not occupied)
+                            (and
+                              (= module-id record.symbol.module-id)
+                              (=
+                                declaration-ordinal
+                                record.symbol.declaration-ordinal)
+                              (= local-ordinal record.symbol.local-ordinal)))
+                            (set! slot-found true)
+                            (set!
+                              slot-index
+                              (bit-and (+ slot-index 1) (- capacity 1))))))
+                      (if (array-ref slots slot-index).occupied
+                        (set!
+                          assigned
+                          (array-ref slots slot-index).canonical-index)
+                        (let
+                          [parent-symbol : CompilerSemanticSymbolId
+                            (CompilerSemanticSymbolId
+                              record.symbol.module-id
+                              record.symbol.declaration-ordinal
+                              -1)]
+                          [parent-slot-index : i64
+                            (bit-and
+                              (compiler-semantic-canonical-symbol-hash
+                                parent-symbol)
+                              (- capacity 1))]
+                          [parent-slot-found : bool false]
+                          (begin
+                            (while (not parent-slot-found)
+                              (let
+                                [occupied : bool
+                                  (array-ref slots parent-slot-index).occupied]
+                                [module-id : i64
+                                  (array-ref slots parent-slot-index).symbol.module-id]
+                                [declaration-ordinal : i64
+                                  (array-ref slots parent-slot-index).symbol.declaration-ordinal]
+                                [local-ordinal : i64
+                                  (array-ref slots parent-slot-index).symbol.local-ordinal]
+                                (if (or
+                                  (not occupied)
+                                  (and
+                                    (= module-id parent-symbol.module-id)
+                                    (=
+                                      declaration-ordinal
+                                      parent-symbol.declaration-ordinal)
+                                    (=
+                                      local-ordinal
+                                      parent-symbol.local-ordinal)))
+                                  (set! parent-slot-found true)
+                                  (set!
+                                    parent-slot-index
+                                    (bit-and
+                                      (+ parent-slot-index 1)
+                                      (- capacity 1))))))
+                            (let
+                              [parent-occupied : bool
+                                (array-ref slots parent-slot-index).occupied]
+                              [parent-canonical-index : i64
+                                (array-ref slots parent-slot-index).canonical-index]
+                              [owned-key : String
+                                (with-escape
+                                  scratch
+                                  (if (and
+                                    (>= record.symbol.local-ordinal 0)
+                                    parent-occupied)
+                                    (compiler-semantic-canonical-local-key
+                                      (array-ref symbols parent-canonical-index)
+                                      record)
+                                    (compiler-semantic-canonical-top-key record)))]
+                              (begin
+                                (set! assigned canonical-len)
+                                (set!
+                                  (array-ref symbols canonical-len)
+                                  owned-key)
+                                (set!
+                                  (array-ref slots slot-index)
+                                  (CompilerSemanticCanonicalBuildSlot
+                                    true
+                                    record.symbol
+                                    canonical-len))
+                                (set! canonical-len (+ canonical-len 1)))))))
+                      (if (= pass 1)
+                        (set!
+                          (array-ref records record-index).canonical-index
+                          assigned)
+                        unit)))
+                  unit)
+                (set! record-index (+ record-index 1))))))
+        (set! pass (+ pass 1)))
       (let
         [result : CompilerSemanticCanonicalBuildResult
           (CompilerSemanticCanonicalBuildResult symbols canonical-len)]
         (begin
-          (unsafe
-            (arena.tl_arena_destroy scratch))
+          (arena.destroy-safe! scratch)
           result)))))
 
 (define (compiler-semantic-binding-lookup

@@ -7342,7 +7342,8 @@ in documentation passes.
   comment blocks, a deterministic multi-root workspace source/declaration index
   with open-document overlays and incremental file/root updates, a bounded
   owned semantic cache for unopened workspace sources with canonical
-  cross-snapshot occurrence queries and explicit completeness, and TypeLisp
+  cross-snapshot occurrence queries and explicit completeness, standard
+  project-wide semantic references with declaration filtering, and TypeLisp
   structural-edit/query extensions,
   structured source locations for source-authored semantic diagnostics, plus
   a REPL that evaluates through the real compile/link/run pipeline.
@@ -7361,7 +7362,7 @@ in documentation passes.
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
 | Compiled comptime execution from embedded/package `tlci` images | Partially implemented: published Linux and Windows compilers use trusted embedded-stdlib and dependency-package images. Exact embedded or byte-identical source provenance admits a stdlib module to its native registration catalog; dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Two-host differential, sustained reset/remap stress, bootstrap fixpoint, and focused package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable; broad dependency graph and stale-rebuild verification remain staged. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
-| Richer LSP/IDE features | The immutable workspace source/declaration index and overlay/event plumbing are implemented. Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, and references/rename through standard methods remain pending. |
+| Richer LSP/IDE features | The immutable workspace source/declaration index, overlay/event plumbing, and standard semantic workspace references are implemented. Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, and rename through the standard method remain pending. |
 
 ---
 

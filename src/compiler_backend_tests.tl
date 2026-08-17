@@ -16922,8 +16922,9 @@
 ;; is how this first surfaced -- as a stage2 assembly failure once the inliner
 ;; formed such a table in src/main.tl.
 ;;
-;; Base -1 with cases -1 and 0 puts both spellings in one emission: the negative
-;; key must appear as `m1` and the positive key must still appear as `0`.
+;; Base -1 with cases -1, 0, and 1 puts every relevant spelling in one
+;; emission: the negative key must appear as `m1`, zero as `0`, and the
+;; same-magnitude positive key as `1` so the signed mapping stays injective.
 (define (compiler-backend-switch-negative-case-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
@@ -16946,7 +16947,10 @@
                   (compiler_ir_types.compiler-ir-switch-case-cons
                     0
                     (compiler_ir_types.compiler-ir-label "join")
-                    compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+                    (compiler_ir_types.compiler-ir-switch-case-cons
+                      1
+                      (compiler_ir_types.compiler-ir-label "join")
+                      compiler_ir_types.CompilerIrSwitchCaseList.Nil)))
                 (compiler_ir_types.compiler-ir-label "join"))
               compiler_ir_types.CompilerIrInstrList.Nil))
           (compiler_ir_types.compiler-ir-block-cons
@@ -16991,6 +16995,13 @@
         (compiler_backend.compiler-backend-string-contains?
           asm
           ".Lf0_entry_switch_case_0:\n")
+        ;; Equal-magnitude signed keys remain distinct.
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    .quad .Lf0_entry_switch_case_1\n")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          ".Lf0_entry_switch_case_1:\n")
         ;; No `-` reaches a symbol name anywhere in the emission.
         (not
           (compiler_backend.compiler-backend-string-contains?

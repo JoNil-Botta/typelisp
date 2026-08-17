@@ -10173,15 +10173,17 @@
 (define (compiler-lower-masked-if-narrow-shift-source) : String
   "(define (fill
   [xs : (Array i16)]
+  [counts : (Array i16)]
   [out : (Array i16)]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (let
       [x : i16 (array-ref xs i)]
+      [count : i16 (array-ref counts i)]
       (set! (array-ref out i) (if (< x 0)
-          (shr x 1)
-          (shl x 1))))))")
+          (shr x count)
+          (shl x count))))))")
 
 (define (compiler-lower-avx512-masked-if-nested-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
@@ -10499,16 +10501,68 @@
       (io.panic
         (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))
 
-(define (compiler-lower-masked-if-narrow-shift-diagnostic-ok?
-  [mode : compiler_lower.CompilerLowerMode]
-  [mode-name : String]) : bool
-  (compiler-lower-mode-error-ok?
+(define (compiler-lower-masked-if-narrow-shift-shape-ok?
+  [mode : compiler_lower.CompilerLowerMode]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
     (compiler-lower-masked-if-narrow-shift-source)
-    mode
-    (str_cat.str-cat
-      "lower: SPMD masked if does not support masked shift 'shr' for lane type i16 in "
-      mode-name
-      " backend mode; supported lane types are i8, u8, i32, u32, i64, and u64")))
+    mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (let
+            [lanes : i64
+              (compiler_lower.lower-simd-lanes-for-elem
+                mode
+                (compiler_ast_types.AstType.I16))]
+            [shl-count : i64
+              (lower-test-function-vector-binop-op-count
+                functions
+                "fill"
+                (compiler_ir_types.CompilerIrBinOp.Shl
+                  (compiler_ast_types.AstType.I16)))]
+            [shr-count : i64
+              (lower-test-function-vector-binop-op-count
+                functions
+                "fill"
+                (compiler_ir_types.CompilerIrBinOp.Shr
+                  (compiler_ast_types.AstType.I16)))]
+            [abort-count : i64
+              (lower-test-functions-call-count functions "tl_shift_abort")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                lanes
+                (compiler_ast_types.AstType.I16))]
+            (begin
+              (unless
+                (= shl-count 2)
+                (io.panic
+                  (str_cat.str-cat
+                    "lower: narrow masked shift shl IR count mismatch: "
+                    (string.int->string shl-count))))
+              (unless
+                (= shr-count 2)
+                (io.panic
+                  (str_cat.str-cat
+                    "lower: narrow masked shift shr IR count mismatch: "
+                    (string.int->string shr-count))))
+              (unless
+                (= abort-count 4)
+                (io.panic
+                  (str_cat.str-cat
+                    "lower: narrow masked shift abort call count mismatch: "
+                    (string.int->string abort-count))))
+              (unless
+                (>= shape-count 10)
+                (io.panic
+                  (str_cat.str-cat
+                    "lower: narrow masked shift vector shape count mismatch: "
+                    (string.int->string shape-count))))
+              true))])]
+    [(compiler_lower.ResultCompilerLower.Err diag)
+      (io.panic
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))
 
 (define (compiler-lower-masked-shift-tests-ok?) : bool
   (begin
@@ -10521,15 +10575,13 @@
         (compiler_lower.CompilerLowerMode.Avx512))
       (io.panic "lower: AVX-512 masked shift shape mismatch"))
     (unless
-      (compiler-lower-masked-if-narrow-shift-diagnostic-ok?
-        (compiler_lower.CompilerLowerMode.Avx2)
-        "AVX2")
-      (io.panic "lower: AVX2 narrow masked shift diagnostic mismatch"))
+      (compiler-lower-masked-if-narrow-shift-shape-ok?
+        (compiler_lower.CompilerLowerMode.Avx2))
+      (io.panic "lower: AVX2 narrow masked shift shape mismatch"))
     (unless
-      (compiler-lower-masked-if-narrow-shift-diagnostic-ok?
-        (compiler_lower.CompilerLowerMode.Avx512)
-        "AVX-512")
-      (io.panic "lower: AVX-512 narrow masked shift diagnostic mismatch"))
+      (compiler-lower-masked-if-narrow-shift-shape-ok?
+        (compiler_lower.CompilerLowerMode.Avx512))
+      (io.panic "lower: AVX-512 narrow masked shift shape mismatch"))
     true))
 
 (define (compiler-lower-avx512-masked-if-nested-shape-ok?) : bool

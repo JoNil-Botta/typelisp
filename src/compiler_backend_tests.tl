@@ -21528,6 +21528,100 @@
             "    addq $224, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-avx2-word-vector-shift-shape?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]
+  [widen : String]
+  [shift : String]) : bool
+  (match (compiler_backend.compiler-backend-emit-avx2-vector-binop
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler-backend-vector-binop-test-assignments)
+    2
+    op
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    16
+    elem-ty
+    (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.backend-and8
+          (= (compiler_backend.compiler-backend-string-count asm widen) 4)
+          (= (compiler_backend.compiler-backend-string-count asm shift) 2)
+          (= (compiler_backend.compiler-backend-string-count asm "vpackusdw") 1)
+          (= (compiler_backend.compiler-backend-string-count asm "vpermq") 1)
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    subq $128, %rsp\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    addq $128, %rsp\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vpsrld $16, %ymm0, %ymm0\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vpermq $216, %ymm1, %ymm8\n"))
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          (str_cat.str-cat "    " widen " (%rsp), %ymm0\n"))
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          (str_cat.str-cat "    " widen " 16(%rsp), %ymm0\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-word-vector-shift-spill-ok? [avx512 : bool]) : bool
+  (match (if avx512
+    (compiler_backend.compiler-backend-emit-avx512-vector-binop
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-byte-vector-shift-spill-assignments)
+      2
+      (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I16))
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      32
+      (compiler_ast_types.AstType.I16)
+      (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (compiler_backend.compiler-backend-emit-avx2-vector-binop
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-byte-vector-shift-spill-assignments)
+      2
+      (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I16))
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      16
+      (compiler_ast_types.AstType.I16)
+      (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (if avx512
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu16 -64(%rbp), %zmm14\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vpsllvw -128(%rbp), %zmm14, %zmm14\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu16 %zmm14, -192(%rbp)\n"))
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu -64(%rbp), %ymm14\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu -128(%rbp), %ymm15\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    addq $128, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-vector-bitwise-binop-ok?) : bool
   (and
     (compiler_backend.backend-and8
@@ -21646,11 +21740,19 @@
         (compiler_ast_types.AstType.I64)
         4
         "    vpxor %ymm1, %ymm1, %ymm1\n    vpcmpgtq %ymm6, %ymm1, %ymm0\n    vpcmpeqd %ymm1, %ymm1, %ymm1\n    vpsllq $63, %ymm1, %ymm1\n    vpsrlq $57, %ymm1, %ymm1\n    vpsubq %ymm7, %ymm1, %ymm1\n    vpsllvq %ymm1, %ymm0, %ymm0\n    vpsrlvq %ymm7, %ymm6, %ymm8\n    vpor %ymm0, %ymm8, %ymm8\n")
-      (compiler-backend-avx2-vector-binop-diagnostic?
-        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I16))
-        (compiler_ast_types.AstType.I16)
-        16
-        "backend: unsupported AVX2 vector binary op")
+      (and
+        (compiler-backend-avx2-word-vector-shift-shape?
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.I16))
+          (compiler_ast_types.AstType.I16)
+          "vpmovsxwd"
+          "vpsllvd")
+        (compiler-backend-avx2-word-vector-shift-shape?
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.U16))
+          (compiler_ast_types.AstType.U16)
+          "vpmovzxwd"
+          "vpsrlvd"))
       (and
         (compiler-backend-byte-vector-shift-shape?
           false
@@ -21701,11 +21803,25 @@
         (compiler_ast_types.AstType.U64)
         8
         "    vpsrlvq %zmm7, %zmm6, %zmm8\n")
-      (compiler-backend-avx512-vector-binop-diagnostic?
-        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.U16))
-        (compiler_ast_types.AstType.U16)
-        32
-        "backend: unsupported AVX-512 vector binary op")
+      (and
+        (compiler-backend-avx512-vector-binop-emits?
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.U16))
+          (compiler_ast_types.AstType.U16)
+          32
+          "    vpsllvw %zmm7, %zmm6, %zmm8\n")
+        (compiler-backend-avx512-vector-binop-emits?
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.I16))
+          (compiler_ast_types.AstType.I16)
+          32
+          "    vpsravw %zmm7, %zmm6, %zmm8\n")
+        (compiler-backend-avx512-vector-binop-emits?
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.U16))
+          (compiler_ast_types.AstType.U16)
+          32
+          "    vpsrlvw %zmm7, %zmm6, %zmm8\n"))
       (and
         (compiler-backend-byte-vector-shift-shape?
           true
@@ -21871,6 +21987,8 @@
     (compiler-backend-vector-spill-pressure-ok?)
     (compiler-backend-vector-bitwise-binop-ok?)
     (compiler-backend-vector-shift-binop-ok?)
+    (compiler-backend-word-vector-shift-spill-ok? false)
+    (compiler-backend-word-vector-shift-spill-ok? true)
     (compiler-backend-byte-vector-shift-spill-ok? false)
     (compiler-backend-byte-vector-shift-spill-ok? true)
     (compiler-backend-avx2-unsigned-compare-alias-ok?)

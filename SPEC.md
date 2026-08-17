@@ -4548,10 +4548,10 @@ runtime-sized buffers, reading through `array-ref` and writing through
 - Straight-line contiguous numeric maps vectorize `+` and `-` for every
   numeric lane type; `bit-and`, `bit-or`, and `bit-xor` for every integer lane
   type; and `*` for every numeric lane type except `i8`/`u8`. Direct `shl` and
-  `shr` maps vectorize `i8`, `u8`, `i32`, `u32`, `i64`, and `u64`, preserving
-  the section 5.4 invalid-count trap on active lanes only, including partial
-  tails. Direct `i16`/`u16` shifts and byte multiplication are rejected with
-  operator/type-specific diagnostics rather than silently scalarizing.
+  `shr` maps vectorize every integer lane type, preserving the section 5.4
+  invalid-count trap on active lanes only, including partial tails. Byte
+  multiplication is rejected with an operator/type-specific diagnostic rather
+  than silently scalarizing.
   Numeric `=`, `!=`, `<`, `<=`, `>`, and `>=` maps produce private masks that
   are stored through `bool` array lanes.
 
@@ -4748,13 +4748,11 @@ Masked varying control flow:
   every contiguous integer array lane type (`i8`/`u8` through `i64`/`u64`).
   Leading integer literals are contextually typed from the other operand.
   These operators do not accept `f32` or `f64` lanes.
-- Masked `shl` and `shr` value lanes support `i8`, `u8`, `i32`, `u32`, `i64`,
-  and `u64` in AVX2 and AVX-512 modes. Signed `shr` is arithmetic and unsigned
-  `shr` is logical. The section 5.4 shift-count rule remains normative: an
-  invalid count traps only when its lane is active after intersecting the
-  current branch and tail masks. Unsupported `i16` and `u16` masked shifts are
-  rejected with an operator-, lane-type-, and backend-specific diagnostic;
-  they do not silently use a scalar loop.
+- Masked `shl` and `shr` value lanes support every integer lane type in AVX2
+  and AVX-512 modes. Signed `shr` is arithmetic and unsigned `shr` is logical.
+  The section 5.4 shift-count rule remains normative: an invalid count traps
+  only when its lane is active after intersecting the current branch and tail
+  masks.
 - Side effects other than supported contiguous `array-set!` and explicit
   `stdlib/atomic.tl` integer element operations are rejected in masked
   branches. This includes `set!` to bindings declared outside the `foreach`,
@@ -7408,7 +7406,7 @@ in documentation passes.
   i32/u32/i64/u64/f32/f64 maps and reduction values, including active-count
   preserving tails and ordered bounds traps; AVX2/AVX-512 masked varying `if` subsets including
   nested branch-mask composition, value-producing selects, and guarded native
-  `i8`/`u8`/`i32`/`u32`/`i64`/`u64` direct and masked shifts with
+  `i8`/`u8`/`i16`/`u16`/`i32`/`u32`/`i64`/`u64` direct and masked shifts with
   active-lane-only invalid-count traps;
   AVX2/AVX-512
   scalar-lane varying `match`; AVX2/AVX-512 enum tag/payload varying `match` with
@@ -7440,7 +7438,6 @@ in documentation passes.
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
-| 16-bit integer shifts | AVX2/AVX-512 direct-map and masked `i8`/`u8`/`i32`/`u32`/`i64`/`u64` shifts are implemented. `i16`/`u16` widening/packing expansions are deferred and rejected with stable operator/type/backend diagnostics. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Fact-erasing closure flows; mutation of captured names | Rejected by design: closure captures are by-value snapshots. All-Copy closures may copy while preserving reference provenance; non-Copy closures may move through checker-known local facts; mutable/consuming capabilities and required lifetime/ownership facts fail closed when erased. |
 | Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |

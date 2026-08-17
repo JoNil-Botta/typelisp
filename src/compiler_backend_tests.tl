@@ -16911,6 +16911,96 @@
           "    jmp .Lf0_join\n"))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; --- negative dense-switch case keys (#6570) ---------------------------------
+;;
+;; A dense switch is built from whatever integers its arms carry, so its lowest
+;; case may be below zero; the emitted dispatch then subtracts a negative base.
+;; The per-case edge blocks a phi target needs spell the case VALUE into their
+;; label, and `-` is an operator in the assembler's expression grammar, not a
+;; symbol character: `.Lf0_entry_switch_case_-1:` is not read as a label at all.
+;; GNU as sees a line starting with `.` and reports `unknown pseudo-op`, which
+;; is how this first surfaced -- as a stage2 assembly failure once the inliner
+;; formed such a table in src/main.tl.
+;;
+;; Base -1 with cases -1 and 0 puts both spellings in one emission: the negative
+;; key must appear as `m1` and the positive key must still appear as `0`.
+(define (compiler-backend-switch-negative-case-program) : compiler_ir_types.CompilerIrProgram
+  (compiler_ir_types.CompilerIrProgram.Program
+    (compiler_ir_types.compiler-ir-global-seq-empty)
+    (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.CompilerIrFunction.Function
+        (ci.intern "main")
+        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ast_types.AstType.I64)
+        2
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Switch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (- 0 1)
+                (compiler_ir_types.compiler-ir-switch-case-cons
+                  (- 0 1)
+                  (compiler_ir_types.compiler-ir-label "join")
+                  (compiler_ir_types.compiler-ir-switch-case-cons
+                    0
+                    (compiler_ir_types.compiler-ir-label "join")
+                    compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+                (compiler_ir_types.compiler-ir-label "join"))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "join")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Phi
+                  1
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.I64 1)
+                    (compiler_ir_types.compiler-ir-label "entry")
+                    compiler_ir_types.CompilerIrPhiInputList.Nil)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 1)))
+                  compiler_ir_types.CompilerIrInstrList.Nil)))
+            compiler_ir_types.CompilerIrBlockList.Nil)))
+      compiler_ir_types.CompilerIrFunctionList.Nil)
+    compiler_ir_types.CompilerIrExternList.Nil))
+
+(define (compiler-backend-switch-negative-case-label-ok?) : bool
+  (match (compiler_backend.compiler-backend-emit-program-linux
+    (compiler-backend-switch-negative-case-program))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          ".Lf0_entry_switch_table:\n")
+        ;; The negative key spells with `m`, in the table and at the block.
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    .quad .Lf0_entry_switch_case_m1\n")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          ".Lf0_entry_switch_case_m1:\n")
+        ;; A non-negative key is spelled exactly as it always was.
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    .quad .Lf0_entry_switch_case_0\n")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          ".Lf0_entry_switch_case_0:\n")
+        ;; No `-` reaches a symbol name anywhere in the emission.
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "switch_case_-"))
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    jmp .Lf0_join\n"))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-switch-object-image-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-object-image-linux
     (compiler-backend-switch-test-program)
@@ -17049,6 +17139,7 @@
     (compiler-backend-switch-base-asm-ok?)
     (compiler-backend-switch-shape-diagnostic-ok?)
     (compiler-backend-switch-phi-edge-copy-ok?)
+    (compiler-backend-switch-negative-case-label-ok?)
     (compiler-backend-switch-object-image-ok?)
     (compiler-backend-switch-base-object-image-ok?)
     (compiler-backend-switch-object-shape-diagnostic-ok?)

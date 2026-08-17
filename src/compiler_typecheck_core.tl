@@ -3214,8 +3214,94 @@
 (define (tc-context-type-get [ctx : TcContext] [id : i64]) : ast.AstType
   (ast.ast-node-pool-context-type-get (tc-context-pools ctx) id))
 
-(define (tc-context-expr-get [ctx : TcContext] [id : i64]) : ast.AstExpr
-  (ast.ast-node-pool-context-expr-get (tc-context-pools ctx) id))
+;; Macro-capable typecheck walks cannot hoist an expression segment-bases token:
+;; expansion may install another pool between two reads. Expand the scalar read
+;; at each use so nested installs cannot redirect the walk or add a TcContext-
+;; sized helper frame to recursive expression checking.
+(defmacro (tc-context-expr-get [ctx : Expr] [id : Expr]) : Expr
+  `(ast.ast-expr-segment-bases-get
+    (if (ast.ast-node-pool-compat-context-active?)
+      (ast.ast-node-pool-active-expr-segment-bases)
+      (match ,ctx
+        [(TcContext _ _ _ _ _ _ expr-pools _ _)
+          (ast.ast-node-pool-context-expr-segment-bases expr-pools)]))
+    ,id))
+
+(test
+  tc-context-expression-pool-isolation
+  (let
+    [installed-len : i64 (ast.ast-node-pool-len)]
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [root-a : i64
+      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 101))]
+    [root-b : i64
+      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 202))]
+    [ctx-a : TcContext
+      (tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools-a)]
+    [ctx-b : TcContext
+      (tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools-b)]
+    [next-a : i64
+      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 303))]
+    [next-b : i64
+      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 404))]
+    [a-root-ok? : bool
+      (match (tc-context-expr-get ctx-a root-a)
+        [(ast.AstExpr.Var name) (= name 101)]
+        [_ false])]
+    [b-root-ok? : bool
+      (match (tc-context-expr-get ctx-b root-b)
+        [(ast.AstExpr.Var name) (= name 202)]
+        [_ false])]
+    [a-next-ok? : bool
+      (match (tc-context-expr-get ctx-a next-a)
+        [(ast.AstExpr.Var name) (= name 303)]
+        [_ false])]
+    [b-next-ok? : bool
+      (match (tc-context-expr-get ctx-b next-b)
+        [(ast.AstExpr.Var name) (= name 404)]
+        [_ false])]
+    [compat-ok? : bool
+      (begin
+        (ast.ast-node-pool-compat-context-use! pools-a)
+        (let
+          [ok?
+            : bool
+            ;; Compatibility callers intentionally follow their selected pool,
+            ;; even when the TcContext argument names another owner.
+            (match (tc-context-expr-get ctx-b root-a)
+              [(ast.AstExpr.Var name) (= name 101)]
+              [_ false])]
+          (begin
+            (ast.ast-node-pool-compat-context-clear!)
+            ok?)))]
+    (if (and
+      (= root-a root-b)
+      (= next-a next-b)
+      a-root-ok?
+      b-root-ok?
+      a-next-ok?
+      b-next-ok?
+      compat-ok?
+      (= (ast.ast-node-pool-context-expr-len pools-a) 2)
+      (= (ast.ast-node-pool-context-expr-len pools-b) 2)
+      (= (ast.ast-node-pool-len) installed-len))
+      unit
+      (io.panic "typecheck: context expression pool isolation failed"))))
 
 ;; Pool selected for type walks that may both read and append. Explicit
 ;; compatibility callers intentionally keep following the pool they installed;
@@ -20852,7 +20938,9 @@
                   (tc-context-macro-state ctx)
                   expr-id
                   (ast.AstExpr.Var name))
-                (ast.ast-node-set! expr-id (ast.ast-node-get projection-id))
+                (ast.ast-node-set!
+                  expr-id
+                  (tc-context-expr-get ctx projection-id))
                 ResultTcUnit.Ok)]
             [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
           ResultTcUnit.Ok))]
@@ -20869,7 +20957,9 @@
                   (tc-context-macro-state ctx)
                   expr-id
                   (ast.AstExpr.Set name value-box))
-                (ast.ast-node-set! expr-id (ast.ast-node-get projection-id))
+                (ast.ast-node-set!
+                  expr-id
+                  (tc-context-expr-get ctx projection-id))
                 ResultTcUnit.Ok)]
             [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
           ResultTcUnit.Ok))]
@@ -20883,7 +20973,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr-id : i64]) : ResultTcUnit
-  (match (ast.ast-node-get expr-id)
+  (match (tc-context-expr-get ctx expr-id)
     [(ast.AstExpr.Spanned inner-box _)
       (tc-normalize-dotted-local-field-node! ctx env inner-box)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
@@ -20914,7 +21004,7 @@
         ctx
         env
         expr-id
-        (ast.ast-node-get expr-id))]))
+        (tc-context-expr-get ctx expr-id))]))
 
 (define (tc-normalize-dotted-local-field-expr-list!
   [ctx : TcContext]
@@ -28792,7 +28882,7 @@
   (if (> tail0.len 0)
     (let
       [value : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& tail0) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& tail0) 0 0))]
       [tail1 : ast.AstExprList (ast.ast-expr-list-tail-from-ref (& tail0) 1)]
       (if (tc-atomic-cas-name? name)
         (if (> tail1.len 0)
@@ -28801,7 +28891,7 @@
             env
             ptr
             value
-            (ast.ast-node-get (ast.ast-expr-list-get (& tail1) 0 0))
+            (tc-context-expr-get ctx (ast.ast-expr-list-get (& tail1) 0 0))
             (ast.ast-expr-list-tail-from-ref (& tail1) 1))
           (ResultTcType.Err
             "typecheck: atomic-cas! expects exactly three arguments"))
@@ -28821,7 +28911,7 @@
       (if (> args.len 0)
         (let
           [ptr : ast.AstExpr
-            (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
           [tail0 : ast.AstExprList (ast.ast-expr-list-tail-from-ref (& args) 1)]
           (if (tc-atomic-load-name? name)
             (tc-atomic-one-arg-call ctx env name ptr tail0)
@@ -28873,7 +28963,7 @@
             [(ResultTcType.Err message) (ResultTcType.Err message)])])]
     [(ast.AstExpr.StructGet receiver-box field)
       (let
-        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
+        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
         (match (tc-ptr-addr-of-place ctx env receiver)
           [(ResultTcType.Ok receiver-ty)
             (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
@@ -28894,7 +28984,7 @@
         [(ResultTcType.Ok index-ty)
           (if (tc-integer-type? index-ty)
             (let
-              [array : ast.AstExpr (ast.ast-node-get array-box)]
+              [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
               (match (tc-ptr-addr-of-place ctx env array)
                 [(ResultTcType.Ok array-ty)
                   (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
@@ -32071,7 +32161,7 @@
   (match decl
     [(ast.AstDecl.Def decl-meta _ maybe-ty expr-box)
       (let
-        [expr : ast.AstExpr (ast.ast-node-get expr-box)]
+        [expr : ast.AstExpr (tc-context-expr-get ctx expr-box)]
         (match maybe-ty
           [(ast.AstMaybeType.Some ty)
             (ResultTcType.Ok (tc-resolve-type ctx ty))]
@@ -32120,7 +32210,7 @@
   (match decl
     [(ast.AstDecl.Def decl-meta _ maybe-ty expr-box)
       (let
-        [expr : ast.AstExpr (ast.ast-node-get expr-box)]
+        [expr : ast.AstExpr (tc-context-expr-get ctx expr-box)]
         (match maybe-ty
           [(ast.AstMaybeType.Some ty)
             (ResultTcType.Ok (tc-resolve-type ctx ty))]
@@ -34034,7 +34124,7 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box span)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (match (tc-integer-literal-expr-with-expected ctx inner expected)
           [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
           [(ResultTcType.Err message)
@@ -34042,7 +34132,7 @@
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (tc-integer-literal-expr-with-expected
         ctx
-        (ast.ast-node-get inner-box)
+        (tc-context-expr-get ctx inner-box)
         expected)]
     [(ast.AstExpr.Literal lit)
       (match lit
@@ -34657,11 +34747,11 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box span)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (match inner
           [(ast.AstExpr.MacroExpansion expanded provenance-id macro-name-id)
             (tc-macro-expansion-result-with-frame
-              (ast.ast-node-get expanded)
+              (tc-context-expr-get ctx expanded)
               (macro-expansion-invocation-path-id provenance-id)
               (macro-expansion-origin-path-id provenance-id)
               macro-name-id
@@ -34708,8 +34798,8 @@
         allow-mut-by-value-borrow)]
     [(ast.AstExpr.Binary op left-box right-box)
       (let
-        [left : ast.AstExpr (ast.ast-node-get left-box)]
-        [right : ast.AstExpr (ast.ast-node-get right-box)]
+        [left : ast.AstExpr (tc-context-expr-get ctx left-box)]
+        [right : ast.AstExpr (tc-context-expr-get ctx right-box)]
         (tc-binary-expr-with-expected-or-actual
           ctx
           env
@@ -34720,13 +34810,13 @@
           expected))]
     [(ast.AstExpr.Unary op inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-unary-expr-with-expected-or-actual ctx env expr op inner expected))]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
       (let
-        [cond : ast.AstExpr (ast.ast-node-get cond-box)]
-        [then-branch : ast.AstExpr (ast.ast-node-get then-branch-box)]
-        [else-branch : ast.AstExpr (ast.ast-node-get else-branch-box)]
+        [cond : ast.AstExpr (tc-context-expr-get ctx cond-box)]
+        [then-branch : ast.AstExpr (tc-context-expr-get ctx then-branch-box)]
+        [else-branch : ast.AstExpr (tc-context-expr-get ctx else-branch-box)]
         (tc-expr-if-with-expected-or-actual
           ctx
           env
@@ -34775,7 +34865,7 @@
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
             (match (tc-let-bindings-for-body ctx env bindings body)
               [(ResultTcEnv.Ok next-env)
                 (match (tc-expr-with-expected-or-actual-id
@@ -34797,13 +34887,13 @@
       (tc-with-region-expr-with-expected-scoped ctx env region body expected)]
     [(ast.AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : ast.AstExpr (ast.ast-node-get scratch-box)]
+        [scratch : ast.AstExpr (tc-context-expr-get ctx scratch-box)]
         (tc-with-escape-expr-with-expected ctx env scratch body expected))]
     [(ast.AstExpr.WithScratch body)
       (tc-with-scratch-expr-with-expected ctx env body expected)]
     [(ast.AstExpr.InArena arena-box body)
       (let
-        [arena : ast.AstExpr (ast.ast-node-get arena-box)]
+        [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
         (tc-in-arena-expr-with-expected-scoped ctx env arena body expected))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
@@ -34815,7 +34905,7 @@
           (let
             [lifetime : ast.AstBorrowLifetime
               (ast.ast-borrow-lifetime-from-id lifetime-id)]
-            [place : ast.AstExpr (ast.ast-node-get place-box)]
+            [place : ast.AstExpr (tc-context-expr-get ctx place-box)]
             (if (and mutable allow-mut-by-value-borrow)
               (tc-borrow-expr-with-policy
                 ctx
@@ -34829,19 +34919,19 @@
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Box inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-box-expr-with-expected-or-actual ctx env inner expected))]
     [(ast.AstExpr.BoxGet inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-box-get-expr-with-expected-or-actual ctx env inner expected))]
     [(ast.AstExpr.BoxTake inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-deref-expr-with-expected-or-actual ctx env inner expected))]
     [(ast.AstExpr.Comptime inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (match (ctfe_support.compiler-ctfe-eval
           inner
           (tc-ctfe-env ctx)
@@ -34865,7 +34955,7 @@
       (match (tc-type-strip-region (tc-resolve-type ctx expected))
         [(ast.AstType.Box inner-ty)
           (let
-            [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+            [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
             [want : ast.AstType (ast.ty-node-get inner-ty)]
             (match (tc-ensure-cleanup-resource-not-stored-expr env inner)
               [(ResultTcUnit.Ok)
@@ -34972,7 +35062,7 @@
               env
               params
               maybe-ret
-              (ast.ast-node-get body-box)
+              (tc-context-expr-get ctx body-box)
               false))])]
     [_ (tc-expr-with-expected-or-actual-call-arg ctx env expr expected)]))
 
@@ -34984,7 +35074,7 @@
   [env : TcTypeEnv]
   [expr-id : i64]) : ResultTcType
   (let
-    [expr : ast.AstExpr (ast.ast-node-get expr-id)]
+    [expr : ast.AstExpr (tc-context-expr-get ctx expr-id)]
     [result : ResultTcType
       (match expr
         [(ast.AstExpr.Var name)
@@ -35014,7 +35104,7 @@
 
 (define (tc-expr-id [ctx : TcContext] [env : TcTypeEnv] [expr-id : i64]) : ResultTcType
   (let
-    [expr : ast.AstExpr (ast.ast-node-get expr-id)]
+    [expr : ast.AstExpr (tc-context-expr-get ctx expr-id)]
     (match expr
       [(ast.AstExpr.Var name)
         (if (< (tc-dotted-name-first-dot-id name) 0)
@@ -35182,7 +35272,7 @@
   [expected : ast.AstType]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
   (let
-    [expr : ast.AstExpr (ast.ast-node-get expr-id)]
+    [expr : ast.AstExpr (tc-context-expr-get ctx expr-id)]
     (match expr
       [(ast.AstExpr.Var name)
         (if (or
@@ -35203,7 +35293,7 @@
               (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
                 ctx
                 env
-                (ast.ast-node-get expr-id)
+                (tc-context-expr-get ctx expr-id)
                 expected
                 allow-mut-by-value-borrow)]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
@@ -35226,7 +35316,7 @@
               (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
                 ctx
                 env
-                (ast.ast-node-get expr-id)
+                (tc-context-expr-get ctx expr-id)
                 expected
                 allow-mut-by-value-borrow)]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
@@ -37430,7 +37520,7 @@
         (tc-call-arity-message func all-args all-params))
       (let
         [arg : ast.AstExpr
-          (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
+          (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
         [want : ast.AstType
           (ast.ast-type-strip-consuming-param-with-pools
             (tc-context-pools ctx)
@@ -37664,7 +37754,9 @@
     (tc-expr-c-abi-fnptr?
       ctx
       env
-      (ast.ast-node-get (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0)))))
+      (tc-context-expr-get
+        ctx
+        (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0)))))
 
 (define (tc-hygiene-c-abi-fnptr-binding?
   [ctx : TcContext]
@@ -37705,13 +37797,13 @@
         (tc-binding-c-abi-fnptr-id? env name))]
     [(ast.AstExpr.Ann inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-expr-c-abi-fnptr? ctx env inner))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
             (match (tc-let-bindings-for-body ctx env bindings body)
               [(ResultTcEnv.Ok next-env)
                 (tc-expr-c-abi-fnptr? ctx next-env body)]
@@ -37719,8 +37811,8 @@
     [(ast.AstExpr.Begin exprs) (tc-expr-list-last-c-abi-fnptr? ctx env exprs)]
     [(ast.AstExpr.If _ then-box else-box)
       (let
-        [then-branch : ast.AstExpr (ast.ast-node-get then-box)]
-        [else-branch : ast.AstExpr (ast.ast-node-get else-box)]
+        [then-branch : ast.AstExpr (tc-context-expr-get ctx then-box)]
+        [else-branch : ast.AstExpr (tc-context-expr-get ctx else-box)]
         (and
           (tc-expr-c-abi-fnptr? ctx env then-branch)
           (tc-expr-c-abi-fnptr? ctx env else-branch)))]
@@ -38045,7 +38137,7 @@
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.Call func-box args)
       (let
-        [nid : i64 (tc-expr-var-name-id (ast.ast-node-get func-box))]
+        [nid : i64 (tc-expr-var-name-id (tc-context-expr-get ctx func-box))]
         (if (>= nid 0)
           (let
             [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
@@ -38063,8 +38155,8 @@
       (if (= args.len 1)
         (let
           [owner-expr : ast.AstExpr
-            (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
-          [nid : i64 (tc-expr-var-name-id (ast.ast-node-get func-box))]
+            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+          [nid : i64 (tc-expr-var-name-id (tc-context-expr-get ctx func-box))]
           (if (>= nid 0)
             (let
               [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
@@ -38246,7 +38338,7 @@
     ResultTcUnit.Ok
     (let
       [arg : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
       (match (tc-expr ctx env arg)
         [(ResultTcType.Ok ty)
           (let
@@ -39515,7 +39607,7 @@
               ctx
               env
               params
-              (ast.ast-node-get body-box))
+              (tc-context-expr-get ctx body-box))
             (ResultTcUnit.Err
               (str_cat.str-cat
                 "typecheck: "
@@ -39570,7 +39662,7 @@
           (if (= args.len 1)
             (let
               [arg : ast.AstExpr
-                (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+                (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
               (match (tc-check-thread-safe-spawn-direct-lambda
                 source-name
                 ctx
@@ -39874,7 +39966,7 @@
       (ResultTcUnit.Err (tc-arity-message-text arity-msg))
       (let
         [arg : ast.AstExpr
-          (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
+          (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
         [want : ast.AstType
           (ast.ast-type-strip-consuming-param-with-pools
             (tc-context-pools ctx)
@@ -40014,7 +40106,7 @@
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
             (match (tc-lambda-expr-allow-ref-captures
               ctx
               env
@@ -40102,7 +40194,7 @@
   (if (= args.len 1)
     (let
       [owner-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       (match (tc-expr ctx env owner-expr)
         [(ResultTcType.Ok owner-ty)
           (if (tc-arena-type? ctx owner-ty)
@@ -40141,7 +40233,7 @@
   (if (= args.len 1)
     (let
       [phase-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       (match (tc-expr ctx env phase-expr)
         [(ResultTcType.Ok phase-ty)
           (if (tc-arena-phase-type? ctx phase-ty)
@@ -40187,7 +40279,7 @@
         "typecheck: arena.destroy-safe! expects exactly one argument")))
   (let
     [owner-expr : ast.AstExpr
-      (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+      (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
     (match (tc-expr ctx env owner-expr)
       [(ResultTcType.Ok owner-ty)
         (begin
@@ -40225,13 +40317,13 @@
   [func-id : i64]
   [args : ast.AstExprList]) : ResultTcType
   (let
-    [func : ast.AstExpr (ast.ast-node-get func-id)]
+    [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
     (match (ast.ast-expr-unspan func)
       [(ast.AstExpr.Lambda lambda-box)
         (match (__tl-box-place lambda-box)
           [(ast.AstLambda.Lambda params maybe-ret body-box)
             (let
-              [body : ast.AstExpr (ast.ast-node-get body-box)]
+              [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
               (match (tc-lambda-expr-allow-ref-captures
                 ctx
                 env
@@ -40430,7 +40522,7 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       (match (tc-check-string-handle-arg ctx env func 0 arg)
         [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
@@ -40445,7 +40537,7 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       (match (tc-check-length-handle-arg ctx env func 0 arg)
         [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
@@ -40460,9 +40552,9 @@
   (if (= args.len 2)
     (let
       [left : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       [right : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 1 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
       (match (tc-check-string-handle-arg ctx env func 0 left)
         [(ResultTcUnit.Ok)
           (match (tc-check-string-handle-arg ctx env func 1 right)
@@ -40618,9 +40710,9 @@
   (if (= args.len 2)
     (let
       [str : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       [index : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 1 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
       (match (tc-expr ctx env str)
         [(ResultTcType.Ok str-ty)
           (if (tc-string-handle-type? str-ty)
@@ -40675,7 +40767,7 @@
         (ResultTcType.Ok (ast.AstType.I64))
         (let
           [arg : ast.AstExpr
-            (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
           (ResultTcType.Err
             (tc-locate-error-at-expr
               arg
@@ -40713,7 +40805,7 @@
     (if (tc-default-builtin-unshadowed-id? env name-id)
       (let
         [arg : ast.AstExpr
-          (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+          (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
         (ResultTcType.Err
           (tc-locate-error-at-expr
             arg
@@ -40763,7 +40855,7 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       (match (tc-expr ctx env arg)
         [(ResultTcType.Ok arg-ty)
           (match (tc-array-length-receiver ctx arg-ty)
@@ -41135,7 +41227,7 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       (match (tc-expr ctx env arg)
         [(ResultTcType.Ok arg-ty)
           (let
@@ -41159,7 +41251,7 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       (match (tc-expr ctx env arg)
         [(ResultTcType.Ok arg-ty)
           (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
@@ -41181,7 +41273,7 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       (match (tc-expr ctx env arg)
         [(ResultTcType.Ok arg-ty)
           (if (cbi.compiler-builtin-lower-float-to-bits-id? name-id)
@@ -41218,7 +41310,7 @@
       (if (= args.len 1)
         (let
           [value : ast.AstExpr
-            (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
           (match (tc-check-exact-arg
             ctx
             env
@@ -41479,9 +41571,9 @@
   (if (= args.len 2)
     (let
       [source : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       [mid : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 1 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
       (match (tc-expr ctx env source)
         [(ResultTcType.Ok source-ty)
           (match (tc-slice-split-result-type ctx env kind source source-ty)
@@ -41513,11 +41605,11 @@
   (if (= args.len 3)
     (let
       [source : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       [start : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 1 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
       [len : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 2 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 2 0))]
       (match (tc-expr ctx env source)
         [(ResultTcType.Ok source-ty)
           (match (tc-slice-view-result-type ctx env kind source source-ty)
@@ -41559,7 +41651,7 @@
   [func-id : i64]
   [args : ast.AstExprList]) : ResultTcType
   (let
-    [func : ast.AstExpr (ast.ast-node-get func-id)]
+    [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
     (match (ast.ast-expr-unspan func)
       [(ast.AstExpr.Var raw-name)
         ;; Keep builtin dispatch identical to the string-name call path; only
@@ -41752,7 +41844,7 @@
       (ast.ast-let-binding-fallback))
       [(ast.AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : ast.AstExpr (ast.ast-node-get init-box)]
+          [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
           [resolved-maybe-ty : ast.AstMaybeType
             (tc-let-binding-resolve-maybe-type ctx maybe-ty)]
           (match (tc-let-binding-plain-type ctx env resolved-maybe-ty init)
@@ -42969,7 +43061,7 @@
                       [(ast.AstLambda.Lambda params maybe-ret lambda-body-box)
                         (let
                           [lambda-body : ast.AstExpr
-                            (ast.ast-node-get lambda-body-box)]
+                            (tc-context-expr-get ctx lambda-body-box)]
                           (tc-lambda-expr-allow-ref-captures
                             ctx
                             env
@@ -43016,7 +43108,7 @@
                     [(ast.AstLambda.Lambda params maybe-ret lambda-body-box)
                       (let
                         [lambda-body : ast.AstExpr
-                          (ast.ast-node-get lambda-body-box)]
+                          (tc-context-expr-get ctx lambda-body-box)]
                         (tc-lambda-expr-allow-ref-captures
                           ctx
                           env
@@ -43048,7 +43140,7 @@
       (ast.ast-let-binding-fallback))
       [(ast.AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : ast.AstExpr (ast.ast-node-get init-box)]
+          [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
           (match (tc-let-binding-init-type-at
             ctx
             env
@@ -43212,8 +43304,8 @@
       (ast.ast-resource-binding-fallback))
       [(ast.AstResourceBinding.Binding name init-box cleanup-box _)
         (let
-          [init : ast.AstExpr (ast.ast-node-get init-box)]
-          [cleanup : ast.AstExpr (ast.ast-node-get cleanup-box)]
+          [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
+          [cleanup : ast.AstExpr (tc-context-expr-get ctx cleanup-box)]
           (match (tc-resource-cleanup-resource-type ctx env cleanup)
             [(ResultTcType.Ok expected-init-ty)
               (match (tc-expr-with-expected-or-actual-id
@@ -54022,19 +54114,19 @@
         [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstExpr.StructGet receiver-box _)
       (let
-        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
+        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
         (tc-mut-borrow-non-call-place-ok ctx env receiver))]
     [(ast.AstExpr.TupleRef tuple-box _)
       (let
-        [tuple : ast.AstExpr (ast.ast-node-get tuple-box)]
+        [tuple : ast.AstExpr (tc-context-expr-get ctx tuple-box)]
         (tc-mut-borrow-non-call-place-ok ctx env tuple))]
     [(ast.AstExpr.ArrayRef array-box _)
       (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
+        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
         (tc-mut-borrow-non-call-place-ok ctx env array))]
     [(ast.AstExpr.BoxGet box-box)
       (let
-        [box-expr : ast.AstExpr (ast.ast-node-get box-box)]
+        [box-expr : ast.AstExpr (tc-context-expr-get ctx box-box)]
         (match (tc-store-place-lifetime ctx env box-expr)
           [(ResultTcNameId.Ok _)
             (match (tc-expr ctx env box-expr)
@@ -54046,7 +54138,7 @@
           [(ResultTcNameId.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.BoxTake receiver-box)
       (let
-        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
+        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
         (match (tc-store-place-lifetime ctx env receiver)
           [(ResultTcNameId.Ok _)
             (match (tc-expr ctx env receiver)
@@ -54072,23 +54164,26 @@
       (if (tc-dotted-place-name-id? ctx env name)
         (match (tc-dotted-local-field-expr-id-after-check name)
           [(ResultTcExprId.Ok virtual-id)
-            (tc-store-place-lifetime ctx env (ast.ast-node-get virtual-id))]
+            (tc-store-place-lifetime
+              ctx
+              env
+              (tc-context-expr-get ctx virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcNameId.Err message)])
         (match (tc-lookup-visible-id ctx env name)
           [(ResultTcType.Ok ty) (tc-store-place-lifetime-var name ty)]
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [(ast.AstExpr.StructGet receiver-box _)
       (let
-        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
+        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
         (tc-store-place-lifetime ctx env receiver))]
     [(ast.AstExpr.TupleRef tuple-box _)
       (let
-        [tuple : ast.AstExpr (ast.ast-node-get tuple-box)]
+        [tuple : ast.AstExpr (tc-context-expr-get ctx tuple-box)]
         (tc-store-place-lifetime ctx env tuple))]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        [index : ast.AstExpr (ast.ast-node-get index-box)]
+        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
+        [index : ast.AstExpr (tc-context-expr-get ctx index-box)]
         (match (tc-expr ctx env index)
           [(ResultTcType.Ok index-ty)
             (if (tc-integer-type? index-ty)
@@ -54097,7 +54192,7 @@
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [(ast.AstExpr.BoxGet box-box)
       (let
-        [box-expr : ast.AstExpr (ast.ast-node-get box-box)]
+        [box-expr : ast.AstExpr (tc-context-expr-get ctx box-box)]
         (match (tc-expr ctx env box-expr)
           [(ResultTcType.Ok box-ty)
             (match (tc-box-set-inner-type ctx box-ty)
@@ -54109,7 +54204,7 @@
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [(ast.AstExpr.BoxTake receiver-box)
       (let
-        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
+        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
         (match (tc-expr ctx env receiver)
           [(ResultTcType.Ok receiver-ty)
             (match (tc-box-set-inner-type ctx receiver-ty)
@@ -55603,7 +55698,7 @@
       (match arm
         [(ast.AstMatchArm.Arm pattern body-box)
           (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
             (match (tc-bind-match-pattern ctx env scrut-ty pattern)
               [(ResultTcEnv.Ok arm-env) (tc-expr ctx arm-env body)]
               [(ResultTcEnv.Err message)
@@ -55624,7 +55719,7 @@
       (match arm
         [(ast.AstMatchArm.Arm pattern body-box)
           (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
             (match (tc-bind-match-pattern ctx env scrut-ty pattern)
               [(ResultTcEnv.Ok arm-env)
                 (match (tc-expr-with-expected-or-actual
@@ -57986,7 +58081,7 @@
     (match (tc-expr
       ctx
       env
-      (ast.ast-node-get (ast.ast-expr-list-get args index 0)))
+      (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0)))
       [(ResultTcType.Ok arg-ty)
         (if (tc-integer-type? arg-ty)
           (tc-syscall-args-at ctx env args (+ index 1))
@@ -58164,7 +58259,8 @@
                               (match (tc-ensure-reference-value-can-store-in-place
                                 ctx
                                 env
-                                (ast.ast-node-get
+                                (tc-context-expr-get
+                                  ctx
                                   (ast.ast-expr-box-get
                                     (ast.ast-node-push box-expr)))
                                 value-ty
@@ -59309,7 +59405,8 @@
               (ResultTcType.Err
                 "typecheck: replace! does not support cleanup-owning places")
               (let
-                [replacement : ast.AstExpr (ast.ast-node-get replacement-id)]
+                [replacement : ast.AstExpr
+                  (tc-context-expr-get ctx replacement-id)]
                 (match (tc-expr-with-expected-or-actual-id
                   ctx
                   env
@@ -59603,7 +59700,7 @@
   [name : i64]
   [value-box : i64]) : ResultTcType
   (let
-    [value : ast.AstExpr (ast.ast-node-get value-box)]
+    [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
     (match (tc-lookup-visible-id ctx env name)
       [(ResultTcType.Ok var-ty)
         (match (tc-expr-with-expected-or-actual-id ctx env value-box var-ty)
@@ -59808,11 +59905,11 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box span)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (match inner
           [(ast.AstExpr.MacroExpansion expanded provenance-id macro-name-id)
             (tc-macro-expansion-result-with-frame
-              (ast.ast-node-get expanded)
+              (tc-context-expr-get ctx expanded)
               (macro-expansion-invocation-path-id provenance-id)
               (macro-expansion-origin-path-id provenance-id)
               macro-name-id
@@ -59884,7 +59981,7 @@
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
             (match (tc-let-bindings-for-body ctx env bindings body)
               [(ResultTcEnv.Ok next-env)
                 (match (tc-expr-id ctx next-env body-box)
@@ -59902,7 +59999,7 @@
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
             (tc-lambda-expr ctx env params maybe-ret body-box body))])]
     [(ast.AstExpr.Tuple exprs)
       (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
@@ -59947,7 +60044,7 @@
       (tc-expr-dyn-array-literal-infer ctx env exprs)]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
-        [len : ast.AstExpr (ast.ast-node-get len-box)]
+        [len : ast.AstExpr (tc-context-expr-get ctx len-box)]
         [elem : ast.AstType
           (tc-resolve-type ctx (tc-context-type-get ctx elem-ty-id))]
         (match (tc-expr-with-expected-or-actual-id
@@ -59998,8 +60095,8 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
+        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
         (match (tc-expr-id ctx env array-box)
           [(ResultTcType.Ok array-ty)
             (match (tc-expr-with-expected-or-actual-id
@@ -60084,15 +60181,19 @@
       (tc-fixed-array-take-type
         ctx
         env
-        (ast.ast-node-get array-box)
+        (tc-context-expr-get ctx array-box)
         array-box
         index-box)]
     [(ast.AstExpr.Replace place-box replacement-box)
-      (tc-replace-type ctx env (ast.ast-node-get place-box) replacement-box)]
+      (tc-replace-type
+        ctx
+        env
+        (tc-context-expr-get ctx place-box)
+        replacement-box)]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
+        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
         (match (tc-expr-id ctx env array-box)
           [(ResultTcType.Ok array-ty)
             (match (tc-array-push-receiver ctx array-ty)
@@ -60181,7 +60282,7 @@
             env
             mutable
             (ast.ast-borrow-lifetime-from-id lifetime-id)
-            (ast.ast-node-get place-box))]
+            (tc-context-expr-get ctx place-box))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Unary op inner-box)
       (match (tc-expr-id ctx env inner-box)
@@ -60189,8 +60290,8 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Binary op left-box right-box)
       (let
-        [left : ast.AstExpr (ast.ast-node-get left-box)]
-        [right : ast.AstExpr (ast.ast-node-get right-box)]
+        [left : ast.AstExpr (tc-context-expr-get ctx left-box)]
+        [right : ast.AstExpr (tc-context-expr-get ctx right-box)]
         (match (tc-binop-expr-types ctx env op left right)
           [(ResultTcBinOpTypes.Ok binop-types)
             (match binop-types
@@ -60224,7 +60325,7 @@
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
             [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
             (if (tc-integer-type? resolved-index-ty)
               (match (tc-expr-with-expected-or-actual-id
@@ -60284,8 +60385,8 @@
             init-box
             value-box)
           (let
-            [init : ast.AstExpr (ast.ast-node-get init-box)]
-            [value : ast.AstExpr (ast.ast-node-get value-box)]
+            [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
+            [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
             [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
             (if (tc-integer-type? resolved-index-ty)
               (match (tc-expr-id ctx env start-box)
@@ -60341,9 +60442,9 @@
             value-box
             body-box)
           (let
-            [init : ast.AstExpr (ast.ast-node-get init-box)]
-            [value : ast.AstExpr (ast.ast-node-get value-box)]
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
+            [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
             [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
             [resolved-prefix-ty : ast.AstType (tc-resolve-type ctx prefix-ty)]
             (if (tc-integer-type? resolved-index-ty)
@@ -60467,19 +60568,19 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.StructSet receiver-box field value-box)
       (let
-        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
+        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
         (tc-struct-field-mutation-value-id ctx env receiver field value))]
     [(ast.AstExpr.WithRegion region body)
       (tc-with-region-expr-scoped ctx env region body)]
     [(ast.AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : ast.AstExpr (ast.ast-node-get scratch-box)]
+        [scratch : ast.AstExpr (tc-context-expr-get ctx scratch-box)]
         (tc-with-escape-expr ctx env scratch body))]
     [(ast.AstExpr.WithScratch body) (tc-with-scratch-expr ctx env body)]
     [(ast.AstExpr.InArena arena-box body)
       (let
-        [arena : ast.AstExpr (ast.ast-node-get arena-box)]
+        [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
         (tc-in-arena-expr-scoped ctx env arena body))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
@@ -60487,24 +60588,24 @@
           (tc-with-resource-expr ctx env bindings body)])]
     [(ast.AstExpr.Box inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-box-expr ctx env inner))]
     [(ast.AstExpr.BoxGet inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-box-get-expr ctx env inner))]
     [(ast.AstExpr.BoxTake inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-deref-expr ctx env inner))]
     [(ast.AstExpr.BoxSet box-box value-box)
       (let
-        [box-expr : ast.AstExpr (ast.ast-node-get box-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [box-expr : ast.AstExpr (tc-context-expr-get ctx box-box)]
+        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
         (tc-box-mutation-value ctx env box-expr value))]
     [(ast.AstExpr.Comptime inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (match (ctfe_support.compiler-ctfe-eval
           inner
           (tc-ctfe-env ctx)
@@ -60516,7 +60617,7 @@
     [(ast.AstExpr.Quote _) (ResultTcType.Ok (ast.AstType.Expr))]
     [(ast.AstExpr.Quasiquote template-box)
       (let
-        [template : ast.AstExpr (ast.ast-node-get template-box)]
+        [template : ast.AstExpr (tc-context-expr-get ctx template-box)]
         (match (tc-quasiquote-template-ok ctx env template)
           [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Expr))]
           [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
@@ -60527,11 +60628,11 @@
         "typecheck: unquote-splicing is only valid inside quasiquote")]
     [(ast.AstExpr.Try inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-try-expr ctx env inner))]
     [(ast.AstExpr.Return value-box)
       (let
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
         (tc-return-expr ctx env value))]
     [(ast.AstExpr.Break) (tc-loop-control-expr env "break")]
     [(ast.AstExpr.Continue) (tc-loop-control-expr env "continue")]
@@ -60556,46 +60657,46 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.PtrAddrOf place-box)
       (let
-        [place : ast.AstExpr (ast.ast-node-get place-box)]
+        [place : ast.AstExpr (tc-context-expr-get ctx place-box)]
         (tc-ptr-addr-of-expr ctx env place))]
     [(ast.AstExpr.PtrRead ptr-box)
       (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
+        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
         (tc-ptr-read-expr ctx env ptr))]
     [(ast.AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
+        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
         (tc-ptr-write-expr ctx env ptr value))]
     [(ast.AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
-        [offset : ast.AstExpr (ast.ast-node-get offset-box)]
+        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
+        [offset : ast.AstExpr (tc-context-expr-get ctx offset-box)]
         (tc-ptr-offset-expr ctx env ptr offset))]
     [(ast.AstExpr.PtrCast ptr-box target-id)
       (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
+        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
         (tc-ptr-cast-expr ctx env ptr (ast.ty-node-get target-id)))]
     [(ast.AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
+        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
         (tc-ptr-to-int-expr ctx env ptr))]
     [(ast.AstExpr.IntToPtr value-box target-id)
       (let
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
         (tc-int-to-ptr-expr ctx env value (ast.ty-node-get target-id)))]
     [(ast.AstExpr.StringData str-box)
       (let
-        [str : ast.AstExpr (ast.ast-node-get str-box)]
+        [str : ast.AstExpr (tc-context-expr-get ctx str-box)]
         (tc-string-data-expr ctx env str))]
     [(ast.AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : ast.AstExpr (ast.ast-node-get ptr-box)]
-        [len : ast.AstExpr (ast.ast-node-get len-box)]
+        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
+        [len : ast.AstExpr (tc-context-expr-get ctx len-box)]
         (tc-string-from-bytes-expr ctx env ptr len))]
     [(ast.AstExpr.ArrayData array-box)
       (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
+        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
         (tc-array-data-expr ctx env array))]
     [(ast.AstExpr.ProgramArgc) (ResultTcType.Ok (ast.AstType.I64))]
     [(ast.AstExpr.ProgramArgv)
@@ -60604,27 +60705,27 @@
       (tc-program-entry-ptr-expr ctx env "program-envp")]
     [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : ast.AstExpr (ast.ast-node-get leaf-box)]
-        [subleaf : ast.AstExpr (ast.ast-node-get subleaf-box)]
+        [leaf : ast.AstExpr (tc-context-expr-get ctx leaf-box)]
+        [subleaf : ast.AstExpr (tc-context-expr-get ctx subleaf-box)]
         (tc-cpuid-expr ctx env leaf subleaf))]
     [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : ast.AstExpr (ast.ast-node-get leaf-box)]
-        [subleaf : ast.AstExpr (ast.ast-node-get subleaf-box)]
+        [leaf : ast.AstExpr (tc-context-expr-get ctx leaf-box)]
+        [subleaf : ast.AstExpr (tc-context-expr-get ctx subleaf-box)]
         (tc-cpuid-expr ctx env leaf subleaf))]
     [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : ast.AstExpr (ast.ast-node-get leaf-box)]
-        [subleaf : ast.AstExpr (ast.ast-node-get subleaf-box)]
+        [leaf : ast.AstExpr (tc-context-expr-get ctx leaf-box)]
+        [subleaf : ast.AstExpr (tc-context-expr-get ctx subleaf-box)]
         (tc-cpuid-expr ctx env leaf subleaf))]
     [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : ast.AstExpr (ast.ast-node-get leaf-box)]
-        [subleaf : ast.AstExpr (ast.ast-node-get subleaf-box)]
+        [leaf : ast.AstExpr (tc-context-expr-get ctx leaf-box)]
+        [subleaf : ast.AstExpr (tc-context-expr-get ctx subleaf-box)]
         (tc-cpuid-expr ctx env leaf subleaf))]
     [(ast.AstExpr.Xgetbv index-box)
       (let
-        [index : ast.AstExpr (ast.ast-node-get index-box)]
+        [index : ast.AstExpr (tc-context-expr-get ctx index-box)]
         (tc-xgetbv-expr ctx env index))]
     [(ast.AstExpr.Syscall args) (tc-syscall-expr ctx env args)]
     [(ast.AstExpr.ForOwnedState payload)
@@ -61111,7 +61212,7 @@
     chain
     seen
     template?
-    (ast.ast-node-get expr-id)))
+    (tc-context-expr-get ctx expr-id)))
 
 (define (tc-comptime-purity-node2-mode
   [ctx : TcContext]
@@ -61307,7 +61408,7 @@
                 (tc-context-macro-state ctx)
                 bound
                 name
-                (ast.ast-node-get init-box)
+                (tc-context-expr-get ctx init-box)
                 template?)
               chain
               seen
@@ -61481,7 +61582,7 @@
         bound
         template?
         expr
-        (ast.ast-node-get func)
+        (tc-context-expr-get ctx func)
         args)
         [(ResultTcUnit.Ok)
           (match (tc-comptime-purity-node-mode
@@ -62361,11 +62462,11 @@
   (match decl
     [(ast.AstDecl.Def decl-meta _ _ expr-box)
       (let
-        [expr : ast.AstExpr (ast.ast-node-get expr-box)]
+        [expr : ast.AstExpr (tc-context-expr-get ctx expr-box)]
         (tc-comptime-purity-expr ctx env TcStringList.Nil chain seen expr))]
     [(ast.AstDecl.DefFn decl-meta _ params _ body-box _)
       (let
-        [body : ast.AstExpr (ast.ast-node-get body-box)]
+        [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
         (tc-comptime-purity-expr
           ctx
           env
@@ -66053,7 +66154,7 @@
         [(ResultTcUnit.Ok)
           (match (tc-macro-abstract-guard
             state
-            (ast.ast-node-get cond-id)
+            (tc-context-expr-get ctx cond-id)
             bound)
             [(TcMacroAbstractGuard.No)
               (tc-comptime-purity-node2-mode
@@ -71631,7 +71732,7 @@
     (= args.len 1))
     (let
       [arg : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       (match (ast.ast-expr-unspan arg)
         [(ast.AstExpr.Lambda lambda-box)
           (match (__tl-box-place lambda-box)
@@ -88749,7 +88850,7 @@
     (spec.ResultGenKey.Ok "" fuel)
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get exprs index 0))]
       (match (macro-identity-key-param-expr
         ctx
         fallback-module
@@ -88895,7 +88996,7 @@
         (spec.ResultGenKey.Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              (ast.ast-node-get (ast.ast-expr-list-get args arg-index 0))
+              (tc-context-expr-get ctx (ast.ast-expr-list-get args arg-index 0))
               "macro call has too many arguments"))))]
     [else
       (match (ast.ast-macro-param-list-get
@@ -88995,7 +89096,9 @@
                     "macro call has too few arguments")))
               (let
                 [head-expr : ast.AstExpr
-                  (ast.ast-node-get (ast.ast-expr-list-get args arg-index 0))]
+                  (tc-context-expr-get
+                    ctx
+                    (ast.ast-expr-list-get args arg-index 0))]
                 (match (macro-identity-key-fixed-param
                   ctx
                   decls
@@ -100020,11 +100123,11 @@
   (match func
     [(ast.AstExpr.Spanned inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (macro-call-decl ctx inner decls call-expr))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (macro-call-decl ctx inner decls call-expr))]
     [(ast.AstExpr.Var name)
       (if (or
@@ -100848,7 +100951,7 @@
     ResultMacroCheck.Ok
     (let
       [head : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
       (match (macro-check-operand
         ctx
         env
@@ -100877,7 +100980,7 @@
     ResultMacroCheck.Ok
     (let
       [head : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
+        (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
       (match (macro-check-operand-with-resolved ctx env resolved-expected head)
         [(ResultMacroCheck.Ok)
           (macro-check-variadic-operands-resolved-at
@@ -100962,7 +101065,7 @@
   [clause : ast.AstExprBindingClause]) : ast.AstExprBindingClause
   (let
     [init-id : i64 clause.init]
-    [init : ast.AstExpr (ast.ast-node-get init-id)]
+    [init : ast.AstExpr (tc-context-expr-get ctx init-id)]
     [raw-init-produced : ast.AstType
       (if capture-expr-types
         (macro-captured-binding-init-produced-type ctx env init)
@@ -101038,7 +101141,7 @@
       (while (< index count)
         (let
           [arg-id : i64 (ast.ast-expr-list-get (& args) index 0)]
-          [arg : ast.AstExpr (ast.ast-node-get arg-id)]
+          [arg : ast.AstExpr (tc-context-expr-get ctx arg-id)]
           (begin
             (ast.ast-expr-list-push
               (&mut out)
@@ -101070,13 +101173,13 @@
         ctx
         pools
         first-id
-        (ast.ast-node-get first-id)
+        (tc-context-expr-get ctx first-id)
         true)
       (macro-captured-expr-node
         ctx
         pools
         second-id
-        (ast.ast-node-get second-id)
+        (tc-context-expr-get ctx second-id)
         true))))
 
 (define (macro-caller-origin-expr-clause-list
@@ -101280,7 +101383,7 @@
     [captured : i64
       (match arg-expr
         [(ast.AstExpr.Spanned inner span)
-          (match (ast.ast-node-get inner)
+          (match (tc-context-expr-get ctx inner)
             [(ast.AstExpr.Literal (ast.AstLiteral.String string-id))
               (ast.ast-expr-spanned-with-pools
                 pools
@@ -101601,7 +101704,7 @@
                     "macro call has too few arguments")))
               (let
                 [arg : i64 (ast.ast-expr-list-get args arg-index 0)]
-                [arg-expr : ast.AstExpr (ast.ast-node-get arg)]
+                [arg-expr : ast.AstExpr (tc-context-expr-get ctx arg)]
                 (match (macro-bind-fixed-param
                   ctx
                   decls
@@ -101806,7 +101909,7 @@
                     "macro call has too few arguments")))
               (let
                 [arg : i64 (ast.ast-expr-list-get args arg-index 0)]
-                [arg-expr : ast.AstExpr (ast.ast-node-get arg)]
+                [arg-expr : ast.AstExpr (tc-context-expr-get ctx arg)]
                 (match (macro-capture-fixed-param
                   ctx
                   decls
@@ -103445,7 +103548,7 @@
         type-env
         decls
         depth
-        (ast.ast-node-get inner))
+        (tc-context-expr-get ctx inner))
         [(ResultMacroExpr.Ok ninner)
           (ResultMacroExpr.Ok (ast.ast-expr-spanned ninner span))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
@@ -103455,7 +103558,7 @@
         type-env
         decls
         depth
-        (ast.ast-node-get inner))
+        (tc-context-expr-get ctx inner))
         [(ResultMacroExpr.Ok ninner)
           (ResultMacroExpr.Ok
             (ast.ast-expr-macro-expansion ninner provenance-id macro-name-id))]
@@ -103481,7 +103584,7 @@
     ResultMacroCheck.Ok
     (let
       [head-id : i64 (ast.ast-expr-list-get args index 0)]
-      [head : ast.AstExpr (ast.ast-node-get head-id)]
+      [head : ast.AstExpr (tc-context-expr-get ctx head-id)]
       (if (macro-binding-prefix-form? head)
         (match (macro-expand-binding-prefix-form ctx type-env decls depth head)
           [(ResultMacroExpr.Ok nhead)
@@ -104446,7 +104549,7 @@
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
         (let
-          [body : ast.AstExpr (ast.ast-node-get body-box)]
+          [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
           [body-fires : bool
             (if (<= index first-fire-index)
               (= index first-fire-index)
@@ -104582,7 +104685,7 @@
                     out))]
               [(ResultTcEnv.Err message)
                 (ResultMacroLetBindingsBuild.Err
-                  (box (tc-expr-diag (ast.ast-node-get ninit) message)))])]
+                  (box (tc-expr-diag (tc-context-expr-get ctx ninit) message)))])]
           [(ResultMacroExpr.Err diag) (ResultMacroLetBindingsBuild.Err diag)])])))
 
 (define (macro-expand-resource-bindings
@@ -104652,7 +104755,8 @@
                           out))]
                     [(ResultTcEnv.Err message)
                       (ResultMacroResourceBindingsBuild.Err
-                        (box (tc-expr-diag (ast.ast-node-get ninit) message)))]))]
+                        (box
+                          (tc-expr-diag (tc-context-expr-get ctx ninit) message)))]))]
               [(ResultMacroExpr.Err diag)
                 (ResultMacroResourceBindingsBuild.Err diag)])]
           [(ResultMacroExpr.Err diag)
@@ -104731,7 +104835,7 @@
       env
       decls
       depth
-      (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))
+      (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))
       (ast.ast-expr-list-tail-from-ref (& args) 1)
       is-unless)))
 
@@ -104807,7 +104911,7 @@
   [depth : i64]
   [expr-id : i64]) : ResultMacroExpr
   (let
-    [expr : ast.AstExpr (ast.ast-node-get expr-id)]
+    [expr : ast.AstExpr (tc-context-expr-get ctx expr-id)]
     [fires : bool
       (macro-expr-might-fire?
         (tc-context-macro-state ctx)
@@ -104844,7 +104948,7 @@
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
+        [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
         [callee-maybe-macro : bool
           (macro-call-callee-maybe-macro? (tc-context-macro-state ctx) func)]
         (if callee-maybe-macro
@@ -105002,7 +105106,7 @@
                     (cfg compile-profile (compiler-tc-walk-scrut-tc-start!))
                     (let
                       [scrut-ty-result : ResultTcType
-                        (tc-expr ctx env (ast.ast-node-get nscrut))]
+                        (tc-expr ctx env (tc-context-expr-get ctx nscrut))]
                       (begin
                         (cfg
                           compile-profile
@@ -105025,7 +105129,9 @@
                           [(ResultTcType.Err message)
                             (ResultMacroExpr.Err
                               (box
-                                (tc-expr-diag (ast.ast-node-get nscrut) message)))])))))]
+                                (tc-expr-diag
+                                  (tc-context-expr-get ctx nscrut)
+                                  message)))])))))]
               [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
     [(ast.AstExpr.While cond-box body-box)
       (match (macro-expand-node ctx env decls depth cond-box)
@@ -105072,7 +105178,7 @@
                     [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
               [(ResultTcType.Err message)
                 (ResultMacroExpr.Err
-                  (box (tc-expr-diag (ast.ast-node-get nsource) message)))])]
+                  (box (tc-expr-diag (tc-context-expr-get ctx nsource) message)))])]
           [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
     [(ast.AstExpr.ForOwnedStep payload)
       (let
@@ -105116,11 +105222,11 @@
                 (ResultMacroExpr.Err
                   (box
                     (tc-expr-diag
-                      (ast.ast-node-get source-name)
+                      (tc-context-expr-get ctx source-name)
                       "typecheck: scalar for owned step requires fixed-array state")))])]
           [(ResultTcType.Err message)
             (ResultMacroExpr.Err
-              (box (tc-expr-diag (ast.ast-node-get source-name) message)))]))]
+              (box (tc-expr-diag (tc-context-expr-get ctx source-name) message)))]))]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
@@ -105980,7 +106086,7 @@
     call-expr
     (match (ast.ast-expr-unspan call-expr)
       [(ast.AstExpr.Call head-id _)
-        (match (ast.ast-expr-unspan (ast.ast-node-get head-id))
+        (match (ast.ast-expr-unspan (tc-context-expr-get ctx head-id))
           [(ast.AstExpr.Var name-id)
             (macro-call-not-macro-message ctx decls module-id name-id)]
           [_ "typecheck: module-scope macro call has a non-symbol head"])]
@@ -107632,7 +107738,7 @@
   [ctx : TcContext]
   [decls : ast.AstDeclList]
   [id : i64]) : bool
-  (macro-expr-uses-macro? ctx decls (ast.ast-node-get id)))
+  (macro-expr-uses-macro? ctx decls (tc-context-expr-get ctx id)))
 
 (define (macro-exprs-use-macro?
   [ctx : TcContext]
@@ -107708,7 +107814,7 @@
     [(ast.AstExpr.Var _) false]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
+        [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
         (or
           (macro-call-is-expandable? ctx decls func expr)
           (macro-expr-uses-macro? ctx decls func)
@@ -111629,7 +111735,7 @@
   [ret : ast.AstType]
   [body-box : i64]) : ResultTcUnit
   (let
-    [body : ast.AstExpr (ast.ast-node-get body-box)]
+    [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
     [registered-params : ast.AstParamList
       (tc-check-fn-registered-params ctx global-env name params)]
     [resolved-ret : ast.AstType (tc-resolve-type ctx ret)]
@@ -112469,7 +112575,7 @@
         [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstDecl.DefMacro decl-meta name params ret body-box)
       (let
-        [body : ast.AstExpr (ast.ast-node-get body-box)]
+        [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
         (tc-check-defmacro name ctx top-env params ret body))]
     [(ast.AstDecl.Extern decl-meta _ kind metadata ty)
       (tc-check-extern-decl ctx kind (__tl-box-place metadata) ty)]

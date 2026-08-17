@@ -34124,7 +34124,7 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box span)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (match (tc-integer-literal-expr-with-expected ctx inner expected)
           [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
           [(ResultTcType.Err message)
@@ -34132,7 +34132,7 @@
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (tc-integer-literal-expr-with-expected
         ctx
-        (tc-context-expr-get ctx inner-box)
+        (ast.ast-node-get inner-box)
         expected)]
     [(ast.AstExpr.Literal lit)
       (match lit
@@ -61212,7 +61212,7 @@
     chain
     seen
     template?
-    (tc-context-expr-get ctx expr-id)))
+    (ast.ast-node-get expr-id)))
 
 (define (tc-comptime-purity-node2-mode
   [ctx : TcContext]
@@ -61408,7 +61408,7 @@
                 (tc-context-macro-state ctx)
                 bound
                 name
-                (tc-context-expr-get ctx init-box)
+                (ast.ast-node-get init-box)
                 template?)
               chain
               seen
@@ -61582,7 +61582,7 @@
         bound
         template?
         expr
-        (tc-context-expr-get ctx func)
+        (ast.ast-node-get func)
         args)
         [(ResultTcUnit.Ok)
           (match (tc-comptime-purity-node-mode
@@ -62462,11 +62462,11 @@
   (match decl
     [(ast.AstDecl.Def decl-meta _ _ expr-box)
       (let
-        [expr : ast.AstExpr (tc-context-expr-get ctx expr-box)]
+        [expr : ast.AstExpr (ast.ast-node-get expr-box)]
         (tc-comptime-purity-expr ctx env TcStringList.Nil chain seen expr))]
     [(ast.AstDecl.DefFn decl-meta _ params _ body-box _)
       (let
-        [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
+        [body : ast.AstExpr (ast.ast-node-get body-box)]
         (tc-comptime-purity-expr
           ctx
           env
@@ -66154,7 +66154,7 @@
         [(ResultTcUnit.Ok)
           (match (tc-macro-abstract-guard
             state
-            (tc-context-expr-get ctx cond-id)
+            (ast.ast-node-get cond-id)
             bound)
             [(TcMacroAbstractGuard.No)
               (tc-comptime-purity-node2-mode
@@ -107738,7 +107738,7 @@
   [ctx : TcContext]
   [decls : ast.AstDeclList]
   [id : i64]) : bool
-  (macro-expr-uses-macro? ctx decls (tc-context-expr-get ctx id)))
+  (macro-expr-uses-macro? ctx decls (ast.ast-node-get id)))
 
 (define (macro-exprs-use-macro?
   [ctx : TcContext]
@@ -107814,7 +107814,7 @@
     [(ast.AstExpr.Var _) false]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
+        [func : ast.AstExpr (ast.ast-node-get func-box)]
         (or
           (macro-call-is-expandable? ctx decls func expr)
           (macro-expr-uses-macro? ctx decls func)

@@ -56861,6 +56861,68 @@
       4
       "single-element trip counts stay exact")))
 
+;; Route A ownership witness: the debug session publishes its borrowed arena and
+;; dependent views in one value, while the inliner publishes and retires its
+;; scratch owner and memo as one value without changing the caller's arena.
+(define (compiler-optimize-owned-state-self-test) : i64
+  (let
+    [home : arena.Arena (arena.current)]
+    [_configure : unit
+      (compiler_optimize.compiler-opt-debug-configure!
+        false
+        "owned-state"
+        false)]
+    [configured : compiler_optimize.CompilerOptOwnedState
+      (compiler_optimize.compiler-opt-owned-state-shared-view)]
+    [debug : compiler_optimize.OptDebugState configured.debug-state]
+    [debug-ok : bool
+      (and
+        (arena.eq? debug.dump-arena home)
+        (string.eq debug.dump-pass "owned-state")
+        (=
+          (string.string-length
+            (compiler_optimize.compiler-opt-debug-dump-result))
+          0)
+        (=
+          (string.string-length
+            (compiler_optimize.compiler-opt-debug-verification-error))
+          0))]
+    [functions : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-test-function (compiler_ir_types.CompilerIrInstrList.Nil))
+        (compiler_ir_types.CompilerIrFunctionList.Nil))]
+    [index : compiler_optimize.OptFunctionIndex
+      (compiler_optimize.opt-function-index-build functions)]
+    [_install : unit (compiler_optimize.opt-inline-owned-state-install! index)]
+    [live-owned : compiler_optimize.CompilerOptOwnedState
+      (compiler_optimize.compiler-opt-owned-state-shared-view)]
+    [live : compiler_optimize.OptInlineOwnedState live-owned.inline-state]
+    [live-ok : bool
+      (and
+        (not (= (arena.raw-handle live.verify-scratch) 0))
+        (= (array-length live.multiblock-ok-memo) 1)
+        (= (array-ref live.multiblock-ok-memo 0) (- 0 1))
+        (arena.eq? (arena.current) home))]
+    [_retire : unit (compiler_optimize.opt-inline-owned-state-reset! true)]
+    [retired-owned : compiler_optimize.CompilerOptOwnedState
+      (compiler_optimize.compiler-opt-owned-state-shared-view)]
+    [retired : compiler_optimize.OptInlineOwnedState retired-owned.inline-state]
+    [retired-ok : bool
+      (and
+        (= (arena.raw-handle retired.verify-scratch) 0)
+        (= (array-length retired.multiblock-ok-memo) 0)
+        (arena.eq? (arena.current) home))]
+    [_reset-debug : unit
+      (compiler_optimize.compiler-opt-debug-configure! false "" false)]
+    (cond [(not debug-ok) 1] [(not live-ok) 2] [(not retired-ok) 3] [else 42])))
+
+(test
+  compiler-optimize-owned-state-route-a
+  (test.assert-i64-eq
+    (compiler-optimize-owned-state-self-test)
+    42
+    "optimizer arena globals install and retire through complete owned states"))
+
 ;; Source-level runtime witness for the whole classifier path: lowering must
 ;; form the compare chain, bit_test must rewrite it, and the backend must fuse
 ;; the shift/test/branch without changing any boundary result. The inputs live

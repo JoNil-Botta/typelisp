@@ -44833,41 +44833,69 @@
                     backend-state
                     assignments
                     src)]
-                [exclude : (__tl_dyn-array String)
-                  (if (string.eq src-home "")
-                    (array.make-array String 0)
-                    (compiler-backend-one-exclude src-home))]
-                [exclude-n : i64
-                  (if (string.eq src-home "")
-                    0
-                    1)]
-                [reg : String
-                  (compiler-backend-planned-or-scavenge-reg
-                    planned0
-                    dst
-                    exclude
-                    exclude-n
-                    "%r8"
-                    backend-state)]
-                (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
-                  type-segment-bases
-                  assignments
-                  src
-                  ty
-                  reg
-                  program-index)
-                  [(ResultCompilerBackend.Ok load)
-                    (ResultCompilerBackend.Ok
-                      (str_cat.str-cat
-                        load
-                        (compiler-backend-emit-store-typed-var-with-plan
-                          assignments
-                          dst
-                          reg
-                          ty
-                          backend-state)))]
-                  [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err message)]))))])]))
+                ;; The mirror image of the load above, and the reason it is
+                ;; worth its own arm: a register-homed source moving to a
+                ;; MEMORY-homed destination is a single `movq %src, N(%rsp)`.
+                ;; Routing it through the scratch instead costs an extra
+                ;; instruction per store, and the P3/P7 call-hole carriers are
+                ;; made of exactly this move -- their carrier is forced to a
+                ;; frame slot by construction, so every crossing paid
+                ;; `movq %reg, %r8 ; movq %r8, N(%rsp)` for a store x86 does in
+                ;; one. The width argument is the load's, unchanged: a var's
+                ;; register home already holds the normalized 64-bit value, so
+                ;; the store needs no per-type narrowing -- and the narrowing
+                ;; the scratch path did emit went into the SCRATCH, which is
+                ;; why it could not simply be dropped there.
+                ;;
+                ;; `compiler-backend-value-scalar-register` answers non-empty
+                ;; only for a var with a plain Register home (never a pair,
+                ;; never a forwarded AddrOf), so this arm needs no scratch at
+                ;; all and asks the scavenger for none: strictly fewer
+                ;; registers are touched than the plan reserved.
+                (if (and (string.eq dst-home "") (not (string.eq src-home "")))
+                  (ResultCompilerBackend.Ok
+                    (compiler-backend-emit-store-typed-var-with-plan
+                      assignments
+                      dst
+                      src-home
+                      ty
+                      backend-state))
+                  (let
+                    [exclude : (__tl_dyn-array String)
+                      (if (string.eq src-home "")
+                        (array.make-array String 0)
+                        (compiler-backend-one-exclude src-home))]
+                    [exclude-n : i64
+                      (if (string.eq src-home "")
+                        0
+                        1)]
+                    [reg : String
+                      (compiler-backend-planned-or-scavenge-reg
+                        planned0
+                        dst
+                        exclude
+                        exclude-n
+                        "%r8"
+                        backend-state)]
+                    (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                      type-segment-bases
+                      assignments
+                      src
+                      ty
+                      reg
+                      program-index)
+                      [(ResultCompilerBackend.Ok load)
+                        (ResultCompilerBackend.Ok
+                          (str_cat.str-cat
+                            load
+                            (compiler-backend-emit-store-typed-var-with-plan
+                              assignments
+                              dst
+                              reg
+                              ty
+                              backend-state)))]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)]))))))])]))
 
 (define (compiler-backend-emit-mov
   [type-segment-bases : i64]

@@ -7198,6 +7198,11 @@
           (string.eq asm "    movq $7, -16(%rbp)\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
+;; Staging through the planned scratch is what a MEMORY-to-memory move needs,
+;; and it is all it is for: the source is spilled, so the value has to be in a
+;; register before it can be stored, and that register is the planned scratch
+;; and never %rax. A register-homed source does NOT take this path -- see
+;; compiler-backend-mov-register-to-slot-ok?.
 (define (compiler-backend-mov-scratch-staging-ok?) : bool
   (let
     [index : compiler_backend.CompilerBackendProgramIndex
@@ -7209,8 +7214,7 @@
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
-          (compiler_regalloc.CompilerRegLocation.Register
-            compiler_abi.compiler-reg-id-r12))
+          (compiler_regalloc.CompilerRegLocation.Spill -24))
         (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [float-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
@@ -7234,7 +7238,7 @@
           (and
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq %r12, %r8\n")
+              "    movq -24(%rbp), %r8\n")
             (compiler_backend.compiler-backend-string-contains?
               asm
               "    movq %r8, -16(%rbp)\n")
@@ -7261,6 +7265,84 @@
               "    movsd %xmm2, -16(%rbp)\n")
             (not
               (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))))
+
+;; P7b: a Mov from a REGISTER-homed value to a MEMORY-homed one is a single
+;; store. x86 stores a register into a frame slot in one instruction, so routing
+;; the move through a scratch (`movq %r12, %r8 ; movq %r8, -16(%rbp)`) spends an
+;; instruction to reach the same state. The P3/P7 call-hole carriers are made of
+;; exactly this Mov -- the carrier is forced to a frame slot by construction --
+;; so every crossing the rewrite inserts used to pay for it.
+;;
+;; Both memory destinations are covered: a var the plan spilled, and a var it
+;; never assigned at all (the bare slot). The narrow type pins the width claim
+;; the register-destination fast path already relies on -- a var's register home
+;; holds the normalized 64-bit value, so the copy needs no per-type narrowing,
+;; and emitting that narrowing into the scratch was the only reason the old path
+;; could not simply drop it. The planned scratch is named on every call and must
+;; not appear in the output: this arm asks the scavenger for nothing.
+(define (compiler-backend-mov-register-to-slot-ok?) : bool
+  (let
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    [slot-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    [spill-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Spill -40))
+        slot-assignments)]
+    (and
+      ;; unassigned destination -> its bare slot, one store
+      (match (compiler_backend.compiler-backend-emit-mov
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        slot-assignments
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64)
+        index
+        2
+        (cfg scratch-vreg "%r8" "")
+        index.backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (string.eq asm "    movq %r12, -16(%rbp)\n")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
+      ;; spilled destination -> its frame offset, one store
+      (match (compiler_backend.compiler-backend-emit-mov
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        spill-assignments
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64)
+        index
+        2
+        (cfg scratch-vreg "%r8" "")
+        index.backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (string.eq asm "    movq %r12, -40(%rbp)\n")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
+      ;; a narrow type changes nothing: no narrowing, no scratch
+      (match (compiler_backend.compiler-backend-emit-mov
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        spill-assignments
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I32)
+        index
+        2
+        (cfg scratch-vreg "%r8" "")
+        index.backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (string.eq asm "    movq %r12, -40(%rbp)\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-register-group-test-type) : compiler_ast_types.AstType
@@ -12121,6 +12203,7 @@
     (compiler-backend-direct-immediate-mov-ok?)
     true
     (compiler-backend-mov-scratch-staging-ok?)
+    (compiler-backend-mov-register-to-slot-ok?)
     (compiler-backend-peephole-asm-ok?)
     (compiler-backend-binop-operand-folding-ok?)
     (compiler-backend-bounds-operand-folding-ok?)
@@ -26092,15 +26175,22 @@
   (match (compiler-backend-copy-bytes-live-through-asm)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
+        ;; The property is that %r9 still holds the value after the CopyBytes:
+        ;; the copy's scratch avoided it, and no emergency save/restore was
+        ;; needed. P7b makes the store that reads it ONE register-to-slot movq
+        ;; in either cfg -- there is no scratch left to stage it through, so
+        ;; neither staging spelling may appear.
         (compiler_backend.compiler-backend-string-contains?
           asm
-          (cfg scratch-vreg "    movq %r9, %rax\n" "    movq %r9, %r8\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          (cfg
-            scratch-vreg
-            "    movq %rax, -32(%rbp)\n"
-            "    movq %r8, -32(%rbp)\n"))
+          "    movq %r9, -32(%rbp)\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r9, %rax\n"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r9, %r8\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm

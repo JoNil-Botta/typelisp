@@ -196,11 +196,11 @@
     (begin
       (if (> n 1023)
         (begin
-          (set! y (* y (stdlib.math.f64-from-bits 0x7fe0000000000000)))
+          (set! y (* y 8.9884656743115795e+307))
           (set! n (- n 1023))
           (if (> n 1023)
             (begin
-              (set! y (* y (stdlib.math.f64-from-bits 0x7fe0000000000000)))
+              (set! y (* y 8.9884656743115795e+307))
               (set! n (- n 1023))
               (if (> n 1023)
                 (set! n 1023)
@@ -208,11 +208,11 @@
             unit))
         (if (< n -1022)
           (begin
-            (set! y (* y (stdlib.math.f64-from-bits 0x0360000000000000)))
+            (set! y (* y 2.0041683600089728e-292))
             (set! n (+ n 969))
             (if (< n -1022)
               (begin
-                (set! y (* y (stdlib.math.f64-from-bits 0x0360000000000000)))
+                (set! y (* y 2.0041683600089728e-292))
                 (set! n (+ n 969))
                 (if (< n -1022)
                   (set! n -1022)
@@ -230,11 +230,11 @@
     (begin
       (if (> n 127)
         (begin
-          (set! y (* y (stdlib.math.f32-from-bits (cast 0x7f000000 : u32))))
+          (set! y (* y (cast 1.7014118346046923e+38 : f32)))
           (set! n (- n 127))
           (if (> n 127)
             (begin
-              (set! y (* y (stdlib.math.f32-from-bits (cast 0x7f000000 : u32))))
+              (set! y (* y (cast 1.7014118346046923e+38 : f32)))
               (set! n (- n 127))
               (if (> n 127)
                 (set! n 127)
@@ -242,13 +242,11 @@
             unit))
         (if (< n -126)
           (begin
-            (set! y (* y (stdlib.math.f32-from-bits (cast 0x0c800000 : u32))))
+            (set! y (* y (cast 1.9721522630525295e-31 : f32)))
             (set! n (+ n 102))
             (if (< n -126)
               (begin
-                (set!
-                  y
-                  (* y (stdlib.math.f32-from-bits (cast 0x0c800000 : u32))))
+                (set! y (* y (cast 1.9721522630525295e-31 : f32)))
                 (set! n (+ n 102))
                 (if (< n -126)
                   (set! n -126)
@@ -791,7 +789,7 @@
     (let
       [adjusted-bits : u64 (- scale-bits (shl (cast 1009 : u64) 52))]
       [scale : f64 (stdlib.math.f64-from-bits adjusted-bits)]
-      (* (stdlib.math.f64-from-bits 0x7f00000000000000) (+ scale (* scale tmp))))
+      (* 5.4861240687936887e+303 (+ scale (* scale tmp))))
     (let
       [adjusted-bits : u64 (+ scale-bits (shl (cast 1022 : u64) 52))]
       [scale : f64 (stdlib.math.f64-from-bits adjusted-bits)]
@@ -805,7 +803,7 @@
               (set! lo (+ (+ (- 1.0 hi) y) lo))
               (set! y (- (+ hi lo) 1.0))))
           unit)
-        (* (stdlib.math.f64-from-bits 0x0010000000000000) y)))))
+        (* 2.2250738585072014e-308 y)))))
 
 ;: Return e^`value` as binary64 without allocation or platform math calls.
 ;:
@@ -827,14 +825,14 @@
           [(!= (bit-and bits 0x8000000000000000) (cast 0 : u64)) 0.0]
           [else (stdlib.math.f64-positive-infinity)])
         (let
-          [z : f64 (* (stdlib.math.f64-from-bits 0x40671547652b82fe) value)]
-          [rounded : f64 (+ z (stdlib.math.f64-from-bits 0x4338000000000000))]
+          [z : f64 (* 184.66496523378731 value)]
+          [rounded : f64 (+ z 6755399441055744.0)]
           [k-bits : u64 (stdlib.math.f64-to-bits rounded)]
-          [k : f64 (- rounded (stdlib.math.f64-from-bits 0x4338000000000000))]
+          [k : f64 (- rounded 6755399441055744.0)]
           [r : f64
             (+
-              (+ value (* k (stdlib.math.f64-from-bits 0xbf762e42fefa0000)))
-              (* k (stdlib.math.f64-from-bits 0xbd0cf79abc9e3b3a)))]
+              (+ value (* k -0.0054152123481117087))
+              (* k -1.2864023111638346e-14))]
           [index : i64 (cast (% k-bits (cast 128 : u64)) : i64)]
           [entry : MathExpF64TableEntry (math-exp-f64-table-entry index)]
           [scale-bits : u64 (+ entry.scale-bits (shl k-bits 45))]
@@ -844,16 +842,8 @@
             (+
               (+
                 (+ tail r)
-                (*
-                  r2
-                  (+
-                    (stdlib.math.f64-from-bits 0x3fdffffffffffdbd)
-                    (* r (stdlib.math.f64-from-bits 0x3fc555555555543c)))))
-              (*
-                (* r2 r2)
-                (+
-                  (stdlib.math.f64-from-bits 0x3fa55555cf172b91)
-                  (* r (stdlib.math.f64-from-bits 0x3f81111167a4d017)))))]
+                (* r2 (+ 0.49999999999996786 (* r 0.16666666666665886))))
+              (* (* r2 r2) (+ 0.041666680841067401 (* r 0.0083333358530595491))))]
           (if (>= magnitude-top (cast 0x408 : u64))
             (math-exp-f64-special tmp scale-bits k-bits)
             (let
@@ -864,21 +854,18 @@
 (define (math-exp-f32-finite [value : f32]) : f32
   (let
     [x : f64 (cast value : f64)]
-    [z : f64 (* (stdlib.math.f64-from-bits 0x40471547652b82fe) x)]
-    [rounded : f64 (+ z (stdlib.math.f64-from-bits 0x4338000000000000))]
+    [z : f64 (* 46.166241308446828 x)]
+    [rounded : f64 (+ z 6755399441055744.0)]
     [k-bits : u64 (stdlib.math.f64-to-bits rounded)]
-    [k : f64 (- rounded (stdlib.math.f64-from-bits 0x4338000000000000))]
+    [k : f64 (- rounded 6755399441055744.0)]
     [r : f64 (- z k)]
     [entry : MathExpF64TableEntry
       (math-exp-f64-table-entry (* (cast (% k-bits (cast 32 : u64)) : i64) 4))]
     [scale-bits : u64 (+ entry.scale-bits (shl k-bits 47))]
     [scale : f64 (stdlib.math.f64-from-bits scale-bits)]
-    [p : f64
-      (+
-        (* (stdlib.math.f64-from-bits 0x3ebc6af84b912394) r)
-        (stdlib.math.f64-from-bits 0x3f2ebfce50fac4f3))]
+    [p : f64 (+ (* 1.6938359250920212e-06 r) 0.00023459809789509004)]
     [r2 : f64 (* r r)]
-    [y : f64 (+ (* (stdlib.math.f64-from-bits 0x3f962e42ff0c52d6) r) 1.0)]
+    [y : f64 (+ (* 0.021660849396613134 r) 1.0)]
     (cast (* (+ (* p r2) y) scale) : f32)))
 
 ;: Return e^`value` as binary32 without allocation or platform math calls.
@@ -894,10 +881,9 @@
       (cond
         [(= bits (cast 0xff800000 : u32)) (cast 0.0 : f32)]
         [(>= magnitude-top (cast 0x7f8 : u32)) (+ value value)]
-        [(> value (stdlib.math.f32-from-bits (cast 0x42b17217 : u32)))
+        [(> value (cast 88.722831726074219 : f32))
           (stdlib.math.f32-positive-infinity)]
-        [(< value (stdlib.math.f32-from-bits (cast 0xc2cff1b4 : u32)))
-          (stdlib.math.f32-from-bits (cast 0 : u32))]
+        [(< value (cast -103.97207641601562 : f32)) (cast 0.0 : f32)]
         [else (math-exp-f32-finite value)])
       (math-exp-f32-finite value))))
 
@@ -1781,39 +1767,29 @@
         r3
         (+
           (+
-            (+
-              (stdlib.math.f64-from-bits 0x3fd5555555555577)
-              (* r (stdlib.math.f64-from-bits 0xbfcffffffffffdcb)))
-            (* r2 (stdlib.math.f64-from-bits 0x3fc999999995dd0c)))
+            (+ 0.3333333333333352 (* r -0.24999999999998432))
+            (* r2 0.19999999999320328))
           (*
             r3
             (+
               (+
-                (+
-                  (stdlib.math.f64-from-bits 0xbfc55555556745a7)
-                  (* r (stdlib.math.f64-from-bits 0x3fc24924a344de30)))
-                (* r2 (stdlib.math.f64-from-bits 0xbfbfffffa4423d65)))
+                (+ -0.16666666669929706 (* r 0.14285715076560868))
+                (* r2 -0.12499997863982555))
               (*
                 r3
                 (+
                   (+
-                    (+
-                      (stdlib.math.f64-from-bits 0x3fbc7184282ad6ca)
-                      (* r (stdlib.math.f64-from-bits 0xbfb999eb43b068ff)))
-                    (* r2 (stdlib.math.f64-from-bits 0x3fb78182f7afd085)))
-                  (* r3 (stdlib.math.f64-from-bits 0xbfb5521375d145cd))))))))]
-    [split : f64 (* r (stdlib.math.f64-from-bits 0x41a0000000000000))]
+                    (+ 0.11110712032936046 (* r -0.10000486757818193))
+                    (* r2 0.091819940061954666))
+                  (* r3 -0.083283630622893415)))))))]
+    [split : f64 (* r 134217728.0)]
     [rhi : f64 (- (+ r split) split)]
     [rlo : f64 (- r rhi)]
-    [w : f64 (* (* rhi rhi) (stdlib.math.f64-from-bits 0xbfe0000000000000))]
+    [w : f64 (* (* rhi rhi) -0.5)]
     [hi : f64 (+ r w)]
     [lo : f64 (+ (- r hi) w)]
     (begin
-      (set!
-        lo
-        (+
-          lo
-          (* (* (stdlib.math.f64-from-bits 0xbfe0000000000000) rlo) (+ rhi r))))
+      (set! lo (+ lo (* (* -0.5 rlo) (+ rhi r))))
       (set! y (+ y lo))
       (+ y hi))))
 
@@ -1824,9 +1800,7 @@
       (if (< bits (cast 0x0010000000000000 : u64))
         (-
           (stdlib.math.f64-to-bits
-            (*
-              (stdlib.math.f64-from-bits bits)
-              (stdlib.math.f64-from-bits 0x4330000000000000)))
+            (* (stdlib.math.f64-from-bits bits) 4503599627370496.0))
           (shl (cast 52 : u64) 52))
         bits)]
     [tmp : u64 (- normalized-bits (cast 0x3fe6000000000000 : u64))]
@@ -1842,25 +1816,18 @@
     [z : f64 (stdlib.math.f64-from-bits reduced-bits)]
     [r : f64 (* (- (- z chi) clo) invc)]
     [kd : f64 (cast k : f64)]
-    [w : f64 (+ (* kd (stdlib.math.f64-from-bits 0x3fe62e42fefa3800)) logc)]
+    [w : f64 (+ (* kd 0.69314718055989033) logc)]
     [hi : f64 (+ w r)]
-    [lo : f64
-      (+ (+ (- w hi) r) (* kd (stdlib.math.f64-from-bits 0x3d2ef35793c76730)))]
+    [lo : f64 (+ (+ (- w hi) r) (* kd 5.4979230187083712e-14))]
     [r2 : f64 (* r r)]
     (+
       (+
-        (+ lo (* r2 (stdlib.math.f64-from-bits 0xbfe0000000000001)))
+        (+ lo (* r2 -0.50000000000000011))
         (*
           (* r r2)
           (+
-            (+
-              (stdlib.math.f64-from-bits 0x3fd555555551305b)
-              (* r (stdlib.math.f64-from-bits 0xbfcfffffffeb4590)))
-            (*
-              r2
-              (+
-                (stdlib.math.f64-from-bits 0x3fc999b324f10111)
-                (* r (stdlib.math.f64-from-bits 0xbfc55575e506c89f)))))))
+            (+ 0.33333333331825593 (* r -0.24999999996229549))
+            (* r2 (+ 0.20000304511814496 (* r -0.16667054827627667))))))
       hi)))
 
 ;: Return the natural logarithm of binary64 value without allocation or
@@ -1896,9 +1863,7 @@
       (if (< bits (cast 0x00800000 : u32))
         (-
           (stdlib.math.f32-to-bits
-            (*
-              (stdlib.math.f32-from-bits bits)
-              (stdlib.math.f32-from-bits (cast 0x4b000000 : u32))))
+            (* (stdlib.math.f32-from-bits bits) (cast 8388608.0 : f32)))
           (shl (cast 23 : u32) 23))
         bits)]
     [tmp : u32 (- normalized-bits (cast 0x3f330000 : u32))]
@@ -1911,15 +1876,11 @@
     [logc : f64 (stdlib.math.f64-from-bits entry.logc-bits)]
     [z : f64 (cast (stdlib.math.f32-from-bits reduced-bits) : f64)]
     [r : f64 (- (* z invc) 1.0)]
-    [y0 : f64
-      (+ logc (* (cast k : f64) (stdlib.math.f64-from-bits 0x3fe62e42fefa39ef)))]
+    [y0 : f64 (+ logc (* (cast k : f64) 0.69314718055994529))]
     [r2 : f64 (* r r)]
-    [y : f64
-      (+
-        (* (stdlib.math.f64-from-bits 0x3fd5575b0be00b6a) r)
-        (stdlib.math.f64-from-bits 0xbfdffffef20a4123))]
+    [y : f64 (+ (* 0.33345676574406602 r) -0.49999974858021029)]
     (begin
-      (set! y (+ (* (stdlib.math.f64-from-bits 0xbfd00ea348b88334) r2) y))
+      (set! y (+ (* -0.25089342214237154 r2) y))
       (set! y (+ (* y r2) (+ y0 r)))
       (cast y : f32))))
 
@@ -1959,8 +1920,9 @@
 ;; paths (HAVE_FAST_FMA unset, TOINT_INTRINSICS unset, EXP_USE_TOINT_NARROW 0,
 ;; WANT_ERRNO unset, POWF_SCALE 1). Table fields are shortest round-tripping
 ;; decimal literals folded to exact IEEE-754 payloads through `f64-to-bits`;
-;; scalar constants are exact bit patterns, and operation order remains fixed
-;; because both are part of the stated error bounds. The fenv/errno-dependent
+;; scalar constants are shortest round-tripping decimal literals, and operation
+;; order remains fixed because both are part of the stated error bounds. The
+;; fenv/errno-dependent
 ;; upstream branches collapse to the plain infinity/zero/NaN results:
 ;; TypeLisp exposes only the default round-to-nearest mode, has no floating
 ;; point exception flags, and does not quiet or inspect signaling NaNs, so
@@ -2648,15 +2610,14 @@
     [rhi : f64 (- (* zhi invc) 1.0)]
     [rlo : f64 (* zlo invc)]
     [r : f64 (+ rhi rlo)]
-    [t1 : f64 (+ (* kd (stdlib.math.f64-from-bits 0x3fe62e42fefa3800)) logc)]
+    [t1 : f64 (+ (* kd 0.69314718055989033) logc)]
     [t2 : f64 (+ t1 r)]
-    [lo1 : f64
-      (+ (* kd (stdlib.math.f64-from-bits 0x3d2ef35793c76730)) logctail)]
+    [lo1 : f64 (+ (* kd 5.4979230187083712e-14) logctail)]
     [lo2 : f64 (+ (- t1 t2) r)]
-    [ar : f64 (* (stdlib.math.f64-from-bits 0xbfe0000000000000) r)]
+    [ar : f64 (* -0.5 r)]
     [ar2 : f64 (* r ar)]
     [ar3 : f64 (* r ar2)]
-    [arhi : f64 (* (stdlib.math.f64-from-bits 0xbfe0000000000000) rhi)]
+    [arhi : f64 (* -0.5 rhi)]
     [arhi2 : f64 (* rhi arhi)]
     [hi : f64 (+ t2 arhi2)]
     [lo3 : f64 (* rlo (+ ar arhi))]
@@ -2665,20 +2626,12 @@
       (*
         ar3
         (+
-          (+
-            (stdlib.math.f64-from-bits 0xbfe5555555555560)
-            (* r (stdlib.math.f64-from-bits 0x3fe0000000000006)))
+          (+ -0.66666666666666785 (* r 0.50000000000000067))
           (*
             ar2
             (+
-              (+
-                (stdlib.math.f64-from-bits 0x3fe999999959554e)
-                (* r (stdlib.math.f64-from-bits 0xbfe555555529a47a)))
-              (*
-                ar2
-                (+
-                  (stdlib.math.f64-from-bits 0xbff2495b9b4845e9)
-                  (* r (stdlib.math.f64-from-bits 0x3ff0002b8b263fc3))))))))]
+              (+ 0.79999999953239764 (* r -0.66666666634877392))
+              (* ar2 (+ -1.1429096284595011 (* r 1.0000415263675542)))))))]
     [lo : f64 (+ (+ (+ (+ lo1 lo2) lo3) lo4) p)]
     [y : f64 (+ hi lo)]
     (MathPowLogF64Result y (+ (- hi y) lo))))
@@ -2694,7 +2647,7 @@
       [adjusted-bits : u64 (- scale-bits (shl (cast 1009 : u64) 52))]
       [scale : f64 (stdlib.math.f64-from-bits adjusted-bits)]
       [y : f64 (+ scale (* scale tmp))]
-      (* y (stdlib.math.f64-from-bits 0x7f00000000000000)))
+      (* y 5.4861240687936887e+303))
     (let
       [adjusted-bits : u64 (+ scale-bits (shl (cast 1022 : u64) 52))]
       [scale : f64 (stdlib.math.f64-from-bits adjusted-bits)]
@@ -2718,7 +2671,7 @@
                     (bit-and adjusted-bits (cast 0x8000000000000000 : u64))))
                 unit)))
           unit)
-        (* (stdlib.math.f64-from-bits 0x0010000000000000) y)))))
+        (* 2.2250738585072014e-308 y)))))
 
 ;: Evaluate the binary64 pow exponential reduction once the argument is known
 ;: to be finite and in the table range; `special` marks the upstream
@@ -2729,15 +2682,13 @@
   [sign-bias : u64]
   [special : bool]) : f64
   (let
-    [z : f64 (* (stdlib.math.f64-from-bits 0x40671547652b82fe) x)]
-    [rounded : f64 (+ z (stdlib.math.f64-from-bits 0x4338000000000000))]
+    [z : f64 (* 184.66496523378731 x)]
+    [rounded : f64 (+ z 6755399441055744.0)]
     [k-bits : u64 (stdlib.math.f64-to-bits rounded)]
-    [k : f64 (- rounded (stdlib.math.f64-from-bits 0x4338000000000000))]
+    [k : f64 (- rounded 6755399441055744.0)]
     [r : f64
       (+
-        (+
-          (+ x (* k (stdlib.math.f64-from-bits 0xbf762e42fefa0000)))
-          (* k (stdlib.math.f64-from-bits 0xbd0cf79abc9e3b3a)))
+        (+ (+ x (* k -0.0054152123481117087)) (* k -1.2864023111638346e-14))
         xtail)]
     [entry : MathExpF64TableEntry
       (math-exp-f64-table-entry (cast (% k-bits (cast 128 : u64)) : i64))]
@@ -2747,18 +2698,8 @@
     [r2 : f64 (* r r)]
     [tmp : f64
       (+
-        (+
-          (+ tail r)
-          (*
-            r2
-            (+
-              (stdlib.math.f64-from-bits 0x3fdffffffffffdbd)
-              (* r (stdlib.math.f64-from-bits 0x3fc555555555543c)))))
-        (*
-          (* r2 r2)
-          (+
-            (stdlib.math.f64-from-bits 0x3fa55555cf172b91)
-            (* r (stdlib.math.f64-from-bits 0x3f81111167a4d017)))))]
+        (+ (+ tail r) (* r2 (+ 0.49999999999996786 (* r 0.16666666666665886))))
+        (* (* r2 r2) (+ 0.041666680841067401 (* r 0.0083333358530595491))))]
     (if special
       (math-pow-f64-exp-special tmp sbits k-bits)
       (let
@@ -2783,7 +2724,7 @@
       [(and extreme (>= abstop (cast 0x409 : u64)))
         (if (!= (shr (stdlib.math.f64-to-bits x) 63) (cast 0 : u64))
           (if (!= sign-bias (cast 0 : u64))
-            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))
+            -0.0
             0.0)
           (if (!= sign-bias (cast 0 : u64))
             (stdlib.math.f64-negative-infinity)
@@ -2924,8 +2865,7 @@
                       (set!
                         ix
                         (bit-and
-                          (stdlib.math.f64-to-bits
-                            (* x (stdlib.math.f64-from-bits 0x4330000000000000)))
+                          (stdlib.math.f64-to-bits (* x 4503599627370496.0))
                           (cast 0x7fffffffffffffff : u64)))
                       (set! ix (- ix (shl (cast 52 : u64) 52))))
                     unit)
@@ -3026,16 +2966,10 @@
     [r : f64 (- (* z invc) 1.0)]
     [y0 : f64 (+ logc (cast k : f64))]
     [r2 : f64 (* r r)]
-    [y : f64
-      (+
-        (* (stdlib.math.f64-from-bits 0x3fd27616c9496e0b) r)
-        (stdlib.math.f64-from-bits 0xbfd71969a075c67a))]
-    [p : f64
-      (+
-        (* (stdlib.math.f64-from-bits 0x3fdec70a6ca7badd) r)
-        (stdlib.math.f64-from-bits 0xbfe7154748bef6c8))]
+    [y : f64 (+ (* 0.28845758110921399 r) -0.36092606229713164)]
+    [p : f64 (+ (* 0.48089848147257702 r) -0.72134746750062906)]
     [r4 : f64 (* r2 r2)]
-    [q : f64 (+ (* (stdlib.math.f64-from-bits 0x3ff71547652ab82b) r) y0)]
+    [q : f64 (+ (* 1.4426950408774342 r) y0)]
     (begin
       (set! q (+ (* p r2) q))
       (set! y (+ (* y r4) q))
@@ -3049,21 +2983,18 @@
 ;: f32-exp port relies on), so the shared accessor supplies the scale bits.
 (define (math-powf-exp2 [xd : f64] [sign-bias : u32]) : f32
   (let
-    [rounded : f64 (+ xd (stdlib.math.f64-from-bits 0x42e8000000000000))]
+    [rounded : f64 (+ xd 211106232532992.0)]
     [ki : u64 (stdlib.math.f64-to-bits rounded)]
-    [kd : f64 (- rounded (stdlib.math.f64-from-bits 0x42e8000000000000))]
+    [kd : f64 (- rounded 211106232532992.0)]
     [r : f64 (- xd kd)]
     [entry : MathExpF64TableEntry
       (math-exp-f64-table-entry (* (cast (% ki (cast 32 : u64)) : i64) 4))]
     [ski : u64 (+ ki (cast sign-bias : u64))]
     [t : u64 (+ entry.scale-bits (shl ski 47))]
     [s : f64 (stdlib.math.f64-from-bits t)]
-    [z : f64
-      (+
-        (* (stdlib.math.f64-from-bits 0x3fac6af84b912394) r)
-        (stdlib.math.f64-from-bits 0x3fcebfce50fac4f3))]
+    [z : f64 (+ (* 0.055503615593415351 r) 0.2402284522445722)]
     [r2 : f64 (* r r)]
-    [y : f64 (+ (* (stdlib.math.f64-from-bits 0x3fe62e42ff0c52d6) r) 1.0)]
+    [y : f64 (+ (* 0.69314718069162029 r) 1.0)]
     (begin
       (set! y (+ (* z r2) y))
       (set! y (* y s))
@@ -3104,16 +3035,16 @@
       (cond
         [(<= ylogx -150.0)
           (if (!= sign-bias (cast 0 : u32))
-            (stdlib.math.f32-from-bits (cast 0x80000000 : u32))
+            (cast -0.0 : f32)
             (cast 0.0 : f32))]
-        [(> ylogx (stdlib.math.f64-from-bits 0x405fffffffa3aae2))
-          (if (> ylogx (stdlib.math.f64-from-bits 0x405fffffffd1d571))
+        [(> ylogx 127.99999991400867)
+          (if (> ylogx 127.99999995700433)
             (if (!= sign-bias (cast 0 : u32))
               (stdlib.math.f32-negative-infinity)
               (stdlib.math.f32-positive-infinity))
             (if (!= sign-bias (cast 0 : u32))
-              (stdlib.math.f32-from-bits (cast 0xff7fffff : u32))
-              (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))))]
+              (cast -3.4028234663852886e+38 : f32)
+              (cast 3.4028234663852886e+38 : f32)))]
         [else (math-powf-exp2 ylogx sign-bias)])
       (math-powf-exp2 ylogx sign-bias))))
 
@@ -3183,10 +3114,7 @@
                     (set!
                       ix
                       (bit-and
-                        (stdlib.math.f32-to-bits
-                          (*
-                            x
-                            (stdlib.math.f32-from-bits (cast 0x4b000000 : u32))))
+                        (stdlib.math.f32-to-bits (* x (cast 8388608.0 : f32)))
                         (cast 0x7fffffff : u32)))
                     (set! ix (- ix (shl (cast 23 : u32) 23))))
                   unit)
@@ -3310,14 +3238,14 @@
 ;: Return one exact non-overlapping piece of the internal pi/2 table.
 (define (math-trig-pi-over-two-piece [index : i64]) : f64
   (cond
-    [(= index 0) (stdlib.math.f64-from-bits 0x3FF921FB40000000)]
-    [(= index 1) (stdlib.math.f64-from-bits 0x3E74442D00000000)]
-    [(= index 2) (stdlib.math.f64-from-bits 0x3CF8469880000000)]
-    [(= index 3) (stdlib.math.f64-from-bits 0x3B78CC5160000000)]
-    [(= index 4) (stdlib.math.f64-from-bits 0x39F01B8380000000)]
-    [(= index 5) (stdlib.math.f64-from-bits 0x387A252040000000)]
-    [(= index 6) (stdlib.math.f64-from-bits 0x36E3822280000000)]
-    [else (stdlib.math.f64-from-bits 0x3569F31D00000000)]))
+    [(= index 0) 1.5707962512969971]
+    [(= index 1) 7.5497894158615964e-08]
+    [(= index 2) 5.3903025299577648e-15]
+    [(= index 3) 3.2820034158079129e-22]
+    [(= index 4) 1.2706557530806761e-29]
+    [(= index 5) 1.2293330898111133e-36]
+    [(= index 6) 2.7337005381646456e-44]
+    [else 2.1674168387780482e-51]))
 
 ;: Return one limb from the decomposed reducer input.
 (define (math-trig-input-limb [index : i64] [x0 : f64] [x1 : f64] [x2 : f64]) : f64
@@ -3583,10 +3511,6 @@
                 tail
                 (- 0.0 tail)))))))))
 
-;: Construct an internal binary64 constant from its exact IEEE-754 bits.
-(define (math-trig-f64-constant [bits : u64]) : f64
-  (stdlib.math.f64-from-bits bits))
-
 ;: Clear the low binary64 word for compensated tangent arithmetic.
 (define (math-trig-truncate-low-word [value : f64]) : f64
   (stdlib.math.f64-from-bits
@@ -3611,51 +3535,23 @@
     (if (< ix (cast 0x413921fb : u64))
       (begin
         ;; rint(value * 2/pi) for round-to-nearest without an extern.
-        (set!
-          fn
-          (+
-            (* value (math-trig-f64-constant (cast 0x3FE45F306DC9C883 : u64)))
-            (math-trig-f64-constant (cast 0x4338000000000000 : u64))))
-        (set!
-          fn
-          (- fn (math-trig-f64-constant (cast 0x4338000000000000 : u64))))
+        (set! fn (+ (* value 0.63661977236758138) 6755399441055744.0))
+        (set! fn (- fn 6755399441055744.0))
         (set! n (cast fn : i64))
-        (set!
-          r
-          (-
-            value
-            (* fn (math-trig-f64-constant (cast 0x3FF921FB54400000 : u64)))))
-        (set! w (* fn (math-trig-f64-constant (cast 0x3DD0B4611A626331 : u64))))
-        (if (<
-          (- r w)
-          (- 0.0 (math-trig-f64-constant (cast 0x3FE921FB54442D18 : u64))))
+        (set! r (- value (* fn 1.5707963267341256)))
+        (set! w (* fn 6.0771005065061922e-11))
+        (if (< (- r w) (- 0.0 0.78539816339744828))
           (begin
             (set! n (- n 1))
             (set! fn (- fn 1.0))
-            (set!
-              r
-              (-
-                value
-                (* fn (math-trig-f64-constant (cast 0x3FF921FB54400000 : u64)))))
-            (set!
-              w
-              (* fn (math-trig-f64-constant (cast 0x3DD0B4611A626331 : u64)))))
-          (if (>
-            (- r w)
-            (math-trig-f64-constant (cast 0x3FE921FB54442D18 : u64)))
+            (set! r (- value (* fn 1.5707963267341256)))
+            (set! w (* fn 6.0771005065061922e-11)))
+          (if (> (- r w) 0.78539816339744828)
             (begin
               (set! n (+ n 1))
               (set! fn (+ fn 1.0))
-              (set!
-                r
-                (-
-                  value
-                  (*
-                    fn
-                    (math-trig-f64-constant (cast 0x3FF921FB54400000 : u64)))))
-              (set!
-                w
-                (* fn (math-trig-f64-constant (cast 0x3DD0B4611A626331 : u64)))))
+              (set! r (- value (* fn 1.5707963267341256)))
+              (set! w (* fn 6.0771005065061922e-11)))
             unit))
         (set! hi (- r w))
         (set! ex (cast (shr ix 20) : i64))
@@ -3667,15 +3563,9 @@
         (if (> (- ex ey) 16)
           (begin
             (set! t r)
-            (set!
-              w
-              (* fn (math-trig-f64-constant (cast 0x3DD0B4611A600000 : u64))))
+            (set! w (* fn 6.077100506303966e-11))
             (set! r (- t w))
-            (set!
-              w
-              (-
-                (* fn (math-trig-f64-constant (cast 0x3BA3198A2E037073 : u64)))
-                (- (- t r) w)))
+            (set! w (- (* fn 2.0222662487959506e-21) (- (- t r) w)))
             (set! hi (- r w))
             (set!
               ey
@@ -3687,19 +3577,9 @@
             (if (> (- ex ey) 49)
               (begin
                 (set! t r)
-                (set!
-                  w
-                  (*
-                    fn
-                    (math-trig-f64-constant (cast 0x3BA3198A2E000000 : u64))))
+                (set! w (* fn 2.0222662487111665e-21))
                 (set! r (- t w))
-                (set!
-                  w
-                  (-
-                    (*
-                      fn
-                      (math-trig-f64-constant (cast 0x397B839A252049C1 : u64)))
-                    (- (- t r) w)))
+                (set! w (- (* fn 8.4784276603688996e-32) (- (- t r) w)))
                 (set! hi (- r w)))
               unit))
           unit)
@@ -3761,54 +3641,30 @@
     [remainder : f64 0.0]
     (if (< ix (cast 0x4dc90fdb : u32))
       (begin
-        (set!
-          fn
-          (+
-            (* wide (math-trig-f64-constant (cast 0x3FE45F306DC9C883 : u64)))
-            (math-trig-f64-constant (cast 0x4338000000000000 : u64))))
-        (set!
-          fn
-          (- fn (math-trig-f64-constant (cast 0x4338000000000000 : u64))))
+        (set! fn (+ (* wide 0.63661977236758138) 6755399441055744.0))
+        (set! fn (- fn 6755399441055744.0))
         (set! n (cast fn : i64))
         (set!
           remainder
-          (-
-            (-
-              wide
-              (* fn (math-trig-f64-constant (cast 0x3FF921FB50000000 : u64))))
-            (* fn (math-trig-f64-constant (cast 0x3E5110B4611A6263 : u64)))))
-        (if (<
-          remainder
-          (- 0.0 (math-trig-f64-constant (cast 0x3FE921FB60000000 : u64))))
+          (- (- wide (* fn 1.5707963109016418)) (* fn 1.5893254773528196e-08)))
+        (if (< remainder (- 0.0 0.78539818525314331))
           (begin
             (set! n (- n 1))
             (set! fn (- fn 1.0))
             (set!
               remainder
               (-
-                (-
-                  wide
-                  (*
-                    fn
-                    (math-trig-f64-constant (cast 0x3FF921FB50000000 : u64))))
-                (* fn (math-trig-f64-constant (cast 0x3E5110B4611A6263 : u64))))))
-          (if (>
-            remainder
-            (math-trig-f64-constant (cast 0x3FE921FB60000000 : u64)))
+                (- wide (* fn 1.5707963109016418))
+                (* fn 1.5893254773528196e-08))))
+          (if (> remainder 0.78539818525314331)
             (begin
               (set! n (+ n 1))
               (set! fn (+ fn 1.0))
               (set!
                 remainder
                 (-
-                  (-
-                    wide
-                    (*
-                      fn
-                      (math-trig-f64-constant (cast 0x3FF921FB50000000 : u64))))
-                  (*
-                    fn
-                    (math-trig-f64-constant (cast 0x3E5110B4611A6263 : u64))))))
+                  (- wide (* fn 1.5707963109016418))
+                  (* fn 1.5893254773528196e-08))))
             unit))
         (MathTrigReduction n remainder 0.0))
       (if (>= ix (cast 0x7f800000 : u32))
@@ -3840,30 +3696,15 @@
     [w : f64 (* z z)]
     [r : f64
       (+
-        (math-trig-f64-constant (cast 0x3F8111111110F8A6 : u64))
-        (*
-          z
-          (+
-            (math-trig-f64-constant (cast 0xBF2A01A019C161D5 : u64))
-            (* z (math-trig-f64-constant (cast 0x3EC71DE357B1FE7D : u64)))))
-        (*
-          z
-          w
-          (+
-            (math-trig-f64-constant (cast 0xBE5AE5E68A2B9CEB : u64))
-            (* z (math-trig-f64-constant (cast 0x3DE5D93A5ACFD57C : u64))))))]
+        0.0083333333333224895
+        (* z (+ -0.00019841269829857949 (* z 2.7557313707070068e-06)))
+        (* z w (+ -2.5050760253406863e-08 (* z 1.5896909952115501e-10))))]
     [v : f64 (* z x)]
     (if tail-present
       (-
         x
-        (-
-          (- (* z (- (* 0.5 tail) (* v r))) tail)
-          (* v (math-trig-f64-constant (cast 0xBFC5555555555549 : u64)))))
-      (+
-        x
-        (*
-          v
-          (+ (math-trig-f64-constant (cast 0xBFC5555555555549 : u64)) (* z r)))))))
+        (- (- (* z (- (* 0.5 tail) (* v r))) tail) (* v -0.16666666666666632)))
+      (+ x (* v (+ -0.16666666666666632 (* z r)))))))
 
 ;: Evaluate the internal binary64 cosine kernel on the reduced interval.
 (define (math-trig-kernel-cos-f64 [x : f64] [tail : f64]) : f64
@@ -3875,22 +3716,14 @@
         (*
           z
           (+
-            (math-trig-f64-constant (cast 0x3FA555555555554C : u64))
-            (*
-              z
-              (+
-                (math-trig-f64-constant (cast 0xBF56C16C16C15177 : u64))
-                (* z (math-trig-f64-constant (cast 0x3EFA01A019CB1590 : u64)))))))
+            0.041666666666666602
+            (* z (+ -0.001388888888887411 (* z 2.4801587289476729e-05)))))
         (*
           w
           w
           (+
-            (math-trig-f64-constant (cast 0xBE927E4F809C52AD : u64))
-            (*
-              z
-              (+
-                (math-trig-f64-constant (cast 0x3E21EE9EBDB4B1C4 : u64))
-                (* z (math-trig-f64-constant (cast 0xBDA8FAE9BE8838D4 : u64))))))))]
+            -2.7557314351390663e-07
+            (* z (+ 2.0875723212981748e-09 (* z -1.1359647557788195e-11))))))]
     [half-z : f64 (* 0.5 z)]
     [base : f64 (- 1.0 half-z)]
     (+ base (+ (- (- 1.0 base) half-z) (- (* z r) (* x tail))))))
@@ -3920,11 +3753,7 @@
               (set! x (- 0.0 x))
               (set! tail (- 0.0 tail)))
             unit)
-          (set!
-            x
-            (+
-              (- (math-trig-f64-constant (cast 0x3FE921FB54442D18 : u64)) x)
-              (- (math-trig-f64-constant (cast 0x3C81A62633145C07 : u64)) tail)))
+          (set! x (+ (- 0.78539816339744828 x) (- 3.061616997868383e-17 tail)))
           (set! tail 0.0))
         unit)
       (set! z (* x x))
@@ -3932,62 +3761,47 @@
       (set!
         r
         (+
-          (math-trig-f64-constant (cast 0x3FC111111110FE7A : u64))
+          0.13333333333320124
           (*
             w
             (+
-              (math-trig-f64-constant (cast 0x3F9664F48406D637 : u64))
+              0.021869488294859542
               (*
                 w
                 (+
-                  (math-trig-f64-constant (cast 0x3F6D6D22C9560328 : u64))
+                  0.0035920791075913124
                   (*
                     w
                     (+
-                      (math-trig-f64-constant (cast 0x3F4344D8F2F26501 : u64))
+                      0.0005880412408202641
                       (*
                         w
-                        (+
-                          (math-trig-f64-constant
-                            (cast 0x3F147E88A03792A6 : u64))
-                          (*
-                            w
-                            (math-trig-f64-constant
-                              (cast 0xBEF375CBDB605373 : u64)))))))))))))
+                        (+ 7.8179444293955709e-05 (* w -1.8558637485527546e-05)))))))))))
       (set!
         v
         (*
           z
           (+
-            (math-trig-f64-constant (cast 0x3FABA1BA1BB341FE : u64))
+            0.053968253976226052
             (*
               w
               (+
-                (math-trig-f64-constant (cast 0x3F8226E3E96E8493 : u64))
+                0.0088632398235993001
                 (*
                   w
                   (+
-                    (math-trig-f64-constant (cast 0x3F57DBC8FEE08315 : u64))
+                    0.0014562094543252903
                     (*
                       w
                       (+
-                        (math-trig-f64-constant (cast 0x3F3026F71A8D1068 : u64))
+                        0.00024646313481846991
                         (*
                           w
                           (+
-                            (math-trig-f64-constant
-                              (cast 0x3F12B80F32F0A7E9 : u64))
-                            (*
-                              w
-                              (math-trig-f64-constant
-                                (cast 0x3EFB2A7074BF7AD4 : u64))))))))))))))
+                            7.1407249138260819e-05
+                            (* w 2.5907305186363371e-05))))))))))))
       (set! s (* z x))
-      (set!
-        r
-        (+
-          tail
-          (* z (+ (* s (+ r v)) tail))
-          (* s (math-trig-f64-constant (cast 0x3FD5555555555563 : u64)))))
+      (set! r (+ tail (* z (+ (* s (+ r v)) tail)) (* s 0.33333333333333409)))
       (set! w (+ x r))
       (if big
         (let
@@ -4013,20 +3827,11 @@
   (let
     [z : f64 (* x x)]
     [w : f64 (* z z)]
-    [r : f64
-      (+
-        (math-trig-f64-constant (cast 0xBF2A00F9E2CAE774 : u64))
-        (* z (math-trig-f64-constant (cast 0x3EC6CD878C3B46A7 : u64))))]
+    [r : f64 (+ -0.00019839334836096632 (* z 2.7183114939898219e-06))]
     [s : f64 (* z x)]
     (cast
       (+
-        (+
-          x
-          (*
-            s
-            (+
-              (math-trig-f64-constant (cast 0xBFC5555554CBAC77 : u64))
-              (* z (math-trig-f64-constant (cast 0x3F811110896EFBB2 : u64))))))
+        (+ x (* s (+ -0.16666666641626524 (* z 0.0083333293858894632))))
         (* s w r))
       : f32)))
 
@@ -4035,15 +3840,10 @@
   (let
     [z : f64 (* x x)]
     [w : f64 (* z z)]
-    [r : f64
-      (+
-        (math-trig-f64-constant (cast 0xBF56C087E80F1E27 : u64))
-        (* z (math-trig-f64-constant (cast 0x3EF99342E0EE5069 : u64))))]
+    [r : f64 (+ -0.0013886763774609929 (* z 2.4390448796277409e-05))]
     (cast
       (+
-        (+
-          (+ 1.0 (* z (math-trig-f64-constant (cast 0xBFDFFFFFFD0C5E81 : u64))))
-          (* w (math-trig-f64-constant (cast 0x3FA55553E1053A42 : u64))))
+        (+ (+ 1.0 (* z -0.499999997251031)) (* w 0.041666623323739063))
         (* (* w z) r))
       : f32)))
 
@@ -4051,20 +3851,11 @@
 (define (math-trig-kernel-tan-f32 [x : f64] [odd : bool]) : f32
   (let
     [z : f64 (* x x)]
-    [r : f64
-      (+
-        (math-trig-f64-constant (cast 0x3F685DADFCECF44E : u64))
-        (* z (math-trig-f64-constant (cast 0x3F8362B9BF971BCD : u64))))]
-    [t : f64
-      (+
-        (math-trig-f64-constant (cast 0x3FAB54C91D865AFE : u64))
-        (* z (math-trig-f64-constant (cast 0x3F991DF3908C33CE : u64))))]
+    [r : f64 (+ 0.002974357433599673 (* z 0.0094656478494367317))]
+    [t : f64 (+ 0.053381237844567039 (* z 0.024528318116654728))]
     [w : f64 (* z z)]
     [s : f64 (* z x)]
-    [u : f64
-      (+
-        (math-trig-f64-constant (cast 0x3FD5554D3418C99F : u64))
-        (* z (math-trig-f64-constant (cast 0x3FC112FD38999F72 : u64))))]
+    [u : f64 (+ 0.3333313950307914 (* z 0.13339200271297674))]
     [result : f64 (+ (+ x (* s u)) (* (* s w) (+ t (* w r))))]
     (cast
       (if odd

@@ -16920,10 +16920,102 @@
           (opt-inline-wide-callee callee-name)))
       1)))
 
-;; The identical body below the arity floor stays out of line. What this band
-;; retires is argument marshalling, so a boundary with nothing to marshal is
-;; left to the site-conditioned tiers, which cap the body at 32.
-(define (compiler-optimize-inline-single-site-narrow-refusal-ok?) : bool
+;; A chain of `count` jump-only blocks labelled chain_0 .. chain_(count-1),
+;; each jumping to the next and the last jumping to `tail-label`. This is how
+;; the fixtures below reach an exact block count without adding instructions
+;; the cost model would price or edges the acyclic checks would refuse.
+(define (opt-inline-chain-block-label [index : i64]) : i64
+  (compiler_ir_types.compiler-ir-label
+    (str_cat.str-cat "chain_" (string.int->string index) "")))
+
+(define (opt-inline-chain-blocks
+  [index : i64]
+  [count : i64]
+  [tail-label : i64]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (if (>= index count)
+    tail
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (opt-inline-chain-block-label index)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (if (>= (+ index 1) count)
+              tail-label
+              (opt-inline-chain-block-label (+ index 1))))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (opt-inline-chain-blocks (+ index 1) count tail-label tail))))
+
+(define (opt-inline-chain-exit-label) : i64
+  (compiler_ir_types.compiler-ir-label "chain_exit"))
+
+(define (opt-inline-chain-exit-block) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (opt-inline-chain-exit-label)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.I64 0)))
+        compiler_ir_types.CompilerIrInstrList.Nil))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; A bounds-free, call-free, acyclic single-site callee of exactly `blocks`
+;; blocks and `params` parameters. Nothing but the band can admit it once it is
+;; past the cost model's 32-block fuel: the hot-loop-leaf gate wants a cyclic
+;; body, the chain gate wants an in-loop site, and the measured tier wants a
+;; site at loop depth 1 or more.
+(define (opt-inline-chain-callee
+  [callee-name : i64]
+  [params : i64]
+  [blocks : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-wide-params params)
+    (compiler_ast_types.AstType.I64)
+    params
+    (opt-inline-chain-blocks
+      0
+      (- blocks 1)
+      (opt-inline-chain-exit-label)
+      (opt-inline-chain-exit-block))))
+
+;; The same straight-line caller as opt-inline-wide-cold-caller with `pad`
+;; jump-only blocks in front of the call block, so the fixture can name the
+;; caller's block count exactly. Total blocks are `pad + 1`.
+(define (opt-inline-wide-padded-caller
+  [func-name : i64]
+  [callee-name : i64]
+  [params : i64]
+  [pad : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    4
+    (opt-inline-chain-blocks
+      0
+      pad
+      (compiler_ir_types.compiler-ir-label "site")
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "site")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-inline-wide-call callee-name params 3)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; Below the arity floor there is no argument marshalling for the absorption to
+;; retire, so the narrow class is paid for by the caller it lands in: it is
+;; admitted only into a caller at or under
+;; opt-inline-single-site-narrow-max-caller-blocks. Here the caller is two
+;; blocks, and the identical 220-instruction three-parameter body that the
+;; arity floor alone would refuse is absorbed whole.
+(define (compiler-optimize-inline-single-site-narrow-small-caller-absorb-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
@@ -16931,9 +17023,164 @@
     (=
       (opt-inline-wide-remaining-calls
         (opt-inline-wide-two-function-optimized
-          (opt-inline-wide-cold-caller symbols.main callee-name narrow)
+          (opt-inline-wide-padded-caller symbols.main callee-name narrow 1)
+          (opt-inline-wide-callee-arity callee-name narrow)))
+      0)))
+
+;; The identical narrow body stays out of line once the caller is past the
+;; band. 71 blocks is the shape the corpus measured: `pl-parse-line` at 127
+;; blocks and `pl-record-sweep` at 197 took three and one narrow absorptions
+;; respectively and cost peephole_lines +1.29%.
+(define (compiler-optimize-inline-single-site-narrow-large-caller-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [narrow : i64 3]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-wide-padded-caller symbols.main callee-name narrow 70)
           (opt-inline-wide-callee-arity callee-name narrow)))
       1)))
+
+;; A wide single-site callee at the pathological-case backstop is still
+;; absorbed: 128 blocks is opt-inline-single-site-max-blocks exactly, and this
+;; band has no growth budget to spend.
+(define (compiler-optimize-inline-single-site-size-cap-absorb-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [wide : i64 (opt-inline-wide-param-count)]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-wide-cold-caller symbols.main callee-name wide)
+          (opt-inline-chain-callee callee-name wide 128)))
+      0)))
+
+;; One block past the backstop and the same body stays out of line. Nothing but
+;; the backstop refuses it: the reference class, the arity, the site and the
+;; call-free body are all what the fixture above uses.
+(define (compiler-optimize-inline-single-site-size-cap-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [wide : i64 (opt-inline-wide-param-count)]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-wide-cold-caller symbols.main callee-name wide)
+          (opt-inline-chain-callee callee-name wide 129)))
+      1)))
+
+;; A one-parameter, one-block, three-reference leaf: too many references to be
+;; absorbable, small enough that the ordinary cost model admits it (1
+;; instruction against a call bonus of 6). The only thing that can refuse it is
+;; the shared block fuel.
+(define (opt-inline-fuel-tiny-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-wide-params 1)
+    (compiler_ast_types.AstType.I64)
+    2
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            1
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 1)))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-fuel-tiny-call [callee-name : i64] [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    callee-name
+    (compiler_ir_types.CompilerIrCallArgs.One
+      (compiler_ir_types.CompilerIrValue.Var 0))
+    (compiler_ast_types.AstType.I64)))
+
+;; entry absorbs the 34-block single-site callee; `mid` then holds three sites
+;; of the tiny leaf, walked with whatever growth accumulator the absorption
+;; left behind.
+(define (opt-inline-fuel-caller
+  [func-name : i64]
+  [big-name : i64]
+  [tiny-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    8
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-inline-wide-call big-name (opt-inline-wide-param-count) 3)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "mid"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "mid")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-inline-fuel-tiny-call tiny-name 4)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-inline-fuel-tiny-call tiny-name 5)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-inline-fuel-tiny-call tiny-name 6)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "exit"))
+                  compiler_ir_types.CompilerIrInstrList.Nil)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 6)))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; The band MOVES a body; it does not copy one, so the blocks it lands do not
+;; spend the shared growth budget the cost model draws on. The 34-block
+;; absorption in `entry` is past that budget on its own, and the three
+;; one-instruction leaf sites in `mid` are admitted anyway. With the moved
+;; blocks charged to `added-so-far` instead they are all three refused -- which
+;; is what left `it-i64-ref` and `it-bucket` behind calls in intern_table's
+;; `it-bench`, 27.2M of callgrind self cost the base tree does not pay.
+(define (compiler-optimize-inline-single-site-absorb-keeps-block-fuel-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [big-name : i64 symbols.inline-switch]
+    [tiny-name : i64 symbols.external-helper]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-wide-optimized
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-fuel-caller symbols.main big-name tiny-name)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-chain-callee big-name (opt-inline-wide-param-count) 34)
+            (compiler_ir_types.compiler-ir-function-cons
+              (opt-inline-fuel-tiny-leaf tiny-name)
+              compiler_ir_types.CompilerIrFunctionList.Nil))))]
+    (and
+      (= (opt-inline-wide-remaining-calls optimized) 0)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "external_helper")
+        0))))
 
 ;; Two references is not absorption. The identical callee reached from two cold
 ;; sites keeps its body at both: this band moves, it never copies, and the

@@ -4469,10 +4469,34 @@
     "the same unbounded body stays out of line at an in-loop site"))
 
 (test
-  inline-single-site-narrow-refusal
+  inline-single-site-narrow-small-caller-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-refusal-ok?)
-    "the same body below the arity floor stays out of line: no marshalling to retire"))
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-small-caller-absorb-ok?)
+    "below the arity floor the body still absorbs into a caller inside the narrow band"))
+
+(test
+  inline-single-site-narrow-large-caller-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-large-caller-refusal-ok?)
+    "below the arity floor and past the narrow caller band, the body stays out of line"))
+
+(test
+  inline-single-site-size-cap-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-size-cap-absorb-ok?)
+    "a single-site callee at the pathological backstop still absorbs: no growth to bound"))
+
+(test
+  inline-single-site-size-cap-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-size-cap-refusal-ok?)
+    "one block past the backstop the same body stays out of line"))
+
+(test
+  inline-single-site-absorb-keeps-block-fuel
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-absorb-keeps-block-fuel-ok?)
+    "a moved body does not spend the shared growth budget the cost model draws on"))
 
 (test
   inline-single-site-two-reference-refusal

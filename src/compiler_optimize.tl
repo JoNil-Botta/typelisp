@@ -79256,6 +79256,33 @@
 ;; be able to exhaust the other's budget.
 (define opt-inline-caller-chain-blocks : i64
   0)
+
+;; Blocks MOVED into the current caller by the single-reference absorb band,
+;; kept out of `added-so-far` for a reason the three accumulators above do not
+;; have. Those gates copy, and their blocks are held out of the shared fuel so
+;; an import cannot evict a banked absorption. This band does not copy at all:
+;; the callee's body leaves the program at the same moment it enters the
+;; caller, so its blocks are not growth, and charging them to a GROWTH budget
+;; is a category error.
+;;
+;; It is a measured one. The shared fuel is 32 blocks and it is what the
+;; ordinary cost model and the single-block bounds-leaf path spend on cheap
+;; accessors; one 41-block absorption exhausts it outright and every accessor
+;; the caller would have inlined afterwards stays behind a call. Measured on
+;; intern_table with the loop-site clause lifted so the absorption reaches
+;; `it-bench`: `it-i64-ref` and `it-bucket` were left out of line at the sites
+;; the absorption had not already covered, 24.1M and 3.2M of callgrind self
+;; cost that the base tree does not pay at all. Charging the move here instead
+;; restores them, and on the corpus it is worth cfg_domloops -52.2M,
+;; lex_source -23.0M, liveness_scan -4.3M, peephole_lines -4.4M and gvn_table
+;; -1.7M against the same tree with the blocks charged to the shared fuel.
+;;
+;; The heavy gate still sees these blocks: opt-inline-single-site-absorb-ok?
+;; asks it about `added-so-far` PLUS this accumulator, so the block count past
+;; which the downstream whole-function passes stop running is enforced against
+;; the caller's real size.
+(define opt-inline-caller-absorb-blocks : i64
+  0)
 (define opt-inline-pred-renames : (__tl_dyn-array OptInlinePredRenameList)
   (__tl_make-array (OptInlinePredRenameList.Nil)))
 
@@ -80745,6 +80772,7 @@
     (set! opt-inline-caller-recursion? false)
     (set! opt-inline-caller-hot-loop-blocks 0)
     (set! opt-inline-caller-chain-blocks 0)
+    (set! opt-inline-caller-absorb-blocks 0)
     (set! opt-inline-caller-accessor-blocks 0)
     (set! opt-inline-caller-checked-blocks 0)
     (set! opt-inline-caller-checked-taken? false)
@@ -80870,6 +80898,15 @@
 ;; against a threshold of 4, so the block weight alone refuses every one of
 ;; these leaves. The single-reference bonus is what admits them, and a
 ;; duplication that has cleared the clauses above is the same bet.
+;;
+;; The 32/6 band this borrows from opt-inline-bounds-loop-absorb-ok? has been
+;; re-measured against the widest band any gate in this file copies at
+;; (opt-inline-hot-loop-leaf-max-body / -max-blocks, 120 and 32), on top of the
+;; allocator's call-hole live-range splitting. It loses: gvn_table 1,052,171,264
+;; -> 1,069,824,014, +16.0M, with no row improving anywhere on the corpus. The
+;; measured population this band serves really is the nine-instruction
+;; character-class predicate, and a copy an order larger than that moves the
+;; allocator exactly as the comment above says it does not. The band stays.
 (define (opt-inline-dup-absorb-ok?
   [absorb-class : i64]
   [callee-instrs : i64]
@@ -80978,9 +81015,9 @@
 ;; the argument marshalling, plus every value in the trio living in a frame slot
 ;; because it crosses a call boundary that the absorbed form does not have.
 ;;
-;; The size ceiling comes off. Two other clauses go on in its place, and both
-;; were put there by measurement, not by symmetry -- the first version of this
-;; band asked the reference count and nothing else, and it LOST:
+;; The size ceiling comes off. Other clauses go on in its place, and every one
+;; of them was put there by measurement, not by symmetry -- the first version of
+;; this band asked the reference count and nothing else, and it LOST:
 ;; liveness_scan 620,776,020 -> 726,936,390, +17.10%, with both target callees
 ;; confirmed absorbed. The prologue arithmetic that motivated the band is real
 ;; and it is not the whole account. What it leaves out is that a body absorbed
@@ -81002,39 +81039,72 @@
 ;;      caller and one self-call counts 2 and lands in the duplication class.
 ;;      Mutual recursion is excluded one level up, where a callee in the
 ;;      caller's own SCC is refused before any of these predicates run;
-;;   2. the boundary is WIDE -- opt-inline-single-site-min-params or more. This
-;;      is the band's actual subject. What no size budget prices, and what
-;;      absorption retires outright, is argument marshalling, and marshalling
-;;      cost scales with ARITY, not with body size. Below the arity where the
-;;      ABI runs out of argument registers there is no marshalling to retire,
-;;      the boundary is a call and a cheap prologue, and the site-conditioned
-;;      tiers above already price it correctly -- including their measured
-;;      refusal of once-per-program `init`/`fill` helpers, whose absorption
-;;      into a hot-loop-holding caller costs that caller its allocation. This
-;;      clause is what keeps those refusals intact;
+;;   2. the boundary is WIDE -- opt-inline-single-site-min-params or more -- OR
+;;      the CALLER is small, by opt-inline-single-site-narrow-max-caller-blocks.
+;;      Arity is the band's original subject. What no size budget prices, and
+;;      what absorption retires outright, is argument marshalling, and
+;;      marshalling cost scales with ARITY, not with body size. Below the arity
+;;      where the ABI runs out of argument registers there is no marshalling to
+;;      retire and the boundary is a call and a cheap prologue -- so a narrow
+;;      absorption has to be paid for by something else, and the measured
+;;      something else is the caller it lands in. See that constant for the
+;;      corpus split;
 ;;   3. the site is NOT in a natural loop of the caller. An unbounded body may
 ;;      be moved next to a loop; it may not be moved inside one. This is the
 ;;      clause the first version lacked, and the 17.10% above is what it costs
-;;      to lack it;
+;;      to lack it. RE-MEASURED ON THIS TREE, on top of the regallocator's
+;;      call-hole live-range splitting (compiler-reg-call-hole-* in
+;;      src/compiler_regalloc.tl) that was expected to retire it: dropping the
+;;      clause still loses, and loses the same way. liveness_scan 425,431,987
+;;      -> 481,949,045 (+13.3%) as `ln-recompute!` (104 blocks) joins
+;;      `ln-fixpoint!` (54 blocks) inside the worklist loop -- callgrind puts
+;;      the merged pair at 374.3M against 317.8M for the two separate
+;;      functions, +56.5M, in a function that now spills 165 times and reloads
+;;      111 times out of a 584-byte frame; cfg_domloops 714,576,600 ->
+;;      753,171,819 (+5.4%) as `cfg-build-csr`, `cfg-idom-iterate`,
+;;      `cfg-build-euler-tree` and `cfg-stamp-euler` merge into `cfg-function`
+;;      (36 -> 179 blocks); lex_source 540,592,721 -> 572,296,609 (+5.9%) as
+;;      four scan helpers merge into `ls-tokenize` (84 -> 144). Call-hole
+;;      splitting does not reach this shape: the import REMOVES the call, so
+;;      there is no call hole to split, and the caller's loop-carried values
+;;      are live across straight-line code instead. What prices this correctly
+;;      is not a cheap clause but the measured tier below, which rebuilds the
+;;      caller both ways and allocates each;
 ;;   4. the heavy gate is kept. It is not a growth budget -- it is the block
 ;;      count past which the whole-function passes downstream stop running --
 ;;      so a merged function that would cross it is refused here for the same
 ;;      reason every other band refuses it. The shared block fuel is NOT kept:
 ;;      that budget exists to stop a caller from ballooning on copies, and this
-;;      band makes no copies. Its blocks are still charged to the shared
-;;      accumulator, so the bands that DO grow the caller see the real size;
+;;      band makes no copies. Its blocks are not charged to the shared
+;;      accumulator either -- see opt-inline-caller-absorb-blocks, which is
+;;      what makes that statement true rather than merely intended;
 ;;   5. the body is call-free, the same clause the duplication and
 ;;      recursive-site tiers carry, for the same reason: this band's model
 ;;      cannot price a callee's own calls (see opt-inline-blocks-call-free?).
-;;      Here it is conservatism rather than a mechanism requirement -- a move
-;;      makes one copy, not two --
-;;      and it costs less than it reads, because SCC order processes callees
-;;      before callers, so a chain of single-site functions is absorbed
-;;      bottom-up in ONE pass;
+;;      RE-MEASURED ON THIS TREE with call-hole splitting in place: dropping it
+;;      still loses, and the mechanism is not spilling at all. It is the
+;;      PROLOGUE. hashmap_insert 28,941,253 -> 36,161,477 (+24.9%): `grow!`
+;;      (18 blocks, calls tl_alloc/tl_array_zero) is absorbed into
+;;      `insert-ref!`, whose callee-saved prologue goes from two pushes and two
+;;      pops to six and six -- eight extra instructions on EVERY insert, about
+;;      900k of them, for a body that runs on the rare rehash. 8 * 900k is the
+;;      +7.2M the row moves. hashmap_grow +18.8% and hashmap_churn +9.6% are
+;;      the same absorption on the same shape. A callee's own calls raise the
+;;      merged function's callee-saved demand at its entry, which is paid per
+;;      CALLER entry while the imported body runs on a colder path, and no
+;;      live-range mechanism can refund that;
 ;;   6. the cascade clause, asked only when the callee actually carries bounds
 ;;      checks, because that is the only thing it protects against: handing a
 ;;      bounds-free single-reference CALLER its first bounds check used to cost
-;;      that caller its own inline at the loop tier.
+;;      that caller its own inline at the loop tier. RE-MEASURED: dropping it
+;;      costs opt_crc32 324,500,336 -> 324,560,322 (+59,986) with no row
+;;      improving, so it stays;
+;;   7. a pathological-case backstop on the callee's size,
+;;      opt-inline-single-site-max-body and -max-blocks. This is NOT a growth
+;;      budget -- absorption does not grow the program and no measured callee
+;;      comes near it -- it is a bound on how much CFG one rewrite may hand the
+;;      per-function pipeline at once, so a generated body of unbounded size
+;;      cannot turn a linear compile into a quadratic one.
 ;;
 ;; Ordered cheapest-first: two integer compares, then arithmetic, then the
 ;; memoized caller facts, and the scan over the callee's blocks last.
@@ -81043,29 +81113,68 @@
 ;; registers and Windows x64 passes four, so at eight parameters BOTH ABIs store
 ;; surplus arguments to the stack at the call and reload them in the callee --
 ;; traffic that exists only because the boundary exists, that no body-size
-;; budget can see, and that absorption retires completely. Below the floor the
-;; boundary is cheap enough that the site-conditioned tiers own the decision.
-;; The measured population starts above it: the liveness callees this band was
-;; built for present at 10 and 14 parameters, and the only compiler function it
-;; claims across a whole self-compile has exactly 8.
+;; budget can see, and that absorption retires completely. The measured
+;; population starts above it: the liveness callees this band was built for
+;; present at 10 and 14 parameters, and the only compiler function it claims
+;; across a whole self-compile has exactly 8.
 (define (opt-inline-single-site-min-params) : i64
   8)
+
+;; Below the arity floor the boundary has no marshalling to retire, so a narrow
+;; absorption is only worth making where the merged function still allocates
+;; well, and the measured predictor of that is the size of the caller it lands
+;; in. Removing the floor outright admits the whole narrow class and costs
+;; peephole_lines 602,719,795 -> 610,515,468 (+1.29%), with no row improving:
+;; `pl-token-len` (27 blocks), `pl-movq-prefix?` (66) and `pl-mnemonic-call?`
+;; (40) merge into `pl-parse-line`, taking it from 127 blocks to 249;
+;; `pl-stack-parens` (54) into `pl-operand-flags` (66 -> 120); `pl-indexed-rsp?`
+;; (51) into `pl-record-sweep` (197 -> 249). Every one of those callers is
+;; already past 64 blocks before the import. 64 sits above every caller the
+;; band claims today and below the smallest of the three that lose, so the
+;; narrow class is admitted where a merged function stays inside one working
+;; set and refused where it joins one already an order larger -- the same
+;; question opt-inline-hot-loop-leaf-max-caller-blocks asks of its own imports,
+;; asked here of a move rather than a copy.
+(define (opt-inline-single-site-narrow-max-caller-blocks) : i64
+  64)
+
+;; The pathological-case backstop of clause 7. 1024 instructions is nearly
+;; three times the largest measured absorption (`ln-recompute!`, 368) and eight
+;; times the largest band ceiling anywhere else in this file; 128 blocks is
+;; four times the largest shape any other band copies. Both sit far below the
+;; heavy gate's 1024 blocks, which is the limit that actually governs the
+;; merged caller.
+(define (opt-inline-single-site-max-body) : i64
+  1024)
+
+(define (opt-inline-single-site-max-blocks) : i64
+  128)
 
 (define (opt-inline-single-site-absorb-ok?
   [absorb-class : i64]
   [has-bounds? : bool]
   [param-count : i64]
+  [callee-instrs : i64]
   [blocks : ir.CompilerIrBlockList]
   [added-blocks : i64]
   [caller-blocks : i64]
   [added-so-far : i64]) : bool
   (and
     (= absorb-class 1)
-    (>= param-count (opt-inline-single-site-min-params))
+    (or
+      (>= param-count (opt-inline-single-site-min-params))
+      (<= caller-blocks (opt-inline-single-site-narrow-max-caller-blocks)))
+    (<= callee-instrs (opt-inline-single-site-max-body))
+    (<=
+      (ir.compiler-ir-block-list-count blocks)
+      (opt-inline-single-site-max-blocks))
+    ;; The heavy gate is asked about TOTAL caller growth, this band's own moved
+    ;; blocks included; they are kept out of `added-so-far` itself by
+    ;; opt-inline-caller-absorb-blocks.
     (not
       (opt-inline-cost-crosses-heavy-gate?
         caller-blocks
-        added-so-far
+        (+ added-so-far opt-inline-caller-absorb-blocks)
         added-blocks))
     (not (opt-inline-bounds-loop-site-in-loop?))
     (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))
@@ -81630,6 +81739,18 @@
 ;; the measured pair: gvn-facts-grow (13 blocks, the whole caller is the loops
 ;; the import joins) wins, pl-run-chunk (34 blocks, the import joins a working
 ;; set an order larger) loses. 16 sits above the winner and below the loser.
+;;
+;; Re-measured at 64 on top of the allocator's call-hole live-range splitting,
+;; which was expected to retire the pl-run-chunk failure: it does not, and the
+;; loser reproduces to the same shape and nearly the same size. peephole_lines
+;; 602,719,795 -> 649,469,685, +7.76%, every other row byte-identical, and the
+;; whole delta is one import -- `pl-line-end` (20 blocks) copied into
+;; `pl-run-chunk`, 44 blocks to 55. Callgrind splits it exactly: pl_run_chunk
+;; 22.5M -> 106.0M while pl_line_end drops 91.8M -> 55.1M, so the copy inside
+;; the per-line loop executes 61.0M more instructions than the 36.7M of
+;; boundary it retires. Call-hole splitting cannot reach this: the import
+;; REMOVES the call, so there is no call hole left to split, and the caller's
+;; loop-carried values are live across straight-line code instead. 16 stays.
 (define (opt-inline-hot-loop-leaf-max-caller-blocks) : i64
   16)
 
@@ -83193,6 +83314,7 @@
                     absorb-class
                     has-bounds?
                     np
+                    callee-instrs
                     cblocks
                     added-blocks
                     caller-blocks
@@ -83293,6 +83415,16 @@
                 ;; Same accounting for a chain import, against its own fuel.
                 [chain-import? : bool
                   (and branch-chain? (not legacy-cost-ok?) (not hot-loop-leaf?))]
+                ;; True only when the single-reference absorb band is what
+                ;; admits this site: its blocks are moved, not copied, so they
+                ;; spend that band's own accumulator rather than the shared
+                ;; growth budget the cost model draws on.
+                [absorb-import? : bool
+                  (and
+                    single-site-absorb?
+                    (not legacy-cost-ok?)
+                    (not hot-loop-leaf?)
+                    (not branch-chain?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-from
                     instrs
@@ -83348,6 +83480,12 @@
                               opt-inline-caller-chain-blocks
                               (+ opt-inline-caller-chain-blocks added-blocks))
                             unit)]
+                        [_absorb-bump : unit
+                          (if absorb-import?
+                            (set!
+                              opt-inline-caller-absorb-blocks
+                              (+ opt-inline-caller-absorb-blocks added-blocks))
+                            unit)]
                         [_accessor-bump : unit
                           (if accessor-import?
                             (set!
@@ -83374,15 +83512,15 @@
                                 (set! opt-inline-caller-checked-taken? true)
                                 unit))
                             unit)]
-                        ;; A hot-loop, chain, accessor or checked import's
-                        ;; blocks stay out of the shared accumulator; each gate
-                        ;; charged its own fuel above.
+                        ;; A hot-loop, chain, accessor, absorb or checked
+                        ;; import's blocks stay out of the shared accumulator;
+                        ;; each gate charged its own above.
                         [added2 : i64
                           (+
                             prefix-added
                             (if (or
                               hot-import?
-                              chain-import?
+                              (or chain-import? absorb-import?)
                               accessor-import?
                               checked?)
                               0
@@ -84083,6 +84221,7 @@
                     absorb-class
                     has-bounds?
                     np
+                    callee-instrs
                     cblocks
                     added-blocks
                     caller-blocks
@@ -84176,6 +84315,16 @@
                 ;; Same chain-import accounting as the non-span path.
                 [chain-import? : bool
                   (and branch-chain? (not legacy-cost-ok?) (not hot-loop-leaf?))]
+                ;; True only when the single-reference absorb band is what
+                ;; admits this site: its blocks are moved, not copied, so they
+                ;; spend that band's own accumulator rather than the shared
+                ;; growth budget the cost model draws on.
+                [absorb-import? : bool
+                  (and
+                    single-site-absorb?
+                    (not legacy-cost-ok?)
+                    (not hot-loop-leaf?)
+                    (not branch-chain?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-with-spans-from
                     instrs
@@ -84234,6 +84383,12 @@
                               opt-inline-caller-chain-blocks
                               (+ opt-inline-caller-chain-blocks added-blocks))
                             unit)]
+                        [_absorb-bump : unit
+                          (if absorb-import?
+                            (set!
+                              opt-inline-caller-absorb-blocks
+                              (+ opt-inline-caller-absorb-blocks added-blocks))
+                            unit)]
                         [_accessor-bump : unit
                           (if accessor-import?
                             (set!
@@ -84266,7 +84421,7 @@
                             prefix-added
                             (if (or
                               hot-import?
-                              chain-import?
+                              (or chain-import? absorb-import?)
                               accessor-import?
                               checked?)
                               0
@@ -84965,7 +85120,9 @@
                         opt-inline-caller-hot-loop-blocks
                         (+
                           opt-inline-caller-chain-blocks
-                          opt-inline-caller-accessor-blocks)))
+                          (+
+                            opt-inline-caller-accessor-blocks
+                            opt-inline-caller-absorb-blocks))))
                     0))))]))]))
 
 ;; One round: arm the richest remaining candidate, rebuild the caller with it,
@@ -85123,7 +85280,9 @@
                             opt-inline-caller-hot-loop-blocks
                             (+
                               opt-inline-caller-chain-blocks
-                              opt-inline-caller-accessor-blocks)))
+                              (+
+                                opt-inline-caller-accessor-blocks
+                                opt-inline-caller-absorb-blocks))))
                         0)
                         (opt-ssa-construct-function type-segment-bases next)
                         next)

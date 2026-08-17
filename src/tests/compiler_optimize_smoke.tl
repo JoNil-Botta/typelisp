@@ -4222,6 +4222,14 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-partial-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-p5a-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-p5a-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-unroll-p5a-remainder-self-test"
+      (compiler_optimize_tests.compiler-optimize-unroll-p5a-remainder-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-paired-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-paired-self-test)
       42)
@@ -4855,6 +4863,13 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-partial-self-test)
     42
     "multi-block versioning keeps underivable checks in the fast clone"))
+
+(test
+  bce-version-p5a-shifted-limits
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-p5a-self-test)
+    42
+    "shifted-limit compares, counter+K indices and the minimized guard version"))
 
 (test
   bce-version-multiblock-paired-checks

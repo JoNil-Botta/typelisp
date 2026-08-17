@@ -1000,8 +1000,8 @@
 (define (ctfe-type-info-source-type) : ast.AstType
   (ctfe-stdlib-comptime-type-id cbi.compiler-builtin-id-fix-TypeInfo))
 
-(define (ctfe-type-info-box-source-type) : ast.AstType
-  (ast.ast-ty-box (ctfe-type-info-source-type)))
+(define (ctfe-type-info-box-source-type [pools : ast.AstNodePoolContext]) : ast.AstType
+  (ast.ast-ty-box-with-pools pools (ctfe-type-info-source-type)))
 
 (defstruct CtfeValueSeq
   (slots (__tl_dyn-array CompilerCtfeValue))
@@ -1379,7 +1379,7 @@
     env
     name-id
     value
-    (ctfe-value-default-cast-type value)
+    (ctfe-value-default-cast-type (ctfe-env-pools env) value)
     false))
 
 (define (ctfe-env-extend-typed-id
@@ -3306,7 +3306,9 @@
                 expr
                 "bitwise not in comptime requires i64")))])]))
 
-(define (ctfe-value-default-cast-type [value : CompilerCtfeValue]) : ast.AstType
+(define (ctfe-value-default-cast-type
+  [pools : ast.AstNodePoolContext]
+  [value : CompilerCtfeValue]) : ast.AstType
   (match value
     [(CompilerCtfeValue.I64 _) (ast.AstType.I64)]
     [(CompilerCtfeValue.F64 _) (ast.AstType.F64)]
@@ -3321,7 +3323,7 @@
     [(CompilerCtfeValue.MatchArmList _)
       (ctfe-stdlib-comptime-type-id cbi.compiler-builtin-id-fix-MatchArmList)]
     [(CompilerCtfeValue.TypeInfo _) (ctfe-type-info-source-type)]
-    [(CompilerCtfeValue.TypeInfoBox _) (ctfe-type-info-box-source-type)]
+    [(CompilerCtfeValue.TypeInfoBox _) (ctfe-type-info-box-source-type pools)]
     [(CompilerCtfeValue.TypeInfoList _)
       (ctfe-stdlib-comptime-type-id cbi.compiler-builtin-id-fix-TypeInfoList)]
     [(CompilerCtfeValue.TypeField _ _)
@@ -3354,8 +3356,9 @@
     [(ast.AstExpr.Var name)
       (match (ctfe-env-lookup-type-id env name)
         [(ast.AstMaybeType.Some ty) ty]
-        [(ast.AstMaybeType.No) (ctfe-value-default-cast-type value)])]
-    [_ (ctfe-value-default-cast-type value)]))
+        [(ast.AstMaybeType.No)
+          (ctfe-value-default-cast-type (ctfe-env-pools env) value)])]
+    [_ (ctfe-value-default-cast-type (ctfe-env-pools env) value)]))
 
 (define (ctfe-binding-type
   [maybe-ty : ast.AstMaybeType]
@@ -10393,7 +10396,7 @@
         (match (ctfe-match-pattern
           (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
           value
-          (ctfe-value-default-cast-type value)
+          (ctfe-value-default-cast-type (ctfe-env-pools env) value)
           env)
           [(CtfePatternMatch.Matched next-env)
             (ctfe-match-pattern-list-at patterns (+ index 1) values next-env)]
@@ -16394,6 +16397,63 @@
           [_ false])]
       [(ResultCtfe.Err _) false])))
 
+;; A captured CTFE pool snapshot has independent cursor cells but can share its
+;; current physical segment with the installed legacy pool. Default source-type
+;; construction must append through the snapshot: a legacy append at the older
+;; installed cursor would overwrite the snapshot's newest node.
+(define (compiler-ctfe-type-info-box-pool-coherency-ok?) : bool
+  (if (ast.ast-node-pool-compat-context-active?)
+    false
+    (let
+      [installed : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 4 8)]
+      [_install : unit (ast.ast-node-pool-compat-context-use! installed)]
+      [snapshot : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [installed-cursor : i64 (ast.ast-node-pool-context-type-len installed)]
+      [sentinel-name : i64
+        (ctfe-materialize-generated-name-id "ctfe-pool-snapshot-sentinel")]
+      [binding-name : i64
+        (ctfe-materialize-generated-name-id "ctfe-pool-type-info-box")]
+      [sentinel-id : i64
+        (ast.ast-node-pool-context-type-push
+          snapshot
+          (ast.AstType.Var sentinel-name))]
+      [env : CtfeEnv (ctfe-env-empty-with-pools snapshot)]
+      [bound : CtfeEnv
+        (ctfe-env-extend-id
+          env
+          binding-name
+          (CompilerCtfeValue.TypeInfoBox (ast.AstType.Bool)))]
+      [source-ok : bool
+        (match (ctfe-env-lookup-type-id bound binding-name)
+          [(ast.AstMaybeType.Some (ast.AstType.Box child-id))
+            (and
+              (= child-id (+ installed-cursor 1))
+              (match (ast.ast-node-pool-context-type-get snapshot child-id)
+                [(ast.AstType.Var name-id)
+                  (=
+                    name-id
+                    (ctfe-qualified-name-key-id
+                      cbi.compiler-builtin-id-fix-stdlib_dot_comptime
+                      cbi.compiler-builtin-id-fix-TypeInfo))]
+                [_ false]))]
+          [_ false])]
+      [sentinel-ok : bool
+        (match (ast.ast-node-pool-context-type-get snapshot sentinel-id)
+          [(ast.AstType.Var name-id) (= name-id sentinel-name)]
+          [_ false])]
+      [cursor-ok : bool
+        (and
+          (= sentinel-id installed-cursor)
+          (= (ast.ast-node-pool-context-type-len installed) installed-cursor)
+          (=
+            (ast.ast-node-pool-context-type-len snapshot)
+            (+ installed-cursor 2)))]
+      (begin
+        (ast.ast-node-pool-compat-context-clear!)
+        (and sentinel-ok source-ok cursor-ok)))))
+
 (define (compiler-ctfe-type-info-reflection-ok?) : bool
   (let
     [env : CtfeEnv
@@ -16419,6 +16479,15 @@
         env
         (ast.AstExpr.TypeLiteral
           (ctfe-ty-push env (ast.ast-ty-dyn-array (ast.AstType.Bool)))))]
+    [slice-ty : i64
+      (ctfe-ast-push
+        env
+        (ast.AstExpr.TypeLiteral
+          (ctfe-ty-push
+            env
+            (ast.ast-ty-slice-with-pools
+              (ctfe-env-pools env)
+              (ast.AstType.Bool)))))]
     [tuple-ty : i64
       (ctfe-ast-push
         env
@@ -16527,6 +16596,74 @@
                     unit
                     (set! ok false))]
                 [(CtfePatternMatch.No) (set! ok false)])]
+            [_ (set! ok false)])]
+        [(ResultCtfe.Err _) (set! ok false)])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 46) slice-ty))
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.TypeInfo ty)
+              (match (ctfe-match-type-info-variant
+                cbi.compiler-builtin-id-comptime-type-info-slice-variant
+                (ast.ast-pattern-cons
+                  (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
+                  (ast.ast-pattern-list-new))
+                ty
+                env)
+                [(CtfePatternMatch.Matched matched)
+                  (if (compiler-ctfe-env-type-info-box-builtin-kind?
+                    matched
+                    cbi.compiler-builtin-id-fix-items
+                    "bool")
+                    unit
+                    (set! ok false))]
+                [(CtfePatternMatch.No) (set! ok false)])]
+            [_ (set! ok false)])]
+        [(ResultCtfe.Err _) (set! ok false)])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 71) slice-ty))
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.String kind _)
+              (if (string.eq kind "slice")
+                unit
+                (set! ok false))]
+            [_ (set! ok false)])]
+        [(ResultCtfe.Err _) (set! ok false)])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 72) slice-ty))
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.String key _)
+              (if (string.eq key "slice_bool")
+                unit
+                (set! ok false))]
+            [_ (set! ok false)])]
+        [(ResultCtfe.Err _) (set! ok false)])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 82) slice-ty))
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.Type ty)
+              (match ty
+                [(ast.AstType.Bool) unit]
+                [_ (set! ok false)])]
             [_ (set! ok false)])]
         [(ResultCtfe.Err _) (set! ok false)])
       (match (compiler-ctfe-eval
@@ -16662,104 +16799,6 @@
         [(ResultCtfe.Err _) (set! ok false)])
       (unless (compiler-ctfe-type-info-source-match-ok? env) (set! ok false))
       ok)))
-
-;; Slice reflection uses a dedicated short-lived environment so its pooled
-;; AstType child remains live across each public query without extending the
-;; already-large general TypeInfo reflection smoke.
-(define (compiler-ctfe-slice-type-literal [env : CtfeEnv]) : i64
-  (ctfe-ast-push
-    env
-    (ast.AstExpr.TypeLiteral
-      (ctfe-ty-push
-        env
-        (ast.ast-ty-slice-with-pools (ctfe-env-pools env) (ast.AstType.Bool))))))
-
-(define (compiler-ctfe-slice-type-info-ok?) : bool
-  (let
-    [env : CtfeEnv (ctfe-env-empty)]
-    [slice-ty : i64 (compiler-ctfe-slice-type-literal env)]
-    (match (compiler-ctfe-eval
-      (ctfe-ast-get
-        env
-        (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 46) slice-ty))
-      env
-      (ctfe-fuel-limit))
-      [(ResultCtfe.Ok value _)
-        (match value
-          [(CompilerCtfeValue.TypeInfo ty)
-            (match (ctfe-match-type-info-variant
-              cbi.compiler-builtin-id-comptime-type-info-slice-variant
-              (ast.ast-pattern-cons
-                (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
-                (ast.ast-pattern-list-new))
-              ty
-              env)
-              [(CtfePatternMatch.Matched matched)
-                (compiler-ctfe-env-type-info-box-builtin-kind?
-                  matched
-                  cbi.compiler-builtin-id-fix-items
-                  "bool")]
-              [(CtfePatternMatch.No) false])]
-          [_ false])]
-      [(ResultCtfe.Err _) false])))
-
-(define (compiler-ctfe-slice-type-kind-ok?) : bool
-  (let
-    [env : CtfeEnv (ctfe-env-empty)]
-    [slice-ty : i64 (compiler-ctfe-slice-type-literal env)]
-    (match (compiler-ctfe-eval
-      (ctfe-ast-get
-        env
-        (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 71) slice-ty))
-      env
-      (ctfe-fuel-limit))
-      [(ResultCtfe.Ok value _)
-        (match value
-          [(CompilerCtfeValue.String kind _) (string.eq kind "slice")]
-          [_ false])]
-      [(ResultCtfe.Err _) false])))
-
-(define (compiler-ctfe-slice-type-key-ok?) : bool
-  (let
-    [env : CtfeEnv (ctfe-env-empty)]
-    [slice-ty : i64 (compiler-ctfe-slice-type-literal env)]
-    (match (compiler-ctfe-eval
-      (ctfe-ast-get
-        env
-        (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 72) slice-ty))
-      env
-      (ctfe-fuel-limit))
-      [(ResultCtfe.Ok value _)
-        (match value
-          [(CompilerCtfeValue.String key _) (string.eq key "slice_bool")]
-          [_ false])]
-      [(ResultCtfe.Err _) false])))
-
-(define (compiler-ctfe-slice-array-element-type-ok?) : bool
-  (let
-    [env : CtfeEnv (ctfe-env-empty)]
-    [slice-ty : i64 (compiler-ctfe-slice-type-literal env)]
-    (match (compiler-ctfe-eval
-      (ctfe-ast-get
-        env
-        (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 82) slice-ty))
-      env
-      (ctfe-fuel-limit))
-      [(ResultCtfe.Ok value _)
-        (match value
-          [(CompilerCtfeValue.Type ty)
-            (match ty
-              [(ast.AstType.Bool) true]
-              [_ false])]
-          [_ false])]
-      [(ResultCtfe.Err _) false])))
-
-(define (compiler-ctfe-slice-reflection-ok?) : bool
-  (and
-    (compiler-ctfe-slice-type-info-ok?)
-    (compiler-ctfe-slice-type-kind-ok?)
-    (compiler-ctfe-slice-type-key-ok?)
-    (compiler-ctfe-slice-array-element-type-ok?)))
 
 ;; --- self-tests ---------------------------------------------------------------
 ;; Basic round-trip: build an `if` expression from bool literal constructors,
@@ -18141,8 +18180,8 @@
     (unless (compiler-ctfe-module-value-index-state-ok?) (return 1))
     (unless (compiler-ctfe-module-value-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-from-program-ok?) (return 1))
+    (unless (compiler-ctfe-type-info-box-pool-coherency-ok?) (return 1))
     (unless (compiler-ctfe-type-info-reflection-ok?) (return 1))
-    (unless (compiler-ctfe-slice-reflection-ok?) (return 1))
     (unless (compiler-ctfe-expr-eq-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-fold-sketch-ok?) (return 1))

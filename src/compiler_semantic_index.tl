@@ -8477,21 +8477,26 @@
     [first-source : String
       "(module semantic.canonical.entry_a)
 (import semantic.canonical.noise as noise)
-(import semantic.canonical.shared as chosen)
+(import semantic.canonical.shared.*)
 (define (consume [local : i64]) : i64
   (+
     noise.shared-value
-    (chosen.function (chosen.macro chosen.shared-value))
-    local))"]
+    (function (macro shared-value))
+    local))
+(define (pair-value [pair : SharedPair]) : i64 pair.value)"]
     [second-source : String
       "(module semantic.canonical.entry_b)
-(import semantic.canonical.shared as shared)
+(import semantic.canonical.shared.shared-value as chosen-value)
+(import semantic.canonical.shared.function as chosen-function)
+(import semantic.canonical.shared.macro as chosen-macro)
+(import semantic.canonical.shared.SharedPair as ChosenPair)
 (import semantic.canonical.noise as noise)
 (define (consume [local : i64]) : i64
   (+
-    (shared.function (shared.macro shared.shared-value))
+    (chosen-function (chosen-macro chosen-value))
     noise.shared-value
-    local))"]
+    local))
+(define (pair-value [pair : ChosenPair]) : i64 pair.value)"]
     [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
     (match (compiler-check-source-index-with-roots
       first-path

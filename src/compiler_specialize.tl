@@ -2612,6 +2612,14 @@
       (match b
         [(ast.AstImportKind.Module) true]
         [_ false])]
+    [(ast.AstImportKind.ModuleAll)
+      (match b
+        [(ast.AstImportKind.ModuleAll) true]
+        [_ false])]
+    [(ast.AstImportKind.ModuleItem a-item)
+      (match b
+        [(ast.AstImportKind.ModuleItem b-item) (= a-item b-item)]
+        [_ false])]
     [(ast.AstImportKind.Macro _ _)
       (match b
         [(ast.AstImportKind.Macro _ _) true]

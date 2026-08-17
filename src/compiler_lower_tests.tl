@@ -6179,6 +6179,44 @@
             (= (lower-test-functions-call-count functions "d/get") 0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-selected-import-alias-name-env-ok?) : bool
+  (let
+    [target-module : i64 (ci.intern "selected.source")]
+    [importer-module : i64 (ci.intern "selected.importer")]
+    [item : i64 (ci.intern "source-value")]
+    [alias : i64 (ci.intern "chosen")]
+    [target-key : i64
+      (compiler_symbols.compiler-symbol-module-key-id-by-id target-module item)]
+    [alias-key : i64
+      (compiler_symbols.compiler-symbol-module-key-id-by-id
+        importer-module
+        alias)]
+    [symbol-id : i64 4242]
+    [base : compiler_lower.LowerNameEnv
+      (compiler_lower.lower-name-env-bind-logical-symbol-id
+        target-key
+        target-key
+        symbol-id
+        (compiler_lower.LowerNameEnv.Nil))]
+    [aliased : compiler_lower.LowerNameEnv
+      (compiler_lower.lower-name-env-add-selected-item-alias
+        (compiler_lower.compiler-lower-state-new)
+        base
+        importer-module
+        target-module
+        item
+        alias)]
+    (and
+      (=
+        (compiler_lower.lower-name-env-lookup-logical-id aliased alias-key -1)
+        target-key)
+      (=
+        (compiler_lower.lower-name-env-lookup-symbol-id aliased alias-key -1)
+        symbol-id)
+      (=
+        (compiler_lower.lower-name-env-lookup-symbol-id aliased target-key -1)
+        symbol-id))))
+
 (define (compiler-lower-dotted-import-default-alias-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
@@ -14673,6 +14711,12 @@
   (test.assert-true
     (compiler-lower-capturing-lambda-structural-sret-params-ok?)
     "capturing lambda keeps env before structural sret"))
+
+(test
+  compiler-lower-selected-import-alias-name-env
+  (test.assert-true
+    (compiler-lower-selected-import-alias-name-env-ok?)
+    "selected import aliases preserve source logical and linker identities"))
 
 (test
   compiler-lower-defdispatch-structural-shape

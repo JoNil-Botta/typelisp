@@ -937,6 +937,11 @@
     [kind : ast.AstImportKind]) : unit
     (match kind
       [(ast.AstImportKind.Module) (codec.surface-ast-write-i64! out 0)]
+      [(ast.AstImportKind.ModuleAll) (codec.surface-ast-write-i64! out 3)]
+      [(ast.AstImportKind.ModuleItem item)
+        (begin
+          (codec.surface-ast-write-i64! out 4)
+          (codec.surface-ast-write-name! out context item))]
       [(ast.AstImportKind.Macro call module-name)
         (begin
           (codec.surface-ast-write-i64! out 1)
@@ -961,6 +966,9 @@
         (ast.AstImportKind.MacroDecls
           (codec.surface-ast-read-i64! reader)
           (surface-ast-read-maybe-module-name! reader))]
+      [(= tag 3) ast.AstImportKind.ModuleAll]
+      [(= tag 4)
+        (ast.AstImportKind.ModuleItem (codec.surface-ast-read-name! reader))]
       [else
         (begin
           (codec.surface-ast-reader-fail!

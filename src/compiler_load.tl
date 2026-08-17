@@ -124,6 +124,19 @@
   (Ok String)
   (Err String))
 
+(defstruct CompilerLoadResolvedImport
+  (resolved String)
+  (kind ast.AstImportKind)
+  ;; Canonical dotted identity of the file-backed module, without a selected
+  ;; item or wildcard suffix.
+  (module-name String)
+  (expected-module ast.AstMaybeModuleName)
+  (alias ast.AstMaybeImportAlias))
+
+(defenum ResultCompilerLoadResolvedImport
+  (Ok CompilerLoadResolvedImport)
+  (Err String))
+
 (defstruct CompilerLoadPackageEntry
   (entry-path String)
   (manifest-dir String)
@@ -175,6 +188,31 @@
 (defenum ResultCompilerLoadAliasCheck
   (Ok)
   (Err (Box cdiag.CompilerDiagnostic)))
+
+(defstruct CompilerLoadImportAliasCollision
+  (alias String)
+  (first-import String)
+  (second-import String)
+  (span ast.AstSourceSpan))
+
+(defenum CompilerLoadMaybeImportAliasCollision
+  (No)
+  (Some CompilerLoadImportAliasCollision))
+
+(defstruct CompilerLoadUnqualifiedImportState
+  (source-ids load_i64_i64_map.Map)
+  (source-modules load_i64_i64_map.Map))
+
+(defstruct CompilerLoadUnqualifiedImportCollision
+  (name String)
+  (first-module String)
+  (second-module String)
+  (path String)
+  (span ast.AstSourceSpan))
+
+(defenum CompilerLoadUnqualifiedImportStep
+  (Ok)
+  (Collision CompilerLoadUnqualifiedImportCollision))
 
 (defenum CompilerLoadSurfaceMaybeString
   (CompilerLoadSurfaceNoString)
@@ -2896,6 +2934,60 @@
       ""
       (string.substring module-name rest-start (- n rest-start)))))
 
+(define (compiler-load-dotted-module-last-dot [module-name : String]) : i64
+  (let
+    [index : i64 (- (string.string-length module-name) 1)]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (>= index 0))
+        (if (string.char-eq (string.string-ref module-name index) '.')
+          (set! found index)
+          (set! index (- index 1))))
+      found)))
+
+(define (compiler-load-resolved-source-exists? [path : String]) : bool
+  (or
+    (io.file-exists? path)
+    (match (compiler-load-embedded-stdlib-source-for-path path)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource _)
+        true]
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource) false])))
+
+(define (compiler-load-import-module-id [module-name : String]) : i64
+  (compiler-load-parse-context-name-id module-name))
+
+(define (compiler-load-selected-item-id
+  [expected-module : ast.AstMaybeModuleName]
+  [fallback : String]) : i64
+  (match expected-module
+    [(ast.AstMaybeModuleName.Some full-import-id)
+      (ci.intern-dotted-final-id full-import-id)]
+    [(ast.AstMaybeModuleName.No) (compiler-load-import-module-id fallback)]))
+
+(define (compiler-load-resolved-import
+  [resolved : String]
+  [kind : ast.AstImportKind]
+  [module-name : String]
+  [alias : ast.AstMaybeImportAlias]) : ResultCompilerLoadResolvedImport
+  (ResultCompilerLoadResolvedImport.Ok
+    (CompilerLoadResolvedImport
+      resolved
+      kind
+      module-name
+      (ast.AstMaybeModuleName.Some (compiler-load-import-module-id module-name))
+      alias)))
+
+(define (compiler-load-invalid-selected-import-message
+  [import-path : String]
+  [module-name : String]) : String
+  (str_cat.str-cat
+    "compiler-load: import '"
+    import-path
+    (str_cat.str-cat
+      "' leaves more than one segment after loadable module '"
+      module-name
+      "'; only one selected item is supported")))
+
 (define (compiler-load-resolve-stdlib-module-path
   [module-path : String]
   [stdlib-roots : svec.Vec]) : String
@@ -3053,11 +3145,200 @@
         import-path
         expected-module
         stdlib-roots)]
+    [(ast.AstImportKind.ModuleAll)
+      (compiler-load-resolve-dotted-import-spec-with-roots
+        importer-path
+        import-root
+        import-path
+        expected-module
+        stdlib-roots)]
+    [(ast.AstImportKind.ModuleItem _)
+      (compiler-load-resolve-dotted-import-spec-with-roots
+        importer-path
+        import-root
+        import-path
+        expected-module
+        stdlib-roots)]
     [(ast.AstImportKind.Macro _ _)
       (ResultPkgResolve.Err
         "compiler-load: module macro imports must be expanded before import resolution")]
     [(ast.AstImportKind.MacroDecls _ _)
       (ResultPkgResolve.Err
+        "compiler-load: module macro imports must be expanded before import resolution")]))
+
+(define (compiler-load-search-import-prefix-with-roots
+  [importer-path : String]
+  [import-root : String]
+  [original-import-path : String]
+  [candidate : String]
+  [selected-item : i64]
+  [remaining-segments : i64]
+  [alias : ast.AstMaybeImportAlias]
+  [stdlib-roots : svec.Vec]) : ResultCompilerLoadResolvedImport
+  (let
+    [candidate-id : i64 (compiler-load-import-module-id candidate)]
+    (match (compiler-load-resolve-dotted-import-spec-with-roots
+      importer-path
+      import-root
+      candidate
+      (ast.AstMaybeModuleName.Some candidate-id)
+      stdlib-roots)
+      [(ResultPkgResolve.Ok resolved)
+        (if (compiler-load-resolved-source-exists? resolved)
+          (if (= remaining-segments 1)
+            (compiler-load-resolved-import
+              resolved
+              (ast.AstImportKind.ModuleItem selected-item)
+              candidate
+              alias)
+            (ResultCompilerLoadResolvedImport.Err
+              (compiler-load-invalid-selected-import-message
+                original-import-path
+                candidate)))
+          (let
+            [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
+            (if (< dot 0)
+              (ResultCompilerLoadResolvedImport.Err "")
+              (compiler-load-search-import-prefix-with-roots
+                importer-path
+                import-root
+                original-import-path
+                (string.substring candidate 0 dot)
+                selected-item
+                (+ remaining-segments 1)
+                alias
+                stdlib-roots))))]
+      [(ResultPkgResolve.Err _)
+        (let
+          [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
+          (if (< dot 0)
+            (ResultCompilerLoadResolvedImport.Err "")
+            (compiler-load-search-import-prefix-with-roots
+              importer-path
+              import-root
+              original-import-path
+              (string.substring candidate 0 dot)
+              selected-item
+              (+ remaining-segments 1)
+              alias
+              stdlib-roots)))])))
+
+(define (compiler-load-resolve-import-spec-with-roots-classified
+  [importer-path : String]
+  [import-root : String]
+  [kind : ast.AstImportKind]
+  [import-path : String]
+  [expected-module : ast.AstMaybeModuleName]
+  [alias : ast.AstMaybeImportAlias]
+  [stdlib-roots : svec.Vec]) : ResultCompilerLoadResolvedImport
+  (match kind
+    [(ast.AstImportKind.ModuleAll)
+      (match (compiler-load-resolve-dotted-import-spec-with-roots
+        importer-path
+        import-root
+        import-path
+        expected-module
+        stdlib-roots)
+        [(ResultPkgResolve.Ok resolved)
+          (compiler-load-resolved-import
+            resolved
+            ast.AstImportKind.ModuleAll
+            import-path
+            alias)]
+        [(ResultPkgResolve.Err message)
+          (ResultCompilerLoadResolvedImport.Err message)])]
+    [(ast.AstImportKind.ModuleItem _)
+      (match (compiler-load-resolve-dotted-import-spec-with-roots
+        importer-path
+        import-root
+        import-path
+        expected-module
+        stdlib-roots)
+        [(ResultPkgResolve.Ok resolved)
+          (compiler-load-resolved-import resolved kind import-path alias)]
+        [(ResultPkgResolve.Err message)
+          (ResultCompilerLoadResolvedImport.Err message)])]
+    [(ast.AstImportKind.Module)
+      (let
+        [original : ResultPkgResolve
+          (compiler-load-resolve-dotted-import-spec-with-roots
+            importer-path
+            import-root
+            import-path
+            expected-module
+            stdlib-roots)]
+        (match original
+          [(ResultPkgResolve.Ok resolved)
+            (if (compiler-load-resolved-source-exists? resolved)
+              (compiler-load-resolved-import
+                resolved
+                ast.AstImportKind.Module
+                import-path
+                alias)
+              (let
+                [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
+                (if (< dot 0)
+                  (compiler-load-resolved-import
+                    resolved
+                    ast.AstImportKind.Module
+                    import-path
+                    alias)
+                  (let
+                    [item-text : String
+                      (string.substring
+                        import-path
+                        (+ dot 1)
+                        (- (string.string-length import-path) (+ dot 1)))]
+                    (match (compiler-load-search-import-prefix-with-roots
+                      importer-path
+                      import-root
+                      import-path
+                      (string.substring import-path 0 dot)
+                      (compiler-load-selected-item-id expected-module item-text)
+                      1
+                      alias
+                      stdlib-roots)
+                      [(ResultCompilerLoadResolvedImport.Ok selected)
+                        (ResultCompilerLoadResolvedImport.Ok selected)]
+                      [(ResultCompilerLoadResolvedImport.Err message)
+                        (if (= (string.string-length message) 0)
+                          (compiler-load-resolved-import
+                            resolved
+                            ast.AstImportKind.Module
+                            import-path
+                            alias)
+                          (ResultCompilerLoadResolvedImport.Err message))])))))]
+          [(ResultPkgResolve.Err original-message)
+            (let
+              [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
+              (if (< dot 0)
+                (ResultCompilerLoadResolvedImport.Err original-message)
+                (let
+                  [item-text : String
+                    (string.substring
+                      import-path
+                      (+ dot 1)
+                      (- (string.string-length import-path) (+ dot 1)))]
+                  (match (compiler-load-search-import-prefix-with-roots
+                    importer-path
+                    import-root
+                    import-path
+                    (string.substring import-path 0 dot)
+                    (compiler-load-selected-item-id expected-module item-text)
+                    1
+                    alias
+                    stdlib-roots)
+                    [(ResultCompilerLoadResolvedImport.Ok selected)
+                      (ResultCompilerLoadResolvedImport.Ok selected)]
+                    [(ResultCompilerLoadResolvedImport.Err message)
+                      (if (= (string.string-length message) 0)
+                        (ResultCompilerLoadResolvedImport.Err original-message)
+                        (ResultCompilerLoadResolvedImport.Err message))]))))]))]
+    [(ast.AstImportKind.Macro _ _)
+      (ResultCompilerLoadResolvedImport.Err
+        "compiler-load: module macro imports must be expanded before import resolution")]
+    [(ast.AstImportKind.MacroDecls _ _)
+      (ResultCompilerLoadResolvedImport.Err
         "compiler-load: module macro imports must be expanded before import resolution")]))
 
 (define (compiler-load-resolve-package-module-import
@@ -3164,11 +3445,212 @@
         manifest-dir
         deps
         stdlib-roots)]
+    [(ast.AstImportKind.ModuleAll)
+      (compiler-load-resolve-package-module-import
+        import-path
+        expected-module
+        importer-path
+        manifest-dir
+        deps
+        stdlib-roots)]
+    [(ast.AstImportKind.ModuleItem _)
+      (compiler-load-resolve-package-module-import
+        import-path
+        expected-module
+        importer-path
+        manifest-dir
+        deps
+        stdlib-roots)]
     [(ast.AstImportKind.Macro _ _)
       (ResultPkgResolve.Err
         "compiler-load: module macro imports must be expanded before import resolution")]
     [(ast.AstImportKind.MacroDecls _ _)
       (ResultPkgResolve.Err
+        "compiler-load: module macro imports must be expanded before import resolution")]))
+
+(define (compiler-load-search-package-import-prefix
+  [importer-path : String]
+  [original-import-path : String]
+  [candidate : String]
+  [selected-item : i64]
+  [remaining-segments : i64]
+  [alias : ast.AstMaybeImportAlias]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : ResultCompilerLoadResolvedImport
+  (let
+    [candidate-id : i64 (compiler-load-import-module-id candidate)]
+    (match (compiler-load-resolve-package-module-import
+      candidate
+      (ast.AstMaybeModuleName.Some candidate-id)
+      importer-path
+      manifest-dir
+      deps
+      stdlib-roots)
+      [(ResultPkgResolve.Ok resolved)
+        (if (compiler-load-resolved-source-exists? resolved)
+          (if (= remaining-segments 1)
+            (compiler-load-resolved-import
+              resolved
+              (ast.AstImportKind.ModuleItem selected-item)
+              candidate
+              alias)
+            (ResultCompilerLoadResolvedImport.Err
+              (compiler-load-invalid-selected-import-message
+                original-import-path
+                candidate)))
+          (let
+            [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
+            (if (< dot 0)
+              (ResultCompilerLoadResolvedImport.Err "")
+              (compiler-load-search-package-import-prefix
+                importer-path
+                original-import-path
+                (string.substring candidate 0 dot)
+                selected-item
+                (+ remaining-segments 1)
+                alias
+                stdlib-roots
+                manifest-dir
+                deps))))]
+      [(ResultPkgResolve.Err _)
+        (let
+          [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
+          (if (< dot 0)
+            (ResultCompilerLoadResolvedImport.Err "")
+            (compiler-load-search-package-import-prefix
+              importer-path
+              original-import-path
+              (string.substring candidate 0 dot)
+              selected-item
+              (+ remaining-segments 1)
+              alias
+              stdlib-roots
+              manifest-dir
+              deps)))])))
+
+(define (compiler-load-resolve-package-import-spec-classified
+  [importer-path : String]
+  [kind : ast.AstImportKind]
+  [import-path : String]
+  [expected-module : ast.AstMaybeModuleName]
+  [alias : ast.AstMaybeImportAlias]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : ResultCompilerLoadResolvedImport
+  (match kind
+    [(ast.AstImportKind.ModuleAll)
+      (match (compiler-load-resolve-package-module-import
+        import-path
+        expected-module
+        importer-path
+        manifest-dir
+        deps
+        stdlib-roots)
+        [(ResultPkgResolve.Ok resolved)
+          (compiler-load-resolved-import
+            resolved
+            ast.AstImportKind.ModuleAll
+            import-path
+            alias)]
+        [(ResultPkgResolve.Err message)
+          (ResultCompilerLoadResolvedImport.Err message)])]
+    [(ast.AstImportKind.ModuleItem _)
+      (match (compiler-load-resolve-package-module-import
+        import-path
+        expected-module
+        importer-path
+        manifest-dir
+        deps
+        stdlib-roots)
+        [(ResultPkgResolve.Ok resolved)
+          (compiler-load-resolved-import resolved kind import-path alias)]
+        [(ResultPkgResolve.Err message)
+          (ResultCompilerLoadResolvedImport.Err message)])]
+    [(ast.AstImportKind.Module)
+      (let
+        [original : ResultPkgResolve
+          (compiler-load-resolve-package-module-import
+            import-path
+            expected-module
+            importer-path
+            manifest-dir
+            deps
+            stdlib-roots)]
+        (match original
+          [(ResultPkgResolve.Ok resolved)
+            (if (compiler-load-resolved-source-exists? resolved)
+              (compiler-load-resolved-import
+                resolved
+                ast.AstImportKind.Module
+                import-path
+                alias)
+              (let
+                [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
+                (if (< dot 0)
+                  (compiler-load-resolved-import
+                    resolved
+                    ast.AstImportKind.Module
+                    import-path
+                    alias)
+                  (let
+                    [item-text : String
+                      (string.substring
+                        import-path
+                        (+ dot 1)
+                        (- (string.string-length import-path) (+ dot 1)))]
+                    (match (compiler-load-search-package-import-prefix
+                      importer-path
+                      import-path
+                      (string.substring import-path 0 dot)
+                      (compiler-load-selected-item-id expected-module item-text)
+                      1
+                      alias
+                      stdlib-roots
+                      manifest-dir
+                      deps)
+                      [(ResultCompilerLoadResolvedImport.Ok selected)
+                        (ResultCompilerLoadResolvedImport.Ok selected)]
+                      [(ResultCompilerLoadResolvedImport.Err message)
+                        (if (= (string.string-length message) 0)
+                          (compiler-load-resolved-import
+                            resolved
+                            ast.AstImportKind.Module
+                            import-path
+                            alias)
+                          (ResultCompilerLoadResolvedImport.Err message))])))))]
+          [(ResultPkgResolve.Err original-message)
+            (let
+              [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
+              (if (< dot 0)
+                (ResultCompilerLoadResolvedImport.Err original-message)
+                (let
+                  [item-text : String
+                    (string.substring
+                      import-path
+                      (+ dot 1)
+                      (- (string.string-length import-path) (+ dot 1)))]
+                  (match (compiler-load-search-package-import-prefix
+                    importer-path
+                    import-path
+                    (string.substring import-path 0 dot)
+                    (compiler-load-selected-item-id expected-module item-text)
+                    1
+                    alias
+                    stdlib-roots
+                    manifest-dir
+                    deps)
+                    [(ResultCompilerLoadResolvedImport.Ok selected)
+                      (ResultCompilerLoadResolvedImport.Ok selected)]
+                    [(ResultCompilerLoadResolvedImport.Err message)
+                      (if (= (string.string-length message) 0)
+                        (ResultCompilerLoadResolvedImport.Err original-message)
+                        (ResultCompilerLoadResolvedImport.Err message))]))))]))]
+    [(ast.AstImportKind.Macro _ _)
+      (ResultCompilerLoadResolvedImport.Err
+        "compiler-load: module macro imports must be expanded before import resolution")]
+    [(ast.AstImportKind.MacroDecls _ _)
+      (ResultCompilerLoadResolvedImport.Err
         "compiler-load: module macro imports must be expanded before import resolution")]))
 
 (define (compiler-load-package-import-externs?
@@ -3197,6 +3679,18 @@
           (match (compiler-load-pkg-dep-lookup deps first)
             [(CompilerLoadSomePath _) true]
             [(CompilerLoadNoPath) false])))]
+    [(ast.AstImportKind.ModuleAll)
+      (compiler-load-package-import-externs?
+        ast.AstImportKind.Module
+        import-path
+        expected-module
+        deps)]
+    [(ast.AstImportKind.ModuleItem _)
+      (compiler-load-package-import-externs?
+        ast.AstImportKind.Module
+        import-path
+        expected-module
+        deps)]
     [(ast.AstImportKind.Macro _ _) false]
     [(ast.AstImportKind.MacroDecls _ _) false]))
 
@@ -3210,6 +3704,8 @@
       ;; the dependency source's public module identity. Let an explicit module
       ;; declaration win, while a moduleless source keeps the dotted fallback.
       [(ast.AstImportKind.Module) ast.AstMaybeModuleName.No]
+      [(ast.AstImportKind.ModuleAll) ast.AstMaybeModuleName.No]
+      [(ast.AstImportKind.ModuleItem _) ast.AstMaybeModuleName.No]
       [_ expected-module])
     expected-module))
 
@@ -4209,6 +4705,8 @@
   [_ : String]) : String
   (match kind
     [(ast.AstImportKind.Module) import-path]
+    [(ast.AstImportKind.ModuleAll) import-path]
+    [(ast.AstImportKind.ModuleItem _) import-path]
     [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
 
 (define (compiler-load-canonical-module-id-from-import
@@ -4395,6 +4893,28 @@
             (ast.AstMaybeModuleName.Some
               (compiler-load-decls-source-module-id imported-decls))
             expected)])]
+    [(ast.AstImportKind.ModuleAll)
+      (match (compiler-load-session-state-surface-summary-find-source
+        state
+        source-path-id)
+        [(CompilerLoadSomeSurfaceSummary summary)
+          (ast.AstMaybeModuleName.Some summary.declaration-module-id)]
+        [(CompilerLoadNoSurfaceSummary)
+          (if (compiler-load-decl-list-has-module? imported-decls)
+            (ast.AstMaybeModuleName.Some
+              (compiler-load-decls-source-module-id imported-decls))
+            expected)])]
+    [(ast.AstImportKind.ModuleItem _)
+      (match (compiler-load-session-state-surface-summary-find-source
+        state
+        source-path-id)
+        [(CompilerLoadSomeSurfaceSummary summary)
+          (ast.AstMaybeModuleName.Some summary.declaration-module-id)]
+        [(CompilerLoadNoSurfaceSummary)
+          (if (compiler-load-decl-list-has-module? imported-decls)
+            (ast.AstMaybeModuleName.Some
+              (compiler-load-decls-source-module-id imported-decls))
+            expected)])]
     [_ expected]))
 
 (define (compiler-load-after-import-alias
@@ -4414,9 +4934,9 @@
 (define (compiler-load-duplicate-dotted-import-alias-loop
   [decls : ast.AstDeclList]
   [current-module : i64]
-  [seen : sym_i64_env.SymI64Env]) : CompilerLoadMaybeString
+  [seen : sym_i64_env.SymI64Env]) : CompilerLoadMaybeImportAliasCollision
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) (CompilerLoadNoString)]
+    [(ast.AstDeclListStep.Nil) (CompilerLoadMaybeImportAliasCollision.No)]
     [(ast.AstDeclListStep.Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
@@ -4430,7 +4950,7 @@
                 import-name
                 _
                 (ast.AstMaybeImportAlias.Some alias)
-                _))
+                span))
             (let
               [key : i64
                 (compiler-load-dotted-import-alias-key current-module alias)]
@@ -4445,7 +4965,13 @@
                     rest
                     current-module
                     seen)
-                  (CompilerLoadSomeString (ci.intern-str alias)))
+                  (CompilerLoadMaybeImportAliasCollision.Some
+                    (CompilerLoadImportAliasCollision
+                      (ci.intern-str alias)
+                      (ci.intern-str
+                        (sym_i64_env.sym-i64-lookup-id-or seen key -1))
+                      import-name
+                      (__tl-box-place span))))
                 (compiler-load-duplicate-dotted-import-alias-loop
                   rest
                   current-module
@@ -4464,15 +4990,336 @@
     decls
     (compiler-load-decls-source-module-id decls)
     (sym_i64_env.sym-i64-empty))
-    [(CompilerLoadNoString) (ResultCompilerLoadAliasCheck.Ok)]
-    [(CompilerLoadSomeString alias)
+    [(CompilerLoadMaybeImportAliasCollision.No)
+      (ResultCompilerLoadAliasCheck.Ok)]
+    [(CompilerLoadMaybeImportAliasCollision.Some collision)
       (ResultCompilerLoadAliasCheck.Err
         (box
-          (cdiag.compiler-diagnostic-at-start
+          (cdiag.compiler-diagnostic-from-ast-span
             path
+            collision.span
             (str_cat.str-cat
-              "compiler-load: duplicate module import alias "
-              alias))))]))
+              "compiler-load: ambiguous import alias '"
+              (str_cat.str-cat
+                collision.alias
+                (str_cat.str-cat
+                  "' between '"
+                  (str_cat.str-cat
+                    collision.first-import
+                    (str_cat.str-cat
+                      "' and '"
+                      (str_cat.str-cat
+                        collision.second-import
+                        "'; use distinct aliases or qualified access")))))))))]))
+
+(define (compiler-load-unqualified-import-note
+  [state : (&mut state CompilerLoadUnqualifiedImportState)]
+  [importer-module : i64]
+  [local-name : i64]
+  [source-module : i64]
+  [source-item : i64]
+  [path : String]
+  [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
+  (let
+    [key : i64 (ci.intern-composite-pair-id importer-module local-name)]
+    [source-id : i64 (ci.intern-composite-pair-id source-module source-item)]
+    (match (load_i64_i64_map.get (& state.source-ids) key)
+      [(load_i64_i64_map.LookupFound prior-source-id)
+        (if (= prior-source-id source-id)
+          (CompilerLoadUnqualifiedImportStep.Ok)
+          (CompilerLoadUnqualifiedImportStep.Collision
+            (CompilerLoadUnqualifiedImportCollision
+              (ci.intern-str local-name)
+              (ci.intern-str
+                (match (load_i64_i64_map.get (& state.source-modules) key)
+                  [(load_i64_i64_map.LookupFound prior-module) prior-module]
+                  [(load_i64_i64_map.LookupMissing)
+                    cbi.compiler-builtin-id-fix-empty]))
+              (ci.intern-str source-module)
+              path
+              span)))]
+      [(load_i64_i64_map.LookupMissing)
+        (begin
+          (load_i64_i64_map.insert-ref! (&mut state.source-ids) key source-id)
+          (load_i64_i64_map.insert-ref!
+            (&mut state.source-modules)
+            key
+            source-module)
+          (CompilerLoadUnqualifiedImportStep.Ok))])))
+
+(define (compiler-load-unqualified-import-note-variants
+  [state : (&mut state CompilerLoadUnqualifiedImportState)]
+  [importer-module : i64]
+  [source-module : i64]
+  [variants : (& variants ast.AstVariantDefList)]
+  [index : i64]
+  [path : String]
+  [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
+  (if (>= index (ast.ast-variant-def-list-len variants))
+    (CompilerLoadUnqualifiedImportStep.Ok)
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def name _ _)
+        (match (compiler-load-unqualified-import-note
+          state
+          importer-module
+          name
+          source-module
+          name
+          path
+          span)
+          [(CompilerLoadUnqualifiedImportStep.Ok)
+            (compiler-load-unqualified-import-note-variants
+              state
+              importer-module
+              source-module
+              variants
+              (+ index 1)
+              path
+              span)]
+          [(CompilerLoadUnqualifiedImportStep.Collision collision)
+            (CompilerLoadUnqualifiedImportStep.Collision collision)])])))
+
+(define (compiler-load-unqualified-import-note-decl
+  [state : (&mut state CompilerLoadUnqualifiedImportState)]
+  [importer-module : i64]
+  [source-module : i64]
+  [decl : ast.AstDecl]
+  [path : String]
+  [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
+  (match (ast.ast-decl-unwrapped decl)
+    [(ast.AstDecl.Def _ name _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefFn _ name _ _ _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefMacro _ name _ _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefDispatch _ name _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.Extern _ name _ _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefStruct _ name _ _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefStructLifetimes _ name _ _ _ _)
+      (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)]
+    [(ast.AstDecl.DefEnum _ name _ variants)
+      (match (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)
+        [(CompilerLoadUnqualifiedImportStep.Ok)
+          (compiler-load-unqualified-import-note-variants
+            state
+            importer-module
+            source-module
+            (& variants)
+            0
+            path
+            span)]
+        [(CompilerLoadUnqualifiedImportStep.Collision collision)
+          (CompilerLoadUnqualifiedImportStep.Collision collision)])]
+    [(ast.AstDecl.DefEnumLifetimes _ name _ _ variants)
+      (match (compiler-load-unqualified-import-note
+        state
+        importer-module
+        name
+        source-module
+        name
+        path
+        span)
+        [(CompilerLoadUnqualifiedImportStep.Ok)
+          (compiler-load-unqualified-import-note-variants
+            state
+            importer-module
+            source-module
+            (& variants)
+            0
+            path
+            span)]
+        [(CompilerLoadUnqualifiedImportStep.Collision collision)
+          (CompilerLoadUnqualifiedImportStep.Collision collision)])]
+    [_ (CompilerLoadUnqualifiedImportStep.Ok)]))
+
+(define (compiler-load-unqualified-import-note-wildcard
+  [state : (&mut state CompilerLoadUnqualifiedImportState)]
+  [decls : ast.AstDeclList]
+  [importer-module : i64]
+  [source-module : i64]
+  [path : String]
+  [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
+  (let
+    [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [decl : ast.AstDecl (array-ref decls.slots (+ decls.offset index))]
+          (begin
+            (match decl
+              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
+              [_
+                (when
+                  (= cur-module source-module)
+                  (match (compiler-load-unqualified-import-note-decl
+                    state
+                    importer-module
+                    source-module
+                    decl
+                    path
+                    span)
+                    [(CompilerLoadUnqualifiedImportStep.Ok) unit]
+                    [(CompilerLoadUnqualifiedImportStep.Collision collision)
+                      (return
+                        (CompilerLoadUnqualifiedImportStep.Collision collision))]))])
+            (set! index (+ index 1)))))
+      (CompilerLoadUnqualifiedImportStep.Ok))))
+
+(define (compiler-load-unqualified-import-collision-message
+  [collision : CompilerLoadUnqualifiedImportCollision]) : String
+  (str_cat.str-cat
+    "compiler-load: ambiguous unqualified import '"
+    (str_cat.str-cat
+      collision.name
+      (str_cat.str-cat
+        "' between modules '"
+        (str_cat.str-cat
+          collision.first-module
+          (str_cat.str-cat
+            "' and '"
+            (str_cat.str-cat
+              collision.second-module
+              "'; use explicit selected aliases or qualified access")))))))
+
+(define (compiler-load-unqualified-import-collision-result
+  [collision : CompilerLoadUnqualifiedImportCollision]) : ResultCompilerLoadAliasCheck
+  (ResultCompilerLoadAliasCheck.Err
+    (box
+      (cdiag.compiler-diagnostic-from-ast-span
+        collision.path
+        collision.span
+        (compiler-load-unqualified-import-collision-message collision)))))
+
+(define (compiler-load-check-unqualified-import-collisions
+  [fallback-path : String]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : ResultCompilerLoadAliasCheck
+  (let
+    [state : CompilerLoadUnqualifiedImportState
+      (CompilerLoadUnqualifiedImportState
+        (load_i64_i64_map.with-capacity 64)
+        (load_i64_i64_map.with-capacity 64))]
+    [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [decl : ast.AstDecl (array-ref decls.slots (+ decls.offset index))]
+          [path : String
+            (ast.ast-decl-path-list-get (& paths) index fallback-path)]
+          (begin
+            (match decl
+              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
+              [(ast.AstDecl.Import
+                  _
+                  (ast.AstImportSpec.Spec
+                    (ast.AstImportKind.ModuleAll)
+                    _
+                    (ast.AstMaybeModuleName.Some source-module)
+                    _
+                    span))
+                (match (compiler-load-unqualified-import-note-wildcard
+                  (&mut state)
+                  decls
+                  cur-module
+                  source-module
+                  path
+                  (__tl-box-place span))
+                  [(CompilerLoadUnqualifiedImportStep.Ok) unit]
+                  [(CompilerLoadUnqualifiedImportStep.Collision collision)
+                    (return
+                      (compiler-load-unqualified-import-collision-result
+                        collision))])]
+              [(ast.AstDecl.Import
+                  _
+                  (ast.AstImportSpec.Spec
+                    (ast.AstImportKind.ModuleItem source-item)
+                    _
+                    (ast.AstMaybeModuleName.Some source-module)
+                    (ast.AstMaybeImportAlias.Some alias)
+                    span))
+                (match (compiler-load-unqualified-import-note
+                  (&mut state)
+                  cur-module
+                  alias
+                  source-module
+                  source-item
+                  path
+                  (__tl-box-place span))
+                  [(CompilerLoadUnqualifiedImportStep.Ok) unit]
+                  [(CompilerLoadUnqualifiedImportStep.Collision collision)
+                    (return
+                      (compiler-load-unqualified-import-collision-result
+                        collision))])]
+              [_ unit])
+            (set! index (+ index 1)))))
+      (ResultCompilerLoadAliasCheck.Ok))))
 
 (define (compiler-load-session-state-surface-summaries-reset!
   [state : CompilerLoadSessionState]) : unit
@@ -7571,6 +8418,8 @@
 (define (compiler-load-surface-import-kind [kind : ast.AstImportKind]) : CompilerLoadSurfaceImportKind
   (match kind
     [(ast.AstImportKind.Module) (CompilerLoadSurfaceImportModule)]
+    [(ast.AstImportKind.ModuleAll) (CompilerLoadSurfaceImportModule)]
+    [(ast.AstImportKind.ModuleItem _) (CompilerLoadSurfaceImportModule)]
     [(ast.AstImportKind.Macro _ _) (CompilerLoadSurfaceImportMacro)]
     [(ast.AstImportKind.MacroDecls _ _) (CompilerLoadSurfaceImportMacroDecls)]))
 
@@ -8223,11 +9072,91 @@
           [(ResultCompilerLoadModuleId.Err diag)
             (ResultCompilerLoadSurfaceSummary.Err diag)]))]))
 
+(define (compiler-load-decl-defines-selected-item?
+  [decl : ast.AstDecl]
+  [item : i64]) : bool
+  (match (ast.ast-decl-unwrapped decl)
+    [(ast.AstDecl.Def decl-meta name _ _) (= name item)]
+    [(ast.AstDecl.DefFn decl-meta name _ _ _ _) (= name item)]
+    [(ast.AstDecl.DefMacro decl-meta name _ _ _) (= name item)]
+    [(ast.AstDecl.DefDispatch decl-meta name _) (= name item)]
+    [(ast.AstDecl.Extern decl-meta name _ _ _) (= name item)]
+    [(ast.AstDecl.DefEnum decl-meta name _ variants)
+      (or
+        (= name item)
+        (compiler-load-lazy-surface-variant-direct-name? variants item))]
+    [(ast.AstDecl.DefEnumLifetimes decl-meta name _ _ variants)
+      (or
+        (= name item)
+        (compiler-load-lazy-surface-variant-direct-name? variants item))]
+    [(ast.AstDecl.DefStruct decl-meta name _ _ _) (= name item)]
+    [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ _ _) (= name item)]
+    [_ false]))
+
+(define (compiler-load-module-defines-selected-item?
+  [decls : ast.AstDeclList]
+  [target-module : i64]
+  [item : i64]) : bool
+  (let
+    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [decl : ast.AstDecl (array-ref decls.slots (+ decls.offset index))]
+          (begin
+            (match decl
+              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
+              [_
+                (when
+                  (and
+                    (= cur-module target-module)
+                    (compiler-load-decl-defines-selected-item? decl item))
+                  (return true))])
+            (set! index (+ index 1)))))
+      false)))
+
+(define (compiler-load-selected-item-present?
+  [kind : ast.AstImportKind]
+  [expected-module : ast.AstMaybeModuleName]
+  [decls : ast.AstDeclList]) : bool
+  (match kind
+    [(ast.AstImportKind.ModuleItem item)
+      (match expected-module
+        [(ast.AstMaybeModuleName.Some target-module)
+          (compiler-load-module-defines-selected-item? decls target-module item)]
+        [(ast.AstMaybeModuleName.No) false])]
+    [_ true]))
+
+(define (compiler-load-expected-module-seen?
+  [seen : sym_i64_env.SymI64Env]
+  [expected-module : ast.AstMaybeModuleName]) : bool
+  (match expected-module
+    [(ast.AstMaybeModuleName.Some module-id)
+      (sym_i64_env.sym-i64-contains-id seen module-id)]
+    [(ast.AstMaybeModuleName.No) false]))
+
+(define (compiler-load-missing-selected-item-message
+  [module-name : String]
+  [kind : ast.AstImportKind]) : String
+  (match kind
+    [(ast.AstImportKind.ModuleItem item)
+      (str_cat.str-cat
+        "compiler-load: module '"
+        (str_cat.str-cat
+          module-name
+          (str_cat.str-cat
+            "' has no selected item '"
+            (str_cat.str-cat (ci.intern-str item) "'"))))]
+    [_ "compiler-load: missing selected import item"]))
+
 (define (compiler-load-alias-decl-list
   [kind : ast.AstImportKind]
   [import-path : String]
   [expected-module : ast.AstMaybeModuleName]
   [alias : ast.AstMaybeImportAlias]
+  [span : ast.AstSourceSpan]
   [rest : ast.AstDeclList]) : ast.AstDeclList
   (match alias
     [(ast.AstMaybeImportAlias.Some _)
@@ -8239,7 +9168,7 @@
             import-path
             expected-module
             alias
-            (box (ast.ast-source-span 0 0 0 0))))
+            (box span)))
         rest)]
     [(ast.AstMaybeImportAlias.No) rest]))
 
@@ -8274,6 +9203,7 @@
   [import-path : String]
   [expected-module : ast.AstMaybeModuleName]
   [alias : ast.AstMaybeImportAlias]
+  [span : ast.AstSourceSpan]
   [_importer-source-module : String]
   [importer-source-module-id : i64]
   [imported-decls : ast.AstDeclList]
@@ -8285,6 +9215,7 @@
         import-path
         expected-module
         alias
+        span
         rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
       (compiler-load-decl-list-prepend
@@ -8482,15 +9413,22 @@
                     rest-seen)]
                 [(ResultCompilerLoadWithPaths.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])
-              (match (compiler-load-resolve-import-spec-with-roots
+              (match (compiler-load-resolve-import-spec-with-roots-classified
                 importer-path
                 import-root
                 kind
                 import-path
                 expected-module
+                alias
                 stdlib-roots)
-                [(ResultPkgResolve.Ok resolved)
+                [(ResultCompilerLoadResolvedImport.Ok import)
                   (let
+                    [resolved : String import.resolved]
+                    [kind : ast.AstImportKind import.kind]
+                    [import-path : String import.module-name]
+                    [expected-module : ast.AstMaybeModuleName
+                      import.expected-module]
+                    [alias : ast.AstMaybeImportAlias import.alias]
                     [resolved-id : i64 (compiler-load-source-path-id resolved)]
                     [preload-candidate : bool
                       (compiler-load-session-state-lazy-import-preload-candidate?
@@ -8568,105 +9506,132 @@
                             (if lazy-skip
                               seen
                               import-seen)]
-                          (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                            traversal
-                            rest
-                            importer-path
-                            importer-module
-                            importer-module-id
-                            importer-source-module
-                            importer-source-module-id
-                            after-import-seen
-                            stdlib-roots
-                            import-root
-                            cfgs
-                            pools)
-                            [(ResultCompilerLoadWithPaths.Ok
-                                rest-decls
-                                rest-paths
-                                rest-modules
-                                rest-seen)
-                              (let
-                                [after-import-expected : ast.AstMaybeModuleName
-                                  (compiler-load-after-import-expected-module
-                                    traversal.load-state
-                                    resolved-id
+                          [validated-module : ast.AstMaybeModuleName
+                            (compiler-load-after-import-expected-module
+                              traversal.load-state
+                              resolved-id
+                              kind
+                              expected-module
+                              alias
+                              imported-decls)]
+                          (begin
+                            (when
+                              (not
+                                (or
+                                  (compiler-load-expected-module-seen?
+                                    seen
+                                    validated-module)
+                                  (compiler-load-selected-item-present?
                                     kind
-                                    expected-module
-                                    alias
-                                    imported-decls)]
-                                [after-import-alias : ast.AstMaybeImportAlias
-                                  (compiler-load-after-import-alias
-                                    traversal.load-state
-                                    resolved-id
-                                    kind
-                                    expected-module
-                                    alias
-                                    imported-decls)]
-                                (if lazy-skip
-                                  (begin
-                                    (compiler-load-session-state-lazy-import-record-skip!
-                                      traversal.load-state)
+                                    validated-module
+                                    imported-decls)))
+                              (return
+                                (ResultCompilerLoadWithPaths.Err
+                                  (box
+                                    (cdiag.compiler-diagnostic-from-ast-span
+                                      importer-path
+                                      (__tl-box-place span)
+                                      (compiler-load-missing-selected-item-message
+                                        import-path
+                                        kind))))))
+                            (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                              traversal
+                              rest
+                              importer-path
+                              importer-module
+                              importer-module-id
+                              importer-source-module
+                              importer-source-module-id
+                              after-import-seen
+                              stdlib-roots
+                              import-root
+                              cfgs
+                              pools)
+                              [(ResultCompilerLoadWithPaths.Ok
+                                  rest-decls
+                                  rest-paths
+                                  rest-modules
+                                  rest-seen)
+                                (let
+                                  [after-import-expected : ast.AstMaybeModuleName
+                                    validated-module]
+                                  [after-import-alias : ast.AstMaybeImportAlias
+                                    (compiler-load-after-import-alias
+                                      traversal.load-state
+                                      resolved-id
+                                      kind
+                                      expected-module
+                                      alias
+                                      imported-decls)]
+                                  (if lazy-skip
+                                    (begin
+                                      (compiler-load-session-state-lazy-import-record-skip!
+                                        traversal.load-state)
+                                      (ResultCompilerLoadWithPaths.Ok
+                                        (compiler-load-decls-after-import
+                                          kind
+                                          resolved
+                                          after-import-expected
+                                          after-import-alias
+                                          (__tl-box-place span)
+                                          importer-source-module
+                                          importer-source-module-id
+                                          (ast.ast-decl-list-new)
+                                          rest-decls)
+                                        (compiler-load-paths-after-import
+                                          importer-path
+                                          traversal.importer-path-id
+                                          traversal.importer-decl-owner-id
+                                          after-import-alias
+                                          (ast.ast-decl-list-new)
+                                          rest-paths)
+                                        (compiler-load-modules-after-import
+                                          importer-source-module-id
+                                          after-import-alias
+                                          (ast.ast-decl-list-new)
+                                          rest-modules)
+                                        rest-seen))
                                     (ResultCompilerLoadWithPaths.Ok
-                                      (compiler-load-decls-after-import
-                                        kind
-                                        resolved
-                                        after-import-expected
-                                        after-import-alias
-                                        importer-source-module
-                                        importer-source-module-id
-                                        (ast.ast-decl-list-new)
-                                        rest-decls)
-                                      (compiler-load-paths-after-import
-                                        importer-path
-                                        traversal.importer-path-id
-                                        traversal.importer-decl-owner-id
-                                        after-import-alias
-                                        (ast.ast-decl-list-new)
-                                        rest-paths)
-                                      (compiler-load-modules-after-import
-                                        importer-source-module-id
-                                        after-import-alias
-                                        (ast.ast-decl-list-new)
-                                        rest-modules)
-                                      rest-seen))
-                                  (ResultCompilerLoadWithPaths.Ok
-                                    (compiler-load-decl-list-append-onto
-                                      imported-decls
-                                      (compiler-load-decls-after-import
-                                        kind
-                                        resolved
-                                        after-import-expected
-                                        after-import-alias
-                                        importer-source-module
-                                        importer-source-module-id
+                                      (compiler-load-decl-list-append-onto
                                         imported-decls
-                                        rest-decls))
-                                    (compiler-load-decl-path-list-append-onto
-                                      imported-paths
-                                      (compiler-load-paths-after-import
-                                        importer-path
-                                        traversal.importer-path-id
-                                        traversal.importer-decl-owner-id
-                                        after-import-alias
-                                        imported-decls
-                                        rest-paths))
-                                    (compiler-load-decl-module-list-append-onto
-                                      imported-modules
-                                      (compiler-load-modules-after-import
-                                        importer-source-module-id
-                                        after-import-alias
-                                        imported-decls
-                                        rest-modules))
-                                    rest-seen)))]
-                            [(ResultCompilerLoadWithPaths.Err diag)
-                              (ResultCompilerLoadWithPaths.Err diag)]))]
+                                        (compiler-load-decls-after-import
+                                          kind
+                                          resolved
+                                          after-import-expected
+                                          after-import-alias
+                                          (__tl-box-place span)
+                                          importer-source-module
+                                          importer-source-module-id
+                                          imported-decls
+                                          rest-decls))
+                                      (compiler-load-decl-path-list-append-onto
+                                        imported-paths
+                                        (compiler-load-paths-after-import
+                                          importer-path
+                                          traversal.importer-path-id
+                                          traversal.importer-decl-owner-id
+                                          after-import-alias
+                                          imported-decls
+                                          rest-paths))
+                                      (compiler-load-decl-module-list-append-onto
+                                        imported-modules
+                                        (compiler-load-modules-after-import
+                                          importer-source-module-id
+                                          after-import-alias
+                                          imported-decls
+                                          rest-modules))
+                                      rest-seen)))]
+                              [(ResultCompilerLoadWithPaths.Err diag)
+                                (ResultCompilerLoadWithPaths.Err diag)])))]
                       [(ResultCompilerLoadWithPaths.Err diag)
                         (ResultCompilerLoadWithPaths.Err diag)]))]
-                [(ResultPkgResolve.Err message)
+                [(ResultCompilerLoadResolvedImport.Err message)
                   (ResultCompilerLoadWithPaths.Err
                     (box
-                      (cdiag.compiler-diagnostic-at-start importer-path message)))]))]
+                      (cdiag.compiler-diagnostic-from-ast-span
+                        importer-path
+                        (__tl-box-place span)
+                        message)))]))]
           [(ast.AstDecl.IncludeStr name include-path)
             (match (compiler-load-expand-include-str-with-pools
               importer-path
@@ -8993,6 +9958,7 @@
   [source-module-fallback : String]
   [source-module-fallback-id : i64]) : ResultCompilerLoadWithPaths
   (let
+    [entry-depth : i64 (array-ref load-state.surface-summary-load-depth 0)]
     [_ : unit
       (compiler-load-session-state-surface-summary-load-enter! load-state)]
     [source-path-id : i64 parse-identity.source-path-id]
@@ -9103,7 +10069,20 @@
                 (ResultCompilerLoadWithPaths.Err diag)]))])]
     (begin
       (compiler-load-session-state-surface-summary-load-exit! load-state)
-      loaded)))
+      (if (= entry-depth 0)
+        (match loaded
+          [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
+            (match (compiler-load-check-unqualified-import-collisions
+              source-path
+              decls
+              paths)
+              [(ResultCompilerLoadAliasCheck.Ok)
+                (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)]
+              [(ResultCompilerLoadAliasCheck.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)])
+        loaded))))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root
   [path : String]
@@ -11289,16 +12268,23 @@
                     rest-seen)]
                 [(ResultCompilerLoadWithPaths.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])
-              (match (compiler-load-resolve-package-import-spec
+              (match (compiler-load-resolve-package-import-spec-classified
                 importer-path
                 kind
                 import-path
                 expected-module
+                alias
                 stdlib-roots
                 manifest-dir
                 deps)
-                [(ResultPkgResolve.Ok resolved)
+                [(ResultCompilerLoadResolvedImport.Ok import)
                   (let
+                    [resolved : String import.resolved]
+                    [kind : ast.AstImportKind import.kind]
+                    [import-path : String import.module-name]
+                    [expected-module : ast.AstMaybeModuleName
+                      import.expected-module]
+                    [alias : ast.AstMaybeImportAlias import.alias]
                     [resolved-id : i64 (compiler-load-source-path-id resolved)]
                     [package-externs : bool
                       (compiler-load-package-import-externs?
@@ -11409,104 +12395,131 @@
                             (if lazy-skip
                               seen
                               import-seen)]
-                          (match (compiler-load-package-decls-with-module-and-roots
-                            rest
-                            importer-path
-                            importer-path-id
-                            importer-module
-                            importer-module-id
-                            importer-source-module
-                            importer-source-module-id
-                            after-import-seen
-                            stdlib-roots
-                            manifest-dir
-                            deps
-                            cfgs)
-                            [(ResultCompilerLoadWithPaths.Ok
-                                rest-decls
-                                rest-paths
-                                rest-modules
-                                rest-seen)
-                              (let
-                                [after-import-expected : ast.AstMaybeModuleName
-                                  (compiler-load-after-import-expected-module
-                                    (compiler-load-active-session-state-shared-view)
-                                    resolved-id
+                          [validated-module : ast.AstMaybeModuleName
+                            (compiler-load-after-import-expected-module
+                              (compiler-load-active-session-state-shared-view)
+                              resolved-id
+                              kind
+                              expected-module
+                              alias
+                              imported-decls)]
+                          (begin
+                            (when
+                              (not
+                                (or
+                                  (compiler-load-expected-module-seen?
+                                    seen
+                                    validated-module)
+                                  (compiler-load-selected-item-present?
                                     kind
-                                    expected-module
-                                    alias
-                                    imported-decls)]
-                                [after-import-alias : ast.AstMaybeImportAlias
-                                  (compiler-load-after-import-alias
-                                    (compiler-load-active-session-state-shared-view)
-                                    resolved-id
-                                    kind
-                                    expected-module
-                                    alias
-                                    imported-decls)]
-                                (if lazy-skip
-                                  (begin
-                                    (compiler-load-lazy-import-record-skip!)
+                                    validated-module
+                                    imported-decls)))
+                              (return
+                                (ResultCompilerLoadWithPaths.Err
+                                  (box
+                                    (cdiag.compiler-diagnostic-from-ast-span
+                                      importer-path
+                                      (__tl-box-place span)
+                                      (compiler-load-missing-selected-item-message
+                                        import-path
+                                        kind))))))
+                            (match (compiler-load-package-decls-with-module-and-roots
+                              rest
+                              importer-path
+                              importer-path-id
+                              importer-module
+                              importer-module-id
+                              importer-source-module
+                              importer-source-module-id
+                              after-import-seen
+                              stdlib-roots
+                              manifest-dir
+                              deps
+                              cfgs)
+                              [(ResultCompilerLoadWithPaths.Ok
+                                  rest-decls
+                                  rest-paths
+                                  rest-modules
+                                  rest-seen)
+                                (let
+                                  [after-import-expected : ast.AstMaybeModuleName
+                                    validated-module]
+                                  [after-import-alias : ast.AstMaybeImportAlias
+                                    (compiler-load-after-import-alias
+                                      (compiler-load-active-session-state-shared-view)
+                                      resolved-id
+                                      kind
+                                      expected-module
+                                      alias
+                                      imported-decls)]
+                                  (if lazy-skip
+                                    (begin
+                                      (compiler-load-lazy-import-record-skip!)
+                                      (ResultCompilerLoadWithPaths.Ok
+                                        (compiler-load-decls-after-import
+                                          kind
+                                          resolved
+                                          after-import-expected
+                                          after-import-alias
+                                          (__tl-box-place span)
+                                          importer-source-module
+                                          importer-source-module-id
+                                          (ast.ast-decl-list-new)
+                                          rest-decls)
+                                        (compiler-load-paths-after-import
+                                          importer-path
+                                          importer-path-id
+                                          importer-path-id
+                                          after-import-alias
+                                          (ast.ast-decl-list-new)
+                                          rest-paths)
+                                        (compiler-load-modules-after-import
+                                          importer-module-id
+                                          after-import-alias
+                                          (ast.ast-decl-list-new)
+                                          rest-modules)
+                                        rest-seen))
                                     (ResultCompilerLoadWithPaths.Ok
-                                      (compiler-load-decls-after-import
-                                        kind
-                                        resolved
-                                        after-import-expected
-                                        after-import-alias
-                                        importer-source-module
-                                        importer-source-module-id
-                                        (ast.ast-decl-list-new)
-                                        rest-decls)
-                                      (compiler-load-paths-after-import
-                                        importer-path
-                                        importer-path-id
-                                        importer-path-id
-                                        after-import-alias
-                                        (ast.ast-decl-list-new)
-                                        rest-paths)
-                                      (compiler-load-modules-after-import
-                                        importer-module-id
-                                        after-import-alias
-                                        (ast.ast-decl-list-new)
-                                        rest-modules)
-                                      rest-seen))
-                                  (ResultCompilerLoadWithPaths.Ok
-                                    (compiler-load-decl-list-append-onto
-                                      imported-decls
-                                      (compiler-load-decls-after-import
-                                        kind
-                                        resolved
-                                        after-import-expected
-                                        after-import-alias
-                                        importer-source-module
-                                        importer-source-module-id
+                                      (compiler-load-decl-list-append-onto
                                         imported-decls
-                                        rest-decls))
-                                    (compiler-load-decl-path-list-append-onto
-                                      imported-paths
-                                      (compiler-load-paths-after-import
-                                        importer-path
-                                        importer-path-id
-                                        importer-path-id
-                                        after-import-alias
-                                        imported-decls
-                                        rest-paths))
-                                    (compiler-load-decl-module-list-append-onto
-                                      imported-modules
-                                      (compiler-load-modules-after-import
-                                        importer-module-id
-                                        after-import-alias
-                                        imported-decls
-                                        rest-modules))
-                                    rest-seen)))]
-                            [(ResultCompilerLoadWithPaths.Err diag)
-                              (ResultCompilerLoadWithPaths.Err diag)]))]
+                                        (compiler-load-decls-after-import
+                                          kind
+                                          resolved
+                                          after-import-expected
+                                          after-import-alias
+                                          (__tl-box-place span)
+                                          importer-source-module
+                                          importer-source-module-id
+                                          imported-decls
+                                          rest-decls))
+                                      (compiler-load-decl-path-list-append-onto
+                                        imported-paths
+                                        (compiler-load-paths-after-import
+                                          importer-path
+                                          importer-path-id
+                                          importer-path-id
+                                          after-import-alias
+                                          imported-decls
+                                          rest-paths))
+                                      (compiler-load-decl-module-list-append-onto
+                                        imported-modules
+                                        (compiler-load-modules-after-import
+                                          importer-module-id
+                                          after-import-alias
+                                          imported-decls
+                                          rest-modules))
+                                      rest-seen)))]
+                              [(ResultCompilerLoadWithPaths.Err diag)
+                                (ResultCompilerLoadWithPaths.Err diag)])))]
                       [(ResultCompilerLoadWithPaths.Err diag)
                         (ResultCompilerLoadWithPaths.Err diag)]))]
-                [(ResultPkgResolve.Err message)
+                [(ResultCompilerLoadResolvedImport.Err message)
                   (ResultCompilerLoadWithPaths.Err
                     (box
-                      (cdiag.compiler-diagnostic-at-start importer-path message)))]))]
+                      (cdiag.compiler-diagnostic-from-ast-span
+                        importer-path
+                        (__tl-box-place span)
+                        message)))]))]
           [(ast.AstDecl.IncludeStr name include-path)
             (match (compiler-load-package-expand-include-str
               importer-path
@@ -11729,6 +12742,9 @@
   [source-module-fallback : String]
   [source-module-fallback-id : i64]) : ResultCompilerLoadWithPaths
   (let
+    [load-state : CompilerLoadSessionState
+      (compiler-load-active-session-state-shared-view)]
+    [entry-depth : i64 (array-ref load-state.surface-summary-load-depth 0)]
     [_ : unit (compiler-load-surface-summary-load-enter!)]
     [source-path-id : i64 parse-identity.source-path-id]
     [module-id-fallback-id : i64 parse-identity.module-fallback-id]
@@ -11833,7 +12849,20 @@
                 (ResultCompilerLoadWithPaths.Err diag)]))])]
     (begin
       (compiler-load-surface-summary-load-exit!)
-      loaded)))
+      (if (= entry-depth 0)
+        (match loaded
+          [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
+            (match (compiler-load-check-unqualified-import-collisions
+              source-path
+              decls
+              paths)
+              [(ResultCompilerLoadAliasCheck.Ok)
+                (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)]
+              [(ResultCompilerLoadAliasCheck.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)])
+        loaded))))
 
 (define (compiler-load-package-program-with-paths-and-roots-expect
   [path : String]
@@ -13134,7 +14163,7 @@
     [(ResultCompilerLoad.Err diag)
       (string.eq
         (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-        "compiler-load: duplicate module import alias one")]
+        "compiler-load: ambiguous import alias 'one' between 'pkg.one' and 'other.one'; use distinct aliases or qualified access")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
 ;; Re-importing the same module under the same alias is idempotent, not a
@@ -13177,6 +14206,189 @@
       (svec.new))
       [(ResultPkgResolve.Ok path) (string.eq path "stdlib/core_macros.tl")]
       [(ResultPkgResolve.Err _) false])))
+
+(define (compiler-load-decl-list-has-wildcard-import?
+  [decls : ast.AstDeclList]
+  [target-module : String]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (let
+        [rest : ast.AstDeclList rest]
+        (match decl
+          [(ast.AstDecl.Import
+              _
+              (ast.AstImportSpec.Spec
+                (ast.AstImportKind.ModuleAll)
+                _
+                (ast.AstMaybeModuleName.Some module-name)
+                (ast.AstMaybeImportAlias.Some alias)
+                span))
+            (if (and
+              (string.eq (ci.intern-str module-name) target-module)
+              (= alias cbi.compiler-builtin-id-fix-empty)
+              (> (ast.ast-source-span-start-line (__tl-box-place span)) 0))
+              true
+              (compiler-load-decl-list-has-wildcard-import? rest target-module))]
+          [_ (compiler-load-decl-list-has-wildcard-import? rest target-module)]))]))
+
+(define (compiler-load-decl-list-has-selected-import?
+  [decls : ast.AstDeclList]
+  [target-module : String]
+  [item : String]
+  [alias-name : String]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (let
+        [rest : ast.AstDeclList rest]
+        (match decl
+          [(ast.AstDecl.Import
+              _
+              (ast.AstImportSpec.Spec
+                (ast.AstImportKind.ModuleItem item-id)
+                _
+                (ast.AstMaybeModuleName.Some module-name)
+                (ast.AstMaybeImportAlias.Some alias)
+                span))
+            (if (and
+              (string.eq (ci.intern-str module-name) target-module)
+              (string.eq (ci.intern-str item-id) item)
+              (string.eq (ci.intern-str alias) alias-name)
+              (> (ast.ast-source-span-start-line (__tl-box-place span)) 0))
+              true
+              (compiler-load-decl-list-has-selected-import?
+                rest
+                target-module
+                item
+                alias-name))]
+          [_
+            (compiler-load-decl-list-has-selected-import?
+              rest
+              target-module
+              item
+              alias-name)]))]))
+
+(define (compiler-load-import-suffix-resolution-ok?) : bool
+  (let
+    [root : String "target/cl_import_suffix_root"]
+    [pkg-root : String "target/cl_import_suffix_root/pkg"]
+    [roots : svec.Vec (compiler-load-string-vec-one root)]
+    (begin
+      (compiler-load-test-mkdir root)
+      (compiler-load-test-mkdir pkg-root)
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_root/pkg/shared.tl"
+        "(module pkg.shared)
+(define value : i64 41)
+(define (function [value : i64]) : i64 (+ value 1))
+(defstruct SharedPair (value i64))
+(defenum Choice (None) (Some i64))
+(defmacro (macro [value : Expr]) : Expr value)")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_entry.tl"
+        "(module suffix.entry)
+(import pkg.shared.*)
+(import pkg.shared.value as chosen)
+(import pkg.shared.Some as chosen-some)
+(define (main) : i64 chosen)")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_missing.tl"
+        "(module suffix.missing)
+(import pkg.shared.absent)
+(define (main) : i64 0)")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_invalid.tl"
+        "(module suffix.invalid)
+(import pkg.shared.absent.extra)
+(define (main) : i64 0)")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_root/pkg/macro-a.tl"
+        "(module pkg.macro-a)
+(defmacro (same-macro) : Expr '(+ 1 1))")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_root/pkg/macro-b.tl"
+        "(module pkg.macro-b)
+(defmacro (same-macro) : Expr '(+ 2 2))")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_collision.tl"
+        "(module suffix.collision)
+(import pkg.macro-a.*)
+(import pkg.macro-b.*)
+(define (main) : i64 0)")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_repeat.tl"
+        "(module suffix.repeat)
+(import pkg.shared.*)
+(import pkg.shared.*)
+(define (main) : i64 value)")
+      (and
+        (match (compiler-load-file-with-paths-and-roots
+          "target/cl_import_suffix_entry.tl"
+          (sym_i64_env.sym-i64-empty)
+          roots)
+          [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
+            (and
+              (compiler-load-decl-list-has-wildcard-import? decls "pkg.shared")
+              (compiler-load-decl-list-has-selected-import?
+                decls
+                "pkg.shared"
+                "value"
+                "chosen")
+              (compiler-load-decl-list-has-selected-import?
+                decls
+                "pkg.shared"
+                "Some"
+                "chosen-some"))]
+          [(ResultCompilerLoadWithPaths.Err _) false])
+        (match (compiler-load-file-with-paths-and-roots
+          "target/cl_import_suffix_missing.tl"
+          (sym_i64_env.sym-i64-empty)
+          roots)
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (let
+              [value : cdiag.CompilerDiagnostic (__tl-box-place diag)]
+              (and
+                (string.eq
+                  (cdiag.compiler-diagnostic-message value)
+                  "compiler-load: module 'pkg.shared' has no selected item 'absent'")
+                (> (cdiag.compiler-diagnostic-line value) 0)))]
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])
+        (match (compiler-load-file-with-paths-and-roots
+          "target/cl_import_suffix_invalid.tl"
+          (sym_i64_env.sym-i64-empty)
+          roots)
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (let
+              [value : cdiag.CompilerDiagnostic (__tl-box-place diag)]
+              (and
+                (string.eq
+                  (cdiag.compiler-diagnostic-message value)
+                  "compiler-load: import 'pkg.shared.absent.extra' leaves more than one segment after loadable module 'pkg.shared'; only one selected item is supported")
+                (> (cdiag.compiler-diagnostic-line value) 0)))]
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])
+        (match (compiler-load-file-with-paths-and-roots
+          "target/cl_import_suffix_collision.tl"
+          (sym_i64_env.sym-i64-empty)
+          roots)
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (let
+              [value : cdiag.CompilerDiagnostic (__tl-box-place diag)]
+              (and
+                (string.eq
+                  (cdiag.compiler-diagnostic-path value)
+                  "target/cl_import_suffix_collision.tl")
+                (= (cdiag.compiler-diagnostic-line value) 3)
+                (string.eq
+                  (cdiag.compiler-diagnostic-message value)
+                  "compiler-load: ambiguous unqualified import 'same-macro' between modules 'pkg.macro-a' and 'pkg.macro-b'; use explicit selected aliases or qualified access")))]
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])
+        (match (compiler-load-file-with-paths-and-roots
+          "target/cl_import_suffix_repeat.tl"
+          (sym_i64_env.sym-i64-empty)
+          roots)
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+          [(ResultCompilerLoadWithPaths.Err _) false])))))
 
 (define (compiler-load-test-mkdir-direct [path : String]) : bool
   (match (fs.try-mkdir-if-missing (& path))
@@ -17775,6 +18987,10 @@
       (compiler-load-dotted-import-resolution-ok?)
       (return
         (io.panic "compiler-load: dotted import resolution smoke mismatch")))
+    (unless
+      (compiler-load-import-suffix-resolution-ok?)
+      (return
+        (io.panic "compiler-load: import suffix resolution smoke mismatch")))
     (unless
       (compiler-load-dotted-source-root-ok?)
       (return (io.panic "compiler-load: dotted source root smoke mismatch")))

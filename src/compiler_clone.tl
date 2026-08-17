@@ -194,6 +194,14 @@
 (define (clone-name-set-empty) : CloneNameSet
   (CloneNameSet (clone_id_map.with-capacity 8) (clone_id_map.with-capacity 8)))
 
+(define (clone-module-alias-import-kind? [kind : ast.AstImportKind]) : bool
+  (match kind
+    [(ast.AstImportKind.Module) true]
+    [(ast.AstImportKind.Macro _ _) true]
+    [(ast.AstImportKind.MacroDecls _ _) true]
+    [(ast.AstImportKind.ModuleAll) false]
+    [(ast.AstImportKind.ModuleItem _) false]))
+
 (define (clone-name-set-for-decls [decls : ast.AstDeclList]) : CloneNameSet
   (let
     [aliases : clone_id_map.Map (clone_id_map.with-capacity 64)]
@@ -213,15 +221,17 @@
               [(ast.AstDecl.Import
                   decl-meta
                   (ast.AstImportSpec.Spec
-                    _
+                    kind
                     _
                     (ast.AstMaybeModuleName.Some target)
                     (ast.AstMaybeImportAlias.Some alias)
                     _))
-                (clone_id_map.insert-ref!
-                  (&mut aliases)
-                  (clone-import-alias-key-id current-module-id alias)
-                  target)]
+                (if (clone-module-alias-import-kind? kind)
+                  (clone_id_map.insert-ref!
+                    (&mut aliases)
+                    (clone-import-alias-key-id current-module-id alias)
+                    target)
+                  unit)]
               [_ unit])
             unit)
           (set! index (+ index 1))))
@@ -763,6 +773,13 @@
         (clone-root-entries-unique-key-for-base-id-or unique base-id -1)
         first-key)
       (= (clone-root-entries-unique-key-for-base-id-or ambiguous base-id -1) -1)
+      (clone-module-alias-import-kind? ast.AstImportKind.Module)
+      (clone-module-alias-import-kind?
+        (ast.AstImportKind.Macro 0 ast.AstMaybeModuleName.No))
+      (clone-module-alias-import-kind?
+        (ast.AstImportKind.MacroDecls 0 ast.AstMaybeModuleName.No))
+      (not (clone-module-alias-import-kind? ast.AstImportKind.ModuleAll))
+      (not (clone-module-alias-import-kind? (ast.AstImportKind.ModuleItem 0)))
       (> (clone-name-set-capacity grown) seed-capacity))))
 
 (define (clone-root-entries-smoke-key-id [index : i64]) : i64

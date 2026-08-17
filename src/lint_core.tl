@@ -3278,6 +3278,8 @@
   [_ : ast.AstMaybeModuleName]) : bool
   (match kind
     [(ast.AstImportKind.Module) true]
+    [(ast.AstImportKind.ModuleAll) true]
+    [(ast.AstImportKind.ModuleItem _) true]
     [(ast.AstImportKind.Macro _ _) false]
     [(ast.AstImportKind.MacroDecls _ _) false]))
 

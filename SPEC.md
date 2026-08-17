@@ -3341,6 +3341,20 @@ Example:
   executes on the host platform that produced it and stays separate from the
   selected runtime target's artifacts; it is not portable code across host
   operating systems.
+  Runtime artifacts and the host image have independent freshness decisions.
+  The `.tlci` binds the complete deterministic package-owned source set, so
+  every source path/byte/add/remove change updates it, including a source edit
+  that leaves runtime assembly unchanged. A comptime-only edit may therefore
+  rebuild only `.tlci`; a runtime source edit normally rebuilds both sides.
+  Target, profile, optimization/debug, native-tool, link-input, and dependency
+  archive changes rebuild the affected runtime side without rewriting an
+  identical host image. Backend configuration also changes `.tlci` when it
+  changes emitted compile-time metadata or code. A no-op reports both sides as
+  `Fresh`, preserves bytes and modification times, and invokes no assembler,
+  archiver, or linker. Changed sides are staged separately and committed as one
+  rollback-capable transaction, so failure retains the preceding complete
+  runtime/image pair. The adjacent `<runtime-artifact>.runtime-inputs` sidecar
+  binds all material runtime inputs and is removed by `typelisp clean`.
 - The optional top-level `(link ...)` section declares native link inputs for
   `bin` package builds, so a package that links system or vendored libraries
   does not need `(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)`
@@ -5427,16 +5441,26 @@ comptime code. The
 runtime archive (`lib<name>.a` / `<name>.lib`) is separate. This section
 specifies the v2 container and its independently versioned metadata schemas.
 
-Package producers make freshness and commit decisions for the runtime artifact
-and host `.tlci` independently. If the newly emitted bytes and all material
-inputs for a side are unchanged, the producer preserves that side byte-for-byte
-without changing its modification time; a fresh runtime side does not invoke
-the assembler, archiver, or linker. Runtime freshness includes target, profile,
-backend mode, optimization/debug configuration, compiler and native-tool
-identity, exact link inputs/arguments, and dependency archive content. Changed
-outputs are staged before atomic replacement, and a failed build must retain
-the preceding complete runtime/host-image pair. CLI status reports `Built` for
-committed sides and `Fresh` for retained sides.
+Package producers make freshness decisions for the runtime artifact and host
+`.tlci` independently. If the newly emitted bytes and all material inputs for a
+side are unchanged, the producer preserves that side byte-for-byte without
+changing its modification time; a fresh runtime side does not invoke the
+assembler, archiver, or linker. Runtime freshness includes emitted
+assembly/object content, target, profile, backend mode, optimization/debug
+configuration, compiler and native-tool identity, exact link inputs/arguments,
+and dependency archive content. The host image includes package identity,
+producer identity, build-host/callback ABI, frontend metadata, package-owned
+macro records/code, and the exact deterministic package-owned source set. Every
+source path/byte/add/remove change therefore updates its source binding. A
+comptime-only edit can change only `.tlci`; a runtime source edit normally
+changes both sides; a runtime configuration/tool/link change can change only
+the runtime side. A backend change also changes `.tlci` when it changes emitted
+compile-time metadata or code.
+
+Changed sides are staged independently, then committed as one rollback-capable
+transaction. A build or commit failure must retain the preceding complete
+runtime/host-image pair. CLI status reports `Built` for committed sides and
+`Fresh` for retained sides.
 
 The container is a custom little-endian binary format shared by Linux and
 Windows. It is not ELF or COFF. The first 176 bytes are a fixed header:
@@ -5824,13 +5848,73 @@ target-independent TypeLisp linker symbol in the package runtime archive.
 Helper names and signatures are nonempty. Metadata v1 images continue to parse
 and emit without this field and remain byte-layout compatible.
 
-Metadata-only tlci files are valid: rodata, code, fixups, entries, symbols, and
-imports are all empty. Emission is deterministic: an image's layout and
-content hash round-trip byte-identically.
+Metadata-only tlci files are valid: code, fixups, entries, symbols, and imports
+are all empty. Their rodata may carry the auxiliary package identity,
+source-set binding, frontend AST, and checked facts described above. Emission
+is deterministic: an image's layout and content hash round-trip
+byte-identically.
 
 `typelisp inspect <file.tlci>` parses a tlci image with the same validation
 path as loaders and prints a stable human-readable header, section table, and
 package metadata. Malformed images surface the tlci parse diagnostic.
+
+##### 5.17.1.3 Package consumer admission and dispatch
+
+Package consumers discover dependency images from the resolved package DAG and
+own their parsed images, keys, mappings, and status in one registry per compiler
+job. Normal source visibility, alias, and shadowing rules first resolve the
+macro declaration. Its physical defining-source provenance then identifies the
+owning registry slot; a same-named declaration from another package cannot
+select that slot.
+
+Admission validates the container and content hash, package name/version, and
+exact current source-set binding before native use. A code-bearing image must
+also pass format/callback ABI and build-host platform admission. Its imports are
+resolved against the static named host registry before any entry runs. The
+producer-compiler identity is retained in the stable package/image key. Exact
+producer identity with the running compiler is additionally required before
+hydrating compiler-internal frontend surfaces; native callback catalogs are
+governed by their callback/schema checks and do not reinterpret compiler AST
+memory. These checks establish integrity and exact-source trust, not publisher
+authenticity or a security signature for future distributed/prebuilt packages.
+
+A valid metadata-only image is a trusted zero-entry catalog. It is never passed
+to the mapping API and contributes no code, fixup, entry, or import bytes. A
+valid code-bearing image is writable only during relocation and import binding;
+the loader then seals rodata read-only and code read/execute. The job registry
+owns that mapping, its registration record, indexed macro entries, and terminal
+shell state until it releases the mapping before destroying their arena.
+
+Entry lookup returns a capability containing the registry handle and slot,
+complete package/image key, registry generation, and mapped-entry generation.
+Every component is revalidated immediately before dispatch. A dependency
+`Expr` entry receives the already checked direct operand handles without
+rebinding. `Module` and `Decls` entries receive the exact bound environment and
+commit through the ordinary generated-module or ordered declaration-splice
+transaction. A status-0 call that returns a result commits exactly one
+host-owned result handle. A status-0 no-result call commits nothing and follows
+the shell path below. On any nonzero status, the invocation session is discarded
+and no partial AST, module, or declaration insertion survives. Dependency
+dispatch failures are qualified by package name/version, image path, and macro
+identity.
+
+The first status-0 native call that returns no result marks that indexed
+entry as a terminal shell for the current mapping generation, then reuses its
+prepared operands for deterministic source CTFE. Known shells do not dispatch
+again in that generation. No catalog, an uncataloged identity, a metadata-only
+catalog, or an unavailable catalog takes the explicit source path without
+entering mapped code. Unavailable classifications distinguish missing,
+stale-source, package mismatch, wrong platform, unsupported format/schema,
+malformed content, and mapping failure.
+
+Source binding is rechecked before mapping. If current package source differs
+from the image binding, the registry records an unavailable stale-source entry
+with zero mapped bytes. Replacing an existing package slot increments the
+registry generation and invalidates every capability from its previous key or
+mapping. After rebuilding, the new source/image key is admitted as a new trusted
+generation and native expansion resumes; repeated admission of that exact key
+reuses the current generation. Source fallback and rebuilt native execution
+must produce the same consumer output for the supported transformer.
 
 ### 5.18 Layout queries
 
@@ -7360,7 +7444,7 @@ in documentation passes.
 | Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
-| Compiled comptime execution from embedded/package `tlci` images | Partially implemented: published Linux and Windows compilers use trusted embedded-stdlib and dependency-package images. Exact embedded or byte-identical source provenance admits a stdlib module to its native registration catalog; dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Two-host differential, sustained reset/remap stress, bootstrap fixpoint, and focused package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable; broad dependency graph and stale-rebuild verification remain staged. |
+| Compiled comptime execution from embedded/package `tlci` images | Partially implemented: published Linux and Windows compilers use trusted embedded-stdlib and dependency-package images. Exact embedded or byte-identical source provenance admits a stdlib module to its native registration catalog; dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Two-host differential, sustained reset/remap stress, bootstrap fixpoint, and focused package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable. The focused stale-source/rebuild gate proves pre-map stand-down, zero mapped stale bytes, capability invalidation, replacement generations, changed native expansion, and byte-identical restoration. Only the broader multi-package dependency-graph native/source differential remains staged. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
 | Richer LSP/IDE features | The immutable workspace source/declaration index, overlay/event plumbing, and standard semantic workspace references are implemented. Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, and rename through the standard method remain pending. |
 

@@ -10523,7 +10523,7 @@
     (str_cat.str-cat
       "lower: SPMD masked if does not support masked shift 'shr' for lane type i16 in "
       mode-name
-      " backend mode; supported lane types are i32, u32, i64, and u64")))
+      " backend mode; supported lane types are i8, u8, i32, u32, i64, and u64")))
 
 (define (compiler-lower-masked-shift-tests-ok?) : bool
   (begin

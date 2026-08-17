@@ -1,4 +1,4 @@
-;; #5679: narrow direct-map shifts stage with a stable operator/type/backend
+;; #5679: 16-bit direct-map shifts stage with a stable operator/type/backend
 ;; diagnostic instead of the generic SIMD-pattern fallback.
 (import stdlib.array)
 

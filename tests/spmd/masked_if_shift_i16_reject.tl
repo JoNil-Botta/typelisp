@@ -1,4 +1,4 @@
-;; #5365: narrow masked shifts stage with a stable backend/type diagnostic.
+;; #5365: 16-bit masked shifts stage with a stable backend/type diagnostic.
 (import stdlib.array)
 
 (define (main) : i64

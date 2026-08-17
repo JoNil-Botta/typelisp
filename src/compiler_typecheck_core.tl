@@ -84518,9 +84518,10 @@
   (macro-active-decl-owner-id i64)
   (macro-active-decl-provenance-id i64)
   (macro-dependency-catalog-handle cload.CompilerLoadDependencyCatalogHandle)
-  ;; -1 means no dependency catalog. Embedded stdlib is selected through the
-  ;; same post-resolution helper using its existing trusted-source route.
-  (macro-active-dependency-catalog-slot i64)
+  ;; Canonical dependency-catalog route metrics. The fixed cell belongs to the
+  ;; TcJobState's lazy macro-walk storage, so interleaved jobs and resets never
+  ;; observe or erase one another's verification counters.
+  (macro-dependency-tlci-route-counters (__tl_dyn-array i64))
   (macro-expand-stdlib-tlci-route-active bool)
   (dotted-macro-journal-pools (__tl_dyn-array ast.AstNodePoolContext))
   (dotted-macro-journal-ids (__tl_dyn-array i64))
@@ -84567,7 +84568,7 @@
     0
     0
     0
-    8
+    7
     0
     0
     0
@@ -84582,7 +84583,7 @@
     cbi.compiler-builtin-id-fix-empty
     (cload.compiler-load-session-state-dependency-catalog-handle
       (cload.compiler-load-serial-test-session-state))
-    -1
+    (array.make-array i64 13)
     false
     (array.make-array ast.AstNodePoolContext 0)
     (array.make-array i64 0)
@@ -84638,6 +84639,179 @@
 
 (defmacro (tc-macro-walk-field [state : Expr] [field : Expr]) : Expr
   `(__tl-project-field (tc-macro-walk-state-data ,state) ,field))
+
+(define tc-dependency-tlci-catalog-hits : i64
+  0)
+(define tc-dependency-tlci-catalog-misses : i64
+  1)
+(define tc-dependency-tlci-load-failures : i64
+  2)
+(define tc-dependency-tlci-interpreted-fallbacks : i64
+  3)
+(define tc-dependency-tlci-native-dispatches : i64
+  4)
+(define tc-dependency-tlci-shell-learns : i64
+  5)
+(define tc-dependency-tlci-shell-cache-hits : i64
+  6)
+(define tc-dependency-tlci-parameter-name-lookups : i64
+  7)
+(define tc-dependency-tlci-native-expr-results : i64
+  8)
+(define tc-dependency-tlci-direct-expr-results : i64
+  9)
+(define tc-dependency-tlci-native-module-results : i64
+  10)
+(define tc-dependency-tlci-native-decls-results : i64
+  11)
+(define tc-dependency-tlci-direct-shell-env-folds : i64
+  12)
+
+(define (tc-dependency-tlci-route-counter-value
+  [state : TcMacroState]
+  [counter : i64]) : i64
+  (array-ref
+    (tc-macro-walk-field state macro-dependency-tlci-route-counters)
+    counter))
+
+(define (tc-dependency-tlci-route-counter-value-for-job
+  [state : TcJobState]
+  [counter : i64]) : i64
+  (tc-dependency-tlci-route-counter-value
+    (tc-job-state-macro-state state)
+    counter))
+
+(define (tc-dependency-tlci-route-counter-add!
+  [state : TcMacroState]
+  [counter : i64]
+  [value : i64]) : unit
+  (let
+    [counters : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-dependency-tlci-route-counters)]
+    (set! (array-ref counters counter) (+ (array-ref counters counter) value))))
+
+(define (tc-dependency-tlci-route-counters-reset! [state : TcMacroState]) : unit
+  (let
+    [counters : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-dependency-tlci-route-counters)]
+    [index : i64 0]
+    (while (< index (array-length counters))
+      (begin
+        (set! (array-ref counters index) 0)
+        (set! index (+ index 1))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-dependency-tlci-route-profile-finish
+    [state : TcMacroState]) : unit
+    (begin
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_catalog_hits"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-catalog-hits))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_catalog_misses"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-catalog-misses))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_load_failures"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-load-failures))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_interpreted_fallbacks"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-interpreted-fallbacks))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_native_dispatches"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-native-dispatches))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_shell_learns"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-shell-learns))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_shell_cache_hits"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-shell-cache-hits))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_parameter_name_lookups"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-parameter-name-lookups))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_native_expr_results"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-native-expr-results))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_direct_expr_results"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-direct-expr-results))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_native_module_results"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-native-module-results))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_native_decls_results"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-native-decls-results))
+      (compiler-tc-macro-counter-profile-line
+        "dependency_tlci_direct_shell_env_folds"
+        (tc-dependency-tlci-route-counter-value
+          state
+          tc-dependency-tlci-direct-shell-env-folds)))))
+
+(cfg
+  test
+  (test
+    compiler-typecheck-dependency-tlci-route-job-isolation
+    (let
+      [left : TcJobState (tc-job-state-new)]
+      [right : TcJobState (tc-job-state-new)]
+      [left-macro : TcMacroState (tc-job-state-macro-state left)]
+      [right-macro : TcMacroState (tc-job-state-macro-state right)]
+      (begin
+        (tc-dependency-tlci-route-counter-add!
+          left-macro
+          tc-dependency-tlci-native-dispatches
+          2)
+        (tc-dependency-tlci-route-counter-add!
+          right-macro
+          tc-dependency-tlci-native-dispatches
+          7)
+        (tc-dependency-tlci-route-counter-add!
+          left-macro
+          tc-dependency-tlci-parameter-name-lookups
+          3)
+        (tc-dependency-tlci-route-counters-reset! right-macro)
+        (test.assert-i64-eq
+          (tc-dependency-tlci-route-counter-value-for-job
+            left
+            tc-dependency-tlci-native-dispatches)
+          2
+          "right reset preserves left dependency dispatches")
+        (test.assert-i64-eq
+          (tc-dependency-tlci-route-counter-value-for-job
+            left
+            tc-dependency-tlci-parameter-name-lookups)
+          3
+          "interleaved dependency route fields share no storage")
+        (test.assert-i64-eq
+          (tc-dependency-tlci-route-counter-value-for-job
+            right
+            tc-dependency-tlci-native-dispatches)
+          0
+          "right dependency route reset is job-local")))))
 
 (defmacro (tc-macro-walk-set! [state : Expr] [field : Expr] [value : Expr]) : Expr
   `(let
@@ -85620,8 +85794,11 @@
 ;; 432 arenas and retained 106,558,504 non-output bytes, while batch 8 used
 ;; 1,728 arenas and retained 77,175,304 bytes without a work regression. Batch
 ;; 1 retained only 27,169,064 bytes, but paid 13,820 arena pairs and raised
-;; fired-declaration self time by 9.4%. Eight is the measured memory/work knee;
-;; retention is bounded by 2 batches, not by the walk.
+;; fired-declaration self time by 9.4%. Eight was the measured memory/work knee;
+;; after the dependency-TLCI dispatch graph crossed the 25% proportional
+;; retention budget, seven reduced the current selfhost's retained bytes while
+;; staying inside the measured 7..9 cadence band. Retention is bounded by 2
+;; batches, not by the walk.
 ;; Make `next` the live generation and destroy the one retired a batch ago.
 ;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
 ;; flag that disables the virgin-arena zero-fill elision permanently for
@@ -96222,36 +96399,17 @@
 ;; path, use the indexed owner module so the transformer still runs as its
 ;; original definition module. The dense declaration ID is carried with it.
 (define (macro-decl-at-index-with-owner-module
-  [ctx : TcContext]
+  [_ctx : TcContext]
   [symbols : csym.CompilerSymbols]
   [target : i64]
   [module-id : i64]) : MacroMaybeDecl
-  (let
-    [provenance-id : i64
-      (csym.compiler-symbols-provenance-id-at-index-or
-        symbols
-        target
-        cbi.compiler-builtin-id-fix-empty)]
-    [catalog-slot : i64
-      (cload.compiler-load-dependency-catalog-handle-slot-for-provenance-id
-        (tc-macro-walk-field
-          (tc-context-macro-state ctx)
-          macro-dependency-catalog-handle)
-        provenance-id)]
-    (begin
-      ;; Catalog selection happens only after normal visibility, alias, and
-      ;; shadowing lookup has produced this dense declaration index.
-      (tc-macro-walk-set!
-        (tc-context-macro-state ctx)
-        macro-active-dependency-catalog-slot
-        catalog-slot)
-      (match (csym.compiler-symbols-decl-at-index symbols target)
-        [(parser.ResultAstDecl.Ok decl)
-          (macro-decl-from-decl
-            decl
-            (macro-decl-owner-module-or symbols target module-id)
-            target)]
-        [(parser.ResultAstDecl.Err _) (MacroMaybeDecl.No)]))))
+  (match (csym.compiler-symbols-decl-at-index symbols target)
+    [(parser.ResultAstDecl.Ok decl)
+      (macro-decl-from-decl
+        decl
+        (macro-decl-owner-module-or symbols target module-id)
+        target)]
+    [(parser.ResultAstDecl.Err _) (MacroMaybeDecl.No)]))
 
 ;; The module accumulator and the current module compare as INTERN IDS: the
 ;; previous String-based walk converted every AstDecl.Module's interned name
@@ -99627,78 +99785,71 @@
   [func : ast.AstExpr]
   [decls : ast.AstDeclList]
   [call-expr : ast.AstExpr]) : ResultMacroCallDecl
-  (begin
-    (tc-macro-walk-set!
-      (tc-context-macro-state ctx)
-      macro-active-dependency-catalog-slot
-      -1)
-    (match func
-      [(ast.AstExpr.Spanned inner-box _)
-        (let
-          [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-          (macro-call-decl ctx inner decls call-expr))]
-      [(ast.AstExpr.MacroExpansion inner-box _ _)
-        (let
-          [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-          (macro-call-decl ctx inner decls call-expr))]
-      [(ast.AstExpr.Var name)
-        (if (or
-          (csym.compiler-composite-pair-key-id? name)
-          (csym.compiler-composite-triple-key-id? name))
-          (macro-call-decl-from-name
+  (match func
+    [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        (macro-call-decl ctx inner decls call-expr))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        (macro-call-decl ctx inner decls call-expr))]
+    [(ast.AstExpr.Var name)
+      (if (or
+        (csym.compiler-composite-pair-key-id? name)
+        (csym.compiler-composite-triple-key-id? name))
+        (macro-call-decl-from-name
+          ctx
+          decls
+          (tc-context-module ctx)
+          (macro-source-module-id (tc-context-module-id ctx))
+          (tc-nominal-name-id-display name)
+          name
+          name
+          -1
+          call-expr)
+        (if (tc-hygiene-global-name-id? name)
+          (if (macro-hygiene-global-id? name)
+            (let
+              [module-id : i64 (macro-hygiene-global-module-id name)]
+              [lookup-name-id : i64
+                (macro-hygiene-global-source-name-id-or name -1)]
+              (macro-call-decl-from-hygiene-name
+                ctx
+                decls
+                (macro-decl-module-display module-id)
+                (macro-source-module-id module-id)
+                (ci.intern-str lookup-name-id)
+                lookup-name-id
+                call-expr))
+            (match (tc-hygiene-global-decode (tc-env-key-name-text name))
+              [(TcHygieneGlobalName.Legacy lookup-name)
+                (macro-call-decl-from-hygiene-name
+                  ctx
+                  decls
+                  (tc-context-module ctx)
+                  (macro-source-module-id (ci.intern-qualified-module-id name))
+                  lookup-name
+                  (macro-hygiene-global-source-name-id-or name -1)
+                  call-expr)]
+              [(TcHygieneGlobalName.Context module lookup-name)
+                (macro-call-decl-from-hygiene-name
+                  ctx
+                  decls
+                  module
+                  (macro-source-module-id (ci.intern-qualified-module-id name))
+                  lookup-name
+                  (macro-hygiene-global-source-name-id-or name -1)
+                  call-expr)]))
+          (macro-call-decl-from-source-name
             ctx
             decls
             (tc-context-module ctx)
             (macro-source-module-id (tc-context-module-id ctx))
-            (tc-nominal-name-id-display name)
+            (tc-hygiene-name-text-id name)
             name
-            name
-            -1
-            call-expr)
-          (if (tc-hygiene-global-name-id? name)
-            (if (macro-hygiene-global-id? name)
-              (let
-                [module-id : i64 (macro-hygiene-global-module-id name)]
-                [lookup-name-id : i64
-                  (macro-hygiene-global-source-name-id-or name -1)]
-                (macro-call-decl-from-hygiene-name
-                  ctx
-                  decls
-                  (macro-decl-module-display module-id)
-                  (macro-source-module-id module-id)
-                  (ci.intern-str lookup-name-id)
-                  lookup-name-id
-                  call-expr))
-              (match (tc-hygiene-global-decode (tc-env-key-name-text name))
-                [(TcHygieneGlobalName.Legacy lookup-name)
-                  (macro-call-decl-from-hygiene-name
-                    ctx
-                    decls
-                    (tc-context-module ctx)
-                    (macro-source-module-id
-                      (ci.intern-qualified-module-id name))
-                    lookup-name
-                    (macro-hygiene-global-source-name-id-or name -1)
-                    call-expr)]
-                [(TcHygieneGlobalName.Context module lookup-name)
-                  (macro-call-decl-from-hygiene-name
-                    ctx
-                    decls
-                    module
-                    (macro-source-module-id
-                      (ci.intern-qualified-module-id name))
-                    lookup-name
-                    (macro-hygiene-global-source-name-id-or name -1)
-                    call-expr)]))
-            (macro-call-decl-from-source-name
-              ctx
-              decls
-              (tc-context-module ctx)
-              (macro-source-module-id (tc-context-module-id ctx))
-              (tc-hygiene-name-text-id name)
-              name
-              call-expr)))]
-      [_ (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])))
+            call-expr)))]
+    [_ (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]))
 
 (define (macro-call-decl-with-context
   [ctx : TcContext]
@@ -101500,37 +101651,60 @@
 
 (define (macro-dependency-tlci-catalog-lookup
   [ctx : TcContext]
+  [slot : i64]
   [identity : String]) : cload.CompilerLoadDependencyCatalogLookup
-  (let
-    [state : TcMacroState (tc-context-macro-state ctx)]
-    [slot : i64
-      (tc-macro-walk-field state macro-active-dependency-catalog-slot)]
-    (cload.compiler-load-dependency-catalog-handle-lookup-macro
-      (tc-macro-walk-field state macro-dependency-catalog-handle)
-      slot
-      identity)))
+  (cload.compiler-load-dependency-catalog-handle-lookup-macro
+    (tc-macro-walk-field
+      (tc-context-macro-state ctx)
+      macro-dependency-catalog-handle)
+    slot
+    identity))
+
+(define (macro-dependency-tlci-catalog-slot-for-declaration
+  [ctx : TcContext]
+  [declaration-id : i64]) : i64
+  (if (< declaration-id 0)
+    -1
+    (cload.compiler-load-dependency-catalog-handle-slot-for-provenance-id
+      (tc-macro-walk-field
+        (tc-context-macro-state ctx)
+        macro-dependency-catalog-handle)
+      (csym.compiler-symbols-provenance-id-at-index-or
+        (tc-context-symbols ctx)
+        declaration-id
+        cbi.compiler-builtin-id-fix-empty))))
 
 ;; Both embedded stdlib and dependency catalogs enter through this selection
 ;; contract after ordinary macro lookup has chosen the defining declaration.
-;; Dependency entries deliberately retain their full status but are never
-;; dispatched here; #2755 owns dependency-native execution and commit.
+;; The dependency payload is a registry-generation-bound capability, never a
+;; free-standing mapped-image index.
+(cfg
+  embedded-stdlib-tlci
+  (defenum MacroTlciResolvedCatalog
+    (Dependency cload.CompilerLoadDependencyCatalogCapability)
+    (Embedded tlci_loader_support.TlciResolvedMacroEntry)))
+
 (cfg
   embedded-stdlib-tlci
   (defenum MacroTlciCatalogSelection
     (None)
-    (Dependency)
-    (EmbeddedResolved tlci_loader_support.TlciResolvedMacroEntry)
-    (EmbeddedShell tlci_loader_support.TlciResolvedMacroEntry)
-    (EmbeddedMissing)
-    (EmbeddedUnavailable)))
+    (Resolved MacroTlciResolvedCatalog)
+    (Shell MacroTlciResolvedCatalog)
+    (MetadataOnly)
+    (Missing)
+    (Unavailable)))
 
 (cfg
   embedded-stdlib-tlci
   (define (macro-tlci-catalog-select
     [ctx : TcContext]
     [definition-module : String]
-    [identity : String]) : MacroTlciCatalogSelection
-    (match (macro-dependency-tlci-catalog-lookup ctx identity)
+    [identity : String]
+    [declaration-id : i64]) : MacroTlciCatalogSelection
+    (match (macro-dependency-tlci-catalog-lookup
+      ctx
+      (macro-dependency-tlci-catalog-slot-for-declaration ctx declaration-id)
+      identity)
       [(cload.CompilerLoadDependencyCatalogLookup.NoCatalog)
         (if (and
           (tc-macro-walk-field
@@ -101539,15 +101713,145 @@
           (cload.compiler-load-embedded-stdlib-module-id? definition-module))
           (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
             [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
-              (MacroTlciCatalogSelection.EmbeddedResolved resolved)]
+              (MacroTlciCatalogSelection.Resolved
+                (MacroTlciResolvedCatalog.Embedded resolved))]
             [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell resolved)
-              (MacroTlciCatalogSelection.EmbeddedShell resolved)]
+              (MacroTlciCatalogSelection.Shell
+                (MacroTlciResolvedCatalog.Embedded resolved))]
             [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
-              MacroTlciCatalogSelection.EmbeddedMissing]
+              MacroTlciCatalogSelection.Missing]
             [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
-              MacroTlciCatalogSelection.EmbeddedUnavailable])
+              MacroTlciCatalogSelection.Unavailable])
           MacroTlciCatalogSelection.None)]
-      [_ MacroTlciCatalogSelection.Dependency])))
+      [(cload.CompilerLoadDependencyCatalogLookup.Resolved capability)
+        (begin
+          (tc-dependency-tlci-route-counter-add!
+            (tc-context-macro-state ctx)
+            tc-dependency-tlci-catalog-hits
+            1)
+          (MacroTlciCatalogSelection.Resolved
+            (MacroTlciResolvedCatalog.Dependency capability)))]
+      [(cload.CompilerLoadDependencyCatalogLookup.Shell capability)
+        (begin
+          (tc-dependency-tlci-route-counter-add!
+            (tc-context-macro-state ctx)
+            tc-dependency-tlci-catalog-hits
+            1)
+          (tc-dependency-tlci-route-counter-add!
+            (tc-context-macro-state ctx)
+            tc-dependency-tlci-shell-cache-hits
+            1)
+          (tc-dependency-tlci-route-counter-add!
+            (tc-context-macro-state ctx)
+            tc-dependency-tlci-interpreted-fallbacks
+            1)
+          (MacroTlciCatalogSelection.Shell
+            (MacroTlciResolvedCatalog.Dependency capability)))]
+      [(cload.CompilerLoadDependencyCatalogLookup.MetadataOnly)
+        (begin
+          (tc-dependency-tlci-route-counter-add!
+            (tc-context-macro-state ctx)
+            tc-dependency-tlci-catalog-misses
+            1)
+          (tc-dependency-tlci-route-counter-add!
+            (tc-context-macro-state ctx)
+            tc-dependency-tlci-interpreted-fallbacks
+            1)
+          MacroTlciCatalogSelection.MetadataOnly)]
+      [(cload.CompilerLoadDependencyCatalogLookup.Missing)
+        (begin
+          (tc-dependency-tlci-route-counter-add!
+            (tc-context-macro-state ctx)
+            tc-dependency-tlci-catalog-misses
+            1)
+          (tc-dependency-tlci-route-counter-add!
+            (tc-context-macro-state ctx)
+            tc-dependency-tlci-interpreted-fallbacks
+            1)
+          MacroTlciCatalogSelection.Missing)]
+      [(cload.CompilerLoadDependencyCatalogLookup.Unavailable _)
+        (begin
+          (tc-dependency-tlci-route-counter-add!
+            (tc-context-macro-state ctx)
+            tc-dependency-tlci-load-failures
+            1)
+          (tc-dependency-tlci-route-counter-add!
+            (tc-context-macro-state ctx)
+            tc-dependency-tlci-interpreted-fallbacks
+            1)
+          MacroTlciCatalogSelection.Unavailable)])))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-tlci-resolved-catalog-open?
+    [catalog : MacroTlciResolvedCatalog]) : bool
+    (match catalog
+      [(MacroTlciResolvedCatalog.Dependency _) true]
+      [(MacroTlciResolvedCatalog.Embedded _)
+        (embedded_tlci.compiler-embedded-stdlib-tlci-session-open!)])))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-tlci-resolved-catalog-dependency?
+    [catalog : MacroTlciResolvedCatalog]) : bool
+    (match catalog
+      [(MacroTlciResolvedCatalog.Dependency _) true]
+      [(MacroTlciResolvedCatalog.Embedded _) false])))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-dependency-tlci-note-if!
+    [state : TcMacroState]
+    [catalog : MacroTlciResolvedCatalog]
+    [counter : i64]) : unit
+    (if (macro-tlci-resolved-catalog-dependency? catalog)
+      (tc-dependency-tlci-route-counter-add! state counter 1)
+      unit)))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-tlci-resolved-catalog-dispatch
+    [catalog : MacroTlciResolvedCatalog]
+    [identity : String]
+    [session-cookie : i64]) : tlci_loader_support.ResultTlciMacroDispatch
+    (match catalog
+      [(MacroTlciResolvedCatalog.Dependency capability)
+        (cload.compiler-load-dependency-catalog-capability-dispatch
+          capability
+          identity
+          session-cookie)]
+      [(MacroTlciResolvedCatalog.Embedded resolved)
+        (embedded_tlci.compiler-embedded-stdlib-tlci-session-dispatch
+          resolved
+          session-cookie)])))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-tlci-resolved-catalog-mark-shell!
+    [catalog : MacroTlciResolvedCatalog]
+    [identity : String]) : tlci_loader_support.ResultTlciLoaderUnit
+    (match catalog
+      [(MacroTlciResolvedCatalog.Dependency capability)
+        (cload.compiler-load-dependency-catalog-capability-mark-shell!
+          capability
+          identity)]
+      [(MacroTlciResolvedCatalog.Embedded resolved)
+        (embedded_tlci.compiler-embedded-stdlib-tlci-session-mark-shell!
+          resolved)])))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-tlci-resolved-catalog-status-diagnostic
+    [catalog : MacroTlciResolvedCatalog]
+    [identity : String]
+    [message : String]) : String
+    (match catalog
+      [(MacroTlciResolvedCatalog.Dependency capability)
+        (cload.compiler-load-dependency-catalog-capability-error
+          capability
+          identity
+          message)]
+      [(MacroTlciResolvedCatalog.Embedded _) message])))
 
 (cfg
   tlci-bootstrap-mutation-witness
@@ -101578,6 +101882,16 @@
           "\n"))
       unit)))
 
+(define (macro-tlci-catalog-identity
+  [definition-module : String]
+  [macro-name : String]) : String
+  ;; Symbol lookup hands the executor either a local declaration name or its
+  ;; already canonical `module/name` display. Package catalogs are produced
+  ;; from the latter, so never qualify an identity a second time.
+  (if (>= (tc-qualified-name-last-slash macro-name) 0)
+    macro-name
+    (csym.compiler-symbol-module-key definition-module macro-name)))
+
 (define (macro-note-stdlib-tlci-route
   [state : TcMacroState]
   [definition-module : String]
@@ -101590,9 +101904,7 @@
       (cfg
         tlci-bootstrap-mutation-witness
         (macro-tlci-bootstrap-mutation-witness-emit!
-          (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
-            macro-name
-            (str_cat.str-cat definition-module "/" macro-name))
+          (macro-tlci-catalog-identity definition-module macro-name)
           "source"
           "interpreted"))
       (if (and
@@ -101602,9 +101914,7 @@
           (cfg
             embedded-stdlib-tlci
             (match (macro-expand-stdlib-tlci-catalog-lookup-cached
-              (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
-                macro-name
-                (str_cat.str-cat definition-module "/" macro-name)))
+              (macro-tlci-catalog-identity definition-module macro-name))
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved _)
                 (cfg
                   compile-profile
@@ -101853,6 +102163,22 @@
 
 (cfg
   (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-native-stress-catalog-dispatch!
+    [pools : ast.AstNodePoolContext]
+    [catalog : MacroTlciResolvedCatalog]
+    [result-kind : i64]
+    [status : i64]) : unit
+    (match catalog
+      [(MacroTlciResolvedCatalog.Dependency _) unit]
+      [(MacroTlciResolvedCatalog.Embedded resolved)
+        (compiler-tc-tlci-native-stress-dispatch!
+          pools
+          resolved
+          result-kind
+          status)])))
+
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
   (define (compiler-tc-tlci-native-stress-pass-finish!
     [pools : ast.AstNodePoolContext]
     [status : i64]) : unit
@@ -101878,8 +102204,9 @@
   embedded-stdlib-tlci
   (define (macro-try-stdlib-tlci-native-resolved
     [host-pools : ast.AstNodePoolContext]
+    [route-state : TcMacroState]
     [identity : String]
-    [resolved : tlci_loader_support.TlciResolvedMacroEntry]
+    [catalog : MacroTlciResolvedCatalog]
     [params : ast.AstMacroParamList]
     [ret : ast.AstType]
     [env : ctfe_support.CtfeEnv]
@@ -101887,7 +102214,7 @@
     [prepared-operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
     [prepared-count : i64]
     [prepared : bool]) : MacroNativeStdlibTlciResult
-    (if (not (embedded_tlci.compiler-embedded-stdlib-tlci-session-open!))
+    (if (not (macro-tlci-resolved-catalog-open? catalog))
       MacroNativeStdlibTlciResult.No
       (let
         [count : i64
@@ -101905,14 +102232,24 @@
           (while (and (not prepared) ok (< index count))
             (match (array-ref params.slots index)
               [(ast.AstMacroParam.Param pname _ _ _)
-                (match (ctfe_support.ctfe-env-lookup-id env pname)
-                  [(ctfe_support.CtfeMaybeValue.Some value)
-                    (begin
-                      (set! (array-ref operands index) value)
-                      (set! index (+ index 1)))]
-                  [(ctfe_support.CtfeMaybeValue.None) (set! ok false)])]))
+                (begin
+                  (macro-dependency-tlci-note-if!
+                    route-state
+                    catalog
+                    tc-dependency-tlci-parameter-name-lookups)
+                  (match (ctfe_support.ctfe-env-lookup-id env pname)
+                    [(ctfe_support.CtfeMaybeValue.Some value)
+                      (begin
+                        (set! (array-ref operands index) value)
+                        (set! index (+ index 1)))]
+                    [(ctfe_support.CtfeMaybeValue.None) (set! ok false)]))]))
           (if (not ok)
-            MacroNativeStdlibTlciResult.No
+            (begin
+              (macro-dependency-tlci-note-if!
+                route-state
+                catalog
+                tc-dependency-tlci-interpreted-fallbacks)
+              MacroNativeStdlibTlciResult.No)
             (begin
               (embedded_tlci.compiler-comptime-host-session-open-with-macro-state!
                 host-pools
@@ -101925,24 +102262,33 @@
                 (ctfe_support.ctfe-env-macro-state env))
               (cfg
                 compile-profile
-                (compiler-tc-stdlib-tlci-entry-invoke-start!))
+                (if (macro-tlci-resolved-catalog-dependency? catalog)
+                  unit
+                  (compiler-tc-stdlib-tlci-entry-invoke-start!)))
+              (macro-dependency-tlci-note-if!
+                route-state
+                catalog
+                tc-dependency-tlci-native-dispatches)
               (let
                 [dispatch-result : tlci_loader_support.ResultTlciMacroDispatch
-                  (embedded_tlci.compiler-embedded-stdlib-tlci-session-dispatch
-                    resolved
+                  (macro-tlci-resolved-catalog-dispatch
+                    catalog
+                    identity
                     (macro-stdlib-tlci-native-cookie))]
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-tc-stdlib-tlci-entry-invoke-finish!))
+                    (if (macro-tlci-resolved-catalog-dependency? catalog)
+                      unit
+                      (compiler-tc-stdlib-tlci-entry-invoke-finish!)))
                   (match dispatch-result
                     [(tlci_loader_support.ResultTlciMacroDispatch.Err message)
                       (begin
                         (cfg
                           (all embedded-stdlib-tlci tlci-native-route-stress)
-                          (compiler-tc-tlci-native-stress-dispatch!
+                          (compiler-tc-tlci-native-stress-catalog-dispatch!
                             host-pools
-                            resolved
+                            catalog
                             5
                             9))
                         (embedded_tlci.compiler-comptime-host-session-close!)
@@ -101971,9 +102317,9 @@
                                   (all
                                     embedded-stdlib-tlci
                                     tlci-native-route-stress)
-                                  (compiler-tc-tlci-native-stress-dispatch!
+                                  (compiler-tc-tlci-native-stress-catalog-dispatch!
                                     host-pools
-                                    resolved
+                                    catalog
                                     (if (tc-macro-result-module? ret)
                                       2
                                       (if (tc-macro-result-decls? ret)
@@ -101983,57 +102329,93 @@
                                 (embedded_tlci.compiler-comptime-host-session-close!)
                                 (cfg
                                   compile-profile
-                                  (begin
-                                    (set!
-                                      compiler-tc-macro-stdlib-tlci-catalog-hits
-                                      (+
-                                        compiler-tc-macro-stdlib-tlci-catalog-hits
-                                        1))
-                                    (set!
-                                      compiler-tc-macro-stdlib-tlci-native-dispatches
-                                      (+
-                                        compiler-tc-macro-stdlib-tlci-native-dispatches
-                                        1))
-                                    (if (tc-macro-result-module? ret)
+                                  (if (macro-tlci-resolved-catalog-dependency?
+                                    catalog)
+                                    unit
+                                    (begin
                                       (set!
-                                        compiler-tc-macro-stdlib-tlci-native-module-results
+                                        compiler-tc-macro-stdlib-tlci-catalog-hits
                                         (+
-                                          compiler-tc-macro-stdlib-tlci-native-module-results
+                                          compiler-tc-macro-stdlib-tlci-catalog-hits
                                           1))
-                                      (if (tc-macro-result-decls? ret)
+                                      (set!
+                                        compiler-tc-macro-stdlib-tlci-native-dispatches
+                                        (+
+                                          compiler-tc-macro-stdlib-tlci-native-dispatches
+                                          1))
+                                      (if (tc-macro-result-module? ret)
                                         (set!
-                                          compiler-tc-macro-stdlib-tlci-native-decls-results
+                                          compiler-tc-macro-stdlib-tlci-native-module-results
                                           (+
-                                            compiler-tc-macro-stdlib-tlci-native-decls-results
+                                            compiler-tc-macro-stdlib-tlci-native-module-results
                                             1))
-                                        (set!
-                                          compiler-tc-macro-stdlib-tlci-native-expr-results
-                                          (+
+                                        (if (tc-macro-result-decls? ret)
+                                          (set!
+                                            compiler-tc-macro-stdlib-tlci-native-decls-results
+                                            (+
+                                              compiler-tc-macro-stdlib-tlci-native-decls-results
+                                              1))
+                                          (set!
                                             compiler-tc-macro-stdlib-tlci-native-expr-results
-                                            1))))))
+                                            (+
+                                              compiler-tc-macro-stdlib-tlci-native-expr-results
+                                              1)))))))
+                                (if (tc-macro-result-module? ret)
+                                  (macro-dependency-tlci-note-if!
+                                    route-state
+                                    catalog
+                                    tc-dependency-tlci-native-module-results)
+                                  (if (tc-macro-result-decls? ret)
+                                    (macro-dependency-tlci-note-if!
+                                      route-state
+                                      catalog
+                                      tc-dependency-tlci-native-decls-results)
+                                    (begin
+                                      (macro-dependency-tlci-note-if!
+                                        route-state
+                                        catalog
+                                        tc-dependency-tlci-native-expr-results)
+                                      (if prepared
+                                        (macro-dependency-tlci-note-if!
+                                          route-state
+                                          catalog
+                                          tc-dependency-tlci-direct-expr-results)
+                                        unit))))
                                 (MacroNativeStdlibTlciResult.Value value)))]
                           [(= status 0)
-                            (match (embedded_tlci.compiler-embedded-stdlib-tlci-session-mark-shell!
-                              resolved)
+                            (match (macro-tlci-resolved-catalog-mark-shell!
+                              catalog
+                              identity)
                               [(tlci_loader_support.ResultTlciLoaderUnit.Ok)
                                 (begin
                                   (cfg
                                     (all
                                       embedded-stdlib-tlci
                                       tlci-native-route-stress)
-                                    (compiler-tc-tlci-native-stress-dispatch!
+                                    (compiler-tc-tlci-native-stress-catalog-dispatch!
                                       host-pools
-                                      resolved
+                                      catalog
                                       4
                                       0))
                                   (embedded_tlci.compiler-comptime-host-session-close!)
                                   (cfg
                                     compile-profile
-                                    (set!
-                                      compiler-tc-macro-stdlib-tlci-shell-learns
-                                      (+
+                                    (if (macro-tlci-resolved-catalog-dependency?
+                                      catalog)
+                                      unit
+                                      (set!
                                         compiler-tc-macro-stdlib-tlci-shell-learns
-                                        1)))
+                                        (+
+                                          compiler-tc-macro-stdlib-tlci-shell-learns
+                                          1))))
+                                  (macro-dependency-tlci-note-if!
+                                    route-state
+                                    catalog
+                                    tc-dependency-tlci-shell-learns)
+                                  (macro-dependency-tlci-note-if!
+                                    route-state
+                                    catalog
+                                    tc-dependency-tlci-interpreted-fallbacks)
                                   MacroNativeStdlibTlciResult.Shell)]
                               [(tlci_loader_support.ResultTlciLoaderUnit.Err
                                   message)
@@ -102042,9 +102424,9 @@
                                     (all
                                       embedded-stdlib-tlci
                                       tlci-native-route-stress)
-                                    (compiler-tc-tlci-native-stress-dispatch!
+                                    (compiler-tc-tlci-native-stress-catalog-dispatch!
                                       host-pools
-                                      resolved
+                                      catalog
                                       5
                                       9))
                                   (embedded_tlci.compiler-comptime-host-session-close!)
@@ -102064,23 +102446,26 @@
                               [recorded : String
                                 (embedded_tlci.compiler-comptime-host-diagnostic-text)]
                               [message : String
-                                (if (and
-                                  (=
-                                    status
-                                    tlci.tlci-host-callback-status-diagnostic)
-                                  (> (string.string-length recorded) 0))
-                                  recorded
-                                  (tlci_loader_support.tlci-loader-macro-status-diagnostic
-                                    identity
-                                    status))]
+                                (macro-tlci-resolved-catalog-status-diagnostic
+                                  catalog
+                                  identity
+                                  (if (and
+                                    (=
+                                      status
+                                      tlci.tlci-host-callback-status-diagnostic)
+                                    (> (string.string-length recorded) 0))
+                                    recorded
+                                    (tlci_loader_support.tlci-loader-macro-status-diagnostic
+                                      identity
+                                      status)))]
                               (begin
                                 (cfg
                                   (all
                                     embedded-stdlib-tlci
                                     tlci-native-route-stress)
-                                  (compiler-tc-tlci-native-stress-dispatch!
+                                  (compiler-tc-tlci-native-stress-catalog-dispatch!
                                     host-pools
-                                    resolved
+                                    catalog
                                     5
                                     status))
                                 (embedded_tlci.compiler-comptime-host-session-close!)
@@ -102096,6 +102481,7 @@
   (define (macro-try-stdlib-tlci-native
     [ctx : TcContext]
     [definition-module : String]
+    [declaration-id : i64]
     [macro-name : String]
     [params : ast.AstMacroParamList]
     [ret : ast.AstType]
@@ -102103,17 +102489,19 @@
     [call-expr : ast.AstExpr]) : MacroNativeStdlibTlciResult
     (let
       [identity : String
-        (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
-          macro-name
-          (str_cat.str-cat definition-module "/" macro-name))]
-      (match (macro-tlci-catalog-select ctx definition-module identity)
+        (macro-tlci-catalog-identity definition-module macro-name)]
+      (match (macro-tlci-catalog-select
+        ctx
+        definition-module
+        identity
+        declaration-id)
         [(MacroTlciCatalogSelection.None) MacroNativeStdlibTlciResult.No]
-        [(MacroTlciCatalogSelection.Dependency) MacroNativeStdlibTlciResult.No]
-        [(MacroTlciCatalogSelection.EmbeddedResolved resolved)
+        [(MacroTlciCatalogSelection.Resolved catalog)
           (macro-try-stdlib-tlci-native-resolved
             (tc-context-pools ctx)
+            (tc-context-macro-state ctx)
             identity
-            resolved
+            catalog
             params
             ret
             env
@@ -102121,24 +102509,27 @@
             (array.make-array ctfe_support.CompilerCtfeValue 8)
             params.len
             false)]
-        [(MacroTlciCatalogSelection.EmbeddedShell _)
+        [(MacroTlciCatalogSelection.Shell catalog)
           (begin
             (cfg
               compile-profile
-              (set!
-                compiler-tc-macro-stdlib-tlci-shell-cache-hits
-                (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1)))
+              (if (macro-tlci-resolved-catalog-dependency? catalog)
+                unit
+                (set!
+                  compiler-tc-macro-stdlib-tlci-shell-cache-hits
+                  (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1))))
             MacroNativeStdlibTlciResult.No)]
-        [(MacroTlciCatalogSelection.EmbeddedMissing)
+        [(MacroTlciCatalogSelection.MetadataOnly)
           MacroNativeStdlibTlciResult.No]
-        [(MacroTlciCatalogSelection.EmbeddedUnavailable)
-          MacroNativeStdlibTlciResult.No]))))
+        [(MacroTlciCatalogSelection.Missing) MacroNativeStdlibTlciResult.No]
+        [(MacroTlciCatalogSelection.Unavailable) MacroNativeStdlibTlciResult.No]))))
 
 (cfg
   (not embedded-stdlib-tlci)
   (define (macro-try-stdlib-tlci-native
     [_ctx : TcContext]
     [_definition-module : String]
+    [_declaration-id : i64]
     [_macro-name : String]
     [_params : ast.AstMacroParamList]
     [_ret : ast.AstType]
@@ -102165,56 +102556,70 @@
   (PreparedEnv ctfe_support.CtfeEnv)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-(define (macro-note-stdlib-tlci-resolved-fallback!) : unit
-  (cfg
-    compile-profile
-    (begin
-      (set!
-        compiler-tc-macro-stdlib-tlci-catalog-hits
-        (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1))
-      (set!
-        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
-        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
-    unit))
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-note-embedded-tlci-resolved-fallback!
+    [catalog : MacroTlciResolvedCatalog]) : unit
+    (if (macro-tlci-resolved-catalog-dependency? catalog)
+      unit
+      (cfg
+        compile-profile
+        (begin
+          (set!
+            compiler-tc-macro-stdlib-tlci-catalog-hits
+            (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1))
+          (set!
+            compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+            (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+        unit))))
 
-(define (macro-note-stdlib-tlci-shell-fallback!) : unit
-  (cfg
-    compile-profile
-    (begin
-      (set!
-        compiler-tc-macro-stdlib-tlci-catalog-hits
-        (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1))
-      (set!
-        compiler-tc-macro-stdlib-tlci-shell-cache-hits
-        (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1))
-      (set!
-        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
-        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
-    unit))
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-note-embedded-tlci-shell-fallback!
+    [catalog : MacroTlciResolvedCatalog]) : unit
+    (if (macro-tlci-resolved-catalog-dependency? catalog)
+      unit
+      (cfg
+        compile-profile
+        (begin
+          (set!
+            compiler-tc-macro-stdlib-tlci-catalog-hits
+            (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1))
+          (set!
+            compiler-tc-macro-stdlib-tlci-shell-cache-hits
+            (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1))
+          (set!
+            compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+            (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+        unit))))
 
-(define (macro-note-stdlib-tlci-missing-fallback!) : unit
-  (cfg
-    compile-profile
-    (begin
-      (set!
-        compiler-tc-macro-stdlib-tlci-catalog-misses
-        (+ compiler-tc-macro-stdlib-tlci-catalog-misses 1))
-      (set!
-        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
-        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
-    unit))
+(define (macro-note-embedded-tlci-missing-fallback! [dependency-slot : i64]) : unit
+  (if (>= dependency-slot 0)
+    unit
+    (cfg
+      compile-profile
+      (begin
+        (set!
+          compiler-tc-macro-stdlib-tlci-catalog-misses
+          (+ compiler-tc-macro-stdlib-tlci-catalog-misses 1))
+        (set!
+          compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+          (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+      unit)))
 
-(define (macro-note-stdlib-tlci-unavailable-fallback!) : unit
-  (cfg
-    compile-profile
-    (begin
-      (set!
-        compiler-tc-macro-stdlib-tlci-load-failures
-        (+ compiler-tc-macro-stdlib-tlci-load-failures 1))
-      (set!
-        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
-        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
-    unit))
+(define (macro-note-embedded-tlci-unavailable-fallback! [dependency-slot : i64]) : unit
+  (if (>= dependency-slot 0)
+    unit
+    (cfg
+      compile-profile
+      (begin
+        (set!
+          compiler-tc-macro-stdlib-tlci-load-failures
+          (+ compiler-tc-macro-stdlib-tlci-load-failures 1))
+        (set!
+          compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+          (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+      unit)))
 
 ;; Expression position can resolve the catalog before binding. A native
 ;; commit consumes the shared capture values directly. If the first dispatch
@@ -102229,6 +102634,7 @@
     [fallback-module-id : i64]
     [type-env : TcTypeEnv]
     [macro-name-id : i64]
+    [declaration-id : i64]
     [macro-name : String]
     [params : ast.AstMacroParamList]
     [ret : ast.AstType]
@@ -102237,15 +102643,19 @@
     (if (> params.len 8)
       MacroDirectStdlibTlciResult.No
       (let
+        [dependency-slot : i64
+          (macro-dependency-tlci-catalog-slot-for-declaration
+            ctx
+            declaration-id)]
         [identity : String
-          (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
-            macro-name
-            (str_cat.str-cat fallback-module "/" macro-name))]
-        (match (macro-tlci-catalog-select ctx fallback-module identity)
+          (macro-tlci-catalog-identity fallback-module macro-name)]
+        (match (macro-tlci-catalog-select
+          ctx
+          fallback-module
+          identity
+          declaration-id)
           [(MacroTlciCatalogSelection.None) MacroDirectStdlibTlciResult.No]
-          [(MacroTlciCatalogSelection.Dependency)
-            MacroDirectStdlibTlciResult.BoundFallback]
-          [(MacroTlciCatalogSelection.EmbeddedResolved resolved)
+          [(MacroTlciCatalogSelection.Resolved catalog)
             (begin
               (cfg compile-profile (compiler-tc-walk-direct-marshal-start!))
               (match (let
@@ -102299,8 +102709,9 @@
                       [native-result : MacroNativeStdlibTlciResult
                         (macro-try-stdlib-tlci-native-resolved
                           syntax-pools
+                          (tc-context-macro-state ctx)
                           identity
-                          resolved
+                          catalog
                           params
                           ret
                           base-env
@@ -102319,11 +102730,14 @@
                           (cfg
                             compile-profile
                             (begin
-                              (set!
-                                compiler-tc-macro-stdlib-tlci-direct-expr-results
-                                (+
+                              (if (macro-tlci-resolved-catalog-dependency?
+                                catalog)
+                                unit
+                                (set!
                                   compiler-tc-macro-stdlib-tlci-direct-expr-results
-                                  1))
+                                  (+
+                                    compiler-tc-macro-stdlib-tlci-direct-expr-results
+                                    1)))
                               (compiler-tc-macro-profile-finish
                                 (tc-context-macro-state ctx)
                                 (ci.intern-composite-pair-id
@@ -102349,7 +102763,11 @@
                           (MacroDirectStdlibTlciResult.Err (box diag)))]
                       [(MacroNativeStdlibTlciResult.Shell)
                         (begin
-                          (macro-note-stdlib-tlci-resolved-fallback!)
+                          (macro-note-embedded-tlci-resolved-fallback! catalog)
+                          (macro-dependency-tlci-note-if!
+                            (tc-context-macro-state ctx)
+                            catalog
+                            tc-dependency-tlci-direct-shell-env-folds)
                           (cfg
                             compile-profile
                             (set!
@@ -102367,19 +102785,23 @@
                                 syntax-pools))))]
                       [(MacroNativeStdlibTlciResult.No)
                         (begin
-                          (macro-note-stdlib-tlci-resolved-fallback!)
+                          (macro-note-embedded-tlci-resolved-fallback! catalog)
                           MacroDirectStdlibTlciResult.BoundFallback)]))]))]
-          [(MacroTlciCatalogSelection.EmbeddedShell _)
+          [(MacroTlciCatalogSelection.Shell catalog)
             (begin
-              (macro-note-stdlib-tlci-shell-fallback!)
+              (macro-note-embedded-tlci-shell-fallback! catalog)
               MacroDirectStdlibTlciResult.BoundFallback)]
-          [(MacroTlciCatalogSelection.EmbeddedMissing)
+          [(MacroTlciCatalogSelection.MetadataOnly)
             (begin
-              (macro-note-stdlib-tlci-missing-fallback!)
+              (macro-note-embedded-tlci-missing-fallback! dependency-slot)
               MacroDirectStdlibTlciResult.BoundFallback)]
-          [(MacroTlciCatalogSelection.EmbeddedUnavailable)
+          [(MacroTlciCatalogSelection.Missing)
             (begin
-              (macro-note-stdlib-tlci-unavailable-fallback!)
+              (macro-note-embedded-tlci-missing-fallback! dependency-slot)
+              MacroDirectStdlibTlciResult.BoundFallback)]
+          [(MacroTlciCatalogSelection.Unavailable)
+            (begin
+              (macro-note-embedded-tlci-unavailable-fallback! dependency-slot)
               MacroDirectStdlibTlciResult.BoundFallback)])))))
 
 (cfg
@@ -102391,6 +102813,7 @@
     [_fallback-module-id : i64]
     [_type-env : TcTypeEnv]
     [_macro-name-id : i64]
+    [declaration-id : i64]
     [macro-name : String]
     [_params : ast.AstMacroParamList]
     [_ret : ast.AstType]
@@ -102398,9 +102821,8 @@
     [_call-expr : ast.AstExpr]) : MacroDirectStdlibTlciResult
     (match (macro-dependency-tlci-catalog-lookup
       ctx
-      (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
-        macro-name
-        (str_cat.str-cat fallback-module "/" macro-name)))
+      (macro-dependency-tlci-catalog-slot-for-declaration ctx declaration-id)
+      (macro-tlci-catalog-identity fallback-module macro-name))
       [(cload.CompilerLoadDependencyCatalogLookup.NoCatalog)
         MacroDirectStdlibTlciResult.No]
       [_ MacroDirectStdlibTlciResult.BoundFallback])))
@@ -102518,6 +102940,7 @@
   [fallback-module-id : i64]
   [type-env : TcTypeEnv]
   [macro-name-id : i64]
+  [declaration-id : i64]
   [macro-name : String]
   [params : ast.AstMacroParamList]
   [ret : ast.AstType]
@@ -102558,6 +102981,7 @@
             (macro-try-stdlib-tlci-native
               ctx
               fallback-module
+              declaration-id
               macro-name
               params
               ret
@@ -102638,6 +103062,7 @@
   [fallback-module-id : i64]
   [type-env : TcTypeEnv]
   [macro-name-id : i64]
+  [declaration-id : i64]
   [macro-name : String]
   [params : ast.AstMacroParamList]
   [ret : ast.AstType]
@@ -102653,6 +103078,7 @@
       fallback-module-id
       type-env
       macro-name-id
+      declaration-id
       macro-name
       params
       ret
@@ -102715,6 +103141,7 @@
           fallback-module-id
           type-env
           macro-name-id
+          declaration-id
           macro-name
           params
           ret
@@ -102893,6 +103320,7 @@
   [fallback-module : String]
   [fallback-module-id : i64]
   [macro-name-id : i64]
+  [declaration-id : i64]
   [macro-name : String]
   [params : ast.AstMacroParamList]
   [ret : ast.AstType]
@@ -102921,6 +103349,7 @@
         fallback-module-id
         type-env
         macro-name-id
+        declaration-id
         macro-name
         params
         ret
@@ -103513,6 +103942,7 @@
         definition-module
         definition-module-id
         macro-name-id
+        declaration-id
         macro-name
         params
         ret
@@ -105823,6 +106253,7 @@
                                     definition-module
                                     global-env
                                     macro-name
+                                    declaration-id
                                     (macro-decl-name-display
                                       macro-name
                                       definition-module)
@@ -106084,6 +106515,7 @@
                                           definition-module
                                           global-env
                                           macro-name
+                                          declaration-id
                                           (macro-decl-name-display
                                             macro-name
                                             definition-module)
@@ -110070,10 +110502,8 @@
       (tc-job-state-macro-state job-state)
       macro-dependency-catalog-handle
       (cload.compiler-load-session-state-dependency-catalog-handle load-state))
-    (tc-macro-walk-set!
-      (tc-job-state-macro-state job-state)
-      macro-active-dependency-catalog-slot
-      -1)
+    (tc-dependency-tlci-route-counters-reset!
+      (tc-job-state-macro-state job-state))
     ;; Legacy macro expansion still reads compatibility globals; bridge the
     ;; compile-owned pool and interner state at the phase boundary.
     (ast.ast-node-pool-context-install! pools)
@@ -112645,6 +113075,10 @@
         (match (ast.ast-decl-list-step cur-decls)
           [(ast.AstDeclListStep.Nil)
             (begin
+              (cfg
+                compile-profile
+                (compiler-tc-dependency-tlci-route-profile-finish
+                  (tc-context-macro-state ctx)))
               (cfg compile-profile (compiler-tc-decl-profile-finish))
               (set!
                 result

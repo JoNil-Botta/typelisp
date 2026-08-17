@@ -1,11 +1,33 @@
 (module spmd_fixture)
 
-;; The consumer package exercises dependency-catalog selection after its
-;; ordinary qualified import resolves this source declaration. #2755 still
-;; owns native dependency dispatch, so the selected catalog must fall back to
-;; this interpreted transformer without changing the result.
+;; The consumer package exercises dependency-catalog selection after ordinary
+;; qualified resolution chooses these physical source declarations. The three
+;; result policies share one native dependency catalog and must stay byte-for-
+;; byte equivalent to forced-source CTFE.
 (defmacro (package-answer) : i64
   `42)
+
+(defmacro (package-increment [value : i64]) : i64
+  `(+ ,value 1))
+
+(defmacro (package-module) : Module
+  `(begin
+    (module fixture.generated)
+    (define (answer) : i64
+      41)))
+
+(defmacro (package-decls) : Decls
+  `(begin
+    (define (package-decl-answer) : i64
+      40)))
+
+;; Keep one intentionally unsupported producer shape in the catalog. Its first
+;; native attempt learns the mapping-generation shell and its second call must
+;; bypass both dispatch and host-session setup before deterministic source CTFE.
+(defmacro (package-unsupported [value : Expr]) : Expr
+  (match value
+    [(comptime.Expr.If condition _ _) condition]
+    [_ value]))
 
 (define (helper [x : i64] [scale : i64])
   (:spmd-callable

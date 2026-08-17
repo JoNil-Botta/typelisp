@@ -545,16 +545,35 @@
 
 ;; Small lifetime-bound capability used by typechecking after dependency
 ;; discovery is complete. The address points at the registry's stable one-slot
-;; `entries` cell; it avoids embedding the much wider load-session value in the
-;; hot macro-walk record while retaining the session ownership boundary.
+;; `entries` and `generation` cells; it avoids embedding the much wider
+;; load-session value in the hot macro-walk record while retaining the session
+;; ownership boundary.
 (defstruct CompilerLoadDependencyCatalogHandle
-  (address i64))
+  (entries-address i64)
+  (generation-address i64))
+
+;; A resolved entry is meaningful only inside the exact registry generation
+;; and stable package image that produced it. Keep that complete capability
+;; together until dispatch; the registry-owned APIs below revalidate every
+;; component before reading the mapping.
+(defstruct CompilerLoadDependencyCatalogCapability
+  (handle CompilerLoadDependencyCatalogHandle)
+  (slot i64)
+  (key CompilerLoadDependencyCatalogKey)
+  (registry-generation i64)
+  ;; Diagnostic spellings use the compiler job's intern owner rather than the
+  ;; catalog arena, so stale/released capabilities can fail without reading a
+  ;; key whose mapping owner has already been retired.
+  (package-name-id i64)
+  (package-version-id i64)
+  (artifact-path-id i64)
+  (resolved tlci_loader_support.TlciResolvedMacroEntry))
 
 (defenum CompilerLoadDependencyCatalogLookup
   (NoCatalog)
   (MetadataOnly)
-  (Resolved tlci_loader_support.TlciResolvedMacroEntry)
-  (Shell tlci_loader_support.TlciResolvedMacroEntry)
+  (Resolved CompilerLoadDependencyCatalogCapability)
+  (Shell CompilerLoadDependencyCatalogCapability)
   (Missing)
   (Unavailable CompilerLoadDependencyCatalogFailure))
 
@@ -627,6 +646,10 @@
   (lazy-import-skip-record-count (__tl_dyn-array i64))
   (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState)
   (dependency-catalog CompilerLoadDependencyCatalogRegistry)
+  ;; Verification policy is snapshotted per package build before admission.
+  ;; A process environment lookup must never become mutable route state shared
+  ;; by interleaved compiler jobs.
+  (dependency-tlci-force-source (__tl_dyn-array bool))
   ;; Intern table this session's floor bookkeeping is bound to once
   ;; `compiler-load-session-state-use-with-intern-state!` installs it; the
   ;; ready flag keeps legacy sessions on the compatibility-global floor path.
@@ -756,6 +779,7 @@
       lazy-import-skip-record-count
       lazy-qualified-observer
       (compiler-load-dependency-catalog-registry-new)
+      (compiler-load-session-state-bool-cell false)
       (array.make-array ci.InternCompatState 1)
       (compiler-load-session-state-bool-cell false)
       (compiler-load-session-state-bool-cell standalone-reset-safe))))
@@ -770,6 +794,17 @@
   [state : CompilerLoadSessionState]) : CompilerLoadDependencyCatalogRegistry
   state.dependency-catalog)
 
+(define (compiler-load-session-state-set-dependency-tlci-force-source!
+  [state : CompilerLoadSessionState]
+  [force-source : bool]) : unit
+  (compiler-load-session-state-bool-cell-set!
+    state.dependency-tlci-force-source
+    force-source))
+
+(define (compiler-load-session-state-dependency-tlci-force-source?
+  [state : CompilerLoadSessionState]) : bool
+  (compiler-load-session-state-bool-cell-get state.dependency-tlci-force-source))
+
 (define (compiler-load-session-state-dependency-catalog-handle
   [state : CompilerLoadSessionState]) : CompilerLoadDependencyCatalogHandle
   (CompilerLoadDependencyCatalogHandle
@@ -779,6 +814,13 @@
           (ptr-cast
             (array-data state.dependency-catalog.entries)
             : (Ptr CompilerLoadDependencyCatalogList))))
+      : i64)
+    (cast
+      (unsafe
+        (ptr->int
+          (ptr-cast
+            (array-data state.dependency-catalog.generation)
+            : (Ptr i64))))
       : i64)))
 
 (define (compiler-load-dependency-catalog-handle-items
@@ -786,8 +828,13 @@
   (unsafe
     (ptr-read
       (int->ptr
-        (cast handle.address : u64)
+        (cast handle.entries-address : u64)
         : (Ptr CompilerLoadDependencyCatalogList)))))
+
+(define (compiler-load-dependency-catalog-handle-generation
+  [handle : CompilerLoadDependencyCatalogHandle]) : i64
+  (unsafe
+    (ptr-read (int->ptr (cast handle.generation-address : u64) : (Ptr i64)))))
 
 (define (compiler-load-dependency-catalog-owner-arena
   [state : CompilerLoadSessionState]) : i64
@@ -1047,14 +1094,139 @@
               (& loaded)
               identity)
               [(tlci_loader_support.TlciMacroEntryLookup.Resolved resolved)
-                (CompilerLoadDependencyCatalogLookup.Resolved resolved)]
+                (CompilerLoadDependencyCatalogLookup.Resolved
+                  (CompilerLoadDependencyCatalogCapability
+                    handle
+                    slot
+                    entry.key
+                    (compiler-load-dependency-catalog-handle-generation handle)
+                    (ci.intern entry.key.package-name)
+                    (ci.intern entry.key.package-version)
+                    (ci.intern entry.key.artifact-path)
+                    resolved))]
               [(tlci_loader_support.TlciMacroEntryLookup.Shell resolved)
-                (CompilerLoadDependencyCatalogLookup.Shell resolved)]
+                (CompilerLoadDependencyCatalogLookup.Shell
+                  (CompilerLoadDependencyCatalogCapability
+                    handle
+                    slot
+                    entry.key
+                    (compiler-load-dependency-catalog-handle-generation handle)
+                    (ci.intern entry.key.package-name)
+                    (ci.intern entry.key.package-version)
+                    (ci.intern entry.key.artifact-path)
+                    resolved))]
               [(tlci_loader_support.TlciMacroEntryLookup.Missing)
                 CompilerLoadDependencyCatalogLookup.Missing]
               [(tlci_loader_support.TlciMacroEntryLookup.Err message)
                 (CompilerLoadDependencyCatalogLookup.Unavailable
                   (CompilerLoadDependencyCatalogFailure.MappingFailure message))])])))))
+
+(define (compiler-load-dependency-catalog-capability-error
+  [capability : CompilerLoadDependencyCatalogCapability]
+  [identity : String]
+  [message : String]) : String
+  (str_cat.str-cat
+    "dependency tlci: package "
+    (ci.intern-str capability.package-name-id)
+    "@"
+    (ci.intern-str capability.package-version-id)
+    ", image "
+    (ci.intern-str capability.artifact-path-id)
+    ", macro "
+    identity
+    ": "
+    message))
+
+(define (compiler-load-dependency-catalog-capability-current?
+  [capability : CompilerLoadDependencyCatalogCapability]) : bool
+  (if (not
+    (=
+      (compiler-load-dependency-catalog-handle-generation capability.handle)
+      capability.registry-generation))
+    false
+    (let
+      [items : CompilerLoadDependencyCatalogList
+        (compiler-load-dependency-catalog-handle-items capability.handle)]
+      (and
+        (>= capability.slot 0)
+        (< capability.slot items.len)
+        (compiler-load-dependency-catalog-key-eq?
+          (array-ref items.slots capability.slot).key
+          capability.key)))))
+
+;; Revalidate the complete registry capability immediately before entering
+;; mapped code. No loaded-image value crosses this API boundary.
+(define (compiler-load-dependency-catalog-capability-dispatch
+  [capability : CompilerLoadDependencyCatalogCapability]
+  [identity : String]
+  [session-cookie : i64]) : tlci_loader_support.ResultTlciMacroDispatch
+  (if (not (compiler-load-dependency-catalog-capability-current? capability))
+    (tlci_loader_support.ResultTlciMacroDispatch.Err
+      (compiler-load-dependency-catalog-capability-error
+        capability
+        identity
+        "selected catalog capability is stale"))
+    (let
+      [items : CompilerLoadDependencyCatalogList
+        (compiler-load-dependency-catalog-handle-items capability.handle)]
+      [entry : CompilerLoadDependencyCatalogEntry
+        (array-ref items.slots capability.slot)]
+      (match entry.status
+        [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
+          (match (tlci_loader_support.tlci-loader-dispatch-resolved-macro
+            (& loaded)
+            capability.resolved
+            session-cookie
+            (array.make-array i64 0)
+            0)
+            [(tlci_loader_support.ResultTlciMacroDispatch.Ok dispatch)
+              (tlci_loader_support.ResultTlciMacroDispatch.Ok dispatch)]
+            [(tlci_loader_support.ResultTlciMacroDispatch.Err message)
+              (tlci_loader_support.ResultTlciMacroDispatch.Err
+                (compiler-load-dependency-catalog-capability-error
+                  capability
+                  identity
+                  message))])]
+        [_
+          (tlci_loader_support.ResultTlciMacroDispatch.Err
+            (compiler-load-dependency-catalog-capability-error
+              capability
+              identity
+              "selected catalog is no longer executable"))]))))
+
+(define (compiler-load-dependency-catalog-capability-mark-shell!
+  [capability : CompilerLoadDependencyCatalogCapability]
+  [identity : String]) : tlci_loader_support.ResultTlciLoaderUnit
+  (if (not (compiler-load-dependency-catalog-capability-current? capability))
+    (tlci_loader_support.ResultTlciLoaderUnit.Err
+      (compiler-load-dependency-catalog-capability-error
+        capability
+        identity
+        "selected catalog capability is stale"))
+    (let
+      [items : CompilerLoadDependencyCatalogList
+        (compiler-load-dependency-catalog-handle-items capability.handle)]
+      [entry : CompilerLoadDependencyCatalogEntry
+        (array-ref items.slots capability.slot)]
+      (match entry.status
+        [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
+          (match (tlci_loader_support.tlci-loader-mark-macro-entry-shell!
+            (& loaded)
+            capability.resolved)
+            [(tlci_loader_support.ResultTlciLoaderUnit.Ok)
+              tlci_loader_support.ResultTlciLoaderUnit.Ok]
+            [(tlci_loader_support.ResultTlciLoaderUnit.Err message)
+              (tlci_loader_support.ResultTlciLoaderUnit.Err
+                (compiler-load-dependency-catalog-capability-error
+                  capability
+                  identity
+                  message))])]
+        [_
+          (tlci_loader_support.ResultTlciLoaderUnit.Err
+            (compiler-load-dependency-catalog-capability-error
+              capability
+              identity
+              "selected catalog is no longer executable"))]))))
 
 (define (compiler-load-dependency-catalog-admitted-image
   [state : CompilerLoadSessionState]
@@ -18445,6 +18617,10 @@
     [owner : i64 (compiler-load-dependency-catalog-owner-arena-ensure! state)]
     [checks : (__tl_dyn-array bool) (__tl_make-array false)]
     (begin
+      (compiler-load-session-state-set-dependency-tlci-force-source! state true)
+      (compiler-load-session-state-set-dependency-tlci-force-source!
+        other-state
+        false)
       (in-arena
         (arena.Arena owner)
         (let
@@ -18548,6 +18724,10 @@
           (set!
             (array-ref checks 0)
             (and
+              (compiler-load-session-state-dependency-tlci-force-source? state)
+              (not
+                (compiler-load-session-state-dependency-tlci-force-source?
+                  other-state))
               (= outer-slot 0)
               (= nested-slot 1)
               (= metadata-slot 2)
@@ -18610,7 +18790,55 @@
               (= observation.code-bytes 0)
               (= observation.fixup-bytes 0)
               (= observation.entry-bytes 0)
-              (= observation.import-bytes 0)))))
+              (= observation.import-bytes 0)))
+          (let
+            [capability : CompilerLoadDependencyCatalogCapability
+              (CompilerLoadDependencyCatalogCapability
+                (compiler-load-session-state-dependency-catalog-handle state)
+                nested-slot
+                nested-key
+                (array-ref state.dependency-catalog.generation 0)
+                (ci.intern nested-key.package-name)
+                (ci.intern nested-key.package-version)
+                (ci.intern nested-key.artifact-path)
+                (tlci_loader_support.TlciResolvedMacroEntry 0 0))]
+            [replacement-key : CompilerLoadDependencyCatalogKey
+              (CompilerLoadDependencyCatalogKey
+                nested-root
+                "nested"
+                "2.0.0"
+                (compiler-load-join-root-path
+                  nested-root
+                  "target/nested-next.tlci")
+                21
+                222
+                23
+                24
+                "compiler-b")]
+            [replacement-entry : CompilerLoadDependencyCatalogEntry
+              (CompilerLoadDependencyCatalogEntry
+                replacement-key
+                CompilerLoadDependencyCatalogImage.None
+                (CompilerLoadDependencyCatalogStatus.Unavailable
+                  (CompilerLoadDependencyCatalogFailure.Missing
+                    "nested replacement missing")))]
+            (begin
+              (set!
+                (array-ref checks 0)
+                (and
+                  (array-ref checks 0)
+                  (compiler-load-dependency-catalog-capability-current?
+                    capability)))
+              (compiler-load-dependency-catalog-record-owned!
+                state
+                replacement-entry)
+              (set!
+                (array-ref checks 0)
+                (and
+                  (array-ref checks 0)
+                  (not
+                    (compiler-load-dependency-catalog-capability-current?
+                      capability))))))))
       (let
         [release-ok : bool
           (match (compiler-load-session-state-dependency-catalog-release! state)

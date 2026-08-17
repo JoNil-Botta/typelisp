@@ -46549,6 +46549,23 @@
       (compiler-backend-symbol-list-contains-id? targets default-label)
       (compiler-backend-switch-cases-target-phi? targets cases))))
 
+;; A switch case value spells part of the edge block's label, and a case value
+;; may be NEGATIVE: a dense switch is built from whatever integers the arms
+;; carry, and folding or inlining can leave a table whose lowest case is below
+;; zero (the emitted base is then subtracted, `subq $-109, %reg`). `-` is an
+;; operator in the assembler's expression grammar and not a symbol character,
+;; so a label spelled `..._switch_case_-105:` is not read as a label at all --
+;; `as` sees a line starting with `.` and reports `unknown pseudo-op`. Spell a
+;; negative tag with a leading `m` instead. The mapping stays injective because
+;; a decimal tag never contains `m`, and the common non-negative tag pays
+;; nothing for it.
+(define (compiler-backend-switch-case-tag-text [tag : i64]) : String
+  (let
+    [digits : String (string.int->string tag)]
+    (if (< tag 0)
+      (string.replace digits "-" "m")
+      digits)))
+
 (define (compiler-backend-switch-case-edge-label
   [current-label : i64]
   [tag : i64]) : i64
@@ -46556,7 +46573,7 @@
     (str_cat.str-cat
       (compiler_ir_types.compiler-ir-label-text current-label)
       "_switch_case_"
-      (string.int->string tag))))
+      (compiler-backend-switch-case-tag-text tag))))
 
 (define (compiler-backend-switch-default-edge-label [current-label : i64]) : i64
   (compiler_ir_types.compiler-ir-label

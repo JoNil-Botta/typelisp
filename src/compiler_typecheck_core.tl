@@ -12859,6 +12859,39 @@
 (define (tc-atomic-arena-owner-marker-id) : i64
   cbi.compiler-builtin-id-tc-atomic-arena-owner)
 
+;; First-class Arena brands live in the generated-name lane, so source text can
+;; render them for diagnostics/reflection but can never name or forge them. The
+;; call expression's pooled function-node id is unique within the compile job;
+;; canonical generated interning makes repeated checker passes over that call
+;; recover the same identity.
+(define (tc-arena-brand-ordinary-prefix) : String
+  "arena-brand/ordinary#")
+
+(define (tc-arena-brand-atomic-prefix) : String
+  "arena-brand/atomic#")
+
+(define (tc-generated-arena-brand-with-prefix-id?
+  [name-id : i64]
+  [prefix : String]) : bool
+  (and
+    (ci.intern-generated-id-active? name-id)
+    (tc-diag-string-prefix? (ci.intern-str name-id) prefix)))
+
+(define (tc-generated-ordinary-arena-brand-id? [name-id : i64]) : bool
+  (tc-generated-arena-brand-with-prefix-id?
+    name-id
+    (tc-arena-brand-ordinary-prefix)))
+
+(define (tc-generated-atomic-arena-brand-id? [name-id : i64]) : bool
+  (tc-generated-arena-brand-with-prefix-id?
+    name-id
+    (tc-arena-brand-atomic-prefix)))
+
+(define (tc-generated-arena-brand-id? [name-id : i64]) : bool
+  (or
+    (tc-generated-ordinary-arena-brand-id? name-id)
+    (tc-generated-atomic-arena-brand-id? name-id)))
+
 (define (tc-return-type-id) : i64
   cbi.compiler-builtin-id-tc-return-type)
 
@@ -17703,10 +17736,14 @@
       (tc-arena-owner-active-persistent-id? env name-id marker-id))))
 
 (define (tc-ordinary-arena-owner-active-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (tc-arena-owner-active-id? env name-id (tc-ordinary-arena-owner-marker-id)))
+  (or
+    (tc-generated-ordinary-arena-brand-id? name-id)
+    (tc-arena-owner-active-id? env name-id (tc-ordinary-arena-owner-marker-id))))
 
 (define (tc-atomic-arena-owner-active-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (tc-arena-owner-active-id? env name-id (tc-atomic-arena-owner-marker-id)))
+  (or
+    (tc-generated-atomic-arena-brand-id? name-id)
+    (tc-arena-owner-active-id? env name-id (tc-atomic-arena-owner-marker-id))))
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (let
@@ -18240,13 +18277,15 @@
         (tc-lifetime-visible-scan-id? env lifetime-id signature-marker-id)))))
 
 (define (tc-lifetime-visible-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
-  (if tc-type-env-scoped-runtime-active
-    (tc-type-env-scoped-carrier-lifetime-visible-id?
-      (tc-type-env-scoped-runtime-current)
-      lifetime-id)
-    (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-      (tc-lifetime-visible-persistent-id? env lifetime-id))))
+  (if (tc-generated-arena-brand-id? lifetime-id)
+    true
+    (if tc-type-env-scoped-runtime-active
+      (tc-type-env-scoped-carrier-lifetime-visible-id?
+        (tc-type-env-scoped-runtime-current)
+        lifetime-id)
+      (begin
+        (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+        (tc-lifetime-visible-persistent-id? env lifetime-id)))))
 
 (define (tc-reference-lifetimes-visible?
   [env : TcTypeEnv]
@@ -24758,13 +24797,31 @@
                   "#"
                   (string.int->string name-id)))])))]))
 
+(define (tc-arena-nominal-name-id? [name-id : i64]) : bool
+  (=
+    (csym.compiler-symbol-name-id-key name-id)
+    (csym.compiler-symbol-name-id-key cbi.compiler-builtin-id-arena-type)))
+
+(define (tc-branded-arena-erases-to-bare?
+  [expected-name-id : i64]
+  [actual-name-id : i64]
+  [actual-lifetimes : ast.AstLifetimeList]) : bool
+  (and
+    (tc-arena-nominal-name-id? expected-name-id)
+    (tc-arena-nominal-name-id? actual-name-id)
+    (= (tc-lifetime-list-count actual-lifetimes) 1)))
+
 (define (tc-nominal-lifetime-use-policy-ok
   [ctx : TcContext]
   [name-id : i64]
   [lifetimes : ast.AstLifetimeList]) : ResultTcUnit
   (match (tc-nominal-lifetimes-id ctx name-id)
     [(ResultTcLifetimeList.Ok params)
-      (if (= (tc-lifetime-list-count params) (tc-lifetime-list-count lifetimes))
+      (if (or
+        (= (tc-lifetime-list-count params) (tc-lifetime-list-count lifetimes))
+        (and
+          (tc-arena-nominal-name-id? name-id)
+          (= (tc-lifetime-list-count lifetimes) 1)))
         ResultTcUnit.Ok
         (ResultTcUnit.Err "typecheck: nominal lifetime argument arity mismatch"))]
     [(ResultTcLifetimeList.Err message)
@@ -24779,7 +24836,9 @@
 (define (tc-bare-nominal-lifetime-policy-ok [ctx : TcContext] [name-id : i64]) : ResultTcUnit
   (match (tc-nominal-lifetimes-id ctx name-id)
     [(ResultTcLifetimeList.Ok params)
-      (if (ast.ast-lifetime-list-empty? (& params))
+      (if (or
+        (ast.ast-lifetime-list-empty? (& params))
+        (tc-arena-nominal-name-id? name-id))
         ResultTcUnit.Ok
         (ResultTcUnit.Err "typecheck: missing nominal lifetime arguments"))]
     [(ResultTcLifetimeList.Err message) (ResultTcUnit.Err message)]))
@@ -27288,9 +27347,14 @@
           (ast.ast-lifetime-fallback))]
       [head : TcVariance
         (if (= argument lifetime-id)
-          (tc-variance-compose
-            position
-            (tc-nominal-lifetime-variance-at ctx name-id index stack))
+          ;; Arena's brand is a capability identity, not a borrowed view. Its
+          ;; phantom lifetime stays invariant even though the unchanged runtime
+          ;; declaration has no field that ordinary inference could inspect.
+          (if (and (tc-arena-nominal-name-id? name-id) (= index 0))
+            (TcVariance.TcVarianceInvariant)
+            (tc-variance-compose
+              position
+              (tc-nominal-lifetime-variance-at ctx name-id index stack)))
           (TcVariance.TcVarianceBivariant))]
       (tc-variance-merge
         head
@@ -27454,6 +27518,14 @@
         (tc-lifetime-outlives-lifetime-id? env expected actual)]
       [(TcVariance.TcVarianceInvariant) false])))
 
+(define (tc-nominal-lifetime-coercion-variance-at
+  [ctx : TcContext]
+  [name-id : i64]
+  [index : i64]) : TcVariance
+  (if (and (tc-arena-nominal-name-id? name-id) (= index 0))
+    (TcVariance.TcVarianceInvariant)
+    (tc-nominal-lifetime-variance-at ctx name-id index TcNameIdList.Nil)))
+
 (define (tc-nominal-lifetime-args-coercible-at?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -27466,7 +27538,7 @@
     (and
       (tc-lifetime-coercible-for-variance?
         env
-        (tc-nominal-lifetime-variance-at ctx name-id index TcNameIdList.Nil)
+        (tc-nominal-lifetime-coercion-variance-at ctx name-id index)
         (ast.ast-lifetime-list-get expected index (ast.ast-lifetime-fallback))
         (ast.ast-lifetime-list-get actual index (ast.ast-lifetime-fallback)))
       (tc-nominal-lifetime-args-coercible-at?
@@ -27674,6 +27746,18 @@
                         (__tl-box-place expected-lifetimes)
                         (__tl-box-place actual-lifetimes)))]
                   [_ false])]
+              ;; A branded Arena may be deliberately erased to the legacy bare
+              ;; handle for read-only/compatibility helpers. This is one-way:
+              ;; the converse case remains unmatched, so a copied bare handle
+              ;; can never regain authority over a generated brand.
+              [(ast.AstType.Struct expected-name)
+                (match actual
+                  [(ast.AstType.StructArgs actual-name actual-lifetimes)
+                    (tc-branded-arena-erases-to-bare?
+                      expected-name
+                      actual-name
+                      (__tl-box-place actual-lifetimes))]
+                  [_ false])]
               [(ast.AstType.StructArgs expected-name expected-lifetimes)
                 (match actual
                   [(ast.AstType.StructArgs actual-name actual-lifetimes)
@@ -27781,7 +27865,7 @@
       [source : i64
         (ast.ast-lifetime-list-get (& actual) index (ast.ast-lifetime-fallback))]
       [variance : TcVariance
-        (tc-nominal-lifetime-variance-at ctx name-id index TcNameIdList.Nil)]
+        (tc-nominal-lifetime-coercion-variance-at ctx name-id index)]
       (if (= required source)
         (tc-nominal-lifetime-coercion-failure-detail-at
           ctx
@@ -28510,11 +28594,15 @@
         (ast.ast-lifetime-list-new)
         stack)]
     [(ast.AstType.StructArgs name lifetimes)
-      (tc-type-move-kind-nominal-with-stack
-        ctx
-        name
-        (__tl-box-place lifetimes)
-        stack)]
+      (if (and
+        (tc-arena-nominal-name-id? name)
+        (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0))
+        (TcMoveKind.MoveOnly)
+        (tc-type-move-kind-nominal-with-stack
+          ctx
+          name
+          (__tl-box-place lifetimes)
+          stack))]
     ;; Unresolved names and invalid type variables must never accidentally
     ;; become Copyable.
     [(ast.AstType.Var _) (TcMoveKind.MoveOnly)]
@@ -37756,6 +37844,52 @@
 (define (tc-arena-owner-kind-atomic) : i64
   2)
 
+(define (tc-arena-owner-call-kind-ids
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-id : i64]
+  [lookup-id : i64]
+  [arg-count : i64]) : i64
+  (if (= arg-count 0)
+    (cond
+      [(or
+          (tc-arena-source-call-base-id?
+            ctx
+            env
+            source-id
+            cbi.compiler-builtin-id-arena-make-atomic)
+          (tc-arena-canonical-call-base-id?
+            lookup-id
+            cbi.compiler-builtin-id-arena-make-atomic-base))
+        (tc-arena-owner-kind-atomic)]
+      [(or
+          (tc-arena-source-call-base-id?
+            ctx
+            env
+            source-id
+            cbi.compiler-builtin-id-arena-make)
+          (tc-arena-canonical-call-base-id?
+            lookup-id
+            cbi.compiler-builtin-id-arena-make-base))
+        (tc-arena-owner-kind-ordinary)]
+      [else (tc-arena-owner-kind-none)])
+    (tc-arena-owner-kind-none)))
+
+(define (tc-arena-brand-id [kind : i64] [call-site-id : i64]) : i64
+  (ci.intern-generated-canonical-name
+    (str_cat.str-cat
+      (if (= kind (tc-arena-owner-kind-atomic))
+        (tc-arena-brand-atomic-prefix)
+        (tc-arena-brand-ordinary-prefix))
+      (string.int->string call-site-id))))
+
+(define (tc-arena-branded-type [kind : i64] [call-site-id : i64]) : ast.AstType
+  (ast.ast-ty-struct-args
+    cbi.compiler-builtin-id-arena-type
+    (ast.ast-lifetime-cons
+      (tc-arena-brand-id kind call-site-id)
+      (ast.ast-lifetime-list-new))))
+
 (cfg
   test
   (define (tc-arena-classifier-identity-ids-ok?) : bool
@@ -37822,6 +37956,48 @@
       unit
       (io.panic "typecheck: arena classifier identity ID test failed"))))
 
+(cfg
+  test
+  (define (tc-arena-generated-brand-ids-ok?) : bool
+    (begin
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (let
+        [ordinary-a : i64
+          (tc-arena-brand-id (tc-arena-owner-kind-ordinary) 101)]
+        [ordinary-a-again : i64
+          (tc-arena-brand-id (tc-arena-owner-kind-ordinary) 101)]
+        [ordinary-b : i64
+          (tc-arena-brand-id (tc-arena-owner-kind-ordinary) 102)]
+        [atomic-a : i64 (tc-arena-brand-id (tc-arena-owner-kind-atomic) 101)]
+        [ordinary-ty : ast.AstType
+          (tc-arena-branded-type (tc-arena-owner-kind-ordinary) 101)]
+        [atomic-ty : ast.AstType
+          (tc-arena-branded-type (tc-arena-owner-kind-atomic) 101)]
+        [rendered : String (tc-type-render ordinary-ty)]
+        [ordinary-prefix : String (tc-arena-brand-ordinary-prefix)]
+        [env : TcTypeEnv (tc-empty-env)]
+        (and
+          (= ordinary-a ordinary-a-again)
+          (not (= ordinary-a ordinary-b))
+          (not (= ordinary-a atomic-a))
+          (tc-generated-ordinary-arena-brand-id? ordinary-a)
+          (tc-generated-atomic-arena-brand-id? atomic-a)
+          (tc-lifetime-visible-id? env ordinary-a)
+          (tc-ordinary-arena-owner-active-id? env ordinary-a)
+          (tc-atomic-arena-owner-active-id? env atomic-a)
+          (not (tc-atomic-arena-owner-active-id? env ordinary-a))
+          (not (tc-type-regions-all-atomic-arena-owners? env ordinary-ty))
+          (tc-type-regions-all-atomic-arena-owners? env atomic-ty)
+          (string.contains (& rendered) (& ordinary-prefix)))))))
+
+(cfg
+  test
+  (test
+    tc-arena-generated-brand-ids
+    (if (tc-arena-generated-brand-ids-ok?)
+      unit
+      (io.panic "typecheck: generated Arena brand ID test failed"))))
+
 (define (tc-arena-call-lookup-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -37868,37 +38044,14 @@
   [expr : ast.AstExpr]) : i64
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.Call func-box args)
-      (if (ast.ast-expr-list-empty? (& args))
-        (let
-          [nid : i64 (tc-expr-var-name-id (ast.ast-node-get func-box))]
-          (if (>= nid 0)
-            (let
-              [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
-              [lookup-id : i64 (tc-arena-call-lookup-id ctx env source-id)]
-              (cond
-                [(or
-                    (tc-arena-source-call-base-id?
-                      ctx
-                      env
-                      source-id
-                      cbi.compiler-builtin-id-arena-make-atomic)
-                    (tc-arena-canonical-call-base-id?
-                      lookup-id
-                      cbi.compiler-builtin-id-arena-make-atomic-base))
-                  (tc-arena-owner-kind-atomic)]
-                [(or
-                    (tc-arena-source-call-base-id?
-                      ctx
-                      env
-                      source-id
-                      cbi.compiler-builtin-id-arena-make)
-                    (tc-arena-canonical-call-base-id?
-                      lookup-id
-                      cbi.compiler-builtin-id-arena-make-base))
-                  (tc-arena-owner-kind-ordinary)]
-                [else (tc-arena-owner-kind-none)]))
-            (tc-arena-owner-kind-none)))
-        (tc-arena-owner-kind-none))]
+      (let
+        [nid : i64 (tc-expr-var-name-id (ast.ast-node-get func-box))]
+        (if (>= nid 0)
+          (let
+            [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
+            [lookup-id : i64 (tc-arena-call-lookup-id ctx env source-id)]
+            (tc-arena-owner-call-kind-ids ctx env source-id lookup-id args.len))
+          (tc-arena-owner-kind-none)))]
     [_ (tc-arena-owner-kind-none)]))
 
 (define (tc-phase-call-owner
@@ -37937,21 +38090,42 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]
+  [ty : ast.AstType]
   [init : ast.AstExpr]) : TcTypeEnv
   (let
     [kind : i64 (tc-arena-owner-call-kind ctx env init)]
+    [brand-env : TcTypeEnv
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(ast.AstType.StructArgs arena-name lifetimes)
+          (if (and
+            (tc-arena-nominal-name-id? arena-name)
+            (= (tc-lifetime-list-count (__tl-box-place lifetimes)) 1))
+            (let
+              [brand : i64
+                (ast.ast-lifetime-list-get
+                  (& (__tl-box-place lifetimes))
+                  0
+                  (ast.ast-lifetime-fallback))]
+              [brand-kind : i64
+                (if (tc-generated-atomic-arena-brand-id? brand)
+                  (tc-arena-owner-kind-atomic)
+                  (if (tc-generated-ordinary-arena-brand-id? brand)
+                    (tc-arena-owner-kind-ordinary)
+                    kind))]
+              (tc-bind-id
+                (if (= brand-kind (tc-arena-owner-kind-atomic))
+                  (tc-bind-atomic-arena-owner env brand)
+                  (tc-bind-ordinary-arena-owner env brand))
+                brand
+                (ast.AstType.Var brand)))
+            env)]
+        [_ env])]
     (cond
       [(= kind (tc-arena-owner-kind-atomic))
-        (tc-bind-id
-          env
-          (tc-atomic-arena-owner-marker-id)
-          (ast.AstType.Var name))]
+        (tc-bind-atomic-arena-owner brand-env name)]
       [(= kind (tc-arena-owner-kind-ordinary))
-        (tc-bind-id
-          env
-          (tc-ordinary-arena-owner-marker-id)
-          (ast.AstType.Var name))]
-      [else env])))
+        (tc-bind-ordinary-arena-owner brand-env name)]
+      [else brand-env])))
 
 (define (tc-bind-arena-phase-if-needed-id
   [ctx : TcContext]
@@ -37974,7 +38148,7 @@
       (if (or
         (tc-type-eq (tc-type-strip-region ty) (ast.AstType.I64))
         (tc-arena-type? ctx ty))
-        (tc-bind-arena-owner-if-needed-id ctx env name init)
+        (tc-bind-arena-owner-if-needed-id ctx env name ty init)
         env)]
     [phase-env : TcTypeEnv
       (tc-bind-arena-phase-if-needed-id ctx owner-env name init)]
@@ -39022,7 +39196,10 @@
           stack
           owner-proof)]
       [(ast.AstType.StructArgs name lifetimes)
-        (if (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)
+        (if (and
+          (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)
+          (not owner-proof)
+          (not (tc-type-regions-all-atomic-arena-owners? env resolved)))
           (tc-thread-transfer-region-reject)
           (tc-thread-transfer-struct-class
             ctx
@@ -39030,7 +39207,9 @@
             (tc-nominal-name-id-display name)
             name
             stack
-            owner-proof))]
+            (or
+              owner-proof
+              (tc-type-regions-all-atomic-arena-owners? env resolved))))]
       [(ast.AstType.Enum name)
         (tc-thread-transfer-enum-class
           ctx
@@ -39040,7 +39219,10 @@
           stack
           owner-proof)]
       [(ast.AstType.EnumArgs name lifetimes)
-        (if (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)
+        (if (and
+          (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)
+          (not owner-proof)
+          (not (tc-type-regions-all-atomic-arena-owners? env resolved)))
           (tc-thread-transfer-region-reject)
           (tc-thread-transfer-enum-class
             ctx
@@ -39048,7 +39230,9 @@
             (tc-nominal-name-id-display name)
             name
             stack
-            owner-proof))]
+            (or
+              owner-proof
+              (tc-type-regions-all-atomic-arena-owners? env resolved))))]
       [(ast.AstType.Func _ _)
         (tc-thread-transfer-reject
           "function value transfer requires a direct no-capture function symbol")]
@@ -40137,6 +40321,22 @@
                   (ResultTcType.Err (tc-call-fixed-arity-message func args 0)))]
               [_ (ResultTcType.Err "typecheck: call target is not a function")])]
           [(ResultTcType.Err message) (ResultTcType.Err message)])])))
+
+(define (tc-arena-owner-call-type-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]
+  [args : ast.AstExprList]
+  [kind : i64]) : ResultTcType
+  ;; Preserve ordinary lookup, arity, and shadowing diagnostics. Only a call
+  ;; that really resolves to the canonical zero-argument constructor gets its
+  ;; otherwise-bare result refined with the call-site brand.
+  (match (tc-call-expr-ordinary-id ctx env func-id args)
+    [(ResultTcType.Ok ty)
+      (if (tc-arena-type? ctx ty)
+        (ResultTcType.Ok (tc-arena-branded-type kind func-id))
+        (ResultTcType.Ok ty))]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-str-ref-type? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -41381,6 +41581,13 @@
             (let
               [arena-call-kind : i64
                 (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
+              [arena-owner-kind : i64
+                (tc-arena-owner-call-kind-ids
+                  ctx
+                  env
+                  name-id
+                  lookup-id
+                  args.len)]
               [slice-call-kind : TcSliceViewCallKind
                 (tc-slice-view-call-kind-name ctx env name-id name)]
               (cond
@@ -41411,6 +41618,13 @@
                     (tc-atomic-pointer-name? name)
                     (not (tc-source-value-bound-id? ctx env name-id)))
                   (tc-atomic-pointer-call ctx env name args)]
+                [(not (= arena-owner-kind (tc-arena-owner-kind-none)))
+                  (tc-arena-owner-call-type-id
+                    ctx
+                    env
+                    func-id
+                    args
+                    arena-owner-kind)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-phase))
                   (tc-phase-call ctx env func args)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
@@ -50170,7 +50384,15 @@
               (ResultTcUnit.Err
                 "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope"))]
           [(tc-type-contains-reference? ty)
-            (if allow-immutable-reference-captures
+            (if (or
+              allow-immutable-reference-captures
+              ;; Nominal lifetime arguments participate in the general
+              ;; reference predicate. A generated atomic Arena brand is a
+              ;; spanning owner capability, not a stack borrow; keep its exact
+              ;; type for the later structural thread-transfer classifier.
+              (tc-type-regions-all-atomic-arena-owners?
+                (tc-type-env-scoped-carrier-env carrier)
+                ty))
               (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
                 expr-bases
                 carrier
@@ -53262,10 +53484,16 @@
   [ctx : TcContext]
   [name-id : i64]
   [args : ast.AstLifetimeList]) : ResultTcLifetimeSubst
-  (match (tc-nominal-lifetimes-id ctx name-id)
-    [(ResultTcLifetimeList.Ok params)
-      (tc-infer-lifetime-list params TcLifetimeSubst.Nil params args)]
-    [(ResultTcLifetimeList.Err message) (ResultTcLifetimeSubst.Err message)]))
+  (if (and
+    (tc-arena-nominal-name-id? name-id)
+    (= (tc-lifetime-list-count args) 1))
+    ;; Arena's single checker-only brand is phantom: its one-word runtime
+    ;; declaration intentionally has no lifetime parameter or field to rewrite.
+    (ResultTcLifetimeSubst.Ok TcLifetimeSubst.Nil)
+    (match (tc-nominal-lifetimes-id ctx name-id)
+      [(ResultTcLifetimeList.Ok params)
+        (tc-infer-lifetime-list params TcLifetimeSubst.Nil params args)]
+      [(ResultTcLifetimeList.Err message) (ResultTcLifetimeSubst.Err message)])))
 
 (define (tc-struct-field-type-with-args-id
   [ctx : TcContext]
@@ -70132,8 +70360,12 @@
       (tc-move-global-copyable-nominal? ctx name depth)]
     [(ast.AstType.Struct name)
       (tc-move-global-copyable-nominal? ctx name depth)]
-    [(ast.AstType.StructArgs name _)
-      (tc-move-global-copyable-nominal? ctx name depth)]
+    [(ast.AstType.StructArgs name lifetimes)
+      (if (and
+        (tc-arena-nominal-name-id? name)
+        (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0))
+        false
+        (tc-move-global-copyable-nominal? ctx name depth))]
     [(ast.AstType.Var name)
       (tc-move-global-copyable-unresolved-name? ctx name depth)]
     [(ast.AstType.VarArgs name _)

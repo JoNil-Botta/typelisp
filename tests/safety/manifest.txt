@@ -387,6 +387,15 @@ thread_spawn_box_i64_capture_reject|check-fail|tests/safety/thread_spawn_box_i64
 thread_join_box_i64_double_reject|check-fail|tests/safety/thread_join_box_i64_double_reject.tl|-|use of moved value `worker`
 thread_spawn_i64_shadow_local_ok|check-ok|tests/safety/thread_spawn_i64_shadow_local_ok.tl|-|-
 arena_phase_rewind_use_after_reject|check-fail|tests/safety/arena_phase_rewind_use_after_reject.tl|-|use of moved value `text`
+arena_branded_distinct_alias_reject|check-fail|tests/safety/arena_branded_distinct_alias_reject.tl|-|lifetime parameter 1 of `stdlib.arena/Arena` is invariant
+arena_branded_duplicate_reject|check-fail|tests/safety/arena_branded_duplicate_reject.tl|-|use of moved value `owner`
+arena_branded_aggregate_duplicate_reject|check-fail|tests/safety/arena_branded_aggregate_duplicate_reject.tl|-|use of moved value `owner`
+arena_branded_closure_capture_reuse_reject|check-fail|tests/safety/arena_branded_closure_capture_reuse_reject.tl|-|use of moved value `owner`
+arena_branded_control_flow_join_reject|check-fail|tests/safety/arena_branded_control_flow_join_reject.tl|-|if branches must match
+arena_bare_cannot_rebrand_reject|check-fail|tests/safety/arena_bare_cannot_rebrand_reject.tl|-|expected (stdlib.arena/Arena owner), found stdlib.arena/Arena
+arena_branded_arity_reject|check-fail|tests/safety/arena_branded_arity_reject.tl|-|nominal lifetime argument arity mismatch
+arena_branded_return_only_reject|check-fail|tests/safety/arena_branded_return_only_reject.tl|-|returned reference lifetime must be tied to a parameter
+arena_branded_ordinary_aggregate_thread_reject|check-fail|tests/safety/arena_branded_ordinary_aggregate_thread_reject.tl|-|scoped-region and lifetime-parameterized values cannot cross thread boundaries
 arena_phase_rewind_token_reuse_reject|check-fail|tests/safety/arena_phase_rewind_token_reuse_reject.tl|-|use of moved value `phase`
 arena_destroy_owner_use_after_reject|check-fail|tests/safety/arena_destroy_owner_use_after_reject.tl|-|use of moved value `owner`
 arena_destroy_value_use_after_reject|check-fail|tests/safety/arena_destroy_value_use_after_reject.tl|-|use of moved value `text`

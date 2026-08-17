@@ -87,9 +87,13 @@
 ;#         (arena.destroy scratch)))))
 ;# ```
 ;#
-;# `Arena` and `ArenaMark` are nominal wrappers over raw runtime handles. The
-;# raw `tl_*` hooks remain exported for compiler/runtime internals and FFI-like
-;# low-level code; ordinary user code should use the typed helpers below.
+;# `Arena` and `ArenaMark` are nominal wrappers over raw runtime handles. An
+;# unannotated canonical `make` or `make-atomic` call is checker-refined to the
+;# move-only `(Arena fresh)` form; the generated brand is phantom, so both forms
+;# retain the same one-word ABI. Writing an explicit bare `Arena` annotation
+;# deliberately erases that brand for compatibility. The raw `tl_*` hooks
+;# remain exported for compiler/runtime internals and FFI-like low-level code;
+;# ordinary user code should use the typed helpers below.
 ;: First-class arena handle. The runtime representation is a raw `i64` handle,
 ;: but the source type is nominal so raw integers cannot satisfy arena APIs.
 (defstruct Arena
@@ -131,7 +135,8 @@
 (unsafe
   (extern (tl_region_reset [arg0 : i64]) : unit))
 
-;: Create a fresh independent arena and return its handle without switching to it.
+;: Create a fresh independent arena and return its handle without switching to
+;: it. An unannotated canonical call receives a fresh move-only checker brand.
 ;:
 ;: Prefer `with-scratch` for one-shot scratch clone-out, or pass the handle to
 ;: `with-escape` when the scratch arena should be reused. Direct switching or
@@ -139,7 +144,9 @@
 (define (make) : Arena
   (Arena (tl_arena_make)))
 
-;: Create a fresh independent atomic arena without switching to it.
+;: Create a fresh independent atomic arena without switching to it. An
+;: unannotated canonical call receives a fresh move-only checker brand that
+;: retains the atomic-owner proof through lifetime-parameterized aggregates.
 (define (make-atomic) : Arena
   (Arena (tl_arena_make_atomic)))
 

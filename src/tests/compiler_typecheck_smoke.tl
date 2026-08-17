@@ -5668,6 +5668,7 @@
       (cis.intern-structural-session-handle-from-source-names macro-a-handle)]
     [session-b : cis.InternStructuralSessionHandle
       (cis.intern-structural-session-handle-from-source-names macro-b-handle)]
+    [generation-b : i64 (ci.intern-compat-state-generation intern-b)]
     [ok : bool
       (and
         (= macro-a-handle.address body-a-handle.address)
@@ -5689,25 +5690,62 @@
             81)]
         [b-pair : cis.InternStructuralKey
           (cis.intern-structural-session-composite-pair-key session-b 71 81)]
+        [a-triple : cis.InternStructuralKey
+          (cis.intern-structural-session-composite-triple-key
+            session-a
+            91
+            101
+            111)]
         (begin
           (set!
             ok
             (and
               ok
               (=
-                (cis.intern-state-structural-key-raw a-pair)
-                (cis.intern-state-structural-key-raw a-pair-again))
+                (cis.intern-structural-key-raw a-pair)
+                (cis.intern-structural-key-raw a-pair-again))
               (not
                 (=
-                  (cis.intern-state-structural-key-raw a-pair)
-                  (cis.intern-state-structural-key-raw b-pair)))
+                  (cis.intern-structural-key-raw a-pair)
+                  (cis.intern-structural-key-raw b-pair)))
               (cis.intern-structural-session-key-owned? session-a a-pair)
               (not (cis.intern-structural-session-key-owned? session-b a-pair))
+              (ci.intern-compat-state-composite-pair-id?
+                intern-a
+                (cis.intern-structural-key-raw a-pair))
+              (=
+                (ci.intern-compat-state-composite-left-id-unchecked
+                  intern-a
+                  (cis.intern-structural-key-raw a-pair))
+                71)
+              (=
+                (ci.intern-compat-state-composite-right-id-unchecked
+                  intern-a
+                  (cis.intern-structural-key-raw a-pair))
+                81)
+              (ci.intern-compat-state-composite-triple-id?
+                intern-a
+                (cis.intern-structural-key-raw a-triple))
+              (=
+                (ci.intern-compat-state-composite-left-id-unchecked
+                  intern-a
+                  (cis.intern-structural-key-raw a-triple))
+                91)
+              (=
+                (ci.intern-compat-state-composite-middle-id-unchecked
+                  intern-a
+                  (cis.intern-structural-key-raw a-triple))
+                101)
+              (=
+                (ci.intern-compat-state-composite-right-id-unchecked
+                  intern-a
+                  (cis.intern-structural-key-raw a-triple))
+                111)
               ;; B is both explicit and installed. The explicit constructor
               ;; must keep the transitional legacy fast path coherent for the
               ;; same owner while leaving unrelated installed owners alone.
               (ci.intern-composite-pair-id?
-                (cis.intern-state-structural-key-raw b-pair))))
+                (cis.intern-structural-key-raw b-pair))))
           (let
             [index : i64 0]
             (while (< index 700)
@@ -5730,8 +5768,21 @@
             ok
             (and
               ok
-              (= (ci.intern-compat-state-structural-count intern-a) 701)
+              (= (ci.intern-compat-state-structural-count intern-a) 702)
               (= (ci.intern-compat-state-structural-count intern-b) 1)
+              (>=
+                (array-length
+                  (__tl-project-field
+                    (array-ref intern-a.structural-table-cell 0)
+                    kinds))
+                1024)
+              (= (ci.intern-structural-record-slot-bytes) 37)
+              (=
+                (array-length
+                  (__tl-project-field
+                    (array-ref intern-a.structural-table-cell 0)
+                    structural-cache-raws))
+                (ci.intern-structural-cache-capacity))
               (=
                 (ci.intern-active-table-id)
                 (ci.intern-compat-state-table-id intern-b))))))
@@ -5747,11 +5798,22 @@
         [next-session-a : cis.InternStructuralSessionHandle
           (cis.intern-structural-session-handle-from-source-names
             (tc_core.tc-macro-state-source-names macro-a))]
-        (and
-          ok
-          stale-before-rebind
-          (cis.intern-structural-session-valid? next-session-a)
-          (= session-a.address next-session-a.address))))))
+        [reset-to-ok : bool
+          (and
+            ok
+            stale-before-rebind
+            (= (ci.intern-compat-state-structural-count intern-a) 0)
+            (cis.intern-structural-session-valid? next-session-a)
+            (= session-a.address next-session-a.address))]
+        (begin
+          (ci.intern-compat-state-reset! intern-b)
+          (and
+            reset-to-ok
+            (cis.intern-structural-session-valid? next-session-a)
+            (not (cis.intern-structural-session-valid? session-b))
+            (= (ci.intern-compat-state-structural-count intern-b) 0)
+            (not (= (ci.intern-compat-state-generation intern-b) generation-b))
+            (= (ci.intern-compat-state-pool-len intern-b) 0)))))))
 
 (test
   compiler-typecheck-structural-intern-session-isolation

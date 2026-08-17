@@ -58,9 +58,33 @@ linux_memory_limit_run_systemd() {
         set -- "--setenv=$_linux_memory_limit_env_name" "$@"
     done
 
-    systemd-run \
+    if [ -z "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+        systemd-run \
+            --user \
+            --quiet \
+            --wait \
+            --pipe \
+            --collect \
+            --same-dir \
+            --service-type=exec \
+            --property=MemoryAccounting=yes \
+            --property="MemoryMax=$_linux_memory_limit_bytes" \
+            --property=MemorySwapMax=0 \
+            --property=OOMPolicy=kill \
+            "$@"
+        return $?
+    fi
+
+    # With --wait, systemd reports a post-run MemoryPeak. Some managers account
+    # only the service launcher in that summary, while the service is not a
+    # descendant that an outer wait4(2) measurement can cover. Preserve the
+    # larger in-cgroup process-group sample when the bounded runner supplies
+    # one; direct callers still get the systemd evidence.
+    _linux_memory_limit_systemd_stderr="$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE.systemd-stderr"
+    rm -f "$_linux_memory_limit_systemd_stderr"
+    _linux_memory_limit_status=0
+    LC_ALL=C SYSTEMD_COLORS=0 systemd-run \
         --user \
-        --quiet \
         --wait \
         --pipe \
         --collect \
@@ -70,7 +94,52 @@ linux_memory_limit_run_systemd() {
         --property="MemoryMax=$_linux_memory_limit_bytes" \
         --property=MemorySwapMax=0 \
         --property=OOMPolicy=kill \
-        "$@"
+        "$@" 2> "$_linux_memory_limit_systemd_stderr" ||
+        _linux_memory_limit_status=$?
+    cat "$_linux_memory_limit_systemd_stderr" >&2
+    _linux_memory_limit_peak_bytes=$(awk '
+        /^Memory peak: / { raw = $3 }
+        END {
+            if (raw == "") exit 1
+            suffix = substr(raw, length(raw), 1)
+            if (suffix ~ /[0-9]/) {
+                value = raw + 0
+                factor = 1
+            } else {
+                value = substr(raw, 1, length(raw) - 1) + 0
+                if (suffix == "B") factor = 1
+                else if (suffix == "K") factor = 1024
+                else if (suffix == "M") factor = 1024 * 1024
+                else if (suffix == "G") factor = 1024 * 1024 * 1024
+                else if (suffix == "T") factor = 1024 * 1024 * 1024 * 1024
+                else exit 1
+            }
+            printf "%.0f\n", value * factor
+        }
+    ' "$_linux_memory_limit_systemd_stderr" 2>/dev/null || true)
+    _linux_memory_limit_sampled_bytes=0
+    if [ -s "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE" ]; then
+        _linux_memory_limit_sampled_bytes=$(sed -n '1p' \
+            "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE")
+        case "$_linux_memory_limit_sampled_bytes" in
+            "" | *[!0-9]*) _linux_memory_limit_sampled_bytes=0 ;;
+        esac
+    fi
+    case "$_linux_memory_limit_peak_bytes" in
+        "" | *[!0-9]*) _linux_memory_limit_peak_bytes=0 ;;
+    esac
+    if [ "$_linux_memory_limit_sampled_bytes" -gt "$_linux_memory_limit_peak_bytes" ]; then
+        _linux_memory_limit_peak_bytes=$_linux_memory_limit_sampled_bytes
+    fi
+    printf '%s\n' "$_linux_memory_limit_peak_bytes" \
+        > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
+    if grep -Eq 'result: oom-kill|result .oom-kill.' \
+        "$_linux_memory_limit_systemd_stderr"; then
+        rm -f "$_linux_memory_limit_systemd_stderr"
+        return 137
+    fi
+    rm -f "$_linux_memory_limit_systemd_stderr"
+    return "$_linux_memory_limit_status"
 }
 
 linux_memory_limit_watchdog_available() {
@@ -134,6 +203,7 @@ linux_memory_limit_run_watchdog() {
     shift
     _linux_memory_limit_kib=$(((_linux_memory_limit_bytes + 1023) / 1024))
     _linux_memory_limit_poll=${TYPELISP_LINUX_MEMORY_LIMIT_POLL_SECONDS:-0.05}
+    _linux_memory_limit_peak_rss=0
 
     setsid "$@" &
     _linux_memory_limit_pid=$!
@@ -158,6 +228,9 @@ linux_memory_limit_run_watchdog() {
         else
             _linux_memory_limit_status=$?
         fi
+        if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+            printf '0\n' > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
+        fi
         return "$_linux_memory_limit_status"
     fi
     if [ "$_linux_memory_limit_pgid" -ne "$_linux_memory_limit_pid" ]; then
@@ -178,12 +251,19 @@ linux_memory_limit_run_watchdog() {
         if [ "$_linux_memory_limit_rss" -eq 0 ]; then
             break
         fi
+        if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_peak_rss" ]; then
+            _linux_memory_limit_peak_rss=$_linux_memory_limit_rss
+        fi
         if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_kib" ]; then
             echo "memory limit exceeded: aggregate RSS ${_linux_memory_limit_rss} KiB > ${_linux_memory_limit_kib} KiB (rss-watchdog fallback)" >&2
             kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
             sleep 0.1
             kill -KILL "-$_linux_memory_limit_pid" 2>/dev/null || true
             wait "$_linux_memory_limit_pid" 2>/dev/null || true
+            if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+                printf '%s\n' "$((_linux_memory_limit_peak_rss * 1024))" \
+                    > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
+            fi
             return 137
         fi
         sleep "$_linux_memory_limit_poll"
@@ -193,6 +273,10 @@ linux_memory_limit_run_watchdog() {
         _linux_memory_limit_status=0
     else
         _linux_memory_limit_status=$?
+    fi
+    if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+        printf '%s\n' "$((_linux_memory_limit_peak_rss * 1024))" \
+            > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
     fi
     return "$_linux_memory_limit_status"
 }

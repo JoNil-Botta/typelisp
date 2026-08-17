@@ -53,10 +53,10 @@ instead, which the sweep does not require to be reachable.
 | Run the complete local CI suite | `ci-verify.sh` |
 | Check TypeLisp formatting and lint | `check-tl-format.sh`, `verify-format-large-crlf.sh`, `check-tl-lint.sh` |
 | Check compiler-source coverage | `verify-selfhost-compile-manifest.sh`, `verify-inline-tests.sh` |
-| Check Linux resident-memory limiting | `verify-linux-memory-limit.sh` (covers `lib-linux-memory-limit.sh`) |
+| Check process-tree memory limiting | `verify-linux-memory-limit.sh` (covers `lib-linux-memory-limit.sh`), `verify-windows-memory-limit.ps1` (covers `run-bounded-process.ps1`) |
 | Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog) |
 | Check public CLI behavior | `verify-public-tools.sh`, `check-stage1-wrapper.sh` |
-| Check TLCI containers and package catalogs | `verify-tlci-corpus.sh`, `verify-tlci-native-route-stress.sh`, `verify-package-metadata-tlci.sh`, `verify-package-native-tlci.sh` |
+| Check TLCI containers and package catalogs | `verify-tlci-corpus.sh`, `verify-tlci-native-route-stress.sh`, `verify-embedded-stdlib-tlci-resources.sh`, `verify-package-metadata-tlci.sh`, `verify-package-native-tlci.sh` |
 | Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh`, `verify-native-link-windows.sh` |
 | Check codegen shape and parity | `verify-asm-shape-gates.sh`, `verify-by-value-aggregate-abi.sh` (internal Tuple/Array physical ABI shapes), `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |
 | Check SPMD behavior | `verify-spmd-simd.sh`, `verify-spmd-runtime-dispatch.sh`, `verify-spmd-package-calls.sh`, `verify-spmd-broadcast.sh`, `verify-spmd-lane-identity.sh` |
@@ -74,6 +74,18 @@ provides a hard cgroup-v2 `MemoryMax` with swap disabled. Other Linux runners
 use a documented fallback that samples and terminates the isolated process
 group when aggregate RSS crosses the same ceiling; neither path uses
 `RLIMIT_AS` or treats virtual reservations as resident memory.
+
+`run-memory-bounded.sh` gives gates one fail-closed interface to those Linux
+backends and the Windows Job Object wrapper. Its stable key/value record
+distinguishes command failure, timeout, memory termination, wrapper/setup
+failure, and success. `verify-embedded-stdlib-tlci-resources.sh` applies an
+8192 MiB cap to the production image build, matched opt1/opt2 compiler builds,
+cold starts, and representative native/source expansions on both CI hosts.
+It writes informational measurements to
+`target/embedded-stdlib-tlci-resources/<host>/report.tsv`, while required
+identity, output, routing, and parity results live separately in
+`assertions.tsv`. Linux adds Cachegrind instruction evidence when available;
+no noisy time or instruction measurement is a regression ratchet.
 
 On Windows, `verify-integration.sh` sends independent manifest links through
 `windows-integration-linker.ps1`. The measured default is four concurrent

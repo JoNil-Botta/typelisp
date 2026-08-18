@@ -52,7 +52,14 @@
           (set! acc (+ acc (* v b)))
           (set! i (+ i 1))))
       (let
-        [r : i64 (+ acc (+ a (+ b (+ c v))))]
+        ;; #6288: acc is the forced `%rbp` value home. Keep the immediate-add
+        ;; result distinct so the backend must encode `%rbp + 31` into another
+        ;; destination before the final rsp frame rebase. The later recursive
+        ;; probe is not inlined and keeps the original acc live, preventing the
+        ;; result from legally reusing `%rbp` in place.
+        [acc-plus-31 : i64 (+ acc 31)]
+        [kept-acc : i64 (+ acc (probe6 0))]
+        [r : i64 (+ acc-plus-31 (+ kept-acc (+ a (+ b (+ c v)))))]
         (if (> rounds 1)
           (+ r (churn6 v (- rounds 1)))
           r)))))
@@ -66,7 +73,8 @@
     ;; per iteration t (0..99, a_t = 1+t, b_t = 2+t, c_t = 3+t, probe6(t) = t):
     ;;   t + (1+2t) + (2+2t) + (2+2t) + (4+2t) + (3+2t) + (6+2t)
     ;;     + 10t + 10(2+t) + 10(3+t)
-    ;; acc = 219650; finals a=101 b=102 c=103 v=10 -> r = 219966.
-    (if (= r 219966)
+    ;; acc = 219650; (acc+31) + acc; finals a=101 b=102 c=103 v=10
+    ;; -> r = 439647.
+    (if (= r 439647)
       42
       1)))

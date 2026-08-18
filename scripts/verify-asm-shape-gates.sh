@@ -708,6 +708,11 @@ check_rbp_sixth_csr() {
     _body=$(function_body "$_asm" _tl_rbp_sixth_csr_churn6)
     assert_contains "$_body" 'pushq %rbp' rbp-sixth-csr
     assert_contains "$_body" 'popq %rbp' rbp-sixth-csr
+    # #6288: `%rbp` is a VALUE home here. Its add-immediate must use the
+    # structurally distinct no-base SIB spelling so the final rsp frame rebase
+    # cannot turn `acc + 31` into a frame address.
+    assert_matches "$_body" '^[[:space:]]+leaq 31\(,%rbp,1\), %r[a-z0-9]+$' rbp-sixth-csr
+    assert_not_contains "$_body" 'leaq 31(%rsp)' rbp-sixth-csr
     assert_not_matches "$_body" '\(%rbp\)' rbp-sixth-csr
 }
 

@@ -32294,6 +32294,132 @@
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; #6288: in Linux FPO mode `%rbp` is both the historical frame-address
+;; spelling and an admissible value home. Force the value home directly so a
+;; harmless allocator-order change cannot make this regression disappear.
+;; Exercise both destination plans through save/restore emission and the final
+;; rsp rebase: the accepted text must retain `n + 31` in the structurally
+;; distinct no-base SIB spelling, while the spilled result's real frame store
+;; is still rebased normally.
+(define (compiler-backend-rbp-immediate-add-assignments [spill-dst? : bool]) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        compiler_abi.compiler-reg-id-rbp))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (if spill-dst?
+          (compiler_regalloc.CompilerRegLocation.Spill -16)
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
+
+(define (compiler-backend-rbp-immediate-add-final-asm [spill-dst? : bool]) : String
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_linux : unit
+      (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler-backend-rbp-immediate-add-assignments spill-dst?)]
+    [slot-vars : i64 2]
+    [frame : i64
+      (compiler_backend.compiler-backend-frame-size
+        (compiler_backend.compiler-backend-frame-slots
+          slot-vars
+          assignments
+          backend-state))]
+    [push-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (compiler_backend.compiler-backend-fill-push-csr-regs!
+        assignments
+        push-regs
+        backend-state)]
+    [vars : compiler_regalloc.CompilerRegVarTypes
+      (compiler_regalloc.compiler-reg-var-types-insert
+        (compiler_regalloc.compiler-reg-var-types-insert
+          (compiler_regalloc.compiler-reg-var-types-empty)
+          1
+          (compiler_ast_types.AstType.I64))
+        0
+        (compiler_ast_types.AstType.I64))]
+    (match (compiler_backend.compiler-backend-emit-binop
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      vars
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      1
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 31)
+      (compiler_ast_types.AstType.I64)
+      backend-state)
+      [(compiler_backend.ResultCompilerBackend.Ok binop-asm)
+        (compiler_backend.compiler-backend-peephole-asm
+          (compiler_backend.compiler-backend-rsp-rebase-full
+            (str_cat.str-cat
+              (compiler_backend.compiler-backend-emit-save-callee-regs
+                assignments
+                slot-vars
+                backend-state)
+              binop-asm
+              (compiler_backend.compiler-backend-emit-restore-callee-regs
+                assignments
+                slot-vars
+                backend-state)
+              "    leave\n    ret\n")
+            frame
+            true
+            push-regs
+            push-count
+            slot-vars
+            backend-state))]
+      [(compiler_backend.ResultCompilerBackend.Err _) ""])))
+
+(define (compiler-backend-rbp-immediate-add-final-ok?) : bool
+  (let
+    [direct : String (compiler-backend-rbp-immediate-add-final-asm false)]
+    [direct-rebase-ok : bool
+      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
+    [spilled : String (compiler-backend-rbp-immediate-add-final-asm true)]
+    [spilled-rebase-ok : bool
+      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
+    (and
+      direct-rebase-ok
+      spilled-rebase-ok
+      (compiler_backend.compiler-backend-string-contains?
+        direct
+        "    leaq 31(,%rbp,1), %r12\n")
+      (compiler_backend.compiler-backend-string-contains?
+        spilled
+        "    leaq 31(,%rbp,1), %r8\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains? direct "31(%rsp)"))
+      (not
+        (compiler_backend.compiler-backend-string-contains? spilled "31(%rsp)"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          direct
+          "    addq $31"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          spilled
+          "    addq $31"))
+      ;; The spilled destination remains a genuine rebased frame write.
+      (compiler_backend.compiler-backend-string-contains?
+        spilled
+        "    movq %r8, 48(%rsp)\n")
+      (compiler_backend.compiler-backend-string-contains?
+        direct
+        "    popq %rbp\n")
+      (compiler_backend.compiler-backend-string-contains?
+        spilled
+        "    popq %rbp\n"))))
+
 (define (compiler-backend-direct-immediate-zero-asm
   [op : compiler_ir_types.CompilerIrBinOp]) : compiler_backend.ResultCompilerBackend
   (compiler_backend.compiler-backend-emit-binop
@@ -47513,6 +47639,7 @@ b_keep:
         (compiler-backend-direct-immediate-shift-home-ok?)
         (compiler-backend-direct-rcx-shift-home-ok?)
         (compiler-backend-spill-immediate-binop-home-ok?)
+        (compiler-backend-rbp-immediate-add-final-ok?)
         (compiler-backend-immediate-zero-compaction-ok?)
         (compiler-backend-spill-source-binop-home-ok?)
         (compiler-backend-spill-unop-home-ok?))

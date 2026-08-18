@@ -3213,6 +3213,10 @@
       (compiler_optimize_tests.compiler-optimize-licm-word-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-local-slot-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-local-slot-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-licm-unswitch-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-unswitch-self-test)
       42)

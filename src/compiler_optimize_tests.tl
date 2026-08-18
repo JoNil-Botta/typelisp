@@ -9859,6 +9859,7 @@
       (opt_i64_i64_map.with-capacity 8)
       argc
       (opt_i64_i64_map.with-capacity 8)
+      (opt_i64_i64_map.with-capacity 8)
       (compiler_optimize.opt-global-cell-summary-empty)
       (compiler_ir_types.compiler-ir-representation-index-empty))))
 
@@ -27772,6 +27773,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       (opt_i64_i64_map.with-capacity 1)
+      (opt_i64_i64_map.with-capacity 1)
       (compiler_optimize.opt-global-cell-summary-empty)
       true
       func)
@@ -27820,6 +27822,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       (opt_i64_i64_map.with-capacity 1)
+      (opt_i64_i64_map.with-capacity 1)
       (compiler_optimize.opt-global-cell-summary-empty)
       true
       func)
@@ -27847,6 +27850,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       direct-call-clean
+      (opt_i64_i64_map.with-capacity 1)
       (compiler_optimize.opt-global-cell-summary-empty)
       true
       func)
@@ -28734,14 +28738,18 @@
   (touch i64)
   (probe i64)
   (writer i64)
-  (leaf i64))
+  (leaf i64)
+  ;; A callee that hands its own argument straight back -- the internal sret
+  ;; shape opt-licm-return-alias-map recognizes.
+  (ret-arg i64))
 
 (define (opt-licm-test-symbols) : OptLicmTestSymbols
   (OptLicmTestSymbols
     (opt-test-symbol "touch")
     (opt-test-symbol "probe")
     (opt-test-symbol "writer")
-    (opt-test-symbol "leaf")))
+    (opt-test-symbol "leaf")
+    (opt-test-symbol "ret_arg")))
 
 (define (opt-licm-header-load-call-blocks [symbols : OptLicmTestSymbols]) : compiler_ir_types.CompilerIrBlockList
   (opt-licm-loop-blocks-with-body
@@ -30823,6 +30831,674 @@
               (compiler_ir_types.compiler-ir-label "loop"))
             1))
         217]
+      [else 42])))
+
+;; --- P16: fixed-field loads through a FRAME OBJECT ---------------------------
+;;
+;; The shape: a function allocates an object (`alloc` + `addr_of`), hands the
+;; address to a helper that returns it back, and then reads a fixed field of it
+;; in a loop that also writes ELEMENTS of a different object. That is every
+;; `Vec` local of the interner benchmark -- map-ids, map-hashes, names,
+;; name-off, name-len, state -- and before P16 the first link of the chain was
+;; refused: a `Vec` handle is not a descriptor handle, so opt-licm-gep-kind had
+;; nothing to say about `gep <handle>, 0` and the load through it was an
+;; ordinary rooted load in a loop that writes memory.
+;;
+;; What makes the load invariant is PROVENANCE, not type. The object is an
+;; `Alloc` of this frame, so it is not the element storage of any array, so an
+;; element store -- through a descriptor's loaded data pointer -- and an
+;; element-only callee provably cannot write it. Type alone would be unsound
+;; here: a `(__tl_dyn-array Struct)` stores its elements inline, so a
+;; struct-typed pointer may address element storage, and the last negative
+;; below is exactly that pointer.
+(define (opt-licm-ls-gep
+  [dst : i64]
+  [base : i64]
+  [offset : i64]
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Gep
+    dst
+    (compiler_ir_types.CompilerIrValue.Var base)
+    (compiler_ir_types.CompilerIrValue.I64 offset)
+    ty))
+
+(define (opt-licm-ls-load
+  [dst : i64]
+  [ptr : i64]
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Load
+    dst
+    (compiler_ir_types.CompilerIrValue.Var ptr)
+    ty))
+
+;; `%9 = gep %array, 0 ; %10 = load %9 ; %11 = gep %10, %i ; store %11` -- a
+;; write into the ARRAY parameter's separately allocated element storage, which
+;; every frame object is disjoint from.
+(define (opt-licm-ls-element-store-instrs
+  [rest : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-licm-ls-gep 9 1 0 (compiler_ast_types.AstType.U8))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-licm-ls-load 10 9 (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          11
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.CompilerIrValue.I64 100)
+            (compiler_ast_types.AstType.I64))
+          rest)))))
+
+(define (opt-licm-ls-blocks
+  [entry-instrs : compiler_ir_types.CompilerIrInstrList]
+  [body : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      entry-instrs)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "body")
+                compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          body))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 8)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-licm-ls-local-object-type) : compiler_ast_types.AstType
+  (compiler_ast_types.AstType.Struct (ci.intern "LicmLocalObject")))
+
+;; `%3 = mov 0 ; %20 = alloc T ; %21 = addr_of %20 ; jump loop`
+(define (opt-licm-ls-alloc-entry) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Mov
+      3
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Alloc
+        20
+        (opt-licm-ls-local-object-type))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.AddrOf 21 20)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+;; The same, plus the sret-shaped call whose result IS `%21`.
+(define (opt-licm-ls-alloc-call-entry [symbols : OptLicmTestSymbols]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Mov
+      3
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Alloc
+        20
+        (opt-licm-ls-local-object-type))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.AddrOf 21 20)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Call
+            22
+            symbols.ret-arg
+            (compiler_ir_types.CompilerIrCallArgs.One
+              (compiler_ir_types.CompilerIrValue.Var 21))
+            (opt-licm-ls-local-object-type))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+(define (opt-licm-ls-plain-entry) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Mov
+      3
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "loop"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-licm-ls-finish-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      5
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.compiler-ir-label "body")
+        (compiler_ir_types.compiler-ir-label "exit"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; Read a fixed field of `handle`, then write an element of the array
+;; parameter. `tail` carries whatever else the case puts in the loop.
+(define (opt-licm-ls-field-read-body
+  [handle : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-licm-ls-gep 7 handle 0 (compiler_ast_types.AstType.U8))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-licm-ls-load 8 7 (compiler_ast_types.AstType.U64))
+      (opt-licm-ls-element-store-instrs tail))))
+
+;; A write through the SAME frame object, at a different offset. It is a
+;; header-or-unknown store, so it closes the proof for every fixed word of that
+;; object -- and for every other descriptor word in the loop.
+(define (opt-licm-ls-same-object-store-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-licm-ls-gep 13 21 8 (compiler_ast_types.AstType.U8))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 13)
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (compiler_ast_types.AstType.I64))
+      (opt-licm-ls-finish-instrs))))
+
+(define (opt-licm-ls-call-instrs [symbols : OptLicmTestSymbols]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Call
+      12
+      symbols.touch
+      (compiler_ir_types.CompilerIrCallArgs.Nil)
+      (compiler_ast_types.AstType.I64))
+    (opt-licm-ls-finish-instrs)))
+
+;; The pointer P16 must still refuse: a fixed word of a STRUCT ELEMENT, reached
+;; by indexing the array parameter's data buffer. Its type is the same struct
+;; type the frame object has; only its provenance differs, and an element store
+;; in this same loop can write it.
+(define (opt-licm-ls-element-handle-body) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-licm-ls-gep 9 1 0 (compiler_ast_types.AstType.U8))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-licm-ls-load 10 9 (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-licm-ls-gep 14 10 0 (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-licm-ls-gep 7 14 8 (compiler_ast_types.AstType.U8))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-licm-ls-load 8 7 (compiler_ast_types.AstType.U64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                11
+                (compiler_ir_types.CompilerIrValue.Var 10)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.StorePtr
+                  (compiler_ir_types.CompilerIrValue.Var 11)
+                  (compiler_ir_types.CompilerIrValue.I64 100)
+                  (compiler_ast_types.AstType.I64))
+                (opt-licm-ls-finish-instrs)))))))))
+
+;; A VARIABLE offset off a frame object leaves the fixed-word class: indexing
+;; can land on any word of the object -- an inline array field's element, say --
+;; so the word a later literal Gep names is no longer decided by the addresses
+;; alone. The read below is loop-INVARIANT (its offset is a parameter) and the
+;; loop still only writes elements, so nothing but the offset's shape keeps it
+;; in place.
+(define (opt-licm-ls-variable-offset-body) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      15
+      (compiler_ir_types.CompilerIrValue.Var 21)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-licm-ls-gep 7 15 0 (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-licm-ls-load 8 7 (compiler_ast_types.AstType.U64))
+        (opt-licm-ls-element-store-instrs (opt-licm-ls-finish-instrs))))))
+
+(define (opt-licm-ls-optimized
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [return-alias : opt_i64_i64_map.Map]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "licm_local")
+        (opt-licm-array-params)
+        (compiler_ast_types.AstType.I64)
+        32
+        blocks)]
+    (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      direct-call-clean
+      return-alias
+      (compiler_optimize.opt-global-cell-summary-empty)
+      true
+      func)
+      [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
+
+(define (opt-licm-ls-return-alias-map [symbols : OptLicmTestSymbols]) : opt_i64_i64_map.Map
+  (let
+    [map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+    (begin
+      (opt_i64_i64_map.insert-ref!
+        (&mut map)
+        (compiler_ir_types.compiler-ir-symbol-id symbols.ret-arg)
+        1)
+      map)))
+
+;; `touch` proven to write ONLY element storage: the middle memory tier.
+(define (opt-licm-ls-element-clean-map [symbols : OptLicmTestSymbols]) : opt_i64_i64_map.Map
+  (opt-licm-touch-clean-map
+    symbols
+    (+
+      (compiler_optimize.opt-direct-call-clean-global-bit)
+      (compiler_optimize.opt-direct-call-clean-unconditional-global-bit))))
+
+;; --- the return-alias table's own question -----------------------------------
+;;
+;; "Does this callee hand one of its own parameters straight back?" The answer
+;; has to come from the callee's IR, not from the calling convention, so these
+;; fixtures pin what counts and what does not.
+(define (opt-licm-ls-alias-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "a"
+      (compiler_ast_types.AstType.U64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "b"
+        (compiler_ast_types.AstType.U64)
+        1)
+      (compiler_ir_types.CompilerIrParamList.Nil))))
+
+(define (opt-licm-ls-alias-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "licm_alias")
+    (opt-licm-ls-alias-params)
+    (compiler_ast_types.AstType.U64)
+    8
+    blocks))
+
+(define (opt-licm-ls-alias-single-block
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      instrs)
+    (compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-licm-ls-alias-return-instrs [var : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var var)))
+    (compiler_ir_types.CompilerIrInstrList.Nil)))
+
+;; Two returning paths, each handing back the parameter named by its argument.
+(define (opt-licm-ls-alias-two-return-blocks [left : i64] [right : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          5
+          (compiler_ir_types.CompilerIrBinOp.Eq)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.compiler-ir-label "left")
+            (compiler_ir_types.compiler-ir-label "right"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "left")
+        (opt-licm-ls-alias-return-instrs left))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "right")
+          (opt-licm-ls-alias-return-instrs right))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-licm-ls-alias-index
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (compiler_optimize.opt-licm-return-alias-function-index
+    (opt-licm-ls-alias-function blocks)))
+
+(define (compiler-optimize-licm-local-slot-self-test) : i64
+  (let
+    [symbols : OptLicmTestSymbols (opt-licm-test-symbols)]
+    [empty-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [element-clean : opt_i64_i64_map.Map
+      (opt-licm-ls-element-clean-map symbols)]
+    [alias-map : opt_i64_i64_map.Map (opt-licm-ls-return-alias-map symbols)]
+    ;; Positive: the field read leaves a loop whose only write is an element
+    ;; store through a DIFFERENT object.
+    [plain-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-ls-optimized
+        (opt-licm-ls-blocks
+          (opt-licm-ls-alloc-entry)
+          (opt-licm-ls-field-read-body 21 (opt-licm-ls-finish-instrs)))
+        empty-map
+        alias-map)]
+    [plain : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks plain-func)]
+    ;; Positive: the same loop plus a direct callee proven to write only
+    ;; element storage. Its writes cannot reach a frame object either.
+    [element-call-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-ls-optimized
+        (opt-licm-ls-blocks
+          (opt-licm-ls-alloc-entry)
+          (opt-licm-ls-field-read-body 21 (opt-licm-ls-call-instrs symbols)))
+        element-clean
+        alias-map)]
+    [element-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks element-call-func)]
+    ;; Negative: the same blocks with the callee's memory class unproven.
+    [opaque-call-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-ls-optimized
+        (opt-licm-ls-blocks
+          (opt-licm-ls-alloc-entry)
+          (opt-licm-ls-field-read-body 21 (opt-licm-ls-call-instrs symbols)))
+        empty-map
+        alias-map)]
+    [opaque-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks opaque-call-func)]
+    ;; Negative: the loop writes the SAME frame object at another offset.
+    [same-object-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-ls-optimized
+        (opt-licm-ls-blocks
+          (opt-licm-ls-alloc-entry)
+          (opt-licm-ls-field-read-body
+            21
+            (opt-licm-ls-same-object-store-instrs)))
+        empty-map
+        alias-map)]
+    [same-object : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks same-object-func)]
+    ;; Positive: the handle arrives back out of a call the table proves returns
+    ;; its argument. This is the interner's `%d = call f(.., %sret)` shape.
+    [alias-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-ls-optimized
+        (opt-licm-ls-blocks
+          (opt-licm-ls-alloc-call-entry symbols)
+          (opt-licm-ls-field-read-body 22 (opt-licm-ls-finish-instrs)))
+        empty-map
+        alias-map)]
+    [alias-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks alias-func)]
+    ;; Negative control for it: without the table the call result carries no
+    ;; provenance and the field read stays put.
+    [no-alias-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-ls-optimized
+        (opt-licm-ls-blocks
+          (opt-licm-ls-alloc-call-entry symbols)
+          (opt-licm-ls-field-read-body 22 (opt-licm-ls-finish-instrs)))
+        empty-map
+        empty-map)]
+    [no-alias : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks no-alias-func)]
+    ;; Negative: the same fixed-offset read through a handle that points INTO
+    ;; element storage. Same static type, different provenance, and the loop's
+    ;; own element store can write it.
+    [element-handle-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-ls-optimized
+        (opt-licm-ls-blocks
+          (opt-licm-ls-plain-entry)
+          (opt-licm-ls-element-handle-body))
+        empty-map
+        alias-map)]
+    [element-handle : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks element-handle-func)]
+    ;; Negative: a variable offset off the frame object, then a literal one.
+    [variable-offset-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-ls-optimized
+        (opt-licm-ls-blocks
+          (opt-licm-ls-alloc-entry)
+          (opt-licm-ls-variable-offset-body))
+        empty-map
+        alias-map)]
+    [variable-offset : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks variable-offset-func)]
+    (cond
+      ;; The return-alias question, first.
+      [(not
+          (=
+            (opt-licm-ls-alias-index
+              (opt-licm-ls-alias-single-block
+                (opt-licm-ls-alias-return-instrs 1)))
+            1))
+        300]
+      [(not
+          (=
+            (opt-licm-ls-alias-index
+              (opt-licm-ls-alias-single-block
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    5
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    (compiler_ir_types.CompilerIrValue.Var 0)
+                    (compiler_ir_types.CompilerIrValue.Var 1)
+                    (compiler_ast_types.AstType.U64))
+                  (opt-licm-ls-alias-return-instrs 5))))
+            -1))
+        301]
+      ;; A unit return describes no value.
+      [(not
+          (=
+            (opt-licm-ls-alias-index
+              (opt-licm-ls-alias-single-block
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.No))
+                  (compiler_ir_types.CompilerIrInstrList.Nil))))
+            -1))
+        302]
+      ;; A tail call's result belongs to the tail callee, not to this
+      ;; function's parameter list.
+      [(not
+          (=
+            (opt-licm-ls-alias-index
+              (opt-licm-ls-alias-single-block
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.TailCall
+                    symbols.touch
+                    (compiler_ir_types.CompilerIrCallArgs.Nil)
+                    (compiler_ast_types.AstType.U64))
+                  (compiler_ir_types.CompilerIrInstrList.Nil))))
+            -1))
+        303]
+      ;; Every returning path must agree.
+      [(not
+          (=
+            (opt-licm-ls-alias-index (opt-licm-ls-alias-two-return-blocks 0 0))
+            0))
+        304]
+      [(not
+          (=
+            (opt-licm-ls-alias-index (opt-licm-ls-alias-two-return-blocks 0 1))
+            -1))
+        305]
+      ;; The frame-object proof.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function plain-func)))
+        310]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              plain
+              (compiler_ir_types.compiler-ir-label "entry"))
+            2))
+        311]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              plain
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        312]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function element-call-func)))
+        313]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              element-call
+              (compiler_ir_types.compiler-ir-label "entry"))
+            2))
+        314]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              element-call
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        315]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function opaque-call-func)))
+        316]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              opaque-call
+              (compiler_ir_types.compiler-ir-label "entry"))
+            0))
+        317]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              opaque-call
+              (compiler_ir_types.compiler-ir-label "loop"))
+            2))
+        318]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function same-object-func)))
+        319]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              same-object
+              (compiler_ir_types.compiler-ir-label "entry"))
+            0))
+        320]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              same-object
+              (compiler_ir_types.compiler-ir-label "loop"))
+            2))
+        321]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function alias-func)))
+        322]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              alias-blocks
+              (compiler_ir_types.compiler-ir-label "entry"))
+            2))
+        323]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              alias-blocks
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        324]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function no-alias-func)))
+        325]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              no-alias
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        326]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              no-alias
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        327]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function element-handle-func)))
+        328]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              element-handle
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        329]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              element-handle
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        330]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function variable-offset-func)))
+        331]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              variable-offset
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        332]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              variable-offset
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        333]
       [else 42])))
 
 (define (opt-licm-unswitch-test-params) : compiler_ir_types.CompilerIrParamList
@@ -45868,6 +46544,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       (opt_i64_i64_map.with-capacity 1)
+      (opt_i64_i64_map.with-capacity 1)
       (compiler_optimize.opt-global-cell-summary-empty)
       true
       func)
@@ -58916,6 +59593,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       (opt-lp-test-clean-map symbols bits)
+      (opt_i64_i64_map.with-capacity 1)
       (opt-lp-test-cells symbols)
       false
       func)
@@ -58947,6 +59625,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       clean
+      (opt_i64_i64_map.with-capacity 1)
       cells
       false
       func)

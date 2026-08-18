@@ -19431,7 +19431,44 @@
   ;; global's symbol id. This is the same class of word as a descriptor header
   ;; slot -- element storage is disjoint from it -- so the header-load proofs
   ;; accept it, while a store through it stays a header-or-unknown store.
-  (GlobalSlot i64))
+  (GlobalSlot i64)
+  ;; P16. `LocalObject o` is the ADDRESS of the object `%o = alloc T` created:
+  ;; storage that belongs to THIS activation. It is reached through
+  ;; `addr_of %o`, through an SSA copy of that address, or back out of a call
+  ;; that returns the argument it was handed (opt-licm-return-alias-map).
+  ;; `LocalSlot o` is a FIXED word of that same object, one or more
+  ;; literal-offset Geps away. Both payloads are the `Alloc`'s dst var, so the
+  ;; two kinds name the object rather than the path taken to it.
+  ;;
+  ;; SOUNDNESS -- why these are the same class of word as a descriptor header
+  ;; slot, and what makes the header-load proofs apply to them.
+  ;;
+  ;;  * `Alloc` creates a distinct object. Nothing else in the function names
+  ;;    it: that is the fact opt-licm-root-disjoint-store? already rests on for
+  ;;    `Fresh`, and the reason `Alloc` seeds a Fresh root at all.
+  ;;  * Decisively, a frame object is never the ELEMENT STORAGE of an array.
+  ;;    Element storage is the heap block a descriptor's DATA SLOT names --
+  ;;    reached by loading that slot (OptLicmPtrKind.DataSlot -> DataBuffer)
+  ;;    and indexed from there (DataElement) -- and that block is the result of
+  ;;    a `tl_alloc`, a different allocation from every `Alloc` of this frame.
+  ;;    So an element store cannot write a word of a frame object, and neither
+  ;;    can an element-only CALLEE, whose every write lands in some array's
+  ;;    element storage by construction (opt-direct-call-element-clean?,
+  ;;    opt-call-memory-element-bit).
+  ;;
+  ;; That is exactly the disjointness the descriptor-header proofs already
+  ;; assume between a descriptor and the buffer it names, so these kinds join
+  ;; opt-licm-header-slot-ptr-kind? and a STORE through one stays a
+  ;; header-or-unknown store (opt-licm-store-summary-for-storeptr's `_` arm),
+  ;; which closes the proof for every other load in the same loop.
+  ;;
+  ;; This is the fact a `Vec`-typed handle needs and the one its TYPE cannot
+  ;; give. A `(__tl_dyn-array Struct)` stores its elements inline, so a
+  ;; Vec-typed pointer may perfectly well address element storage that an
+  ;; element-only store writes -- but not one whose provenance is an `Alloc` of
+  ;; this function.
+  (LocalObject i64)
+  (LocalSlot i64))
 
 (defenum OptLicmPtrEnv
   (Nil)
@@ -19448,7 +19485,21 @@
   (Some OptLicmRoot))
 
 (defstruct OptLicmRootEnv
-  (map opt_i64_i64_map.Map))
+  (map opt_i64_i64_map.Map)
+  ;; The whole-program RETURN-ALIAS table: callee symbol id -> 1 + the index of
+  ;; the parameter that callee hands straight back on every returning path
+  ;; (opt-licm-return-alias-map). It rides with the provenance environment
+  ;; because a `Call` is where provenance would otherwise stop for no reason
+  ;; but missing information: the internal ABI returns an inline aggregate
+  ;; through a hidden slot the CALLER allocates and the callee returns
+  ;; unchanged, so `%d = call f(.., %p)` leaves `%d` and `%p` naming one object
+  ;; with no IR edge between them. The table restores that edge from the
+  ;; callee's own IR rather than from an ABI assumption.
+  ;;
+  ;; The map is a per-program fact. Environments built by the per-function
+  ;; summary passes carry an EMPTY one, which simply keeps their older, weaker
+  ;; verdict (a call result stays unrooted).
+  (return-alias opt_i64_i64_map.Map))
 
 (import (vector.vector OptLicmRoot core) as opt_licm_store_root_vec)
 
@@ -19489,8 +19540,10 @@
   ;; opt-licm-direct-call-keeps-globals-clean?.
   (mem-clean-call? bool))
 
-(define (opt-licm-root-env-with-capacity [capacity : i64]) : OptLicmRootEnv
-  (OptLicmRootEnv (opt_i64_i64_map.with-capacity capacity)))
+(define (opt-licm-root-env-with-capacity
+  [capacity : i64]
+  [return-alias : opt_i64_i64_map.Map]) : OptLicmRootEnv
+  (OptLicmRootEnv (opt_i64_i64_map.with-capacity capacity) return-alias))
 
 (define (opt-licm-root-encode [root : OptLicmRoot]) : i64
   (match root
@@ -19763,6 +19816,22 @@
 ;; emitted call, not a memory fact, so an element-only direct call counts here
 ;; exactly like any other call -- its memory verdict is softer, its calling
 ;; convention is not.
+;;
+;; P14 re-measured dropping `element-only-call?` from this predicate outright,
+;; on the whole 17-row corpus: gvn_table -344,685 and liveness_scan -31,277
+;; against cfg_domloops +11,853, intern_table +6. It kept the boundary, because
+;; the residual loss was not separable from the win: gvn-scan-ints and
+;; cfg-scan-ints are character-identical sources whose asm diffs are identical
+;; modulo symbol ids, and they moved in OPPOSITE directions, so no static
+;; property of the loop distinguishes them.
+;;
+;; P16 measured it a third time, now that the memory proof it was waiting on
+;; exists (opt-licm-local-slot-kind). Dropping the bit here and excepting only
+;; the fixed-word ADDRESS class at the Gep site
+;; (opt-licm-gep-call-boundary-ok?) give byte-identical counts on all
+;; seventeen rows. The narrow exception is what lands: it keeps this predicate,
+;; and with it R7's and P14's verdict for every address the exception does not
+;; name, at no measured cost.
 (define (opt-licm-store-summary-call-boundary? [summary : OptLicmStoreSummary]) : bool
   (or summary.call-or-unknown? summary.element-only-call?))
 
@@ -19868,11 +19937,14 @@
 ;;
 ;; It gets its own field rather than `element-only-store?` because it is still a
 ;; CALL: the hoist/allocate interlock reads
-;; opt-licm-store-summary-call-boundary? and keeps pricing it as one. Measured,
-;; that separation is the whole difference between a win and a loss -- routing
-;; the bit through `element-only-store?` instead (so the interlock stopped
-;; seeing the call) cost intern_table 602,891,376 -> 611,411,217 (+1.41%) for a
-;; gvn_table gain of 0.34M.
+;; opt-licm-store-summary-call-boundary? and keeps pricing it as one. R7
+;; measured that separation as the whole difference between a win and a loss --
+;; routing the bit through `element-only-store?` instead, so the interlock
+;; stopped seeing the call, cost intern_table 602,891,376 -> 611,411,217
+;; (+1.41%) for a gvn_table gain of 0.34M. The separation still stands, but the
+;; boundary is no longer all-or-nothing: P16 excepts one ADDRESS class from it
+;; by name (opt-licm-gep-call-boundary-ok?) while every other consumer keeps
+;; pricing an element-only call exactly as a call.
 (define (opt-licm-store-summary-for-direct-call
   [direct-call-clean : opt_i64_i64_map.Map]
   [name : i64]) : OptLicmStoreSummary
@@ -20067,12 +20139,158 @@
                   (opt-licm-phi-root env (__tl-box-place rest) found)
                   (OptMaybeLicmRoot.No))])]))]))
 
+;; --- whole-program return-alias table ---------------------------------------
+;;
+;; Which callees hand one of their own arguments straight back to the caller?
+;; The question exists because provenance dies at a `Call` even when the value
+;; that comes out is the very pointer that went in. The internal ABI returns an
+;; inline aggregate through a hidden trailing slot that the CALLER allocates
+;; (lower-prepare-internal-return-value), and the callee's return value is that
+;; slot's pointer, so
+;;
+;;     %36 = alloc Vec ; %37 = addr_of %36 ; %38 = call f(n, %37) : Vec
+;;
+;; leaves `%38` and `%37` naming ONE object with nothing in the IR to say so.
+;; Every later `gep %38, <field>` therefore looks like a fixed word of an
+;; unknown object, and the header-load proofs give up on it.
+;;
+;; This table answers the question from the CALLEE's own IR rather than from
+;; the calling convention: a function qualifies only when EVERY `Return` in it
+;; returns the same parameter var, verbatim -- no phi, no copy chain, no
+;; aggregate rebuild -- and the function contains no tail call (whose result is
+;; the tail callee's, not a parameter of this one). Under that condition the
+;; call's dst is definitionally the value of that argument, whatever the ABI
+;; does to transport it, so the caller may copy the argument's root and pointer
+;; class onto the result. A function with no `Return` at all (every path
+;; aborts) does not qualify: there is no returned value to describe.
+;;
+;; The table is built once per program beside the other call summaries and is
+;; empty at levels that build no summaries, where it costs the older verdict
+;; and nothing else.
+(define (opt-licm-return-alias-instr
+  [params : ir.CompilerIrParamList]
+  [found : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Return maybe-value)
+      (match maybe-value
+        [(ir.CompilerIrMaybeValue.Some value)
+          (match value
+            [(ir.CompilerIrValue.Var var)
+              (let
+                [index : i64 (opt-call-memory-param-index-from params var 0)]
+                (cond
+                  [(< index 0) -1]
+                  [(= found -2) index]
+                  [(= found index) found]
+                  [else -1]))]
+            [_ -1])]
+        [(ir.CompilerIrMaybeValue.No) -1])]
+    [(ir.CompilerIrInstr.TailCall _ _ _) -1]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) -1]
+    [_ found]))
+
+(define (opt-licm-return-alias-instr-seq-from
+  [params : ir.CompilerIrParamList]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [found : i64]) : i64
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    found
+    (opt-licm-return-alias-instr-seq-from
+      params
+      instrs
+      (+ index 1)
+      (opt-licm-return-alias-instr
+        params
+        found
+        (ir.compiler-ir-instr-seq-ref instrs index)))))
+
+(define (opt-licm-return-alias-blocks
+  [params : ir.CompilerIrParamList]
+  [blocks : ir.CompilerIrBlockList]
+  [found : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) found]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-licm-return-alias-blocks
+            params
+            (__tl-box-place rest)
+            (opt-licm-return-alias-instr-seq-from params instrs 0 found))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-licm-return-alias-blocks
+        params
+        (ir.compiler-ir-block-seq-to-list seq)
+        found)]))
+
+;; The parameter index this function returns unchanged, or -1.
+(define (opt-licm-return-alias-function-index [func : ir.CompilerIrFunction]) : i64
+  (match func
+    [(ir.CompilerIrFunction.Function _ params _ _ blocks)
+      (let
+        [found : i64 (opt-licm-return-alias-blocks params blocks -2)]
+        (if (< found 0)
+          -1
+          found))]))
+
+(define (opt-licm-return-alias-add-functions
+  [functions : ir.CompilerIrFunctionList]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) out]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ _)
+          (let
+            [index : i64 (opt-licm-return-alias-function-index func)]
+            [_record : unit
+              (if (< index 0)
+                unit
+                (opt_i64_i64_map.insert-ref!
+                  (&mut out)
+                  (ir.compiler-ir-symbol-id name)
+                  (+ index 1)))]
+            (opt-licm-return-alias-add-functions (__tl-box-place rest) out))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-licm-return-alias-add-functions
+        (ir.compiler-ir-function-seq-to-list seq)
+        out)]))
+
+(define (opt-licm-return-alias-map
+  [functions : ir.CompilerIrFunctionList]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (opt-licm-return-alias-add-functions
+    functions
+    (opt_i64_i64_map.with-capacity capacity)))
+
+;; The argument a direct call returns unchanged, if the table proves it does.
+(define (opt-licm-root-env-return-alias-value
+  [env : (& env OptLicmRootEnv)]
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrMaybeValue
+  (match (opt_i64_i64_map.get
+    (& env.return-alias)
+    (ir.compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound encoded)
+      (opt-call-memory-arg-at args (- encoded 1))]
+    [(opt_i64_i64_map.LookupMissing) (ir.CompilerIrMaybeValue.No)]))
+
 (define (opt-licm-root-env-update-instr!
   [env : (&mut env OptLicmRootEnv)]
   [instr : ir.CompilerIrInstr]) : unit
   (match instr
     [(ir.CompilerIrInstr.Alloc dst _)
       (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))]
+    ;; The address of an allocated object designates that object. Without this
+    ;; arm every address-taken local was unrooted, so a write through one fell
+    ;; into the unrooted store summary (killing every descriptor proof in the
+    ;; loop) and a read through one could never use the disjointness its
+    ;; `Alloc` already establishes. `addr_of` of anything unrooted stays
+    ;; unrooted, exactly as the copy arms below behave.
+    [(ir.CompilerIrInstr.AddrOf dst src)
+      (opt-licm-root-env-copy! env dst (ir.CompilerIrValue.Var src))]
     [(ir.CompilerIrInstr.Gep dst base _ _)
       (opt-licm-root-env-copy! env dst base)]
     [(ir.CompilerIrInstr.Mov dst src _) (opt-licm-root-env-copy! env dst src)]
@@ -20087,10 +20305,18 @@
     ;; A descriptor-data Load may be rebound by
     ;; opt-licm-provenance-state-instr immediately after this update.
     [(ir.CompilerIrInstr.Load dst _ _) (opt-licm-root-env-remove! env dst)]
-    [(ir.CompilerIrInstr.Call dst name _ _)
+    [(ir.CompilerIrInstr.Call dst name args _)
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
-        unit)]
+        ;; A callee that returns one of its arguments returns that object, so
+        ;; the result inherits the argument's root -- most often the caller's
+        ;; own sret buffer, whose root is the `Alloc` two instructions up.
+        ;; Binding a fresh id here instead would be unsound: the result and the
+        ;; argument would then read as two disjoint objects.
+        (match (opt-licm-root-env-return-alias-value env name args)
+          [(ir.CompilerIrMaybeValue.Some value)
+            (opt-licm-root-env-copy! env dst value)]
+          [(ir.CompilerIrMaybeValue.No) unit]))]
     [_ unit]))
 
 (define (opt-licm-array-header-type?
@@ -20151,11 +20377,19 @@
           (opt-licm-data-slot? offset ty)))]
     [_ false]))
 
+;; The pointer classes whose target is a FIXED word of an object that element
+;; storage is disjoint from: a descriptor's own header words, a global cell's
+;; object, and (P16) a word of a frame object this function allocated. Element
+;; stores and element-only callees provably cannot write any of them, which is
+;; what the header-load proofs need; a store THROUGH one is a
+;; header-or-unknown store and closes those proofs for the whole loop.
 (define (opt-licm-header-slot-ptr-kind? [kind : OptLicmPtrKind]) : bool
   (match kind
     [(OptLicmPtrKind.HeaderSlot _) true]
     [(OptLicmPtrKind.DataSlot _) true]
     [(OptLicmPtrKind.GlobalSlot _) true]
+    [(OptLicmPtrKind.LocalObject _) true]
+    [(OptLicmPtrKind.LocalSlot _) true]
     [_ false]))
 
 (define (opt-licm-header-slot-source?
@@ -20177,6 +20411,22 @@
           (opt-licm-array-header-var? type-segment-bases types ptr-var))
         (opt-licm-header-slot-ptr-kind? (opt-licm-ptr-lookup ptrs ptr-var)))]
     [_ false]))
+
+;; `Gep <address of a frame object>, <literal>` addresses a FIXED word of that
+;; object, and so does a further literal Gep off such a word (a field of an
+;; inline field). A VARIABLE offset is indexing: it can leave the word the
+;; caller reasoned about, so it keeps no provenance. The payload stays the
+;; `Alloc`'s dst so every path to the object answers to one id.
+(define (opt-licm-local-slot-kind
+  [base-kind : OptLicmPtrKind]
+  [offset : ir.CompilerIrValue]) : OptLicmPtrKind
+  (match offset
+    [(ir.CompilerIrValue.I64 _)
+      (match base-kind
+        [(OptLicmPtrKind.LocalObject object) (OptLicmPtrKind.LocalSlot object)]
+        [(OptLicmPtrKind.LocalSlot object) (OptLicmPtrKind.LocalSlot object)]
+        [_ (OptLicmPtrKind.Unknown)])]
+    [_ (OptLicmPtrKind.Unknown)]))
 
 (define (opt-licm-gep-kind
   [type-segment-bases : i64]
@@ -20204,7 +20454,12 @@
                 (if (opt-licm-data-slot? offset ty)
                   (OptLicmPtrKind.DataSlot base-var)
                   (OptLicmPtrKind.Unknown)))
-              (OptLicmPtrKind.Unknown))]))]
+              ;; Not a descriptor handle. It may still be the address of a
+              ;; frame object of this function, in which case a LITERAL offset
+              ;; picks out a fixed word of it. The descriptor classification
+              ;; above wins wherever it applies, so the established
+              ;; HeaderSlot/DataSlot chain is untouched.
+              (opt-licm-local-slot-kind base-kind offset))]))]
     ;; `Gep <global operand>, <literal>` addresses a fixed word of the object
     ;; that global's cell designates -- the descriptor handle a `Vec`/array
     ;; global holds, or the handle's own header words. A variable offset is
@@ -20520,6 +20775,35 @@
                     (OptLicmPtrKind.DataBuffer ptr-var))
                   invalid)])]
           [_ invalid])]
+      ;; P16: the frame objects of this function, and the two ways their
+      ;; address travels. `Alloc` names the object; `addr_of` forms the pointer
+      ;; the rest of the function uses (Mov copies it through the arm above);
+      ;; and a callee that returns the argument it was handed -- the internal
+      ;; sret shape -- hands the same pointer back out.
+      [(ir.CompilerIrInstr.Alloc dst _)
+        (opt-licm-store-state-bind-ptr
+          invalid
+          dst
+          (OptLicmPtrKind.LocalObject dst))]
+      [(ir.CompilerIrInstr.AddrOf dst src)
+        (opt-licm-store-state-bind-ptr
+          invalid
+          dst
+          (opt-licm-ptr-lookup invalid.ptrs src))]
+      [(ir.CompilerIrInstr.Call dst name args _)
+        (match (opt-licm-root-env-return-alias-value
+          (& invalid.roots)
+          name
+          args)
+          [(ir.CompilerIrMaybeValue.Some value)
+            (match value
+              [(ir.CompilerIrValue.Var src-var)
+                (opt-licm-store-state-bind-ptr
+                  invalid
+                  dst
+                  (opt-licm-ptr-lookup invalid.ptrs src-var))]
+              [_ invalid])]
+          [(ir.CompilerIrMaybeValue.No) invalid])]
       [_ invalid])))
 
 (define (opt-licm-store-state-instr
@@ -20795,13 +21079,14 @@
   [type-segment-bases : i64]
   [params : ir.CompilerIrParamList]
   [types : OptSsaVarTypes]
+  [return-alias : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]) : OptLicmStoreState
   (let
     ;; Rooted pointer values are sparse even in functions with large SSA
     ;; frames. Starting this map at the full frame size retained hundreds of
     ;; megabytes across compiler optimization; let the generated hashmap grow
     ;; only when a function actually carries many checked/fresh roots.
-    [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
+    [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17 return-alias)]
     [_params : unit
       (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)]
     [initial : OptLicmStoreState
@@ -20827,7 +21112,7 @@
           summary
           (opt-licm-store-summary-empty)
           (OptLicmPtrEnv.Nil)
-          (opt-licm-root-env-with-capacity 17)
+          (opt-licm-root-env-with-capacity 17 (opt_i64_i64_map.with-capacity 1))
           (opt-licm-store-roots-new)
           false
           false
@@ -20910,6 +21195,65 @@
 (define (opt-licm-mode-vector? [mode : i64]) : bool
   (= mode 2))
 
+;; The P6/R7 hoist-vs-allocate interlock at an ADDRESS-FORMATION site, plus the
+;; one class P16 excepts from it.
+;;
+;; The rule it enforces: a loop-spanning address that has to survive a CALL
+;; costs more in spill staging than the reloads it saves, so an address is not
+;; hoisted out of a loop that calls anything whose calling convention the
+;; backend must respect. A direct callee proven memory-clean is not a boundary
+;; (it contributes the empty summary); an element-only direct callee IS one,
+;; because it still emits a call.
+;;
+;; THE EXCEPTION, and the arithmetic behind it. The interlock's break-even
+;; assumes reading the word in place costs ONE instruction: a literal-offset
+;; Gep folds into the load's addressing mode, so `mov r,[handle+8]` is no
+;; dearer than the spill reload a hoisted value pays. That holds only while the
+;; handle is already in a register. It fails one level in: when the address is
+;; a fixed word of an object reached through a handle that is ITSELF re-derived
+;; every trip -- a frame object's field, or a descriptor word behind such a
+;; field -- reading it in place costs two instructions, three once the handle
+;; spills, against one reload. That is exactly the class
+;; opt-licm-header-slot-ptr-kind? names: a fixed word of an object element
+;; storage is disjoint from. Its addresses are excepted here, and only while
+;; the boundary is an element-only DIRECT call -- an unknown call still closes
+;; the path, for memory reasons as much as pressure ones.
+;;
+;; MEASURED (P16, one cachegrind run each, base target/wsl/ic-p15.tsv). With
+;; the memory proof in place but this exception absent, the interner's six Vec
+;; header chains still cannot leave the per-symbol loop -- their first link is
+;; an address, and it is this gate that holds it -- and intern_table stops at
+;; 499,720,995. With the exception it reaches 435,013,637 (-15.58% against the
+;; base's 515,307,475), alongside gvn_table -344,685, liveness_scan -649,743,
+;; opt_quicksort -31,992 and cfg_domloops +11,853. Dropping
+;; `element-only-call?` from opt-licm-store-summary-call-boundary? instead --
+;; the general relaxation P14 rejected -- reproduces those seventeen numbers
+;; exactly, so the narrow exception is chosen for costing nothing extra and
+;; leaving the general boundary, and R7's and P14's evidence for it, in force.
+;; The cfg_domloops +11,853 is P14's coalescing artifact, unchanged and
+;; unchanged in cause: three register copies at no-op `cast i64 to u64` sites
+;; in cfg-scan-ints, whose gvn_table twin moves the other way by 30x as much.
+(define (opt-licm-gep-call-boundary-ok?
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [ptrs : OptLicmPtrEnv]
+  [store-summary : OptLicmStoreSummary]
+  [legacy-store-summary : OptLicmStoreSummary]
+  [any-call? : bool]
+  [base : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (or
+    (not any-call?)
+    (and
+      (not (opt-licm-store-summary-call-boundary? store-summary))
+      (not (opt-licm-store-summary-call-boundary? legacy-store-summary)))
+    (and
+      (not store-summary.call-or-unknown?)
+      (not legacy-store-summary.call-or-unknown?)
+      (opt-licm-header-slot-ptr-kind?
+        (opt-licm-gep-kind type-segment-bases types ptrs base offset ty)))))
+
 ;; `descriptor-header-hoist?` licenses the descriptor-header exception to the
 ;; return-shaped side-exit suppression (see opt-licm-apply-loop): it is true
 ;; exactly when this is a late (post-BCE) run AND the loop body's raw store
@@ -20917,15 +21261,18 @@
 ;; effect and no header-or-unknown store anywhere in the body (element-only
 ;; stores through a descriptor's loaded data pointer remain, but those write
 ;; element storage, which the memory model keeps disjoint from descriptor
-;; header words). Under that condition a `Load` whose address is a descriptor
-;; header slot -- the data-pointer slot or the length slot of a loop-invariant
-;; array/string handle -- reads the same value on every iteration, so moving
-;; it to the preheader is sound: nothing in the body can write the slot, and
-;; reading the header of a live descriptor is always safe (a dangling handle
-;; is already UB; the bce guard hoist and the unsuppressed loops already
-;; speculate header loads the same way). The exception is late-only for the
-;; established reason: before BCE, moving a descriptor length can hide the
-;; shared bound identity bounds-check elimination still needs.
+;; header words). Under that condition a `Load` whose address is a FIXED WORD
+;; of an object element storage is disjoint from -- the data-pointer or length
+;; slot of a loop-invariant array/string handle, a word of the object a global
+;; cell designates, or (P16) a field of a frame object this function allocated,
+;; the three classes opt-licm-header-slot-ptr-kind? names -- reads the same
+;; value on every iteration, so moving it to the preheader is sound: nothing in
+;; the body can write that word, and reading it is always safe (the object is
+;; live; a dangling handle is already UB; the bce guard hoist and the
+;; unsuppressed loops already speculate such loads the same way). The exception
+;; is late-only for the established reason: before BCE, moving a descriptor
+;; length can hide the shared bound identity bounds-check elimination still
+;; needs.
 (define (opt-licm-candidate?
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
@@ -20994,23 +21341,19 @@
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (and
         (opt-gvn-stable-var? sources dst)
-        ;; Keep an address calculation out of an unknown-call-spanning live
-        ;; range. The backend otherwise has to preserve it across the call,
-        ;; which can spill the descriptor base used by every loop iteration.
-        ;; A direct call proven memory-clean retains the established LICM
-        ;; behavior and cannot introduce that borrowed-root regression. An
-        ;; element-only direct call does NOT qualify: it still emits a call, so
-        ;; the address still has to survive one, and admitting it here is a
-        ;; measured LOSS -- intern_table 602,891,376 -> 611,411,217 (+1.41%)
-        ;; against gvn_table -0.34M and liveness_scan -0.09M, with every other
-        ;; row unmoved (one cachegrind run each). The memory fact the element
-        ;; bit carries is real; the register pressure it would buy is not worth
-        ;; it at an address-formation site.
-        (or
-          (not any-call?)
-          (and
-            (not (opt-licm-store-summary-call-boundary? store-summary))
-            (not (opt-licm-store-summary-call-boundary? legacy-store-summary))))
+        ;; Keep an address calculation out of a call-spanning live range,
+        ;; except for the fixed-word class whose in-place read is not one
+        ;; instruction. See opt-licm-gep-call-boundary-ok?.
+        (opt-licm-gep-call-boundary-ok?
+          type-segment-bases
+          types
+          ptrs
+          store-summary
+          legacy-store-summary
+          any-call?
+          base
+          offset
+          ty)
         ;; Gep computes an address from SSA values; it does not read through
         ;; that address. A hidden mutable-global read among the operands is
         ;; admitted only when opt-licm-globals-clean? proves the body cannot
@@ -22356,6 +22699,7 @@
   [context : OptCfgContext]
   [verified? : bool]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [return-alias : opt_i64_i64_map.Map]
   [global-cells : OptGlobalCellSummary]
   [late? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
@@ -22387,6 +22731,7 @@
                     type-segment-bases
                     params
                     types
+                    return-alias
                     blocks)]
                 ;; Loop-scope global promotion mints fresh vars, so the pass
                 ;; carries the frame counter in a cell and writes the final
@@ -22446,6 +22791,7 @@
         (opt-cfg-context-build blocks)
         false
         direct-call-clean
+        (opt_i64_i64_map.with-capacity 1)
         (opt-global-cell-summary-empty)
         false
         func)
@@ -22460,6 +22806,7 @@
         type-segment-bases
         (opt-cfg-context-build blocks)
         false
+        (opt_i64_i64_map.with-capacity 1)
         (opt_i64_i64_map.with-capacity 1)
         (opt-global-cell-summary-empty)
         false
@@ -22480,6 +22827,7 @@
         type-segment-bases
         (opt-cfg-context-build blocks)
         false
+        (opt_i64_i64_map.with-capacity 1)
         (opt_i64_i64_map.with-capacity 1)
         global-cells
         late?
@@ -43031,6 +43379,12 @@
   ;; memory barrier.
   (call-memory opt_i64_i64_map.Map)
   (argc-return opt_i64_i64_map.Map)
+  ;; Whole-program RETURN-ALIAS table for LICM provenance: callee symbol id ->
+  ;; 1 + the index of the parameter that callee returns unchanged. See
+  ;; opt-licm-return-alias-map; it lives here because it is built once per
+  ;; program from the same reachable-function list as the call summaries and
+  ;; consumed in the same per-function level-2 pass.
+  (return-alias opt_i64_i64_map.Map)
   ;; Whole-program table of never-written literal-i64 globals, mapping
   ;; global name -> constant value. Carried alongside the BCE summaries (rather
   ;; than threaded as a separate parameter) because both are built once per
@@ -43084,6 +43438,7 @@
   (OptLoopBceSummaries
     false
     (profile_state.compiler-profile-state-new)
+    (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -78410,6 +78765,7 @@
                           dead-phi-context
                           loop-cluster-verified?
                           summaries.direct-call-clean
+                          summaries.return-alias
                           summaries.global-cell
                           false
                           dead-phi)]
@@ -78713,6 +79069,7 @@
                           lftr-context
                           loop-cluster-verified?
                           summaries.direct-call-clean
+                          summaries.return-alias
                           summaries.global-cell
                           true
                           lftr)]
@@ -91499,7 +91856,8 @@
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : OptLicmRootEnv
   (let
-    [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
+    [roots : OptLicmRootEnv
+      (opt-licm-root-env-with-capacity 17 (opt_i64_i64_map.with-capacity 1))]
     (begin
       (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)
       (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
@@ -92051,7 +92409,7 @@
           summaries
           function-set
           params
-          (opt-licm-root-env-with-capacity 1)
+          (opt-licm-root-env-with-capacity 1 (opt_i64_i64_map.with-capacity 1))
           (opt_i64_i64_map.with-capacity 1)
           blocks)
         (let
@@ -93092,6 +93450,13 @@
           call-memory
           (opt-loop-bce-direct-call-clean-map functions capacity))
         (opt_i64_i64_map.with-capacity 1))]
+    ;; The return-alias table rides the same level>=2 gate as
+    ;; `direct-call-clean`: it feeds LICM provenance only, and leaving it empty
+    ;; below that level keeps opt0/opt1 byte-identical.
+    [return-alias : opt_i64_i64_map.Map
+      (if build-direct-call-clean
+        (opt-licm-return-alias-map functions capacity)
+        (opt_i64_i64_map.with-capacity 1))]
     (OptLoopBceSummaries
       true
       (profile_state.compiler-profile-state-new)
@@ -93099,6 +93464,7 @@
       direct-call-clean
       call-memory
       argc-return
+      return-alias
       (opt_i64_i64_map.with-capacity 1)
       (opt-global-cell-summary-empty)
       (ir.compiler-ir-representation-index-empty))))
@@ -93113,6 +93479,7 @@
     summaries.direct-call-clean
     summaries.call-memory
     summaries.argc-return
+    summaries.return-alias
     const-divisors
     summaries.global-cell
     summaries.representations))
@@ -93127,6 +93494,7 @@
     summaries.direct-call-clean
     summaries.call-memory
     summaries.argc-return
+    summaries.return-alias
     summaries.const-divisors
     global-cell
     summaries.representations))
@@ -93141,6 +93509,7 @@
     summaries.direct-call-clean
     summaries.call-memory
     summaries.argc-return
+    summaries.return-alias
     summaries.const-divisors
     summaries.global-cell
     summaries.representations))

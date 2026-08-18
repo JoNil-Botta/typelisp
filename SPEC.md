@@ -7432,7 +7432,38 @@ in documentation passes.
   structured source locations for source-authored semantic diagnostics, plus
   a REPL that evaluates through the real compile/link/run pipeline.
 
-### 8.2 Not yet implemented, in migration, or deferred
+### 8.2 SPMD backend support
+
+Section 5.15 defines one SPMD semantic surface across scalar, AVX2, and AVX-512
+modes. A backend asymmetry called out below is an implementation bug tracked by
+an open issue, not a permanent language limitation. "Native" means that
+eligible full gangs use SIMD instructions while preserving protected tails.
+"Scalar reference" is also supported behavior where section 5.15 specifies
+ordered or non-canonical execution; it is not an unsupported fallback.
+
+| Surface | Scalar | AVX2 | AVX-512 | Coverage / open gap |
+|---------|--------|------|---------|---------------------|
+| Contiguous `foreach` map/zip and native `Slice` map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates; `i8`/`u8` multiplication is pending under [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684) |
+| Gather-only reads | Supported: reference semantics | Supported: native gather with active-lane checks | Supported: native gather with active-lane checks | Gather integration and benchmark gates |
+| Explicit atomic scatter | Supported: ordered reference | Supported: scalarized atomic lanes | Supported: scalarized atomic lanes | Atomic-scatter fixtures; this is the specified overlap-safe path |
+| Masked varying `if`, `while`, and scalar/enum `match` | Supported: reference semantics | Supported: native masked gangs | Supported: native masked gangs | Masked-control differential and shape gates; masked `i8`/`u8` multiplication is pending under [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684) |
+| `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates |
+| `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
+| `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `scripts/verify-spmd-broadcast.sh` |
+| `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
+| `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `scripts/verify-spmd-lane-identity.sh` |
+| Same-program private out-of-line varying helpers | Supported: scalar ABI | Supported: native AVX2 private ABI | Supported: native AVX-512 private ABI | Private-helper differential/shape gates; imported package helpers retain the separately specified scalar/AVX-512 `spmd-call-v1` catalog ABI |
+| `defdispatch` | Supported: scalar variant | Supported: cached runtime AVX2 selection | Supported: cached runtime AVX-512 selection | Runtime-dispatch gate |
+
+Deliberate language exclusions are separate from backend gaps. Public vector,
+mask, and `(varying T)` source value types remain deferred by design. Source
+`return`/`break`/`continue` from SPMD regions, ordinary potentially overlapping
+scatter, aggregate/string/function lane and call values, nested public SPMD
+forms, and indirect/extern/recursive varying helper calls remain rejected as
+specified in section 5.15. The matrix does not turn those forms into silently
+scalarized extensions.
+
+### 8.3 Not yet implemented, in migration, or deferred
 
 | Feature | Status |
 |---------|--------|

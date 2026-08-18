@@ -126,22 +126,25 @@ The following parts are implemented and actively tested:
   inline tests, doctests, formatting, linting, documentation generation, and a
   stdio language server with a deterministic multi-root workspace index and
   open-document overlays.
-- SPMD `foreach`, `spmd-reduce`, and `spmd-scan` with scalar lowering and
-  restricted AVX2/AVX-512 lowering.
+- SPMD `foreach`, `spmd-reduce`, `spmd-scan`, `spmd-broadcast`, and
+  `spmd-shuffle`, plus `program-index` / `program-count` lane identity, with
+  scalar reference lowering and native AVX2/AVX-512 lowering for eligible
+  shapes.
 
 Some capabilities remain restricted or experimental:
 
-- Scalar `spmd-scan` is implemented. AVX2 and AVX-512 support covers only a
-  restricted set of canonical scan forms. General scan vectorization is not
-  complete.
+- Canonical range-wide scans vectorize in both AVX2 and AVX-512; other
+  supported scan shapes retain the specified scalar reference. SIMD `i8`/`u8`
+  lane multiplication remains tracked by
+  [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684).
 - Published compilers dispatch trusted embedded-stdlib and package-dependency
   comptime macros through TLCI native catalogs on Linux and Windows. Dependency
   catalogs are source- and host-admitted, selected by physical defining
   provenance, and revalidated against their package key and mapping generation
   immediately before execution; unsupported registered shells retain
   deterministic source CTFE.
-- Public vector and mask value types, general vectorized SPMD support, a
-  package registry, and workspaces are not complete.
+- Public vector, mask, and varying source value types remain deferred by
+  design. A package registry and workspaces are also not complete.
 - General `free` and GC are intentionally not planned. TypeLisp uses arenas as
   its memory-reclamation model.
 

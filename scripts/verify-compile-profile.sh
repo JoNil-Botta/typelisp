@@ -1581,9 +1581,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #5754's explicit context projection for typecheck expression reads crosses
     # the boundary to 44 segments: the authoritative Windows CI probe measured
     # 2,827,771 used nodes, 2,883,584 capacity, and 92,274,688 physical payload
-    # bytes.
+    # bytes. Rebasing #6702's optimizer/regalloc campaign onto the #6717 tree
+    # crosses the next boundary: the authoritative Windows probe measured
+    # 2,888,486 used nodes, 2,949,120 capacity, and 94,371,840 physical payload
+    # bytes. The separately pinned checked-expression and type pools remain in
+    # their existing segment families.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 44 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 45 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

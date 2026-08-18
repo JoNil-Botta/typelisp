@@ -29572,6 +29572,8 @@
       (compiler_optimize.opt-function-blocks arith-func)]
     [arith-loops : compiler_optimize.OptNaturalLoopList
       (compiler_optimize.opt-cfg-natural-loops (opt-licm-arithmetic-blocks))]
+    [word-loops : compiler_optimize.OptNaturalLoopList
+      (compiler_optimize.opt-cfg-natural-loops (opt-licm-word-blocks))]
     [trap-func : compiler_ir_types.CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-trap-blocks))]
     [trap : compiler_ir_types.CompilerIrBlockList
@@ -29774,12 +29776,21 @@
           8)
         (opt_i64_i64_map.with-capacity 8))]
     (cond
-      ;; The cheap gate admits a real invariant seed, but rejects both a loop
-      ;; whose only arithmetic can trap and a loop without a unique preheader.
-      ;; Those rejected shapes cannot begin a legal hoist chain, so whole-
-      ;; function provenance would be pure overhead.
-      [(not
-          (compiler_optimize.opt-licm-loops-may-change? false true arith-loops))
+      ;; The cheap gate admits real invariant arithmetic and Word seeds, but
+      ;; rejects both a loop whose only arithmetic can trap and a loop without
+      ;; a unique preheader. Those rejected shapes cannot begin a legal hoist
+      ;; chain, so whole-function provenance would be pure overhead.
+      [(or
+          (not
+            (compiler_optimize.opt-licm-loops-may-change?
+              false
+              true
+              arith-loops))
+          (not
+            (compiler_optimize.opt-licm-loops-may-change?
+              false
+              false
+              word-loops)))
         218]
       [(compiler_optimize.opt-licm-loops-may-change? false false trap-loops)
         219]

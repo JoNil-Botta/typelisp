@@ -22264,6 +22264,7 @@
       (and late? (opt-licm-seed-value? loop-defs src))]
     [(ir.CompilerIrInstr.Bitcast _ src _ _)
       (and late? (opt-licm-seed-value? loop-defs src))]
+    [(ir.CompilerIrInstr.Word _ src _ _) (opt-licm-seed-value? loop-defs src)]
     [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
       (and
         (not (opt-binop-traps? op))

@@ -8,17 +8,29 @@
 ;# The i64 additions wrap modulo 2^64, matching the baseline's uint64_t
 ;# arithmetic. `base-reps + io.arg-count` prevents whole-program constant
 ;# folding while retaining a deterministic no-argument exit status.
-; Compatibility exception for #3772: SPMD value operands and direct scan body
-; writes use bare array helpers so the checker sees compiler array ASTs.
-(import stdlib.array)
+; SPMD value operands and direct scan body writes use array helpers over native
+; Slices so the checker sees compiler array ASTs.
 (import stdlib.io)
+(import stdlib.vector)
+(import (vector.vector i64) as i64v)
 
 (define array-len : i64
   4096)
 (define base-reps : i64
   300000)
 
-(define (init [a : (Array i64)] [n : i64]) : unit
+(define (make-buffer [capacity : i64]) : i64v.Vec
+  (let
+    [out : i64v.Vec (i64v.with-capacity capacity)]
+    [i : i64 0]
+    (begin
+      (while (< i capacity)
+        (begin
+          (i64v.push-ref! (&mut out) 0)
+          (set! i (+ i 1))))
+      out)))
+
+(define (init [a : (&mut a (Slice i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -26,22 +38,38 @@
         (set! (array-ref a i) (+ i 1))
         (set! i (+ i 1))))))
 
+(define (scan-kernel
+  [a : (& a (Slice i64))]
+  [out : (&mut out (Slice i64))]
+  [r : i64]) : unit
+  (spmd-scan
+    sum
+    ([i : i64 0 array-len] [prefix : i64 r])
+    (array-ref a i)
+    (set! (array-ref out i) prefix)))
+
 (define (main) : i64
   (let
-    [a : (Array i64) (array.make-array i64 array-len)]
-    [out : (Array i64) (array.make-array i64 array-len)]
+    [a : i64v.Vec (make-buffer array-len)]
+    [out : i64v.Vec (make-buffer array-len)]
     [reps : i64 (+ base-reps (io.arg-count))]
     [acc : i64 0]
     [r : i64 0]
     (begin
-      (init a array-len)
-      (while (< r reps)
+      (let
+        [init-view : (&mut a (Slice i64)) (i64v.view-mut (&mut a))]
+        (init init-view array-len))
+      (let
+        [a-view : (& a (Slice i64)) (i64v.view (& a))]
+        [out-view : (&mut out (Slice i64)) (i64v.view-mut (&mut out))]
+        [kernel : (-> (& a (Slice i64)) (&mut out (Slice i64)) i64 unit)
+          scan-kernel]
         (begin
-          (spmd-scan
-            sum
-            ([i : i64 0 array-len] [prefix : i64 r])
-            (array-ref a i)
-            (set! (array-ref out i) prefix))
-          (set! acc (+ acc (array-ref out (bit-and r (- array-len 1)))))
-          (set! r (+ r 1))))
-      (bit-and acc 255))))
+          (while (< r reps)
+            (begin
+              (kernel a-view out-view r)
+              (set!
+                acc
+                (+ acc (array-ref out-view (bit-and r (- array-len 1)))))
+              (set! r (+ r 1))))
+          (bit-and acc 255))))))

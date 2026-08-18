@@ -15,15 +15,27 @@
 ;# preventing whole-loop constant folding. The folded index `r % array-len`
 ;# (modulo, since the length is not a power of two) reads a different element
 ;# each pass so the stored array cannot be eliminated.
-(import stdlib.array)
 (import stdlib.io)
+(import stdlib.vector)
+(import (vector.vector i64) as i64v)
 
 (define array-len : i64
   1003)
 (define base-reps : i64
   1000000)
 
-(define (init [a : (Array i64)] [b : (Array i64)] [n : i64]) : unit
+(define (make-buffer [capacity : i64]) : i64v.Vec
+  (let
+    [out : i64v.Vec (i64v.with-capacity capacity)]
+    [i : i64 0]
+    (begin
+      (while (< i capacity)
+        (begin
+          (i64v.push-ref! (&mut out) 0)
+          (set! i (+ i 1))))
+      out)))
+
+(define (init [a : (&mut a (Slice i64))] [b : (&mut b (Slice i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -34,19 +46,24 @@
 
 (define (main) : i64
   (let
-    [a : (Array i64) (array.make-array i64 array-len)]
-    [b : (Array i64) (array.make-array i64 array-len)]
-    [out : (Array i64) (array.make-array i64 array-len)]
+    [a : i64v.Vec (make-buffer array-len)]
+    [b : i64v.Vec (make-buffer array-len)]
+    [out : i64v.Vec (make-buffer array-len)]
+    [a-view : (&mut a (Slice i64)) (i64v.view-mut (&mut a))]
+    [b-view : (&mut b (Slice i64)) (i64v.view-mut (&mut b))]
+    [out-view : (&mut out (Slice i64)) (i64v.view-mut (&mut out))]
     [reps : i64 (+ base-reps (io.arg-count))]
     [acc : i64 0]
     [r : i64 0]
     (begin
-      (init a b array-len)
+      (init a-view b-view array-len)
       (while (< r reps)
         (begin
           (foreach
             ([i : i64 0 array-len])
-            (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r)))
-          (set! acc (+ acc (array-ref out (% r array-len))))
+            (set!
+              (array-ref out-view i)
+              (+ (+ (array-ref a-view i) (array-ref b-view i)) r)))
+          (set! acc (+ acc (array-ref out-view (% r array-len))))
           (set! r (+ r 1))))
       (bit-and acc 255))))

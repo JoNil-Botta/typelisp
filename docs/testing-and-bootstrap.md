@@ -69,6 +69,12 @@ including the rule ID accepted by `;; lint-allow: <rule-id>` and a suggested
 remedy. Scripts that parse lint output can select the stable
 `path:line:column: message` form with `--format flat`.
 
+The default `raw-arena-op` rule rejects direct calls to the raw arena
+set/destroy/rewind helpers and their unsafe `arena` wrappers outside the
+checked-in audited module allowlist. New code should use `in-arena`,
+`with-scratch`, `with-arena`, `rewind-safe!`, or `destroy-safe!`; the allowlist
+exists only for runtime protocols whose migration is tracked separately.
+
 Dead-code lint treats library packages as external API roots and reports
 unreachable declarations in `bin` packages.
 

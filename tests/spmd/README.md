@@ -123,9 +123,6 @@ compile and run in `avx2` and `avx512`.
 - `masked_if_shift_negative_trap.tl` and
   `masked_if_shift_large_trap.tl` - active negative i64 and width-equal u32
   counts take `tl_shift_abort` with exit 129 in every runnable mode.
-- `masked_if_shift_i16_reject.tl` - scalar reference execution plus stable
-  AVX2/AVX-512 operator/type/backend diagnostics for the deferred 16-bit shift
-  surface.
 - `masked_if_value_types.tl` - AVX2/AVX-512 value-producing masked `if` over
   u32, u64, f32, f64, and bool lane results, each with a non-full tail. Exit
   42.
@@ -177,8 +174,7 @@ compile and run in `avx2` and `avx512`.
 - `map_shift_value_types.tl` - direct contiguous `shl`/`shr` maps over
   i32/u32/i64/u64 values with varying counts, signed/logical right shifts,
   full gangs, and partial tails whose inactive backing counts are invalid.
-  `map_shift_{negative,large}_trap.tl` pin active-count exit 129 behavior, and
-  `map_shift_i16_reject.tl` pins the 16-bit operator/type diagnostic.
+  `map_shift_{negative,large}_trap.tl` pin active-count exit 129 behavior.
 - `byte_shift_value_types.tl` - direct and nested masked `shl`/`shr` over
   i8/u8 lanes in scalar, AVX2, and AVX-512 modes, covering zero, sub-gang,
   exact-gang, multi-gang, and tail lengths, varying and literal counts,
@@ -186,6 +182,14 @@ compile and run in `avx2` and `avx512`.
   `byte_shift_inactive_invalid.tl` keeps negative and width-equal counts in
   inactive branch and tail lanes. The two `byte_shift_*_trap.tl` fixtures pin
   active negative and width-equal exit 129 behavior.
+- `word_shift_value_types.tl` - direct and nested masked `shl`/`shr` over
+  i16/u16 lanes in scalar, AVX2, and AVX-512 modes, covering zero, sub-gang,
+  exact-gang, multi-gang, and tail lengths, varying and literal counts,
+  signed/logical right shifts, AVX2 widening/packing, native AVX-512 word
+  shifts, and varying `while`. `word_shift_inactive_invalid.tl` keeps negative
+  and width-equal counts in inactive branch and tail lanes. The two
+  `word_shift_*_trap.tl` fixtures pin active negative and width-equal exit 129
+  behavior.
 - `map_compare_surface.tl` - direct maps for all six comparison predicates
   plus unsigned and f32/f64 comparison lanes, producing bool-array masks.
   Scalar, AVX2, and AVX-512 modes exit 42.
@@ -243,10 +247,9 @@ Coverage map:
   `../integration/spmd_foreach.tl`, the two tail fixtures, and
   `uniform_zip_i64.tl`. Direct sub/bit-or/bit-xor opcode coverage lives in
   `../integration/spmd_foreach.tl`; direct checked shifts and comparisons live
-  in `map_shift_value_types.tl`, `byte_shift_value_types.tl`, and
-  `map_compare_surface.tl`. The intentionally unsupported byte multiply and
-  16-bit-shift policies are covered by
-  `i8_mul_reject.tl` and `map_shift_i16_reject.tl`.
+  in `map_shift_value_types.tl`, `byte_shift_value_types.tl`,
+  `word_shift_value_types.tl`, and `map_compare_surface.tl`. The intentionally
+  unsupported byte multiply policy is covered by `i8_mul_reject.tl`.
 - Vector/native-Slice public-surface coverage for borrowed backing storage
   lives in `native_slice_surface_i64.tl`.
 - Scalar and AVX2/AVX-512 gather-read coverage for generated Vec backing
@@ -262,12 +265,13 @@ Coverage map:
   `masked_if_bitand_value_i64.tl`, `masked_if_bitwise_value_types.tl`,
   `masked_if_shift_value_types.tl`, `masked_if_shift_inactive.tl`,
   `byte_shift_value_types.tl`, `byte_shift_inactive_invalid.tl`,
+  `word_shift_value_types.tl`, `word_shift_inactive_invalid.tl`,
   `masked_if_value_types.tl`, `masked_if_nested_i64.tl`, and
   `masked_if_i16_u16.tl`. The bitwise fixture covers `bit-or`/`bit-xor` IR
   and native opcode shapes for all eight contiguous integer lane types. The
-  shift fixtures cover native dword/qword opcodes, byte widening/shift/packing
-  expansions, the AVX2 signed-i64 expansion, reduced active-lane trap guards,
-  inactive branch/tail counts, and staged 16-bit diagnostics.
+  shift fixtures cover native dword/qword and AVX-512 word opcodes, byte and
+  AVX2 word widening/shift/packing expansions, the AVX2 signed-i64 expansion,
+  reduced active-lane trap guards, and inactive branch/tail counts.
 - AVX2/AVX-512 scalar-lane varying `match` coverage lives in
   `varying_match_i64.tl` and `masked_if_match_i64.tl`; enum tag/payload
   varying-match coverage lives in `varying_match_enum_payload.tl` through the

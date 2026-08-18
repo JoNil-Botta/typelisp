@@ -48435,6 +48435,8 @@
   (match (tc_core.tc-type-without-regions ty)
     [(ast.AstType.I8) true]
     [(ast.AstType.U8) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.U16) true]
     [(ast.AstType.I32) true]
     [(ast.AstType.U32) true]
     [(ast.AstType.I64) true]
@@ -48445,6 +48447,8 @@
   (match (tc_core.tc-type-without-regions ty)
     [(ast.AstType.I8) 8]
     [(ast.AstType.U8) 8]
+    [(ast.AstType.I16) 16]
+    [(ast.AstType.U16) 16]
     [(ast.AstType.I32) 32]
     [(ast.AstType.U32) 32]
     [(ast.AstType.I64) 64]
@@ -48473,7 +48477,7 @@
     (if (lower-mode-avx2? mode)
       "AVX2"
       "AVX-512")
-    " backend mode; supported lane types are i8, u8, i32, u32, i64, and u64"))
+    " backend mode; supported lane types are i8, u8, i16, u16, i32, u32, i64, and u64"))
 
 (define (lower-spmd-expr-has-shift?
   [ctx : tc_core.TcContext]
@@ -55067,7 +55071,7 @@
       (tc_core.tc-type-render lane-ty)
       " in "
       (lower-masked-shift-mode-name (lower-state-mode state))
-      " backend mode; supported lane types are i8, u8, i32, u32, i64, and u64")))
+      " backend mode; supported lane types are i8, u8, i16, u16, i32, u32, i64, and u64")))
 
 (define (lower-avx512-masked-shift-guard-and-emit
   [state : LowerState (:consume)]

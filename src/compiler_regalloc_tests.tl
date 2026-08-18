@@ -4595,7 +4595,60 @@
       (compiler-reg-self-loop-exit-live-phi-mask-shape-ok? loop-first-mask)
       (compiler-reg-self-loop-exit-live-phi-mask-shape-ok? exit-first-mask)
       (= (array-ref fixed-register-mask 0) 0)
-      (= (array-ref fixed-register-mask 3) 0))))
+      (= (array-ref fixed-register-mask 1) 0)
+      (= (array-ref fixed-register-mask 3) 0)
+      (= (array-ref fixed-register-mask 4) 0))))
+
+;; The counter web of the same self-loop must reach ONE home end to end: with
+;; v1/v4 coalesced the back edge carries no phi copy at all, which is what turns
+;; `lea ; cmp ; jge exit ; mov ; jmp top` into `add ; cmp ; jl top`. The
+;; accumulator web (v0/v3) keeps the home it already had.
+(define (compiler-reg-self-loop-counter-coalesce-plan-ok?) : bool
+  (match (reg.compiler-reg-plan-function-scalar-for-abi
+    cabi.CompilerRegTargetAbi.Linux
+    (compiler-reg-self-loop-exit-live-phi-function true))
+    [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+      (and
+        (compiler-reg-location-any-register?
+          (reg.compiler-reg-assignment-lookup assignments 1))
+        (compiler-reg-same-location? assignments 1 4)
+        (compiler-reg-same-location? assignments 0 3)
+        (compiler-reg-different-location? assignments 1 0))]))
+
+;; Negative 1: the counter PHI RESULT is read on the exit edge. One register
+;; cannot hold both -- the increment would overwrite the value the exit reads --
+;; so the web stays excluded and the back edge keeps its copy.
+;; Negative 2: the counter PHI RESULT is read again INSIDE the block, after the
+;; increment that feeds the back edge. Same conclusion, different witness.
+(define (compiler-reg-self-loop-counter-negative-masks-ok?) : bool
+  (let
+    [exit-read : ir.CompilerIrFunction
+      (compiler-reg-self-loop-counter-exit-read-function)]
+    [late-read : ir.CompilerIrFunction
+      (compiler-reg-self-loop-counter-late-read-function)]
+    [exit-read-mask : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-phi-touched-safe
+        exit-read
+        (live.compiler-live-analyze-function-edge-precise exit-read))]
+    [late-read-mask : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-phi-touched-safe
+        late-read
+        (live.compiler-live-analyze-function-edge-precise late-read))]
+    (and
+      (= (array-ref exit-read-mask 0) 0)
+      (= (array-ref exit-read-mask 1) 0)
+      (= (array-ref late-read-mask 0) 0)
+      (= (array-ref late-read-mask 1) 0)
+      (match (reg.compiler-reg-plan-function-scalar-for-abi
+        cabi.CompilerRegTargetAbi.Linux
+        exit-read)
+        [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+          (compiler-reg-different-location? assignments 0 1)])
+      (match (reg.compiler-reg-plan-function-scalar-for-abi
+        cabi.CompilerRegTargetAbi.Linux
+        late-read)
+        [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+          (compiler-reg-different-location? assignments 0 1)]))))
 
 (cfg
   test
@@ -10557,8 +10610,11 @@
   (test
     regalloc-self-loop-exit-live-phi
     (test.assert-true
-      (compiler-reg-self-loop-exit-live-phi-mask-ok?)
-      "self-loop safety admits accumulator, excludes live counter, and ignores successor order")))
+      (and
+        (compiler-reg-self-loop-exit-live-phi-mask-ok?)
+        (compiler-reg-self-loop-counter-coalesce-plan-ok?)
+        (compiler-reg-self-loop-counter-negative-masks-ok?))
+      "self-loop safety admits accumulator and counter webs, refuses a phi result read past its increment, and ignores successor order")))
 
 (cfg
   test
@@ -12747,8 +12803,11 @@
 ;; Single-block accumulator carry plus a loop counter. The accumulator back-edge
 ;; value is defined in the block and only feeds successor phis, so EP relaxation
 ;; may merge its back-edge copy with the header phi even though the value is also
-;; live on the exit edge. The counter back-edge value feeds the exit compare and
-;; must remain excluded. Both branch successor orderings exercise edge neutrality.
+;; live on the exit edge. The counter back-edge value feeds the exit compare, but
+;; the counter PHI RESULT is dead from the increment onwards and leaves the block
+;; on no edge, so that web is relaxed too -- one register carries the phi result
+;; and then the increment, and the back edge needs no copy.
+;; Both branch successor orderings exercise edge neutrality.
 (define (compiler-reg-self-loop-exit-live-phi-function [loop-first : bool]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ir.compiler-ir-test-symbol "self_loop_exit_live_phi")
@@ -12836,8 +12895,131 @@
   (and
     (= (array-ref mask 0) 1)
     (= (array-ref mask 3) 1)
-    (= (array-ref mask 1) 0)
-    (= (array-ref mask 4) 0)))
+    (= (array-ref mask 1) 1)
+    (= (array-ref mask 4) 1)))
+
+;; Negative counter shape 1: the exit returns the PHI RESULT v0, not the
+;; increment v1, so v0 is live on the exit edge. Sharing one register would let
+;; `add` destroy the value the exit reads, so the web must stay excluded.
+(define (compiler-reg-self-loop-counter-exit-read-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "self_loop_counter_exit_read")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I64)
+    3
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
+          ir.CompilerIrInstrList.Nil))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "loop")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Phi
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.I64 0)
+                (ir.compiler-ir-label "entry")
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.compiler-ir-label "loop")
+                  ir.CompilerIrPhiInputList.Nil))
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                1
+                ir.CompilerIrBinOp.Add
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  2
+                  ir.CompilerIrBinOp.Lt
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.CompilerIrValue.I64 10)
+                  (ast.AstType.Bool))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Branch
+                    (ir.CompilerIrValue.Var 2)
+                    (ir.compiler-ir-label "loop")
+                    (ir.compiler-ir-label "exit"))
+                  ir.CompilerIrInstrList.Nil)))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "exit")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
+              ir.CompilerIrInstrList.Nil))
+          ir.CompilerIrBlockList.Nil)))))
+
+;; Negative counter shape 2: the PHI RESULT v0 is read AGAIN inside the block,
+;; after the increment v1 that feeds the back edge. The increment would destroy
+;; v0 before that read, so the web must stay excluded here too.
+(define (compiler-reg-self-loop-counter-late-read-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "self_loop_counter_late_read")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I64)
+    4
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
+          ir.CompilerIrInstrList.Nil))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "loop")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Phi
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.I64 0)
+                (ir.compiler-ir-label "entry")
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.compiler-ir-label "loop")
+                  ir.CompilerIrPhiInputList.Nil))
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                1
+                ir.CompilerIrBinOp.Add
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  2
+                  ir.CompilerIrBinOp.Mul
+                  (ir.CompilerIrValue.Var 0)
+                  (ir.CompilerIrValue.I64 3)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    3
+                    ir.CompilerIrBinOp.Lt
+                    (ir.CompilerIrValue.Var 1)
+                    (ir.CompilerIrValue.I64 10)
+                    (ast.AstType.Bool))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Branch
+                      (ir.CompilerIrValue.Var 3)
+                      (ir.compiler-ir-label "loop")
+                      (ir.compiler-ir-label "exit"))
+                    ir.CompilerIrInstrList.Nil))))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "exit")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
+              ir.CompilerIrInstrList.Nil))
+          ir.CompilerIrBlockList.Nil)))))
 
 (define (compiler-reg-destructive-straight-chain-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function

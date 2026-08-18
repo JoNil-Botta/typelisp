@@ -4779,14 +4779,35 @@
 ;; `compiler-reg-merged-root-index` self-host mis-coalesce the fixpoint caught).
 ;;
 ;; So a phi with ANY live-out input is normally EXCLUDED from EP relaxation: its
-;; result and inputs fall back to conservative interference. The narrow exception is
-;; a single-block self-loop back-edge value that is DEFINED in the block and has no
-;; ordinary (non-phi) use there. Such a value is live-out only to feed successor phi
-;; edges: sharing its storage with the header phi is exactly the destructive loop
-;; carry, while a counter still used by the exit compare fails the non-phi-use proof.
-;; Pure loop/if-merge carries whose inputs are all dead after the merge stay relaxed
-;; as before. Using the sound EP block live-out here can only over-exclude (a missed
-;; coalesce), never under-exclude.
+;; result and inputs fall back to conservative interference. The exceptions are both
+;; about a single-block self-loop back-edge value that is DEFINED in the block:
+;;
+;;   (a) no ordinary (non-phi) use in the block. Such a value is live-out only to
+;;       feed successor phi edges: sharing its storage with the header phi is
+;;       exactly the destructive loop carry.
+;;
+;;   (b) the PHI RESULT is dead before that value's defining instruction: the result
+;;       is not in the block's live-out (so no successor edge, and no exit phi,
+;;       reads it -- phi-out is contained in the EP live-out) and no instruction
+;;       AFTER the def uses it. This is the bottom-tested counted loop
+;;       `r = phi [init, pre], [v, self]; ... last use of r ...; v = add r, 1;
+;;       c = lt v, n; branch c, self, exit`: the counter's increment is read by the
+;;       exit compare, so (a)'s non-phi-use proof fails, yet the carry is just as
+;;       destructive. Proof for (b): within the block `r` lives from the phi point
+;;       to its last use, which is at or before `v`'s def point, and it leaves the
+;;       block on no edge; `v` lives from its def point onwards. The two ranges meet
+;;       only at the def point itself, where `r` is the read operand and `v` the
+;;       written result of ONE instruction -- the two-address shape the half-open
+;;       segment overlap test already admits and the binop emitter already stages a
+;;       scratch for when a source register equals the destination home. So one
+;;       register can hold `r` then `v` with no live value destroyed, which is
+;;       precisely the phi copy the back edge would otherwise need.
+;;
+;; A counter that is ALSO read on the exit edge or by an exit phi is `r` in the
+;; block's live-out and is rejected by (b), keeping its copy. Pure loop/if-merge
+;; carries whose inputs are all dead after the merge stay relaxed as before. Using
+;; the sound EP block live-out here can only over-exclude (a missed coalesce), never
+;; under-exclude.
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-block-live-out-by-label
   [liveness : live.CompilerFunctionLiveness]
@@ -4855,7 +4876,78 @@
             (set! index (+ index 1)))))
       found)))
 
+;; Index of the instruction that defines `var`, or -1 when the block does not
+;; define it. SSA gives at most one such instruction per block.
+(define (compiler-reg-instr-seq-def-index
+  [instrs : ir.CompilerIrInstrSeq]
+  [var : i64]) : i64
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< index count) (< found 0))
+        (begin
+          (if (and
+            (>= var 0)
+            (= (compiler-reg-instr-def-var (array-ref slots index)) var))
+            (set! found index)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+;; True when no instruction STRICTLY AFTER `from` mentions `var` as a use. Phi
+;; uses count here (unlike the non-phi-use probe): a phi input read of the value
+;; would keep it live on that edge, and this predicate is asked exactly to prove
+;; the value is dead from `from + 1` onwards.
+(define (compiler-reg-instr-seq-no-use-after?
+  [instrs : ir.CompilerIrInstrSeq]
+  [var : i64]
+  [from : i64]) : bool
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64
+      (if (< from 0)
+        0
+        (+ from 1))]
+    [clean : bool true]
+    (begin
+      (while (and (< index count) clean)
+        (begin
+          (if (live.compiler-live-set-contains?
+            (live.compiler-live-instr-uses (array-ref slots index))
+            var)
+            (set! clean false)
+            unit)
+          (set! index (+ index 1))))
+      clean)))
+
+;; Exception (b) of the live-out-input exclusion: the phi RESULT `dst` is dead
+;; before the back-edge input `var`'s defining instruction, so one register can
+;; carry `dst` and then `var` across the whole block. `dst` must leave the block
+;; on no edge (EP live-out contains every phi-edge read, so this also rejects a
+;; result the exit phi reads) and no instruction after `var`'s def may use it.
+;; The def instruction ITSELF may read `dst` -- that is the counter increment,
+;; and the half-open segment overlap test already treats a last-use and a def at
+;; one point as non-interfering.
+(define (compiler-reg-phi-result-dead-before-back-edge-def?
+  [instrs : ir.CompilerIrInstrSeq]
+  [live-out : live.CompilerLiveI64Set]
+  [dst : i64]
+  [var : i64]) : bool
+  (and
+    (>= dst 0)
+    (not (live.compiler-live-set-contains? live-out dst))
+    (let
+      [def-index : i64 (compiler-reg-instr-seq-def-index instrs var)]
+      (and
+        (>= def-index 0)
+        (compiler-reg-instr-seq-no-use-after? instrs dst def-index)))))
+
 (define (compiler-reg-phi-live-out-inputs-self-loop-safe?
+  [dst : i64]
   [inputs : ir.CompilerIrPhiInputList]
   [live-out : live.CompilerLiveI64Set]
   [instrs : ir.CompilerIrInstrSeq]
@@ -4864,6 +4956,7 @@
     [(ir.CompilerIrPhiInputList.Nil) true]
     [(ir.CompilerIrPhiInputList.Array seq)
       (compiler-reg-phi-live-out-inputs-self-loop-safe?
+        dst
         (ir.compiler-ir-phi-input-seq-to-list seq)
         live-out
         instrs
@@ -4876,10 +4969,17 @@
               (and
                 (= predecessor block-label)
                 (compiler-reg-instr-seq-defines-var? instrs var)
-                (not (compiler-reg-instr-seq-non-phi-uses-var? instrs var)))
+                (or
+                  (not (compiler-reg-instr-seq-non-phi-uses-var? instrs var))
+                  (compiler-reg-phi-result-dead-before-back-edge-def?
+                    instrs
+                    live-out
+                    dst
+                    var)))
               true)]
           [_ true])
         (compiler-reg-phi-live-out-inputs-self-loop-safe?
+          dst
           (__tl-box-place rest)
           live-out
           instrs
@@ -4906,6 +5006,7 @@
                   (and
                     self-loop
                     (compiler-reg-phi-live-out-inputs-self-loop-safe?
+                      dst
                       inputs
                       live-out
                       instrs

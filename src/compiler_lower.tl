@@ -20,6 +20,7 @@
 (import compiler_ctfe as ctfe)
 (import compiler_float as cfloat)
 (import compiler_intern as ci)
+(import compiler_profile_state as profile_state)
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import compiler_package_surface_producer as package_surface))
@@ -543,6 +544,8 @@
   34)
 (define function-memo-storage : i64
   35)
+(define profile-owner : i64
+  36)
 
 ;; Package identity is job-owned. Function-local lowering keeps its four SPMD
 ;; traversal values and two memo generations in a separate one-word capability;
@@ -689,10 +692,12 @@
 (define (compiler-lower-state-from-name-cache [cache : LowerNameCache]) : CompilerLowerState
   (compiler-lower-state-from-address cache.owner-address))
 
-(define (compiler-lower-state-new-with-intern-state
-  [intern-state : ci.InternCompatState]) : CompilerLowerState
+(define (compiler-lower-state-new-with-intern-state-and-profile-state
+  [intern-state : ci.InternCompatState]
+  [_profile-state : profile_state.CompilerProfileState]) : CompilerLowerState
   (let
-    [cells : (__tl_dyn-array i64) (array.make-array i64 36)]
+    [cells : (__tl_dyn-array i64)
+      (array.make-array i64 (cfg (any compile-profile test) 37 36))]
     [address : i64
       (cast
         (unsafe
@@ -836,7 +841,21 @@
         (compiler-lower-state-cell
           CompilerLowerFunctionMemoStorage
           (compiler-lower-function-memo-storage-empty)))
+      (cfg
+        (any compile-profile test)
+        (set!
+          (array-ref cells profile-owner)
+          (compiler-lower-state-cell
+            profile_state.CompilerProfileState
+            _profile-state))
+        unit)
       state)))
+
+(define (compiler-lower-state-new-with-intern-state
+  [intern-state : ci.InternCompatState]) : CompilerLowerState
+  (compiler-lower-state-new-with-intern-state-and-profile-state
+    intern-state
+    (profile_state.compiler-profile-state-new)))
 
 ;; Serial/test compatibility adapter. Driver-owned jobs construct the lower
 ;; carrier with their explicit intern capability instead.
@@ -849,6 +868,14 @@
 
 (define (compiler-lower-state-interns [state : CompilerLowerState]) : ci.InternCompatState
   (compiler-lower-state-read state ci.InternCompatState intern-owner))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-lower-state-profile [state : CompilerLowerState]) : profile_state.CompilerProfileState
+    (compiler-lower-state-read
+      state
+      profile_state.CompilerProfileState
+      profile-owner)))
 
 (define (compiler-lower-state-checked-pools [state : CompilerLowerState]) : CompilerLowerCheckedPoolsState
   (compiler-lower-state-read state CompilerLowerCheckedPoolsState checked-pools))
@@ -2617,26 +2644,27 @@
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-specialization-counters) : unit
+  (define (compiler-lower-profile-specialization-counters
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
       (compiler-lower-profile-counter
         "specialization.structural_keys.created"
-        (spec.spec-profile-structural-key-created-value))
+        (spec.spec-profile-structural-key-created-value state))
       (compiler-lower-profile-counter
         "specialization.structural_keys.reused"
-        (spec.spec-profile-structural-key-reused-value))
+        (spec.spec-profile-structural-key-reused-value state))
       (compiler-lower-profile-counter
         "specialization.generated_text.materialized"
-        (spec.spec-profile-generated-text-materialized-value))
+        (spec.spec-profile-generated-text-materialized-value state))
       (compiler-lower-profile-counter
         "specialization.render.calls"
-        (spec.spec-profile-name-render-calls-value))
+        (spec.spec-profile-name-render-calls-value state))
       (compiler-lower-profile-counter
         "specialization.render.cache_hits"
-        (spec.spec-profile-name-render-cache-hits-value))
+        (spec.spec-profile-name-render-cache-hits-value state))
       (compiler-lower-profile-counter
         "specialization.render.cache_misses"
-        (spec.spec-profile-name-render-cache-misses-value)))))
+        (spec.spec-profile-name-render-cache-misses-value state)))))
 
 (cfg
   compile-profile
@@ -69074,7 +69102,10 @@
       (package_surface.package-surface-capture-expanded! program paths pools)
       unit)
     (cfg compile-profile (compiler-lower-profile-name-reset))
-    (spec.spec-profile-reset!)
+    (cfg
+      (any compile-profile test)
+      (spec.spec-profile-reset! (compiler-lower-state-profile lower-state))
+      unit)
     (cfg compile-profile (compiler-lower-profile-start))
     (let
       [needs-specialization : bool
@@ -69096,12 +69127,21 @@
           ;; scalar interner changes before explicit specialization begins.
           (ci.intern-compat-state-capture-from-globals! intern-state)
           (if needs-specialization
-            (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
-              program
-              paths
-              entry-path
-              pools
-              intern-state)
+            (cfg
+              (any compile-profile test)
+              (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
+                program
+                paths
+                entry-path
+                pools
+                intern-state
+                (compiler-lower-state-profile lower-state))
+              (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
+                program
+                paths
+                entry-path
+                pools
+                intern-state))
             (spec.ResultSpecProgramWithPaths.Ok program paths)))]
       (begin
         ;; Explicit specialization mutates owner pool/interner cells; publish
@@ -69114,7 +69154,8 @@
               (cfg compile-profile (compiler-lower-profile-finish "specialize"))
               (cfg
                 compile-profile
-                (compiler-lower-profile-specialization-counters))
+                (compiler-lower-profile-specialization-counters
+                  (compiler-lower-state-profile lower-state)))
               (cfg compile-profile (compiler-lower-profile-start))
               (let
                 [prune-names : LowerNameEnv
@@ -69243,7 +69284,8 @@
               (cfg compile-profile (compiler-lower-profile-finish "specialize"))
               (cfg
                 compile-profile
-                (compiler-lower-profile-specialization-counters))
+                (compiler-lower-profile-specialization-counters
+                  (compiler-lower-state-profile lower-state)))
               (ResultCompilerLower.Err
                 (box
                   (lower-diagnostic-with-fallback-path
@@ -69368,7 +69410,13 @@
           program
           paths
           entry-path
-          (spec.spec-owner-context-new pools intern-state))]
+          (cfg
+            (any compile-profile test)
+            (spec.spec-owner-context-new-with-profile-state
+              pools
+              intern-state
+              (compiler-lower-state-profile lower-state))
+            (spec.spec-owner-context-new pools intern-state)))]
       (begin
         ;; Publish explicit generation mutations before matching either result
         ;; or entering the legacy macro-expansion phase.

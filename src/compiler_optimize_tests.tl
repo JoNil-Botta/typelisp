@@ -17698,19 +17698,33 @@
             (compiler_optimize.opt-inline-structure-ok? blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
-;; The identical callee at an IN-LOOP site stays out of line. An unbounded body
-;; may be moved next to a loop, not inside one: absorbing it into the loop is
-;; the shape that measured liveness_scan +17.10%.
-(define (compiler-optimize-inline-single-site-wide-loop-site-refusal-ok?) : bool
+;; The identical callee at an IN-LOOP site is absorbed too, and the body it
+;; lands is the same one. THIS WAS A REFUSAL TEST, on the argument that an
+;; unbounded body may be moved next to a loop and not inside one. What that
+;; argument priced was the merged frame, which is paid once per caller
+;; invocation -- while at an in-loop site the boundary it buys is retired once
+;; per ITERATION. The measurement it rested on (liveness_scan +17.10%, and
+;; +13.3% re-measured) was an allocator fact, and the allocator packets under
+;; this one retired it: the same absorption now measures liveness_scan -1.113%
+;; and intern_table -8.451%. See clause 3 at opt-inline-single-site-absorb-ok?.
+(define (compiler-optimize-inline-single-site-wide-loop-site-absorb-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    (=
-      (opt-inline-wide-remaining-calls
-        (opt-inline-wide-two-function-optimized
-          (opt-inline-wide-loop-caller symbols.main callee-name)
-          (opt-inline-wide-callee callee-name)))
-      1)))
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-wide-two-function-optimized
+        (opt-inline-wide-loop-caller symbols.main callee-name)
+        (opt-inline-wide-callee callee-name))]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 0)
+            (= (compiler_optimize.opt-count-bounds-blocks blocks) 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
 
 ;; A chain of `count` jump-only blocks labelled chain_0 .. chain_(count-1),
 ;; each jumping to the next and the last jumping to `tail-label`. This is how
@@ -18025,8 +18039,12 @@
       1)))
 
 ;; The same wide callee with one call to an external helper in its body stays
-;; out of line: this band prices a body by counting it, and a callee's own
-;; calls are a cost those counts do not carry.
+;; out of line AT A STRAIGHT-LINE SITE: this band prices a body by counting it,
+;; and a callee's own calls are a cost those counts do not carry -- the wider
+;; callee-saved prologue they force at the merged entry is paid once per caller
+;; invocation, and here the boundary it buys is retired once per caller
+;; invocation too. The fixture below is the same callee at an in-loop site;
+;; only the caller differs.
 (define (compiler-optimize-inline-single-site-call-bearing-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -18041,6 +18059,23 @@
           (opt-inline-wide-callee-calling callee-name symbols.external-helper)))
       1)))
 
+;; ... and at an IN-LOOP site the same call-carrying body absorbs. The imported
+;; call already ran once per iteration before the move, so nothing inside the
+;; iteration changes except that the boundary stops running in it. This is the
+;; measured intern_table shape: `it-intern-slice` calls `it-hash-words`,
+;; `it-grow!` and `it-map-insert-from` and absorbs into `it-bench`'s per-line
+;; loop for -8.451%.
+(define (compiler-optimize-inline-single-site-loop-site-call-bearing-absorb-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-wide-loop-caller symbols.main callee-name)
+          (opt-inline-wide-callee-calling callee-name symbols.external-helper)))
+      0)))
+
 ;; An address-taken callee is refused even at one call site: the address is a
 ;; second way in, so the body cannot move.
 (define (compiler-optimize-inline-single-site-address-taken-refusal-ok?) : bool
@@ -18053,6 +18088,63 @@
           (opt-inline-wide-address-taken-caller symbols.main callee-name)
           (opt-inline-wide-callee callee-name)))
       1)))
+
+;; The clause-6 pair, on the shape the cascade clause exists for. `mid` is
+;; single-reference and carries no bounds check of its own, so importing the
+;; bounds-carrying wide leaf hands it its first one and costs it its own inline
+;; -- which is what the clause refuses. Both programs are identical except for
+;; where `mid` makes the call: `opt-inline-wide-cold-caller` puts it in
+;; straight-line code, `opt-inline-wide-loop-caller` puts it in a natural loop.
+;; The leaf is the call-free ten-parameter body the headline fixture absorbs,
+;; so the cascade clause is the only thing that can separate the two.
+;;
+;; The loop tier keeps this clause at both sites and has its own fixture for it
+;; (compiler-optimize-inline-bounds-loop-cascade-refusal-ok?, the measured
+;; `qs-fill`/`qs-bench` shape). That leaf takes three parameters, so the arity
+;; floor keeps this band away from it entirely and the two verdicts do not
+;; collide.
+(define (opt-inline-single-site-cascade-clause-program
+  [symbols : OptInlineMultiTestSymbols]
+  [mid : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-switch-caller-named symbols symbols.inline-nonleaf)
+    (compiler_ir_types.compiler-ir-function-cons
+      mid
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-inline-wide-callee symbols.inline-switch)
+        compiler_ir_types.CompilerIrFunctionList.Nil))))
+
+(define (compiler-optimize-inline-single-site-cascade-site-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-wide-optimized
+        (opt-inline-single-site-cascade-clause-program
+          symbols
+          (opt-inline-wide-cold-caller
+            symbols.inline-nonleaf
+            symbols.inline-switch
+            (opt-inline-wide-param-count))))]
+    [admitted : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-wide-optimized
+        (opt-inline-single-site-cascade-clause-program
+          symbols
+          (opt-inline-wide-loop-caller
+            symbols.inline-nonleaf
+            symbols.inline-switch)))]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          refused
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          admitted
+          "inline_nonleaf"
+          "inline_switch")
+        0))))
 
 ;; The cascade. `main` calls a wide single-site middle function, which calls the
 ;; wide single-site leaf. SCC order absorbs the leaf into the middle function

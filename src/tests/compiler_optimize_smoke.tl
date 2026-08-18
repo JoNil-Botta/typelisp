@@ -4491,10 +4491,10 @@
     "a 220-instruction ten-parameter single-site callee absorbs whole at its one cold site"))
 
 (test
-  inline-single-site-wide-loop-site-refusal
+  inline-single-site-wide-loop-site-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-wide-loop-site-refusal-ok?)
-    "the same unbounded body stays out of line at an in-loop site"))
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-wide-loop-site-absorb-ok?)
+    "the same unbounded body absorbs at an in-loop site: the boundary retires per iteration"))
 
 (test
   inline-single-site-narrow-small-caller-refusal
@@ -4543,6 +4543,18 @@
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-single-site-call-bearing-refusal-ok?)
     "a wide single-site callee that calls out stays out of line: the band cannot price its callee's calls"))
+
+(test
+  inline-single-site-loop-site-call-bearing-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-loop-site-call-bearing-absorb-ok?)
+    "the same call-carrying callee absorbs at an in-loop site: its calls already ran per iteration"))
+
+(test
+  inline-single-site-cascade-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-cascade-site-ok?)
+    "the cascade clause refuses at a straight-line site and comes off at an in-loop one"))
 
 (test
   inline-single-site-address-taken-refusal

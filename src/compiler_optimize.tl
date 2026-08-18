@@ -82348,6 +82348,13 @@
 ;; The measured-plan tier (opt-inline-checked-ok?) does not carry this clause,
 ;; because it does not have to guess: it re-plans the merged caller through a
 ;; real allocation and reverts whatever does not repay.
+;;
+;; The single-site absorb band carries it at a STRAIGHT-LINE site only. The cost
+;; the clause stands in for -- a wider callee-saved set at the merged entry, the
+;; caller's values surviving a clobber it did not have -- is paid once per
+;; caller invocation, so it only outweighs the retired boundary where that
+;; boundary is also retired once per caller invocation. See clause 5 of the
+;; header at opt-inline-single-site-absorb-ok? for the measurement on each side.
 (define (opt-inline-instr-call? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Call _ _ _ _) true]
@@ -84340,6 +84347,17 @@
 ;; bounds check is refused. A caller that already carries one is already
 ;; subject to this gate at its own site and has nothing further to lose, and a
 ;; caller with more than one reference was never going to be absorbed anyway.
+;;
+;; The tier above asks this unconditionally. The single-site absorb band asks it
+;; only at a STRAIGHT-LINE site (opt-inline-single-site-frame-tax-ok?), and the
+;; difference is the size of the import being weighed against the caller's lost
+;; inline. Here the import is capped at 32 instructions and its boundary may be
+;; as narrow as the 3-parameter `qs-fill` above -- worth little even once per
+;; iteration, which is why the measured answer at an in-loop site is still to
+;; refuse. That band's arity floor admits only boundaries of eight parameters or
+;; more, where the marshalling alone is real, so its in-loop imports outweigh a
+;; caller inline that retires once per caller invocation. Same clause, two
+;; populations.
 (define (opt-inline-bounds-loop-cascade-safe?) : bool
   (begin
     (opt-inline-caller-facts-ensure!)
@@ -84529,16 +84547,20 @@
 ;; this band asked the reference count and nothing else, and it LOST:
 ;; liveness_scan 620,776,020 -> 726,936,390, +17.10%, with both target callees
 ;; confirmed absorbed. The prologue arithmetic that motivated the band is real
-;; and it is not the whole account. What it leaves out is that a body absorbed
-;; into a LOOP puts its entire working set inside that loop, where the
-;; allocator must now keep the loop's own live values across it. Absorbing
-;; `ln-recompute!` into the fixpoint worklist loop cost far more in spills
-;; inside that loop than the 14-argument boundary ever cost in marshalling.
+;; and it is not the whole account. What it left out is that a body absorbed
+;; into a LOOP put its entire working set inside that loop, where the allocator
+;; then had to keep the loop's own live values across it: absorbing the
+;; benchmark's `ln-recompute!` into its fixpoint worklist loop cost far more in
+;; spills inside that loop than the 14-argument boundary ever cost in
+;; marshalling. That was an ALLOCATOR fact carried by an INLINER clause, and the
+;; allocator has since been taught it. Clause 3 below carries what is left of
+;; the argument, and what the same absorption measures now.
 ;;
 ;; That is the trade this band makes explicit. The loop tier bounds the body
 ;; and demands an in-loop site: a small body is safe inside a loop, and only an
-;; in-loop site repays a boundary worth little. This tier is its exact
-;; complement -- it lifts the size bound and demands the opposite site:
+;; in-loop site repays a boundary worth little. This tier lifts the size bound
+;; instead and prices the SITE: a straight-line site buys its import with three
+;; clauses, an in-loop site with none of them.
 ;;
 ;;   1. absorb-class 1 -- exactly one static reference, not address-taken, not
 ;;      `main`, not a self-call from this caller. This is what makes the move
@@ -84556,27 +84578,63 @@
 ;;      and the boundary is a call and a cheap prologue, so the narrow class is
 ;;      left to the site-conditioned tiers (see the note at
 ;;      opt-inline-single-site-min-params for the two measured variants);
-;;   3. the site is NOT in a natural loop of the caller. An unbounded body may
-;;      be moved next to a loop; it may not be moved inside one. This is the
-;;      clause the first version lacked, and the 17.10% above is what it costs
-;;      to lack it. RE-MEASURED ON THIS TREE, on top of the regallocator's
-;;      call-hole live-range splitting (compiler-reg-call-hole-* in
-;;      src/compiler_regalloc.tl) that was expected to retire it: dropping the
-;;      clause still loses, and loses the same way. liveness_scan 425,431,987
-;;      -> 481,949,045 (+13.3%) as `ln-recompute!` (104 blocks) joins
-;;      `ln-fixpoint!` (54 blocks) inside the worklist loop -- callgrind puts
-;;      the merged pair at 374.3M against 317.8M for the two separate
-;;      functions, +56.5M, in a function that now spills 165 times and reloads
-;;      111 times out of a 584-byte frame; cfg_domloops 714,576,600 ->
-;;      753,171,819 (+5.4%) as `cfg-build-csr`, `cfg-idom-iterate`,
-;;      `cfg-build-euler-tree` and `cfg-stamp-euler` merge into `cfg-function`
-;;      (36 -> 179 blocks); lex_source 540,592,721 -> 572,296,609 (+5.9%) as
-;;      four scan helpers merge into `ls-tokenize` (84 -> 144). Call-hole
-;;      splitting does not reach this shape: the import REMOVES the call, so
-;;      there is no call hole to split, and the caller's loop-carried values
-;;      are live across straight-line code instead. What prices this correctly
-;;      is not a cheap clause but the measured tier below, which rebuilds the
-;;      caller both ways and allocates each;
+;;   3. the site is NOT in a natural loop of the caller -- and where it IS,
+;;      this clause and clauses 5 and 6 all come off together, because all
+;;      three are settled by the same comparison. Every cost they stand for is
+;;      paid once per CALLER INVOCATION: the frame tax the merged function pays
+;;      at its own entry (a wider callee-saved set, a bigger frame, the
+;;      caller's own values pushed out of registers by the imported working
+;;      set) for clauses 3 and 5, and the caller's own lost inline for clause
+;;      6. What all three buy is one retired boundary, and the SITE is what
+;;      decides how often that boundary would have been retired.
+;;
+;;      At a STRAIGHT-LINE site the boundary also retires once per caller
+;;      invocation. A per-invocation cost is set against a per-invocation
+;;      saving, so the tax can outweigh it -- and the imported body's own calls
+;;      and loops are moved next to the CALLER's loops, which now pay for them.
+;;      At an IN-LOOP site the boundary retires once per ITERATION while the
+;;      tax is still paid once per invocation, and the imported calls and loops
+;;      already ran once per iteration before the move. Nothing inside the
+;;      iteration changes except that the call sequence, the argument
+;;      marshalling and the callee's prologue stop running in it. No ratio
+;;      makes a per-invocation tax outrun a per-iteration saving, so the
+;;      clauses that exist for the straight-line case do not gate this one.
+;;
+;;      MEASURED on this tree, waiving all three at in-loop sites only:
+;;      intern_table 570,249,745 -> 522,058,963 (-8.451%), `it-intern-slice`
+;;      (9 parameters, 332 instructions in 41 blocks, 1.72M calls) absorbed
+;;      into `it-bench`'s per-line loop -- the shape clang's `it_pass` has had
+;;      all along; liveness_scan 408,504,323 -> 403,959,683 (-1.113%),
+;;      `recompute!` (14 parameters, 384 instructions in 45 blocks) absorbed
+;;      into `fixpoint!`'s worklist loop. Every other row byte-identical.
+;;
+;;      This clause's own history is that same merge measured before the
+;;      allocator could hold it: liveness_scan +17.10% with no site clause at
+;;      all, and +13.3% re-measured over the regallocator's call-hole
+;;      live-range splitting (compiler-reg-call-hole-* in
+;;      src/compiler_regalloc.tl), which does not reach this shape because the
+;;      import REMOVES the call and leaves no hole to split. Both were real,
+;;      and what retired them is not an inliner clause but the two allocator
+;;      packets under this one -- the flag-exit rounding and the loop-depth
+;;      ladders in src/compiler_regalloc.tl. Before the ladders the same waiver
+;;      still lost on intern_table (+2.1%): the merged kernel's byte loop
+;;      spilled its bases, and the ladders alone moved that experiment from
+;;      581.8M to 532.4M. (The old liveness numbers name `ln-recompute!` /
+;;      `ln-fixpoint!`; the benchmark's live pair is now `recompute!` /
+;;      `fixpoint!` in liveness_storage.tl, the same shape.)
+;;
+;;      The rest of the old evidence was never about in-loop sites: cfg_domloops
+;;      +5.4% and lex_source +5.9% are STRAIGHT-LINE merges into `cfg-function`
+;;      and `ls-tokenize`, which this clause still refuses -- and on this tree
+;;      those bodies no longer even reach it, since clause 2's arity floor
+;;      stops them first (lex_source presents no candidate to this band at
+;;      all). The straight-line half is not theory either. Waiving these three
+;;      clauses for EVERY site, on this tree, absorbs `cfg-stamp-euler` (8
+;;      parameters, 207 instructions in 16 blocks) into `cfg-function` at its
+;;      straight-line site and costs cfg_domloops 701,851,308 -> 702,906,528
+;;      (+0.150%), callgrind putting the merged function at 113.3M against
+;;      95.3M for the pair. That single row is the whole difference between the
+;;      rule this band carries and the rule it refuses;
 ;;   4. the heavy gate is kept. It is not a growth budget -- it is the block
 ;;      count past which the whole-function passes downstream stop running --
 ;;      so a merged function that would cross it is refused here for the same
@@ -84585,27 +84643,66 @@
 ;;      band makes no copies. Its blocks are not charged to the shared
 ;;      accumulator either -- see opt-inline-caller-absorb-blocks, which is
 ;;      what makes that statement true rather than merely intended;
-;;   5. the body is call-free, the same clause the duplication and
-;;      recursive-site tiers carry, for the same reason: this band's model
-;;      cannot price a callee's own calls (see opt-inline-blocks-call-free?).
-;;      RE-MEASURED ON THIS TREE with call-hole splitting in place: dropping it
-;;      still loses, and the mechanism is not spilling at all. It is the
-;;      PROLOGUE. hashmap_insert 28,941,253 -> 36,161,477 (+24.9%): `grow!`
-;;      (18 blocks, calls tl_alloc/tl_array_zero) is absorbed into
-;;      `insert-ref!`, whose callee-saved prologue goes from two pushes and two
-;;      pops to six and six -- eight extra instructions on EVERY insert, about
-;;      900k of them, for a body that runs on the rare rehash. 8 * 900k is the
-;;      +7.2M the row moves. hashmap_grow +18.8% and hashmap_churn +9.6% are
-;;      the same absorption on the same shape. A callee's own calls raise the
-;;      merged function's callee-saved demand at its entry, which is paid per
-;;      CALLER entry while the imported body runs on a colder path, and no
-;;      live-range mechanism can refund that;
-;;   6. the cascade clause, asked only when the callee actually carries bounds
-;;      checks, because that is the only thing it protects against: handing a
-;;      bounds-free single-reference CALLER its first bounds check used to cost
-;;      that caller its own inline at the loop tier. RE-MEASURED: dropping it
-;;      costs opt_crc32 324,500,336 -> 324,560,322 (+59,986) with no row
-;;      improving, so it stays;
+;;   5. AT A STRAIGHT-LINE SITE the body is call-free, the same clause the
+;;      duplication and recursive-site tiers carry, for the same reason: this
+;;      band's model cannot price a callee's own calls (see
+;;      opt-inline-blocks-call-free?). RE-MEASURED with call-hole splitting in
+;;      place: dropping it at a straight-line site still loses, and the
+;;      mechanism is not spilling at all. It is the PROLOGUE. hashmap_insert
+;;      28,941,253 -> 36,161,477 (+24.9%): `grow!` (18 blocks, calls
+;;      tl_alloc/tl_array_zero) is absorbed into `insert-ref!` at the
+;;      straight-line `(if (needs-grow? map) (grow! map) unit)` that opens
+;;      every insert, and `insert-ref!`'s callee-saved prologue goes from two
+;;      pushes and two pops to six and six -- eight extra instructions on EVERY
+;;      insert, about 900k of them, for a body that runs on the rare rehash.
+;;      8 * 900k is the +7.2M the row moves. hashmap_grow +18.8% and
+;;      hashmap_churn +9.6% are the same absorption on the same shape. A
+;;      callee's own calls raise the merged function's callee-saved demand at
+;;      its entry, which is paid per CALLER entry while the imported body runs
+;;      on a colder path, and no live-range mechanism can refund that.
+;;
+;;      That accounting is clause 3's frequency argument stated in prologue
+;;      instructions, and it is also why the clause cannot survive an in-loop
+;;      site: there the imported body and its calls run once per iteration, the
+;;      same rate as the boundary being retired, while the wider prologue is
+;;      still paid once per invocation. The measured in-loop case is
+;;      `it-intern-slice`, which calls `it-hash-words`, `it-grow!` and
+;;      `it-map-insert-from` and is the -8.451% in clause 3. (The hashmap
+;;      numbers also predate clause 2: `grow!` takes ONE parameter, so the
+;;      arity floor now refuses it before this clause is ever reached, which is
+;;      why hashmap_insert, hashmap_grow and hashmap_churn stay byte-identical
+;;      even under the widest experiment -- none of them presents a candidate
+;;      to this band at all.);
+;;   6. AT A STRAIGHT-LINE SITE the cascade clause, asked only when the callee
+;;      actually carries bounds checks, because that is the only thing it
+;;      protects against: handing a bounds-free single-reference CALLER its
+;;      first bounds check costs that caller its own inline at the loop tier.
+;;      This one is not the frame tax. What it weighs is one boundary against
+;;      another -- the import here against the CALLER's own absorption at the
+;;      caller's site -- so clause 3's frequencies apply to it just as
+;;      literally. The caller's own boundary retires once per caller
+;;      invocation; at a straight-line site so does the import, and the two are
+;;      then close enough that the measured answer decides. `cfg-stamp-euler`
+;;      is refused by exactly this clause (`cfg-function` is itself a
+;;      bounds-free single-reference caller) and admitting it is the +0.150%
+;;      above. At an in-loop site the import retires per ITERATION against a
+;;      caller inline worth one boundary per invocation, and clause 2
+;;      guarantees the import is a WIDE boundary rather than a token one:
+;;      `it-intern-slice` is refused by this clause as well -- `it-bench` being
+;;      bounds-free and single-reference in the same way -- and absorbing it is
+;;      the -8.451%.
+;;
+;;      The loop tier keeps the clause at BOTH sites, and rightly: its measured
+;;      case (`qs-fill` into `qs-bench`, at opt-inline-bounds-loop-cascade-safe?
+;;      below) is an in-loop site where refusing still wins, because a
+;;      24-instruction 3-parameter import is a boundary worth little even once
+;;      per iteration. That is exactly the class clause 2's arity floor keeps
+;;      this band away from, which is why the same waiver is sound here and not
+;;      there. This band's own re-measurement of the clause was opt_crc32
+;;      324,500,336 -> 324,560,322 (+59,986) with no row improving; on this
+;;      tree opt_crc32 presents no candidate to this band at all (the arity
+;;      floor again), so the straight-line half of the clause now rests on
+;;      `cfg-stamp-euler` rather than on that number;
 ;;   7. a pathological-case backstop on the callee's size,
 ;;      opt-inline-single-site-max-body and -max-blocks. This is NOT a growth
 ;;      budget -- absorption does not grow the program and no measured callee
@@ -84614,7 +84711,8 @@
 ;;      cannot turn a linear compile into a quadratic one.
 ;;
 ;; Ordered cheapest-first: two integer compares, then arithmetic, then the
-;; memoized caller facts, and the scan over the callee's blocks last.
+;; memoized caller facts, and the scan over the callee's blocks last -- which
+;; an in-loop site never reaches, since clause 3 answers for 5 and 6 as well.
 ;;
 ;; On the arity floor below: x86-64 SysV passes six integer arguments in
 ;; registers and Windows x64 passes four, so at eight parameters BOTH ABIs store
@@ -84653,6 +84751,26 @@
 (define (opt-inline-single-site-max-blocks) : i64
   128)
 
+;; Clauses 3, 5 and 6 in one place, because between them they are one decision.
+;; Each stands for a cost the merged function pays once per CALLER INVOCATION --
+;; the frame tax at its own entry for 3 and 5, the caller's own lost inline for
+;; 6 -- and such a cost is only worth pricing where the boundary it buys is also
+;; retired once per caller invocation. That is a straight-line site. At an
+;; in-loop site the boundary retires per iteration and all three come off; the
+;; numbered list above carries the argument and the measurements.
+;;
+;; Ordered so the site question runs first. It forces the memoized caller facts
+;; the cascade clause needs anyway, and an in-loop answer retires the scan over
+;; the callee's blocks outright.
+(define (opt-inline-single-site-frame-tax-ok?
+  [has-bounds? : bool]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (or
+    (opt-inline-bounds-loop-site-in-loop?)
+    (and
+      (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))
+      (opt-inline-blocks-call-free? blocks))))
+
 (define (opt-inline-single-site-absorb-ok?
   [absorb-class : i64]
   [has-bounds? : bool]
@@ -84677,9 +84795,7 @@
         caller-blocks
         (+ added-so-far opt-inline-caller-absorb-blocks)
         added-blocks))
-    (not (opt-inline-bounds-loop-site-in-loop?))
-    (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))
-    (opt-inline-blocks-call-free? blocks)))
+    (opt-inline-single-site-frame-tax-ok? has-bounds? blocks)))
 
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]

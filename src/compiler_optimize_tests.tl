@@ -56865,6 +56865,9 @@
   (arr i64)
   (k i64)
   (agg i64)
+  ;; a second word cell, never read by the reader: what a callee writes when
+  ;; the point of the fixture is that it writes some OTHER cell
+  (m i64)
   (callee i64)
   (reader i64)
   (other i64)
@@ -56875,6 +56878,7 @@
     (opt-test-symbol "gc_arr")
     (opt-test-symbol "gc_k")
     (opt-test-symbol "gc_agg")
+    (opt-test-symbol "gc_m")
     (opt-test-symbol "gc_callee")
     (opt-test-symbol "gc_reader")
     (opt-test-symbol "gc_other")
@@ -56883,7 +56887,7 @@
 (define (opt-gc-test-globals [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
   (let
     [builder : compiler_ir_types.CompilerIrGlobalBuilder
-      (compiler_ir_types.compiler-ir-global-builder-with-capacity 3)]
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 4)]
     (begin
       (opt-test-global-builder-push!
         (&mut builder)
@@ -56901,11 +56905,41 @@
         symbols.agg
         (compiler_ast_types.AstType.Struct symbols.agg)
         (compiler_ir_types.CompilerIrValue.Unit))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.m
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 3))
       (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
 
-;; `call-mode`: 0 no call, 1 an ordinary RETURNING call (condition (c) rejects
-;; the function), 2 a call to the NON-RETURNING oob-abort helper (condition (c)
-;; admits it -- nothing runs after it, so no callee write can reach a use).
+;; `call-mode`: 0 no call, 1 a direct RETURNING call to `gc_callee` (condition
+;; (c) then asks P18's table which cells that callee's row writes), 2 a call to
+;; the NON-RETURNING oob-abort helper (not a returning call at all -- nothing
+;; runs after it, so no callee write can reach a use), 3 an INDIRECT call,
+;; which may land on any function of the program and so refuses every cell,
+;; 4 the same direct call as 1 in a body that does NOT loop, which is what
+;; opt-global-cell-promotion-pays? declines for a call-bearing function.
+;; Every mode but 0 and 4 closes `body` into a loop.
+(define (opt-gc-test-reader-loops? [call-mode : i64]) : bool
+  (and (> call-mode 0) (not (= call-mode 4))))
+
+(define (opt-gc-test-reader-call [symbols : OptGcTestSymbols] [call-mode : i64]) : compiler_ir_types.CompilerIrInstr
+  (if (= call-mode 3)
+    (compiler_ir_types.CompilerIrInstr.CallIndirect
+      9
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrCallArgs.One
+        (compiler_ir_types.CompilerIrValue.Var 3))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Call
+      9
+      (if (= call-mode 2)
+        cbi.compiler-builtin-id-tl-oob-abort
+        symbols.callee)
+      (compiler_ir_types.CompilerIrCallArgs.One
+        (compiler_ir_types.CompilerIrValue.Var 3))
+      (compiler_ast_types.AstType.I64))))
+
 (define (opt-gc-test-reader-tail
   [symbols : OptGcTestSymbols]
   [store-k? : bool]
@@ -56928,20 +56962,22 @@
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ast_types.AstType.I64))
       (cond
+        ;; A call-bearing function only promotes cells the LOOP set names
+        ;; (opt-global-cell-promotion-pays?), so `body` closes on itself here
+        ;; and returns through a separate exit block -- except in mode 4, which
+        ;; is exactly the straight-line neighbour that rule declines.
         [(> call-mode 0)
           (compiler_ir_types.compiler-ir-instr-cons
-            (compiler_ir_types.CompilerIrInstr.Call
-              9
-              (if (= call-mode 2)
-                cbi.compiler-builtin-id-tl-oob-abort
-                symbols.callee)
-              (compiler_ir_types.CompilerIrCallArgs.One
-                (compiler_ir_types.CompilerIrValue.Var 3))
-              (compiler_ast_types.AstType.I64))
+            (opt-gc-test-reader-call symbols call-mode)
             (compiler_ir_types.compiler-ir-instr-cons
-              (compiler_ir_types.CompilerIrInstr.Return
-                (compiler_ir_types.CompilerIrMaybeValue.Some
-                  (compiler_ir_types.CompilerIrValue.Var 5)))
+              (if (opt-gc-test-reader-loops? call-mode)
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 5))))
               compiler_ir_types.CompilerIrInstrList.Nil))]
         [store-k?
           (compiler_ir_types.compiler-ir-instr-cons
@@ -57008,7 +57044,17 @@
                     (compiler_ir_types.CompilerIrValue.Var 4)
                     (compiler_ast_types.AstType.I64))
                   (opt-gc-test-reader-tail symbols store-k? call-mode)))))))
-      compiler_ir_types.CompilerIrBlockList.Nil)))
+      (if (opt-gc-test-reader-loops? call-mode)
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 5)))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrBlockList.Nil))))
 
 (define (opt-gc-test-reader-function
   [symbols : OptGcTestSymbols]
@@ -57082,6 +57128,12 @@
     (compiler_ir_types.compiler-ir-function-cons
       g
       compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (opt-gc-test-functions3
+  [f : compiler_ir_types.CompilerIrFunction]
+  [g : compiler_ir_types.CompilerIrFunction]
+  [h : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons f (opt-gc-test-functions2 g h)))
 
 (define (opt-gc-test-summaries
   [symbols : OptGcTestSymbols]
@@ -57310,11 +57362,13 @@
       [(not (= (opt-gc-test-stray-blocks blocks true 0) 1)) 9]
       [else 42])))
 
-;; Same shape as opt-gc-test-plain-hoist-ok?, for the fixture whose only call
-;; is the NON-RETURNING oob-abort helper. That fixture's frame starts at 10
-;; (the call defines var 9), so the two fresh hoist vars are 10 and 11.
-(define (opt-gc-test-abort-hoist-ok?
-  [out : compiler_ir_types.CompilerIrFunction]) : i64
+;; Same shape as opt-gc-test-plain-hoist-ok?, for the fixtures that keep a call
+;; and still hoist BOTH word cells: the NON-RETURNING oob-abort helper, and a
+;; returning callee whose mod-ref row names neither cell. Their frame starts at
+;; 10 (the call defines var 9), so the two fresh hoist vars are 10 and 11.
+(define (opt-gc-test-call-hoist-ok?
+  [out : compiler_ir_types.CompilerIrFunction]
+  [callee : i64]) : i64
   (let
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks out)]
@@ -57341,14 +57395,102 @@
             (not (opt-gc-test-is-var? rhs 10))]
           [_ true])
         6]
-      ;; the abort call itself is untouched -- this is a classification, not
-      ;; check or trap motion
+      ;; the call itself is untouched -- this is a classification, not check,
+      ;; trap or call motion
       [(match (opt-gc-test-instr-at blocks 1 7)
-          [(compiler_ir_types.CompilerIrInstr.Call _ callee _ _)
-            (not (= callee cbi.compiler-builtin-id-tl-oob-abort))]
+          [(compiler_ir_types.CompilerIrInstr.Call _ target _ _)
+            (not (= target callee))]
           [_ true])
         7]
       [else 42])))
+
+;; The fixture shape where condition (c) refuses ONE cell: `gc_k` is written by
+;; a returning callee and keeps per-use semantics, while `gc_arr` -- which no
+;; callee writes -- takes the single entry load (fresh var 10, the frame's
+;; first free slot). Everything else is opt-gc-test-call-hoist-ok?.
+(define (opt-gc-test-arr-only-hoist-ok?
+  [out : compiler_ir_types.CompilerIrFunction]) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out)]
+    (cond
+      [(not (= (compiler_optimize.opt-function-frame out) 11)) 1]
+      [(not (= (opt-gc-test-block-instr-count blocks 0) 2)) 2]
+      [(match (opt-gc-test-instr-at blocks 0 0)
+          [(compiler_ir_types.CompilerIrInstr.Mov d src _)
+            (not (and (= d 10) (opt-gc-test-is-global-named? src "gc_arr")))]
+          [_ true])
+        3]
+      [(match (opt-gc-test-instr-at blocks 1 0)
+          [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
+            (not (opt-gc-test-is-var? base 10))]
+          [_ true])
+        4]
+      ;; both `@gc_k` reads still name the cell
+      [(match (opt-gc-test-instr-at blocks 1 2)
+          [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ rhs _)
+            (not (opt-gc-test-is-global-named? rhs "gc_k"))]
+          [_ true])
+        5]
+      [(match (opt-gc-test-instr-at blocks 1 3)
+          [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
+            (not (opt-gc-test-is-global-named? src "gc_k"))]
+          [_ true])
+        6]
+      ;; exactly those two, plus the non-word aggregate Mov
+      [(not (= (opt-gc-test-stray-blocks blocks true 0) 3)) 7]
+      [else 42])))
+
+;; `gc_callee` as the PROGRAM sees it: one `set!` of `target`, then a return.
+;; P18's table reads a direct callee's row off its body, so this body is what
+;; decides -- per cell -- whether the reader may hoist across the call.
+(define (opt-gc-test-callee-function
+  [symbols : OptGcTestSymbols]
+  [target : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.callee
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Store
+            target
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; `gc_callee` again, storing nothing itself and CALLING `gc_writer` (which
+;; stores gc_k). Its row is the TRANSITIVE one the mod-ref fixpoint computes,
+;; so the reader must refuse gc_k across it exactly as across a direct writer.
+(define (opt-gc-test-callee-caller-function [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.callee
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    2
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Call
+            0
+            symbols.writer
+            (compiler_ir_types.CompilerIrCallArgs.Nil)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
 
 ;; Fixture H: @gc_k is read EXACTLY ONCE, in a non-entry block. The hoist
 ;; would replace that one conditional load with one unconditional entry load
@@ -57385,6 +57527,260 @@
               compiler_ir_types.CompilerIrInstrList.Nil)))
         compiler_ir_types.CompilerIrBlockList.Nil))))
 
+;; PRESSURE fixture for opt-global-cell-entry-fits?. Same admitted shape as P2
+;; -- a returning callee that writes some other cell, two `@gc_arr` reads in a
+;; body that loops -- with `live-ins` values entering the function from outside:
+;; vars the accumulator chain reads and no instruction defines, which is what a
+;; parameter is to opt-unroll-mb-live-in-count (uses minus defs) and so exactly
+;; what it counts. At the budget the cell hoists; one over it the whole function
+;; is declined, because the copy would have to live in a frame slot across the
+;; call.
+;;
+;; Vars: 10 the descriptor gep, 11 its load, 12..(11+live-ins) the chain,
+;; (12+live-ins) the second `@gc_arr` read, (13+live-ins) the call result, so
+;; the frame is (14+live-ins) and the single hoist would take it.
+(define (opt-gc-test-pressure-chain
+  [acc : i64]
+  [next : i64]
+  [remaining : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (if (<= remaining 0)
+    tail
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        (+ acc 1)
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var acc)
+        (compiler_ir_types.CompilerIrValue.Var next)
+        (compiler_ast_types.AstType.I64))
+      (opt-gc-test-pressure-chain (+ acc 1) (+ next 1) (- remaining 1) tail))))
+
+(define (opt-gc-test-pressure-function
+  [symbols : OptGcTestSymbols]
+  [live-ins : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [acc : i64 (+ 11 live-ins)]
+    (compiler_ir_types.CompilerIrFunction.Function
+      symbols.reader
+      compiler_ir_types.CompilerIrParamList.Nil
+      (compiler_ast_types.AstType.I64)
+      (+ 14 live-ins)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "body"))
+            compiler_ir_types.CompilerIrInstrList.Nil))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                10
+                (compiler_ir_types.CompilerIrValue.Global symbols.arr)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Load
+                  11
+                  (compiler_ir_types.CompilerIrValue.Var 10)
+                  (compiler_ast_types.AstType.I64))
+                (opt-gc-test-pressure-chain
+                  11
+                  0
+                  live-ins
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Gep
+                      (+ acc 1)
+                      (compiler_ir_types.CompilerIrValue.Global symbols.arr)
+                      (compiler_ir_types.CompilerIrValue.I64 0)
+                      (compiler_ast_types.AstType.U8))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Call
+                        (+ acc 2)
+                        symbols.callee
+                        (compiler_ir_types.CompilerIrCallArgs.One
+                          (compiler_ir_types.CompilerIrValue.Var acc))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Branch
+                          (compiler_ir_types.CompilerIrValue.Var acc)
+                          (compiler_ir_types.compiler-ir-label "body")
+                          (compiler_ir_types.compiler-ir-label "exit"))
+                        compiler_ir_types.CompilerIrInstrList.Nil)))))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var acc)))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-gc-test-pressure-run [symbols : OptGcTestSymbols] [live-ins : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-gc-test-pressure-function symbols live-ins)]
+    (compiler_optimize.opt-global-cell-function
+      (opt-gc-test-summaries
+        symbols
+        (opt-gc-test-functions2
+          func
+          (opt-gc-test-callee-function symbols symbols.m)))
+      func)))
+
+;; --- global-cell condition (c): per-call, per-cell mod-ref -------------------
+;;
+;; v1 refused a function outright as soon as any RETURNING call remained. The
+;; condition is now per CELL: a direct callee contributes exactly the cells its
+;; P18 mod-ref row says it (transitively) may `set!`, and only a call this walk
+;; cannot resolve to a name still refuses everything. Every fixture below is
+;; the SAME reader -- fixture A's body plus one returning call -- and differs
+;; only in what the program says that call can write.
+;;
+;;   P1 extern      the callee is no function of this program: no IR body,
+;;                  hence no `Store`, and under (b) no pointer that names a
+;;                  cell -> both word cells hoist
+;;   P2 other cell  the callee sets `gc_m` -> both word cells still hoist
+;;   N1 the cell    the callee sets `gc_k` -> gc_k keeps per-use semantics,
+;;                  while `gc_arr`, which nothing writes, still hoists
+;;   N2 transitive  the callee sets nothing itself and calls `gc_writer`, which
+;;                  sets gc_k -> same verdict as N1, read off the fixpoint's row
+;;   N3 indirect    a CallIndirect may land anywhere -> nothing hoists, which is
+;;                  exactly the v1 rule (fixture C of the test above pins the
+;;                  same shape from the other side)
+;;   N4 price       P2's program with a reader whose body does NOT loop: legal,
+;;                  and declined by opt-global-cell-promotion-pays?, because a
+;;                  copy that has to survive the call costs a callee-saved
+;;                  register on every activation and the reads it replaces run
+;;                  at most once
+;;   P3/N5 pressure a looping reader with six values entering from outside
+;;                  hoists; with seven, opt-global-cell-entry-fits? declines the
+;;                  function, because the copy would be a frame slot rather than
+;;                  a callee-saved register. Two-sided on
+;;                  opt-licm-global-promote-live-in-budget
+;;
+;; The negatives are load-bearing: dropping the mod-ref test from
+;; opt-global-cell-plan-build makes N1 and N2 hoist `gc_k` across the very call
+;; that writes it, and this is the test that fails.
+(define (compiler-optimize-global-cell-call-mod-ref-self-test) : i64
+  (let
+    [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
+    [reader : compiler_ir_types.CompilerIrFunction
+      (opt-gc-test-reader-function symbols false 1)]
+    ;; P1: `gc_callee` is absent from the program's function list
+    [out-extern : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-global-cell-function
+        (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader))
+        reader)]
+    ;; P2: it is present, and sets a cell this reader never reads
+    [out-other : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-global-cell-function
+        (opt-gc-test-summaries
+          symbols
+          (opt-gc-test-functions2
+            reader
+            (opt-gc-test-callee-function symbols symbols.m)))
+        reader)]
+    ;; N1: it sets `gc_k`
+    [out-k : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-global-cell-function
+        (opt-gc-test-summaries
+          symbols
+          (opt-gc-test-functions2
+            reader
+            (opt-gc-test-callee-function symbols symbols.k)))
+        reader)]
+    ;; N2: it calls something that sets `gc_k`
+    [out-trans : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-global-cell-function
+        (opt-gc-test-summaries
+          symbols
+          (opt-gc-test-functions3
+            reader
+            (opt-gc-test-callee-caller-function symbols)
+            (opt-gc-test-writer-function symbols)))
+        reader)]
+    ;; N4: legal exactly as P2 is, and declined on price -- the reader does not
+    ;; loop, so the copy would have to survive the call in a callee-saved
+    ;; register for reads that run at most once per activation
+    [flat-reader : compiler_ir_types.CompilerIrFunction
+      (opt-gc-test-reader-function symbols false 4)]
+    [out-flat : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-global-cell-function
+        (opt-gc-test-summaries
+          symbols
+          (opt-gc-test-functions2
+            flat-reader
+            (opt-gc-test-callee-function symbols symbols.m)))
+        flat-reader)]
+    [blocks-flat : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out-flat)]
+    ;; P3/N5: the live-in budget, one on each side of it
+    [out-fits : compiler_ir_types.CompilerIrFunction
+      (opt-gc-test-pressure-run symbols 6)]
+    [blocks-fits : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out-fits)]
+    [out-pressured : compiler_ir_types.CompilerIrFunction
+      (opt-gc-test-pressure-run symbols 7)]
+    [blocks-pressured : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out-pressured)]
+    ;; N3: the call names no callee at all
+    [indirect-reader : compiler_ir_types.CompilerIrFunction
+      (opt-gc-test-reader-function symbols false 3)]
+    [out-indirect : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-global-cell-function
+        (opt-gc-test-summaries symbols (opt-gc-test-functions1 indirect-reader))
+        indirect-reader)]
+    [blocks-indirect : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out-indirect)]
+    (cond
+      [(not (= (opt-gc-test-call-hoist-ok? out-extern symbols.callee) 42)) 1]
+      [(not (= (opt-gc-test-call-hoist-ok? out-other symbols.callee) 42)) 2]
+      [(not (= (opt-gc-test-arr-only-hoist-ok? out-k) 42)) 3]
+      [(not (= (opt-gc-test-arr-only-hoist-ok? out-trans) 42)) 4]
+      ;; N3 is untouched: same frame, no entry load, the global base intact
+      [(not (= (compiler_optimize.opt-function-frame out-indirect) 10)) 5]
+      [(not (= (opt-gc-test-block-instr-count blocks-indirect 0) 1)) 6]
+      [(match (opt-gc-test-instr-at blocks-indirect 1 0)
+          [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
+            (not (opt-gc-test-is-global-named? base "gc_arr"))]
+          [_ true])
+        7]
+      ;; N4 is untouched for the same three reasons, on price rather than
+      ;; legality
+      [(not (= (compiler_optimize.opt-function-frame out-flat) 10)) 8]
+      [(not (= (opt-gc-test-block-instr-count blocks-flat 0) 1)) 9]
+      [(match (opt-gc-test-instr-at blocks-flat 1 0)
+          [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
+            (not (opt-gc-test-is-global-named? base "gc_arr"))]
+          [_ true])
+        10]
+      ;; P3: at the budget the single entry load appears and the loop's first
+      ;; `@gc_arr` read becomes the fresh var (frame 20 -> 21)
+      [(not (= (compiler_optimize.opt-function-frame out-fits) 21)) 11]
+      [(match (opt-gc-test-instr-at blocks-fits 0 0)
+          [(compiler_ir_types.CompilerIrInstr.Mov d src _)
+            (not (and (= d 20) (opt-gc-test-is-global-named? src "gc_arr")))]
+          [_ true])
+        12]
+      [(match (opt-gc-test-instr-at blocks-fits 1 0)
+          [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
+            (not (opt-gc-test-is-var? base 20))]
+          [_ true])
+        13]
+      ;; N5: one live-in more and the function is untouched
+      [(not (= (compiler_optimize.opt-function-frame out-pressured) 21)) 14]
+      [(not (= (opt-gc-test-block-instr-count blocks-pressured 0) 1)) 15]
+      [(match (opt-gc-test-instr-at blocks-pressured 1 0)
+          [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
+            (not (opt-gc-test-is-global-named? base "gc_arr"))]
+          [_ true])
+        16]
+      [else 42])))
+
 (define (compiler-optimize-global-cell-self-test) : i64
   (let
     [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
@@ -57404,9 +57800,12 @@
       (compiler_optimize.opt-global-cell-function summaries-b reader-b)]
     [blocks-b : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks out-b)]
-    ;; fixture C: a remaining call excludes the whole function (c)
+    ;; fixture C: an INDIRECT call may land on any function of the program, so
+    ;; it may write any cell and (c) excludes the WHOLE function -- the only
+    ;; whole-function refusal left. Which cells a NAMED callee writes is
+    ;; compiler-optimize-global-cell-call-mod-ref-self-test.
     [reader-c : compiler_ir_types.CompilerIrFunction
-      (opt-gc-test-reader-function symbols false 1)]
+      (opt-gc-test-reader-function symbols false 3)]
     [summaries-c : compiler_optimize.OptLoopBceSummaries
       (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-c))]
     [out-c : compiler_ir_types.CompilerIrFunction
@@ -57474,8 +57873,8 @@
             false]
           [_ true])
         11]
-      [(not (= cell-a.word-cell 2)) 12]
-      [(not (= cell-d.word-cell 1)) 13]
+      [(not (= cell-a.word-cell 3)) 12]
+      [(not (= cell-d.word-cell 2)) 13]
       [(not (opt_i64_i64_map.contains? (& cell-d.addr-taken) symbols.arr)) 14]
       [(not (= (opt-gc-test-plain-hoist-ok? out-a) 42)) 15]
       ;; fixture B: the function's only `Store gc_k` is the last instruction of
@@ -57517,7 +57916,13 @@
       [(not (= (opt-gc-test-plain-hoist-ok? out-e) 42)) 50]
       ;; fixture G: a NON-RETURNING abort call is not a (c) call -- the
       ;; function hoists both word cells and the abort stays where it was
-      [(not (= (opt-gc-test-abort-hoist-ok? out-g) 42)) 55]
+      [(not
+          (=
+            (opt-gc-test-call-hoist-ok?
+              out-g
+              cbi.compiler-builtin-id-tl-oob-abort)
+            42))
+        55]
       ;; fixture F: second run is a no-op
       [(not (= (compiler_optimize.opt-function-frame out-f) 9)) 60]
       [(not (= (opt-gc-test-block-instr-count blocks-f 0) 3)) 61]
@@ -61421,14 +61826,17 @@
       (opt-lp-promoted-blocks symbols (opt-lp-test-zero-trip-blocks symbols))]
     [zero-trip : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks zero-trip-func)]
-    ;; (e) the function-scope pass still refuses a function with a returning
-    ;; call, while the loop-scope promotion fires on the same function
+    ;; (e) the function-scope pass still refuses a function whose callee's
+    ;; mod-ref row is "may write any cell" -- `lp_callee` makes an indirect
+    ;; call, so it has to be IN the program for the table to say so -- while
+    ;; the loop-scope promotion fires on the same function, because the call
+    ;; sits in the entry block and not in the loop.
     [call-fixture : compiler_ir_types.CompilerIrFunction
       (opt-lp-test-call-function symbols)]
     [call-functions : compiler_ir_types.CompilerIrFunctionList
-      (opt-gc-test-functions2
+      (compiler_ir_types.compiler-ir-function-cons
         call-fixture
-        (opt-lp-test-writer-function symbols))]
+        (opt-lp-test-program-functions symbols))]
     [call-summaries : compiler_optimize.OptLoopBceSummaries
       (compiler_optimize.opt-loop-bce-summaries-set-global-cell
         (compiler_optimize.opt-loop-bce-empty-summaries)
@@ -61792,6 +62200,13 @@
     (compiler-optimize-copy-call-self-test)
     42
     "a byte copy in a __bce_fast clone becomes one tl_mem_copy_fwd(dst, src, count) call, with an invariant+counter destination index admitted and idempotently; checked, wide-element, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width and constant-value loops do not"))
+
+(test
+  global-cell-call-mod-ref
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-call-mod-ref-self-test)
+    42
+    "condition (c) is per cell: an extern or other-cell callee still hoists, a direct or transitive writer of the cell does not, and an indirect call refuses the function"))
 
 (test
   global-cell-observable-store

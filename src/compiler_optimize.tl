@@ -22539,10 +22539,10 @@
 ;; standalone load to relocate -- `globals-clean?` only lets an instruction
 ;; whose OTHER operands are invariant leave the loop, which a `mul %varying,
 ;; @g` or `lt %counter, @g` never is. The function-scope global_cell pass does
-;; materialize the load, but it refuses any function containing a returning
-;; call (a callee could `set!` the cell, so a function-ENTRY load would be
-;; stale) and any function that stores the cell itself, which is exactly why
-;; the hot loops that carry these operands are the ones it declines.
+;; materialize the load, but only for a cell no returning call in the function
+;; may write (P21, its condition (c)) and no store in the function can make
+;; observable, and only where the entry copy's cost is repaid -- so the hot
+;; loops that carry these operands still include ones it declines.
 ;;
 ;; A LOOP is the smaller scope where the same fact holds far more often. When
 ;; `opt-licm-globals-clean?` holds, the body contains no call that may write
@@ -22552,9 +22552,9 @@
 ;; value-identical: the preheader load runs on every loop ENTRY, so a `set!`
 ;; made elsewhere in the same function -- before the loop, or between two
 ;; entries of it -- is observed exactly as the per-use loads observed it. That
-;; is the difference from the function-scope pass, whose entry load would go
-;; stale, and it is why this promotion is loop-scoped rather than a relaxation
-;; of that pass's condition.
+;; is the difference from the function-scope pass, whose entry load has to
+;; prove the cell survives every call in the whole function, and it is why this
+;; promotion stays loop-scoped rather than folding into that pass's condition.
 ;;
 ;; The preheader load is speculation-free even for a zero-trip loop: a global
 ;; cell is statically allocated and always exists, so the load reads valid
@@ -22657,9 +22657,12 @@
       0
       (opt-global-mod-ref-any))))
 
-;; Does the loop's per-global cell-write set forbid promoting `name`? A zero
-;; set forbids nothing, which is what the loop-wide path passes.
-(define (opt-licm-global-promote-refused?
+;; Does a per-global cell-write set forbid promoting `name`? A zero set forbids
+;; nothing, which is what the loop-wide path passes. Both promotions ask it:
+;; the loop-scope one with the loop's write set (OptLicmStoreState.global-cell-
+;; writes) and the function-scope global_cell pass with the union of its
+;; returning calls' rows (opt-global-cell-call-writes), condition (c).
+(define (opt-global-cell-writes-refused?
   [cells : OptGlobalCellSummary]
   [cell-writes : i64]
   [name : i64]) : bool
@@ -22705,7 +22708,7 @@
         [(OptMaybeAstType.Some ty)
           (if (and
             (opt-global-cell-word-type? ty)
-            (not (opt-licm-global-promote-refused? cells cell-writes name)))
+            (not (opt-global-cell-writes-refused? cells cell-writes name)))
             (let
               [fresh : i64 (array-ref frame-cell 0)]
               [next : opt_i64_i64_map.Map plan]
@@ -94581,20 +94584,38 @@
 ;;       exactly Store targets and GlobalAddr operands, arm-for-arm so a new IR
 ;;       instruction fails to compile until handled -- minus this program's
 ;;       Store targets, so it is exactly the address-taken globals;
-;;   (c) the function contains no Call/TailCall/indirect-call/SpmdCall that can
-;;       RETURN: any such callee could set! G. v1 deliberately treats the whole
-;;       returning call family as opaque; a callgraph refinement (block only
-;;       callees that may set! G) is a later packet. Passes after this one only
-;;       rewrite or clone existing instructions -- the inliner, the pipeline's
-;;       only call producer, has already run -- so the no-call fact cannot be
-;;       invalidated downstream. Trapping operations like BoundsCheck are not
-;;       calls, and explicit panic paths diverge before any write could
-;;       interleave -- which is exactly why a direct call to a non-returning
-;;       trap helper is excluded from (c) as well: control never returns from
-;;       it, so no use of `%g` runs after it and nothing it could write is ever
-;;       read (opt-global-cell-scan-direct-call, opt-direct-call-noreturn?).
+;;   (c) no Call/TailCall/indirect-call/SpmdCall that can RETURN may write G's
+;;       cell. This is a per-CELL question, answered by P18's per-global call
+;;       mod-ref table (OptGlobalModRef): a DIRECT callee's row names every
+;;       cell it and everything it transitively calls may `set!`
+;;       (opt-global-mod-ref-call-mask), and the union of those rows over the
+;;       function's returning calls -- opt-global-cell-call-writes -- is
+;;       exactly the set of cells this condition refuses. A callee outside the
+;;       program's function list is an EXTERN: no IR body, hence no `Store`,
+;;       and under (b) no pointer it holds can name a cell, so it writes none.
+;;       An INDIRECT call (CallIndirect, either C-ABI store-result form,
+;;       SpmdCall, TailCallIndirect) may land on any function of the program,
+;;       so it contributes "any cell" and refuses every G -- and so does every
+;;       direct call when the program carries no table at all
+;;       (opt-global-mod-ref-build declines above the summary function limit,
+;;       and when the address-taken set is non-empty, which is (b) again).
+;;       Passes after this one only rewrite or clone existing instructions --
+;;       the inliner, the pipeline's only call producer, has already run -- so
+;;       the call set this reads cannot grow downstream. Trapping operations
+;;       like BoundsCheck are not calls, and explicit panic paths diverge
+;;       before any write could interleave -- which is exactly why a direct
+;;       call to a non-returning trap helper is not a returning call at all:
+;;       control never returns from it, so no use of `%g` runs after it and
+;;       nothing it could write is ever read
+;;       (opt-global-cell-scan-direct-call, opt-direct-call-noreturn?).
+;;       HISTORY. v1 read: "the function contains no
+;;       Call/TailCall/indirect-call/SpmdCall that can RETURN: any such callee
+;;       could set! G. v1 deliberately treats the whole returning call family
+;;       as opaque; a callgraph refinement (block only callees that may set! G)
+;;       is a later packet." That refinement is this condition, and a program
+;;       without a mod-ref table still answers every query the v1 way.
 ;; A set! in ANOTHER function (the loader pattern) cannot interleave with this
-;; activation because (c) rules out the call that would reach it, and the
+;; activation unless (c) admits a call that reaches it, and the
 ;; entry load observes any set! made before this activation -- exactly what a
 ;; per-use load would observe. Recursion needs no special case: today's
 ;; semantics already reload the cell at least once per activation (every use
@@ -94616,7 +94637,16 @@
   (refs opt_i64_i64_map.Map)
   (ref-list OptI64List)
   (stores opt_i64_i64_map.Map)
-  (calls bool))
+  ;; Condition (c), the half that needs no table: a RETURNING call whose target
+  ;; this walk cannot name -- indirect, C-ABI, SpmdCall, TailCallIndirect. Such
+  ;; a call may land on any function of the program, so it may write ANY cell.
+  (call-any bool)
+  ;; Condition (c), the half a table resolves: the DIRECT returning callees,
+  ;; deduped through `callees` so a repeated call site conses once and the list
+  ;; is bounded by the program's function count. `opt-global-cell-call-writes`
+  ;; turns it into the union of their mod-ref rows.
+  (callees opt_i64_i64_map.Map)
+  (callee-list OptI64List))
 
 ;; Reference counts saturate: the only question the plan asks is "more than
 ;; one?", so the map value stops growing at two and a hot cell cannot make the
@@ -94629,13 +94659,18 @@
     (opt_i64_i64_map.with-capacity 8)
     OptI64List.Nil
     (opt_i64_i64_map.with-capacity 8)
-    false))
+    false
+    ;; Most scanned blocks call nothing, and the per-block scans
+    ;; (opt-global-cell-scan-block-by-id) run once per block, so this set
+    ;; starts at one slot and grows only where calls actually appear.
+    (opt_i64_i64_map.with-capacity 1)
+    OptI64List.Nil))
 
 (define (opt-global-cell-scan-ref
   [scan : OptGlobalCellScan (:consume)]
   [name : i64]) : OptGlobalCellScan
   (match scan
-    [(OptGlobalCellScan refs ref-list stores calls)
+    [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
       (match (opt_i64_i64_map.get (& refs) name)
         [(opt_i64_i64_map.LookupFound seen)
           (begin
@@ -94645,7 +94680,13 @@
               (if (< seen (opt-global-cell-ref-count-cap))
                 (+ seen 1)
                 seen))
-            (OptGlobalCellScan refs ref-list stores calls))]
+            (OptGlobalCellScan
+              refs
+              ref-list
+              stores
+              call-any
+              callees
+              callee-list))]
         [(opt_i64_i64_map.LookupMissing)
           (begin
             (opt_i64_i64_map.insert-ref! (&mut refs) name 1)
@@ -94653,38 +94694,97 @@
               refs
               (OptI64List.Cons name (box ref-list))
               stores
-              calls))])]))
+              call-any
+              callees
+              callee-list))])]))
 
 (define (opt-global-cell-scan-store
   [scan : OptGlobalCellScan (:consume)]
   [name : i64]) : OptGlobalCellScan
   (match scan
-    [(OptGlobalCellScan refs ref-list stores calls)
+    [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
       (begin
         (opt_i64_i64_map.insert-ref! (&mut stores) name 1)
-        (OptGlobalCellScan refs ref-list stores calls))]))
+        (OptGlobalCellScan refs ref-list stores call-any callees callee-list))]))
 
+;; A returning call whose target this walk cannot name. It may land on any
+;; function of the program, so it may write any cell and condition (c) then
+;; refuses every global in the function -- the v1 verdict, unchanged.
 (define (opt-global-cell-scan-call [scan : OptGlobalCellScan]) : OptGlobalCellScan
-  (if scan.calls
+  (if scan.call-any
     scan
-    (OptGlobalCellScan scan.refs scan.ref-list scan.stores true)))
+    (OptGlobalCellScan
+      scan.refs
+      scan.ref-list
+      scan.stores
+      true
+      scan.callees
+      scan.callee-list)))
 
-;; Condition (c) rejects a function that may transfer control to a callee that
-;; could `set! G` between the entry load and a use of `%g`. A non-returning
-;; trap helper cannot: control never comes back from it, so NO use of `%g`
-;; executes after it on any path, and no value it could write is ever read.
-;; That is the same argument opt-direct-call-noreturn? states in full, and the
-;; same one the pass header already makes for BoundsCheck and explicit panic
-;; paths ("diverge before any write could interleave") -- a `call tl_oob_abort`
-;; is exactly that panic path after the backend has expanded a check, or after
-;; a stdlib range guard has been inlined here. Counting it would disqualify
-;; every otherwise call-free function that inlines one.
+;; A returning call to a NAMED callee. Recorded here and resolved later: the
+;; per-program mod-ref table is not an input to this walk -- the whole-program
+;; pass of it (opt-global-cell-summary-build) is what the table is built FROM --
+;; so opt-global-cell-call-writes reads the rows once per function instead.
+(define (opt-global-cell-scan-callee
+  [scan : OptGlobalCellScan (:consume)]
+  [name : i64]) : OptGlobalCellScan
+  (match scan
+    [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
+      (if (opt_i64_i64_map.contains? (& callees) name)
+        (OptGlobalCellScan refs ref-list stores call-any callees callee-list)
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut callees) name 1)
+          (OptGlobalCellScan
+            refs
+            ref-list
+            stores
+            call-any
+            callees
+            (OptI64List.Cons name (box callee-list)))))]))
+
+;; Condition (c) refuses a cell that a callee could `set!` between the entry
+;; load and a use of `%g`. A non-returning trap helper could not: control never
+;; comes back from it, so NO use of `%g` executes after it on any path, and no
+;; value it could write is ever read. That is the same argument
+;; opt-direct-call-noreturn? states in full, and the same one the pass header
+;; already makes for BoundsCheck and explicit panic paths ("diverge before any
+;; write could interleave") -- a `call tl_oob_abort` is exactly that panic path
+;; after the backend has expanded a check, or after a stdlib range guard has
+;; been inlined here. Recording it would charge every otherwise call-free
+;; function that inlines one with its callee's row.
 (define (opt-global-cell-scan-direct-call
   [scan : OptGlobalCellScan]
   [name : i64]) : OptGlobalCellScan
   (if (opt-direct-call-noreturn? name)
     scan
-    (opt-global-cell-scan-call scan)))
+    (opt-global-cell-scan-callee scan (ir.compiler-ir-symbol-id name))))
+
+;; Condition (c) as a MASK over global cells: what the RETURNING calls this
+;; scan saw may write, in the packed OptGlobalModRef encoding. An unresolved
+;; call form contributes "any cell"; a named callee contributes its row, which
+;; is 0 for an extern (no IR body, hence no `Store`) and "any cell" whenever
+;; the program carries no table -- so a table-less program refuses exactly the
+;; functions v1 refused. The walk stops as soon as the union saturates.
+(define (opt-global-cell-call-writes-list
+  [mod-ref : OptGlobalModRef]
+  [names : OptI64List]
+  [mask : i64]) : i64
+  (match names
+    [(OptI64List.Nil) mask]
+    [(OptI64List.Cons name rest)
+      (if (opt-global-mod-ref-any? mask)
+        mask
+        (opt-global-cell-call-writes-list
+          mod-ref
+          (__tl-box-place rest)
+          (bit-or mask (opt-global-mod-ref-call-mask mod-ref name))))]))
+
+(define (opt-global-cell-call-writes
+  [cell : OptGlobalCellSummary]
+  [scan : OptGlobalCellScan]) : i64
+  (if scan.call-any
+    (opt-global-mod-ref-any)
+    (opt-global-cell-call-writes-list cell.mod-ref scan.callee-list 0)))
 
 (define (opt-global-cell-scan-value
   [scan : OptGlobalCellScan]
@@ -94763,8 +94863,9 @@
         (__tl-box-place rest))]))
 
 ;; Per-function fact scan: global-ref operand uses (refs), direct set! targets
-;; (stores), and whether any RETURNING call-family instruction remains (calls;
-;; a direct call to a non-returning trap helper is not one -- see
+;; (stores), and the RETURNING call-family instructions that remain -- named
+;; callees in `callees`/`callee-list`, unresolvable ones in `call-any` (a
+;; direct call to a non-returning trap helper is neither -- see
 ;; opt-global-cell-scan-direct-call). Mirrors
 ;; opt-const-globals-disq-instr arm-for-arm (no wildcard): a new IR instruction
 ;; fails to compile until classified here, so a new call-like or store-like
@@ -97192,11 +97293,15 @@
 ;; The pass hoists ONE entry-block load of `@G` and rewrites every in-function
 ;; `@G` read to it, so it is correct exactly when no `set! G` this function
 ;; performs can be observed by one of those reads. Conditions (b) and (c)
-;; already exclude every OTHER writer -- no address-taken cell can be reached
-;; through a pointer, and a function containing any RETURNING call is rejected
-;; outright, while the non-returning trap calls (c) still admits can make no
-;; store observable at all (nothing runs after them) --
-;; so only this function's own `Store G` instructions matter. A `Store G` at
+;; already exclude every OTHER writer of G -- no address-taken cell can be
+;; reached through a pointer, and every returning call whose mod-ref row names
+;; G's cell refuses G outright, while the non-returning trap calls (c) still
+;; ignores can make no store observable at all (nothing runs after them) --
+;; so only this function's own `Store G` instructions matter. A returning call
+;; that (c) ADMITS for G writes no cell of G's, so it cannot make one of this
+;; function's stores observable either; a callee is free to READ G, but this
+;; pass rewrites only THIS function's operands, so what a callee reads out of
+;; the cell is exactly what it read before. A `Store G` at
 ;; block B, instruction index k, is observable exactly when some `@G` read runs
 ;; after it on some execution path, i.e. when either
 ;;   (i)  B reads `@G` at an index > k, or
@@ -97670,8 +97775,37 @@
 ;; unsound; the legality conditions (a)/(b)/(c) are unchanged and this filter
 ;; only ever declines one.
 ;;
-;; The index build is paid only when some referenced cell has exactly one
-;; reference, which is the only question the loop set can change.
+;; A function that CONTAINS A RETURNING CALL pays more, and pays it at every N.
+;; Its promoted copy does not merely span the function, it spans a CALL, so the
+;; only registers that can hold it are the callee-saved GP file -- the same
+;; register-file argument opt-licm-global-promote-live-in-budget prices at loop
+;; scope. The push/pop pair, and the stack realignment that can come with it,
+;; is then paid on EVERY activation, while the reads it replaces are paid only
+;; on the paths actually taken; N static reads on straight-line or conditional
+;; paths are at most N dynamic loads and usually fewer. A read inside a loop is
+;; the one shape that repays it, because there the static read is many dynamic
+;; loads per activation. So a call-bearing function promotes exactly the cells
+;; the loop set names, whatever N is.
+;;
+;; MEASURED, benchmarks/gvn_table with condition (c) per cell and this rule
+;; withdrawn (`calls?` forced false), against target/wsl/ic-p20.tsv:
+;;   gvn-table-invalidate-var  +7,782,390 Ir. Two straight-line reads of
+;;     `gvn_table` (blocks if_then.12 and while_exit.16, neither in a loop)
+;;     become one entry load; the entry block already held a preheader load of
+;;     the same cell, so the activation pays a second load, one more push/pop
+;;     (%rbp) and an 8-byte realignment -- five instructions x 1,556,478 calls,
+;;     to the instruction.
+;;   gvn-step-load +779,100 Ir (three reads of `gvn_epoch`, all behind
+;;     branches), gvn-run-block +563,444 Ir (three reads of `gvn_hash_prime`,
+;;     all in the loop's EXIT block, which runs once per activation).
+;;   gvn-root-of-var -318,122 Ir and gvn-table-clear -116,186 Ir are the two
+;;     that win, and gvn-root-of-var is exactly the loop shape: its second
+;;     `gvn_fact_cap` read sits in `while_header.0`.
+;; Whole benchmark: 964,017,000 -> 972,707,626 (+0.90%) without the rule.
+;;
+;; The index build is paid when some referenced cell has exactly one reference
+;; or the function contains a returning call, which are the two questions the
+;; loop set can change.
 ;; Mark every block covered by a back edge's [target, source] span. One
 ;; difference-array pass plus a prefix sum, linear in blocks plus edges.
 (define (opt-global-cell-loop-marks!
@@ -97765,14 +97899,52 @@
 (define (opt-global-cell-promotion-pays?
   [counts : opt_i64_i64_map.Map]
   [loop-refs : opt_i64_i64_map.Map]
+  [calls? : bool]
   [name : i64]) : bool
-  (if (not (opt-global-cell-single-ref? counts name))
-    true
-    (opt_i64_i64_map.contains? (& loop-refs) name)))
+  (if (or calls? (opt-global-cell-single-ref? counts name))
+    (opt_i64_i64_map.contains? (& loop-refs) name)
+    true))
 
+;; PRESSURE, asked only of a call-bearing function. Its entry copy is live from
+;; entry across every call the function makes, so the only registers it can
+;; occupy are the callee-saved GP file -- and it competes there with the values
+;; that also enter from outside, which for a FUNCTION are exactly its used
+;; parameters. That is the same quantity, the same proxy and the same budget the
+;; loop-scope promotion prices its own copies with: opt-unroll-mb-live-in-count
+;; over the region's blocks (uses minus defs, so a parameter counts and a local
+;; def does not) against opt-licm-global-promote-live-in-budget, whose "WHY SIX"
+;; note is the register-file argument in full. Over the budget the copy is a
+;; frame slot rather than a register, which costs a store at entry and makes
+;; every use a frame load instead of a rip-relative one, for no instruction
+;; saved. tests/integration/licm_memclean_global_promote.tl's `pressured-scan`
+;; is the pinned refusal -- twelve live-in parameters around a memory-clean
+;; call, the same loop the loop-scope tier refuses on this same budget, which
+;; the asm-shape gate reads as two surviving cell reads.
+(define (opt-global-cell-entry-fits? [blocks : ir.CompilerIrBlockList]) : bool
+  (<=
+    (opt-unroll-mb-live-in-count blocks)
+    (opt-licm-global-promote-live-in-budget)))
+
+;; Does this function contain a RETURNING call at all? Condition (c) asks which
+;; CELLS those calls write; profitability asks only whether one exists, because
+;; that is what makes the promoted copy callee-saved.
+(define (opt-global-cell-any-call? [scan : OptGlobalCellScan]) : bool
+  (or
+    scan.call-any
+    (match scan.callee-list
+      [(OptI64List.Nil) false]
+      [(OptI64List.Cons _ _) true])))
+
+;; `call-writes` is condition (c): the cells this function's returning calls
+;; may write (opt-global-cell-call-writes). A cell inside that set keeps
+;; per-use semantics exactly as a stored (a) or address-taken (b) one does.
+;; `calls?` is the same calls' PRICE rather than their legality -- see
+;; opt-global-cell-promotion-pays?.
 (define (opt-global-cell-plan-build
   [cell : OptGlobalCellSummary]
   [stores : opt_i64_i64_map.Map]
+  [call-writes : i64]
+  [calls? : bool]
   [counts : opt_i64_i64_map.Map]
   [loop-refs : opt_i64_i64_map.Map]
   [refs : OptI64List]
@@ -97785,10 +97957,13 @@
       (if (or
         (opt_i64_i64_map.contains? (& stores) name)
         (opt_i64_i64_map.contains? (& cell.addr-taken) name)
-        (not (opt-global-cell-promotion-pays? counts loop-refs name)))
+        (opt-global-cell-writes-refused? cell call-writes name)
+        (not (opt-global-cell-promotion-pays? counts loop-refs calls? name)))
         (opt-global-cell-plan-build
           cell
           stores
+          call-writes
+          calls?
           counts
           loop-refs
           (__tl-box-place rest)
@@ -97800,6 +97975,8 @@
             (opt-global-cell-plan-build
               cell
               stores
+              call-writes
+              calls?
               counts
               loop-refs
               (__tl-box-place rest)
@@ -97817,6 +97994,8 @@
                   (opt-global-cell-plan-build
                     cell
                     stores
+                    call-writes
+                    calls?
                     counts
                     loop-refs
                     (__tl-box-place rest)
@@ -97826,6 +98005,8 @@
               (opt-global-cell-plan-build
                 cell
                 stores
+                call-writes
+                calls?
                 counts
                 loop-refs
                 (__tl-box-place rest)
@@ -98375,9 +98556,12 @@
 
 ;; Load each hoistable global's cell once at entry and rewrite its uses. The
 ;; pass is a no-op (returning the function by reference) when the program has
-;; no word-cell candidates, when a call-family instruction remains (c), when
-;; no global is referenced, or when every referenced global is excluded by
-;; (a)/(b)/cell-width.
+;; no word-cell candidates, when no global is referenced, when a returning call
+;; may write ANY cell (c) -- the whole-function refusal, which is also every
+;; call's verdict in a program with no mod-ref table -- when a call-bearing
+;; function is already over the live-in budget (opt-global-cell-entry-fits?),
+;; or when every referenced global is excluded by (a)/(b)/(c)/cell-width or
+;; price.
 (define (opt-global-cell-function
   [summaries : OptLoopBceSummaries]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
@@ -98394,53 +98578,64 @@
                 blocks
                 true)]
             (cond
-              [scan.calls func]
               [(match scan.ref-list
                   [(OptI64List.Nil) true]
                   [(OptI64List.Cons _ _) false])
                 func]
               [else
                 (let
-                  [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-                  [_seed : unit (set! (array-ref frame-cell 0) frame)]
-                  [planned : OptGlobalCellPlan
-                    (opt-global-cell-plan-build
-                      cell
-                      (opt-global-cell-observable-stores blocks)
-                      scan.refs
-                      (if (opt-global-cell-any-single-ref?
-                        scan.refs
-                        scan.ref-list)
-                        (opt-global-cell-loop-refs
-                          blocks
-                          (opt_i64_i64_map.with-capacity 8))
-                        (opt_i64_i64_map.with-capacity 1))
-                      scan.ref-list
-                      frame-cell
-                      (opt_i64_i64_map.with-capacity 8)
-                      0)]
-                  (if (= planned.count 0)
+                  [call-writes : i64 (opt-global-cell-call-writes cell scan)]
+                  [calls? : bool (opt-global-cell-any-call? scan)]
+                  (if (or
+                    (opt-global-mod-ref-any? call-writes)
+                    (and calls? (not (opt-global-cell-entry-fits? blocks))))
                     func
                     (let
-                      [hoists : (__tl_dyn-array ir.CompilerIrInstr)
-                        (array.make-array ir.CompilerIrInstr planned.count)]
-                      [_filled : i64
-                        (opt-global-cell-hoists-fill!
-                          planned.map
+                      [frame-cell : (__tl_dyn-array i64)
+                        (array.make-array i64 1)]
+                      [_seed : unit (set! (array-ref frame-cell 0) frame)]
+                      [planned : OptGlobalCellPlan
+                        (opt-global-cell-plan-build
                           cell
+                          (opt-global-cell-observable-stores blocks)
+                          call-writes
+                          calls?
+                          scan.refs
+                          (if (or
+                            calls?
+                            (opt-global-cell-any-single-ref?
+                              scan.refs
+                              scan.ref-list))
+                            (opt-global-cell-loop-refs
+                              blocks
+                              (opt_i64_i64_map.with-capacity 8))
+                            (opt_i64_i64_map.with-capacity 1))
                           scan.ref-list
-                          hoists
+                          frame-cell
+                          (opt_i64_i64_map.with-capacity 8)
                           0)]
-                      (ir.CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        (array-ref frame-cell 0)
-                        (opt-global-cell-rewrite-blocks
-                          planned.map
-                          hoists
-                          planned.count
-                          blocks)))))]))))]))
+                      (if (= planned.count 0)
+                        func
+                        (let
+                          [hoists : (__tl_dyn-array ir.CompilerIrInstr)
+                            (array.make-array ir.CompilerIrInstr planned.count)]
+                          [_filled : i64
+                            (opt-global-cell-hoists-fill!
+                              planned.map
+                              cell
+                              scan.ref-list
+                              hoists
+                              0)]
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            (array-ref frame-cell 0)
+                            (opt-global-cell-rewrite-blocks
+                              planned.map
+                              hoists
+                              planned.count
+                              blocks)))))))]))))]))
 
 (define (optimize-program [program : ir.CompilerIrProgram]) : ir.CompilerIrProgram
   (optimize-program-with-level program (compiler-optimize-default-level)))

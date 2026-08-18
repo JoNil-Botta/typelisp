@@ -12,6 +12,20 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
 
+# Target-conditioned prefix declarations change the skip totals. Windows also
+# builds dependency nodes serially in one process, while Linux workers isolate
+# child-node fallback accounting from the root build.
+case "$NL_HOST_OS" in
+    windows)
+        TRUSTED_PREFIX_SKIPPED=223
+        FORCED_SOURCE_FALLBACKS=3
+        ;;
+    *)
+        TRUSTED_PREFIX_SKIPPED=218
+        FORCED_SOURCE_FALLBACKS=1
+        ;;
+esac
+
 COMPILER=${1:-${TYPELISP_BIN:-}}
 if [ -z "$COMPILER" ]; then
     echo "usage: $0 <profile dependency-tlci-verification compiler>" >&2
@@ -227,7 +241,8 @@ fi
 [ -s "$CONSUMER_ASM" ] || fail "trusted consumer assembly is missing"
 [ -x "$CONSUMER_BIN" ] || fail "trusted consumer executable is missing"
 [ -s "$RIGHT_TLCI" ] || fail "right dependency TLCI is missing"
-assert_surface_route trusted "$WORKDIR/native.err" 1 2 0 223 223
+assert_surface_route trusted "$WORKDIR/native.err" 1 2 0 \
+    "$TRUSTED_PREFIX_SKIPPED" "$TRUSTED_PREFIX_SKIPPED"
 cp "$CONSUMER_ASM" "$NATIVE_ASM"
 run_consumer_56 trusted
 
@@ -249,7 +264,8 @@ if ! "$COMPILER" build \
     cat "$WORKDIR/source.err" >&2
     fail "forced-source diamond build failed"
 fi
-assert_surface_route forced-source "$WORKDIR/source.err" 0 0 3 0 0
+assert_surface_route forced-source "$WORKDIR/source.err" 0 0 \
+    "$FORCED_SOURCE_FALLBACKS" 0 0
 cmp "$NATIVE_ASM" "$CONSUMER_ASM" >/dev/null ||
     fail "trusted and forced-source diamond assembly differ"
 run_consumer_56 forced-source

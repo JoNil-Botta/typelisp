@@ -405,7 +405,9 @@
   (let
     [root : String
       (load.compiler-load-normalize-path
-        (load.compiler-load-join-root-path manifest-dir dep.path))]
+        (if (load.compiler-load-absolute-path? dep.path)
+          dep.path
+          (load.compiler-load-join-root-path manifest-dir dep.path)))]
     [manifest-path : String
       (load.compiler-load-join-root-path root "typelisp.pkg")]
     (match (package_source.package-source-discover-for

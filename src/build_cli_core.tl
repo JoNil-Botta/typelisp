@@ -3228,6 +3228,70 @@
           (set! index (+ index 1))))
       paths)))
 
+(define (build-package-catalog-dep-root
+  [manifest-dir : String]
+  [dep : load.CompilerPkgDep]) : String
+  (load.compiler-load-canonical-path
+    (if (load.compiler-load-absolute-path? dep.path)
+      dep.path
+      (load.compiler-load-join-root-path manifest-dir dep.path))))
+
+(define (build-package-catalog-deps-contain-root?
+  [deps : load.CompilerPkgDepList]
+  [count : i64]
+  [manifest-dir : String]
+  [root : String]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (< index count)
+        (begin
+          (if (string.eq
+            (build-package-catalog-dep-root
+              manifest-dir
+              (load.compiler-pkg-dep-list-at deps index))
+            root)
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (build-package-graph-catalog-deps
+  [nodes : BuildPackageGraphNodeVec]
+  [manifest-dir : String]
+  [direct-deps : load.CompilerPkgDepList]) : load.CompilerPkgDepList
+  (let
+    [index : i64 0]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
+    [direct-count : i64 (load.compiler-pkg-dep-list-count direct-deps)]
+    [deps : load.CompilerPkgDepList direct-deps]
+    (begin
+      (while (< index count)
+        (let
+          [node : BuildPackageGraphNode
+            (build-package-graph-node-vec-at nodes index)]
+          [root : String
+            (load.compiler-load-canonical-path
+              (load.compiler-load-dirname node.manifest-path))]
+          (begin
+            ;; Graph construction already canonicalizes and deduplicates node
+            ;; roots. Only direct manifest requests need comparison here so
+            ;; their aliases and duplicate request telemetry stay intact.
+            (if (build-package-catalog-deps-contain-root?
+              deps
+              direct-count
+              manifest-dir
+              root)
+              unit
+              (set!
+                deps
+                (load.compiler-pkg-dep-list-push
+                  deps
+                  (load.CompilerPkgDep node.manifest.name root))))
+            (set! index (+ index 1)))))
+      deps)))
+
 (define (build-package-graph-test-manifest [name : String]) : load.CompilerPkgManifest
   (load.CompilerPkgManifest
     name
@@ -3294,6 +3358,19 @@
         (backend.CompilerBackendTarget.Windows))]
     [tlcis : process.ProcessStringList
       (build-package-graph-tlci-paths nodes (BuildProfile.Release))]
+    [catalog-deps : load.CompilerPkgDepList
+      (build-package-graph-catalog-deps
+        nodes
+        "root"
+        (load.compiler-pkg-dep-list-empty))]
+    [direct-catalog-deps : load.CompilerPkgDepList
+      (load.compiler-pkg-dep-list-push
+        (load.compiler-pkg-dep-list-push
+          (load.compiler-pkg-dep-list-empty)
+          (load.CompilerPkgDep "first-a" "first"))
+        (load.CompilerPkgDep "first-b" "first/."))]
+    [merged-catalog-deps : load.CompilerPkgDepList
+      (build-package-graph-catalog-deps nodes "root" direct-catalog-deps)]
     [expected : process.ProcessStringList
       (process.args-append
         (process.args-append
@@ -3327,7 +3404,21 @@
         "root/first/typelisp.pkg")
       (build_run_core.source-tool-string-list-eq? libs expected)
       (build_run_core.source-tool-string-list-eq? windows-libs expected-windows)
-      (build_run_core.source-tool-string-list-eq? tlcis expected-tlcis))))
+      (build_run_core.source-tool-string-list-eq? tlcis expected-tlcis)
+      (= (load.compiler-pkg-dep-list-count catalog-deps) 3)
+      (string.eq (load.compiler-pkg-dep-list-at catalog-deps 0).alias "first")
+      (load.compiler-load-absolute-path?
+        (load.compiler-pkg-dep-list-at catalog-deps 0).path)
+      (= (load.compiler-pkg-dep-list-count merged-catalog-deps) 4)
+      (string.eq
+        (load.compiler-pkg-dep-list-at merged-catalog-deps 0).alias
+        "first-a")
+      (string.eq
+        (load.compiler-pkg-dep-list-at merged-catalog-deps 1).alias
+        "first-b")
+      (string.eq
+        (load.compiler-pkg-dep-list-at merged-catalog-deps 2).alias
+        "second"))))
 
 (cfg
   test
@@ -6098,6 +6189,7 @@
     [lock-policy : BuildPackageLockPolicy]
     [stdlib-roots : cli_svec.Vec]
     [dep-libs : process.ProcessStringList]
+    [catalog-deps : load.CompilerPkgDepList]
     [producer-identity : String]
     [announce : bool]) : i64
     (let
@@ -6134,7 +6226,7 @@
         (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
           (load.compiler-load-serial-test-session-state)
           manifest-dir
-          manifest.deps)]
+          (load.compiler-pkg-deps-from-list catalog-deps))]
       (if (or
         (> (string.string-length compile-context.error) 0)
         (not (build-ensure-package-output-dirs manifest-dir name profile)))
@@ -6232,6 +6324,7 @@
     [_lock-policy : BuildPackageLockPolicy]
     [_stdlib-roots : cli_svec.Vec]
     [_dep-libs : process.ProcessStringList]
+    [_catalog-deps : load.CompilerPkgDepList]
     [_producer-identity : String]
     [_announce : bool]) : i64
     (begin
@@ -6568,6 +6661,7 @@
                         config.lock-policy
                         config.stdlib-roots
                         (process.args-empty)
+                        (load.compiler-pkg-deps-list resolved-manifest.deps)
                         producer-identity
                         true))
                     (begin
@@ -7061,6 +7155,7 @@
               lock-policy
               stdlib-roots
               (process.args-empty)
+              (load.compiler-pkg-deps-list manifest.deps)
               producer-identity
               announce)]
           (if (= node-status 0)
@@ -7238,6 +7333,10 @@
                       lock-policy
                       stdlib-roots
                       (build-package-graph-link-libs nodes profile target)
+                      (build-package-graph-catalog-deps
+                        nodes
+                        (load.compiler-load-dirname normalized-path)
+                        (load.compiler-pkg-deps-list resolved-manifest.deps))
                       producer-identity
                       announce)
                     dep-status))])]))]))

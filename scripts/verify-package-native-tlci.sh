@@ -15,6 +15,13 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
 
+# Target-conditioned prefix declarations change how much source work the
+# hydrated dependency surface bypasses.
+case "$NL_HOST_OS" in
+    windows) TRUSTED_PREFIX_SKIPPED=221 ;;
+    *) TRUSTED_PREFIX_SKIPPED=216 ;;
+esac
+
 COMPILER=${1:-${TYPELISP_BIN:-}}
 if [ -z "$COMPILER" ]; then
     echo "usage: $0 <profile dependency-tlci-verification compiler>" >&2
@@ -211,7 +218,7 @@ grep -F "dependency-tlci-verification|phase=prepared|requests=1|entries=1" \
     fail "consumer did not admit one code-bearing dependency catalog"
 grep -F "dependency-tlci-verification|phase=finished|requests=-1|entries=1" \
     "$NATIVE_ERR" |
-    grep -F "|surface-enabled=1|surface-fragments=1|surface-hits=1|surface-fallbacks=0|surface-decls=20|surface-macro-skipped=221|surface-typecheck-skipped=221" \
+    grep -F "|surface-enabled=1|surface-fragments=1|surface-hits=1|surface-fallbacks=0|surface-decls=20|surface-macro-skipped=$TRUSTED_PREFIX_SKIPPED|surface-typecheck-skipped=$TRUSTED_PREFIX_SKIPPED" \
     >/dev/null || fail "trusted dependency frontend surface route mismatch"
 
 assert_profile_eq dependency_tlci_catalog_hits 6 "$NATIVE_ERR"

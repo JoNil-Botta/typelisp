@@ -2023,7 +2023,7 @@
                 1)]
             [(SourceToolCommandStatus.Ok)
               (begin
-                (io.print-string (str_cat.str-cat "Built " bin-path "\n"))
+                (io.print-format "{}" (str_cat.str-cat "Built " bin-path "\n"))
                 (source-tool-clean-temp
                   temp-dir
                   asm-path

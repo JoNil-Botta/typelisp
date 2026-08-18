@@ -193,6 +193,6 @@
         42
         1)]
     (begin
-      (io.print-string "arena lifetime score: ")
-      (io.print result)
+      (io.print-format "{}" "arena lifetime score: ")
+      (io.println "{}" result)
       result)))

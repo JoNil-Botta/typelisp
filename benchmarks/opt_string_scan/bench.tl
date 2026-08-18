@@ -33,5 +33,5 @@
     [text : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (io.print (scan-repeat text rounds))
+      (io.println "{}" (scan-repeat text rounds))
       0)))

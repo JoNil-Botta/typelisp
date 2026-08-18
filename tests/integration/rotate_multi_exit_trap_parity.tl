@@ -55,5 +55,5 @@
           (set! (array-ref ys i) 1)
           (set! i (+ i 1))))
       (io.println "rows")
-      (io.print (scan-row xs ys 8 -1))
+      (io.println "{}" (scan-row xs ys 8 -1))
       42)))

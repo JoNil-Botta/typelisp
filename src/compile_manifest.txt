@@ -348,7 +348,6 @@ contains|_tl_source_tool_build_source:
 contains|_tl_source_tool_run_source:
 contains|_tl_source_tool_run_command:
 contains|_tl_source_tool_augment_assembly_for_target:
-not-contains|.globl _tl_print_string
 contains|tl_process_output:
 contains|_tl_fs_mkdir_status:
 end

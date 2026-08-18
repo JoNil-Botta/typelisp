@@ -1360,7 +1360,9 @@
                 (compiler_driver_core.compiler-driver-state-profile _state)))
             (if (= write-status 0)
               (begin
-                (io.print-string (str_cat.str-cat "Wrote " object-path "\n"))
+                (io.print-format
+                  "{}"
+                  (str_cat.str-cat "Wrote " object-path "\n"))
                 (ResultCompileCliWindowsBatchEntry.Ok
                   "coff-object"
                   object-path
@@ -1393,7 +1395,9 @@
                 (compiler_driver_core.compiler-driver-state-profile _state)))
             (if (= write-status 0)
               (begin
-                (io.print-string (str_cat.str-cat "Wrote " assembly-path "\n"))
+                (io.print-format
+                  "{}"
+                  (str_cat.str-cat "Wrote " assembly-path "\n"))
                 (ResultCompileCliWindowsBatchEntry.Ok
                   "assembly"
                   assembly-path
@@ -2187,7 +2191,7 @@
       (byte_buf.str-as-bytes (& contents)))
       [(io.OkIoUnit)
         (begin
-          (io.print-string (str_cat.str-cat "Wrote " plan-path "\n"))
+          (io.print-format "{}" (str_cat.str-cat "Wrote " plan-path "\n"))
           0)]
       [(io.ErrIoUnit error)
         (begin
@@ -2460,7 +2464,7 @@
                   (compile-cli-typecheck-doctests input-path stdlib-roots)]
                 (if (= doctest-status 0)
                   (begin
-                    (io.print-string "Type checking passed!\n")
+                    (io.print-format "{}" "Type checking passed!\n")
                     0)
                   doctest-status))
               inline-test-status))]

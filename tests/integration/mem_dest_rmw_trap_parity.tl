@@ -42,8 +42,8 @@
         (begin
           (set! (array-ref b i) 1)
           (set! i (+ i 1))))
-      (io.print-string "rows\n")
+      (io.print-format "{}" "rows\n")
       ;; Merges a[0..3] and then aborts reading b[4].
       (merge-row a b 8)
-      (io.print-string "unreachable\n")
+      (io.print-format "{}" "unreachable\n")
       0)))

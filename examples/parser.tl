@@ -291,6 +291,6 @@
       (let
         [result : i64 (eval (parse-expr (& tags) (& vals) (&mut cur)))]
         (begin
-          (io.print-string "parser result: ")
-          (io.print result)
+          (io.print-format "{}" "parser result: ")
+          (io.println "{}" result)
           result)))))

@@ -8777,40 +8777,6 @@
 (define tc-type-env-store-epoch : i64
   0)
 
-(define (tc-type-env-store-owner-root [handle : i64]) : i64
-  (if (= handle 0)
-    0
-    (let
-      [root : i64
-        (unsafe
-          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-      (if (= root 0)
-        handle
-        root))))
-
-(define (tc-type-env-store-owner-current-head [handle : i64]) : i64
-  (let
-    [root : i64 (tc-type-env-store-owner-root handle)]
-    (if (= root 0)
-      0
-      (let
-        [head : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
-        (if (= head 0)
-          root
-          head)))))
-
-(define (tc-type-env-store-restore-after-owner-alloc!
-  [previous-arena : i64]
-  [owner : i64]) : unit
-  (if (=
-    (tc-type-env-store-owner-root previous-arena)
-    (tc-type-env-store-owner-root owner))
-    unit
-    (unsafe
-      (arena.tl_arena_set (tc-type-env-store-owner-current-head previous-arena)))))
-
 (define (tc-type-env-store-new-with-topenv-state-address
   [topenv-state-address : i64]) : TcTypeEnvStore
   (TcTypeEnvStore
@@ -8820,7 +8786,7 @@
     (array.make-array TcTypeEnvCache 1)
     0
     0
-    (tc-type-env-store-owner-root (arena.tl_arena_current))
+    (arena.tl_arena_current)
     topenv-state-address
     0))
 
@@ -13138,28 +13104,12 @@
     [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
     (if (= data.hygiene-cache-arena-root 0)
       unit
-      (let
-        [previous : i64 (arena.tl_arena_current)]
-        [head : i64 data.hygiene-cache-arena]
-        [root : i64 data.hygiene-cache-arena-root]
-        (if (= head root)
-          (begin
-            (unsafe
-              (begin
-                (arena.tl_arena_set head)
-                (arena.tl_region_reset data.hygiene-cache-arena-mark)))
-            (set! data.hygiene-cache-arena (arena.tl_arena_current))
-            (tc-macro-module-env-state-data-set! state data)
-            (unsafe
-              (arena.tl_arena_set previous)))
-          (begin
-            ;; A large cache outgrew the small root. Replacing the chain with one
-            ;; general root here avoids another overflow on every later reset.
-            (unsafe
-              (arena.tl_arena_destroy head))
-            (tc-hygiene-module-env-cache-arena-install!
-              state
-              (arena.tl_arena_make))))))))
+      ;; Growth appends segments behind the stable root, so the original mark
+      ;; can reset the complete chain without recapturing or replacing a head.
+      (in-arena
+        (arena.Arena data.hygiene-cache-arena-root)
+        (unsafe
+          (arena.tl_region_reset data.hygiene-cache-arena-mark))))))
 
 (define (tc-macro-module-env-cache-clear! [state : TcMacroState]) : unit
   (let
@@ -17156,7 +17106,7 @@
       (array.make-array TcStringListStoreData 1)]
     [nodes : (__tl_dyn-array TcStringListNode)
       (array.make-array TcStringListNode 4)]
-    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcStringListNode first -1))
       (set! (array-ref cell 0) (TcStringListStoreData nodes 1 owner))
@@ -17314,7 +17264,7 @@
       (array.make-array TcNameIdListStoreData 1)]
     [nodes : (__tl_dyn-array TcNameIdListNode)
       (array.make-array TcNameIdListNode 4)]
-    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcNameIdListNode first -1))
       (set! (array-ref cell 0) (TcNameIdListStoreData nodes 1 owner))
@@ -17990,7 +17940,7 @@
       (array.make-array TcLifetimeSubstStoreData 1)]
     [nodes : (__tl_dyn-array TcLifetimeSubstNode)
       (array.make-array TcLifetimeSubstNode 4)]
-    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcLifetimeSubstNode from to -1))
       (set! (array-ref cell 0) (TcLifetimeSubstStoreData nodes 1 owner))
@@ -21753,12 +21703,9 @@
         (set! tc-module-decl-index-decl-offset decl-offset)
         (set! tc-module-decl-index-generation (ci.intern-generation))
         (set! tc-module-decl-index-maybe-stale false)
-        ;; The arena head advances as it grows; re-capture it so the next
-        ;; rebuild destroys the whole chain, then restore the caller's arena.
-        ;; The previous rebuild's arena (kept alive across maybe-stale
-        ;; revalidation) is destroyed only now that every index global points
-        ;; into the fresh one.
-        (set! tc-module-decl-index-arena (arena.tl_arena_current))
+        ;; The stable arena root names the complete grown chain. The previous
+        ;; rebuild (kept alive across maybe-stale revalidation) is destroyed
+        ;; only now that every index global points into the fresh one.
         (unsafe
           (arena.tl_arena_set prev-arena))
         (if (= old-arena 0)
@@ -22307,10 +22254,7 @@
             [cell : (__tl_dyn-array TcLazyImportStateData)
               (array.make-array TcLazyImportStateData 1)]
             [_init : unit
-              (set!
-                (array-ref cell 0)
-                (tc-lazy-import-state-data-new
-                  (tc-type-env-store-owner-root owner)))]
+              (set! (array-ref cell 0) (tc-lazy-import-state-data-new owner))]
             [next : i64
               (cast
                 (unsafe
@@ -29602,10 +29546,7 @@
           [(ResultTcType.Ok (ast.AstType.String)) true]
           [_ false]))
       (let
-        [scratch-restored? : bool
-          (=
-            (tc-type-env-store-owner-root (arena.tl_arena_current))
-            (tc-type-env-store-owner-root scratch))]
+        [scratch-restored? : bool (= (arena.tl_arena_current) scratch)]
         (begin
           (unsafe
             (begin
@@ -35765,22 +35706,15 @@
             [(TcMaybeNameId.Some target-id) target-id]
             [(TcMaybeNameId.No) -1])]))))
 
-;; These are the compiler-recognized unqualified compatibility names whose
-;; definitions deliberately live in stdlib modules. Keep this catalog beside
-;; the typecheck suggestion policy so a missing import can be diagnosed without
-;; loading or parsing unrelated stdlib modules on an error path.
+;; These are compiler-recognized unqualified public names whose definitions
+;; live in stdlib modules. Keep this catalog beside the typecheck suggestion
+;; policy so a missing import can be diagnosed without loading or parsing
+;; unrelated stdlib modules on an error path.
 (define (tc-unbound-stdlib-provider [name : String]) : String
   (cond
     [(or
-        (string.eq name "print")
-        (string.eq name "print-bool")
-        (string.eq name "print-char")
         (string.eq name "print-error")
-        (string.eq name "print-float")
         (string.eq name "print-format")
-        (string.eq name "print-newline")
-        (string.eq name "print-str")
-        (string.eq name "print-string")
         (string.eq name "println")
         (string.eq name "panic")
         (string.eq name "error")
@@ -67582,7 +67516,7 @@
   (let
     [nodes : (__tl_dyn-array TcMovedPathFactNode)
       (array.make-array TcMovedPathFactNode 4)]
-    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcMovedPathFactNode first -1))
       (box (TcMovedPathFactStoreData nodes 1 owner)))))
@@ -68008,7 +67942,7 @@
   (let
     [cell : (__tl_dyn-array TcMovePathSegmentStoreData)
       (array.make-array TcMovePathSegmentStoreData 1)]
-    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (begin
       (set!
         (array-ref cell 0)
@@ -85647,7 +85581,7 @@
           (if (=
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena)
             0)
-            (tc-type-env-store-owner-root previous-arena)
+            previous-arena
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))]
         (in-arena
           (arena.Arena owner-arena)
@@ -85902,7 +85836,6 @@
       (tc-macro-walk-set! state macro-live-registries-fallback true)]
     [built : csym.ResultCompilerSymbols
       (macro-live-symbols-build-fresh-current state program paths)]
-    [next-head : i64 (arena.tl_arena_current)]
     (begin
       (unsafe
         (arena.tl_arena_set enclosing))
@@ -85914,7 +85847,7 @@
             [retired : i64
               (tc-macro-walk-field state macro-live-symbols-retired-arena)]
             (begin
-              (tc-macro-walk-set! state macro-live-symbols-arena next-head)
+              (tc-macro-walk-set! state macro-live-symbols-arena next-arena)
               (tc-macro-walk-set!
                 state
                 macro-live-symbols-retired-arena
@@ -85931,7 +85864,7 @@
             [stable-message : String (string.copy (& message))]
             (begin
               (unsafe
-                (arena.tl_arena_destroy next-head))
+                (arena.tl_arena_destroy next-arena))
               (csym.ResultCompilerSymbols.Err stable-message)))]))))
 
 (define (macro-live-symbols-build-or-reuse!
@@ -90177,10 +90110,9 @@
 ;; maps. Sharing the maps with the survivor's copy-out is what keeps a node that
 ;; appears in both from being persisted (and re-allocated) twice.
 ;;
-;; Sequencing mirrors `macro-decl-generation-copy-out`: resume from the head the
-;; pool recorded, allocate the program shell there, publish the new head, and
-;; only then call the copy -- which reads that head, works from it, and restores
-;; the caller's arena itself.
+;; Sequencing mirrors `macro-decl-generation-copy-out`: resume from the pool's
+;; stable root, allocate the program shell there, and then call the copy, which
+;; restores the caller's arena itself.
 (define (macro-decl-generation-persist-decls
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
@@ -90193,10 +90125,6 @@
       (unsafe
         (arena.tl_arena_set (ast.ast-node-pool-context-base-arena pools)))]
     [program : ast.AstProgram (ast.ast-program decls)]
-    [_sync : unit
-      (ast.ast-node-pool-context-sync-base-arena!
-        pools
-        (arena.tl_arena_current))]
     (match (ast.ast-program-copy-append-above-with-maps
       pools
       pools
@@ -90277,10 +90205,6 @@
                             owned-path
                             owned-summary
                             closure))]
-                      [_sync : unit
-                        (ast.ast-node-pool-context-sync-base-arena!
-                          pools
-                          (arena.tl_arena_current))]
                       unit)]
                   [(MacroGeneratedModuleCatalogEntry.Empty) unit])
                 (set! done true))
@@ -93543,23 +93467,6 @@
       unit)
     (tc-macro-walk-field state macro-hygiene-env-storage-arena)))
 
-(define (macro-hygiene-env-storage-restore!
-  [state : TcMacroState]
-  [previous : i64]
-  [storage : i64]) : unit
-  (let
-    [head : i64 (arena.tl_arena_current)]
-    (begin
-      ;; Large array growth can advance the arena to a new segment. Retain that
-      ;; newest head, and keep it active when the caller was already allocating
-      ;; in this owner, rather than restoring a stale pre-growth handle.
-      (tc-macro-walk-set! state macro-hygiene-env-storage-arena head)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous storage)
-            head
-            previous))))))
-
 (define (macro-hygiene-env-grow-copy!
   [dst-kinds : (__tl_dyn-array i64)]
   [dst-keys : (__tl_dyn-array i64)]
@@ -93600,15 +93507,11 @@
           (if (< old-capacity 1)
             64
             (* old-capacity 2))]
-        [previous-arena : i64 (arena.tl_arena_current)]
         [storage : i64 (macro-hygiene-env-storage-handle state)]
-        (begin
-          ;; Snapshots can cross every scratch rewind involved in an expansion.
-          ;; This path intentionally retains its explicit restoration helper:
-          ;; when growth advances a nested caller's physical head, restoring the
-          ;; pre-growth handle causes severe selfhost retention on Windows.
-          (unsafe
-            (arena.tl_arena_set storage))
+        ;; Snapshots can cross every scratch rewind involved in an expansion.
+        ;; The stable storage root remains valid across physical chain growth.
+        (in-arena
+          (arena.Arena storage)
           (let
             [next-kinds : (__tl_dyn-array i64)
               (array.make-array i64 next-capacity)]
@@ -93633,8 +93536,7 @@
               (tc-macro-walk-set! state macro-hygiene-env-kinds next-kinds)
               (tc-macro-walk-set! state macro-hygiene-env-keys next-keys)
               (tc-macro-walk-set! state macro-hygiene-env-values next-values)
-              (tc-macro-walk-set! state macro-hygiene-env-parents next-parents)
-              (macro-hygiene-env-storage-restore! state previous-arena storage))))))))
+              (tc-macro-walk-set! state macro-hygiene-env-parents next-parents))))))))
 
 (define (macro-hygiene-env-push
   [kind : i64]
@@ -107095,7 +106997,7 @@
 ;; Move one expansion result out of its generation and into the committed pool.
 ;; Everything the survivor still owns in the generation is rebuilt in the pool's
 ;; base arena; every node id below the shared bases is left alone. Leaves the
-;; base arena's newest head synced into `pools` and current.
+;; pool's stable base root current for the caller.
 ;;
 ;; PERSIST IN PLACE, not copy-append: the expression rows this expansion created
 ;; are rewritten where they already are, so the pool does not grow and the
@@ -107134,10 +107036,6 @@
                   (ast.ast-node-pool-context-base-arena pools)))]
             [paths : ast.AstDeclPathList
               (macro-decl-generation-copy-paths expanded-paths)]
-            [_sync : unit
-              (ast.ast-node-pool-context-sync-base-arena!
-                pools
-                (arena.tl_arena_current))]
             (match copied
               [(ast.AstProgram.Program decls-box)
                 (ResultMacroDeclExpansion.Ok (__tl-box-place decls-box) paths)]))])]
@@ -107149,10 +107047,6 @@
         [owned : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-copy (__tl-box-place diag))]
         [boxed : (Box cdiag.CompilerDiagnostic) (box owned)]
-        [_sync : unit
-          (ast.ast-node-pool-context-sync-base-arena!
-            pools
-            (arena.tl_arena_current))]
         (ResultMacroDeclExpansion.Err boxed))]))
 
 ;; R3-P1: run one firing declaration's expansion inside its own arena generation
@@ -107174,11 +107068,9 @@
 ;; `macro-hygiene-produced-floor`, which is itself taken during the expansion,
 ;; so it can never mutate a shared node into the generation.
 ;;
-;; The pool's base arena IS the enclosing arena here, and a type push can grow
-;; it while the generation is current, so the enclosing handle is restored
-;; through `node-pool-restore-arena-after-base-alloc!` rather than written back
-;; raw -- restoring a filled segment head would start a sibling chain that the
-;; owner's destroy-from-head never reaches.
+;; The pool's base arena IS the enclosing arena here. Arena handles are stable
+;; roots, so a type push can grow its physical chain without changing the
+;; enclosing handle restored after the generation.
 (define (macro-expand-decl-with-path-generational
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -107253,7 +107145,6 @@
     (let
       [macro-state : TcMacroState (tc-context-macro-state ctx)]
       [enclosing : i64 (arena.tl_arena_current)]
-      [entry-base-arena : i64 (ast.ast-node-pool-base-arena-handle)]
       [entry-expr-len : i64 (ast.ast-node-pool-len)]
       [_profile-entry-type-len : i64 (ast.ty-node-pool-len)]
       [_profile-live-before-enter : i64
@@ -107349,20 +107240,6 @@
               _profile-generation-mark)
             0)
           0)]
-      ;; The generation is reused by the rest of its batch, so its newest head
-      ;; has to be published before the arena is switched away -- keeping the
-      ;; `make` root would restart the next declaration on a filled segment and
-      ;; grow a sibling chain the retiring destroy never reaches (H4).
-      [_track-head : unit
-        (if splice?
-          (tc-macro-walk-set!
-            macro-state
-            macro-splice-generation-arena
-            (arena.tl_arena_current))
-          (tc-macro-walk-set!
-            macro-state
-            macro-decl-generation-arena
-            (arena.tl_arena_current)))]
       ;; The expansion can install a different pool context -- captured CTFE
       ;; syntax pools rebase the active pools -- so the context to append into
       ;; must be re-read HERE. Carrying a context across the call and installing
@@ -107372,10 +107249,8 @@
       [_capture-expanded : unit
         (ast.ast-node-pool-context-capture-active! pools)]
       [_leave : unit
-        (ast.node-pool-restore-arena-after-base-alloc!
-          enclosing
-          entry-base-arena
-          (ast.ast-node-pool-context-base-arena pools))]
+        (unsafe
+          (arena.tl_arena_set enclosing))]
       [_profile-copy-start-total : i64
         (cfg compile-profile (profile.alloc-total) 0)]
       [_profile-copy-start-live : i64
@@ -107445,10 +107320,8 @@
           compile-profile
           (compiler-tc-walk-decl-generation-note!
             (- (ast.ast-node-pool-context-expr-len pools) _copy-start-len)))
-        (ast.node-pool-restore-arena-after-base-alloc!
-          enclosing
-          entry-base-arena
-          (ast.ast-node-pool-context-base-arena pools))
+        (unsafe
+          (arena.tl_arena_set enclosing))
         (ast.ast-node-pool-context-install! pools)
         escaped))))
 

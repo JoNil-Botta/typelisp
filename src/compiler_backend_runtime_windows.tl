@@ -1680,7 +1680,4 @@ tl_tlci_call_macro_entry:
       "    .extern GetStdHandle
 "
       "")
-    (if (runtime_common.compiler-backend-runtime-features-print-f64? features)
-      "    .extern _snprintf
-"
-      "")))
+    ""))

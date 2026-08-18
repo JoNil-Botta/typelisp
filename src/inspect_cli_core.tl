@@ -286,7 +286,7 @@ Summary:
         1)]
     [(tlci_core.ResultTlciImage.Ok image)
       (begin
-        (io.print-string (tlci-inspect-render bytes image))
+        (io.print-format "{}" (tlci-inspect-render bytes image))
         0)]))
 
 (cfg
@@ -311,7 +311,8 @@ Summary:
       [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Ok
           count)
         (begin
-          (io.print-string
+          (io.print-format
+            "{}"
             (str_cat.str-cat
               "embedded-loader-macro-count: "
               (string.int->string count)

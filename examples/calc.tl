@@ -289,6 +289,6 @@
       (let
         [result : i64 (eval (parse (& toks)))]
         (begin
-          (io.print-string "calculator result: ")
-          (io.print result)
+          (io.print-format "{}" "calculator result: ")
+          (io.println "{}" result)
           result)))))

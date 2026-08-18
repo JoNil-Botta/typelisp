@@ -19,12 +19,10 @@
     false
     false
     false
-    false
     false))
 
 (define (compiler-backend-runtime-test-full-features) : runtime_common.CompilerBackendRuntimeFeatures
   (runtime_common.CompilerBackendRuntimeFeatures
-    true
     true
     true
     true
@@ -362,11 +360,6 @@
           (& windows-full-externs)
           ".extern WriteFile")
         "full Windows externs include write support")
-      (test.assert-true
-        (compiler-backend-runtime-test-contains?
-          (& windows-full-externs)
-          ".extern _snprintf")
-        "full Windows externs include float formatting")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& windows-full-externs)

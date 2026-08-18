@@ -2,6 +2,6 @@
 
 (define (main) : i64
   (begin
-    (io.print-char 'A')
-    (io.print-newline)
+    (io.print-format "{}" 'A')
+    (io.println "")
     0))

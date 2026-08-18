@@ -20,6 +20,7 @@
 (import compiler_ctfe as ctfe)
 (import compiler_float as cfloat)
 (import compiler_intern as ci)
+(import compiler_profile_state as profile_state)
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import compiler_package_surface_producer as package_surface))
@@ -65,17 +66,6 @@
   (Nil)
   (Bind i64 i64 i64 LowerNameEnv))
 
-(define (lower-name-arena-owner-root [handle : i64]) : i64
-  (if (= handle 0)
-    0
-    (let
-      [root : i64
-        (unsafe
-          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-      (if (= root 0)
-        handle
-        root))))
-
 (define (lower-name-store-new) : LowerNameStore
   (begin
     (cfg
@@ -88,7 +78,7 @@
         (__tl_make-array (__tl_dyn-array LowerNameBinding) 4)]
       [first : (__tl_dyn-array LowerNameBinding)
         (__tl_make-array LowerNameBinding 16)]
-      [owner : i64 (lower-name-arena-owner-root (arena.tl_arena_current))]
+      [owner : i64 (arena.tl_arena_current)]
       (begin
         (set! (array-ref segments 0) first)
         (LowerNameStore segments 1 0 owner)))))
@@ -554,6 +544,8 @@
   34)
 (define function-memo-storage : i64
   35)
+(define profile-owner : i64
+  36)
 
 ;; Package identity is job-owned. Function-local lowering keeps its four SPMD
 ;; traversal values and two memo generations in a separate one-word capability;
@@ -597,7 +589,7 @@
 
 (define (compiler-lower-function-memo-storage-empty) : CompilerLowerFunctionMemoStorage
   (CompilerLowerFunctionMemoStorage
-    (lower-name-arena-owner-root (arena.tl_arena_current))
+    (arena.tl_arena_current)
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
     (__tl_make-array ast.AstType 0)
@@ -700,10 +692,12 @@
 (define (compiler-lower-state-from-name-cache [cache : LowerNameCache]) : CompilerLowerState
   (compiler-lower-state-from-address cache.owner-address))
 
-(define (compiler-lower-state-new-with-intern-state
-  [intern-state : ci.InternCompatState]) : CompilerLowerState
+(define (compiler-lower-state-new-with-intern-state-and-profile-state
+  [intern-state : ci.InternCompatState]
+  [_profile-state : profile_state.CompilerProfileState]) : CompilerLowerState
   (let
-    [cells : (__tl_dyn-array i64) (array.make-array i64 36)]
+    [cells : (__tl_dyn-array i64)
+      (array.make-array i64 (cfg (any compile-profile test) 37 36))]
     [address : i64
       (cast
         (unsafe
@@ -847,7 +841,21 @@
         (compiler-lower-state-cell
           CompilerLowerFunctionMemoStorage
           (compiler-lower-function-memo-storage-empty)))
+      (cfg
+        (any compile-profile test)
+        (set!
+          (array-ref cells profile-owner)
+          (compiler-lower-state-cell
+            profile_state.CompilerProfileState
+            _profile-state))
+        unit)
       state)))
+
+(define (compiler-lower-state-new-with-intern-state
+  [intern-state : ci.InternCompatState]) : CompilerLowerState
+  (compiler-lower-state-new-with-intern-state-and-profile-state
+    intern-state
+    (profile_state.compiler-profile-state-new)))
 
 ;; Serial/test compatibility adapter. Driver-owned jobs construct the lower
 ;; carrier with their explicit intern capability instead.
@@ -860,6 +868,14 @@
 
 (define (compiler-lower-state-interns [state : CompilerLowerState]) : ci.InternCompatState
   (compiler-lower-state-read state ci.InternCompatState intern-owner))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-lower-state-profile [state : CompilerLowerState]) : profile_state.CompilerProfileState
+    (compiler-lower-state-read
+      state
+      profile_state.CompilerProfileState
+      profile-owner)))
 
 (define (compiler-lower-state-checked-pools [state : CompilerLowerState]) : CompilerLowerCheckedPoolsState
   (compiler-lower-state-read state CompilerLowerCheckedPoolsState checked-pools))
@@ -1948,15 +1964,7 @@
   (let
     [base-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
-    (in-arena
-      base-arena
-      (let
-        [out : String (string.copy (& text))]
-        (begin
-          (ast.ast-node-pool-context-sync-base-arena!
-            pools
-            (arena.tl_arena_current))
-          out)))))
+    (in-arena base-arena (string.copy (& text)))))
 
 (define (lower-copy-paths-into-pools
   [paths : ast.AstDeclPathList]
@@ -1988,9 +1996,6 @@
                     index
                     cbi.compiler-builtin-id-fix-empty))
                 (set! index (+ index 1)))))
-          (ast.ast-node-pool-context-sync-base-arena!
-            pools
-            (arena.tl_arena_current))
           out)))))
 
 (define (lower-clear-macro-expanded-source-caches-into-pools!
@@ -2004,10 +2009,7 @@
       (begin
         (load.compiler-load-dotted-path-cache-reset!)
         (tc_core.compiler-typecheck-clear-macro-expanded-source-caches-for-job!
-          job-state)
-        (ast.ast-node-pool-context-sync-base-arena!
-          pools
-          (arena.tl_arena_current))))))
+          job-state)))))
 
 (define (lower-name-env-copy-active [names : LowerNameEnv]) : LowerNameEnv
   (match names
@@ -2022,15 +2024,7 @@
   (let
     [base-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
-    (in-arena
-      base-arena
-      (let
-        [out : LowerNameEnv (lower-name-env-copy-active names)]
-        (begin
-          (ast.ast-node-pool-context-sync-base-arena!
-            pools
-            (arena.tl_arena_current))
-          out)))))
+    (in-arena base-arena (lower-name-env-copy-active names))))
 
 (define (lower-checked-dest-pools-commit!
   [lower-state : CompilerLowerState]
@@ -2650,26 +2644,27 @@
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-specialization-counters) : unit
+  (define (compiler-lower-profile-specialization-counters
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
       (compiler-lower-profile-counter
         "specialization.structural_keys.created"
-        (spec.spec-profile-structural-key-created-value))
+        (spec.spec-profile-structural-key-created-value state))
       (compiler-lower-profile-counter
         "specialization.structural_keys.reused"
-        (spec.spec-profile-structural-key-reused-value))
+        (spec.spec-profile-structural-key-reused-value state))
       (compiler-lower-profile-counter
         "specialization.generated_text.materialized"
-        (spec.spec-profile-generated-text-materialized-value))
+        (spec.spec-profile-generated-text-materialized-value state))
       (compiler-lower-profile-counter
         "specialization.render.calls"
-        (spec.spec-profile-name-render-calls-value))
+        (spec.spec-profile-name-render-calls-value state))
       (compiler-lower-profile-counter
         "specialization.render.cache_hits"
-        (spec.spec-profile-name-render-cache-hits-value))
+        (spec.spec-profile-name-render-cache-hits-value state))
       (compiler-lower-profile-counter
         "specialization.render.cache_misses"
-        (spec.spec-profile-name-render-cache-misses-value)))))
+        (spec.spec-profile-name-render-cache-misses-value state)))))
 
 (cfg
   compile-profile
@@ -14109,9 +14104,6 @@
             (begin
               (set! (array-ref keep index) (array-ref source index))
               (set! index (+ index 1))))
-          (ast.ast-node-pool-context-sync-base-arena!
-            pools
-            (arena.tl_arena_current))
           (LowerDeclKeepPlan keep count))))))
 
 (define (lower-decl-keep-plan-apply
@@ -14479,7 +14471,6 @@
                                       reachable
                                       dispatch-variants
                                       reachable-path-type-names)))])]
-                          [scratch-head : i64 (arena.tl_arena_current)]
                           (begin
                             ;; Materialize the pruned program back in the persistent
                             ;; arena before rewinding the scratch arena.
@@ -14506,25 +14497,21 @@
                                       (ast.ast-program filtered-decls)
                                       filtered-paths
                                       keep-plan)])]
-                              [new-prev-arena : i64 (arena.tl_arena_current)]
                               (begin
                                 (unsafe
-                                  (arena.tl_arena_set scratch-head)
+                                  (arena.tl_arena_set scratch)
                                   (arena.tl_region_reset mark)
-                                  (arena.tl_arena_set new-prev-arena))
+                                  (arena.tl_arena_set prev-arena))
                                 pruned))))])))
-                (let
-                  [scratch-head : i64 (arena.tl_arena_current)]
-                  (begin
-                    (unsafe
-                      (arena.tl_arena_set scratch-head)
-                      (arena.tl_region_reset mark)
-                      (arena.tl_arena_set prev-arena))
-                    (LowerPrunedProgramWithPlan.Program
-                      program
-                      paths
-                      (lower-decl-keep-plan-all
-                        (ast.ast-decl-list-len (& decls)))))))]
+                (begin
+                  (unsafe
+                    (arena.tl_arena_set scratch)
+                    (arena.tl_region_reset mark)
+                    (arena.tl_arena_set prev-arena))
+                  (LowerPrunedProgramWithPlan.Program
+                    program
+                    paths
+                    (lower-decl-keep-plan-all (ast.ast-decl-list-len (& decls))))))]
             (begin
               (lower-reach-scratch-state-reset! lower-state)
               result))))]))
@@ -48476,6 +48463,8 @@
   (match (tc_core.tc-type-without-regions ty)
     [(ast.AstType.I8) true]
     [(ast.AstType.U8) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.U16) true]
     [(ast.AstType.I32) true]
     [(ast.AstType.U32) true]
     [(ast.AstType.I64) true]
@@ -48486,6 +48475,8 @@
   (match (tc_core.tc-type-without-regions ty)
     [(ast.AstType.I8) 8]
     [(ast.AstType.U8) 8]
+    [(ast.AstType.I16) 16]
+    [(ast.AstType.U16) 16]
     [(ast.AstType.I32) 32]
     [(ast.AstType.U32) 32]
     [(ast.AstType.I64) 64]
@@ -48514,7 +48505,7 @@
     (if (lower-mode-avx2? mode)
       "AVX2"
       "AVX-512")
-    " backend mode; supported lane types are i8, u8, i32, u32, i64, and u64"))
+    " backend mode; supported lane types are i8, u8, i16, u16, i32, u32, i64, and u64"))
 
 (define (lower-spmd-expr-has-shift?
   [ctx : tc_core.TcContext]
@@ -55108,7 +55099,7 @@
       (tc_core.tc-type-render lane-ty)
       " in "
       (lower-masked-shift-mode-name (lower-state-mode state))
-      " backend mode; supported lane types are i8, u8, i32, u32, i64, and u64")))
+      " backend mode; supported lane types are i8, u8, i16, u16, i32, u32, i64, and u64")))
 
 (define (lower-avx512-masked-shift-guard-and-emit
   [state : LowerState (:consume)]
@@ -65887,17 +65878,6 @@
         (arena.tl_arena_destroy lower-scratch-arena))
       (set! lower-scratch-arena 0))))
 
-(define (lower-scratch-arena-release-after-overflow!
-  [scratch : i64]
-  [scratch-head : i64]) : unit
-  ;; Region reset retains overflow mappings to preserve the public stale-address
-  ;; semantics. A lowered function has already cloned every live result into the
-  ;; IR/enclosing arenas, so recycle an overflowed internal scratch arena here
-  ;; instead of accumulating one 64 MiB mapping per large function.
-  (if (= scratch scratch-head)
-    unit
-    (lower-scratch-arena-release!)))
-
 ;; Dedicated arena for the escaped (lowered) IR function bodies. The
 ;; lowered IR is consumed exactly once: at opt levels >= 1 the optimizer
 ;; deep-clones every surviving function into the enclosing arena
@@ -66057,52 +66037,40 @@
           mode)
           [(ResultLowerFunction.Ok fns function-spans)
             (let
-              [scratch-head : i64 (arena.tl_arena_current)]
               [escaped-fns : ir.CompilerIrFunctionList
                 (lower-function-list-escape-to-ir-arena fns)]
               ;; The IR function clones go to the dedicated lowered-IR
               ;; arena (released by the driver after optimization); the
               ;; spans side-table is rebuilt in the enclosing arena since
-              ;; it outlives the lowered IR. The stored handle must follow
-              ;; the arena's grown head, or every later allocation re-walks
-              ;; the overflow path from the full first segment.
+              ;; it outlives the lowered IR. Stable-root arena handles preserve
+              ;; both owners across any segment growth during those clones.
               (begin
                 (unsafe
                   (arena.tl_arena_set enclosing))
                 (let
                   [escaped-spans : ir.CompilerSourceSpans
                     (ir.compiler-source-spans-append-new spans function-spans)]
-                  [new-enclosing : i64 (arena.tl_arena_current)]
                   (begin
                     (unsafe
-                      (arena.tl_arena_set scratch-head)
+                      (arena.tl_arena_set scratch)
                       (arena.tl_region_reset mark)
-                      (arena.tl_arena_set new-enclosing))
-                    (lower-scratch-arena-release-after-overflow!
-                      scratch
-                      scratch-head)
+                      (arena.tl_arena_set enclosing))
                     (tc_core.tc-nominal-owner-cache-reset!)
                     (ResultLowerFunction.Ok escaped-fns escaped-spans)))))]
           [(ResultLowerFunction.Err message)
-            (let
-              [scratch-head : i64 (arena.tl_arena_current)]
-              (begin
-                (unsafe
-                  (arena.tl_arena_set enclosing))
-                (let
-                  [escaped-message : (Box cdiag.CompilerDiagnostic)
-                    (clone message)]
-                  [new-enclosing : i64 (arena.tl_arena_current)]
-                  (begin
-                    (unsafe
-                      (arena.tl_arena_set scratch-head)
-                      (arena.tl_region_reset mark)
-                      (arena.tl_arena_set new-enclosing))
-                    (lower-scratch-arena-release-after-overflow!
-                      scratch
-                      scratch-head)
-                    (tc_core.tc-nominal-owner-cache-reset!)
-                    (ResultLowerFunction.Err escaped-message)))))])))))
+            (begin
+              (unsafe
+                (arena.tl_arena_set enclosing))
+              (let
+                [escaped-message : (Box cdiag.CompilerDiagnostic)
+                  (clone message)]
+                (begin
+                  (unsafe
+                    (arena.tl_arena_set scratch)
+                    (arena.tl_region_reset mark)
+                    (arena.tl_arena_set enclosing))
+                  (tc_core.tc-nominal-owner-cache-reset!)
+                  (ResultLowerFunction.Err escaped-message))))])))))
 
 (define (lower-struct-cleanup-param-id [lower-state : CompilerLowerState]) : i64
   (let
@@ -69134,7 +69102,10 @@
       (package_surface.package-surface-capture-expanded! program paths pools)
       unit)
     (cfg compile-profile (compiler-lower-profile-name-reset))
-    (spec.spec-profile-reset!)
+    (cfg
+      (any compile-profile test)
+      (spec.spec-profile-reset! (compiler-lower-state-profile lower-state))
+      unit)
     (cfg compile-profile (compiler-lower-profile-start))
     (let
       [needs-specialization : bool
@@ -69156,12 +69127,21 @@
           ;; scalar interner changes before explicit specialization begins.
           (ci.intern-compat-state-capture-from-globals! intern-state)
           (if needs-specialization
-            (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
-              program
-              paths
-              entry-path
-              pools
-              intern-state)
+            (cfg
+              (any compile-profile test)
+              (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
+                program
+                paths
+                entry-path
+                pools
+                intern-state
+                (compiler-lower-state-profile lower-state))
+              (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
+                program
+                paths
+                entry-path
+                pools
+                intern-state))
             (spec.ResultSpecProgramWithPaths.Ok program paths)))]
       (begin
         ;; Explicit specialization mutates owner pool/interner cells; publish
@@ -69174,7 +69154,8 @@
               (cfg compile-profile (compiler-lower-profile-finish "specialize"))
               (cfg
                 compile-profile
-                (compiler-lower-profile-specialization-counters))
+                (compiler-lower-profile-specialization-counters
+                  (compiler-lower-state-profile lower-state)))
               (cfg compile-profile (compiler-lower-profile-start))
               (let
                 [prune-names : LowerNameEnv
@@ -69303,7 +69284,8 @@
               (cfg compile-profile (compiler-lower-profile-finish "specialize"))
               (cfg
                 compile-profile
-                (compiler-lower-profile-specialization-counters))
+                (compiler-lower-profile-specialization-counters
+                  (compiler-lower-state-profile lower-state)))
               (ResultCompilerLower.Err
                 (box
                   (lower-diagnostic-with-fallback-path
@@ -69428,7 +69410,13 @@
           program
           paths
           entry-path
-          (spec.spec-owner-context-new pools intern-state))]
+          (cfg
+            (any compile-profile test)
+            (spec.spec-owner-context-new-with-profile-state
+              pools
+              intern-state
+              (compiler-lower-state-profile lower-state))
+            (spec.spec-owner-context-new pools intern-state)))]
       (begin
         ;; Publish explicit generation mutations before matching either result
         ;; or entering the legacy macro-expansion phase.

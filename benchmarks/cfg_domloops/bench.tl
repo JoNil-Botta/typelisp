@@ -856,5 +856,5 @@
     [path : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (io.print (cfg-bench path rounds))
+      (io.println "{}" (cfg-bench path rounds))
       0)))

@@ -588,7 +588,8 @@
                 [else
                   (stress-tier1 (& loaded) iterations progress-path failed-at)])]
             (begin
-              (io.print-string
+              (io.print-format
+                "{}"
                 (str_cat.str-cat
                   "stress tier="
                   (string.int->string tier)

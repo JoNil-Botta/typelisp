@@ -1346,27 +1346,6 @@
 (define (compiler-backend-state-owner-arena [state : CompilerBackendState]) : i64
   (__tl-project-field (compiler-backend-state-data state) owner-arena))
 
-(define (compiler-backend-arena-owner-current-head [owner : arena.Arena]) : arena.Arena
-  (let
-    [handle : i64 (arena.raw-handle owner)]
-    (if (= handle 0)
-      owner
-      (let
-        [root-candidate : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-        [root : i64
-          (if (= root-candidate 0)
-            handle
-            root-candidate)]
-        [head : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
-        (arena.Arena
-          (if (= head 0)
-            root
-            head))))))
-
 (define (compiler-backend-state-emission-arena [state : CompilerBackendState]) : i64
   (__tl-project-field (compiler-backend-state-data state) emission-arena))
 
@@ -1407,7 +1386,7 @@
     [stored : i64 (compiler-backend-state-emission-arena state)]
     (if (= stored 0)
       (arena.current)
-      (compiler-backend-arena-owner-current-head (arena.Arena stored)))))
+      (arena.Arena stored))))
 
 (define (compiler-backend-state-scalar-registers-enabled?
   [state : CompilerBackendState]) : bool
@@ -4990,6 +4969,223 @@
       [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
       [_ false])))
 
+(define (compiler-backend-word-vector-shift?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]) : bool
+  (and
+    (match elem-ty
+      [(compiler_ast_types.AstType.I16) true]
+      [(compiler_ast_types.AstType.U16) true]
+      [_ false])
+    (match op
+      [(compiler_ir_types.CompilerIrBinOp.Shl _) true]
+      [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
+      [_ false])))
+
+(define (compiler-backend-word-vector-shift-mnemonic
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]) : String
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Shl _) "vpsllvd"]
+    [(compiler_ir_types.CompilerIrBinOp.Shr _)
+      (match elem-ty
+        [(compiler_ast_types.AstType.I16) "vpsravd"]
+        [(compiler_ast_types.AstType.U16) "vpsrlvd"]
+        [_ ""])]
+    [_ ""]))
+
+(define (compiler-backend-word-vector-widen-mnemonic
+  [elem-ty : compiler_ast_types.AstType]) : String
+  (match elem-ty
+    [(compiler_ast_types.AstType.I16) "vpmovsxwd"]
+    [(compiler_ast_types.AstType.U16) "vpmovzxwd"]
+    [_ ""]))
+
+;; AVX2 has no per-word variable shift. Widen the low and high 128-bit word
+;; groups to dwords, use the native dword shift, mask each result to its exact
+;; low 16 bits, then pack. `vpackusdw` interleaves its two inputs inside each
+;; 128-bit sublane, so the final qword permutation restores source lane order.
+(define (compiler-backend-emit-avx2-word-vector-shift
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [vector-bytes : i64 32]
+    [group-bytes : i64 16]
+    [result-base : i64 64]
+    [move : String (compiler-backend-vector-move-for-width "ymm" elem-ty)]
+    [dword-move : String
+      (compiler-backend-vector-move-for-width
+        "ymm"
+        (compiler_ast_types.AstType.I32))]
+    [widen : String (compiler-backend-word-vector-widen-mnemonic elem-ty)]
+    [shift : String (compiler-backend-word-vector-shift-mnemonic op elem-ty)]
+    [tmp0 : String "%ymm0"]
+    [tmp1 : String "%ymm1"]
+    (match (compiler-backend-vector-register-use
+      assignments
+      lhs
+      "word shift lhs"
+      "ymm"
+      elem-ty
+      (compiler-backend-vector-spill-scratch "ymm" 0)
+      backend-state)
+      [(ResultBackendVectorUse.Ok lhs-use)
+        (match lhs-use
+          [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+            (match (compiler-backend-vector-register-use
+              assignments
+              rhs
+              "word shift rhs"
+              "ymm"
+              elem-ty
+              (compiler-backend-vector-spill-scratch "ymm" 1)
+              backend-state)
+              [(ResultBackendVectorUse.Ok rhs-use)
+                (match rhs-use
+                  [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
+                    (match (compiler-backend-vector-dst-reg
+                      assignments
+                      dst
+                      "word shift dst"
+                      "ymm"
+                      (compiler-backend-vector-spill-scratch "ymm" 0)
+                      backend-state)
+                      [(ResultBackendReg.Ok dst-reg)
+                        (let
+                          [groups : String ""]
+                          [group : i64 0]
+                          (begin
+                            (while (< group 2)
+                              (let
+                                [word-offset : i64 (* group group-bytes)]
+                                [result-offset : i64
+                                  (+ result-base (* group vector-bytes))]
+                                (begin
+                                  (set!
+                                    groups
+                                    (str_cat.str-cat
+                                      groups
+                                      "    "
+                                      widen
+                                      " "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        word-offset)
+                                      ", "
+                                      tmp0
+                                      "\n    "
+                                      widen
+                                      " "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        (+ vector-bytes word-offset))
+                                      ", "
+                                      tmp1
+                                      "\n    "
+                                      shift
+                                      " "
+                                      tmp1
+                                      ", "
+                                      tmp0
+                                      ", "
+                                      tmp0
+                                      "\n    "
+                                      dword-move
+                                      " "
+                                      tmp0
+                                      ", "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        result-offset)
+                                      "\n"))
+                                  (set! group (+ group 1)))))
+                            (ResultCompilerBackend.Ok
+                              (str_cat.str-cat
+                                lhs-asm
+                                rhs-asm
+                                "    subq $128, %rsp\n    "
+                                move
+                                " "
+                                lhs-reg
+                                ", (%rsp)\n    "
+                                move
+                                " "
+                                rhs-reg
+                                ", 32(%rsp)\n"
+                                groups
+                                "    vpcmpeqd "
+                                tmp0
+                                ", "
+                                tmp0
+                                ", "
+                                tmp0
+                                "\n    vpsrld $16, "
+                                tmp0
+                                ", "
+                                tmp0
+                                "\n    "
+                                dword-move
+                                " 64(%rsp), "
+                                tmp1
+                                "\n    vpand "
+                                tmp0
+                                ", "
+                                tmp1
+                                ", "
+                                tmp1
+                                "\n    "
+                                dword-move
+                                " 96(%rsp), "
+                                dst-reg
+                                "\n    vpand "
+                                tmp0
+                                ", "
+                                dst-reg
+                                ", "
+                                dst-reg
+                                "\n    vpackusdw "
+                                dst-reg
+                                ", "
+                                tmp1
+                                ", "
+                                tmp1
+                                "\n    vpermq $216, "
+                                tmp1
+                                ", "
+                                dst-reg
+                                "\n    addq $128, %rsp\n"
+                                (compiler-backend-vector-store-dst
+                                  assignments
+                                  dst
+                                  "ymm"
+                                  elem-ty
+                                  dst-reg
+                                  backend-state)))))]
+                      [(ResultBackendReg.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler_diagnostic.compiler-diagnostic-with-message
+                              instr-diag
+                              message)))])])]
+              [(ResultBackendVectorUse.Err message)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-with-message
+                      instr-diag
+                      message)))])])]
+      [(ResultBackendVectorUse.Err message)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-with-message
+              instr-diag
+              message)))])))
+
 (define (compiler-backend-byte-vector-shift-mnemonic
   [op : compiler_ir_types.CompilerIrBinOp]
   [elem-ty : compiler_ast_types.AstType]) : String
@@ -6142,6 +6338,16 @@
       [mnemonic : String
         (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
       (cond
+        [(compiler-backend-word-vector-shift? op elem-ty)
+          (compiler-backend-emit-avx2-word-vector-shift
+            assignments
+            dst
+            op
+            lhs
+            rhs
+            elem-ty
+            instr-diag
+            backend-state)]
         [(compiler-backend-byte-vector-shift? op elem-ty)
           (compiler-backend-emit-byte-vector-shift
             assignments
@@ -6692,6 +6898,8 @@
         [(compiler_ast_types.AstType.U64) "vpsllvq"]
         [(compiler_ast_types.AstType.I32) "vpsllvd"]
         [(compiler_ast_types.AstType.U32) "vpsllvd"]
+        [(compiler_ast_types.AstType.I16) "vpsllvw"]
+        [(compiler_ast_types.AstType.U16) "vpsllvw"]
         [_ ""])]
     [(compiler_ir_types.CompilerIrBinOp.Shr _)
       (match elem-ty
@@ -6699,6 +6907,8 @@
         [(compiler_ast_types.AstType.U64) "vpsrlvq"]
         [(compiler_ast_types.AstType.I32) "vpsravd"]
         [(compiler_ast_types.AstType.U32) "vpsrlvd"]
+        [(compiler_ast_types.AstType.I16) "vpsravw"]
+        [(compiler_ast_types.AstType.U16) "vpsrlvw"]
         [_ ""])]
     [(compiler_ir_types.CompilerIrBinOp.BitAnd)
       (match elem-ty
@@ -36738,14 +36948,6 @@
 
 (define (compiler-backend-runtime-param-types-id [name-id : i64]) : compiler_ast_types.AstTypeList
   (cond
-    [(cbi.compiler-builtin-backend-tl-print-char-id? name-id)
-      (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.AstType.Char)
-        (compiler_ast_types.ast-type-list-new))]
-    [(cbi.compiler-builtin-backend-tl-print-f64-id? name-id)
-      (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.AstType.F64)
-        (compiler_ast_types.ast-type-list-new))]
     [(cbi.compiler-builtin-backend-tl-array-fill8-id? name-id)
       (compiler_ast_types.ast-type-cons
         (compiler_ast_types.ast-ty-mut-ptr (compiler_ast_types.AstType.U8))
@@ -71782,10 +71984,6 @@
               (compiler-backend-plan-provides-id?
                 plan
                 cbi.compiler-builtin-id-tl-region-reset))]
-          [print-f64 : bool
-            (compiler-backend-plan-provides-id?
-              plan
-              cbi.compiler-builtin-id-tl-print-f64)]
           (runtime_common.CompilerBackendRuntimeFeatures
             alloc
             region-mark
@@ -71794,7 +71992,6 @@
             (compiler-backend-runtime-tail-profile? tail-plan)
             (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
             write-exit
-            print-f64
             (compiler-backend-runtime-tail-startup-profile? tail-plan)))])))
 
 (define (compiler-backend-current-arena-load
@@ -80747,16 +80944,13 @@
 (define (compiler-backend-assembly-stream-carry-home-current!
   [stream : CompilerBackendStreamState]
   [home-arena : arena.Arena]) : unit
-  ;; Rendering/appending the retained group can grow `home-arena`. Carry its
-  ;; root-tracked current head into the next flush instead of re-entering the
-  ;; old segment and creating a detached sibling overflow chain.
+  ;; Rendering/appending the retained group can grow `home-arena`; its stable
+  ;; root remains the owner used by every later flush.
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set!
-        data.assembly-home-arena
-        (compiler-backend-arena-owner-current-head home-arena))
+      (set! data.assembly-home-arena home-arena)
       (compiler-backend-stream-state-data-set! stream data))))
 
 ;; Flush one raw function group through the record pipeline. `scratch` is active
@@ -82597,13 +82791,13 @@
   (and
     (backend-and8
       (not (compiler-backend-string-contains? asm "tl_print_err:\n"))
-      (not (compiler-backend-string-contains? asm "tl_print_string:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_arg_count:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_arg:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_read_file:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_file_exists:\n"))
-      (not (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")))
+      (not (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n"))
+      true)
     (backend-and8
       (not (compiler-backend-string-contains? asm ".L_tl_file_close_status:\n"))
       (not
@@ -82628,12 +82822,12 @@
       (not (compiler-backend-string-contains? asm "tl_cpuid_eax:\n"))
       (not (compiler-backend-string-contains? asm "tl_xgetbv:\n")))
     (backend-and4
-      (not (compiler-backend-string-contains? asm "tl_print_char:\n"))
-      (not (compiler-backend-string-contains? asm "tl_print_f64:\n"))
       (not
         (compiler-backend-string-contains? asm ".L_tl_fs_remove_file_status:\n"))
       (not
-        (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n")))
+        (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n"))
+      true
+      true)
     (not (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n"))))
 
 ;; Backend-smoke regression for the fail-closed splice predicate.  Exercise a

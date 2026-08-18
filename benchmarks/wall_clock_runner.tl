@@ -277,7 +277,7 @@
                             signal
                             launch-errno)]
                         (begin
-                          (io.print-string line)
+                          (io.print-format "{}" line)
                           0))]))))))))))
 
 (define (usage-error) : i64

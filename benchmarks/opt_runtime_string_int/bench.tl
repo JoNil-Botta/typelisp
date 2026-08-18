@@ -22,5 +22,5 @@
     [seed : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (io.print (string-int-repeat seed rounds))
+      (io.println "{}" (string-int-repeat seed rounds))
       0)))

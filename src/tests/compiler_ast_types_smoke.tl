@@ -353,26 +353,22 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
     [owner : i64 (ast.ast-node-pool-context-owner-arena pools)]
+    [base : i64 (ast.ast-node-pool-context-base-arena pools)]
     [copied : ast.AstNodePoolContext (ast.ast-node-pool-context-snapshot pools)]
-    [synthetic-head : arena.Arena (arena.make)]
-    [head : i64 (arena.raw-handle synthetic-head)]
     (begin
-      ;; Model a payload allocation advancing the mutable chain head after a
-      ;; context copy has been installed. Retirement must still recognize the
-      ;; copied active context as belonging to the original pool owner.
-      (ast.ast-node-pool-context-sync-base-arena! copied head)
+      ;; Context snapshots keep the pool's stable root identity. Physical arena
+      ;; growth does not require publishing a replacement head into either cell.
       (ast.ast-node-pool-context-install! copied)
       (let
         [ok : bool
           (and
-            (not (= owner head))
+            (= owner base)
             (= (ast.ast-node-pool-context-owner-arena copied) owner)
             (= (ast.ast-node-pool-owner-arena-handle) owner)
-            (= (ast.ast-node-pool-base-arena-handle) head))]
+            (= (ast.ast-node-pool-context-base-arena copied) base)
+            (= (ast.ast-node-pool-base-arena-handle) base))]
         (begin
           (ast.ast-node-pool-context-install! active-before)
-          (unsafe
-            (arena.destroy synthetic-head))
           ok)))))
 
 (define (compiler-ast-context-shared-binary?

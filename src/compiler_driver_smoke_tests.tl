@@ -33,14 +33,11 @@
       (unsafe
         (arena.tl_arena_set owner))
       ;; Fill the 64 MiB root without touching its payload pages, then force
-      ;; one overflow segment. Public current remains the stable `owner` root;
-      ;; the physical head is observed only through the raw helper.
+      ;; one overflow segment. Public current remains the stable `owner` root.
       (compiler-driver-smoke-runtime-alloc 67108800)
       (compiler-driver-smoke-runtime-alloc 8)
       (let
-        [head : i64
-          (compiler_driver_core.compiler-driver-arena-owner-current-head owner)]
-        [grown? : bool (not (= head owner))]
+        [stable? : bool (= (arena.tl_arena_current) owner)]
         (begin
           (compiler_driver_core.compiler-driver-restore-arena-owner-current!
             owner)
@@ -57,7 +54,7 @@
                   (unsafe
                     (arena.tl_arena_set home)
                     (arena.tl_arena_destroy owner))
-                  (and grown? preserved? resumed?))))))))))
+                  (and stable? preserved? resumed?))))))))))
 
 (define (compiler-driver-lower-name-store-owner-current-ok?) : bool
   (let
@@ -81,11 +78,7 @@
           (compiler_lower.lower-name-store-add-segment!
             (&mut (__tl-box-place store)))
           (let
-            [home-restored? : bool
-              (=
-                (compiler_lower.lower-name-arena-owner-root
-                  (arena.tl_arena_current))
-                (compiler_lower.lower-name-arena-owner-root home))]
+            [home-restored? : bool (= (arena.tl_arena_current) home)]
             [segment-count : i64
               (__tl-project-field (__tl-box-place store) segment-count)]
             (begin
@@ -575,8 +568,10 @@
 
 (define (compiler-driver-reader-context-smoke-fail [message : String]) : bool
   (begin
-    (io.print-string (str_cat.str-cat "driver reader-context smoke: " message))
-    (io.print-string "\n")
+    (io.print-format
+      "{}"
+      (str_cat.str-cat "driver reader-context smoke: " message))
+    (io.print-format "{}" "\n")
     false))
 
 (define (compiler-driver-reader-context-smoke-mirror-intern-state-ok?

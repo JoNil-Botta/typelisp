@@ -13,6 +13,7 @@
     {"jsonpath_id": 9, "raw_contains": "\"label\":\"(sig.combine [left : i64] [right : i64]) : i64\"", "raw_contains": "Imported combine documentation.", "raw_contains": "\"activeParameter\":1"},
     {"jsonpath_id": 10, "json_contains": "\"result\":null", "jsonpath_result": null},
     {"jsonpath_id": 11, "json_contains": "\"result\":null", "jsonpath_result": null},
-    {"jsonpath_id": 12, "json_contains": "\"result\":null", "jsonpath_result": null}
+    {"jsonpath_id": 12, "raw_contains": "\"label\":\"(add [left : i64] [right : (Tuple i64 bool)]) : i64\"", "raw_contains": "\"activeParameter\":0"},
+    {"jsonpath_id": 13, "json_contains": "\"result\":null", "jsonpath_result": null}
   ]
 }

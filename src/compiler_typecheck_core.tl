@@ -86311,8 +86311,16 @@
 ;; count cadence is alignment-sensitive -- six retained 130,882,560 bytes -- so
 ;; five is the measured current knee. Three same-source Windows selfhosts kept
 ;; median macro-walk time flat (1,985 ms versus 1,988 ms at seven) and emitted
-;; byte-identical assembly. Retention is bounded by 2 batches, not by the walk.
-;; Make `next` the live generation and destroy the one retired a batch ago.
+;; byte-identical assembly. #6318's combined source graph later shifted an
+;; unphased batch five to 111,472,912 / 417,176,320 non-output bytes (26.72%).
+;; Starting the ring with one four-declaration batch, then keeping steady-state
+;; batches at five, restored 78,932,232 / 405,167,800 (19.48%) without changing
+;; the 2,860 rotations. A global batch four retained 73,602,040 / 405,151,072
+;; (18.17%) but raised rotations to 3,574. Interleaved three-run Windows
+;; profile-selfhost medians were 14.686 s unphased, 14.966 s phase-shifted, and
+;; 14.986 s at global batch four, so the one-time phase shift is the measured
+;; memory/work knee. Retention is bounded by 2 batches, not by the walk. Make
+;; `next` the live generation and destroy the one retired a batch ago.
 ;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
 ;; flag that disables the virgin-arena zero-fill elision permanently for
 ;; everything later allocated in it (#5599). `macro-decl-generation-arena`
@@ -86351,10 +86359,22 @@
         (+ (tc-macro-walk-field state macro-decl-generation-batch-used) 1))
       (tc-macro-walk-field state macro-decl-generation-arena))
     (let
+      [initial? : bool
+        (and
+          (= (tc-macro-walk-field state macro-decl-generation-arena) 0)
+          (= (tc-macro-walk-field state macro-decl-generation-retired-arena) 0))]
       [next : i64 (arena.tl_arena_make)]
       (begin
         (macro-decl-generation-rotate! state next)
-        (tc-macro-walk-set! state macro-decl-generation-batch-used 1)
+        ;; Make only the first batch one declaration short. This phase-shifts
+        ;; every later five-declaration boundary without adding steady-state
+        ;; rotations; full release resets both handles and starts a new ring.
+        (tc-macro-walk-set!
+          state
+          macro-decl-generation-batch-used
+          (if initial?
+            2
+            1))
         next))))
 
 ;; R3-P2b: import-placeholder expansions get their OWN two-generation ring, not

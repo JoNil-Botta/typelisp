@@ -85160,14 +85160,25 @@
 ;;      caller and one self-call counts 2 and lands in the duplication class.
 ;;      Mutual recursion is excluded one level up, where a callee in the
 ;;      caller's own SCC is refused before any of these predicates run;
-;;   2. the boundary is WIDE -- opt-inline-single-site-min-params or more.
-;;      Arity is the band's subject. What no size budget prices, and what
-;;      absorption retires outright, is argument marshalling, and marshalling
-;;      cost scales with ARITY, not with body size. Below the arity where the
-;;      ABI runs out of argument registers there is no marshalling to retire
-;;      and the boundary is a call and a cheap prologue, so the narrow class is
-;;      left to the site-conditioned tiers (see the note at
-;;      opt-inline-single-site-min-params for the two measured variants);
+;;   2. the boundary is WIDE -- opt-inline-single-site-min-params or more --
+;;      or, at an IN-LOOP site, the body is small by the loop tier's own size
+;;      class (opt-inline-bounds-loop-small?) and call-free. Arity is the
+;;      band's subject. What no size budget prices, and what absorption retires
+;;      outright, is argument marshalling, and marshalling cost scales with
+;;      ARITY, not with body size. Below the arity where the ABI runs out of
+;;      argument registers there is no marshalling to retire: the boundary is a
+;;      call and a cheap prologue, worth little even once per iteration, so it
+;;      can only be bought with an import that costs little. That is the loop
+;;      tier's shape, which at a single-reference site that tier already moves;
+;;      what it asks on top is the cascade clause, and clause 6 below retires
+;;      that at an in-loop site. Call-freedom is clause 5 KEPT rather than
+;;      waived: clause 5 comes off at an in-loop site because a wide boundary
+;;      pays for the wider callee-saved prologue the imported calls force at
+;;      the merged entry, and a narrow one does not. So the narrow class enters
+;;      this band at exactly the loop tier's size, call-free, at an in-loop
+;;      site, and nowhere else; see the note at
+;;      opt-inline-single-site-min-params for the measured variants of the
+;;      split;
 ;;   3. the site is NOT in a natural loop of the caller -- and where it IS,
 ;;      this clause and clauses 5 and 6 all come off together, because all
 ;;      three are settled by the same comparison. Every cost they stand for is
@@ -85282,16 +85293,23 @@
 ;;      bounds-free and single-reference in the same way -- and absorbing it is
 ;;      the -8.451%.
 ;;
-;;      The loop tier keeps the clause at BOTH sites, and rightly: its measured
+;;      The loop tier keeps the clause at BOTH sites, and its own measured
 ;;      case (`qs-fill` into `qs-bench`, at opt-inline-bounds-loop-cascade-safe?
-;;      below) is an in-loop site where refusing still wins, because a
-;;      24-instruction 3-parameter import is a boundary worth little even once
-;;      per iteration. That is exactly the class clause 2's arity floor keeps
-;;      this band away from, which is why the same waiver is sound here and not
-;;      there. This band's own re-measurement of the clause was opt_crc32
-;;      324,500,336 -> 324,560,322 (+59,986) with no row improving; on this
-;;      tree opt_crc32 presents no candidate to this band at all (the arity
-;;      floor again), so the straight-line half of the clause now rests on
+;;      below) is an in-loop site where refusing won when it was measured.
+;;      Clause 2 now reaches that size class at in-loop sites, so the same
+;;      question is put again on this tree and comes back the other way:
+;;      absorbing `qs-checksum` (2 parameters, 28 instructions in 4 blocks)
+;;      into `qs-bench` past the cascade clause is -128,009 on opt_quicksort,
+;;      and the same waiver on the generated `set-ref!` accessor is -0.590% on
+;;      cfg_domloops and -1.291% on gvn_table. The two verdicts differ in what
+;;      the clause is asked ABOUT: here the callee has exactly one reference
+;;      and the import is a MOVE, while the loop tier's copy of the clause
+;;      also governs its two-reference sites, where the caller's lost inline
+;;      buys a duplicate. This band's own re-measurement of the clause was
+;;      opt_crc32 324,500,336 -> 324,560,322 (+59,986) with no row improving;
+;;      the candidate opt_crc32 presents today, `crc-update` at 3 parameters
+;;      and 44 instructions, is refused by clause 2's size class rather than
+;;      by this one, so the straight-line half of the clause now rests on
 ;;      `cfg-stamp-euler` rather than on that number;
 ;;   7. a pathological-case backstop on the callee's size,
 ;;      opt-inline-single-site-max-body and -max-blocks. This is NOT a growth
@@ -85300,9 +85318,12 @@
 ;;      per-function pipeline at once, so a generated body of unbounded size
 ;;      cannot turn a linear compile into a quadratic one.
 ;;
-;; Ordered cheapest-first: two integer compares, then arithmetic, then the
-;; memoized caller facts, and the scan over the callee's blocks last -- which
-;; an in-loop site never reaches, since clause 3 answers for 5 and 6 as well.
+;; Ordered cheapest-first: the reference class, then clause 2 -- one integer
+;; compare for a wide boundary; for a narrow one the loop tier's two size
+;; compares, the memoized site question, and a call scan over the callee's
+;; blocks -- then the size backstops, then arithmetic, then clauses 3, 5 and 6,
+;; whose own scan over the callee's blocks an in-loop site never reaches, since
+;; clause 3 answers for 5 and 6 as well.
 ;;
 ;; On the arity floor below: x86-64 SysV passes six integer arguments in
 ;; registers and Windows x64 passes four, so at eight parameters BOTH ABIs store
@@ -85315,20 +85336,60 @@
 (define (opt-inline-single-site-min-params) : i64
   8)
 
-;; Below the arity floor the boundary has no marshalling to retire, and the
-;; narrow class stays with the site-conditioned tiers. Two variants were
-;; measured and refused. Removing the floor outright admits the whole narrow
-;; class and costs peephole_lines 602,719,795 -> 610,515,468 (+1.29%), with no
-;; row improving: `pl-token-len` (27 blocks), `pl-movq-prefix?` (66) and
-;; `pl-mnemonic-call?` (40) merge into `pl-parse-line`, taking it from 127
-;; blocks to 249; `pl-stack-parens` (54) into `pl-operand-flags` (66 -> 120);
-;; `pl-indexed-rsp?` (51) into `pl-record-sweep` (197 -> 249). Admitting the
-;; narrow class only into a SMALL caller (<= 64 blocks) left every
-;; instruction-count row byte-identical -- it bought nothing in the corpus --
-;; while merging the single-site functions of every small program into `main`,
-;; which is the shape the codegen fixtures under tests/integration inspect by
-;; name (switch_dispatch_scavenge, const_global_mask_unroll, ...). A relief that
-;; measures nothing and reshapes small programs is not kept.
+;; Below the arity floor the boundary has no marshalling to retire. At a
+;; STRAIGHT-LINE site the narrow class stays out of this band entirely; at an
+;; IN-LOOP site it enters at the loop tier's size class and no wider
+;; (opt-inline-bounds-loop-small?, 32 instructions in 6 blocks), and call-free.
+;; Four variants of that split were measured against this tree.
+;;
+;; Removing the floor at EVERY site admits the whole narrow class and costs
+;; peephole_lines 602,719,795 -> 610,515,468 (+1.29%), with no row improving:
+;; `pl-token-len` (27 blocks), `pl-movq-prefix?` (66) and `pl-mnemonic-call?`
+;; (40) merge into `pl-parse-line`, taking it from 127 blocks to 249;
+;; `pl-stack-parens` (54) into `pl-operand-flags` (66 -> 120);
+;; `pl-indexed-rsp?` (51) into `pl-record-sweep` (197 -> 249). All five of
+;; those sites are straight-line, which is why the in-loop half of the clause
+;; leaves them refused. Admitting the narrow class only into a SMALL caller
+;; (<= 64 blocks) left every instruction-count row byte-identical -- it bought
+;; nothing in the corpus -- while merging the single-site functions of every
+;; small program into `main`, which is the shape the codegen fixtures under
+;; tests/integration inspect by name (switch_dispatch_scavenge,
+;; const_global_mask_unroll, ...). A relief that measures nothing and reshapes
+;; small programs is not kept.
+;;
+;; Waiving the floor at IN-LOOP sites with no size class at all loses on the
+;; two rows whose hot loop belongs to the caller: cfg_domloops 701,677,745 ->
+;; 748,383,265 (+6.656%) and lex_source 540,540,835 -> 562,870,483 (+4.131%),
+;; against gvn_table -1.272%, peephole_lines -0.954%, intern_table -0.476%,
+;; opt_crc32 -0.203% and opt_quicksort -0.032%. Callgrind splits both losers
+;; the same way. cfg_domloops: `cfg-idom-iterate` (7 parameters, 236
+;; instructions in 40 blocks) moves into `cfg-function` and the pair's 169.9M
+;; becomes 198.0M; `cfg-loop-body` (7, 201, 22) and `cfg-loop-preheader`
+;; (7, 177, 30) move into `cfg-natural-loops` and its 119.1M becomes 145.5M.
+;; lex_source: six callees move into `ls-tokenize`, whose 224.0M becomes
+;; 258.3M. This is P18's register-pressure reading of `cfg-natural-loops`
+;; arriving as an instruction count -- the caller's loop already holds more
+;; live values than the callee-saved set, and an import lands its whole
+;; working set inside that loop. A wide boundary can still pay for that; a
+;; narrow one cannot, which is the entire content of clause 2.
+;;
+;; Widening the in-loop class to 64 instructions in 16 blocks buys
+;; intern_table -0.148% (`it-slice-eq?` into `it-intern-slice`) and opt_crc32
+;; -0.203% (`crc-update` into `crc-bench`) and costs lex_source 540,540,835 ->
+;; 549,226,451 (+1.607%): `ls-scan-comment-end` (37 instructions in 10 blocks)
+;; and `ls-scan-str-end` (56 in 16) move into `ls-tokenize`, whose 224.0M
+;; becomes 244.6M. The loop tier's own class is where the corpus stops paying,
+;; so it is where the waiver stops.
+;;
+;; What the class as landed admits is three imports in the whole corpus, and
+;; they are what the two rows below measure: the generated
+;; `stdlib.vector.generated.i64/set-ref!` (3 parameters, 22 instructions in 6
+;; blocks) into `cfg-scan-ints` for cfg_domloops 701,677,745 -> 697,540,921
+;; (-0.590%) and into `gvn-scan-ints` for gvn_table 986,691,676 -> 973,957,482
+;; (-1.291%), and `qs-checksum` (2, 28, 4) into `qs-bench` for opt_quicksort
+;; -128,009 (-0.032%). All three are refused today by the loop tier's cascade
+;; clause and by nothing else. The other fourteen rows are byte-identical in
+;; the emitted assembly, not merely in the count.
 ;; The pathological-case backstop of clause 7. 1024 instructions is nearly
 ;; three times the largest measured absorption (`ln-recompute!`, 368) and eight
 ;; times the largest band ceiling anywhere else in this file; 128 blocks is
@@ -85340,6 +85401,35 @@
 
 (define (opt-inline-single-site-max-blocks) : i64
   128)
+
+;; Clause 2: the one place the site question is asked about ARITY rather than
+;; about the frame tax. A wide boundary is admitted at any site; a narrow one
+;; only inside a natural loop of the caller, only at the loop tier's size, and
+;; only call-free. Below the floor the retired boundary is a call and a cheap
+;; prologue, and only an import that costs little can be bought with it.
+;;
+;; What the narrow half does NOT keep is the loop phi-predecessor suppression
+;; (#5193, opt-inline-current-phi-predecessor?), and that is load-bearing:
+;; both corpus imports this clause admits sit in a loop latch that feeds a
+;; header phi, and adding the suppression here puts cfg_domloops and gvn_table
+;; straight back on their base numbers. What the suppression stops is the cost
+;; model's single-reference absorb BONUS buying an admission whose live ranges
+;; the split then lengthens; the body this band takes is not bought with that
+;; bonus and is not copied.
+;;
+;; Ordered so a wide callee answers on one integer compare, and a narrow one on
+;; the loop tier's two size compares and the memoized site question before any
+;; scan over its blocks.
+(define (opt-inline-single-site-arity-ok?
+  [param-count : i64]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (or
+    (>= param-count (opt-inline-single-site-min-params))
+    (and
+      (opt-inline-bounds-loop-small? blocks callee-instrs)
+      (opt-inline-bounds-loop-site-in-loop?)
+      (opt-inline-blocks-call-free? blocks))))
 
 ;; Clauses 3, 5 and 6 in one place, because between them they are one decision.
 ;; Each stands for a cost the merged function pays once per CALLER INVOCATION --
@@ -85372,7 +85462,7 @@
   [added-so-far : i64]) : bool
   (and
     (= absorb-class 1)
-    (>= param-count (opt-inline-single-site-min-params))
+    (opt-inline-single-site-arity-ok? param-count callee-instrs blocks)
     (<= callee-instrs (opt-inline-single-site-max-body))
     (<=
       (ir.compiler-ir-block-list-count blocks)

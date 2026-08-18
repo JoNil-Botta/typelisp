@@ -4517,6 +4517,24 @@
     "below the arity floor and past the narrow caller band, the body stays out of line"))
 
 (test
+  inline-single-site-narrow-loop-site-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-loop-site-absorb-ok?)
+    "below the arity floor a small call-free body still moves at an in-loop site"))
+
+(test
+  inline-single-site-narrow-straight-site-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-straight-site-refusal-ok?)
+    "the same body at a straight-line site stays out: below the floor there is no marshalling to retire"))
+
+(test
+  inline-single-site-narrow-oversize-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-oversize-refusal-ok?)
+    "past the loop tier's size class the in-loop waiver stops admitting a below-floor boundary"))
+
+(test
   inline-single-site-size-cap-absorb
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-single-site-size-cap-absorb-ok?)

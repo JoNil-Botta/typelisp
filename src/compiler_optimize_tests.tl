@@ -16337,6 +16337,14 @@
             (compiler_optimize.opt-inline-structure-ok? blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
+;; `mid` is single-reference and carries no bounds checks, so the cascade
+;; clause is live for every leaf it imports. The leaf here CALLS OUT, and that
+;; is what keeps the clause the only thing separating the two programs below:
+;; the single-site band's clause 2 now takes a narrow leaf at an in-loop site,
+;; but only a call-free one, so a call-bearing leaf still reaches this tier and
+;; only this tier. The call-free counterpart of exactly this program is
+;; compiler-optimize-inline-single-site-narrow-loop-site-absorb-ok?, where the
+;; body moves; between them the two fixtures isolate call-freedom.
 (define (opt-inline-cascade-program
   [symbols : OptInlineMultiTestSymbols]
   [mid-entry : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunctionList
@@ -16348,7 +16356,7 @@
       (compiler_ir_types.compiler-ir-function-cons
         (opt-inline-loop-site-function mid-name leaf-name mid-entry)
         (compiler_ir_types.compiler-ir-function-cons
-          (opt-inline-switch-callee-named leaf-name)
+          (opt-inline-dup-leaf-calling leaf-name symbols.external-helper)
           compiler_ir_types.CompilerIrFunctionList.Nil)))))
 
 ;; `mid` is single-reference and carries no bounds checks, so it is inlined at
@@ -17848,6 +17856,195 @@
         (opt-inline-wide-two-function-optimized
           (opt-inline-wide-padded-caller symbols.main callee-name narrow 70)
           (opt-inline-wide-callee-arity callee-name narrow)))
+      1)))
+
+;; --- the narrow class at an IN-LOOP site ------------------------------------
+;;
+;; Clause 2's second half, on the shape the corpus measured. The leaf is the
+;; cyclic bounds-carrying Switch leaf the loop tier is built around -- three
+;; parameters, seven instructions in five blocks, call-free -- and `mid` is
+;; single-reference and bounds-free, so the loop tier refuses the import on its
+;; cascade clause and nothing else in this file can admit it. That is exactly
+;; `stdlib.vector.generated.i64/set-ref!` (3 parameters, 22 instructions in 6
+;; blocks) at its in-loop site in `cfg-scan-ints` and `gvn-scan-ints`, which
+;; the waiver moves for cfg_domloops -0.590% and gvn_table -1.291%.
+;;
+;; Each fixture below builds one program and varies one thing: where `mid`
+;; makes the call, and how big the leaf is.
+(define (opt-inline-narrow-site-program
+  [symbols : OptInlineMultiTestSymbols]
+  [mid : compiler_ir_types.CompilerIrFunction]
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-switch-caller-named symbols symbols.inline-nonleaf)
+    (compiler_ir_types.compiler-ir-function-cons
+      mid
+      (compiler_ir_types.compiler-ir-function-cons
+        leaf
+        compiler_ir_types.CompilerIrFunctionList.Nil))))
+
+(define (opt-inline-narrow-site-optimized
+  [symbols : OptInlineMultiTestSymbols]
+  [mid : compiler_ir_types.CompilerIrFunction]
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_optimize.opt-inline-program-functions
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-inline-narrow-site-program symbols mid leaf)
+    2))
+
+;; Calls to the leaf left in `mid`. `main`'s own copy of `mid`, if the cost
+;; model took one, is not counted: the inliner leaves the original function
+;; standing for global DCE to remove afterwards, so `mid` is the one place that
+;; answers whether the import happened.
+(define (opt-inline-narrow-site-remaining-calls
+  [optimized : compiler_ir_types.CompilerIrFunctionList]) : i64
+  (opt-count-direct-call-name-function-list
+    optimized
+    "inline_nonleaf"
+    "inline_switch"))
+
+;; The same five blocks and the same natural loop as opt-inline-loop-site-
+;; function, with the one call moved out of `body` and into `entry`. The pair
+;; differs in the SITE and in nothing else.
+(define (opt-inline-straight-site-function
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            3
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-inline-loop-site-call callee-name 5)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))
+              compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "header")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 4)))
+                  compiler_ir_types.CompilerIrInstrList.Nil))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; `count` extra Movs ahead of the `zero` case's jump. The leaf keeps its five
+;; blocks, its three parameters, its bounds check and its loop, and only its
+;; instruction count moves, so a pair of fixtures can sit either side of
+;; opt-inline-bounds-loop-max-body.
+(define (opt-inline-narrow-fat-zero-instrs [count : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (<= count 0)
+    (opt-inline-dup-leaf-jump-zero-instrs)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        4
+        (compiler_ir_types.CompilerIrValue.I64 count)
+        (compiler_ast_types.AstType.I64))
+      (opt-inline-narrow-fat-zero-instrs (- count 1)))))
+
+(define (opt-inline-narrow-fat-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-dup-leaf-named
+    callee-name
+    5
+    (opt-inline-narrow-fat-zero-instrs 40)))
+
+;; Below the arity floor, at an IN-LOOP site, at the loop tier's size and
+;; call-free: the body moves. Nothing else in the file admits this shape -- the
+;; loop tier refuses it on the cascade clause, the hot-loop-leaf gate asks the
+;; same clause, and a cyclic bounds-carrying body has no cost-model path.
+(define (compiler-optimize-inline-single-site-narrow-loop-site-absorb-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [leaf-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-narrow-site-remaining-calls
+        (opt-inline-narrow-site-optimized
+          symbols
+          (opt-inline-loop-site-function
+            symbols.inline-nonleaf
+            leaf-name
+            (opt-inline-loop-site-entry-instrs))
+          (opt-inline-switch-callee-named leaf-name)))
+      0)))
+
+;; The same leaf and the same caller with the call moved into `entry`: at a
+;; STRAIGHT-LINE site the boundary is retired once per caller invocation, the
+;; frame tax is paid at the same rate, and below the arity floor there is no
+;; marshalling in that boundary to tip the comparison. The narrow class stays
+;; out.
+(define (compiler-optimize-inline-single-site-narrow-straight-site-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [leaf-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-narrow-site-remaining-calls
+        (opt-inline-narrow-site-optimized
+          symbols
+          (opt-inline-straight-site-function symbols.inline-nonleaf leaf-name)
+          (opt-inline-switch-callee-named leaf-name)))
+      1)))
+
+;; ... and past the loop tier's size class the same in-loop site refuses it:
+;; 47 instructions is past opt-inline-bounds-loop-max-body, which is where
+;; clause 2 stops admitting a below-floor boundary. Everything else is the
+;; positive fixture above.
+(define (compiler-optimize-inline-single-site-narrow-oversize-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [leaf-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-narrow-site-remaining-calls
+        (opt-inline-narrow-site-optimized
+          symbols
+          (opt-inline-loop-site-function
+            symbols.inline-nonleaf
+            leaf-name
+            (opt-inline-loop-site-entry-instrs))
+          (opt-inline-narrow-fat-leaf leaf-name)))
       1)))
 
 ;; A wide single-site callee at the pathological-case backstop is still

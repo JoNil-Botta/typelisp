@@ -3840,6 +3840,7 @@
 
 (defstruct CompilerBackendProgramCollections
   (functions BackendSymbolSet)
+  (references BackendSymbolSet)
   (strings BackendStringSet)
   (floats BackendFloatSet)
   (bytes BackendStringSet)
@@ -3931,6 +3932,7 @@
 (define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-new 256)
+    (compiler-backend-symbol-set-new 256)
     (compiler-backend-string-set-new 256)
     (compiler-backend-float-set-new 256)
     (compiler-backend-string-set-new 64)
@@ -3943,6 +3945,20 @@
   [name : i64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-add collections.functions name)
+    (compiler-backend-symbol-set-add collections.references name)
+    collections.strings
+    collections.floats
+    collections.bytes
+    collections.uses-avx2-i64-lane-id
+    collections.uses-avx512-i64-lane-id
+    collections.uses-f64-neg))
+
+(define (compiler-backend-program-collections-add-reference
+  [collections : CompilerBackendProgramCollections (:consume)]
+  [name : i64]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    collections.functions
+    (compiler-backend-symbol-set-add collections.references name)
     collections.strings
     collections.floats
     collections.bytes
@@ -3955,6 +3971,7 @@
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     (compiler-backend-string-set-add collections.strings text)
     collections.floats
     collections.bytes
@@ -3968,6 +3985,7 @@
   [bits : u64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     (compiler-backend-float-set-add collections.floats ty bits)
     collections.bytes
@@ -3980,6 +3998,7 @@
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     (compiler-backend-string-set-add collections.bytes text)
@@ -3991,6 +4010,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -4002,6 +4022,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -4013,6 +4034,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -70150,6 +70172,10 @@
   [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
   (compiler-backend-symbol-set-list collections.functions))
 
+(define (compiler-backend-program-collections-references
+  [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
+  (compiler-backend-symbol-set-list collections.references))
+
 (define (compiler-backend-program-collections-strings
   [collections : CompilerBackendProgramCollections]) : BackendStringSeq
   (compiler-backend-string-set-list collections.strings))
@@ -70216,6 +70242,10 @@
   (match value
     [(compiler_ir_types.CompilerIrValue.Function name)
       (compiler-backend-program-collections-add-function collections name)]
+    [(compiler_ir_types.CompilerIrValue.Global name)
+      (compiler-backend-program-collections-add-reference collections name)]
+    [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
+      (compiler-backend-program-collections-add-reference collections name)]
     [(compiler_ir_types.CompilerIrValue.String text)
       (compiler-backend-program-collections-add-string collections text)]
     [(compiler_ir_types.CompilerIrValue.F64 bits)
@@ -71860,23 +71890,22 @@
   [runtime-index : CompilerBackendRuntimeIndex]
   [referenced-functions : BackendSymbolSeq]
   [extern-name-id : i64]
+  [source-name-id : i64]
   [link-symbol-id : i64]) : bool
-  (let
-    [foreign-link-symbol : bool
-      (and
-        (not (= extern-name-id link-symbol-id))
-        (not (compiler-backend-runtime-helper-known-id? extern-name-id))
-        (not (compiler-backend-runtime-helper-known-id? link-symbol-id)))]
-    (or
-      foreign-link-symbol
-      (backend-or4
-        (compiler-backend-runtime-index-calls? runtime-index extern-name-id)
-        (compiler-backend-runtime-index-calls? runtime-index link-symbol-id)
-        (compiler-backend-symbol-list-contains-id?
-          referenced-functions
-          extern-name-id)
-        false)
-      false)))
+  (or
+    (backend-or4
+      (compiler-backend-runtime-index-calls? runtime-index extern-name-id)
+      (compiler-backend-runtime-index-calls? runtime-index source-name-id)
+      (compiler-backend-runtime-index-calls? runtime-index link-symbol-id)
+      (compiler-backend-symbol-list-contains-id?
+        referenced-functions
+        extern-name-id))
+    (compiler-backend-symbol-list-contains-id?
+      referenced-functions
+      source-name-id)
+    (compiler-backend-symbol-list-contains-id?
+      referenced-functions
+      link-symbol-id)))
 
 (define (compiler-backend-emit-externs-into
   [backend-state : CompilerBackendState]
@@ -71891,7 +71920,7 @@
       (match item
         [(compiler_ir_types.CompilerIrExtern.Extern
             name-id
-            _
+            source-name-id
             name
             _
             _
@@ -71909,6 +71938,7 @@
               runtime-index
               referenced-functions
               name-id
+              source-name-id
               link-symbol-id))
             (compiler-backend-emit-externs-into
               backend-state
@@ -72333,6 +72363,7 @@
   [program-index : CompilerBackendProgramIndex]
   [runtime-index : CompilerBackendRuntimeIndex]
   [closure-names : BackendSymbolSeq]
+  [referenced-symbols : BackendSymbolSeq]
   [strings : BackendStringSeq]
   [bytes : BackendStringSeq]
   [floats : BackendFloatSeq]
@@ -72435,7 +72466,7 @@
                             externs
                             plan
                             runtime-index
-                            closure-names
+                            referenced-symbols
                             runtime-data-buf)]
                         (begin
                           (cfg
@@ -72505,6 +72536,8 @@
         spans)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
+    [referenced-symbols : BackendSymbolSeq
+      (compiler-backend-program-collections-references collections)]
     [strings : BackendStringSeq
       (compiler-backend-program-collections-strings collections)]
     [bytes : BackendStringSeq
@@ -72552,6 +72585,7 @@
             program-index
             runtime-index
             closure-names
+            referenced-symbols
             strings
             bytes
             floats
@@ -75978,11 +76012,10 @@
                   link-symbol-id
                   provided
                   plan)
-                (compiler-backend-extern-symbol-referenced?
-                  runtime-index
-                  referenced-functions
-                  name-id
-                  link-symbol-id)
+                ;; Object relocations are the exact reference inventory. In
+                ;; particular, generated indirect C calls can relocate through
+                ;; a resolved identity that is not one of the extern record's
+                ;; parser, logical, or link ids.
                 has-relocation)
                 (object_target.compiler-backend-object-symbol-extern
                   parts
@@ -83033,6 +83066,103 @@
         (compiler-backend-string-contains? asm ".globl tl_str_view\n")
         (compiler-backend-string-contains? asm "tl_str_view:\n")
         (not (compiler-backend-string-contains? asm ".extern tl_str_view\n")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-unused-foreign-link-extern-program) : compiler_ir_types.CompilerIrProgram
+  (let
+    [name-id : i64 (compiler-backend-test-symbol "fixture.tl::unused-foreign")]
+    [link-symbol-id : i64
+      (compiler-backend-test-symbol "unused_foreign_symbol")]
+    (compiler_ir_types.CompilerIrProgram.Program
+      (compiler_ir_types.compiler-ir-global-seq-empty)
+      (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.CompilerIrFunction.Function
+          cbi.compiler-builtin-id-fix-main
+          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ast_types.AstType.I64)
+          0
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-instr-seq1
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 42)))))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-extern-cons
+        (compiler_ir_types.CompilerIrExtern.Extern
+          name-id
+          name-id
+          "fixture.tl::unused-foreign"
+          (compiler_ast_types.AstType.I64)
+          (compiler_ast_types.AstExternAbi.C)
+          link-symbol-id
+          (compiler_ast_types.ast-extern-link-input-list-new)
+          false)
+        compiler_ir_types.CompilerIrExternList.Nil))))
+
+(define (compiler-backend-unused-foreign-link-extern-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-unused-foreign-link-extern-program))
+    [(ResultCompilerBackend.Ok asm)
+      (not
+        (compiler-backend-string-contains?
+          asm
+          ".extern unused_foreign_symbol\n"))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-source-referenced-foreign-link-extern-program) : compiler_ir_types.CompilerIrProgram
+  (let
+    [name-id : i64 (compiler-backend-test-symbol "fixture.tl::foreign")]
+    [source-name-id : i64 (compiler-backend-test-symbol "foreign")]
+    [link-symbol-id : i64
+      (compiler-backend-test-symbol "required_foreign_symbol")]
+    [globals : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
+    (begin
+      (compiler_ir_types.compiler-ir-global-builder-push!
+        (&mut globals)
+        (compiler_ir_types.CompilerIrGlobal.Global
+          (compiler-backend-test-symbol "fixture.tl::foreign-value")
+          (compiler_ast_types.AstType.I64)
+          (compiler_ir_types.CompilerIrValue.Function source-name-id)))
+      (compiler_ir_types.CompilerIrProgram.Program
+        (compiler_ir_types.compiler-ir-global-builder-to-seq globals)
+        (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.CompilerIrFunction.Function
+            cbi.compiler-builtin-id-fix-main
+            compiler_ir_types.CompilerIrParamList.Nil
+            (compiler_ast_types.AstType.I64)
+            0
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-instr-seq1
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 42)))))
+              compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrFunctionList.Nil)
+        (compiler_ir_types.compiler-ir-extern-cons
+          (compiler_ir_types.CompilerIrExtern.Extern
+            name-id
+            source-name-id
+            "fixture.tl::foreign"
+            (compiler_ast_types.AstType.I64)
+            (compiler_ast_types.AstExternAbi.C)
+            link-symbol-id
+            (compiler_ast_types.ast-extern-link-input-list-new)
+            false)
+          compiler_ir_types.CompilerIrExternList.Nil)))))
+
+(define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-source-referenced-foreign-link-extern-program))
+    [(ResultCompilerBackend.Ok asm)
+      (compiler-backend-string-contains?
+        asm
+        ".extern required_foreign_symbol\n")]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool

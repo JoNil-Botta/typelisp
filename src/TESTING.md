@@ -916,6 +916,17 @@ through the existing module/declaration validation and splice paths. The
 production-route stress gate additionally crosses five pool-reset and image
 release/remap cycles with more than 25,000 routed calls per host.
 
+Package dependency images also carry relocatable checked frontend surfaces.
+`verify-package-surface-tlci.sh` builds a two-parent diamond with a shared
+transitive dependency, same-named macros, a generic macro, `Module` and `Decls`
+macro results, and dependency SPMD metadata. The trusted route must hydrate all
+three surface fragments transactionally, copy their AST/fact/SPMD state into
+consumer-owned storage, and report nonzero `surface-macro-skipped` and
+`surface-typecheck-skipped` counters. Forced-source and injected-last-fragment
+rejection controls must report zero skips, produce byte-identical assembly, and
+run with the same result. Rejection is all-or-source: a consumer never mixes a
+partially hydrated dependency prefix with parsed dependency source.
+
 The separately invokable `verify-embedded-stdlib-tlci-resources.sh` gate runs
 the production image builder, matched opt1/opt2 self-builds, cold startup, and
 a native/forced-source expansion pair under an 8192 MiB complete-process-tree

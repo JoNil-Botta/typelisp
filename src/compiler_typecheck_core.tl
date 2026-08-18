@@ -110399,14 +110399,80 @@
             (string.int->string count)
             "\n"))))))
 
+;; Package imports are flattened at their source import sites, between
+;; entry-owned module/alias markers. Provenance is the stable discriminator:
+;; scan through the last declaration copied from an admitted dependency and
+;; include every harmless marker before it in the authenticated prefix.
+(define (tc-dependency-surface-prefix-candidate
+  [load-state : cload.CompilerLoadSessionState]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [cache-scope : String]
+  [surface-count : i64]) : TcPrefixCandidate
+  (let
+    [decl-count : i64 (ast.ast-decl-list-len (& decls))]
+    [path-count : i64 (ast.ast-decl-path-list-len (& paths))]
+    [index : i64 0]
+    [remaining : i64 surface-count]
+    [module : String ""]
+    [module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    (if (<= surface-count 0)
+      TcPrefixCandidate.No
+      (begin
+        (while (and (> remaining 0) (< index decl-count) (< index path-count))
+          (let
+            [decl : ast.AstDecl
+              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
+            [provenance-id : i64
+              (ast.ast-decl-path-list-provenance-id
+                (& paths)
+                index
+                cbi.compiler-builtin-id-fix-empty)]
+            (begin
+              (if (cload.compiler-load-session-state-dependency-surface-provenance?
+                load-state
+                provenance-id)
+                (set! remaining (- remaining 1))
+                unit)
+              (match decl
+                [(ast.AstDecl.Module next-module)
+                  (begin
+                    (set! module (tc-env-key-name-text next-module))
+                    (set! module-id next-module))]
+                [_ unit])
+              (set! index (+ index 1)))))
+        (if (= remaining 0)
+          (TcPrefixCandidate.Some
+            (tc-prefix-key-start cache-scope)
+            index
+            module
+            module-id)
+          TcPrefixCandidate.No)))))
+
 (define (macro-surface-prefix-plan
+  [load-state : cload.CompilerLoadSessionState]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : MacroSurfacePrefixPlan
   (if (surface_facts.surface-typecheck-facts-active?)
     (let
       [facts : surface_facts.SurfaceTypecheckFacts
         (surface_facts.surface-typecheck-facts-current)]
-      [count : i64 facts.macro-prefix-decl-count]
+      [count : i64
+        (if (surface_facts.surface-typecheck-facts-composite-active?)
+          (match (tc-dependency-surface-prefix-candidate
+            load-state
+            decls
+            paths
+            (tc-prefix-default-cache-scope)
+            (cload.compiler-load-session-state-dependency-surface-provenance-count
+              load-state))
+            [(TcPrefixCandidate.Some _ candidate-count _ _)
+              (if (surface_facts.surface-typecheck-facts-rebase-composite-macro-prefix!
+                candidate-count)
+                candidate-count
+                0)]
+            [(TcPrefixCandidate.No) 0])
+          facts.macro-prefix-decl-count)]
       [decl-count : i64 (ast.ast-decl-list-len (& decls))]
       [path-count : i64 (ast.ast-decl-path-list-len (& paths))]
       (if (and (> count 0) (< count decl-count) (<= count path-count))
@@ -110417,6 +110483,11 @@
           [module : MacroSurfacePrefixModule
             (macro-surface-prefix-module prefix-decls)]
           (begin
+            (if (surface_facts.surface-typecheck-facts-composite-active?)
+              (cload.compiler-load-session-state-dependency-surface-note-macro-skip!
+                load-state
+                count)
+              unit)
             (cfg compile-profile (macro-profile-surface-prefix-hit count))
             (MacroSurfacePrefixPlan.Hydrated
               (tc-decl-list-drop decls count)
@@ -110431,7 +110502,11 @@
               (macro-decl-list-reverse prefix-decls)
               (macro-decl-path-list-reverse prefix-paths)
               count)))
-        (MacroSurfacePrefixPlan.Cold)))
+        (begin
+          (if (surface_facts.surface-typecheck-facts-composite-active?)
+            (surface_facts.surface-typecheck-facts-clear!)
+            unit)
+          (MacroSurfacePrefixPlan.Cold))))
     (MacroSurfacePrefixPlan.Cold)))
 
 (define (macro-expand-decls-with-surface-prefix
@@ -110442,7 +110517,7 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroDeclsWithPaths
-  (match (macro-surface-prefix-plan decls paths)
+  (match (macro-surface-prefix-plan load-state decls paths)
     [(MacroSurfacePrefixPlan.Cold)
       (macro-expand-decls
         load-state
@@ -113260,7 +113335,25 @@
       module-id
       (tc-empty-module-local-env-cache))))
 
+(define (tc-summary-decl-prefix [decls : ast.AstDeclList] [count : i64]) : CompilerTypecheckSummary
+  (let
+    [cursor : ast.AstDeclList decls]
+    [index : i64 0]
+    [summary : CompilerTypecheckSummary (CompilerTypecheckSummary 0 0 0)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (match (ast.ast-decl-list-step cursor)
+          [(ast.AstDeclListStep.Nil) (set! done true)]
+          [(ast.AstDeclListStep.Cons decl rest)
+            (begin
+              (set! summary (tc-summary-add-decl summary decl))
+              (set! cursor rest)
+              (set! index (+ index 1)))]))
+      summary)))
+
 (define (tc-check-decls-with-paths
+  [load-state : cload.CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
   [prefix-cache-active : bool]
   [ctx : TcContext]
@@ -113274,28 +113367,52 @@
   ;; the declarations it skipped. Clone-root collection therefore takes the
   ;; ordinary declaration walk even when the interactive prefix cache is on.
   (if (surface_facts.surface-typecheck-facts-active?)
-    (let
-      [facts : surface_facts.SurfaceTypecheckFacts
-        (surface_facts.surface-typecheck-facts-current)]
-      (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
-        [(TcPrefixCandidate.Some _ count module module-id)
-          (if (= count facts.prefix-decl-count)
-            (tc-check-decls-with-surface-prefix-hit
-              ctx
-              top-env
-              decls
-              paths
-              count
-              module
-              module-id
-              facts)
+    (match (if (surface_facts.surface-typecheck-facts-composite-active?)
+      (tc-dependency-surface-prefix-candidate
+        load-state
+        decls
+        paths
+        cache-scope
+        (cload.compiler-load-session-state-dependency-surface-provenance-count
+          load-state))
+      (tc-prefix-candidate decls paths stdlib-roots cache-scope))
+      [(TcPrefixCandidate.Some _ count module module-id)
+        (let
+          [rebased : bool
+            (if (surface_facts.surface-typecheck-facts-composite-active?)
+              (match (tc-summary-decl-prefix decls count)
+                [(CompilerTypecheckSummary values functions externs)
+                  (surface_facts.surface-typecheck-facts-rebase-composite-typecheck-prefix!
+                    count
+                    values
+                    functions
+                    externs)])
+              true)]
+          [facts : surface_facts.SurfaceTypecheckFacts
+            (surface_facts.surface-typecheck-facts-current)]
+          (if (and rebased (= count facts.prefix-decl-count))
+            (begin
+              (if (surface_facts.surface-typecheck-facts-composite-active?)
+                (cload.compiler-load-session-state-dependency-surface-note-typecheck-skip!
+                  load-state
+                  count)
+                unit)
+              (tc-check-decls-with-surface-prefix-hit
+                ctx
+                top-env
+                decls
+                paths
+                count
+                module
+                module-id
+                facts))
             (begin
               (surface_facts.surface-typecheck-facts-clear!)
-              (tc-check-decls-with-paths-cold ctx top-env decls paths summary)))]
-        [(TcPrefixCandidate.No)
-          (begin
-            (surface_facts.surface-typecheck-facts-clear!)
-            (tc-check-decls-with-paths-cold ctx top-env decls paths summary))]))
+              (tc-check-decls-with-paths-cold ctx top-env decls paths summary))))]
+      [(TcPrefixCandidate.No)
+        (begin
+          (surface_facts.surface-typecheck-facts-clear!)
+          (tc-check-decls-with-paths-cold ctx top-env decls paths summary))])
     (if (and prefix-cache-active (not tc-clone-root-collection-active))
       (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
         [(TcPrefixCandidate.Some key count module module-id)
@@ -113854,6 +113971,7 @@
                                   (tc-macro-helper-env-cache-reset!
                                     (tc-context-macro-state ctx))
                                   (match (tc-check-decls-with-paths
+                                    load-state
                                     prefix-cache
                                     (tc-prefix-snapshot-cache-active-for-state?
                                       prefix-cache

@@ -47557,6 +47557,8 @@ b_keep:
         (compiler_backend.compiler-backend-runtime-helper-asm-ok?)
         (compiler_backend.compiler-backend-str-view-runtime-helper-asm-ok?)
         (compiler_backend.compiler-backend-unused-str-view-extern-ok?)
+        (compiler_backend.compiler-backend-unused-foreign-link-extern-ok?)
+        (compiler_backend.compiler-backend-source-referenced-foreign-link-extern-ok?)
         (compiler-backend-runtime-helper-inventory-ok?)
         (compiler-backend-runtime-memchr-functions-ok?)
         (compiler-backend-runtime-atomic-wrapper-asm-ok?)

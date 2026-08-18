@@ -3008,7 +3008,9 @@
 (define (opt-dce-no-mirror-shared-view) : (__tl_dyn-array i64)
   (unsafe
     (ptr-read
-      (ptr-cast (array-data opt-dce-no-mirror) : (Ptr (__tl_dyn-array i64))))))
+      (ptr-cast
+        (__tl_array-data opt-dce-no-mirror)
+        : (Ptr (__tl_dyn-array i64))))))
 
 ;; Apply to `mirror` the same use-count edit a rewrite just applied to the
 ;; array the walk is reading. See `opt-dce-block-list-array-pass`: the dry run
@@ -77650,7 +77652,7 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data opt-inline-pred-renames)
+        (__tl_array-data opt-inline-pred-renames)
         : (Ptr OptInlinePredRenameList)))))
 
 (define opt-inline-current-phi-predecessor? : bool
@@ -79063,7 +79065,7 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data opt-inline-caller-facts-blocks)
+        (__tl_array-data opt-inline-caller-facts-blocks)
         : (Ptr ir.CompilerIrBlockList)))))
 
 (define opt-inline-caller-single-site? : bool
@@ -79076,7 +79078,9 @@
 (define (opt-inline-caller-loop-labels-shared-view) : OptLabelSet
   (unsafe
     (ptr-read
-      (ptr-cast (array-data opt-inline-caller-loop-labels) : (Ptr OptLabelSet)))))
+      (ptr-cast
+        (__tl_array-data opt-inline-caller-loop-labels)
+        : (Ptr OptLabelSet)))))
 
 (define opt-inline-caller-has-bounds? : bool
   false)

@@ -138,7 +138,7 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data surface-typecheck-facts-installed-value)
+        (__tl_array-data surface-typecheck-facts-installed-value)
         : (Ptr SurfaceTypecheckFacts)))))
 
 (define (surface-typecheck-facts-clear!) : unit

@@ -62,7 +62,7 @@
   (let
     [cell : (Array (& text str) 1) (array value)]
     (unsafe
-      (ptr-read (ptr-cast (array-data cell) : (Ptr u64))))))
+      (ptr-read (ptr-cast (__tl_array-data cell) : (Ptr u64))))))
 
 ;: Recover a borrowed string from a word produced by `borrowed-string-word`.
 ;: `_anchor` is intentionally runtime-unused; its type carries the checked
@@ -73,7 +73,7 @@
   (let
     [cell : (Array u64 1) (array word)]
     (unsafe
-      (ptr-read (ptr-cast (array-data cell) : (Ptr (& text str)))))))
+      (ptr-read (ptr-cast (__tl_array-data cell) : (Ptr (& text str)))))))
 
 ;: Return an empty borrowed argument list tied to `text` without storing it.
 (define (args-empty-like [_text : (& text str)]) : (ProcessBorrowedStringList

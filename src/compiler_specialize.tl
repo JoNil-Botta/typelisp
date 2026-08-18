@@ -853,7 +853,9 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr SpecTemplateShadowStateData))))
+              (ptr-cast
+                (__tl_array-data cell)
+                : (Ptr SpecTemplateShadowStateData))))
           : i64)))))
 
 (define (spec-template-shadow-state-grow-records

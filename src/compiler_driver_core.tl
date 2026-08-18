@@ -212,7 +212,7 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data compiler-driver-detached-compat-pools)
+        (__tl_array-data compiler-driver-detached-compat-pools)
         : (Ptr compiler_ast_types.AstNodePoolContext)))))
 
 (define (compiler-driver-state-detach-active-pools-if-owned!

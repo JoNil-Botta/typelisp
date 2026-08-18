@@ -47,9 +47,9 @@
               (if (> n 0)
                 (string.str-copy-bytes-into
                   (unsafe
-                    (ptr-cast (array-data cur) : (Ptr u8)))
+                    (ptr-cast (__tl_array-data cur) : (Ptr u8)))
                   (unsafe
-                    (array-data bigger))
+                    (__tl_array-data bigger))
                   0
                   n)
                 unit)
@@ -68,7 +68,7 @@
             (unsafe
               (string-data (& s)))
             (unsafe
-              (array-data buf.data))
+              (__tl_array-data buf.data))
             base
             slen)
           (set! buf.len (+ base slen)))))))
@@ -79,7 +79,7 @@
     (if (= n 0)
       ""
       (unsafe
-        (string-from-bytes (ptr-cast (array-data buf.data) : (Ptr u8)) n)))))
+        (string-from-bytes (ptr-cast (__tl_array-data buf.data) : (Ptr u8)) n)))))
 
 ;; Append a newline plus `indent` spaces to the buffer in place.
 (define (render-newline-into! [buf : (&mut buf FmtRenderBuf)] [indent : i64]) : unit

@@ -3462,16 +3462,16 @@
         segment-limit)]
     [starts-data : (MutPtr i64)
       (unsafe
-        (array-data starts))]
+        (__tl_array-data starts))]
     [ends-data : (MutPtr i64)
       (unsafe
-        (array-data ends))]
+        (__tl_array-data ends))]
     [segment-starts-data : (MutPtr i64)
       (unsafe
-        (array-data segment-starts))]
+        (__tl_array-data segment-starts))]
     [segment-ends-data : (MutPtr i64)
       (unsafe
-        (array-data segment-ends))]
+        (__tl_array-data segment-ends))]
     [next : i64 (+ point 1)]
     [index : i64 0]
     (while (< index after-words)
@@ -4360,7 +4360,7 @@
     [mask-len : i64 (array-length mask-words)]
     [mask-data : (MutPtr i64)
       (unsafe
-        (array-data mask-words))]
+        (__tl_array-data mask-words))]
     [word-limit : i64
       (if (< after-words mask-limit)
         after-words
@@ -4377,10 +4377,10 @@
         segment-ends-len)]
     [segment-starts-data : (MutPtr i64)
       (unsafe
-        (array-data segment-starts))]
+        (__tl_array-data segment-starts))]
     [segment-ends-data : (MutPtr i64)
       (unsafe
-        (array-data segment-ends))]
+        (__tl_array-data segment-ends))]
     [next : i64 (+ point 1)]
     [index : i64 0]
     (while (< index limit)

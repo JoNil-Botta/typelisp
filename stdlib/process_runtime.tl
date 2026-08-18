@@ -504,7 +504,7 @@
 ;: Return the integer address of private byte storage.
 (define (array-u8-addr [buf : (__tl_dyn-array u8)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
 
 ;: Return the integer address of a byte-builder snapshot backing buffer.
 (cfg
@@ -518,12 +518,12 @@
 ;: Return the integer address of private `u64` storage.
 (define (array-u64-addr [buf : (__tl_dyn-array u64)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
 
 ;: Return the integer address of private `i32` storage.
 (define (array-i32-addr [buf : (__tl_dyn-array i32)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
 
 ;: Read the unsigned byte at `index` of a C string as an i64.
 (define (byte-at [ptr : (Ptr u8)] [index : i64]) : i64
@@ -1615,7 +1615,7 @@
             source
             current
             (unsafe
-              (ptr-cast (array-data copy) : (MutPtr i64)))
+              (ptr-cast (__tl_array-data copy) : (MutPtr i64)))
             0
             (cast 1 : i32)
             (cast 2 : i32))
@@ -1635,7 +1635,7 @@
         (stdlib.process_runtime.win-get-temp-path
           (cast 320 : i32)
           (unsafe
-            (array-data pathbuf)))]
+            (__tl_array-data pathbuf)))]
       (if (= (cast path-len : i64) 0)
         -1
         (let
@@ -1645,7 +1645,7 @@
               (io.array-const-ptr prefix)
               (cast 0 : i32)
               (unsafe
-                (array-data namebuf)))]
+                (__tl_array-data namebuf)))]
           (if (= (cast name-result : i64) 0)
             -1
             (let
@@ -1718,7 +1718,7 @@
                 (stdlib.process_runtime.win-get-exit-code
                   process-handle
                   (unsafe
-                    (ptr-cast (array-data codebuf) : (MutPtr i32))))
+                    (ptr-cast (__tl_array-data codebuf) : (MutPtr i32))))
                 (stdlib.process_runtime.win-close-handle process-handle)
                 (stdlib.process_runtime.win-close-handle worker-handle)
                 (stdlib.process_runtime.windows-exit-dword->status
@@ -1790,7 +1790,7 @@
                     (stdlib.process_runtime.win-get-exit-code
                       process-handle
                       (unsafe
-                        (ptr-cast (array-data codebuf) : (MutPtr i32))))
+                        (ptr-cast (__tl_array-data codebuf) : (MutPtr i32))))
                     (stdlib.process_runtime.win-close-handle process-handle)
                     (stdlib.process_runtime.win-close-handle worker-handle)
                     (stdlib.process_runtime.windows-exit-dword->status
@@ -1807,7 +1807,7 @@
           handle
           offset
           (unsafe
-            (ptr-cast (array-data pos) : (MutPtr i64)))
+            (ptr-cast (__tl_array-data pos) : (MutPtr i64)))
           whence)]
       (if (= ok (cast 0 : i32))
         -1
@@ -1854,7 +1854,7 @@
                         (ptr-offset (stdlib.io.array-ptr buf) offset))
                       chunk
                       (unsafe
-                        (ptr-cast (array-data readbuf) : (MutPtr i32)))
+                        (ptr-cast (__tl_array-data readbuf) : (MutPtr i32)))
                       0)]
                   [read-count : i64 (cast (array-ref readbuf 0) : i64)]
                   (if (= ok (cast 0 : i32))

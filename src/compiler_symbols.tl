@@ -287,10 +287,10 @@
         ;; data like the put path instead of paying a bounds check per probe.
         [key-data : (Ptr i64)
           (unsafe
-            (ptr-cast (array-data keys) : (Ptr i64)))]
+            (ptr-cast (__tl_array-data keys) : (Ptr i64)))]
         [value-data : (Ptr i64)
           (unsafe
-            (ptr-cast (array-data values) : (Ptr i64)))]
+            (ptr-cast (__tl_array-data values) : (Ptr i64)))]
         [encoded : i64 (+ key 1)]
         [slot : i64 (compiler-symbol-map-first-slot key capacity)]
         [mask : i64 (- capacity 1)]
@@ -321,10 +321,10 @@
     [values : (__tl_dyn-array i64) map.values]
     [key-data : (MutPtr i64)
       (unsafe
-        (ptr-cast (array-data keys) : (MutPtr i64)))]
+        (ptr-cast (__tl_array-data keys) : (MutPtr i64)))]
     [value-data : (MutPtr i64)
       (unsafe
-        (ptr-cast (array-data values) : (MutPtr i64)))]
+        (ptr-cast (__tl_array-data values) : (MutPtr i64)))]
     [capacity : i64 (array-length keys)]
     [mask : i64 (- capacity 1)]
     [encoded : i64 (+ key 1)]

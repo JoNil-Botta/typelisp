@@ -882,7 +882,7 @@
       [bytes : (__tl_dyn-array u8) (array.make-array u8 3)]
       [dst : (MutPtr u8)
         (unsafe
-          (array-data bytes))]
+          (__tl_array-data bytes))]
       (begin
         (set! (array-ref bytes 0) (cast 'a' : u8))
         (set! (array-ref bytes 1) (cast 0 : u8))

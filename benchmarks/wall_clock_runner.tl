@@ -25,15 +25,15 @@
 
 (define (array-i32-addr [items : (__tl_dyn-array i32)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
 
 (define (array-i64-addr [items : (__tl_dyn-array i64)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
 
 (define (array-u8-addr [items : (__tl_dyn-array u8)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
 
 (define (program-argv-at [index : i64]) : (Ptr u8)
   (unsafe

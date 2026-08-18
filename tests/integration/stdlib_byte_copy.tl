@@ -10,7 +10,7 @@
 
 (define (byte-copy-base [items : (__tl_dyn-array u8)]) : (MutPtr u8)
   (unsafe
-    (array-data items)))
+    (__tl_array-data items)))
 
 (define (byte-copy-source-at [base : (MutPtr u8)] [offset : i64]) : (Ptr u8)
   (unsafe

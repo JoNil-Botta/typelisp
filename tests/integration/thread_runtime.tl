@@ -6,7 +6,7 @@
 
 (define (integration-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
 
 (define (integration-addr->mut-i64 [addr : i64]) : (MutPtr i64)
   (unsafe

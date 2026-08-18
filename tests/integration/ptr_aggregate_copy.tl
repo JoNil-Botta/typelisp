@@ -19,11 +19,11 @@
     [slots : (__tl_dyn-array Slot) (array.make-array Slot 2)]
     [data : (MutPtr Slot)
       (unsafe
-        (ptr-cast (array-data slots) : (MutPtr Slot)))]
+        (ptr-cast (__tl_array-data slots) : (MutPtr Slot)))]
     [pairs : (__tl_dyn-array Pair) (array.make-array Pair 2)]
     [pair-data : (MutPtr Pair)
       (unsafe
-        (ptr-cast (array-data pairs) : (MutPtr Pair)))]
+        (ptr-cast (__tl_array-data pairs) : (MutPtr Pair)))]
     (begin
       (set! (array-ref slots 0) (Occupied 11 22 33))
       (set! (array-ref pairs 0) (Pair 44 55))

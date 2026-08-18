@@ -107,7 +107,7 @@
         ; Heads and parent indices are returned only by sym-i64-store-push!.
         [binding : SymI64Binding
           (unsafe
-            (ptr-read (ptr-offset (array-data slots) head)))]
+            (ptr-read (ptr-offset (__tl_array-data slots) head)))]
         (SymI64ViewBind
           binding.key
           binding.value
@@ -130,7 +130,7 @@
           (__tl-project-field (__tl-box-place store) slots)]
         [bindings : (Ptr SymI64Binding)
           (unsafe
-            (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
+            (ptr-cast (__tl_array-data slots) : (Ptr SymI64Binding)))]
         (begin
           (while (>= cursor 0)
             (let
@@ -152,7 +152,7 @@
           (__tl-project-field (__tl-box-place store) slots)]
         [bindings : (Ptr SymI64Binding)
           (unsafe
-            (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
+            (ptr-cast (__tl_array-data slots) : (Ptr SymI64Binding)))]
         (begin
           (while (>= cursor 0)
             (let
@@ -174,7 +174,7 @@
           (__tl-project-field (__tl-box-place store) slots)]
         [bindings : (Ptr SymI64Binding)
           (unsafe
-            (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
+            (ptr-cast (__tl_array-data slots) : (Ptr SymI64Binding)))]
         (begin
           (while (>= cursor 0)
             (let

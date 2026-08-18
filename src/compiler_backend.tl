@@ -301,7 +301,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 (defmacro (compiler-backend-phi-copy-seq-rev-ref
   [copies : CompilerBackendPhiCopySeq]
@@ -1037,7 +1037,7 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr CompilerBackendStateData))))
+              (ptr-cast (__tl_array-data cell) : (Ptr CompilerBackendStateData))))
           : i64)))))
 
 (define (compiler-backend-state-set-representations!
@@ -1213,7 +1213,7 @@
           (unsafe
             (ptr->int
               (ptr-cast
-                (array-data cell)
+                (__tl_array-data cell)
                 : (Ptr CompilerBackendStreamStateData))))
           : i64)))))
 
@@ -2862,7 +2862,7 @@
           (unsafe
             (ptr->int
               (ptr-cast
-                (array-data cell)
+                (__tl_array-data cell)
                 : (Ptr CompilerBackendFunctionStateData))))
           : i64)))))
 
@@ -3506,7 +3506,7 @@
                         [hash : i64
                           (ci.intern-hash-words
                             (unsafe
-                              (ptr-cast (array-data bytes) : (Ptr u8)))
+                              (ptr-cast (__tl_array-data bytes) : (Ptr u8)))
                             off
                             len)]
                         [slot : i64 (bit-and hash (- new-cap 1))]
@@ -77066,7 +77066,7 @@
                         [hash : i64
                           (ci.intern-hash-words
                             (unsafe
-                              (ptr-cast (array-data bytes) : (Ptr u8)))
+                              (ptr-cast (__tl_array-data bytes) : (Ptr u8)))
                             off
                             len)]
                         [slot : i64 (bit-and hash (- new-cap 1))]
@@ -80844,7 +80844,7 @@
         [out : (__tl_dyn-array u8) (array.make-array u8 total)]
         [dst : (MutPtr u8)
           (unsafe
-            (array-data out))]
+            (__tl_array-data out))]
         (begin
           (compiler-backend-peephole-records-blit! v dst)
           (unsafe

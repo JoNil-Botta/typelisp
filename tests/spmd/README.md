@@ -51,10 +51,11 @@ compile and run in `avx2` and `avx512`.
   generated vectors and native slices. Vec- and fixed-array-backed views cover
   empty, sub-gang, full-gang, multi-gang, offset, and masked-tail ranges while
   surrounding sentinels prove that stores stay within the logical Slice;
-  native-Slice `spmd-reduce` and `spmd-scan` paths run in the same fixture. The
-  verifier also pins native AVX2/AVX-512 load, arithmetic, store, and tail-mask
-  code shapes. This guards the array-surface migration away from public
-  `(Array T)` signatures.
+  a varying scalar loop repeatedly reads and writes four Slices at one lane
+  index, and native-Slice `spmd-reduce` and `spmd-scan` paths run in the same
+  fixture. The verifier pins one scalar bounds-abort site per Slice plus native
+  AVX2/AVX-512 load, arithmetic, store, and tail-mask code shapes. This guards
+  the array-surface migration away from public `(Array T)` signatures.
 - `native_slice_multi_output_i64.tl` - one native-Slice `foreach` reads both
   source slices twice at the same lane index and writes two distinct outputs.
   Offset views, surrounding sentinels, and a 19-element masked tail run in all

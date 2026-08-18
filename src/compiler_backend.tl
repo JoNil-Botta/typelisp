@@ -26889,6 +26889,13 @@
 ;; with the displacement negated, which replaces a `mov` + arithmetic pair. Only
 ;; a displacement that still encodes as imm32 qualifies (i64 MIN has no
 ;; negation, so it falls out here).
+;;
+;; #6288: centralize the FPO `%rbp` value-home invariant here rather than in
+;; selected callers. `K(%rbp)` is textually indistinguishable from a frame
+;; address to the final rsp rebase. The no-base SIB form `K(,%rbp,1)` computes
+;; the same value but cannot be classified as a frame reference. Any current or
+;; retried register plan that reaches this formatter is therefore safe by
+;; construction.
 (define (compiler-backend-binop-immediate-lea-asm
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs-reg : String]
@@ -26902,7 +26909,9 @@
           "    leaq "
           (compiler-backend-immediate-displacement imm)
           "("
-          lhs-reg
+          (if (string.eq lhs-reg "%rbp")
+            ",%rbp,1"
+            lhs-reg)
           "), "
           dst-home
           "\n"))]
@@ -26915,7 +26924,9 @@
                 "    leaq "
                 (string.int->string (- 0 value))
                 "("
-                lhs-reg
+                (if (string.eq lhs-reg "%rbp")
+                  ",%rbp,1"
+                  lhs-reg)
                 "), "
                 dst-home
                 "\n"))
@@ -26947,10 +26958,6 @@
         (compiler-backend-mul-immediate-direct-asm lhs-reg dst-home imm rhs))
       (match (if (and
         (not (string.eq lhs-reg ""))
-        ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
-        ;; reference and silently rebased by the FPO rsp-rebase pass
-        ;; (miscompile) -- an rbp-homed lhs takes the mov+add path below.
-        (not (string.eq lhs-reg "%rbp"))
         (not (string.eq lhs-reg dst-home))
         (not (string.eq imm "$0"))
         (= (compiler-backend-type-size type-segment-bases ty) 8))
@@ -27046,10 +27053,6 @@
     (match (if (and
       (not zero-addsub?)
       (not (string.eq lhs-reg ""))
-      ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
-      ;; reference and silently rebased by the FPO rsp-rebase pass
-      ;; (miscompile) -- an rbp-homed lhs takes the mov+add path below.
-      (not (string.eq lhs-reg "%rbp"))
       (= (compiler-backend-type-size type-segment-bases operand-ty) 8))
       ;; A register-homed lhs makes the three-operand lea form a strict
       ;; win over load+op: one instruction fewer before the home store.
@@ -64478,9 +64481,10 @@
 ;; %rbp in the pool and re-emits).
 ;;
 ;; #rbp-base invariant: in fpo mode every "(%rbp" occurrence is a frame
-;; reference -- %rbp pool VALUES never appear as memory-operand bases (the
-;; emitters stage them through a scratch; see address-base-filter) and bare
-;; `%rbp` register operands contain no "(%rbp".
+;; reference. Emitters structurally distinguish %rbp pool VALUES with a
+;; no-base SIB spelling `(,%rbp,1)` where possible and otherwise stage through
+;; a scratch (see address-base-filter); bare `%rbp` register operands also
+;; contain no "(%rbp".
 ;; GAP1: 3-arg spelling for the stage-1 / adapter / fallback call sites --
 ;; byte-identical to the pre-GAP1 pass (no push mode).
 (define (compiler-backend-rsp-rebase

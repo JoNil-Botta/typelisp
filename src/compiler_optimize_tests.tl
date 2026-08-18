@@ -14056,6 +14056,55 @@
               compiler_ir_types.CompilerIrInstrList.Nil))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
+(define (opt-devirt-local-alias-caller [duplicate? : bool]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [target : i64 (opt-test-symbol "local_alias_target")]
+    [entry-tail : compiler_ir_types.CompilerIrInstrList
+      (if duplicate?
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.Function
+              (opt-test-symbol "local_alias_other"))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "call"))
+            compiler_ir_types.CompilerIrInstrList.Nil))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "call"))
+          compiler_ir_types.CompilerIrInstrList.Nil))]
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "local_alias_caller")
+      compiler_ir_types.CompilerIrParamList.Nil
+      (compiler_ast_types.AstType.I64)
+      2
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              0
+              (compiler_ir_types.CompilerIrValue.Function target)
+              (compiler_ast_types.AstType.I64))
+            entry-tail))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "call")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.CallIndirect
+                1
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                compiler_ir_types.CompilerIrCallArgs.Nil
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 1)))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
 (define (opt-devirt-reach-target) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (opt-test-symbol "kept_target")
@@ -14213,6 +14262,21 @@
           [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ _ _) 1]
           [_ 0])
         (opt-count-indirect-call-instrs (__tl-box-place rest)))]))
+
+(define (opt-count-indirect-call-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-count-indirect-call-instrs
+              (compiler_ir_types.compiler-ir-instr-seq-to-list instrs))
+            (opt-count-indirect-call-blocks (__tl-box-place rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-count-indirect-call-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-inline-mov-dst-src?
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -20917,6 +20981,12 @@
     [devirt-dynamic : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-devirt-known-function-function
         (opt-devirt-dynamic-caller))]
+    [devirt-local-alias : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-devirt-known-function-function
+        (opt-devirt-local-alias-caller false))]
+    [devirt-duplicate-alias : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-devirt-known-function-function
+        (opt-devirt-local-alias-caller true))]
     [devirt-inlined : compiler_ir_types.CompilerIrFunctionList
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -20994,6 +21064,27 @@
                   "inline_add")
                 0)
               (return 10))
+            (unless
+              (=
+                (opt-count-direct-call-name-blocks
+                  (compiler_optimize.opt-function-blocks devirt-local-alias)
+                  "local_alias_target")
+                1)
+              (return 111))
+            (unless
+              (=
+                (opt-count-indirect-call-blocks
+                  (compiler_optimize.opt-function-blocks devirt-local-alias))
+                0)
+              (return 112))
+            ;; Multiple definitions make the alias path-dependent, even when
+            ;; every definition happens to be a function literal.
+            (unless
+              (=
+                (opt-count-indirect-call-blocks
+                  (compiler_optimize.opt-function-blocks devirt-duplicate-alias))
+                1)
+              (return 113))
             (match (compiler_optimize.opt-function-list-find
               devirt-inlined
               "main")
@@ -29124,6 +29215,143 @@
           31]
         [else 42]))))
 
+(define (opt-licm-word-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "slice"
+      (compiler_ast_types.ast-ty-ref
+        0
+        (compiler_ast_types.ast-ty-slice (compiler_ast_types.AstType.I64)))
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "again"
+        (compiler_ast_types.AstType.Bool)
+        1)
+      (compiler_ir_types.CompilerIrParamList.Nil))))
+
+(define (opt-licm-word-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          2
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            3
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "loop")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Word
+              5
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              0
+              (compiler_ast_types.AstType.U64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Word
+                6
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                1
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "word_bounds_ok"))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Gep
+                    7
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    (compiler_ir_types.CompilerIrValue.Var 3)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Load
+                      8
+                      (compiler_ir_types.CompilerIrValue.Var 7)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.BinOp
+                        4
+                        (compiler_ir_types.CompilerIrBinOp.Add)
+                        (compiler_ir_types.CompilerIrValue.Var 3)
+                        (compiler_ir_types.CompilerIrValue.I64 1)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Branch
+                          (compiler_ir_types.CompilerIrValue.Var 1)
+                          (compiler_ir_types.compiler-ir-label "loop")
+                          (compiler_ir_types.compiler-ir-label "exit"))
+                        (compiler_ir_types.CompilerIrInstrList.Nil))))))))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "exit")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 8)))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-licm-word-count-at
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-count-word-instr-seq instrs)])]))
+
+(define (compiler-optimize-licm-word-self-test) : i64
+  (let
+    [result : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-licm-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.CompilerIrFunction.Function
+          (opt-test-symbol "licm_word")
+          (opt-licm-word-params)
+          (compiler_ast_types.AstType.I64)
+          9
+          (opt-licm-word-blocks)))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks result)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function result)))
+        1]
+      [(not
+          (=
+            (opt-licm-word-count-at
+              blocks
+              (compiler_ir_types.compiler-ir-label "entry"))
+            2))
+        2]
+      [(not
+          (=
+            (opt-licm-word-count-at
+              blocks
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        3]
+      [else 42])))
+
 (define (compiler-optimize-licm-self-test) : i64
   (let
     [symbols : OptLicmTestSymbols (opt-licm-test-symbols)]
@@ -33763,6 +33991,33 @@
     17
     blocks))
 
+;; Replace the ordinary exit Phi with the reduction shape produced by scalar
+;; SPMD lowering: the loop's accumulator is consumed directly in its sole exit
+;; block. Versioning must materialize the merge needed by the parallel fast
+;; edge instead of rejecting that otherwise-safe loop.
+(define (opt-bce-version-test-direct-exit-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil)
+      (compiler_ir_types.CompilerIrBlockList.Nil)]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-bce-version-test-direct-exit-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block label _)
+          (compiler_ir_types.compiler-ir-block-cons
+            (if (= label (compiler_ir_types.compiler-ir-label "done"))
+              (compiler_ir_types.compiler-ir-block
+                label
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 5)))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))
+              block)
+            (opt-bce-version-test-direct-exit-blocks (__tl-box-place rest)))])]))
+
 (define (opt-bce-version-test-block-checks
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [label-want : i64]) : i64
@@ -33933,6 +34188,13 @@
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-bce-version-function
           (opt-bce-version-test-function (opt-bce-version-test-blocks 25))))]
+    [direct-exit : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function
+          (opt-bce-version-test-direct-exit-blocks
+            (opt-bce-version-test-blocks 1))))]
+    [direct-exit-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks direct-exit)]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -34132,6 +34394,26 @@
               (compiler_ir_types.compiler-ir-label "loop"))
             1))
         34]
+      ;; A direct accumulator use in the sole exit is wired through a fresh
+      ;; two-input Phi so the check-free clone remains valid.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function direct-exit)))
+        35]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              direct-exit-out
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        36]
+      [(not
+          (=
+            (opt-bce-version-test-exit-phi-inputs
+              direct-exit-out
+              (compiler_ir_types.compiler-ir-label "done"))
+            2))
+        37]
       [else 42])))
 
 ;; Full-pipeline integration: a lowered while loop with a checked array read

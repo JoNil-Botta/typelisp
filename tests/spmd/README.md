@@ -216,9 +216,10 @@ compile and run in `avx2` and `avx512`.
   single post-loop horizontal reduction.
 - `../integration/spmd_scan_scalar.tl` - `spmd-scan` inclusive prefixes for
   i64 sum/min/max, i32 sum/min/max, and bool all/any across empty, sub-lane,
-  exact-lane, multiple-gang, and tail lengths. Scalar and AVX2 execute the
-  same result; AVX2 opcode gates require real shift/permute prefix stages.
-  AVX-512 currently retains the scalar reference. Exit 42.
+  exact-lane, multiple-gang, and tail lengths. Scalar, AVX2, and AVX-512
+  execute the same result; AVX2 opcode gates require real shift/permute prefix
+  stages, while AVX-512 gates require `valignd`/`valignq`, prefix arithmetic,
+  and bool-mask instructions. Exit 42.
 - `../integration/spmd_scan_{negative_start,short_output}_trap.tl` - active
   negative-start and post-gang short-destination bounds traps checked in every
   runnable backend mode by `scripts/verify-spmd-simd.sh`.
@@ -284,18 +285,20 @@ Coverage map:
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
   `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. The
-  `private_helper_*` fixtures execute the scalar and AVX-512 private ABI for
-  i64/f64/bool values, nested calls, direct helper loads/bounds checks, branch
-  masks, and tails. Focused source-to-private-call IR coverage also lives in
-  `src/tests/compiler_spmd_call_lower_*_smoke.tl`. Function-value/indirect
-  varying calls remain rejected by the safety fixtures.
+  `private_helper_*` fixtures execute the scalar, AVX2, and AVX-512 private
+  ABIs for i64/f64/bool values, nested calls, direct helper loads/bounds
+  checks, branch masks, and tails. Focused source-to-private-call IR coverage
+  also lives in `src/tests/compiler_spmd_call_lower_*_smoke.tl`.
+  Function-value/indirect varying calls remain rejected by the safety
+  fixtures.
 - `spmd-reduce` and `spmd-scan` coverage for the documented
   operator/type surface lives in `../integration/spmd_reduce_scalar.tl` and
   `../integration/spmd_scan_scalar.tl`. `map_fused_reduce_i64.tl` covers
   contiguous array reads combined with uniform/lane terms and mapped
   sub/bitwise/checked-shift operators. The former also executes f32 sums; the
-  latter requires native AVX2 prefixes for canonical contiguous shapes and
-  scalar reference lowering elsewhere through `scripts/verify-spmd-simd.sh`.
+  latter requires native AVX2 and AVX-512 prefixes for canonical contiguous
+  shapes and scalar reference lowering elsewhere through
+  `scripts/verify-spmd-simd.sh`.
 - `spmd-broadcast` executable coverage lives in the `broadcast_lane*_{i64,u64,u32}.tl`
   fixtures, with mode-specific expectations in `scripts/verify-spmd-broadcast.sh`.
 - `spmd-shuffle` scalar and native AVX2/AVX-512 coverage lives in

@@ -1049,8 +1049,8 @@
     [items64 : (Array i64) (__tl_make-array i64 1)]
     [items32 : (Array i32) (__tl_make-array i32 1)]
     (atomic-wrapper-root
-      (unsafe (array-data items64))
-      (unsafe (array-data items32)))))")
+      (unsafe (__tl_array-data items64))
+      (unsafe (__tl_array-data items32)))))")
 
 (define (compiler-backend-emit-runtime-atomic-wrapper-source
   [target : compiler_backend.CompilerBackendTarget]) : compiler_backend.ResultCompilerBackend

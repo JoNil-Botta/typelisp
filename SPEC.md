@@ -6363,11 +6363,12 @@ contracts:
   initialized per the `init` eligibility rules in section 5.12.1; bulk
   zero/fill helpers are implementation details, and safe code observes
   initialized source values.
-- `array-data` returns a raw `(MutPtr T)` to element storage, requires an
-  enclosing `(unsafe ...)` expression, and exists only for runtime, FFI, and
-  internal compatibility code that must pass raw storage pointers. It operates
-  on array owner storage and does not accept a borrowed Slice receiver or
-  extract a Slice's pointer/length pair.
+- `array-data` and its compiler-private `__tl_array-data` spelling return a raw
+  `(MutPtr T)` to element storage, require an enclosing `(unsafe ...)`
+  expression, and exist only for runtime, FFI, and internal compatibility code
+  that must pass raw storage pointers. They share one AST, typecheck, and
+  lowering route, operate on array owner storage, and do not accept a borrowed
+  Slice receiver or extract a Slice's pointer/length pair.
 - `__tl_array-take!` is the private three-operand compatibility primitive used
   by generated vector internals: `(__tl_array-take! items live index)` returns
   `(Tuple bool T)` and updates the separate dynamic-array liveness bitmap. The

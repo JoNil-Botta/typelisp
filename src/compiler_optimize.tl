@@ -94238,6 +94238,7 @@
     summaries.direct-call-clean
     summaries.call-memory
     summaries.argc-return
+    summaries.return-alias
     summaries.const-divisors
     summaries.global-cell
     representations))

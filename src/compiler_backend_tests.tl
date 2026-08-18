@@ -27674,6 +27674,48 @@
             (compiler-backend-todo-marker))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; M6-E must read scratch registers from the Branch's real plan slot when the
+;; narrow fold consumes a widening Cast. The merge value forces a phi-edge copy
+;; (`xorl %esi, %esi` on the false edge); without the +4 lookup M6-C declines
+;; and leaves a separate `movzbq` plus `cmpq`.
+(define compiler-backend-cmp-mem-narrow-phi-copy-source : String
+  "(define (probe [p : (Ptr u8)] [i : i64]) : i64
+  (let
+    [value : i64
+      (if
+        (=
+          (cast (unsafe (ptr-read (ptr-offset p i))) : i64)
+          10)
+        i
+        0)]
+    (+ value 1)))
+(define (main) : i64
+  (probe (ptr-null : (Ptr u8)) 0))")
+
+(define (compiler-backend-cmp-mem-narrow-phi-copy-fold-ok?) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (string.copy (& compiler-backend-cmp-mem-narrow-phi-copy-source))
+    (compiler_backend.CompilerBackendTarget.Linux))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_probe")]
+        (compiler_backend.backend-and4
+          (compiler_backend.compiler-backend-string-contains?
+            body
+            "    cmpb $10, (")
+          (compiler_backend.compiler-backend-string-contains?
+            body
+            "    xorl %esi, %esi\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              body
+              "    movzbq "))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              body
+              "    cmpq "))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-cmp-mem-fold-shapes-ok?) : bool
   (and
     (compiler_backend.backend-and4
@@ -27692,6 +27734,7 @@
       (compiler-backend-cmp-mem-staged-both-refused-ok?)
       (compiler-backend-cmp-mem-staged-second-use-refused-ok?))
     (compiler-backend-cmp-mem-spilled-rhs-fold-ok?)
+    (compiler-backend-cmp-mem-narrow-phi-copy-fold-ok?)
     (compiler-backend-gep-load-alu-commuted-shapes-ok?)
     (compiler-backend-cmp-mem-store-between-refused-ok?)
     (compiler-backend-cmp-mem-flags-between-refused-ok?)))

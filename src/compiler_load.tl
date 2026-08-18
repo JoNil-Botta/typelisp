@@ -12720,12 +12720,14 @@
                     (compiler-load-dependency-surface-final-module-id
                       copied-decls
                       cbi.compiler-builtin-id-fix-empty)
-                    (if (= (string.string-length source-module-fallback) 0)
-                      cbi.compiler-builtin-id-fix-empty
-                      (if (string.eq source-module-fallback module-id-fallback)
-                        module-id-fallback-id
+                    (cond
+                      [(= (string.string-length source-module-fallback) 0)
+                        cbi.compiler-builtin-id-fix-empty]
+                      [(string.eq source-module-fallback module-id-fallback)
+                        module-id-fallback-id]
+                      [else
                         (compiler-load-parse-context-name-id
-                          source-module-fallback))))]
+                          source-module-fallback)]))]
                 [merged-seen : sym_i64_env.SymI64Env
                   (compiler-load-dependency-surface-merge-seen
                     seen

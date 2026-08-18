@@ -19468,7 +19468,40 @@
   ;; element-only store writes -- but not one whose provenance is an `Alloc` of
   ;; this function.
   (LocalObject i64)
-  (LocalSlot i64))
+  (LocalSlot i64)
+  ;; P20. The BOX of a FROZEN memory-class global (opt-global-frozen-build) and
+  ;; the descriptor chain hanging off it. `g` is the global's symbol id.
+  ;;
+  ;;   FrozenBoxSlot g     the address of a fixed word of box(g)
+  ;;                       (`gep @g, <literal>`, and a further literal gep of
+  ;;                       one, which is still a fixed word of the same object)
+  ;;   FrozenObject v g    a POINTER read out of such a word -- the descriptor
+  ;;                       handle a `Vec` global's `slots` field holds. `v` is
+  ;;                       the loading var, so the DataSlot/DataBuffer chain
+  ;;                       below keeps naming one object.
+  ;;   FrozenWord g        the address of a fixed word of a FrozenObject that is
+  ;;                       not its data slot (a descriptor's length word)
+  ;;   FrozenDataSlot v g  the DATA slot of a FrozenObject. It is a frozen word
+  ;;                       like the others, and a load through it also yields
+  ;;                       `DataBuffer v` exactly as `DataSlot v` does, so
+  ;;                       element stores through the loaded buffer keep their
+  ;;                       element-only classification.
+  ;;
+  ;; SOUNDNESS. These four are the words opt-global-frozen-build has proven
+  ;; IMMUTABLE for the whole run: see its header for the provenance proof (the
+  ;; cell holds one fresh, never-escaping `tl_alloc` object written once before
+  ;; `main`) and for the whole-program use check (no instruction anywhere
+  ;; writes through, or leaks, an address of this class). So a load through one
+  ;; reads the same value on every iteration of every loop, with no store
+  ;; summary, no call summary and no per-loop question involved -- which is
+  ;; what opt-licm-frozen-kind-invariant? licenses. A store through one cannot occur
+  ;; at all in an admitted program; if one did the global would not be frozen,
+  ;; and the `_` arm of opt-licm-store-summary-for-storeptr still prices it as a
+  ;; header-or-unknown store, so nothing rests on that impossibility.
+  (FrozenBoxSlot i64)
+  (FrozenObject i64 i64)
+  (FrozenWord i64)
+  (FrozenDataSlot i64 i64))
 
 (defenum OptLicmPtrEnv
   (Nil)
@@ -19804,15 +19837,25 @@
 (defstruct OptLicmGlobalFacts
   (clean? bool)
   (mask i64)
-  (index opt_i64_i64_map.Map))
+  (index opt_i64_i64_map.Map)
+  ;; P20. The program's FROZEN globals (opt-global-frozen-build): those whose
+  ;; box and descriptor words are immutable for the whole run. Carried here
+  ;; because every consumer of this bundle is exactly a consumer of the frozen
+  ;; chain's classification.
+  (frozen opt_i64_i64_map.Map)
+  ;; Whether THIS loop is allowed to take a frozen chain out. The proof is
+  ;; unconditional; this is the pressure gate that prices it. See
+  ;; opt-licm-frozen-chain-hoist?.
+  (frozen-hoist? bool))
 
 (define (opt-licm-global-facts
   [clean? : bool]
   [cells : OptGlobalCellSummary]
-  [mask : i64]) : OptLicmGlobalFacts
+  [mask : i64]
+  [frozen-hoist? : bool]) : OptLicmGlobalFacts
   (let
     [mod-ref : OptGlobalModRef cells.mod-ref]
-    (OptLicmGlobalFacts clean? mask mod-ref.index)))
+    (OptLicmGlobalFacts clean? mask mod-ref.index cells.frozen frozen-hoist?)))
 
 (define (opt-licm-global-facts-invariant?
   [facts : OptLicmGlobalFacts]
@@ -20463,6 +20506,45 @@
     [(OptLicmPtrKind.GlobalSlot _) true]
     [(OptLicmPtrKind.LocalObject _) true]
     [(OptLicmPtrKind.LocalSlot _) true]
+    [(OptLicmPtrKind.FrozenBoxSlot _) true]
+    [(OptLicmPtrKind.FrozenObject _ _) true]
+    [(OptLicmPtrKind.FrozenWord _) true]
+    [(OptLicmPtrKind.FrozenDataSlot _ _) true]
+    [_ false]))
+
+;; P20. The two questions a frozen chain has to answer, together. The class
+;; proves that NOTHING writes the box's or the descriptor's words -- but a
+;; `Store g` replaces the box outright, so the chain is invariant only in a loop
+;; that P18's per-global cell-write set already proves does not write g's cell.
+;; That is `opt-licm-global-facts-invariant?`, the same answer the scalar
+;; operand arms take, and it is strictly weaker than `globals.clean?`: a loop
+;; whose callee stores some OTHER cell still passes it.
+(define (opt-licm-frozen-kind-invariant?
+  [facts : OptLicmGlobalFacts]
+  [kind : OptLicmPtrKind]) : bool
+  (match kind
+    [(OptLicmPtrKind.FrozenBoxSlot global)
+      (opt-licm-global-facts-invariant? facts global)]
+    [(OptLicmPtrKind.FrozenObject _ global)
+      (opt-licm-global-facts-invariant? facts global)]
+    [(OptLicmPtrKind.FrozenWord global)
+      (opt-licm-global-facts-invariant? facts global)]
+    [(OptLicmPtrKind.FrozenDataSlot _ global)
+      (opt-licm-global-facts-invariant? facts global)]
+    [_ false]))
+
+;; A frozen chain's head operand: `gep @g, <literal>` reads g's cell, so the
+;; operand is invariant exactly when that cell is outside the loop's write set.
+(define (opt-licm-frozen-global-value?
+  [facts : OptLicmGlobalFacts]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Global name)
+      (and
+        (opt_i64_i64_map.contains?
+          (& facts.frozen)
+          (ir.compiler-ir-symbol-id name))
+        (opt-licm-global-facts-invariant? facts name))]
     [_ false]))
 
 (define (opt-licm-header-slot-source?
@@ -20485,6 +20567,21 @@
         (opt-licm-header-slot-ptr-kind? (opt-licm-ptr-lookup ptrs ptr-var)))]
     [_ false]))
 
+;; P20. Is this load's address a word opt-global-frozen-build proved immutable,
+;; in a loop that does not replace the box it belongs to? A `Global` source is
+;; NOT one: it is the cell read itself, and the value it produces is the box
+;; POINTER, whose constancy the Gep/Load operand rules already decide
+;; (opt-licm-frozen-global-value?). This predicate answers only for an address
+;; the frozen chain built.
+(define (opt-licm-frozen-source?
+  [facts : OptLicmGlobalFacts]
+  [ptrs : OptLicmPtrEnv]
+  [src : ir.CompilerIrValue]) : bool
+  (match src
+    [(ir.CompilerIrValue.Var ptr-var)
+      (opt-licm-frozen-kind-invariant? facts (opt-licm-ptr-lookup ptrs ptr-var))]
+    [_ false]))
+
 ;; `Gep <address of a frame object>, <literal>` addresses a FIXED word of that
 ;; object, and so does a further literal Gep off such a word (a field of an
 ;; inline field). A VARIABLE offset is indexing: it can leave the word the
@@ -20501,9 +20598,41 @@
         [_ (OptLicmPtrKind.Unknown)])]
     [_ (OptLicmPtrKind.Unknown)]))
 
+;; P20. A LITERAL-offset Gep off a frozen address, or off a frozen object,
+;; addresses another fixed word of the same frozen object, so it stays in the
+;; chain. A VARIABLE offset is indexing and drops the class -- and cannot occur
+;; for an admitted global at all, because opt-global-frozen-uses-instr refuses a
+;; global whose chain is ever indexed. The data slot keeps its own kind so the
+;; load through it still yields `DataBuffer base-var`, which is what leaves
+;; element stores through the loaded buffer classified as element-only.
+(define (opt-licm-frozen-gep-kind
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [base-var : i64]
+  [base-kind : OptLicmPtrKind]
+  [offset : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptLicmPtrKind
+  (match offset
+    [(ir.CompilerIrValue.I64 _)
+      (match base-kind
+        [(OptLicmPtrKind.FrozenBoxSlot global)
+          (OptLicmPtrKind.FrozenBoxSlot global)]
+        [(OptLicmPtrKind.FrozenWord global) (OptLicmPtrKind.FrozenWord global)]
+        [(OptLicmPtrKind.FrozenDataSlot _ global)
+          (OptLicmPtrKind.FrozenWord global)]
+        [(OptLicmPtrKind.FrozenObject _ global)
+          (if (and
+            (opt-licm-array-header-var? type-segment-bases types base-var)
+            (opt-licm-data-slot? offset ty))
+            (OptLicmPtrKind.FrozenDataSlot base-var global)
+            (OptLicmPtrKind.FrozenWord global))]
+        [_ (OptLicmPtrKind.Unknown)])]
+    [_ (OptLicmPtrKind.Unknown)]))
+
 (define (opt-licm-gep-kind
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
+  [frozen : opt_i64_i64_map.Map]
   [ptrs : OptLicmPtrEnv]
   [base : ir.CompilerIrValue]
   [offset : ir.CompilerIrValue]
@@ -20513,6 +20642,38 @@
       (let
         [base-kind : OptLicmPtrKind (opt-licm-ptr-lookup ptrs base-var)]
         (match base-kind
+          [(OptLicmPtrKind.FrozenBoxSlot _)
+            (opt-licm-frozen-gep-kind
+              type-segment-bases
+              types
+              base-var
+              base-kind
+              offset
+              ty)]
+          [(OptLicmPtrKind.FrozenObject _ _)
+            (opt-licm-frozen-gep-kind
+              type-segment-bases
+              types
+              base-var
+              base-kind
+              offset
+              ty)]
+          [(OptLicmPtrKind.FrozenWord _)
+            (opt-licm-frozen-gep-kind
+              type-segment-bases
+              types
+              base-var
+              base-kind
+              offset
+              ty)]
+          [(OptLicmPtrKind.FrozenDataSlot _ _)
+            (opt-licm-frozen-gep-kind
+              type-segment-bases
+              types
+              base-var
+              base-kind
+              offset
+              ty)]
           [(OptLicmPtrKind.DataBuffer object)
             (OptLicmPtrKind.DataElement object)]
           [(OptLicmPtrKind.DataElement object)
@@ -20537,9 +20698,19 @@
     ;; that global's cell designates -- the descriptor handle a `Vec`/array
     ;; global holds, or the handle's own header words. A variable offset is
     ;; element indexing and stays Unknown.
+    ;;
+    ;; P20: when that global is FROZEN the same address gets the stronger kind,
+    ;; which additionally certifies the word is immutable program-wide. The
+    ;; `GlobalSlot` class is unchanged for every other global and keeps exactly
+    ;; the answers it gave before.
     [(ir.CompilerIrValue.Global name)
       (match offset
-        [(ir.CompilerIrValue.I64 _) (OptLicmPtrKind.GlobalSlot name)]
+        [(ir.CompilerIrValue.I64 _)
+          (if (opt_i64_i64_map.contains?
+            (& frozen)
+            (ir.compiler-ir-symbol-id name))
+            (OptLicmPtrKind.FrozenBoxSlot (ir.compiler-ir-symbol-id name))
+            (OptLicmPtrKind.GlobalSlot name))]
         [_ (OptLicmPtrKind.Unknown)])]
     [_ (OptLicmPtrKind.Unknown)]))
 
@@ -20835,6 +21006,7 @@
 (define (opt-licm-provenance-state-instr
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
+  [frozen : opt_i64_i64_map.Map]
   [state : OptLicmStoreState]
   [instr : ir.CompilerIrInstr]) : OptLicmStoreState
   (let
@@ -20857,14 +21029,38 @@
           (opt-licm-gep-kind
             type-segment-bases
             types
+            frozen
             invalid.ptrs
             base
             offset
             ty))]
-      [(ir.CompilerIrInstr.Load dst src _)
+      [(ir.CompilerIrInstr.Load dst src load-ty)
         (match src
           [(ir.CompilerIrValue.Var ptr-var)
             (match (opt-licm-ptr-lookup invalid.ptrs ptr-var)
+              ;; P20. A pointer read out of a frozen BOX word is the descriptor
+              ;; handle the box holds; the whole-program check proved that
+              ;; handle's own fixed words are never written either, so it heads
+              ;; a frozen object. The ARRAY-HEADER type test is the same one
+              ;; opt-global-frozen-load-level applies: a box word of any other
+              ;; type is a scalar field, whose loaded VALUE heads no chain, and
+              ;; the whole-program check leaves such a var unleveled -- so
+              ;; binding one here would call a var frozen that nothing checked.
+              ;; The data slot of a frozen object behaves exactly like
+              ;; `DataSlot` below: the loaded buffer is element storage, which
+              ;; is NOT frozen and keeps its element-only class.
+              [(OptLicmPtrKind.FrozenBoxSlot global)
+                (if (opt-licm-array-header-type? type-segment-bases load-ty)
+                  (opt-licm-store-state-bind-ptr
+                    invalid
+                    dst
+                    (OptLicmPtrKind.FrozenObject dst global))
+                  invalid)]
+              [(OptLicmPtrKind.FrozenDataSlot object _)
+                (opt-licm-store-state-bind-ptr
+                  invalid
+                  dst
+                  (OptLicmPtrKind.DataBuffer object))]
               [(OptLicmPtrKind.DataSlot object)
                 ;; The loaded buffer is reachable through `object`, but it may
                 ;; also have an independent Fresh root or be reachable through
@@ -20937,7 +21133,12 @@
   (let
     [provenance : OptLicmStoreState
       (if track-provenance?
-        (opt-licm-provenance-state-instr type-segment-bases types state instr)
+        (opt-licm-provenance-state-instr
+          type-segment-bases
+          types
+          global-cells.frozen
+          state
+          instr)
         state)]
     (match instr
       [(ir.CompilerIrInstr.Call _ name _ _)
@@ -21145,6 +21346,7 @@
 (define (opt-licm-provenance-state-instr-seq-from
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
+  [frozen : opt_i64_i64_map.Map]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [state : OptLicmStoreState]) : OptLicmStoreState
@@ -21153,17 +21355,20 @@
     (opt-licm-provenance-state-instr-seq-from
       type-segment-bases
       types
+      frozen
       instrs
       (+ index 1)
       (opt-licm-provenance-state-instr
         type-segment-bases
         types
+        frozen
         state
         (ir.compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-licm-provenance-state-blocks
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
+  [frozen : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]
   [state : OptLicmStoreState]) : OptLicmStoreState
   (match blocks
@@ -21174,10 +21379,12 @@
           (opt-licm-provenance-state-blocks
             type-segment-bases
             types
+            frozen
             (__tl-box-place rest)
             (opt-licm-provenance-state-instr-seq-from
               type-segment-bases
               types
+              frozen
               instrs
               0
               state))])]
@@ -21185,6 +21392,7 @@
       (opt-licm-provenance-state-blocks
         type-segment-bases
         types
+        frozen
         (ir.compiler-ir-block-seq-to-list seq)
         state)]))
 
@@ -21197,6 +21405,7 @@
   [params : ir.CompilerIrParamList]
   [types : OptSsaVarTypes]
   [return-alias : opt_i64_i64_map.Map]
+  [frozen : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]) : OptLicmStoreState
   (let
     ;; Rooted pointer values are sparse even in functions with large SSA
@@ -21214,8 +21423,18 @@
         roots
         (opt-global-mod-ref-any))]
     [first : OptLicmStoreState
-      (opt-licm-provenance-state-blocks type-segment-bases types blocks initial)]
-    (opt-licm-provenance-state-blocks type-segment-bases types blocks first)))
+      (opt-licm-provenance-state-blocks
+        type-segment-bases
+        types
+        frozen
+        blocks
+        initial)]
+    (opt-licm-provenance-state-blocks
+      type-segment-bases
+      types
+      frozen
+      blocks
+      first)))
 
 (define (opt-licm-store-summary-blocks
   [type-segment-bases : i64]
@@ -21359,6 +21578,7 @@
 (define (opt-licm-gep-call-boundary-ok?
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
+  [globals : OptLicmGlobalFacts]
   [ptrs : OptLicmPtrEnv]
   [store-summary : OptLicmStoreSummary]
   [legacy-store-summary : OptLicmStoreSummary]
@@ -21368,6 +21588,28 @@
   [ty : ast.AstType]) : bool
   (or
     (not any-call?)
+    ;; P20. The frozen chain's addresses. The interlock's arithmetic above
+    ;; applies to them with the SAME numbers -- `gep @g, 0` is a rip-relative
+    ;; cell load plus a fold, and every address behind it is re-derived from
+    ;; it -- but they are excepted for a class of call the P16 exception cannot
+    ;; reach: an UNKNOWN direct call. P16 had to stop at the element-only tier
+    ;; for a memory reason (an unknown callee may write any descriptor header),
+    ;; and that reason is absent here: no callee can write a frozen word,
+    ;; whatever it does, because no instruction in the program writes one. What
+    ;; remains is the pressure question alone, and `frozen-hoist?` is the gate
+    ;; that prices it (see opt-licm-frozen-chain-hoist?).
+    (and
+      globals.frozen-hoist?
+      (opt-licm-frozen-kind-invariant?
+        globals
+        (opt-licm-gep-kind
+          type-segment-bases
+          types
+          globals.frozen
+          ptrs
+          base
+          offset
+          ty)))
     (and
       (not (opt-licm-store-summary-call-boundary? store-summary))
       (not (opt-licm-store-summary-call-boundary? legacy-store-summary)))
@@ -21375,7 +21617,14 @@
       (not store-summary.call-or-unknown?)
       (not legacy-store-summary.call-or-unknown?)
       (opt-licm-header-slot-ptr-kind?
-        (opt-licm-gep-kind type-segment-bases types ptrs base offset ty)))))
+        (opt-licm-gep-kind
+          type-segment-bases
+          types
+          globals.frozen
+          ptrs
+          base
+          offset
+          ty)))))
 
 ;; `descriptor-header-hoist?` licenses the descriptor-header exception to the
 ;; return-shaped side-exit suppression (see opt-licm-apply-loop): it is true
@@ -21470,6 +21719,7 @@
         (opt-licm-gep-call-boundary-ok?
           type-segment-bases
           types
+          globals
           ptrs
           store-summary
           legacy-store-summary
@@ -21506,12 +21756,27 @@
         ;; nothing here. The scalar arms above carry no such chain -- each
         ;; admits exactly one instruction and at most one new loop-spanning
         ;; value -- which is why they take the refinement and this arm does not.
-        (opt-licm-values-invariant?
-          globals.clean?
-          loop-defs
-          hoisted
-          base
-          offset)
+        ;;
+        ;; P20 opens ONE named exception to that verdict, and prices it where
+        ;; P18 said the price had to be paid. A FROZEN global's cell is written
+        ;; once, before `main`, by the startup initializer and by nothing else
+        ;; (opt-global-frozen-build), so `@g` here is not a mutable-global read
+        ;; at all -- no cell-write set, no loop-wide gate and no call can
+        ;; change what it reads. The chain it starts is still the same chain
+        ;; P18 measured, so it is admitted only under `frozen-hoist?`, the
+        ;; loop's pressure gate, which is what keeps cfg-natural-loops refusing
+        ;; it.
+        (or
+          (and
+            globals.frozen-hoist?
+            (opt-licm-frozen-global-value? globals base)
+            (opt-licm-value-invariant? globals.clean? loop-defs hoisted offset))
+          (opt-licm-values-invariant?
+            globals.clean?
+            loop-defs
+            hoisted
+            base
+            offset))
         (or
           (opt-licm-mode-late? licm-mode)
           (opt-licm-memory-safe?
@@ -21534,9 +21799,22 @@
         (opt-gvn-value-stable? sources src)
         ;; A `Global` SOURCE here is a load THROUGH the pointer that cell holds
         ;; -- the head of the very chain the Gep arm above prices -- so it keeps
-        ;; the loop-wide answer for the same measured reason.
-        (opt-licm-value-invariant? globals.clean? loop-defs hoisted src)
+        ;; the loop-wide answer for the same measured reason. A FROZEN global's
+        ;; cell is constant, so that source is invariant outright (P20).
         (or
+          (and
+            globals.frozen-hoist?
+            (opt-licm-frozen-global-value? globals src))
+          (opt-licm-value-invariant? globals.clean? loop-defs hoisted src))
+        (or
+          ;; P20. A load whose ADDRESS is a frozen word reads the same value on
+          ;; every iteration of every loop: opt-global-frozen-build proved no
+          ;; instruction in the program writes that word, so no store summary,
+          ;; no call summary and no side-exit poison bears on it. The load is
+          ;; also always safe to speculate into the preheader -- the object is
+          ;; a startup allocation that lives for the whole run. What is left is
+          ;; register pressure, which `frozen-hoist?` prices.
+          (and globals.frozen-hoist? (opt-licm-frozen-source? globals ptrs src))
           (opt-licm-memory-safe?
             store-summary
             legacy-store-summary
@@ -22536,6 +22814,101 @@
                 (opt-licm-global-promote-loads planned.map cells refs)
                 true)))]))))
 
+;; P20 PRESSURE GATE. The frozen-chain proof is unconditional -- the words are
+;; immutable for the whole run -- so nothing about SOUNDNESS varies per loop.
+;; Profitability does, and P18 measured exactly how: letting a global's
+;; descriptor chain out of a loop puts three new values in the preheader per
+;; global (the box word, and the descriptor's length and data words behind it),
+;; each of which must then live across the whole loop and, because such a loop
+;; contains a call, can only live in the callee-saved file. On cfg_domloops'
+;; `cfg-natural-loops` -- five read-only globals, all of them frozen -- that is
+;; fifteen words against a six-register budget, and P18 measured the result:
+;; fourteen values in the preheader, ten spilled, the loop-carried hash
+;; accumulator out of a register, an eight-compare bce guard on a path that
+;; averages 1.06 trips, and the row +1.42%.
+;;
+;; So the chain is priced with the same live-in budget the loop-scoped cell
+;; promotion uses (opt-licm-global-promote-live-in-budget, and its rationale:
+;; values live across a call must fit the callee-saved file), charged the words
+;; the chain actually adds. `opt-licm-frozen-chain-words` is 3 because that is
+;; the depth the classification reaches: `gep @g, k` -> the box word's load ->
+;; that descriptor's length and data words, of which the ADDRESSES fold into
+;; their loads, so three loaded values survive per global.
+;;
+;; Two further conditions come from the classes this hoist joins rather than
+;; from the budget. `late?` is the same pre-BCE restriction the descriptor
+;; header hoist takes: moving a descriptor length before bounds-check
+;; elimination can hide the shared bound identity it still needs. The
+;; return-shaped side-exit poison (side-exit kind 1) is respected rather than
+;; excepted: that gate exists because probe-shaped loops average one or two
+;; trips, where a preheader value is paid for in full and saved almost never.
+;;
+;; MEASURED (P20, one cachegrind run each on the 17-row corpus, base
+;; target/wsl/ic-p17c.tsv). Three shapes of this gate were built and measured:
+;;
+;;   A. this one -- live-in + 3 words per referenced frozen global vs the
+;;      budget: gvn_table 971,122,210 -> 964,017,000 (-7,105,210, -0.732%),
+;;      the other SIXTEEN rows byte-identical.
+;;   B. the packet's fallback, hoisting the BOX WORD only and leaving the
+;;      descriptor's length and data words in the loop: gvn_table +329,098
+;;      (+0.034%), every other row byte-identical. The half chain is a LOSS,
+;;      not a smaller win: the descriptor handle still has to live across the
+;;      call in a callee-saved register (two more pushes in the prologue) while
+;;      the two loads it feeds stay in the body, so the loop pays the register
+;;      and keeps the work.
+;;   C. dropping the per-chain word term, gating on the live-in count alone:
+;;      cfg_domloops 693,082,377 -> 701,201,926 (+8,119,549, +1.17%) --
+;;      P18's probeA regression reproduced, cfg-natural-loops' five chains
+;;      going out together -- and gvn_table only -1,324,773, because the extra
+;;      chains this admits there cost more than they save. peephole_lines
+;;      -73,283 does not pay for either.
+;;
+;; So the word count is the term that both earns the gvn_table win and keeps
+;; cfg_domloops byte-identical, and the full chain is what makes the win a win.
+(define (opt-licm-frozen-chain-words) : i64
+  3)
+
+(define (opt-licm-frozen-ref-count
+  [frozen : opt_i64_i64_map.Map]
+  [refs : OptI64List]
+  [count : i64]) : i64
+  (match refs
+    [(OptI64List.Nil) count]
+    [(OptI64List.Cons name rest)
+      (opt-licm-frozen-ref-count
+        frozen
+        (__tl-box-place rest)
+        (if (opt_i64_i64_map.contains? (& frozen) name)
+          (+ count 1)
+          count))]))
+
+(define (opt-licm-frozen-chain-hoist?
+  [cells : OptGlobalCellSummary]
+  [late? : bool]
+  [side-exit-kind : i64]
+  [body-blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    late?
+    (not (= side-exit-kind 1))
+    ;; No frozen global in the program: skip the body scan entirely, which is
+    ;; what keeps every level below 2 and every program without one byte- and
+    ;; allocation-identical.
+    (> (opt_i64_i64_map.len (& cells.frozen)) 0)
+    (let
+      [scan : OptGlobalCellScan
+        (opt-global-cell-scan-blocks
+          (opt-global-cell-scan-new)
+          body-blocks
+          false)]
+      [count : i64 (opt-licm-frozen-ref-count cells.frozen scan.ref-list 0)]
+      (and
+        (> count 0)
+        (<=
+          (+
+            (opt-unroll-mb-live-in-count body-blocks)
+            (* count (opt-licm-frozen-chain-words)))
+          (opt-licm-global-promote-live-in-budget))))))
+
 ;; Preheader instruction list: the hoisted instructions followed by the
 ;; promotion's cell loads. No promotion means the hoisted list is handed back
 ;; unchanged rather than copied, keeping the no-promotion path allocation- and
@@ -22657,7 +23030,15 @@
         ;; bundle the hoist filter reads it through.
         [cell-writes : i64 store-state.global-cell-writes]
         [globals : OptLicmGlobalFacts
-          (opt-licm-global-facts globals-clean? global-cells cell-writes)]
+          (opt-licm-global-facts
+            globals-clean?
+            global-cells
+            cell-writes
+            (opt-licm-frozen-chain-hoist?
+              global-cells
+              late?
+              side-exit-kind
+              body-blocks))]
         [globals-promote-clean? : bool
           (and
             globals-clean-relaxed?
@@ -22957,6 +23338,7 @@
                     params
                     types
                     return-alias
+                    global-cells.frozen
                     blocks)]
                 ;; Loop-scope global promotion mints fresh vars, so the pass
                 ;; carries the frame counter in a cell and writes the final
@@ -43586,7 +43968,12 @@
   ;; 2, and every program outside those preconditions) carries
   ;; opt-global-mod-ref-none, which answers "may write any cell" to every
   ;; question and so leaves the loop-wide gates exactly as they were.
-  (mod-ref OptGlobalModRef))
+  (mod-ref OptGlobalModRef)
+  ;; P20's FROZEN globals: those whose box and descriptor words are immutable
+  ;; for the whole run (opt-global-frozen-build). Empty at every level below 2
+  ;; and in every program without one, where LICM's frozen arms are dead and
+  ;; nothing is recomputed.
+  (frozen opt_i64_i64_map.Map))
 
 (define (opt-global-cell-summary-empty) : OptGlobalCellSummary
   (OptGlobalCellSummary
@@ -43594,7 +43981,8 @@
     (opt_i64_i64_map.with-capacity 1)
     (array.make-array ast.AstType 0)
     0
-    (opt-global-mod-ref-none)))
+    (opt-global-mod-ref-none)
+    (opt_i64_i64_map.with-capacity 1)))
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
@@ -93877,7 +94265,10 @@
         (opt-const-divisors-build globals reachable-functions)
         (opt_i64_i64_map.with-capacity 1)))
     (if (>= level 2)
-      (opt-global-cell-summary-build globals reachable-functions)
+      (opt-global-cell-summary-build
+        type-segment-bases
+        globals
+        reachable-functions)
       (opt-global-cell-summary-empty))))
 
 ;; Substitute a proven constant global with its literal value in
@@ -95161,7 +95552,1594 @@
             [(OptGlobalModRefWrites.Some writes)
               (OptGlobalModRef true index writes)])]))))
 
+;; --- P20: FROZEN memory-class globals ----------------------------------------
+;;
+;; WHAT IT PROVES. For a global `g` in this set, every word of the object its
+;; cell designates -- the BOX -- and every fixed word of the descriptor a box
+;; word points at, holds the same value for as long as cell(g) itself is not
+;; written. Not "this loop's callees do not write it": nothing anywhere in the
+;; program writes any of those words. So a loop that P18's per-global cell-write
+;; set already proves does not write cell(g) sees one fixed box, and every load
+;; down the chain is loop-invariant with no store summary, no call summary and
+;; no per-loop memory question (opt-licm-frozen-kind-invariant?). That is what lets a
+;; `gep @g, 0` / `load` / `gep, 1` / `load` chain leave a loop whose body calls
+;; an ordinary unknown callee every trip.
+;;
+;; THE LOWERING FACTS IT RESTS ON (verified in src/compiler_lower.tl and
+;; src/compiler_backend.tl, read-only for this packet).
+;;
+;;  L1. A memory-class global's cell holds a POINTER to its aggregate payload.
+;;      `lower-ptr-addr-of-global-value-reference?` (compiler_lower.tl ~17269)
+;;      states it: "A memory-class global's symbol stores a pointer to its
+;;      aggregate payload, so the address of the value is the loaded symbol",
+;;      and it is what makes `(& g)` / `(&mut g)` lower to the VALUE form
+;;      `CompilerIrValue.Global g` rather than to `GlobalAddr g`
+;;      (lower-ptr-addr-of-local-address ~27089). A dynamic-array or string
+;;      global takes the `GlobalAddr` arm instead, which is why the
+;;      address-taken exclusion below is not vacuous.
+;;
+;;  L2. The startup initializer stores the init function's RETURN VALUE into the
+;;      cell, from outside the IR: `compiler-backend-global-init-call`
+;;      (compiler_backend.tl ~70700) emits `call __global_init_<g>` followed by
+;;      `movq %rax, <g>(%rip)`, once, before `main`. That is the only cell write
+;;      the IR does not carry as an instruction, so it is checked here directly
+;;      on the initializer's returned value.
+;;
+;;  L3. Every IR cell write is `CompilerIrInstr.Store g, v` -- the lowering of
+;;      `(set! g ...)` (compiler_lower.tl ~27851), whose value operand goes
+;;      through `lower-return-abi-value` ("store-copy") and is therefore a fresh
+;;      `tl_alloc` copy (lower-copy-inline-aggregate-to-heap ~16493,
+;;      lower-reserve-heap-storage ~15116). That freshness is CHECKED at every
+;;      site rather than assumed (opt-global-frozen-writer-check-function).
+;;
+;;  L4. No pointer can name a cell unless `CompilerIrValue.GlobalAddr` exists
+;;      for it -- the same whole-program argument P18's mod-ref table rests on
+;;      (see opt-global-mod-ref-build's header, which lists the cell writers
+;;      exhaustively). `addr-taken` below is exactly the set of globals with a
+;;      `GlobalAddr` occurrence.
+;;
+;; THE PROOF, for `g` admitted below.
+;;
+;;  (1) CELL WRITERS. By L2/L3/L4 the writers of cell(g) are exactly: the
+;;      startup initializer, once, before `main`; and the `Store g, v`
+;;      instructions of the program. The first is checked here; the second are
+;;      checked here AND are exactly what P18's per-global cell-write set
+;;      tracks, so a loop that set proves does not write cell(g) sees one fixed
+;;      box for its whole execution. Every consumer of this set asks that
+;;      question first (opt-licm-frozen-kind-invariant?).
+;;
+;;  (2) BOX IDENTITY. `opt-global-frozen-writer-check-function` checks every
+;;      writer's own IR: the value it puts in the cell is a var defined by
+;;      `call tl_alloc(n)`, and that var (and everything a Gep or Mov derives
+;;      from it) is used ONLY as a Gep base, a Mov source, a Load source, the
+;;      DESTINATION of the initializing `copy_bytes`, or that one stored or
+;;      returned value. So the pointer is written through to initialize the
+;;      object and is handed to nothing else: not to a call, not into memory,
+;;      not into another cell. box(g) is therefore, at every moment, an object
+;;      no other cell, local, or element storage names -- the packet's
+;;      provenance claim, established rather than assumed. It is a `tl_alloc`
+;;      heap object, so it is also distinct from every frame `Alloc` (P16's
+;;      argument) and, being named by nothing but cell(g), from every
+;;      descriptor's element buffer.
+;;
+;;  (3) DESCRIPTOR PRIVACY. A box word may hold a pointer -- for a `Vec` global,
+;;      `slots` points at the array descriptor. The `copy_bytes` that fills each
+;;      fresh box must take its source from a direct call to an INERT function
+;;      (opt-global-frozen-inert-closure?: a closure that mentions no global,
+;;      performs no `Store` and makes no indirect call), so everything that
+;;      closure built it allocated itself and it could neither have read another
+;;      global's box nor have published its own. A `set!` of one global from
+;;      another fails this at once -- its copy source is a `Global` operand, not
+;;      a call result -- which is the aliasing case this level has to exclude.
+;;
+;;  (4) NO WRITER. `opt-global-frozen-round` then checks the WHOLE program. It
+;;      tracks, in every function, the values that may name a frozen object:
+;;
+;;        level 4  the BOX POINTER itself: a `CompilerIrValue.Global g`, a
+;;                 `Mov` copy of one, or a PARAMETER some call site passes one to
+;;        level 1  a fixed-word ADDRESS of the box: `gep <level 4>, <literal>`,
+;;                 and a further literal gep of one
+;;        level 2  a DESCRIPTOR HANDLE read out of a box word: `load <level 1>`
+;;                 whose loaded type is an array/string header. A load of any
+;;                 other type is a scalar field (a length, a capacity) and
+;;                 carries no level, which is what keeps arithmetic on such a
+;;                 field from refusing the global
+;;        level 3  a fixed-word ADDRESS of that descriptor: `gep <level 2>,
+;;                 <literal>`, and a further literal gep of one
+;;
+;;      and REFUSES `g` unless every occurrence of such a value in the program
+;;      is one of: a `Load` source, a `Mov` source, the base of a
+;;      literal-offset `Gep`, or an argument of a DIRECT call to a function of
+;;      this program -- which is not an escape but a hand-off, propagated to the
+;;      callee's parameter and checked there by the same rules, to a fixpoint.
+;;      Everything else refuses: a `StorePtr` through such an address, storing
+;;      one into memory, an indexed gep off one, a cast, a phi, a return, an
+;;      argument to an extern or an indirect call. So no instruction in the
+;;      program can write any of these words, and with (2) and (3) -- the only
+;;      pointers to these objects are the ones this chain forms -- no execution
+;;      can either.
+;;
+;;  (5) LIFETIME. A box and its descriptor are `tl_alloc` objects a cell writer
+;;      created, so a speculative preheader load of one of their words is always
+;;      safe wherever (1) holds: the loop's box was allocated before the loop
+;;      was entered and nothing in the loop replaces it (a region reset reclaims
+;;      only allocations made after its mark, and a cell writer's allocation
+;;      outlives its write by construction -- it IS the cell's value).
+;;
+;; WHAT IT DELIBERATELY DOES NOT DO. The packet also describes carrying the
+;; refinement through the per-callee mod-ref table, extending its rows from
+;; cells to "cell or box of g", so a loop could hoist across a call that writes
+;; SOME box as long as it is not g's. That form needs a per-call-site
+;; classification of which arguments carry a box pointer, and the LICM pointer
+;; environment cannot supply it soundly: an argument whose provenance the
+;; environment lost is indistinguishable from a box pointer, so every such site
+;; would have to contribute "any box" and the refinement would buy nothing. This
+;; form needs no argument classification at LICM time at all, because (4) has
+;; already followed every box pointer to every place it can reach, and it is
+;; strictly stronger wherever it applies: a callee that writes a frozen box does
+;; not exist. What it gives up is a global whose box words ARE written through a
+;; pointer somewhere; no row of the benchmark corpus has one on a hot chain.
+;;
+;; STALENESS. Like P18's mod-ref table and the call-memory summaries, this is a
+;; whole-program fact about the IR the summary bundle is built from. The passes
+;; that run afterwards rewrite and clone existing instructions; none of them
+;; MINTS a store through a newly formed global-rooted address (the inliner, the
+;; only pass that imports foreign instructions, has already run when the
+;; summaries are built), and a pass that clones such a store can only clone one
+;; that already existed -- which would have refused the global here.
+;; Level encoding: `((global + 1) * 8) + level`, so 0 means "no level" even for
+;; a symbol id of 0.
+(define (opt-global-frozen-encode [global : i64] [level : i64]) : i64
+  (+ (* (+ global 1) 8) level))
+
+(define (opt-global-frozen-encoded-global [encoded : i64]) : i64
+  (- (/ encoded 8) 1))
+
+(define (opt-global-frozen-encoded-level [encoded : i64]) : i64
+  (% encoded 8))
+
+(define (opt-global-frozen-with-level [encoded : i64] [level : i64]) : i64
+  (opt-global-frozen-encode (opt-global-frozen-encoded-global encoded) level))
+
+(define (opt-global-frozen-var-level [levels : opt_i64_i64_map.Map] [var : i64]) : i64
+  (match (opt_i64_i64_map.get (& levels) var)
+    [(opt_i64_i64_map.LookupFound encoded) encoded]
+    [(opt_i64_i64_map.LookupMissing) 0]))
+
+;; The code a VALUE carries: a leveled var, or the box pointer a candidate
+;; global's own operand is.
+(define (opt-global-frozen-value-level
+  [cand : opt_i64_i64_map.Map]
+  [levels : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var var) (opt-global-frozen-var-level levels var)]
+    [(ir.CompilerIrValue.Global name)
+      (if (opt_i64_i64_map.contains? (& cand) (ir.compiler-ir-symbol-id name))
+        (opt-global-frozen-encode (ir.compiler-ir-symbol-id name) 4)
+        0)]
+    [_ 0]))
+
+(defstruct OptGlobalFrozenLevels
+  (map opt_i64_i64_map.Map)
+  (vars OptI64List))
+
+(define (opt-global-frozen-levels-new [capacity : i64]) : OptGlobalFrozenLevels
+  (OptGlobalFrozenLevels
+    (opt_i64_i64_map.with-capacity capacity)
+    (OptI64List.Nil)))
+
+(define (opt-global-frozen-levels-bind
+  [levels : OptGlobalFrozenLevels (:consume)]
+  [var : i64]
+  [encoded : i64]) : OptGlobalFrozenLevels
+  (match levels
+    [(OptGlobalFrozenLevels map vars)
+      (if (= (opt-global-frozen-var-level map var) encoded)
+        (OptGlobalFrozenLevels map vars)
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut map) var encoded)
+          (OptGlobalFrozenLevels map (OptI64List.Cons var (box vars)))))]))
+
+;; The level a literal-offset `Gep` produces off a base carrying `encoded`: a
+;; box-word address stays one, a descriptor handle yields a descriptor-word
+;; address, and a descriptor-word address stays one.
+(define (opt-global-frozen-gep-level [encoded : i64]) : i64
+  (let
+    [level : i64 (opt-global-frozen-encoded-level encoded)]
+    (cond
+      [(= level 4) (opt-global-frozen-with-level encoded 1)]
+      [(= level 1) encoded]
+      [(= level 2) (opt-global-frozen-with-level encoded 3)]
+      [(= level 3) encoded]
+      [else 0])))
+
+;; A load through a box-word address yields the DESCRIPTOR HANDLE the box holds
+;; -- but only when the loaded type is an array/string header. Any other type is
+;; a scalar field of the box (a length, a capacity, an inline word), whose VALUE
+;; nothing can write through, so it carries no level and its arithmetic uses
+;; refuse nothing. This is the same type test opt-licm-gep-kind applies before
+;; it will call a handle a descriptor (opt-licm-array-header-type?), so LICM can
+;; never call a var frozen that this pass has not leveled.
+(define (opt-global-frozen-load-level
+  [type-segment-bases : i64]
+  [encoded : i64]
+  [ty : ast.AstType]) : i64
+  (let
+    [level : i64 (opt-global-frozen-encoded-level encoded)]
+    (if (and
+      (or (= level 1) (= level 4))
+      (opt-licm-array-header-type? type-segment-bases ty))
+      (opt-global-frozen-with-level encoded 2)
+      0)))
+
+;; One propagation step. The rules are exactly the ones opt-licm-gep-kind and
+;; opt-licm-provenance-state-instr apply at LICM time, so every var LICM later
+;; calls frozen is a var this pass has leveled and checked.
+(define (opt-global-frozen-levels-instr
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels (:consume)]
+  [instr : ir.CompilerIrInstr]) : OptGlobalFrozenLevels
+  (match instr
+    [(ir.CompilerIrInstr.Gep dst base offset _)
+      (match offset
+        [(ir.CompilerIrValue.I64 _)
+          (let
+            [next : i64
+              (opt-global-frozen-gep-level
+                (opt-global-frozen-value-level cand levels.map base))]
+            (if (= next 0)
+              levels
+              (opt-global-frozen-levels-bind levels dst next)))]
+        [_ levels])]
+    [(ir.CompilerIrInstr.Load dst src ty)
+      (let
+        [next : i64
+          (opt-global-frozen-load-level
+            type-segment-bases
+            (opt-global-frozen-value-level cand levels.map src)
+            ty)]
+        (if (= next 0)
+          levels
+          (opt-global-frozen-levels-bind levels dst next)))]
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (let
+        [next : i64 (opt-global-frozen-value-level cand levels.map src)]
+        (if (= next 0)
+          levels
+          (opt-global-frozen-levels-bind levels dst next)))]
+    [_ levels]))
+
+(define (opt-global-frozen-levels-seq-from
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels (:consume)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptGlobalFrozenLevels
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    levels
+    (opt-global-frozen-levels-seq-from
+      type-segment-bases
+      cand
+      (opt-global-frozen-levels-instr
+        type-segment-bases
+        cand
+        levels
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-global-frozen-levels-blocks
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels (:consume)]
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalFrozenLevels
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) levels]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-frozen-levels-blocks
+            type-segment-bases
+            cand
+            (opt-global-frozen-levels-seq-from
+              type-segment-bases
+              cand
+              levels
+              instrs
+              0)
+            (__tl-box-place rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-levels-blocks
+        type-segment-bases
+        cand
+        levels
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; --- the whole-program use check --------------------------------------------
+;; The one var this instruction may legally use at a leveled value: a Load's
+;; source, a Mov's source, or the base of a literal-offset Gep. A DIRECT call's
+;; arguments are handled separately (every var operand of a `Call`/`TailCall` IS
+;; an argument, so the whole instruction is allowed and the codes propagate to
+;; the callee's parameters).
+(define (opt-global-frozen-allowed-use [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Load _ src _)
+      (match src
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (match src
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (match offset
+        [(ir.CompilerIrValue.I64 _)
+          (match base
+            [(ir.CompilerIrValue.Var var) var]
+            [_ -1])]
+        [_ -1])]
+    [_ -1]))
+
+(define (opt-global-frozen-hand-off? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Call _ _ _ _) true]
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
+    [_ false]))
+
+(define (opt-global-frozen-refuse
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [encoded : i64]) : unit
+  (if (= encoded 0)
+    unit
+    (opt_i64_i64_map.insert-ref!
+      bad
+      (opt-global-frozen-encoded-global encoded)
+      1)))
+
+(define (opt-global-frozen-refuse-vars
+  [levels : opt_i64_i64_map.Map]
+  [vars : OptI64List]
+  [uses : opt_i64_i64_map.Map]
+  [allowed : i64]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match vars
+    [(OptI64List.Nil) unit]
+    [(OptI64List.Cons var rest)
+      (begin
+        (if (and (not (= var allowed)) (opt_i64_i64_map.contains? (& uses) var))
+          (opt-global-frozen-refuse
+            bad
+            (opt-global-frozen-var-level levels var))
+          unit)
+        (opt-global-frozen-refuse-vars
+          levels
+          (__tl-box-place rest)
+          uses
+          allowed
+          bad))]))
+
+;; Every `Global` this instruction mentions in a position that is NOT an
+;; allowed one. The existing whole-instruction global walk
+;; (opt-global-cell-scan-instr) is total over the IR instruction set, so a new
+;; form cannot slip a `Global` operand past this; the four forms with an allowed
+;; position are the ones handled here instead.
+(define (opt-global-frozen-escaped-refs
+  [scan : OptGlobalCellScan]
+  [instr : ir.CompilerIrInstr]) : OptGlobalCellScan
+  (match instr
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (match offset
+        [(ir.CompilerIrValue.I64 _) scan]
+        [_
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value scan base)
+            offset)])]
+    [(ir.CompilerIrInstr.Load _ _ _) scan]
+    [(ir.CompilerIrInstr.Mov _ _ _) scan]
+    [(ir.CompilerIrInstr.Call _ _ _ _) scan]
+    [(ir.CompilerIrInstr.TailCall _ _ _) scan]
+    [_ (opt-global-cell-scan-instr scan false instr)]))
+
+(define (opt-global-frozen-refuse-list
+  [names : OptI64List]
+  [cand : opt_i64_i64_map.Map]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match names
+    [(OptI64List.Nil) unit]
+    [(OptI64List.Cons name rest)
+      (begin
+        (if (opt_i64_i64_map.contains? (& cand) name)
+          (opt_i64_i64_map.insert-ref! bad name 1)
+          unit)
+        (opt-global-frozen-refuse-list (__tl-box-place rest) cand bad))]))
+
+;; --- the hand-off: a box pointer passed to a direct callee -------------------
+;; Parameter slot key. The index limit is the call-memory summary's, so the two
+;; whole-program analyses describe the same parameter positions.
+(define (opt-global-frozen-param-key [name : i64] [index : i64]) : i64
+  (+ (* (ir.compiler-ir-symbol-id name) (opt-call-memory-param-limit)) index))
+
+(define (opt-global-frozen-param-level
+  [params : (& params opt_i64_i64_map.Map)]
+  [name : i64]
+  [index : i64]) : i64
+  (match (opt_i64_i64_map.get params (opt-global-frozen-param-key name index))
+    [(opt_i64_i64_map.LookupFound encoded) encoded]
+    [(opt_i64_i64_map.LookupMissing) 0]))
+
+;; Propose that `name`'s parameter `index` may carry `encoded`. A slot that
+;; already carries a DIFFERENT code sees two different frozen objects, which
+;; this pass does not model, so both globals are refused; the slot keeps its
+;; first code, which only ever attributes a later violation to an
+;; already-refused global.
+(define (opt-global-frozen-param-propose
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [name : i64]
+  [index : i64]
+  [encoded : i64]) : bool
+  (let
+    [key : i64 (opt-global-frozen-param-key name index)]
+    (match (opt_i64_i64_map.get (& params) key)
+      [(opt_i64_i64_map.LookupFound existing)
+        (begin
+          (if (= existing encoded)
+            unit
+            (begin
+              (opt-global-frozen-refuse bad existing)
+              (opt-global-frozen-refuse bad encoded)))
+          false)]
+      [(opt_i64_i64_map.LookupMissing)
+        (begin
+          (opt_i64_i64_map.insert-ref! params key encoded)
+          true)])))
+
+(define (opt-global-frozen-args-propagate
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [levels : opt_i64_i64_map.Map]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]
+  [index : i64]
+  [changed : bool]) : bool
+  (if (>= index (opt-call-memory-param-limit))
+    changed
+    (match (opt-call-memory-arg-at args index)
+      [(ir.CompilerIrMaybeValue.No) changed]
+      [(ir.CompilerIrMaybeValue.Some value)
+        (let
+          [encoded : i64 (opt-global-frozen-value-level cand levels value)]
+          [next : bool
+            (if (= encoded 0)
+              changed
+              (if (not
+                (opt_i64_i64_map.contains?
+                  (& fnset)
+                  (ir.compiler-ir-symbol-id name)))
+                ;; An extern has no IR body for this walk to check, so a box
+                ;; pointer handed to one is out of reach and the global is
+                ;; refused.
+                (begin
+                  (opt-global-frozen-refuse bad encoded)
+                  changed)
+                (or
+                  (opt-global-frozen-param-propose
+                    params
+                    bad
+                    name
+                    index
+                    encoded)
+                  changed)))]
+          (opt-global-frozen-args-propagate
+            cand
+            fnset
+            levels
+            params
+            bad
+            name
+            args
+            (+ index 1)
+            next))])))
+
+(define (opt-global-frozen-check-instr
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]
+  [changed : bool]) : bool
+  (begin
+    ;; A DIRECT call needs no use check -- every var operand of one is an
+    ;; argument, which is an allowed position -- and neither does a function
+    ;; with no leveled var of its own.
+    (match levels.vars
+      [(OptI64List.Nil) unit]
+      [_
+        (if (opt-global-frozen-hand-off? instr)
+          unit
+          (let
+            [uses : opt_i64_i64_map.Map
+              (opt-collect-instr-uses (opt_i64_i64_map.with-capacity 4) instr)]
+            (opt-global-frozen-refuse-vars
+              levels.map
+              levels.vars
+              uses
+              (opt-global-frozen-allowed-use instr)
+              bad)))])
+    (match instr
+      [(ir.CompilerIrInstr.Call _ name args _)
+        (opt-global-frozen-args-propagate
+          cand
+          fnset
+          levels.map
+          params
+          bad
+          name
+          args
+          0
+          changed)]
+      [(ir.CompilerIrInstr.TailCall name args _)
+        (opt-global-frozen-args-propagate
+          cand
+          fnset
+          levels.map
+          params
+          bad
+          name
+          args
+          0
+          changed)]
+      [_ changed])))
+
+(define (opt-global-frozen-check-seq-from
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [changed : bool]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    changed
+    (opt-global-frozen-check-seq-from
+      cand
+      fnset
+      levels
+      params
+      bad
+      instrs
+      (+ index 1)
+      (opt-global-frozen-check-instr
+        cand
+        fnset
+        levels
+        params
+        bad
+        (ir.compiler-ir-instr-seq-ref instrs index)
+        changed))))
+
+(define (opt-global-frozen-check-blocks
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [blocks : ir.CompilerIrBlockList]
+  [changed : bool]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) changed]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (opt-global-frozen-check-blocks
+        cand
+        fnset
+        levels
+        params
+        bad
+        (__tl-box-place rest)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-global-frozen-check-seq-from
+              cand
+              fnset
+              levels
+              params
+              bad
+              instrs
+              0
+              changed)]))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-check-blocks
+        cand
+        fnset
+        levels
+        params
+        bad
+        (ir.compiler-ir-block-seq-to-list seq)
+        changed)]))
+
+(define (opt-global-frozen-escape-seq-from
+  [scan : OptGlobalCellScan]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptGlobalCellScan
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    scan
+    (opt-global-frozen-escape-seq-from
+      (opt-global-frozen-escaped-refs
+        scan
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-global-frozen-escape-blocks
+  [scan : OptGlobalCellScan]
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalCellScan
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) scan]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-frozen-escape-blocks
+            (opt-global-frozen-escape-seq-from scan instrs 0)
+            (__tl-box-place rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-escape-blocks
+        scan
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The parameter vars a caller's argument codes seed.
+(define (opt-global-frozen-seed-params
+  [params : (& params opt_i64_i64_map.Map)]
+  [name : i64]
+  [list : ir.CompilerIrParamList]
+  [index : i64]
+  [levels : OptGlobalFrozenLevels (:consume)]) : OptGlobalFrozenLevels
+  (match (ir.compiler-ir-param-list-force-cons list)
+    [(ir.CompilerIrParamList.Nil) levels]
+    [(ir.CompilerIrParamList.Array seq)
+      (opt-global-frozen-seed-params
+        params
+        name
+        (ir.compiler-ir-param-seq-to-list seq)
+        index
+        levels)]
+    [(ir.CompilerIrParamList.Cons param rest)
+      (match param
+        [(ir.CompilerIrParam.Param _ _ var)
+          (let
+            [encoded : i64 (opt-global-frozen-param-level params name index)]
+            (opt-global-frozen-seed-params
+              params
+              name
+              (__tl-box-place rest)
+              (+ index 1)
+              (if (= encoded 0)
+                levels
+                (opt-global-frozen-levels-bind levels var encoded))))])]))
+
+;; One function, one round: seed its parameters from what callers pass, rebuild
+;; its level map (twice, so a definition listed after a use in block order is
+;; not missed -- a missed level is a missed CHECK, not a missed optimization),
+;; then check every use and hand the codes on to its own callees.
+(define (opt-global-frozen-round-function
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [func : ir.CompilerIrFunction]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [changed : bool]) : bool
+  (match func
+    [(ir.CompilerIrFunction.Function name param-list _ _ blocks)
+      (let
+        [escaped : OptGlobalCellScan
+          (opt-global-frozen-escape-blocks (opt-global-cell-scan-new) blocks)]
+        [seeded : OptGlobalFrozenLevels
+          (opt-global-frozen-seed-params
+            (& params)
+            name
+            param-list
+            0
+            (opt-global-frozen-levels-new 8))]
+        [levels : OptGlobalFrozenLevels
+          (opt-global-frozen-levels-blocks
+            type-segment-bases
+            cand
+            (opt-global-frozen-levels-blocks
+              type-segment-bases
+              cand
+              seeded
+              blocks)
+            blocks)]
+        (begin
+          (opt-global-frozen-refuse-list escaped.ref-list cand bad)
+          (opt-global-frozen-check-blocks
+            cand
+            fnset
+            levels
+            params
+            bad
+            blocks
+            changed)))]))
+
+(define (opt-global-frozen-round
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [functions : ir.CompilerIrFunctionList]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [changed : bool]) : bool
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) changed]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (opt-global-frozen-round
+        type-segment-bases
+        cand
+        fnset
+        (__tl-box-place rest)
+        params
+        bad
+        (opt-global-frozen-round-function
+          type-segment-bases
+          cand
+          fnset
+          func
+          params
+          bad
+          changed))]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-global-frozen-round
+        type-segment-bases
+        cand
+        fnset
+        (ir.compiler-ir-function-seq-to-list seq)
+        params
+        bad
+        changed)]))
+
+;; Rounds needed: one per call-graph edge a box pointer travels. The cap is a
+;; compile-time bound, and exhausting it DISCARDS the whole set rather than
+;; shipping a half-propagated one -- an unpropagated parameter is an unchecked
+;; use, so there is no safe partial answer.
+(define (opt-global-frozen-round-cap) : i64
+  8)
+
+(define (opt-global-frozen-fixpoint
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [functions : ir.CompilerIrFunctionList]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [remaining : i64]) : bool
+  (if (<= remaining 0)
+    false
+    (if (opt-global-frozen-round
+      type-segment-bases
+      cand
+      fnset
+      functions
+      params
+      bad
+      false)
+      (opt-global-frozen-fixpoint
+        type-segment-bases
+        cand
+        fnset
+        functions
+        params
+        bad
+        (- remaining 1))
+      true)))
+
+;; --- P20: every writer of the cell stores a fresh, private box ---------------
+;;
+;; Proof obligations (2) and (3), checked at every site that can put a pointer
+;; in cell(g): the startup initializer's returned value (L2) and every
+;; `Store g, v` (L3). Both are walked in the IR rather than trusted from the
+;; lowering, so a future change to `lower-return-abi-value` cannot silently
+;; widen this class.
+;;
+;; The admitted shape is the one the lowering emits, and nothing else:
+;;
+;;     %r = call <builder>(..)      ; the value being assigned
+;;     %c = call tl_alloc(N)        ; lower-reserve-heap-storage
+;;     copy_bytes %c, %r, N         ; lower-copy-inline-aggregate-to-heap
+;;     store g, %c                  ; (or `return %c` in an initializer)
+;;
+;; (2) BOX IDENTITY. `%c` is a fresh `tl_alloc`, and every var a Gep or Mov
+;;     derives from it is used only to READ it, to be the DESTINATION of the
+;;     initializing `copy_bytes`, or as that one stored/returned value. So the
+;;     pointer reaches no call, no memory and no other cell: at the moment
+;;     cell(g) receives it, box(g) is an object nothing else names.
+;;
+;; (3) DESCRIPTOR PRIVACY. What the copy puts INSIDE the box may be a pointer --
+;;     for a `Vec` global, the `slots` descriptor. The copy's source must
+;;     therefore be the result of a direct call to an INERT function
+;;     (opt-global-frozen-inert-closure?: its whole closure mentions no global,
+;;     performs no `Store` and makes no indirect call), so everything that
+;;     closure built it allocated itself and it could neither have read another
+;;     global's box nor have published its own. `(set! g @h)` fails this at
+;;     once -- its copy source is `@h`, not a call result -- which is the
+;;     aliasing case the descriptor level has to exclude.
+(define (opt-global-frozen-tl-alloc-dst [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Call dst name _ _)
+      (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
+        dst
+        -1)]
+    [_ -1]))
+
+(defstruct OptGlobalFrozenWriterScan
+  ;; Vars written into some candidate cell, leveled with the global they feed.
+  (writes OptGlobalFrozenLevels)
+  ;; Vars defined by `call tl_alloc(...)`.
+  (allocs opt_i64_i64_map.Map)
+  ;; var -> 1 + the symbol id of the direct callee that produced it.
+  (call-dsts opt_i64_i64_map.Map))
+
+;; Bind a cell-write var, refusing both globals if the var already feeds a
+;; different cell: one allocation stored into two cells makes those two globals
+;; share a box, and a refusal earned by one would then not protect the other.
+(define (opt-global-frozen-write-bind
+  [writes : OptGlobalFrozenLevels (:consume)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [var : i64]
+  [encoded : i64]) : OptGlobalFrozenLevels
+  (let
+    [existing : i64 (opt-global-frozen-var-level writes.map var)]
+    (begin
+      (if (or (= existing 0) (= existing encoded))
+        unit
+        (begin
+          (opt-global-frozen-refuse bad existing)
+          (opt-global-frozen-refuse bad encoded)))
+      (opt-global-frozen-levels-bind writes var encoded))))
+
+(define (opt-global-frozen-writer-scan-new) : OptGlobalFrozenWriterScan
+  (OptGlobalFrozenWriterScan
+    (opt-global-frozen-levels-new 4)
+    (opt_i64_i64_map.with-capacity 8)
+    (opt_i64_i64_map.with-capacity 8)))
+
+;; `owner` is the global this function initializes, or -1: an initializer's
+;; RETURN is a cell write (L2), an ordinary function's `Store g` is (L3).
+(define (opt-global-frozen-writer-scan-instr
+  [cand : opt_i64_i64_map.Map]
+  [owner : i64]
+  [scan : OptGlobalFrozenWriterScan (:consume)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]) : OptGlobalFrozenWriterScan
+  (match scan
+    [(OptGlobalFrozenWriterScan writes allocs call-dsts)
+      (let
+        [alloc-dst : i64 (opt-global-frozen-tl-alloc-dst instr)]
+        [_alloc : unit
+          (if (< alloc-dst 0)
+            unit
+            (opt_i64_i64_map.insert-ref! (&mut allocs) alloc-dst 1))]
+        [_call : unit
+          (match instr
+            [(ir.CompilerIrInstr.Call dst name _ _)
+              (opt_i64_i64_map.insert-ref!
+                (&mut call-dsts)
+                dst
+                (+ (ir.compiler-ir-symbol-id name) 1))]
+            [_ unit])]
+        (match instr
+          [(ir.CompilerIrInstr.Store name value _)
+            (let
+              [id : i64 (ir.compiler-ir-symbol-id name)]
+              (if (not (opt_i64_i64_map.contains? (& cand) id))
+                (OptGlobalFrozenWriterScan writes allocs call-dsts)
+                (match value
+                  [(ir.CompilerIrValue.Var var)
+                    (OptGlobalFrozenWriterScan
+                      (opt-global-frozen-write-bind
+                        writes
+                        bad
+                        var
+                        (opt-global-frozen-encode id 1))
+                      allocs
+                      call-dsts)]
+                  [_
+                    (begin
+                      (opt_i64_i64_map.insert-ref! bad id 1)
+                      (OptGlobalFrozenWriterScan writes allocs call-dsts))])))]
+          [(ir.CompilerIrInstr.Return maybe)
+            (if (< owner 0)
+              (OptGlobalFrozenWriterScan writes allocs call-dsts)
+              (match maybe
+                [(ir.CompilerIrMaybeValue.Some value)
+                  (match value
+                    [(ir.CompilerIrValue.Var var)
+                      (OptGlobalFrozenWriterScan
+                        (opt-global-frozen-write-bind
+                          writes
+                          bad
+                          var
+                          (opt-global-frozen-encode owner 1))
+                        allocs
+                        call-dsts)]
+                    [_
+                      (begin
+                        (opt_i64_i64_map.insert-ref! bad owner 1)
+                        (OptGlobalFrozenWriterScan writes allocs call-dsts))])]
+                [(ir.CompilerIrMaybeValue.No)
+                  (begin
+                    (opt_i64_i64_map.insert-ref! bad owner 1)
+                    (OptGlobalFrozenWriterScan writes allocs call-dsts))]))]
+          ;; An initializer whose result is a tail callee's is not an
+          ;; allocation this pass can describe.
+          [(ir.CompilerIrInstr.TailCall _ _ _)
+            (begin
+              (if (< owner 0)
+                unit
+                (opt_i64_i64_map.insert-ref! bad owner 1))
+              (OptGlobalFrozenWriterScan writes allocs call-dsts))]
+          [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
+            (begin
+              (if (< owner 0)
+                unit
+                (opt_i64_i64_map.insert-ref! bad owner 1))
+              (OptGlobalFrozenWriterScan writes allocs call-dsts))]
+          [_ (OptGlobalFrozenWriterScan writes allocs call-dsts)]))]))
+
+(define (opt-global-frozen-writer-scan-seq-from
+  [cand : opt_i64_i64_map.Map]
+  [owner : i64]
+  [scan : OptGlobalFrozenWriterScan (:consume)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptGlobalFrozenWriterScan
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    scan
+    (opt-global-frozen-writer-scan-seq-from
+      cand
+      owner
+      (opt-global-frozen-writer-scan-instr
+        cand
+        owner
+        scan
+        bad
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      bad
+      instrs
+      (+ index 1))))
+
+(define (opt-global-frozen-writer-scan-blocks
+  [cand : opt_i64_i64_map.Map]
+  [owner : i64]
+  [scan : OptGlobalFrozenWriterScan (:consume)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalFrozenWriterScan
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) scan]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-frozen-writer-scan-blocks
+            cand
+            owner
+            (opt-global-frozen-writer-scan-seq-from
+              cand
+              owner
+              scan
+              bad
+              instrs
+              0)
+            bad
+            (__tl-box-place rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-writer-scan-blocks
+        cand
+        owner
+        scan
+        bad
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The closure of the written allocations under address-forming copies.
+(define (opt-global-frozen-derived-instr
+  [derived : OptGlobalFrozenLevels (:consume)]
+  [instr : ir.CompilerIrInstr]) : OptGlobalFrozenLevels
+  (match instr
+    [(ir.CompilerIrInstr.Gep dst base _ _)
+      (let
+        [encoded : i64
+          (match base
+            [(ir.CompilerIrValue.Var var)
+              (opt-global-frozen-var-level derived.map var)]
+            [_ 0])]
+        (if (= encoded 0)
+          derived
+          (opt-global-frozen-levels-bind derived dst encoded)))]
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (let
+        [encoded : i64
+          (match src
+            [(ir.CompilerIrValue.Var var)
+              (opt-global-frozen-var-level derived.map var)]
+            [_ 0])]
+        (if (= encoded 0)
+          derived
+          (opt-global-frozen-levels-bind derived dst encoded)))]
+    [_ derived]))
+
+(define (opt-global-frozen-derived-seq-from
+  [derived : OptGlobalFrozenLevels (:consume)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptGlobalFrozenLevels
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    derived
+    (opt-global-frozen-derived-seq-from
+      (opt-global-frozen-derived-instr
+        derived
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-global-frozen-derived-blocks
+  [derived : OptGlobalFrozenLevels (:consume)]
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalFrozenLevels
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) derived]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-frozen-derived-blocks
+            (opt-global-frozen-derived-seq-from derived instrs 0)
+            (__tl-box-place rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-derived-blocks
+        derived
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The one var this instruction may legally use at the fresh box: a Gep base, a
+;; Mov/Load source, a `CopyBytes` DESTINATION, or the stored/returned value.
+;; Those are the READS of the box plus the copy that fills it and the hand-off
+;; to the cell; anything else -- a call argument, a `StorePtr` through it, a
+;; stored VALUE, a `CopyBytes` source, a cast, a phi -- would let the pointer
+;; escape and is refused.
+(define (opt-global-frozen-writer-allowed-use [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Gep _ base _ _)
+      (match base
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (match src
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Load _ src _)
+      (match src
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.CopyBytes dst _ _)
+      (match dst
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Store _ value _)
+      (match value
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Return maybe)
+      (match maybe
+        [(ir.CompilerIrMaybeValue.Some value)
+          (match value
+            [(ir.CompilerIrValue.Var var) var]
+            [_ -1])]
+        [(ir.CompilerIrMaybeValue.No) -1])]
+    [_ -1]))
+
+;; The copy that fills a fresh box: its SOURCE decides whether what lands
+;; inside is private (obligation 3).
+(define (opt-global-frozen-writer-copy-ok
+  [functions : ir.CompilerIrFunctionList]
+  [derived : OptGlobalFrozenLevels]
+  [call-dsts : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.CopyBytes dst src _)
+      (let
+        [encoded : i64
+          (match dst
+            [(ir.CompilerIrValue.Var var)
+              (opt-global-frozen-var-level derived.map var)]
+            [_ 0])]
+        (if (= encoded 0)
+          unit
+          (let
+            [callee : i64
+              (match src
+                [(ir.CompilerIrValue.Var var)
+                  (match (opt_i64_i64_map.get (& call-dsts) var)
+                    [(opt_i64_i64_map.LookupFound encoded-callee)
+                      (- encoded-callee 1)]
+                    [(opt_i64_i64_map.LookupMissing) -1])]
+                [_ -1])]
+            (if (and
+              (>= callee 0)
+              (opt-global-frozen-inert-closure? functions callee))
+              unit
+              (opt-global-frozen-refuse bad encoded)))))]
+    [_ unit]))
+
+(define (opt-global-frozen-writer-uses-seq-from
+  [functions : ir.CompilerIrFunctionList]
+  [derived : OptGlobalFrozenLevels]
+  [call-dsts : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      [uses : opt_i64_i64_map.Map
+        (opt-collect-instr-uses (opt_i64_i64_map.with-capacity 4) instr)]
+      (begin
+        (opt-global-frozen-refuse-vars
+          derived.map
+          derived.vars
+          uses
+          (opt-global-frozen-writer-allowed-use instr)
+          bad)
+        (opt-global-frozen-writer-copy-ok functions derived call-dsts instr bad)
+        (opt-global-frozen-writer-uses-seq-from
+          functions
+          derived
+          call-dsts
+          instrs
+          (+ index 1)
+          bad)))))
+
+(define (opt-global-frozen-writer-uses-blocks
+  [functions : ir.CompilerIrFunctionList]
+  [derived : OptGlobalFrozenLevels]
+  [call-dsts : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-global-frozen-writer-uses-seq-from
+              functions
+              derived
+              call-dsts
+              instrs
+              0
+              bad)])
+        (opt-global-frozen-writer-uses-blocks
+          functions
+          derived
+          call-dsts
+          (__tl-box-place rest)
+          bad))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-writer-uses-blocks
+        functions
+        derived
+        call-dsts
+        (ir.compiler-ir-block-seq-to-list seq)
+        bad)]))
+
+;; Every write var must be a `tl_alloc` result; anything else is not provably a
+;; fresh object.
+(define (opt-global-frozen-writes-are-allocs
+  [writes : opt_i64_i64_map.Map]
+  [vars : OptI64List]
+  [allocs : opt_i64_i64_map.Map]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match vars
+    [(OptI64List.Nil) unit]
+    [(OptI64List.Cons var rest)
+      (begin
+        (if (opt_i64_i64_map.contains? (& allocs) var)
+          unit
+          (opt-global-frozen-refuse
+            bad
+            (opt-global-frozen-var-level writes var)))
+        (opt-global-frozen-writes-are-allocs
+          writes
+          (__tl-box-place rest)
+          allocs
+          bad))]))
+
+(define (opt-global-frozen-writer-check-function
+  [functions : ir.CompilerIrFunctionList]
+  [cand : opt_i64_i64_map.Map]
+  [owner : i64]
+  [func : ir.CompilerIrFunction]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (let
+        [scan : OptGlobalFrozenWriterScan
+          (opt-global-frozen-writer-scan-blocks
+            cand
+            owner
+            (opt-global-frozen-writer-scan-new)
+            bad
+            blocks)]
+        (match scan.writes.vars
+          [(OptI64List.Nil) unit]
+          [_
+            (begin
+              (opt-global-frozen-writes-are-allocs
+                scan.writes.map
+                scan.writes.vars
+                scan.allocs
+                bad)
+              (opt-global-frozen-writer-uses-blocks
+                functions
+                (opt-global-frozen-derived-blocks
+                  (opt-global-frozen-derived-blocks scan.writes blocks)
+                  blocks)
+                scan.call-dsts
+                blocks
+                bad))]))]))
+
+;; --- P20: the initializer's call closure -------------------------------------
+;;
+;; "Inert" is what obligation (3) asks of whatever built the value a fresh box
+;; is copied from: a closure that mentions no global at all cannot have read
+;; another global's box; one that performs no `Store` cannot have published a
+;; pointer into a cell; one that makes no indirect call cannot reach code this
+;; walk has not seen. An EXTERN callee has no IR body, so it can neither name a
+;; global nor call back into the program; the allocator it usually is returns
+;; fresh storage by definition.
+(defstruct OptGlobalFrozenInert
+  (ok? bool)
+  (budget i64))
+
+(define (opt-global-frozen-inert-budget) : i64
+  256)
+
+(define (opt-global-frozen-find-function
+  [functions : ir.CompilerIrFunctionList]
+  [name : i64]) : OptMaybeFunction
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) (OptMaybeFunction.No)]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function func-name _ _ _ _)
+          (if (=
+            (ir.compiler-ir-symbol-id func-name)
+            (ir.compiler-ir-symbol-id name))
+            (OptMaybeFunction.Some func)
+            (opt-global-frozen-find-function (__tl-box-place rest) name))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-global-frozen-find-function
+        (ir.compiler-ir-function-seq-to-list seq)
+        name)]))
+
+;; Instruction forms that transfer control somewhere this walk cannot resolve.
+(define (opt-global-frozen-opaque-call? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult _) true]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
+    [(ir.CompilerIrInstr.SpmdCall _) true]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) true]
+    [(ir.CompilerIrInstr.Syscall _ _) true]
+    [_ false]))
+
+(define (opt-global-frozen-inert-instr
+  [functions : ir.CompilerIrFunctionList]
+  [visited : (&mut visited opt_i64_i64_map.Map)]
+  [state : OptGlobalFrozenInert]
+  [instr : ir.CompilerIrInstr]) : OptGlobalFrozenInert
+  (if (not state.ok?)
+    state
+    (if (opt-global-frozen-opaque-call? instr)
+      (OptGlobalFrozenInert false state.budget)
+      (match instr
+        [(ir.CompilerIrInstr.Store _ _ _)
+          (OptGlobalFrozenInert false state.budget)]
+        [(ir.CompilerIrInstr.Call _ name _ _)
+          (opt-global-frozen-inert-function functions visited state name)]
+        [(ir.CompilerIrInstr.TailCall name _ _)
+          (opt-global-frozen-inert-function functions visited state name)]
+        [_ state]))))
+
+(define (opt-global-frozen-inert-seq-from
+  [functions : ir.CompilerIrFunctionList]
+  [visited : (&mut visited opt_i64_i64_map.Map)]
+  [state : OptGlobalFrozenInert]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptGlobalFrozenInert
+  (if (or (not state.ok?) (>= index (ir.compiler-ir-instr-seq-count instrs)))
+    state
+    (opt-global-frozen-inert-seq-from
+      functions
+      visited
+      (opt-global-frozen-inert-instr
+        functions
+        visited
+        state
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-global-frozen-inert-blocks
+  [functions : ir.CompilerIrFunctionList]
+  [visited : (&mut visited opt_i64_i64_map.Map)]
+  [state : OptGlobalFrozenInert]
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalFrozenInert
+  (if (not state.ok?)
+    state
+    (match blocks
+      [(ir.CompilerIrBlockList.Nil) state]
+      [(ir.CompilerIrBlockList.Cons block rest)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-global-frozen-inert-blocks
+              functions
+              visited
+              (opt-global-frozen-inert-seq-from
+                functions
+                visited
+                state
+                instrs
+                0)
+              (__tl-box-place rest))])]
+      [(ir.CompilerIrBlockList.Array seq)
+        (opt-global-frozen-inert-blocks
+          functions
+          visited
+          state
+          (ir.compiler-ir-block-seq-to-list seq))])))
+
+(define (opt-global-frozen-inert-function
+  [functions : ir.CompilerIrFunctionList]
+  [visited : (&mut visited opt_i64_i64_map.Map)]
+  [state : OptGlobalFrozenInert]
+  [name : i64]) : OptGlobalFrozenInert
+  (cond
+    [(not state.ok?) state]
+    [(opt_i64_i64_map.contains? (& visited) (ir.compiler-ir-symbol-id name))
+      state]
+    [(<= state.budget 0) (OptGlobalFrozenInert false 0)]
+    [else
+      (begin
+        (opt_i64_i64_map.insert-ref! visited (ir.compiler-ir-symbol-id name) 1)
+        (match (opt-global-frozen-find-function functions name)
+          ;; Not in the program's function list: an extern. No IR body, so it
+          ;; names no global, performs no `Store`, and calls nothing back.
+          [(OptMaybeFunction.No) state]
+          [(OptMaybeFunction.Some func)
+            (match func
+              [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+                (let
+                  [refs : OptGlobalCellScan
+                    (opt-global-cell-scan-blocks
+                      (opt-global-cell-scan-new)
+                      blocks
+                      false)]
+                  [addrs : opt_i64_i64_map.Map
+                    (opt-const-globals-disq-blocks
+                      (opt_i64_i64_map.with-capacity 4)
+                      blocks)]
+                  (if (or
+                    (> (opt_i64_i64_map.len (& refs.refs)) 0)
+                    (> (opt_i64_i64_map.len (& addrs)) 0))
+                    (OptGlobalFrozenInert false state.budget)
+                    (opt-global-frozen-inert-blocks
+                      functions
+                      visited
+                      (OptGlobalFrozenInert true (- state.budget 1))
+                      blocks)))])]))]))
+
+(define (opt-global-frozen-inert-closure?
+  [functions : ir.CompilerIrFunctionList]
+  [name : i64]) : bool
+  (let
+    [visited : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 16)]
+    [state : OptGlobalFrozenInert
+      (opt-global-frozen-inert-function
+        functions
+        (&mut visited)
+        (OptGlobalFrozenInert true (opt-global-frozen-inert-budget))
+        name)]
+    state.ok?))
+
+;; --- P20: candidate selection and the finished set ---------------------------
+(defstruct OptGlobalFrozenCandidates
+  ;; global symbol id -> 1 + the symbol id of its `RuntimeGlobal` initializer.
+  (map opt_i64_i64_map.Map)
+  (names OptI64List)
+  ;; initializer symbol id -> 1 + the global it initializes. A collision means
+  ;; two globals share an initializer, which this pass does not model.
+  (inits opt_i64_i64_map.Map))
+
+(define (opt-global-frozen-candidates-fill
+  [globals : ir.CompilerIrGlobalSeq]
+  [disq : opt_i64_i64_map.Map]
+  [cand : OptGlobalFrozenCandidates (:consume)]
+  [index : i64]) : OptGlobalFrozenCandidates
+  (if (>= index globals.len)
+    cand
+    (match (ir.compiler-ir-global-seq-ref globals index)
+      [(ir.CompilerIrGlobal.Global name _ value)
+        (match value
+          [(ir.CompilerIrValue.RuntimeGlobal init)
+            (let
+              [id : i64 (ir.compiler-ir-symbol-id name)]
+              [init-id : i64 (ir.compiler-ir-symbol-id init)]
+              (if (opt_i64_i64_map.contains? (& disq) id)
+                (opt-global-frozen-candidates-fill
+                  globals
+                  disq
+                  cand
+                  (+ index 1))
+                (match cand
+                  [(OptGlobalFrozenCandidates map names inits)
+                    (if (opt_i64_i64_map.contains? (& inits) init-id)
+                      (opt-global-frozen-candidates-fill
+                        globals
+                        disq
+                        (OptGlobalFrozenCandidates map names inits)
+                        (+ index 1))
+                      (begin
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut map)
+                          id
+                          (+ init-id 1))
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut inits)
+                          init-id
+                          (+ id 1))
+                        (opt-global-frozen-candidates-fill
+                          globals
+                          disq
+                          (OptGlobalFrozenCandidates
+                            map
+                            (OptI64List.Cons id (box names))
+                            inits)
+                          (+ index 1))))])))]
+          [_ (opt-global-frozen-candidates-fill globals disq cand (+ index 1))])])))
+
+;; One walk over the program: every function's cell writes, plus the
+;; initializer return of the function that is some candidate's initializer.
+(define (opt-global-frozen-writer-scan-functions
+  [functions : ir.CompilerIrFunctionList]
+  [all : ir.CompilerIrFunctionList]
+  [cand : OptGlobalFrozenCandidates]
+  [seen : (&mut seen opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) unit]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (begin
+        (match func
+          [(ir.CompilerIrFunction.Function name _ _ _ _)
+            (let
+              [owner : i64
+                (match (opt_i64_i64_map.get
+                  (& cand.inits)
+                  (ir.compiler-ir-symbol-id name))
+                  [(opt_i64_i64_map.LookupFound encoded) (- encoded 1)]
+                  [(opt_i64_i64_map.LookupMissing) -1])]
+              (begin
+                (if (< owner 0)
+                  unit
+                  (opt_i64_i64_map.insert-ref! seen owner 1))
+                (opt-global-frozen-writer-check-function
+                  all
+                  cand.map
+                  owner
+                  func
+                  bad)))])
+        (opt-global-frozen-writer-scan-functions
+          (__tl-box-place rest)
+          all
+          cand
+          seen
+          bad))]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-global-frozen-writer-scan-functions
+        (ir.compiler-ir-function-seq-to-list seq)
+        all
+        cand
+        seen
+        bad)]))
+
+(define (opt-global-frozen-admit
+  [cand : OptGlobalFrozenCandidates]
+  [bad : opt_i64_i64_map.Map]
+  [seen : opt_i64_i64_map.Map]
+  [names : OptI64List]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match names
+    [(OptI64List.Nil) out]
+    [(OptI64List.Cons id rest)
+      (let
+        [next : opt_i64_i64_map.Map out]
+        (begin
+          ;; `seen` is what makes a missing initializer a refusal rather than a
+          ;; silent pass: the backend's startup store is the one cell write the
+          ;; IR does not carry, so an initializer this walk never saw is a
+          ;; writer it never checked.
+          (if (and
+            (not (opt_i64_i64_map.contains? (& bad) id))
+            (opt_i64_i64_map.contains? (& seen) id))
+            (opt_i64_i64_map.insert-ref! (&mut next) id 1)
+            unit)
+          (opt-global-frozen-admit cand bad seen (__tl-box-place rest) next)))]))
+
+;; Build the frozen set, or decline. `disq` is the program's `GlobalAddr` set
+;; unioned with its `Store` targets, both already computed for the global cell
+;; summary; only the `GlobalAddr` part is a refusal here, so the set is
+;; intersected back with the store targets that pass the writer check. The
+;; function-count gate is the same one every other whole-program summary
+;; applies, so a big program pays nothing for a set its LICM would not consult.
+(define (opt-global-frozen-build
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : ir.CompilerIrFunctionList]
+  [addr-taken : opt_i64_i64_map.Map]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (if (>
+    (opt-function-list-count functions)
+    (opt-loop-bce-summary-function-limit))
+    (opt_i64_i64_map.with-capacity 1)
+    (let
+      [cand : OptGlobalFrozenCandidates
+        (opt-global-frozen-candidates-fill
+          globals
+          addr-taken
+          (OptGlobalFrozenCandidates
+            (opt_i64_i64_map.with-capacity capacity)
+            (OptI64List.Nil)
+            (opt_i64_i64_map.with-capacity capacity))
+          0)]
+      (if (= (opt_i64_i64_map.len (& cand.map)) 0)
+        (opt_i64_i64_map.with-capacity 1)
+        (let
+          [bad : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+          [seen : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+          [param-levels : opt_i64_i64_map.Map
+            (opt_i64_i64_map.with-capacity capacity)]
+          [fixed? : bool
+            (opt-global-frozen-fixpoint
+              type-segment-bases
+              cand.map
+              (opt-call-memory-function-set
+                functions
+                (opt_i64_i64_map.with-capacity capacity))
+              functions
+              (&mut param-levels)
+              (&mut bad)
+              (opt-global-frozen-round-cap))]
+          [_writers : unit
+            (opt-global-frozen-writer-scan-functions
+              functions
+              functions
+              cand
+              (&mut seen)
+              (&mut bad))]
+          (if (not fixed?)
+            (opt_i64_i64_map.with-capacity 1)
+            (opt-global-frozen-admit
+              cand
+              bad
+              seen
+              cand.names
+              (opt_i64_i64_map.with-capacity capacity))))))))
+
 (define (opt-global-cell-summary-build
+  [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]) : OptGlobalCellSummary
   (let
@@ -95200,6 +97178,12 @@
             globals
             functions
             scan.stores
+            addr-taken
+            capacity)
+          (opt-global-frozen-build
+            type-segment-bases
+            globals
+            functions
             addr-taken
             capacity))))))
 

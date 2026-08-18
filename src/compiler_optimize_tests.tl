@@ -57089,6 +57089,7 @@
   (compiler_optimize.opt-loop-bce-summaries-set-global-cell
     (compiler_optimize.opt-loop-bce-empty-summaries)
     (compiler_optimize.opt-global-cell-summary-build
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (opt-gc-test-globals symbols)
       functions)))
 
@@ -59177,6 +59178,7 @@
 
 (define (opt-lp-test-cells [symbols : OptLpTestSymbols]) : compiler_optimize.OptGlobalCellSummary
   (compiler_optimize.opt-global-cell-summary-build
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (opt-lp-test-globals symbols)
     (opt-lp-test-program-functions symbols)))
 
@@ -59929,6 +59931,7 @@
         addr-blocks
         (opt-lp-test-clean-map symbols global-bit)
         (compiler_optimize.opt-global-cell-summary-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (opt-lp-test-globals symbols)
           (opt-gc-test-functions1 (opt-licm-test-function addr-blocks))))]
     ;; (d) a MEMORY-clean callee is admitted to the promotion too, under the
@@ -59985,6 +59988,7 @@
       [(compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
           (opt-lp-test-clean-map symbols global-bit)
           (compiler_optimize.opt-global-cell-summary-build
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (opt-lp-test-globals symbols)
             (opt-gc-test-functions1 (opt-licm-test-function addr-blocks)))
           symbols.callee)
@@ -60005,6 +60009,7 @@
       [(compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
           (opt-lp-test-clean-map symbols (bit-or memory-bit global-bit))
           (compiler_optimize.opt-global-cell-summary-build
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (opt-lp-test-globals symbols)
             (opt-gc-test-functions1 (opt-licm-test-function addr-blocks)))
           symbols.callee)
@@ -60196,11 +60201,13 @@
 
 (define (opt-mr-test-cells [symbols : OptMrTestSymbols]) : compiler_optimize.OptGlobalCellSummary
   (compiler_optimize.opt-global-cell-summary-build
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (opt-mr-test-globals symbols)
     (opt-mr-test-functions symbols)))
 
 (define (opt-mr-addr-cells [symbols : OptMrTestSymbols]) : compiler_optimize.OptGlobalCellSummary
   (compiler_optimize.opt-global-cell-summary-build
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (opt-mr-test-globals symbols)
     (opt-mr-addr-functions symbols)))
 
@@ -60448,6 +60455,620 @@
       ;; and the older loop-wide refusal stands for both cells
       [(not (= (opt-lp-loop-body-cell-operands via-a-addr-taken) 2)) 34]
       [(not (= (opt-lp-preheader-cell-loads via-a-addr-taken) 0)) 35]
+      [else 42])))
+
+;; --- P20: frozen memory-class globals ----------------------------------------
+;;
+;; The class's own question ("is every word of this global's box, and of the
+;; descriptor a box word names, immutable for as long as its cell is not
+;; written?") and the decision it moves: the `gep @g, 0` / `load` / `gep, 1` /
+;; `load` chain leaves a loop whose body calls a callee of entirely unknown
+;; effects, which every gate before P20 refused. Each negative here is one
+;; clause of the proof (opt-global-frozen-build's header) with that clause
+;; broken.
+(defstruct OptFzTestSymbols
+  ;; admitted: cell written only by a checked initializer, chain only read, and
+  ;; handed to a callee that only reads through it
+  (box i64)
+  ;; two more admitted globals, so the pressure gate has a chain count to price
+  (box2 i64)
+  (box3 i64)
+  ;; admitted although its cell IS `set!`: the store puts a fresh box built by
+  ;; an inert helper in it, which is the shape the store-copy lowering emits
+  (setg i64)
+  ;; refused: a cell store whose value is not a fresh allocation
+  (setbad i64)
+  ;; refused: a box word is stored through
+  (written i64)
+  ;; refused: its box pointer is handed to an EXTERN, out of this walk's reach
+  (passed-extern i64)
+  ;; refused: handed to a program callee that stores through the parameter
+  (passed-written i64)
+  ;; refused: the box is filled from a builder whose closure reads a global, so
+  ;; what it put inside may be an object that global also names
+  (dirty i64)
+  ;; an ordinary constant global: the cell holds no box at all
+  (scalar i64)
+  ;; a scalar cell the loop's opaque callee writes, so the loop is one the
+  ;; loop-wide gate refuses and the per-global one admits
+  (counter i64)
+  (init-box i64)
+  (init-box2 i64)
+  (init-box3 i64)
+  (init-setg i64)
+  (init-setbad i64)
+  (init-written i64)
+  (init-passed-extern i64)
+  (init-passed-written i64)
+  (init-dirty i64)
+  (builder i64)
+  (dirty-builder i64)
+  (reader i64)
+  (writer i64)
+  (param-writer i64)
+  (pass-extern i64)
+  (pass-written i64)
+  (pass-box i64)
+  (setter i64)
+  (setter-bad i64)
+  (sink i64)
+  (opaque i64)
+  (extern i64))
+
+(define (opt-fz-test-symbols) : OptFzTestSymbols
+  (OptFzTestSymbols
+    (opt-test-symbol "fz_box")
+    (opt-test-symbol "fz_box2")
+    (opt-test-symbol "fz_box3")
+    (opt-test-symbol "fz_set")
+    (opt-test-symbol "fz_set_bad")
+    (opt-test-symbol "fz_written")
+    (opt-test-symbol "fz_passed_extern")
+    (opt-test-symbol "fz_passed_written")
+    (opt-test-symbol "fz_dirty")
+    (opt-test-symbol "fz_scalar")
+    (opt-test-symbol "fz_counter")
+    (opt-test-symbol "fz_init_box")
+    (opt-test-symbol "fz_init_box2")
+    (opt-test-symbol "fz_init_box3")
+    (opt-test-symbol "fz_init_set")
+    (opt-test-symbol "fz_init_set_bad")
+    (opt-test-symbol "fz_init_written")
+    (opt-test-symbol "fz_init_passed_extern")
+    (opt-test-symbol "fz_init_passed_written")
+    (opt-test-symbol "fz_init_dirty")
+    (opt-test-symbol "fz_builder")
+    (opt-test-symbol "fz_dirty_builder")
+    (opt-test-symbol "fz_reader")
+    (opt-test-symbol "fz_writer")
+    (opt-test-symbol "fz_param_writer")
+    (opt-test-symbol "fz_pass_extern")
+    (opt-test-symbol "fz_pass_written")
+    (opt-test-symbol "fz_pass_box")
+    (opt-test-symbol "fz_setter")
+    (opt-test-symbol "fz_setter_bad")
+    (opt-test-symbol "fz_sink")
+    (opt-test-symbol "fz_opaque")
+    (opt-test-symbol "fz_extern")))
+
+(define (opt-fz-runtime-global
+  [builder : (&mut builder compiler_ir_types.CompilerIrGlobalBuilder)]
+  [name : i64]
+  [init : i64]) : unit
+  (opt-test-global-builder-push!
+    builder
+    name
+    (compiler_ast_types.AstType.I64)
+    (compiler_ir_types.CompilerIrValue.RuntimeGlobal init)))
+
+(define (opt-fz-const-global
+  [builder : (&mut builder compiler_ir_types.CompilerIrGlobalBuilder)]
+  [name : i64]
+  [value : i64]) : unit
+  (opt-test-global-builder-push!
+    builder
+    name
+    (compiler_ast_types.AstType.I64)
+    (compiler_ir_types.CompilerIrValue.I64 value)))
+
+(define (opt-fz-test-globals [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 16)]
+    (begin
+      (opt-fz-runtime-global (&mut builder) symbols.box symbols.init-box)
+      (opt-fz-runtime-global (&mut builder) symbols.box2 symbols.init-box2)
+      (opt-fz-runtime-global (&mut builder) symbols.box3 symbols.init-box3)
+      (opt-fz-runtime-global (&mut builder) symbols.setg symbols.init-setg)
+      (opt-fz-runtime-global (&mut builder) symbols.setbad symbols.init-setbad)
+      (opt-fz-runtime-global
+        (&mut builder)
+        symbols.written
+        symbols.init-written)
+      (opt-fz-runtime-global
+        (&mut builder)
+        symbols.passed-extern
+        symbols.init-passed-extern)
+      (opt-fz-runtime-global
+        (&mut builder)
+        symbols.passed-written
+        symbols.init-passed-written)
+      (opt-fz-runtime-global (&mut builder) symbols.dirty symbols.init-dirty)
+      (opt-fz-const-global (&mut builder) symbols.scalar 7)
+      (opt-fz-const-global (&mut builder) symbols.counter 0)
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-fz-return-var [var : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var var)))
+    compiler_ir_types.CompilerIrInstrList.Nil))
+
+(define (opt-fz-alloc-instr [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    cbi.compiler-builtin-id-tl-alloc
+    (compiler_ir_types.CompilerIrCallArgs.One
+      (compiler_ir_types.CompilerIrValue.I64 16))
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-fz-call-instr [dst : i64] [callee : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    callee
+    compiler_ir_types.CompilerIrCallArgs.Nil
+    (compiler_ast_types.AstType.I64)))
+
+;; The store-copy shape every cell writer has to have: a value built by
+;; `builder`, a fresh `tl_alloc` box, and one `copy_bytes` into it. `%3` is the
+;; box; `tail` consumes it (a `Store` or a `Return`).
+(define (opt-fz-fresh-box-instrs
+  [builder : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-fz-call-instr 2 builder)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-fz-alloc-instr 3)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.CopyBytes
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          16)
+        tail))))
+
+(define (opt-fz-init-function [name : i64] [builder : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    name
+    (opt-fz-fresh-box-instrs builder (opt-fz-return-var 3))))
+
+;; `(set! g <fresh>)`: the same shape, with the cell store in place of the
+;; initializer's return.
+(define (opt-fz-setter-function [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.setter
+    (opt-fz-fresh-box-instrs
+      symbols.builder
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Store
+          symbols.setg
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64))
+        (opt-mr-return-zero)))))
+
+;; A cell store whose value is not an allocation at all.
+(define (opt-fz-setter-bad-function [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.setter-bad
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        1
+        (compiler_ir_types.CompilerIrValue.I64 3)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Store
+          symbols.setbad
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (opt-mr-return-zero)))))
+
+;; Inert: allocates its own storage, mentions no global, stores no cell, makes
+;; no indirect call.
+(define (opt-fz-builder-function [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.builder
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-fz-alloc-instr 1)
+      (opt-fz-return-var 1))))
+
+;; The same builder with one global READ in it: what it puts inside the box may
+;; be an object that global also names, so the descriptor level is refused.
+(define (opt-fz-dirty-builder-function [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.dirty-builder
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-fz-alloc-instr 1)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          2
+          (compiler_ir_types.CompilerIrValue.Global symbols.scalar)
+          (compiler_ast_types.AstType.I64))
+        (opt-fz-return-var 1)))))
+
+;; The four-instruction chain off `base`: box-word address, descriptor handle,
+;; descriptor length address, length. `first` is the first of four var ids.
+(define (opt-fz-chain-instrs
+  [base : compiler_ir_types.CompilerIrValue]
+  [first : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      first
+      base
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.U8))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        (+ first 1)
+        (compiler_ir_types.CompilerIrValue.Var first)
+        (compiler_ast_types.AstType.DynArray 0))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          (+ first 2)
+          (compiler_ir_types.CompilerIrValue.Var (+ first 1))
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            (+ first 3)
+            (compiler_ir_types.CompilerIrValue.Var (+ first 2))
+            (compiler_ast_types.AstType.I64))
+          tail)))))
+
+(define (opt-fz-one-param) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "v"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.CompilerIrParamList.Nil)))
+
+(define (opt-fz-one-param-function
+  [name : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-fz-one-param)
+    (compiler_ast_types.AstType.I64)
+    8
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        instrs)
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; `gep <param>, 0` / `load` / `gep, 1` / `load`: a callee that only READS
+;; through the box pointer it was handed. The parameter carries the caller's
+;; code, and every use of it here is an allowed one, so the hand-off refuses
+;; nothing.
+(define (opt-fz-reader-function [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-fz-one-param-function
+    symbols.reader
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      1
+      (opt-fz-return-var 4))))
+
+;; A box word STORED THROUGH: the one instruction the class forbids outright.
+(define (opt-fz-writer-function [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.writer
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        1
+        (compiler_ir_types.CompilerIrValue.Global symbols.written)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (opt-mr-return-zero)))))
+
+;; The same store, one call-graph edge away: the caller hands the box pointer
+;; over and the callee writes through it, which the parameter seeding has to
+;; carry.
+(define (opt-fz-param-writer-function [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-fz-one-param-function
+    symbols.param-writer
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (opt-mr-return-zero)))))
+
+(define (opt-fz-call-with-global [name : i64] [callee : i64] [global : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    name
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Call
+        1
+        callee
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Global global))
+        (compiler_ast_types.AstType.I64))
+      (opt-mr-return-zero))))
+
+;; Writes a scalar global CELL, so LICM sees an unknown callee that keeps no
+;; global clean: the loop-wide gate every arm before P20 asks refuses outright,
+;; while the per-global set names only `fz_counter`.
+(define (opt-fz-opaque-function [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.opaque
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Store
+        symbols.counter
+        (compiler_ir_types.CompilerIrValue.I64 5)
+        (compiler_ast_types.AstType.I64))
+      (opt-mr-return-zero))))
+
+(define (opt-fz-sink-function [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-fz-one-param-function symbols.sink (opt-mr-return-zero)))
+
+(define (opt-fz-test-functions [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-fz-init-function symbols.init-box symbols.builder)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-fz-init-function symbols.init-box2 symbols.builder)
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-fz-init-function symbols.init-box3 symbols.builder)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-fz-init-function symbols.init-setg symbols.builder)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-fz-init-function symbols.init-setbad symbols.builder)
+            (compiler_ir_types.compiler-ir-function-cons
+              (opt-fz-init-function symbols.init-written symbols.builder)
+              (compiler_ir_types.compiler-ir-function-cons
+                (opt-fz-init-function
+                  symbols.init-passed-extern
+                  symbols.builder)
+                (compiler_ir_types.compiler-ir-function-cons
+                  (opt-fz-init-function
+                    symbols.init-passed-written
+                    symbols.builder)
+                  (compiler_ir_types.compiler-ir-function-cons
+                    (opt-fz-init-function
+                      symbols.init-dirty
+                      symbols.dirty-builder)
+                    (opt-fz-test-helper-functions symbols)))))))))))
+
+(define (opt-fz-test-helper-functions [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-fz-builder-function symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-fz-dirty-builder-function symbols)
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-fz-reader-function symbols)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-fz-writer-function symbols)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-fz-param-writer-function symbols)
+            (compiler_ir_types.compiler-ir-function-cons
+              (opt-fz-call-with-global
+                symbols.pass-extern
+                symbols.extern
+                symbols.passed-extern)
+              (compiler_ir_types.compiler-ir-function-cons
+                (opt-fz-call-with-global
+                  symbols.pass-written
+                  symbols.param-writer
+                  symbols.passed-written)
+                (compiler_ir_types.compiler-ir-function-cons
+                  (opt-fz-call-with-global
+                    symbols.pass-box
+                    symbols.reader
+                    symbols.box)
+                  (compiler_ir_types.compiler-ir-function-cons
+                    (opt-fz-setter-function symbols)
+                    (compiler_ir_types.compiler-ir-function-cons
+                      (opt-fz-setter-bad-function symbols)
+                      (compiler_ir_types.compiler-ir-function-cons
+                        (opt-fz-sink-function symbols)
+                        (compiler_ir_types.compiler-ir-function-cons
+                          (opt-fz-opaque-function symbols)
+                          compiler_ir_types.CompilerIrFunctionList.Nil)))))))))))))
+
+(define (opt-fz-test-cells [symbols : OptFzTestSymbols]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-global-cell-summary-build
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-fz-test-globals symbols)
+    (opt-fz-test-functions symbols)))
+
+(define (opt-fz-frozen?
+  [cells : compiler_optimize.OptGlobalCellSummary]
+  [name : i64]) : bool
+  (opt_i64_i64_map.contains?
+    (& cells.frozen)
+    (compiler_ir_types.compiler-ir-symbol-id name)))
+
+;; One chain in a loop that calls `callee` every trip. Vars 6..9 are the chain,
+;; 10 the call, 11 the accumulator the loop returns.
+(define (opt-fz-loop-blocks [callee : i64] [global : i64]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global global)
+      6
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-fz-call-instr 10 callee)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            11
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (compiler_ast_types.AstType.I64))
+          (opt-licm-loop-finish-instrs))))
+    11))
+
+;; Three chains in one loop: nine preheader words against a live-in budget of
+;; six, so the pressure gate refuses every one of them
+;; (opt-licm-frozen-chain-hoist?).
+(define (opt-fz-wide-loop-blocks [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global symbols.box)
+      6
+      (opt-fz-chain-instrs
+        (compiler_ir_types.CompilerIrValue.Global symbols.box2)
+        12
+        (opt-fz-chain-instrs
+          (compiler_ir_types.CompilerIrValue.Global symbols.box3)
+          16
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-fz-call-instr 10 symbols.opaque)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                11
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ast_types.AstType.I64))
+              (opt-licm-loop-finish-instrs))))))
+    11))
+
+;; The POST-BCE run with the program's own cell summary and an EMPTY
+;; direct-call-clean map, so the loop's callee is one of entirely unknown
+;; effects: exactly the boundary P16's exception and P18's refinement both stop
+;; at.
+(define (opt-fz-licm-late
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [cells : compiler_optimize.OptGlobalCellSummary]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-test-function blocks)]
+    (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      (opt_i64_i64_map.with-capacity 1)
+      (opt_i64_i64_map.with-capacity 1)
+      cells
+      true
+      func)
+      [(compiler_optimize.OptFunctionCtxResult.Result next _)
+        (compiler_optimize.opt-function-blocks next)])))
+
+(define (opt-fz-block-loads
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
+          (+
+            (if (= block-label label)
+              (opt-count-load-instrs
+                (compiler_ir_types.compiler-ir-instr-seq-to-list instrs))
+              0)
+            (opt-fz-block-loads (__tl-box-place rest) label))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-fz-block-loads
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        label)]))
+
+(define (opt-fz-preheader-loads
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (opt-fz-block-loads blocks (compiler_ir_types.compiler-ir-label "entry")))
+
+(define (opt-fz-body-loads [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (opt-fz-block-loads blocks (compiler_ir_types.compiler-ir-label "loop")))
+
+(define (compiler-optimize-licm-frozen-global-self-test) : i64
+  (let
+    [symbols : OptFzTestSymbols (opt-fz-test-symbols)]
+    [cells : compiler_optimize.OptGlobalCellSummary (opt-fz-test-cells symbols)]
+    [hoisted : compiler_ir_types.CompilerIrBlockList
+      (opt-fz-licm-late (opt-fz-loop-blocks symbols.opaque symbols.box) cells)]
+    ;; a `set!`-able global still hoists, as long as the LOOP is not what
+    ;; replaces the box...
+    [set-hoisted : compiler_ir_types.CompilerIrBlockList
+      (opt-fz-licm-late (opt-fz-loop-blocks symbols.opaque symbols.setg) cells)]
+    ;; ...and refuses when the loop's callee does replace it, which is the
+    ;; per-global cell-write set doing the work
+    [set-written : compiler_ir_types.CompilerIrBlockList
+      (opt-fz-licm-late (opt-fz-loop-blocks symbols.setter symbols.setg) cells)]
+    [written : compiler_ir_types.CompilerIrBlockList
+      (opt-fz-licm-late
+        (opt-fz-loop-blocks symbols.opaque symbols.written)
+        cells)]
+    [passed : compiler_ir_types.CompilerIrBlockList
+      (opt-fz-licm-late
+        (opt-fz-loop-blocks symbols.opaque symbols.passed-written)
+        cells)]
+    [wide : compiler_ir_types.CompilerIrBlockList
+      (opt-fz-licm-late (opt-fz-wide-loop-blocks symbols) cells)]
+    ;; the same admitted loop with the frozen set withdrawn: the older gates
+    ;; decide it, and they refuse
+    [without : compiler_ir_types.CompilerIrBlockList
+      (opt-fz-licm-late
+        (opt-fz-loop-blocks symbols.opaque symbols.box)
+        (compiler_optimize.opt-global-cell-summary-empty))]
+    (cond
+      ;; --- the class itself ---
+      ;; checked initializer, chain only read, handed to a read-only callee
+      [(not (opt-fz-frozen? cells symbols.box)) 1]
+      [(not (opt-fz-frozen? cells symbols.box2)) 2]
+      [(not (opt-fz-frozen? cells symbols.box3)) 3]
+      ;; a `set!` of the cell is admitted when the stored box is fresh and
+      ;; filled from an inert builder -- the store-copy shape the lowering emits
+      [(not (opt-fz-frozen? cells symbols.setg)) 4]
+      ;; and refused when the stored value is not an allocation at all
+      [(opt-fz-frozen? cells symbols.setbad) 5]
+      ;; a store through a box word
+      [(opt-fz-frozen? cells symbols.written) 6]
+      ;; the box pointer handed to an extern this walk cannot follow
+      [(opt-fz-frozen? cells symbols.passed-extern) 7]
+      ;; handed to a program callee that stores through the parameter: the
+      ;; refusal has to travel the call-graph edge with the pointer
+      [(opt-fz-frozen? cells symbols.passed-written) 8]
+      ;; the box filled from a builder that reads a global, so what is inside
+      ;; it is not provably private
+      [(opt-fz-frozen? cells symbols.dirty) 9]
+      ;; a constant global is no memory-class box at all
+      [(opt-fz-frozen? cells symbols.scalar) 10]
+      [(opt-fz-frozen? cells symbols.counter) 11]
+      ;; --- the decision the class moves ---
+      ;; the whole chain leaves a loop that calls an unknown callee every trip
+      [(not (= (opt-fz-preheader-loads hoisted) 2)) 20]
+      [(not (= (opt-fz-body-loads hoisted) 0)) 21]
+      ;; the same for a `set!`-able global whose cell this loop does not write
+      [(not (= (opt-fz-preheader-loads set-hoisted) 2)) 22]
+      [(not (= (opt-fz-body-loads set-hoisted) 0)) 23]
+      ;; ...and nothing moves when the loop's callee replaces that very box
+      [(not (= (opt-fz-preheader-loads set-written) 0)) 24]
+      [(not (= (opt-fz-body-loads set-written) 2)) 25]
+      ;; nor when the class refused the global
+      [(not (= (opt-fz-preheader-loads written) 0)) 26]
+      [(not (= (opt-fz-body-loads written) 2)) 27]
+      [(not (= (opt-fz-preheader-loads passed) 0)) 28]
+      [(not (= (opt-fz-body-loads passed) 2)) 29]
+      ;; three admitted chains are nine preheader words against a budget of
+      ;; six, so the pressure gate refuses all three
+      [(not (= (opt-fz-preheader-loads wide) 0)) 30]
+      [(not (= (opt-fz-body-loads wide) 6)) 31]
+      ;; and with no frozen set at all the admitted loop keeps every load,
+      ;; which is what makes the win attributable to this class alone
+      [(not (= (opt-fz-preheader-loads without) 0)) 32]
+      [(not (= (opt-fz-body-loads without) 2)) 33]
       [else 42])))
 
 ;; --- element-storage write attribution --------------------------------------
@@ -60765,6 +61386,7 @@
           (compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
             (opt-cm-elem-clean-map lp-functions)
             (compiler_optimize.opt-global-cell-summary-build
+              (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
               (opt-lp-test-globals lp)
               (opt-gc-test-functions1
                 (opt-licm-test-function
@@ -60811,6 +61433,7 @@
       (compiler_optimize.opt-loop-bce-summaries-set-global-cell
         (compiler_optimize.opt-loop-bce-empty-summaries)
         (compiler_optimize.opt-global-cell-summary-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (opt-lp-test-globals symbols)
           call-functions))]
     [call-entry-hoisted : compiler_ir_types.CompilerIrBlockList
@@ -60821,6 +61444,7 @@
         (compiler_optimize.opt-licm-function-with-global-cells
           type-segment-bases
           (compiler_optimize.opt-global-cell-summary-build
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (opt-lp-test-globals symbols)
             call-functions)
           false
@@ -61203,6 +61827,13 @@
     (compiler-optimize-licm-global-mod-ref-self-test)
     42
     "the per-global mod-ref table names the cells a callee may write, carries them one call-graph edge, and lets a loop promote every OTHER cell across it; a pointer-writing and an extern callee refuse nothing, an indirect callee and a program-wide cell address refuse everything, an in-loop set! refuses only its own cell, and the packed row declines past its capacity"))
+
+(test
+  licm-frozen-global-box-chain
+  (test.assert-i64-eq
+    (compiler-optimize-licm-frozen-global-self-test)
+    42
+    "a memory-class global whose cell is written once by its startup initializer, whose box and descriptor words no instruction in the program writes, and whose box pointer only ever reaches read-only callees, carries its whole descriptor chain out of a loop that calls an unknown callee every trip; a set! cell, a stored box word, a box pointer handed to an extern or to a parameter-writing callee, an escaping initializer allocation, a global-reading initializer closure, and a loop over budget each refuse"))
 
 (test
   call-memory-element-write-attribution

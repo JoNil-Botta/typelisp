@@ -9814,7 +9814,8 @@
       (opt_i64_i64_map.with-capacity 8)
       argc
       (opt_i64_i64_map.with-capacity 8)
-      (compiler_optimize.opt-global-cell-summary-empty))))
+      (compiler_optimize.opt-global-cell-summary-empty)
+      (compiler_ir_types.compiler-ir-representation-index-empty))))
 
 (define (opt-loop-bce-test-entry-tail [init : i64]) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
@@ -26629,6 +26630,100 @@
           (opt-test-symbol "SsaBoundaryVarArgs")
           (compiler_ast_types.ast-lifetime-list-new))))))
 
+(define (opt-ssa-representation-index-for-functions
+  [functions : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrRepresentationIndex
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    (compiler_ir_types.compiler-ir-representation-index-build
+      bases
+      (compiler_ir_types.CompilerIrProgram.Program
+        (compiler_ir_types.compiler-ir-global-seq-empty)
+        functions
+        (compiler_ir_types.CompilerIrExternList.Nil)))))
+
+(define (opt-ssa-representation-index-for-function
+  [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrRepresentationIndex
+  (opt-ssa-representation-index-for-functions
+    (compiler_ir_types.compiler-ir-function-cons
+      func
+      (compiler_ir_types.CompilerIrFunctionList.Nil))))
+
+(define (opt-ssa-representation-group-evidence-function
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "ssa_representation_group_evidence")
+    (compiler_ir_types.CompilerIrParamList.Nil)
+    (compiler_ast_types.AstType.Unit)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Pack
+            0
+            (compiler_ir_types.compiler-ir-value-cons
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ir_types.compiler-ir-value-cons
+                (compiler_ir_types.CompilerIrValue.I64 2)
+                (compiler_ir_types.CompilerIrValueList.Nil)))
+            ty)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.No))
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-ssa-representation-aware-diamond-ok?
+  [ty : compiler_ast_types.AstType]
+  [representations : compiler_ir_types.CompilerIrRepresentationIndex]) : bool
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ssa-construct-function-with-representations
+        bases
+        representations
+        (opt-ssa-fixed-handle-diamond-function ty))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out)]
+    (and
+      (compiler_optimize.opt-verify-ok?
+        (compiler_optimize.opt-verify-function out))
+      (= (opt-count-phi-blocks blocks) 1)
+      (= (opt-count-mov-dst-blocks blocks 3) 0)
+      (opt-phi-types-match-blocks? bases blocks ty))))
+
+(define (opt-ssa-representation-aware-loop-ok?
+  [ty : compiler_ast_types.AstType]
+  [representations : compiler_ir_types.CompilerIrRepresentationIndex]) : bool
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ssa-construct-function-with-representations
+        bases
+        representations
+        (opt-ssa-fixed-handle-loop-function ty))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out)]
+    (and
+      (compiler_optimize.opt-verify-ok?
+        (compiler_optimize.opt-verify-function out))
+      (= (opt-count-phi-blocks blocks) 1)
+      (= (opt-count-mov-dst-blocks blocks 3) 0)
+      (opt-phi-types-match-blocks? bases blocks ty))))
+
+(define (opt-ssa-representation-aware-rejected?
+  [func : compiler_ir_types.CompilerIrFunction]
+  [representations : compiler_ir_types.CompilerIrRepresentationIndex]) : bool
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    (compiler_optimize.opt-function-eq
+      bases
+      func
+      (compiler_optimize.opt-ssa-construct-function-with-representations
+        bases
+        representations
+        func))))
+
 (define (compiler-optimize-ssa-fixed-handle-self-test) : i64
   (let
     [func-ty : compiler_ast_types.AstType
@@ -26641,6 +26736,36 @@
       (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64))]
     [box-ty : compiler_ast_types.AstType
       (compiler_ast_types.ast-ty-box (compiler_ast_types.AstType.I64))]
+    [nominal-ty : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Enum
+        (opt-test-symbol "SsaRepresentationOneWord"))]
+    [group-ty : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (opt-test-symbol "SsaRepresentationGroup"))]
+    [nominal-diamond : compiler_ir_types.CompilerIrFunction
+      (opt-ssa-fixed-handle-diamond-function nominal-ty)]
+    [known-one : compiler_ir_types.CompilerIrRepresentationIndex
+      (opt-ssa-representation-index-for-function nominal-diamond)]
+    [group-diamond : compiler_ir_types.CompilerIrFunction
+      (opt-ssa-fixed-handle-diamond-function group-ty)]
+    [group-index : compiler_ir_types.CompilerIrRepresentationIndex
+      (opt-ssa-representation-index-for-functions
+        (compiler_ir_types.compiler-ir-function-cons
+          group-diamond
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-ssa-representation-group-evidence-function group-ty)
+            (compiler_ir_types.CompilerIrFunctionList.Nil))))]
+    [missing-index : compiler_ir_types.CompilerIrRepresentationIndex
+      (compiler_ir_types.compiler-ir-representation-index-empty)]
+    [nominal-address-taken : compiler_ir_types.CompilerIrFunction
+      (opt-ssa-fixed-handle-address-taken-function nominal-ty)]
+    [nominal-address-index : compiler_ir_types.CompilerIrRepresentationIndex
+      (opt-ssa-representation-index-for-function nominal-address-taken)]
+    [nominal-unsupported : compiler_ir_types.CompilerIrFunction
+      (opt-ssa-fixed-handle-unsupported-dst-function nominal-ty)]
+    [nominal-unsupported-index : compiler_ir_types.CompilerIrRepresentationIndex
+      (opt-ssa-representation-index-for-function nominal-unsupported)]
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
     [address-taken : compiler_ir_types.CompilerIrFunction
       (opt-ssa-fixed-handle-address-taken-function box-ty)]
     [address-taken-out : compiler_ir_types.CompilerIrFunction
@@ -26679,6 +26804,52 @@
             unsupported-dst
             unsupported-dst-out))
         11]
+      [(not
+          (compiler_optimize.opt-ssa-register-value-type-with-representations?
+            bases
+            known-one
+            nominal-ty))
+        12]
+      [(compiler_optimize.opt-ssa-register-value-type-with-representations?
+          bases
+          group-index
+          group-ty)
+        13]
+      [(compiler_optimize.opt-ssa-register-value-type-with-representations?
+          bases
+          missing-index
+          nominal-ty)
+        14]
+      [(compiler_optimize.opt-ssa-register-value-type-with-representations?
+          bases
+          known-one
+          (compiler_ast_types.AstType.Var
+            (opt-test-symbol "SsaRepresentationVar")))
+        15]
+      [(compiler_optimize.opt-ssa-register-value-type-with-representations?
+          bases
+          known-one
+          (compiler_ast_types.ast-ty-var-args
+            (opt-test-symbol "SsaRepresentationVarArgs")
+            (compiler_ast_types.ast-lifetime-list-new)))
+        16]
+      [(not (opt-ssa-representation-aware-diamond-ok? nominal-ty known-one)) 17]
+      [(not (opt-ssa-representation-aware-loop-ok? nominal-ty known-one)) 18]
+      [(not (opt-ssa-representation-aware-rejected? group-diamond group-index))
+        19]
+      [(not
+          (opt-ssa-representation-aware-rejected? nominal-diamond missing-index))
+        20]
+      [(not
+          (opt-ssa-representation-aware-rejected?
+            nominal-address-taken
+            nominal-address-index))
+        21]
+      [(not
+          (opt-ssa-representation-aware-rejected?
+            nominal-unsupported
+            nominal-unsupported-index))
+        22]
       [else 42])))
 
 ;; The raw tail-recursion-to-loop shape targets the function ENTRY block and its
@@ -29359,10 +29530,14 @@
       (opt-licm-late-optimized-function (opt-licm-arithmetic-blocks))]
     [arith : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks arith-func)]
+    [arith-loops : compiler_optimize.OptNaturalLoopList
+      (compiler_optimize.opt-cfg-natural-loops (opt-licm-arithmetic-blocks))]
     [trap-func : compiler_ir_types.CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-trap-blocks))]
     [trap : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks trap-func)]
+    [trap-loops : compiler_optimize.OptNaturalLoopList
+      (compiler_optimize.opt-cfg-natural-loops (opt-licm-trap-blocks))]
     [call-func : compiler_ir_types.CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-call-blocks))]
     [call-blocks : compiler_ir_types.CompilerIrBlockList
@@ -29371,6 +29546,8 @@
       (opt-licm-optimized-function (opt-licm-no-preheader-blocks))]
     [no-preheader : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks no-preheader-func)]
+    [no-preheader-loops : compiler_optimize.OptNaturalLoopList
+      (compiler_optimize.opt-cfg-natural-loops (opt-licm-no-preheader-blocks))]
     [nested-func : compiler_ir_types.CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-nested-blocks))]
     [nested : compiler_ir_types.CompilerIrBlockList
@@ -29557,6 +29734,20 @@
           8)
         (opt_i64_i64_map.with-capacity 8))]
     (cond
+      ;; The cheap gate admits a real invariant seed, but rejects both a loop
+      ;; whose only arithmetic can trap and a loop without a unique preheader.
+      ;; Those rejected shapes cannot begin a legal hoist chain, so whole-
+      ;; function provenance would be pure overhead.
+      [(not
+          (compiler_optimize.opt-licm-loops-may-change? false true arith-loops))
+        218]
+      [(compiler_optimize.opt-licm-loops-may-change? false false trap-loops)
+        219]
+      [(compiler_optimize.opt-licm-loops-may-change?
+          false
+          false
+          no-preheader-loops)
+        220]
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function arith-func)))

@@ -11672,7 +11672,7 @@
       (opt_i64_i64_map.insert-ref! (&mut out) var next-count)
       out)))
 
-(define (opt-ssa-register-value-type? [ty : ast.AstType]) : bool
+(define (opt-ssa-fixed-register-value-type? [ty : ast.AstType]) : bool
   (match ty
     [(ast.AstType.I64) true]
     [(ast.AstType.I32) true]
@@ -11702,6 +11702,32 @@
     [(ast.AstType.Box _) true]
     [_ false]))
 
+;; SSA may rename a resolved nominal only when the job-owned pre-optimizer
+;; index positively proves its value is one register word. A missing key,
+;; unresolved Var/VarArgs, conflicting evidence, and every register group stay
+;; fail-closed. Group SSA needs word-by-word phi/copy modeling and is a separate
+;; representation packet; treating a group as one value here would silently
+;; drop words at joins.
+(define (opt-ssa-register-value-type-with-representations?
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [ty : ast.AstType]) : bool
+  (if (opt-ssa-fixed-register-value-type? ty)
+    true
+    (match (ir.compiler-ir-representation-index-kind
+      type-segment-bases
+      representations
+      ty)
+      [(ir.CompilerIrRepresentationKind.KnownOneWord) true]
+      [(ir.CompilerIrRepresentationKind.RegisterGroup _ _) false]
+      [(ir.CompilerIrRepresentationKind.Unknown) false])))
+
+;; Compatibility entry for standalone optimizer helpers and tests that do not
+;; own a whole-program representation capability. It intentionally preserves
+;; the historical fixed-handle boundary.
+(define (opt-ssa-register-value-type? [ty : ast.AstType]) : bool
+  (opt-ssa-fixed-register-value-type? ty))
+
 (define (opt-ssa-facts-bad-var [facts : OptSsaFacts (:consume)] [var : i64]) : OptSsaFacts
   (match facts
     [(OptSsaFacts.Facts counts bad types)
@@ -11717,6 +11743,7 @@
 
 (define (opt-ssa-facts-add-def-ty
   [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
   [facts : OptSsaFacts (:consume)]
   [var : i64]
   [ty : ast.AstType]) : OptSsaFacts
@@ -11724,7 +11751,11 @@
     [(OptSsaFacts.Facts counts bad types)
       (let
         [next-counts : opt_i64_i64_map.Map (opt-ssa-count-add counts var)]
-        (if (not (opt-ssa-register-value-type? ty))
+        (if (not
+          (opt-ssa-register-value-type-with-representations?
+            type-segment-bases
+            representations
+            ty))
           (OptSsaFacts.Facts next-counts (opt-used-add bad var) types)
           (match (opt-ssa-var-types-lookup types var)
             [(OptMaybeAstType.No)
@@ -11742,14 +11773,16 @@
 
 (define (opt-ssa-facts-add-param
   [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
   [facts : OptSsaFacts (:consume)]
   [param : ir.CompilerIrParam]) : OptSsaFacts
   (match param
     [(ir.CompilerIrParam.Param _ ty var)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts var ty)]))
+      (opt-ssa-facts-add-def-ty type-segment-bases representations facts var ty)]))
 
 (define (opt-ssa-facts-add-params
   [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
   [params : ir.CompilerIrParamList]
   [facts : OptSsaFacts (:consume)]) : OptSsaFacts
   (match (ir.compiler-ir-param-list-force-cons params)
@@ -11757,41 +11790,45 @@
     [(ir.CompilerIrParamList.Array seq)
       (opt-ssa-facts-add-params
         type-segment-bases
+        representations
         (ir.compiler-ir-param-seq-to-list seq)
         facts)]
     [(ir.CompilerIrParamList.Cons param rest)
       (opt-ssa-facts-add-params
         type-segment-bases
+        representations
         (__tl-box-place rest)
-        (opt-ssa-facts-add-param type-segment-bases facts param))]))
+        (opt-ssa-facts-add-param type-segment-bases representations facts param))]))
 
 (define (opt-ssa-facts-add-instr
   [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
   [facts : OptSsaFacts (:consume)]
   [instr : ir.CompilerIrInstr]) : OptSsaFacts
   (match instr
     [(ir.CompilerIrInstr.Mov dst _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
     [(ir.CompilerIrInstr.Load dst _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
     [(ir.CompilerIrInstr.Cast dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
     [(ir.CompilerIrInstr.Bitcast dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
     [(ir.CompilerIrInstr.BinOp dst op _ _ ty)
       (opt-ssa-facts-add-def-ty
         type-segment-bases
+        representations
         facts
         dst
         (ir.compiler-ir-binop-result-type op ty))]
     [(ir.CompilerIrInstr.UnOp dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
     [(ir.CompilerIrInstr.Call dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
     [(ir.CompilerIrInstr.CallIndirect dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
     [(ir.CompilerIrInstr.CallIndirectC dst _ _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
         [result (__tl-project-field (__tl-box-place payload-box) result)]
@@ -11800,15 +11837,25 @@
           [(ir.CompilerIrSpmdCallResult.Value dst class ty)
             (match class
               [(ir.CompilerIrSpmdValueClass.Uniform)
-                (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+                (opt-ssa-facts-add-def-ty
+                  type-segment-bases
+                  representations
+                  facts
+                  dst
+                  ty)]
               [(ir.CompilerIrSpmdValueClass.Varying)
                 (opt-ssa-facts-add-def-bad facts dst)]
               [(ir.CompilerIrSpmdValueClass.Mask)
                 (opt-ssa-facts-add-def-bad facts dst)])]))]
     [(ir.CompilerIrInstr.Phi dst _ ty)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases representations facts dst ty)]
     [(ir.CompilerIrInstr.EntryArgc dst)
-      (opt-ssa-facts-add-def-ty type-segment-bases facts dst (ast.AstType.I64))]
+      (opt-ssa-facts-add-def-ty
+        type-segment-bases
+        representations
+        facts
+        dst
+        (ast.AstType.I64))]
     [(ir.CompilerIrInstr.AddrOf dst src)
       (opt-ssa-facts-bad-var (opt-ssa-facts-add-def-bad facts dst) src)]
     [(ir.CompilerIrInstr.Alloc dst _) (opt-ssa-facts-add-def-bad facts dst)]
@@ -11863,6 +11910,7 @@
 
 (define (opt-ssa-facts-add-instr-seq-from
   [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [facts : OptSsaFacts (:consume)]) : OptSsaFacts
@@ -11870,15 +11918,18 @@
     facts
     (opt-ssa-facts-add-instr-seq-from
       type-segment-bases
+      representations
       instrs
       (+ index 1)
       (opt-ssa-facts-add-instr
         type-segment-bases
+        representations
         facts
         (ir.compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-ssa-facts-add-blocks
   [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
   [blocks : ir.CompilerIrBlockList]
   [facts : OptSsaFacts (:consume)]) : OptSsaFacts
   (match blocks
@@ -11888,28 +11939,48 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (opt-ssa-facts-add-blocks
             type-segment-bases
+            representations
             (__tl-box-place rest)
-            (opt-ssa-facts-add-instr-seq-from type-segment-bases instrs 0 facts))])]
+            (opt-ssa-facts-add-instr-seq-from
+              type-segment-bases
+              representations
+              instrs
+              0
+              facts))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-ssa-facts-add-blocks
         type-segment-bases
+        representations
         (ir.compiler-ir-block-seq-to-list seq)
         facts)]))
 
-(define (opt-ssa-facts-from-function
+(define (opt-ssa-facts-from-function-with-representations
   [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : OptSsaFacts
   (opt-ssa-facts-add-blocks
     type-segment-bases
+    representations
     blocks
     (opt-ssa-facts-add-params
       type-segment-bases
+      representations
       params
       (OptSsaFacts.Facts
         (opt_i64_i64_map.with-capacity 64)
         (opt_i64_i64_map.with-capacity 64)
         (opt-ssa-var-types-new)))))
+
+(define (opt-ssa-facts-from-function
+  [type-segment-bases : i64]
+  [params : ir.CompilerIrParamList]
+  [blocks : ir.CompilerIrBlockList]) : OptSsaFacts
+  (opt-ssa-facts-from-function-with-representations
+    type-segment-bases
+    (ir.compiler-ir-representation-index-empty)
+    params
+    blocks))
 
 (define (opt-ssa-candidate? [facts : OptSsaFacts] [var : i64]) : bool
   (match facts
@@ -13885,8 +13956,9 @@
           (ir.compiler-ir-label
             (str_cat.str-cat (ir.compiler-ir-label-text entry) "__ssa_entry")))))))
 
-(define (opt-ssa-construct-function
+(define (opt-ssa-construct-function-with-representations
   [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -13894,7 +13966,11 @@
         func
         (let
           [facts : OptSsaFacts
-            (opt-ssa-facts-from-function type-segment-bases params blocks)]
+            (opt-ssa-facts-from-function-with-representations
+              type-segment-bases
+              representations
+              params
+              blocks)]
           ;; Pre-existing lowerer phis are fine (their inputs are rewritten
           ;; per edge during materialization); only a phi DST that is itself
           ;; a rename candidate is out of scope.
@@ -13915,6 +13991,14 @@
                     blocks
                     facts
                     context)))))))]))
+
+(define (opt-ssa-construct-function
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (opt-ssa-construct-function-with-representations
+    type-segment-bases
+    (ir.compiler-ir-representation-index-empty)
+    func))
 
 (define (opt-ssa-construct-with-context
   [func : ir.CompilerIrFunction]
@@ -13981,8 +14065,9 @@
 ;; `entry-context` is consumed only when `entry-context-valid?` reports that it
 ;; was built for `func`'s current blocks; otherwise this builds its own, exactly
 ;; as before. The pre-SSA rotation pass hands its context down this way.
-(define (opt-ssa-construct-function-from-context-result
+(define (opt-ssa-construct-function-from-context-and-representations-result
   [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
   [func : ir.CompilerIrFunction]
   [entry-context : OptCfgContext]
   [entry-context-valid? : bool]) : OptFunctionCtxResult
@@ -13997,7 +14082,11 @@
           (OptFunctionCtxResult.Result func context)
           (let
             [facts : OptSsaFacts
-              (opt-ssa-facts-from-function type-segment-bases params blocks)]
+              (opt-ssa-facts-from-function-with-representations
+                type-segment-bases
+                representations
+                params
+                blocks)]
             (cond
               ;; Pre-existing lowerer phis are fine (their inputs are rewritten
               ;; per edge during materialization); only a phi DST that is
@@ -14018,6 +14107,18 @@
                   blocks
                   facts
                   context)]))))]))
+
+(define (opt-ssa-construct-function-from-context-result
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [entry-context : OptCfgContext]
+  [entry-context-valid? : bool]) : OptFunctionCtxResult
+  (opt-ssa-construct-function-from-context-and-representations-result
+    type-segment-bases
+    (ir.compiler-ir-representation-index-empty)
+    func
+    entry-context
+    entry-context-valid?))
 
 ;; --- conservative global value numbering / cross-block copies ---------------
 ;;
@@ -22025,6 +22126,124 @@
                 rest-blocks
                 (or loop-changed rest-changed))])])]))
 
+;; Provenance is the most expensive fixed cost in LICM: it walks the whole
+;; function twice and grows pointer/root maps before a loop has shown that it
+;; can move anything.  A real hoist chain must start with one instruction whose
+;; operands are already defined outside the loop (later candidates can depend
+;; on that first hoist), so this syntactic seed test has no false negatives.
+;; It is deliberately broader than opt-licm-candidate?: source stability,
+;; memory effects, global cleanliness, vector mode, and live-range policy stay
+;; with the full pass.  The cheap test only proves when that work cannot pay.
+(define (opt-licm-seed-value?
+  [loop-defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var) (not (opt-used-contains loop-defs var))]
+    [_ true]))
+
+(define (opt-licm-seed-values?
+  [loop-defs : opt_i64_i64_map.Map]
+  [a : ir.CompilerIrValue]
+  [b : ir.CompilerIrValue]) : bool
+  (and (opt-licm-seed-value? loop-defs a) (opt-licm-seed-value? loop-defs b)))
+
+(define (opt-licm-seed-instr?
+  [late? : bool]
+  [loop-defs : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (and late? (opt-licm-seed-value? loop-defs src))]
+    [(ir.CompilerIrInstr.Cast _ src _ _)
+      (and late? (opt-licm-seed-value? loop-defs src))]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _)
+      (and late? (opt-licm-seed-value? loop-defs src))]
+    [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+      (and
+        (not (opt-binop-traps? op))
+        (opt-licm-seed-values? loop-defs lhs rhs))]
+    [(ir.CompilerIrInstr.UnOp _ _ src _) (opt-licm-seed-value? loop-defs src)]
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (opt-licm-seed-values? loop-defs base offset)]
+    [(ir.CompilerIrInstr.Load _ src _) (opt-licm-seed-value? loop-defs src)]
+    [_ false]))
+
+(define (opt-licm-seed-instr-seq-from?
+  [late? : bool]
+  [loop-defs : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-licm-seed-instr?
+        late?
+        loop-defs
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      (opt-licm-seed-instr-seq-from? late? loop-defs instrs (+ index 1)))))
+
+(define (opt-licm-seed-blocks?
+  [late? : bool]
+  [loop-defs : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-licm-seed-instr-seq-from? late? loop-defs instrs 0)
+            (opt-licm-seed-blocks? late? loop-defs (__tl-box-place rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-licm-seed-blocks?
+        late?
+        loop-defs
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; Loop-scope global-cell promotion is LICM's other possible rewrite.  Preserve
+;; it even when no ordinary hoist can start: a Global operand may occur in any
+;; instruction, so reuse the total IR operand scan instead of duplicating a
+;; fragile partial match here.  This path runs only after the seed scan failed.
+(define (opt-licm-body-has-global-reference? [blocks : ir.CompilerIrBlockList]) : bool
+  (match (opt-global-cell-scan-blocks (opt-global-cell-scan-new) blocks false).ref-list
+    [(OptI64List.Nil) false]
+    [(OptI64List.Cons _ _) true]))
+
+(define (opt-licm-loop-may-change?
+  [global-promotion? : bool]
+  [late? : bool]
+  [loop : OptNaturalLoop]) : bool
+  (match (opt-natural-loop-preheader loop)
+    [(OptLoopPreheader.No) false]
+    [(OptLoopPreheader.Some _)
+      (let
+        [body-blocks : ir.CompilerIrBlockList
+          (opt-natural-loop-body-blocks loop)]
+        [loop-defs : opt_i64_i64_map.Map
+          (opt-licm-collect-defs-blocks
+            body-blocks
+            (opt_i64_i64_map.with-capacity
+              (opt-licm-body-map-capacity body-blocks)))]
+        (or
+          (opt-licm-seed-blocks? late? loop-defs body-blocks)
+          (and
+            global-promotion?
+            (opt-licm-body-has-global-reference? body-blocks))))]))
+
+(define (opt-licm-loops-may-change?
+  [global-promotion? : bool]
+  [late? : bool]
+  [loops : OptNaturalLoopList]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons loop rest)
+      (or
+        (opt-licm-loop-may-change? global-promotion? late? loop)
+        (opt-licm-loops-may-change?
+          global-promotion?
+          late?
+          (__tl-box-place rest)))]))
+
 (define (opt-licm-function-with-context-result-and-direct-call-clean
   [type-segment-bases : i64]
   [context : OptCfgContext]
@@ -22039,73 +22258,73 @@
       (match func
         [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
           (let
-            [sources : opt_i64_i64_map.Map
-              (opt-gvn-sources-blocks
-                blocks
-                (opt-gvn-sources-params
-                  params
-                  (opt_i64_i64_map.with-capacity 64)))]
-            [types : OptSsaVarTypes
-              (opt-licm-type-env-from-function params blocks)]
             [loops : OptNaturalLoopList
               (opt-cfg-natural-loops-with-context blocks context)]
-            (match loops
-              [(OptNaturalLoopList.Nil)
-                (OptFunctionCtxResult.Result func context)]
-              [_
-                (let
-                  [provenance : OptLicmStoreState
-                    (opt-licm-provenance-state-from-function
-                      type-segment-bases
+            (if (not
+              (opt-licm-loops-may-change?
+                (not (= global-cells.word-cell 0))
+                late?
+                loops))
+              (OptFunctionCtxResult.Result func context)
+              (let
+                [sources : opt_i64_i64_map.Map
+                  (opt-gvn-sources-blocks
+                    blocks
+                    (opt-gvn-sources-params
                       params
-                      types
-                      blocks)]
-                  ;; Loop-scope global promotion mints fresh vars, so the pass
-                  ;; carries the frame counter in a cell and writes the final
-                  ;; value back into the rewritten function.
-                  [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-                  [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
-                  (match (opt-licm-apply-loops
+                      (opt_i64_i64_map.with-capacity 64)))]
+                [types : OptSsaVarTypes
+                  (opt-licm-type-env-from-function params blocks)]
+                [provenance : OptLicmStoreState
+                  (opt-licm-provenance-state-from-function
                     type-segment-bases
-                    sources
+                    params
                     types
-                    provenance
-                    direct-call-clean
-                    global-cells
-                    frame-cell
-                    late?
-                    loops
-                    blocks)
-                    [(OptBlockListPassResult.Result
-                        hoisted-blocks
-                        licm-changed?)
-                      (if (not licm-changed?)
-                        ;; Nothing hoisted: the input context still describes the
-                        ;; unchanged CFG, so skip the context rebuild and the
-                        ;; post-pass verify entirely.
-                        (OptFunctionCtxResult.Result func context)
-                        (let
-                          [hoisted : ir.CompilerIrFunction
-                            (ir.CompilerIrFunction.Function
-                              name
-                              params
-                              ret-ty
-                              (array-ref frame-cell 0)
-                              hoisted-blocks)]
-                          ;; LICM may hoist into a synthesized preheader edge, so build
-                          ;; one fresh context for the rewritten CFG, reuse it for the
-                          ;; post-pass verify, and hand it back for the next pass.
-                          [hoisted-context : OptCfgContext
-                            (opt-cfg-context-build hoisted-blocks)]
-                          (match (opt-verify-function-with-context
-                            hoisted
-                            hoisted-context)
-                            [(ResultCompilerOptimizeVerify.Ok)
-                              (OptFunctionCtxResult.Result
-                                hoisted
-                                hoisted-context)]
-                            [(ResultCompilerOptimizeVerify.Err _)
-                              (OptFunctionCtxResult.Result func context)])))]))]))])]
+                    blocks)]
+                ;; Loop-scope global promotion mints fresh vars, so the pass
+                ;; carries the frame counter in a cell and writes the final
+                ;; value back into the rewritten function.
+                [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+                [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
+                (match (opt-licm-apply-loops
+                  type-segment-bases
+                  sources
+                  types
+                  provenance
+                  direct-call-clean
+                  global-cells
+                  frame-cell
+                  late?
+                  loops
+                  blocks)
+                  [(OptBlockListPassResult.Result hoisted-blocks licm-changed?)
+                    (if (not licm-changed?)
+                      ;; Nothing hoisted: the input context still describes the
+                      ;; unchanged CFG, so skip the context rebuild and the
+                      ;; post-pass verify entirely.
+                      (OptFunctionCtxResult.Result func context)
+                      (let
+                        [hoisted : ir.CompilerIrFunction
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            (array-ref frame-cell 0)
+                            hoisted-blocks)]
+                        ;; LICM may hoist into a synthesized preheader edge, so build
+                        ;; one fresh context for the rewritten CFG, reuse it for the
+                        ;; post-pass verify, and hand it back for the next pass.
+                        [hoisted-context : OptCfgContext
+                          (opt-cfg-context-build hoisted-blocks)]
+                        (match (opt-verify-function-with-context
+                          hoisted
+                          hoisted-context)
+                          [(ResultCompilerOptimizeVerify.Ok)
+                            (OptFunctionCtxResult.Result
+                              hoisted
+                              hoisted-context)]
+                          [(ResultCompilerOptimizeVerify.Err _)
+                            (OptFunctionCtxResult.Result func context)])))]))))])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -41687,6 +41906,7 @@
 
 (define (opt-divrem-safety-blocks-with-context
   [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
   [context : OptCfgContext]
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
@@ -41698,7 +41918,11 @@
       [index : OptCfgIndex context.index]
       [count : i64 (opt-cfg-index-block-count index)]
       [ssa-facts : OptSsaFacts
-        (opt-ssa-facts-from-function type-segment-bases params blocks)]
+        (opt-ssa-facts-from-function-with-representations
+          type-segment-bases
+          representations
+          params
+          blocks)]
       [types : OptSsaVarTypes
         (match ssa-facts
           [(OptSsaFacts.Facts _ _ fact-types) fact-types])]
@@ -41724,6 +41948,7 @@
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (opt-divrem-safety-blocks-with-context
     type-segment-bases
+    (ir.compiler-ir-representation-index-empty)
     (opt-cfg-context-build blocks)
     params
     blocks))
@@ -41889,7 +42114,10 @@
   (const-divisors opt_i64_i64_map.Map)
   ;; Whole-program global-cell invariance facts (see OptGlobalCellSummary);
   ;; consumed by the global_cell pass in the level-2 fixpoint pipeline.
-  (global-cell OptGlobalCellSummary))
+  (global-cell OptGlobalCellSummary)
+  ;; Job-owned type representation evidence. The optimizer uses only positive
+  ;; KnownOneWord facts; absent/conflicting/group entries remain fail-closed.
+  (representations ir.CompilerIrRepresentationIndex))
 
 (defstruct OptLoopBceState
   (exprs OptLoopBceExprEnv)
@@ -41936,7 +42164,8 @@
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
-    (opt-global-cell-summary-empty)))
+    (opt-global-cell-summary-empty)
+    (ir.compiler-ir-representation-index-empty)))
 
 (define (opt-loop-bce-summary-length-clean?
   [summaries : OptLoopBceSummaries]
@@ -44687,7 +44916,11 @@
           blocks
           (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 64)))]
       [ssa-facts : OptSsaFacts
-        (opt-ssa-facts-from-function type-segment-bases params blocks)]
+        (opt-ssa-facts-from-function-with-representations
+          type-segment-bases
+          summaries.representations
+          params
+          blocks)]
       [types : OptSsaVarTypes
         (match ssa-facts
           [(OptSsaFacts.Facts _ _ fact-types) fact-types])]
@@ -75916,8 +76149,9 @@
                       ;; original function, so the optimization path remains safe.
                       [_t-ssa : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [ssa-result : OptFunctionCtxResult
-                        (opt-ssa-construct-function-from-context-result
+                        (opt-ssa-construct-function-from-context-and-representations-result
                           type-segment-bases
+                          summaries.representations
                           rotated
                           rotation-context
                           rotation-context-valid?)]
@@ -76879,6 +77113,7 @@
                           (if run-heavy?
                             (opt-divrem-safety-blocks-with-context
                               type-segment-bases
+                              summaries.representations
                               gep-offset-context
                               params
                               const-div-blocks)
@@ -91010,7 +91245,8 @@
       call-memory
       argc-return
       (opt_i64_i64_map.with-capacity 1)
-      (opt-global-cell-summary-empty))))
+      (opt-global-cell-summary-empty)
+      (ir.compiler-ir-representation-index-empty))))
 
 (define (opt-loop-bce-summaries-set-const-divisors
   [summaries : OptLoopBceSummaries]
@@ -91023,7 +91259,8 @@
     summaries.call-memory
     summaries.argc-return
     const-divisors
-    summaries.global-cell))
+    summaries.global-cell
+    summaries.representations))
 
 (define (opt-loop-bce-summaries-set-global-cell
   [summaries : OptLoopBceSummaries]
@@ -91036,7 +91273,8 @@
     summaries.call-memory
     summaries.argc-return
     summaries.const-divisors
-    global-cell))
+    global-cell
+    summaries.representations))
 
 (define (opt-loop-bce-summaries-set-profile-state
   [summaries : OptLoopBceSummaries]
@@ -91049,7 +91287,22 @@
     summaries.call-memory
     summaries.argc-return
     summaries.const-divisors
-    summaries.global-cell))
+    summaries.global-cell
+    summaries.representations))
+
+(define (opt-loop-bce-summaries-set-representations
+  [summaries : OptLoopBceSummaries]
+  [representations : ir.CompilerIrRepresentationIndex]) : OptLoopBceSummaries
+  (OptLoopBceSummaries
+    summaries.enabled
+    summaries.profile-state
+    summaries.length-clean
+    summaries.direct-call-clean
+    summaries.call-memory
+    summaries.argc-return
+    summaries.const-divisors
+    summaries.global-cell
+    representations))
 
 ;; Build the per-program summaries: the function-count-gated BCE/LICM call maps
 ;; plus the const-divisor table. The const-divisor table is built only at opt
@@ -93704,7 +93957,7 @@
   [spans : ir.CompilerSourceSpans]
   [level : i64]
   [profile-state : profile_state.CompilerProfileState]
-  [_representations : ir.CompilerIrRepresentationIndex]) : CompilerOptimizedProgram
+  [representations : ir.CompilerIrRepresentationIndex]) : CompilerOptimizedProgram
   (match program
     [(ir.CompilerIrProgram.Program globals functions externs)
       (if (= level 0)
@@ -93792,13 +94045,15 @@
                           "optimize-inline"
                           inline-arena))]
                     [summaries : OptLoopBceSummaries
-                      (opt-loop-bce-summaries-set-profile-state
-                        (opt-build-program-summaries
-                          type-segment-bases
-                          pruned-globals
-                          optimizer-functions
-                          level)
-                        profile-state)]
+                      (opt-loop-bce-summaries-set-representations
+                        (opt-loop-bce-summaries-set-profile-state
+                          (opt-build-program-summaries
+                            type-segment-bases
+                            pruned-globals
+                            optimizer-functions
+                            level)
+                          profile-state)
+                        representations)]
                     [_load-cse-profile-reset : unit
                       (cfg
                         compile-profile

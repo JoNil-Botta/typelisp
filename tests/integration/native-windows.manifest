@@ -153,6 +153,7 @@ atomic_thread_spawn|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena
 selfloop_redef_writeback|tests/integration/selfloop_redef_writeback.tl|42|-|-|-
 loopcarried_phi_home|tests/integration/loopcarried_phi_home.tl|42|-|-|-
 ssa_fixed_handle_values|tests/integration/ssa_fixed_handle_values.tl|42|-|-|stdlib/string.tl
+ssa_nominal_one_word|tests/integration/ssa_nominal_one_word.tl|42|-|-|-
 loop_carried_memory_aggregate_move|tests/integration/loop_carried_memory_aggregate_move.tl|42|-|-|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-

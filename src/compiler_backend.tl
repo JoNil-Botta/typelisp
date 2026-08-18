@@ -3840,6 +3840,7 @@
 
 (defstruct CompilerBackendProgramCollections
   (functions BackendSymbolSet)
+  (references BackendSymbolSet)
   (strings BackendStringSet)
   (floats BackendFloatSet)
   (bytes BackendStringSet)
@@ -3931,6 +3932,7 @@
 (define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-new 256)
+    (compiler-backend-symbol-set-new 256)
     (compiler-backend-string-set-new 256)
     (compiler-backend-float-set-new 256)
     (compiler-backend-string-set-new 64)
@@ -3943,6 +3945,20 @@
   [name : i64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-add collections.functions name)
+    (compiler-backend-symbol-set-add collections.references name)
+    collections.strings
+    collections.floats
+    collections.bytes
+    collections.uses-avx2-i64-lane-id
+    collections.uses-avx512-i64-lane-id
+    collections.uses-f64-neg))
+
+(define (compiler-backend-program-collections-add-reference
+  [collections : CompilerBackendProgramCollections (:consume)]
+  [name : i64]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    collections.functions
+    (compiler-backend-symbol-set-add collections.references name)
     collections.strings
     collections.floats
     collections.bytes
@@ -3955,6 +3971,7 @@
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     (compiler-backend-string-set-add collections.strings text)
     collections.floats
     collections.bytes
@@ -3968,6 +3985,7 @@
   [bits : u64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     (compiler-backend-float-set-add collections.floats ty bits)
     collections.bytes
@@ -3980,6 +3998,7 @@
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     (compiler-backend-string-set-add collections.bytes text)
@@ -3991,6 +4010,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -4002,6 +4022,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -4013,6 +4034,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -70146,6 +70168,10 @@
   [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
   (compiler-backend-symbol-set-list collections.functions))
 
+(define (compiler-backend-program-collections-references
+  [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
+  (compiler-backend-symbol-set-list collections.references))
+
 (define (compiler-backend-program-collections-strings
   [collections : CompilerBackendProgramCollections]) : BackendStringSeq
   (compiler-backend-string-set-list collections.strings))
@@ -70212,6 +70238,10 @@
   (match value
     [(compiler_ir_types.CompilerIrValue.Function name)
       (compiler-backend-program-collections-add-function collections name)]
+    [(compiler_ir_types.CompilerIrValue.Global name)
+      (compiler-backend-program-collections-add-reference collections name)]
+    [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
+      (compiler-backend-program-collections-add-reference collections name)]
     [(compiler_ir_types.CompilerIrValue.String text)
       (compiler-backend-program-collections-add-string collections text)]
     [(compiler_ir_types.CompilerIrValue.F64 bits)
@@ -72329,6 +72359,7 @@
   [program-index : CompilerBackendProgramIndex]
   [runtime-index : CompilerBackendRuntimeIndex]
   [closure-names : BackendSymbolSeq]
+  [referenced-symbols : BackendSymbolSeq]
   [strings : BackendStringSeq]
   [bytes : BackendStringSeq]
   [floats : BackendFloatSeq]
@@ -72431,7 +72462,7 @@
                             externs
                             plan
                             runtime-index
-                            closure-names
+                            referenced-symbols
                             runtime-data-buf)]
                         (begin
                           (cfg
@@ -72501,6 +72532,8 @@
         spans)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
+    [referenced-symbols : BackendSymbolSeq
+      (compiler-backend-program-collections-references collections)]
     [strings : BackendStringSeq
       (compiler-backend-program-collections-strings collections)]
     [bytes : BackendStringSeq
@@ -72548,6 +72581,7 @@
             program-index
             runtime-index
             closure-names
+            referenced-symbols
             strings
             bytes
             floats

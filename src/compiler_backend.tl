@@ -52905,10 +52905,10 @@
     [_ false]))
 
 ;; M6-B/M6-C: compare asm, true jcc, false jcc, true label, false label,
-;; resume index.
+;; branch scratch-plan lookahead, resume index.
 (defenum CompilerBackendGepLoadCmpBranchFold
   (No)
-  (Some String String String i64 i64 i64))
+  (Some String String String i64 i64 i64 i64))
 
 ;; --- M6-G: a narrow element load whose only reader is its widening cast ------
 ;;
@@ -53133,8 +53133,8 @@
   [value-var : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   ;; The instruction right behind the fused load, i.e. where the walk started.
-  ;; M6-E threads phi-edge copies only when the compare sits exactly there, so
-  ;; that the branch lands on the scratch-plan offset the copies read.
+  ;; Its distance from the compare determines where the branch's scratch-plan
+  ;; entry lives when M6-E threads phi-edge copies around the folded compare.
   [origin : i64]
   [index : i64]) : CompilerBackendGepLoadCmpBranchFold
   (let
@@ -53245,30 +53245,18 @@
                     (if (and
                       (not (string.eq cmp-asm ""))
                       (not (string.eq true-jcc ""))
-                      (compiler-backend-branch-uses-var? cond cmp-dst)
-                      ;; M6-E: phi-edge copies are threaded onto the successor
-                      ;; edges by compiler-backend-gep-load-cmp-branch-emit,
-                      ;; which reads the BRANCH's own cycle/stage scratch out of
-                      ;; the allocator plan at offset 3 (gep, load, compare,
-                      ;; branch). A fold that swallowed extra instructions -- a
-                      ;; widening cast, or one the walk stepped over -- puts the
-                      ;; branch at a different offset, so it keeps declining
-                      ;; rather than reading a slot planned for some other
-                      ;; instruction.
-                      (or
-                        (not
-                          (compiler-backend-branch-needs-phi-copies?
-                            (compiler-backend-state-function-state
-                              ctx.backend-state)
-                            true-label
-                            false-label))
-                        (= cmp-index origin)))
+                      (compiler-backend-branch-uses-var? cond cmp-dst))
                       (CompilerBackendGepLoadCmpBranchFold.Some
                         cmp-asm
                         true-jcc
                         false-jcc
                         true-label
                         false-label
+                        ;; The current instruction is Gep: Load is +1, the
+                        ;; first walked instruction is +2, and Branch follows
+                        ;; the compare. Wide shapes therefore use 3; a narrow
+                        ;; widening cast makes it 4.
+                        (+ (- cmp-index origin) 3)
                         (+ cmp-index 2))
                       (CompilerBackendGepLoadCmpBranchFold.No)))]
                 [_ (CompilerBackendGepLoadCmpBranchFold.No)])
@@ -53287,7 +53275,9 @@
 ;; block, the branch jumps to the edge labels instead of the real successors,
 ;; and the edge blocks are appended behind the branch. Reusing it costs nothing
 ;; -- those edge blocks are the very ones the unfolded path emitted -- and lets
-;; the fold keep shapes it used to hand back whole.
+;; the fold keep shapes it used to hand back whole. `branch-plan-ahead` names
+;; the branch's real offset in the uncontracted stream: 3 for Gep/Load/Cmp and
+;; 4 when M6-C also consumes a widening Cast.
 (define (compiler-backend-gep-load-cmp-branch-emit
   [ctx : CompilerBackendEmissionContext]
   [cmp-asm : String]
@@ -53295,6 +53285,7 @@
   [false-jcc : String]
   [true-label : i64]
   [false-label : i64]
+  [branch-plan-ahead : i64]
   [branch-fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
@@ -53316,13 +53307,13 @@
       [planned-cycle : String
         (compiler-backend-scratch-plan-register-ahead
           (compiler-backend-runtime-plan-scratch ctx.plan)
-          3
+          branch-plan-ahead
           1
           ctx.backend-state)]
       [planned-stage : String
         (compiler-backend-scratch-plan-register-ahead
           (compiler-backend-runtime-plan-scratch ctx.plan)
-          3
+          branch-plan-ahead
           2
           ctx.backend-state)]
       (match (compiler-backend-emit-phi-edge-copies
@@ -53404,6 +53395,7 @@
   [false-jcc : String]
   [true-label : i64]
   [false-label : i64]
+  [branch-plan-ahead : i64]
   [branch-fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (if (string.eq staged-base "")
     (compiler-backend-gep-load-cmp-branch-emit
@@ -53413,6 +53405,7 @@
       false-jcc
       true-label
       false-label
+      branch-plan-ahead
       branch-fallthrough)
     (match (compiler-backend-emit-load-value-with-plan
       ctx.assignments
@@ -53427,6 +53420,7 @@
           false-jcc
           true-label
           false-label
+          branch-plan-ahead
           branch-fallthrough)
           [(ResultCompilerBackend.Ok body-asm)
             (ResultCompilerBackend.Ok (str_cat.str-cat stage-asm body-asm))]
@@ -53533,6 +53527,7 @@
               false-jcc
               true-label
               false-label
+              branch-plan-ahead
               after-branch)
             (CompilerBackendMaybeGepLoadCmpEmission.Some
               (compiler-backend-emit-fused-result-rest
@@ -53555,6 +53550,7 @@
                   false-jcc
                   true-label
                   false-label
+                  branch-plan-ahead
                   (compiler-backend-fused-compare-fallthrough
                     instrs
                     after-branch

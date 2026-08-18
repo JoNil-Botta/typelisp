@@ -8173,6 +8173,39 @@
             compiler_ir_types.CompilerIrInstrList.Nil))
         compiler_ir_types.CompilerIrBlockList.Nil))))
 
+;; An unconditional edge is a scheduling boundary, not an execution choice.
+;; The incoming parameter is therefore already live across it, and the Mov can
+;; move beside its sole use without extending execution or violating dominance.
+(define (opt-successor-sink-jump-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          2
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "use"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "use")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            3
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 3)))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
 ;; The payload address uses a two-instruction address chain that is also needed
 ;; by the tag load in the dispatch block. Sinking the payload Load therefore
 ;; moves v4 but clones v3 and, transitively, v2 with fresh ids 16 and 17.
@@ -8823,6 +8856,10 @@
       (opt-successor-sink-run
         "successor_sink_positive"
         (opt-successor-sink-positive-blocks))]
+    [jump : compiler_ir_types.CompilerIrBlockList
+      (opt-successor-sink-run
+        "successor_sink_jump"
+        (opt-successor-sink-jump-blocks))]
     [remat-function : compiler_ir_types.CompilerIrFunction
       (opt-successor-sink-run-function
         "successor_sink_remat"
@@ -9116,6 +9153,14 @@
               (compiler_ir_types.compiler-ir-label-none))
             (compiler_ir_types.compiler-ir-label-none)))
         (return 16))
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            jump
+            2
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label "use"))
+        (return 17))
       42)))
 
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it

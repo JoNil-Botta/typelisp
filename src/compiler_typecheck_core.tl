@@ -85075,7 +85075,7 @@
     0
     0
     0
-    7
+    5
     0
     0
     0
@@ -86305,9 +86305,13 @@
 ;; 1 retained only 27,169,064 bytes, but paid 13,820 arena pairs and raised
 ;; fired-declaration self time by 9.4%. Eight was the measured memory/work knee;
 ;; after the dependency-TLCI dispatch graph crossed the 25% proportional
-;; retention budget, seven reduced the current selfhost's retained bytes while
-;; staying inside the measured 7..9 cadence band. Retention is bounded by 2
-;; batches, not by the walk.
+;; retention budget, seven first restored it. On the later combined
+;; optimizer/SPMD graph, seven retained 102,860,432 bytes (25.39%) while five
+;; retained 75,241,224 bytes (18.58%) with 815 additional arena pairs. The
+;; count cadence is alignment-sensitive -- six retained 130,882,560 bytes -- so
+;; five is the measured current knee. Three same-source Windows selfhosts kept
+;; median macro-walk time flat (1,985 ms versus 1,988 ms at seven) and emitted
+;; byte-identical assembly. Retention is bounded by 2 batches, not by the walk.
 ;; Make `next` the live generation and destroy the one retired a batch ago.
 ;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
 ;; flag that disables the virgin-arena zero-fill elision permanently for

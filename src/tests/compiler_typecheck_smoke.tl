@@ -5668,13 +5668,28 @@
       (cis.intern-structural-session-handle-from-source-names macro-a-handle)]
     [session-b : cis.InternStructuralSessionHandle
       (cis.intern-structural-session-handle-from-source-names macro-b-handle)]
+    [env-a : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job-a)]
+    [env-b : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job-b)]
+    [env-session-a : cis.InternStructuralSessionHandle
+      (tc_core.tc-type-env-structural-session env-a)]
+    [env-session-b : cis.InternStructuralSessionHandle
+      (tc_core.tc-type-env-structural-session env-b)]
+    [session-a-generation : i64
+      (cis.intern-structural-session-current-reset-generation session-a)]
     [generation-b : i64 (ci.intern-compat-state-generation intern-b)]
+    [stale-arena-raw : i64 -1]
     [ok : bool
       (and
         (= macro-a-handle.address body-a-handle.address)
         (= macro-a-handle.address ctx-a-handle.address)
         (= macro-a-handle.address hygiene-a-handle.address)
-        (not (= macro-a-handle.address macro-b-handle.address)))]
+        (not (= macro-a-handle.address macro-b-handle.address))
+        (= env-session-a.address session-a.address)
+        (= env-session-b.address session-b.address)
+        (not
+          (=
+            (cis.intern-structural-session-owner env-session-a)
+            (cis.intern-structural-session-owner env-session-b))))]
     (begin
       ;; Keep B installed while macro expansion and ordinary typecheck views
       ;; owned by A canonicalize, grow, and decode A's structural records.
@@ -5696,7 +5711,40 @@
             91
             101
             111)]
+        [large-owner : i64 (+ (ci.intern-capacity) 1000)]
+        [large-token : i64 (+ (ci.intern-capacity) 2000)]
+        [a-region : cis.InternArenaPhaseIdentity
+          (cis.intern-structural-session-arena-phase-identity
+            session-a
+            (cis.InternArenaPhaseRecord.Region large-owner large-token))]
+        [a-region-again : cis.InternArenaPhaseIdentity
+          (cis.intern-structural-session-arena-phase-identity
+            session-a
+            (cis.InternArenaPhaseRecord.Region large-owner large-token))]
+        ;; The initial map has 512 slots. Changing this component by 512
+        ;; deliberately preserves the arena record's first bucket.
+        [a-region-hash-collision : cis.InternArenaPhaseIdentity
+          (cis.intern-structural-session-arena-phase-identity
+            session-a
+            (cis.InternArenaPhaseRecord.Region (+ large-owner 512) large-token))]
+        [a-current-marker : cis.InternArenaPhaseIdentity
+          (cis.intern-structural-session-arena-phase-identity
+            session-a
+            (cis.InternArenaPhaseRecord.CurrentRegionMarker large-owner))]
+        [a-owner-marker : cis.InternArenaPhaseIdentity
+          (cis.intern-structural-session-arena-phase-identity
+            session-a
+            (cis.InternArenaPhaseRecord.TokenOwnerMarker large-token))]
+        [a-region-marker : cis.InternArenaPhaseIdentity
+          (cis.intern-structural-session-arena-phase-identity
+            session-a
+            (cis.InternArenaPhaseRecord.TokenRegionMarker large-token))]
+        [b-region : cis.InternArenaPhaseIdentity
+          (cis.intern-structural-session-arena-phase-identity
+            session-b
+            (cis.InternArenaPhaseRecord.Region large-owner large-token))]
         (begin
+          (set! stale-arena-raw (cis.intern-arena-phase-identity-raw a-region))
           (set!
             ok
             (and
@@ -5745,7 +5793,71 @@
               ;; must keep the transitional legacy fast path coherent for the
               ;; same owner while leaving unrelated installed owners alone.
               (ci.intern-composite-pair-id?
-                (cis.intern-structural-key-raw b-pair))))
+                (cis.intern-structural-key-raw b-pair))
+              (=
+                (cis.intern-arena-phase-identity-raw a-region)
+                (cis.intern-arena-phase-identity-raw a-region-again))
+              (not
+                (=
+                  (cis.intern-arena-phase-identity-raw a-region)
+                  (cis.intern-arena-phase-identity-raw a-region-hash-collision)))
+              (not
+                (=
+                  (cis.intern-arena-phase-identity-raw a-region)
+                  (cis.intern-arena-phase-identity-raw a-current-marker)))
+              (not
+                (=
+                  (cis.intern-arena-phase-identity-raw a-current-marker)
+                  (cis.intern-arena-phase-identity-raw a-owner-marker)))
+              (not
+                (=
+                  (cis.intern-arena-phase-identity-raw a-owner-marker)
+                  (cis.intern-arena-phase-identity-raw a-region-marker)))
+              (not
+                (=
+                  (cis.intern-arena-phase-identity-raw a-region)
+                  (cis.intern-arena-phase-identity-raw b-region)))
+              (not
+                (ci.intern-renderable-id?
+                  (cis.intern-arena-phase-identity-raw a-region)))
+              (match (cis.intern-structural-session-arena-phase-record
+                session-a
+                a-region)
+                [(cis.InternMaybeArenaPhaseRecord.Some
+                    (cis.InternArenaPhaseRecord.Region owner token))
+                  (and (= owner large-owner) (= token large-token))]
+                [_ false])
+              (match (cis.intern-structural-session-arena-phase-record
+                session-a
+                a-current-marker)
+                [(cis.InternMaybeArenaPhaseRecord.Some
+                    (cis.InternArenaPhaseRecord.CurrentRegionMarker owner))
+                  (= owner large-owner)]
+                [_ false])
+              (match (cis.intern-structural-session-arena-phase-record
+                session-a
+                a-owner-marker)
+                [(cis.InternMaybeArenaPhaseRecord.Some
+                    (cis.InternArenaPhaseRecord.TokenOwnerMarker token))
+                  (= token large-token)]
+                [_ false])
+              (match (cis.intern-structural-session-arena-phase-record
+                session-a
+                a-region-marker)
+                [(cis.InternMaybeArenaPhaseRecord.Some
+                    (cis.InternArenaPhaseRecord.TokenRegionMarker token))
+                  (= token large-token)]
+                [_ false])
+              (match (cis.intern-structural-session-arena-phase-record
+                session-b
+                a-region)
+                [(cis.InternMaybeArenaPhaseRecord.No) true]
+                [_ false])
+              (match (cis.intern-structural-session-arena-phase-record-for-raw
+                session-a
+                (cis.intern-structural-key-raw a-pair))
+                [(cis.InternMaybeArenaPhaseRecord.No) true]
+                [_ false])))
           (let
             [index : i64 0]
             (while (< index 700)
@@ -5757,25 +5869,42 @@
                     (+ 1000 index)
                     (+ 2000 index)
                     (+ 3000 index))]
+                [phase : cis.InternArenaPhaseIdentity
+                  (cis.intern-structural-session-arena-phase-identity
+                    session-a
+                    (cis.InternArenaPhaseRecord.Region
+                      (+ (ci.intern-capacity) 4000 index)
+                      (+ (ci.intern-capacity) 5000 index)))]
                 (begin
                   (unless
                     (=
                       (cis.intern-structural-session-key-middle session-a key)
                       (+ 2000 index))
                     (set! ok false))
+                  (match (cis.intern-structural-session-arena-phase-record
+                    session-a
+                    phase)
+                    [(cis.InternMaybeArenaPhaseRecord.Some
+                        (cis.InternArenaPhaseRecord.Region owner token))
+                      (unless
+                        (and
+                          (= owner (+ (ci.intern-capacity) 4000 index))
+                          (= token (+ (ci.intern-capacity) 5000 index)))
+                        (set! ok false))]
+                    [_ (set! ok false)])
                   (set! index (+ index 1))))))
           (set!
             ok
             (and
               ok
-              (= (ci.intern-compat-state-structural-count intern-a) 702)
-              (= (ci.intern-compat-state-structural-count intern-b) 1)
+              (= (ci.intern-compat-state-structural-count intern-a) 1407)
+              (= (ci.intern-compat-state-structural-count intern-b) 2)
               (>=
                 (array-length
                   (__tl-project-field
                     (array-ref intern-a.structural-table-cell 0)
                     kinds))
-                1024)
+                2048)
               (= (ci.intern-structural-record-slot-bytes) 37)
               (=
                 (array-length
@@ -5802,8 +5931,18 @@
           (and
             ok
             stale-before-rebind
+            (not
+              (=
+                (cis.intern-structural-session-current-reset-generation
+                  session-a)
+                session-a-generation))
             (= (ci.intern-compat-state-structural-count intern-a) 0)
             (cis.intern-structural-session-valid? next-session-a)
+            (match (cis.intern-structural-session-arena-phase-record-for-raw
+              next-session-a
+              stale-arena-raw)
+              [(cis.InternMaybeArenaPhaseRecord.No) true]
+              [_ false])
             (= session-a.address next-session-a.address))]
         (begin
           (ci.intern-compat-state-reset! intern-b)

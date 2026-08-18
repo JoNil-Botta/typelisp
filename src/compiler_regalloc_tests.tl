@@ -13632,6 +13632,166 @@
                   ir.CompilerIrInstrList.Nil))))))
       ir.CompilerIrBlockList.Nil)))
 
+;; ---------------------------------------------------------------------------
+;; P22: nested value-identical copies coalesce ACROSS a call.
+;;
+;; Every fixture below is the loop-index/bounds-check shape the benchmarks show:
+;; a long-lived value `0` that is live across a real call (so the kind-6
+;; clobber-span exclusion keeps it out of the plain same-value relation) and a
+;; short copy `1` of it whose whole live hull sits inside `0`'s. The merged
+;; class hull is then exactly `0`'s hull, so the class inherits the call
+;; crossing `0` already carried and nothing else.
+(define (compiler-reg-p22-nested-copy-function
+  [copy : ir.CompilerIrInstr]
+  [use-ty : ast.AstType]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "p22_nested_copy")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I64)
+    3
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            0
+            (ir.CompilerIrValue.I64 7)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            copy
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Store
+                (ir.compiler-ir-test-symbol "g")
+                (ir.CompilerIrValue.Var 1)
+                use-ty)
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Call
+                  2
+                  (ir.compiler-ir-test-symbol "side_effect")
+                  ir.CompilerIrCallArgs.Nil
+                  (ast.AstType.Unit))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Store
+                    (ir.compiler-ir-test-symbol "g")
+                    (ir.CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Return
+                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
+                    ir.CompilerIrInstrList.Nil)))))))
+      ir.CompilerIrBlockList.Nil)))
+
+;; The mutable-source hazard must survive the relaxation: `0` is redefined
+;; INSIDE the copy's liveness, so the two are not the same value at the copy's
+;; use however neatly their hulls nest.
+(define (compiler-reg-p22-nested-reject-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "p22_nested_reject")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I64)
+    3
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            0
+            (ir.CompilerIrValue.I64 7)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              1
+              (ir.CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                0
+                (ir.CompilerIrValue.I64 9)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Store
+                  (ir.compiler-ir-test-symbol "g")
+                  (ir.CompilerIrValue.Var 1)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Call
+                    2
+                    (ir.compiler-ir-test-symbol "side_effect")
+                    ir.CompilerIrCallArgs.Nil
+                    (ast.AstType.Unit))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Store
+                      (ir.compiler-ir-test-symbol "g")
+                      (ir.CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Return
+                        (ir.CompilerIrMaybeValue.Some
+                          (ir.CompilerIrValue.Var 0)))
+                      ir.CompilerIrInstrList.Nil))))))))
+      ir.CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-p22-nested-same-home? [func : ir.CompilerIrFunction]) : bool
+  (match (reg.compiler-reg-plan-function-scalar func)
+    [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+      (compiler-reg-same-location? assignments 0 1)]))
+
+(define (compiler-reg-p22-nested-copy-ok?) : bool
+  (and
+    ;; A same-width signedness cast whose source stays live shares its home.
+    (compiler-reg-p22-nested-same-home?
+      (compiler-reg-p22-nested-copy-function
+        (ir.CompilerIrInstr.Cast
+          1
+          (ir.CompilerIrValue.Var 0)
+          (ast.AstType.I64)
+          (ast.AstType.U64))
+        (ast.AstType.U64)))
+    ;; Same in the other signedness direction.
+    (compiler-reg-p22-nested-same-home?
+      (compiler-reg-p22-nested-copy-function
+        (ir.CompilerIrInstr.Cast
+          1
+          (ir.CompilerIrValue.Var 0)
+          (ast.AstType.U64)
+          (ast.AstType.I64))
+        (compiler-reg-i64-ty)))
+    ;; A plain Mov whose source stays live shares its home.
+    (compiler-reg-p22-nested-same-home?
+      (compiler-reg-p22-nested-copy-function
+        (ir.CompilerIrInstr.Mov
+          1
+          (ir.CompilerIrValue.Var 0)
+          (compiler-reg-i64-ty))
+        (compiler-reg-i64-ty)))
+    ;; A NARROWING cast is real work -- the destination home holds the
+    ;; sign-normalized 32-bit value, which is not the source's bit pattern --
+    ;; so it must keep its own home.
+    (not
+      (compiler-reg-p22-nested-same-home?
+        (compiler-reg-p22-nested-copy-function
+          (ir.CompilerIrInstr.Cast
+            1
+            (ir.CompilerIrValue.Var 0)
+            (ast.AstType.I64)
+            (ast.AstType.I32))
+          (ast.AstType.I32))))
+    ;; A widening cast is real work too.
+    (not
+      (compiler-reg-p22-nested-same-home?
+        (compiler-reg-p22-nested-copy-function
+          (ir.CompilerIrInstr.Cast
+            1
+            (ir.CompilerIrValue.Var 0)
+            (ast.AstType.I32)
+            (compiler-reg-i64-ty))
+          (compiler-reg-i64-ty))))
+    ;; Nesting lifts the clobber-span refusal ONLY. A source redefined inside
+    ;; the copy's liveness is still refused.
+    (not
+      (compiler-reg-p22-nested-same-home?
+        (compiler-reg-p22-nested-reject-function)))))
+
 (define (compiler-reg-interference-blocks-coalesce-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ir.compiler-ir-test-symbol "interference_blocks_coalesce")
@@ -15337,6 +15497,9 @@
             (ast.ast-node-pool-reader-type-segment-bases)
             func
             0))
+        (reg.compiler-reg-same-value-eligible-vars
+          interval-index
+          (live.compiler-live-set-empty))
         (reg.compiler-reg-function-var-types func)
         interval-index)]))
 
@@ -17747,6 +17910,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-coalesce-ok?"
       (compiler-reg-coalesce-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-p22-nested-copy-ok?"
+      (compiler-reg-p22-nested-copy-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-liveness-handle-ok?"
       (cfg test (compiler-reg-liveness-handle-ok?) true))

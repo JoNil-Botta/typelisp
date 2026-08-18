@@ -7109,6 +7109,51 @@
           (ci.intern-compat-state-capture-active)))
         [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
+      ;; P22: a same-width signedness Cast is a value-identical copy, so a
+      ;; coalesced pair (one home for both endpoints) must emit NOTHING. The
+      ;; identical-type early return above cannot answer this one -- I64 and
+      ;; U64 are different types -- so the elision has to come from the
+      ;; same-width arm loading the source into its own home.
+      (match (compiler_backend.compiler-backend-emit-cast
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        "_tl_test"
+        (compiler_ir_types.compiler-ir-label "entry")
+        coalesced
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64)
+        (compiler_ast_types.AstType.U64)
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)
+        ""
+        ""
+        ""
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+        [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
+      (match (compiler_backend.compiler-backend-emit-cast
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        "_tl_test"
+        (compiler_ir_types.compiler-ir-label "entry")
+        coalesced
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.U64)
+        (compiler_ast_types.AstType.I64)
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)
+        ""
+        ""
+        ""
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+        [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
       (match (compiler_backend.compiler-backend-emit-cast
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         "_tl_test"

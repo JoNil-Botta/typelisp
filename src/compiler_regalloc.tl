@@ -8404,6 +8404,10 @@
   (counts (__tl_dyn-array i64))
   (phi-defs (__tl_dyn-array i64))
   (eligible (__tl_dyn-array i64))
+  ;; P22: the clobber-span-free half of the same-value admission -- a var has an
+  ;; interval and is not a storage-identity value, but its hull MAY cross a
+  ;; modeled caller-clobber point. Only nested pairs (below) may use it.
+  (hull-eligible (__tl_dyn-array i64))
   (class-multi (__tl_dyn-array i64))
   (def-off (__tl_dyn-array i64))
   (def-pts (__tl_dyn-array i64))
@@ -8628,6 +8632,73 @@
 (define (compiler-reg-sv-int-ok? [int-ok : (__tl_dyn-array i64)] [v : i64]) : bool
   (and (>= v 0) (< v (array-length int-ok)) (= (array-ref int-ok v) 1)))
 
+;; P22. Do the two endpoints of a value-identical copy NEST -- is one endpoint's
+;; coarse live hull contained in the other's?
+;;
+;; This is the geometric fact that lets the same-value relation admit a pair
+;; whose endpoints cross a modeled caller-clobber point. The clobber-span
+;; exclusion above keeps a call-crossing value out of the relation because the
+;; overlap waiver must not manufacture constraints the greedy did not already
+;; see. When the hulls nest, it manufactures none: the merged class hull is
+;; exactly the OUTER endpoint's hull, so the class carries precisely the clobber
+;; spans that endpoint already carried, and the greedy's csr-only restriction,
+;; call-region parking and regmask model answer for the class exactly what they
+;; answered for the outer member on its own.
+;;
+;; It is also the shape in which a merge cannot cost pressure. Register pressure
+;; at a point is the number of values live there needing a home; with nesting,
+;; the inner endpoint is live only where the outer one already is, so the merge
+;; removes one live value from the overlap and changes nothing anywhere else.
+;; That is why a nested pair needs no benefit heuristic: it is never worse than
+;; leaving the copy in place.
+;;
+;; The hull (not the segments) is the right granularity here because the hull is
+;; what the clobber-span exclusion itself tests
+;; (compiler-reg-same-value-eligible-vars): nesting on hulls means the class's
+;; answer to that exact question is unchanged.
+(define (compiler-reg-sv-hull-nested?
+  [ctx : CompilerRegSvMultiCtx]
+  [left : i64]
+  [right : i64]) : bool
+  (let
+    [starts : (__tl_dyn-array i64) ctx.starts]
+    [ends : (__tl_dyn-array i64) ctx.ends]
+    [n : i64 (array-length starts)]
+    (and
+      (>= left 0)
+      (>= right 0)
+      (< left n)
+      (< right n)
+      (>= (array-ref starts left) 0)
+      (>= (array-ref starts right) 0)
+      (or
+        (and
+          (<= (array-ref starts left) (array-ref starts right))
+          (<= (array-ref ends right) (array-ref ends left)))
+        (and
+          (<= (array-ref starts right) (array-ref starts left))
+          (<= (array-ref ends left) (array-ref ends right)))))))
+
+;; May this copy pair enter the same-value relation at all? Either both
+;; endpoints pass the full kind-6 admission (unchanged), or -- P22 -- both are
+;; interval-carrying non-storage-identity values whose hulls nest, which is the
+;; constraint-free case argued above.
+(define (compiler-reg-sv-pair-admissible?
+  [ctx : CompilerRegSvMultiCtx]
+  [svar : i64]
+  [dst : i64]) : bool
+  (let
+    [eligible : (__tl_dyn-array i64) ctx.eligible]
+    [hull-eligible : (__tl_dyn-array i64) ctx.hull-eligible]
+    (or
+      (and
+        (compiler-reg-sv-eligible? eligible dst)
+        (compiler-reg-sv-eligible? eligible svar))
+      (and
+        (compiler-reg-sv-eligible? hull-eligible dst)
+        (compiler-reg-sv-eligible? hull-eligible svar)
+        (compiler-reg-sv-hull-nested? ctx svar dst)))))
+
 ;; One copy pair (Mov, or width-64 int Cast). The single-def-src path mirrors
 ;; the original relation (no type restriction); the mutable-src path is the
 ;; M-C extension, GP-int scalars only.
@@ -8638,12 +8709,10 @@
   (let
     [counts : (__tl_dyn-array i64) ctx.counts]
     [phi-defs : (__tl_dyn-array i64) ctx.phi-defs]
-    [eligible : (__tl_dyn-array i64) ctx.eligible]
     [int-ok : (__tl_dyn-array i64) ctx.int-ok]
     (if (and
       (compiler-reg-sv-single-def-non-phi? counts phi-defs dst)
-      (compiler-reg-sv-eligible? eligible dst)
-      (compiler-reg-sv-eligible? eligible svar))
+      (compiler-reg-sv-pair-admissible? ctx svar dst))
       (if (compiler-reg-sv-single-def-non-phi? counts phi-defs svar)
         (compiler-reg-sv-multi-union! ctx svar dst)
         (if (and
@@ -8711,6 +8780,7 @@
 (define (compiler-reg-function-same-value-parents-multi
   [func : ir.CompilerIrFunction]
   [eligible : (__tl_dyn-array i64)]
+  [hull-eligible : (__tl_dyn-array i64)]
   [type-info : CompilerRegVarTypes]
   [interval-index : CompilerRegIntervalIndex]) : (__tl_dyn-array i64)
   (match func
@@ -8783,6 +8853,7 @@
                       counts
                       phi-defs
                       eligible
+                      hull-eligible
                       class-multi
                       def-off
                       def-pts
@@ -31737,6 +31808,15 @@
           (compiler-reg-same-value-eligible-vars-excluding
             interval-index
             clobber-points
+            storage-identity-vars)
+          ;; P22 nested-pair admission: the same exclusion list MINUS the
+          ;; clobber-span test. Storage-identity values stay out (their address
+          ;; identity, not their bits, is what a consumer reads) and a var with
+          ;; no interval stays out; only the call-crossing refusal is lifted,
+          ;; and only for a pair whose hulls nest.
+          (compiler-reg-same-value-eligible-vars-excluding
+            interval-index
+            (live.compiler-live-set-empty)
             storage-identity-vars)
           type-info
           interval-index)

@@ -7517,7 +7517,7 @@
           (begin
             (unsafe
               (ptr-write!
-                (ptr-offset (array-data cache.slots) cursor)
+                (ptr-offset (__tl_array-data cache.slots) cursor)
                 (array-ref cache.slots (+ cursor 1))))
             (set! cursor (+ cursor 1))))
         (set! cache.len last)))))
@@ -7565,7 +7565,7 @@
             ;; stale cache rows.
             (unsafe
               (ptr-write!
-                (ptr-offset (array-data copy.slots) index)
+                (ptr-offset (__tl_array-data copy.slots) index)
                 (lsp_vector_families.LspWorkspaceSemanticCacheEntry
                   (string.copy (& entry.uri))
                   (string.copy (& entry.path))
@@ -7987,7 +7987,7 @@
   (begin
     (unsafe
       (ptr-write!
-        (ptr-offset (array-data cache.slots) cache.len)
+        (ptr-offset (__tl_array-data cache.slots) cache.len)
         (lsp_vector_families.LspWorkspaceSemanticCacheEntry
           (string.copy (& source.uri))
           (string.copy (& source.path))
@@ -8137,7 +8137,7 @@
               (begin
                 (unsafe
                   (ptr-write!
-                    (ptr-offset (array-data bigger) copy-index)
+                    (ptr-offset (__tl_array-data bigger) copy-index)
                     (array-ref cache.slots copy-index)))
                 (set! copy-index (+ copy-index 1))))
             (set! cache.slots bigger)))
@@ -8289,7 +8289,7 @@
               (begin
                 (unsafe
                   (ptr-write!
-                    (ptr-offset (array-data bigger) copy-index)
+                    (ptr-offset (__tl_array-data bigger) copy-index)
                     (array-ref facts.slots copy-index)))
                 (set! copy-index (+ copy-index 1))))
             (set! facts.slots bigger)))

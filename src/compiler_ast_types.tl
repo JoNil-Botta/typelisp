@@ -971,7 +971,7 @@
   (-
     (cast
       (unsafe
-        (ptr->int (ptr-cast (array-data segment) : (Ptr u8))))
+        (ptr->int (ptr-cast (__tl_array-data segment) : (Ptr u8))))
       : i64)
     (* segment-index ast-expr-node-pool-segment-bytes)))
 
@@ -988,7 +988,7 @@
           0))
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data bases) : (Ptr u8))))
+          (ptr->int (ptr-cast (__tl_array-data bases) : (Ptr u8))))
         : i64))))
 (define ast-node-pool-segment-count : i64
   1)
@@ -1210,7 +1210,7 @@
       (AstExprNodePoolState
         (cast
           (unsafe
-            (ptr->int (ptr-cast (array-data segment-bases) : (Ptr u8))))
+            (ptr->int (ptr-cast (__tl_array-data segment-bases) : (Ptr u8))))
           : i64)
         0
         base-arena
@@ -1361,7 +1361,7 @@
   (-
     (cast
       (unsafe
-        (ptr->int (ptr-cast (array-data segment) : (Ptr u8))))
+        (ptr->int (ptr-cast (__tl_array-data segment) : (Ptr u8))))
       : i64)
     (* segment-index ast-type-node-pool-segment-bytes)))
 
@@ -1378,7 +1378,7 @@
           0))
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data bases) : (Ptr u8))))
+          (ptr->int (ptr-cast (__tl_array-data bases) : (Ptr u8))))
         : i64))))
 (define ty-node-pool-segment-count : i64
   1)
@@ -1566,7 +1566,7 @@
       (AstTypeNodePoolState
         (cast
           (unsafe
-            (ptr->int (ptr-cast (array-data segment-bases) : (Ptr u8))))
+            (ptr->int (ptr-cast (__tl_array-data segment-bases) : (Ptr u8))))
           : i64)
         0
         base-arena
@@ -2543,14 +2543,14 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data ast-node-pool-compat-context-cell)
+        (__tl_array-data ast-node-pool-compat-context-cell)
         : (Ptr AstNodePoolContext)))))
 
 (define (ast-node-pool-compat-saved-context-shared-view) : AstNodePoolContext
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data ast-node-pool-compat-saved-context-cell)
+        (__tl_array-data ast-node-pool-compat-saved-context-cell)
         : (Ptr AstNodePoolContext)))))
 
 (define (ast-node-pool-context-capture-active) : AstNodePoolContext
@@ -2890,7 +2890,7 @@
 (define (ast-node-pool-context-expr-cell-address [pools : AstNodePoolContext]) : i64
   (cast
     (unsafe
-      (ptr->int (ptr-cast (array-data pools.expr-pool) : (Ptr u8))))
+      (ptr->int (ptr-cast (__tl_array-data pools.expr-pool) : (Ptr u8))))
     : i64))
 
 (define (ast-node-pool-context-expr-installed? [pools : AstNodePoolContext]) : bool
@@ -2961,7 +2961,7 @@
 (define (ast-node-pool-context-expr-segment-bases [pools : AstNodePoolContext]) : i64
   (__tl-project-field
     (unsafe
-      (ptr-read (array-data pools.expr-pool)))
+      (ptr-read (__tl_array-data pools.expr-pool)))
     segment-bases))
 
 ;; Segment-bases pointer of the process-global (installed) expression pool, the
@@ -3045,7 +3045,7 @@
 (define (ast-node-pool-context-type-cell-address [pools : AstNodePoolContext]) : i64
   (cast
     (unsafe
-      (ptr->int (ptr-cast (array-data pools.type-pool) : (Ptr u8))))
+      (ptr->int (ptr-cast (__tl_array-data pools.type-pool) : (Ptr u8))))
     : i64))
 
 ;; Cell identity, rather than a segment-bases comparison, distinguishes the
@@ -9958,7 +9958,7 @@
     [base : i64
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data slots) : (Ptr u8))))
+          (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8))))
         : i64)]
     (and
       (match (unsafe
@@ -9980,7 +9980,7 @@
     [base : i64
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data slots) : (Ptr u8))))
+          (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8))))
         : i64)]
     (and
       (match (unsafe

@@ -104,4 +104,4 @@
           (set! (array-ref out index) (array-ref bytes (+ offset index)))
           (set! index (+ index 1))))
       (unsafe
-        (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) length)))))
+        (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) length)))))

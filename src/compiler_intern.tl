@@ -72,7 +72,7 @@
 
 (defmacro (intern-i64-array-address [items : Expr]) : u64
   `(unsafe
-    (ptr->int (ptr-cast (array-data ,items) : (Ptr u8)))))
+    (ptr->int (ptr-cast (__tl_array-data ,items) : (Ptr u8)))))
 
 (defmacro (intern-active-i64-ref [address : Expr] [index : Expr]) : i64
   `(unsafe
@@ -925,8 +925,8 @@
   [bytes : Expr]) : unit
   `(unsafe
     (intern-runtime-copy-bytes!
-      (ptr-cast (array-data ,to) : (MutPtr u8))
-      (ptr-cast (array-data ,from) : (Ptr u8))
+      (ptr-cast (__tl_array-data ,to) : (MutPtr u8))
+      (ptr-cast (__tl_array-data ,from) : (Ptr u8))
       ,bytes)))
 
 (define (intern-structural-table-grow-records!
@@ -2306,7 +2306,7 @@
         (string-data (& text)))]
     [dst : (MutPtr u8)
       (unsafe
-        (array-data buf))]
+        (__tl_array-data buf))]
     [i : i64 0]
     (begin
       (while (< i len)
@@ -3848,10 +3848,12 @@
         [steps : i64 0]
         [ids : (Ptr InternSlotId)
           (unsafe
-            (ptr-cast (array-data intern-map-id-slots) : (Ptr InternSlotId)))]
+            (ptr-cast
+              (__tl_array-data intern-map-id-slots)
+              : (Ptr InternSlotId)))]
         [hashes : (Ptr i64)
           (unsafe
-            (ptr-cast (array-data intern-map-hash-slots) : (Ptr i64)))]
+            (ptr-cast (__tl_array-data intern-map-hash-slots) : (Ptr i64)))]
         (begin
           (while (< steps capacity)
             (let
@@ -3917,7 +3919,9 @@
           (cast
             (unsafe
               (ptr->int
-                (ptr-cast (array-data cell) : (Ptr InternSourceNameSession))))
+                (ptr-cast
+                  (__tl_array-data cell)
+                  : (Ptr InternSourceNameSession))))
             : i64))))))
 
 (define (intern-source-name-session-handle-from-state
@@ -3934,7 +3938,7 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr InternSourceNameSession))))
+              (ptr-cast (__tl_array-data cell) : (Ptr InternSourceNameSession))))
           : i64)))))
 
 (define (intern-source-name-session-handle-session
@@ -4031,7 +4035,9 @@
 (define (intern-pool-string-shared-view [id : i64]) : String
   (unsafe
     (ptr-read
-      (ptr-offset (ptr-cast (array-data intern-pool-slots) : (Ptr String)) id))))
+      (ptr-offset
+        (ptr-cast (__tl_array-data intern-pool-slots) : (Ptr String))
+        id))))
 
 ;: Recover the original String for an interned id.
 (define (intern-str [id : i64]) : String
@@ -4657,7 +4663,9 @@
           (set! (array-ref buf i) (cast (bit-and i 255) : u8))
           (set! i (+ i 1))))
       (unsafe
-        (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) source-length)))))
+        (string-from-bytes
+          (ptr-cast (__tl_array-data buf) : (Ptr u8))
+          source-length)))))
 
 (define (intern-compat-state-persistent-arena-growth-tests-ok?) : bool
   (let

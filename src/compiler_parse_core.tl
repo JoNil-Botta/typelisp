@@ -37,7 +37,7 @@
 (define (compiler-parse-decl-list-storage-key
   [decls : (& decls ast.AstDeclList)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data decls.slots) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data decls.slots) : (Ptr u8))) : i64)))
 
 ;; Declaration origins are cold records in the transient spanned-node pool.
 ;; A run is marker(key), marker(start slot), then one Nil(span) per slot.
@@ -416,7 +416,9 @@
   [fallback : ast.AstSourceSpan]) : ast.AstSourceSpan
   (compiler-parse-member-origin-span
     (unsafe
-      (cast (ptr->int (ptr-cast (array-data fields.slots) : (Ptr u8))) : i64))
+      (cast
+        (ptr->int (ptr-cast (__tl_array-data fields.slots) : (Ptr u8)))
+        : i64))
     index
     fallback))
 
@@ -426,7 +428,9 @@
   [fallback : ast.AstSourceSpan]) : ast.AstSourceSpan
   (compiler-parse-member-origin-span
     (unsafe
-      (cast (ptr->int (ptr-cast (array-data variants.slots) : (Ptr u8))) : i64))
+      (cast
+        (ptr->int (ptr-cast (__tl_array-data variants.slots) : (Ptr u8)))
+        : i64))
     index
     fallback))
 
@@ -804,7 +808,7 @@
 (define (compiler-parse-array-data-addr-i64 [items : (__tl_dyn-array i64)]) : i64
   (cast
     (unsafe
-      (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
+      (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))))
     : i64))
 
 (define (compiler-parse-intern-owner-data-addr
@@ -813,14 +817,14 @@
     0
     (cast
       (unsafe
-        (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
+        (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))))
       : i64)))
 
 (define (compiler-parse-dispatch-cache-handle-data-addr
   [items : (__tl_dyn-array (__tl_dyn-array sym_i64_env.SymI64Env))]) : i64
   (cast
     (unsafe
-      (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
+      (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))))
     : i64))
 
 (define (compiler-parse-state-new-from-owner
@@ -947,7 +951,7 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data compiler-parse-default-state)
+        (__tl_array-data compiler-parse-default-state)
         : (Ptr CompilerParseState)))))
 
 (define (sexpr-colon? [s : reader.Sexpr]) : bool
@@ -9168,7 +9172,7 @@
                         (cast
                           (ptr->int
                             (ptr-cast
-                              (array-data parsed-variants.slots)
+                              (__tl_array-data parsed-variants.slots)
                               : (Ptr u8)))
                           : i64))
                       "__tl_member_origin"
@@ -9229,7 +9233,7 @@
                         (cast
                           (ptr->int
                             (ptr-cast
-                              (array-data parsed-fields.slots)
+                              (__tl_array-data parsed-fields.slots)
                               : (Ptr u8)))
                           : i64))
                       "__tl_member_origin"

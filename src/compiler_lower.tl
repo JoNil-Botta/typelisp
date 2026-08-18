@@ -158,7 +158,7 @@
     [segment : (__tl_dyn-array LowerNameBinding)
       (array-ref store.segments segment-index)]
     (unsafe
-      (ptr-read (ptr-offset (array-data segment) offset)))))
+      (ptr-read (ptr-offset (__tl_array-data segment) offset)))))
 
 (define (lower-name-store-push!
   [store : (&mut store LowerNameStore)]
@@ -289,7 +289,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 (defenum LowerSpmdPackageSymbolRegistration
   (New)
@@ -683,7 +683,7 @@
       (set! (array-ref cell 0) ,value)
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data cell) : (Ptr ,T))))
+          (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,T))))
         : i64))))
 
 (define (compiler-lower-state-from-address [address : i64]) : CompilerLowerState
@@ -701,7 +701,7 @@
     [address : i64
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data cells) : (Ptr i64))))
+          (ptr->int (ptr-cast (__tl_array-data cells) : (Ptr i64))))
         : i64)]
     [state : CompilerLowerState (CompilerLowerState address)]
     (begin
@@ -8128,7 +8128,7 @@
           (unsafe
             (ptr->int
               (ptr-cast
-                (array-data cell)
+                (__tl_array-data cell)
                 : (Ptr CompilerLowerFunctionStateData))))
           : i64)]
       (begin

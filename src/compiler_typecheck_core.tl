@@ -53,7 +53,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 ;; TcTypeEnv cache fields: ids map, values, unsafe flags, raw C fnptr flags,
 ;; default-shadow flags, scan-through, partial, rest head, below head. The flag
@@ -465,7 +465,9 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcTopEnvMembershipStateData))))
+              (ptr-cast
+                (__tl_array-data cell)
+                : (Ptr TcTopEnvMembershipStateData))))
           : i64)))))
 
 (define (tc-thread-name-kind-state-new) : TcThreadNameKindState
@@ -486,7 +488,9 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcThreadNameKindStateData))))
+              (ptr-cast
+                (__tl_array-data cell)
+                : (Ptr TcThreadNameKindStateData))))
           : i64)))))
 
 (define (tc-inlay-hint-state-new) : TcInlayHintState
@@ -507,7 +511,8 @@
       (TcInlayHintState
         (cast
           (unsafe
-            (ptr->int (ptr-cast (array-data cell) : (Ptr TcInlayHintStateData))))
+            (ptr->int
+              (ptr-cast (__tl_array-data cell) : (Ptr TcInlayHintStateData))))
           : i64)))))
 
 (define (tc-macro-call-site-state-new) : TcMacroCallSiteState
@@ -534,7 +539,7 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcMacroCallSiteStateData))))
+              (ptr-cast (__tl_array-data cell) : (Ptr TcMacroCallSiteStateData))))
           : i64)))))
 
 (define (tc-source-key-cache-state-new) : TcSourceKeyCacheState
@@ -561,7 +566,7 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcScratchArenaStateData))))
+              (ptr-cast (__tl_array-data cell) : (Ptr TcScratchArenaStateData))))
           : i64)))))
 
 (define (tc-unused-unsafe-state-new) : TcUnusedUnsafeState
@@ -585,7 +590,7 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcUnusedUnsafeStateData))))
+              (ptr-cast (__tl_array-data cell) : (Ptr TcUnusedUnsafeStateData))))
           : i64)))))
 
 (define (tc-job-state-new) : TcJobState
@@ -615,7 +620,7 @@
       (TcJobState
         (cast
           (unsafe
-            (ptr->int (ptr-cast (array-data cell) : (Ptr TcJobStateData))))
+            (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr TcJobStateData))))
           : i64)))))
 
 (define (tc-job-state-data [state : TcJobState]) : TcJobStateData
@@ -627,7 +632,7 @@
     (cast
       (unsafe
         (ptr->int
-          (array-data
+          (__tl_array-data
             (tc-job-state-field
               state
               macro-state-addresses
@@ -3914,7 +3919,7 @@
             (cast
               (ptr->int
                 (ptr-cast
-                  (array-data compiler-tc-walk-clock-scratch)
+                  (__tl_array-data compiler-tc-walk-clock-scratch)
                   : (Ptr u8)))
               : i64))]
         [status : i64
@@ -8810,7 +8815,7 @@
           topenv-state-address
           structural-session-address))
       (unsafe
-        (cast (ptr->int (ptr-cast (array-data cell) : (Ptr u8))) : i64)))))
+        (cast (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr u8))) : i64)))))
 
 (define (tc-type-env-store-handle-new) : i64
   (let
@@ -8996,7 +9001,7 @@
           (unsafe
             (cast
               (ptr->int
-                (ptr-cast (ptr-offset (array-data items) index) : (Ptr u8)))
+                (ptr-cast (ptr-offset (__tl_array-data items) index) : (Ptr u8)))
               : i64)))))))
 
 (define (tc-type-env-store-push-cache!
@@ -9015,7 +9020,9 @@
       (unsafe
         (cast
           (ptr->int
-            (ptr-cast (ptr-offset (array-data store.caches) index) : (Ptr u8)))
+            (ptr-cast
+              (ptr-offset (__tl_array-data store.caches) index)
+              : (Ptr u8)))
           : i64)))))
 
 ;; Cleanup-owner markers are only ever introduced by `with`-resource bindings, so
@@ -9172,7 +9179,7 @@
                 (unsafe
                   (ptr-read
                     (ptr-offset
-                      (ptr-cast (array-data unsafe-flags) : (Ptr i64))
+                      (ptr-cast (__tl_array-data unsafe-flags) : (Ptr i64))
                       index)))
                 1))]
           [(tc_i64_i64_map.LookupMissing)
@@ -12283,7 +12290,7 @@
                   (TcChainIndex (tc_i64_i64_map.with-capacity 1024) 0 owner))
                 (unsafe
                   (cast
-                    (ptr->int (ptr-cast (array-data slots) : (Ptr u8)))
+                    (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
                     : i64)))))]
         (begin
           (tc-chain-state-set! store-handle cell)
@@ -13116,7 +13123,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroModuleEnvStateData))))
                 : i64)]
             (begin
@@ -16149,7 +16156,9 @@
               (cast
                 (unsafe
                   (ptr->int
-                    (ptr-cast (array-data cell) : (Ptr TcMacroHelperStateData))))
+                    (ptr-cast
+                      (__tl_array-data cell)
+                      : (Ptr TcMacroHelperStateData))))
                 : i64)]
             (begin
               (tc-macro-state-slot-address-set!
@@ -16481,7 +16490,7 @@
                               (ptr-read
                                 (ptr-offset
                                   (ptr-cast
-                                    (array-data cache.unsafe-flags)
+                                    (__tl_array-data cache.unsafe-flags)
                                     : (Ptr i64))
                                   index)))
                             1))
@@ -17204,7 +17213,8 @@
       (set! (array-ref cell 0) (TcStringListStoreData nodes 1 owner))
       (unsafe
         (cast
-          (ptr->int (ptr-cast (array-data cell) : (Ptr TcStringListStoreData)))
+          (ptr->int
+            (ptr-cast (__tl_array-data cell) : (Ptr TcStringListStoreData)))
           : i64)))))
 
 (define (tc-string-list-store-grow!
@@ -17362,7 +17372,8 @@
       (set! (array-ref cell 0) (TcNameIdListStoreData nodes 1 owner))
       (unsafe
         (cast
-          (ptr->int (ptr-cast (array-data cell) : (Ptr TcNameIdListStoreData)))
+          (ptr->int
+            (ptr-cast (__tl_array-data cell) : (Ptr TcNameIdListStoreData)))
           : i64)))))
 
 (define (tc-name-id-list-store-grow!
@@ -18053,7 +18064,7 @@
       (unsafe
         (cast
           (ptr->int
-            (ptr-cast (array-data cell) : (Ptr TcLifetimeSubstStoreData)))
+            (ptr-cast (__tl_array-data cell) : (Ptr TcLifetimeSubstStoreData)))
           : i64)))))
 
 (define (tc-lifetime-subst-store-grow!
@@ -22432,7 +22443,9 @@
               (cast
                 (unsafe
                   (ptr->int
-                    (ptr-cast (array-data cell) : (Ptr TcLazyImportStateData))))
+                    (ptr-cast
+                      (__tl_array-data cell)
+                      : (Ptr TcLazyImportStateData))))
                 : i64)]
             (begin
               (tc-macro-state-slot-address-set!
@@ -62735,7 +62748,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroAbstractStateData))))
                 : i64)]
             (begin
@@ -62928,7 +62941,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroProofReuseStateData))))
                 : i64)]
             (begin
@@ -63112,7 +63125,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroIdentityStateData))))
                 : i64)]
             (begin
@@ -67817,7 +67830,7 @@
   [data : (& data TcMovedPathFactStoreData)]
   [index : i64]) : TcMovedPathFactNode
   (unsafe
-    (ptr-read (ptr-offset (array-data data.nodes) index))))
+    (ptr-read (ptr-offset (__tl_array-data data.nodes) index))))
 
 (define (tc-moved-path-facts-empty? [facts : TcMovedPathFacts]) : bool
   (match facts
@@ -67902,7 +67915,7 @@
       (unsafe
         (cast
           (ptr->int
-            (ptr-cast (array-data cell) : (Ptr TcParamStorageOriginNode)))
+            (ptr-cast (__tl_array-data cell) : (Ptr TcParamStorageOriginNode)))
           : i64)))))
 
 (define (tc-param-storage-origin-lookup [head : i64] [name-id : i64]) : TcMaybeNameId
@@ -68180,7 +68193,7 @@
       (unsafe
         (cast
           (ptr->int
-            (ptr-cast (array-data cell) : (Ptr TcMovePathSegmentStoreData)))
+            (ptr-cast (__tl_array-data cell) : (Ptr TcMovePathSegmentStoreData)))
           : i64)))))
 
 (define (tc-move-path-segment-store-grow!
@@ -85102,7 +85115,9 @@
               (cast
                 (unsafe
                   (ptr->int
-                    (ptr-cast (array-data cell) : (Ptr TcMacroWalkStateData))))
+                    (ptr-cast
+                      (__tl_array-data cell)
+                      : (Ptr TcMacroWalkStateData))))
                 : i64)]
             (begin
               (tc-macro-state-slot-address-set!
@@ -85345,7 +85360,7 @@
                   (unsafe
                     (ptr->int
                       (ptr-cast
-                        (array-data cell)
+                        (__tl_array-data cell)
                         : (Ptr ci.InternSourceNameSession))))
                   : i64))]
             (tc-macro-state-slot-address-set! state 13 next-address))))
@@ -85870,7 +85885,8 @@
     [cell : (__tl_dyn-array csym.CompilerRegistries)
       (tc-macro-walk-field state macro-live-registries-cell)]
     (unsafe
-      (ptr-read (ptr-cast (array-data cell) : (Ptr csym.CompilerRegistries))))))
+      (ptr-read
+        (ptr-cast (__tl_array-data cell) : (Ptr csym.CompilerRegistries))))))
 
 ;; Whole-program symbol/registry rebuilds replace the previous tables, but the
 ;; ordinary compile arena retains every obsolete generation until process exit.
@@ -86988,8 +87004,8 @@
       (not
         (unsafe
           (=
-            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
-            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (__tl_array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
         (begin
@@ -87233,8 +87249,8 @@
       (not
         (unsafe
           (=
-            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
-            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (__tl_array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
         (begin
@@ -87277,13 +87293,17 @@
   test
   (define (macro-decl-list-slots-address [items : ast.AstDeclList]) : i64
     (unsafe
-      (cast (ptr->int (ptr-cast (array-data items.slots) : (Ptr u8))) : i64))))
+      (cast
+        (ptr->int (ptr-cast (__tl_array-data items.slots) : (Ptr u8)))
+        : i64))))
 
 (cfg
   test
   (define (macro-decl-path-list-slots-address [items : ast.AstDeclPathList]) : i64
     (unsafe
-      (cast (ptr->int (ptr-cast (array-data items.slots) : (Ptr u8))) : i64))))
+      (cast
+        (ptr->int (ptr-cast (__tl_array-data items.slots) : (Ptr u8)))
+        : i64))))
 
 (cfg
   test
@@ -87571,7 +87591,9 @@
       (cast
         (unsafe
           (ptr->int
-            (ptr-cast (array-data cell) : (Ptr MacroProgramSegmentNodeData))))
+            (ptr-cast
+              (__tl_array-data cell)
+              : (Ptr MacroProgramSegmentNodeData))))
         : i64))))
 
 (define (macro-segmented-program-view-new-current
@@ -87599,7 +87621,9 @@
       (cast
         (unsafe
           (ptr->int
-            (ptr-cast (array-data cell) : (Ptr MacroSegmentedProgramViewData))))
+            (ptr-cast
+              (__tl_array-data cell)
+              : (Ptr MacroSegmentedProgramViewData))))
         : i64))))
 
 (define (macro-segmented-program-begin!
@@ -89867,7 +89891,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroGeneratedModuleStateData))))
                 : i64)]
             (begin
@@ -90173,7 +90197,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroGeneratedDeclsStateData))))
                 : i64)]
             (begin
@@ -92870,7 +92894,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroSurfaceCallStateData))))
                 : i64)]
             (begin
@@ -94410,7 +94434,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroHygieneProducedStateData))))
                 : i64)]
             (begin
@@ -97067,7 +97091,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroImportIndexStateData))))
                 : i64)]
             (begin
@@ -97824,7 +97848,7 @@
 (define (macro-decl-list-slots-data-addr [decls : ast.AstDeclList]) : i64
   (cast
     (unsafe
-      (ptr->int (ptr-cast (array-data decls.slots) : (Ptr u8))))
+      (ptr->int (ptr-cast (__tl_array-data decls.slots) : (Ptr u8))))
     : i64))
 
 ;; The mapping is program-derived, so the cache must not survive into the next
@@ -99777,7 +99801,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroResultIdentityStateData))))
                 : i64)]
             (begin

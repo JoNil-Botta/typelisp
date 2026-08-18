@@ -88,7 +88,7 @@
 
 (define (tlci-pages-array-ptr [bytes : (__tl_dyn-array u8)]) : (Ptr u8)
   (unsafe
-    (ptr-cast (array-data bytes) : (Ptr u8))))
+    (ptr-cast (__tl_array-data bytes) : (Ptr u8))))
 
 (define (tlci-pages-copy-bytes!
   [dst : (MutPtr u8)]
@@ -154,7 +154,7 @@
           region.size
           protect
           (unsafe
-            (ptr-cast (array-data old) : (MutPtr i32))))]
+            (ptr-cast (__tl_array-data old) : (MutPtr i32))))]
       (not (= ok (cast 0 : i32))))))
 
 (cfg

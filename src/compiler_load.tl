@@ -40,7 +40,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 ;; Sources, manifests, and include payloads are interpreted as text here.
 ;; Make that conversion explicit at the binary IO boundary.
@@ -812,14 +812,14 @@
       (unsafe
         (ptr->int
           (ptr-cast
-            (array-data state.dependency-catalog.entries)
+            (__tl_array-data state.dependency-catalog.entries)
             : (Ptr CompilerLoadDependencyCatalogList))))
       : i64)
     (cast
       (unsafe
         (ptr->int
           (ptr-cast
-            (array-data state.dependency-catalog.generation)
+            (__tl_array-data state.dependency-catalog.generation)
             : (Ptr i64))))
       : i64)))
 
@@ -4164,8 +4164,8 @@
         (not
           (unsafe
             (=
-              (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
-              (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
+              (ptr->int (ptr-cast (__tl_array-data left.slots) : (Ptr u8)))
+              (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
         (let
           [new-offset : i64 (- right.offset left-len)]
           (begin
@@ -4226,8 +4226,8 @@
       (not
         (unsafe
           (=
-            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
-            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (__tl_array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
         (begin
@@ -4293,8 +4293,8 @@
       (not
         (unsafe
           (=
-            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
-            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (__tl_array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
         (begin
@@ -13398,7 +13398,7 @@
       (set! (array-ref bytes 4) (cast 255 : u8))
       (set! (array-ref bytes 5) (cast 10 : u8))
       (unsafe
-        (string-from-bytes (ptr-cast (array-data bytes) : (Ptr u8)) 6)))))
+        (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 6)))))
 
 (define (compiler-load-decl-list-has-import-alias?
   [decls : ast.AstDeclList]
@@ -17770,7 +17770,7 @@
 (define (compiler-load-module-list-slots-address
   [items : ast.AstDeclModuleList]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data items.slots) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data items.slots) : (Ptr u8))) : i64)))
 
 (define (compiler-load-append-onto-reuse-ok?) : bool
   (let

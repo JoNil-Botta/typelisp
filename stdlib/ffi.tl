@@ -104,7 +104,7 @@
       [buf : (__tl_dyn-array u8) (array.make-array u8 needed)]
       [dst : (MutPtr u8)
         (unsafe
-          (array-data buf))]
+          (__tl_array-data buf))]
       (begin
         (c-bytes-copy-bytes! view dst n)
         (unsafe
@@ -204,7 +204,7 @@
     [data : (__tl_dyn-array u8) (array.make-array u8 3)]
     [dst : (MutPtr u8)
       (unsafe
-        (array-data data))]
+        (__tl_array-data data))]
     (begin
       (test-write-u8! dst 0 97)
       (test-write-u8! dst 1 0)
@@ -238,7 +238,7 @@
       [empty-storage : (__tl_dyn-array u8) (array.make-array u8 1)]
       [empty-buf : (MutPtr u8)
         (unsafe
-          (array-data empty-storage))]
+          (__tl_array-data empty-storage))]
       (begin
         (test-assert-copy-ok (c-string-copy! "" empty-buf 1) 1)
         (test-assert-u8-eq (test-read-u8 empty-buf 0) 0)))
@@ -246,7 +246,7 @@
       [exact-storage : (__tl_dyn-array u8) (array.make-array u8 4)]
       [exact : (MutPtr u8)
         (unsafe
-          (array-data exact-storage))]
+          (__tl_array-data exact-storage))]
       (begin
         (test-assert-copy-ok (c-string-copy! "abc" exact 4) 4)
         (test-assert-u8-eq (test-read-u8 exact 0) 97)
@@ -259,7 +259,7 @@
       [bytes-storage : (__tl_dyn-array u8) (array.make-array u8 4)]
       [bytes-dst : (MutPtr u8)
         (unsafe
-          (array-data bytes-storage))]
+          (__tl_array-data bytes-storage))]
       (begin
         (test-assert-copy-ok (c-bytes-copy! bytes-view bytes-dst 4) 4)
         (test-assert-u8-eq (test-read-u8 bytes-dst 0) 98)
@@ -270,7 +270,7 @@
       [small-storage : (__tl_dyn-array u8) (array.make-array u8 3)]
       [small : (MutPtr u8)
         (unsafe
-          (array-data small-storage))]
+          (__tl_array-data small-storage))]
       (begin
         (test-write-u8! small 0 77)
         (test-assert-too-small (c-string-copy! "abc" small 3) 4)
@@ -280,7 +280,7 @@
       [nul-storage : (__tl_dyn-array u8) (array.make-array u8 4)]
       [nul-buf : (MutPtr u8)
         (unsafe
-          (array-data nul-storage))]
+          (__tl_array-data nul-storage))]
       (begin
         (test-write-u8! nul-buf 0 88)
         (if (c-string-interior-nul? with-nul)
@@ -297,7 +297,7 @@
       [binary-storage : (__tl_dyn-array u8) (array.make-array u8 3)]
       [binary-buf : (MutPtr u8)
         (unsafe
-          (array-data binary-storage))]
+          (__tl_array-data binary-storage))]
       (begin
         (test-write-u8! binary-buf 0 66)
         (if (c-bytes-interior-nul? binary-view)

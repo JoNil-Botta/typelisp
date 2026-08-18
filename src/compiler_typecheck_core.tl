@@ -12,6 +12,7 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_diagnostic as cdiag)
 (import compiler_float as cfloat)
 (import compiler_ctfe as ctfe_support)
@@ -250,7 +251,11 @@
   ;; Address of this store's TcChainIndex cell, or 0 before the first explicit
   ;; top-env layer is built. Word offset 8; the eight fields above are one word
   ;; each, which the raw accessors below rely on.
-  (chain-state i64))
+  (chain-state i64)
+  ;; Explicit source-name/structural-intern session owned by this environment.
+  ;; Arena-phase marker handles resolve only through this capability; snapshots
+  ;; share the store, so the hot three-word TcTypeEnv ABI stays unchanged.
+  (structural-session-address i64))
 
 ;; Structural index over one store's explicit top-env layer forest. `map` sends
 ;; a binding key to the packed reference of the newest layer that binds it;
@@ -8778,7 +8783,8 @@
   0)
 
 (define (tc-type-env-store-new-with-topenv-state-address
-  [topenv-state-address : i64]) : TcTypeEnvStore
+  [topenv-state-address : i64]
+  [structural-session-address : i64]) : TcTypeEnvStore
   (TcTypeEnvStore
     (array.make-array TcTypeEnvBinding 1)
     0
@@ -8788,22 +8794,31 @@
     0
     (arena.tl_arena_current)
     topenv-state-address
-    0))
+    0
+    structural-session-address))
 
 (define (tc-type-env-store-handle-new-with-topenv-state-address
-  [topenv-state-address : i64]) : i64
+  [topenv-state-address : i64]
+  [structural-session-address : i64]) : i64
   (let
     [cell : (__tl_dyn-array TcTypeEnvStore) (array.make-array TcTypeEnvStore 1)]
     (begin
       (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
       (set!
         (array-ref cell 0)
-        (tc-type-env-store-new-with-topenv-state-address topenv-state-address))
+        (tc-type-env-store-new-with-topenv-state-address
+          topenv-state-address
+          structural-session-address))
       (unsafe
         (cast (ptr->int (ptr-cast (array-data cell) : (Ptr u8))) : i64)))))
 
 (define (tc-type-env-store-handle-new) : i64
-  (tc-type-env-store-handle-new-with-topenv-state-address 0))
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-capture-active-handle)]
+    (tc-type-env-store-handle-new-with-topenv-state-address
+      0
+      source-names.address)))
 
 (define (tc-type-env-store-read [handle : i64]) : TcTypeEnvStore
   (unsafe
@@ -8817,11 +8832,20 @@
   (TcTypeEnv (tc-type-env-store-handle-new) -1 0))
 
 (define (tc-type-env-new-with-job-state [state : TcJobState]) : TcTypeEnv
-  (TcTypeEnv
-    (tc-type-env-store-handle-new-with-topenv-state-address
-      (__tl-project-field (tc-job-state-topenv-membership state) address))
-    -1
-    0))
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (tc-macro-state-source-names (tc-job-state-macro-state state))]
+    (TcTypeEnv
+      (tc-type-env-store-handle-new-with-topenv-state-address
+        (__tl-project-field (tc-job-state-topenv-membership state) address)
+        source-names.address)
+      -1
+      0)))
+
+(define (tc-type-env-structural-session [env : TcTypeEnv]) : cis.InternStructuralSessionHandle
+  (cis.InternStructuralSessionHandle
+    (unsafe
+      (ptr-read (ptr-offset (int->ptr env.store : (Ptr i64)) 9)))))
 
 (define (tc-type-env-topenv-membership-state [env : TcTypeEnv]) : TcTopEnvMembershipState
   (TcTopEnvMembershipState
@@ -10333,6 +10357,7 @@
 
 (define (tc-type-env-scoped-stack-find-lifetime-index-from
   [stack : TcTypeEnvScopedStack]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]
   [signature-marker-id : i64]
   [index : i64]) : i64
@@ -10341,6 +10366,7 @@
     (let
       [slot : TcTypeEnvScopedSlot (array-ref stack.slots index)]
       (if (tc-env-binding-matches-lifetime-id?
+        session
         slot.name-id
         slot.ty
         lifetime-id
@@ -10348,15 +10374,18 @@
         index
         (tc-type-env-scoped-stack-find-lifetime-index-from
           stack
+          session
           lifetime-id
           signature-marker-id
           (- index 1))))))
 
 (define (tc-type-env-scoped-stack-find-lifetime-index
   [stack : TcTypeEnvScopedStack]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]) : i64
   (tc-type-env-scoped-stack-find-lifetime-index-from
     stack
+    session
     lifetime-id
     (tc-signature-lifetime-marker-id)
     (- (tc-type-env-scoped-stack-len stack) 1)))
@@ -10954,6 +10983,10 @@
   -1)
 (define tc-type-env-scoped-cache-visible-generation : i64
   -1)
+(define tc-type-env-scoped-cache-visible-session-owner : i64
+  -1)
+(define tc-type-env-scoped-cache-visible-session-generation : i64
+  -1)
 (define tc-type-env-scoped-cache-visible-lifetime-id : i64
   -1)
 (define tc-type-env-scoped-cache-visible-result : bool
@@ -10963,6 +10996,10 @@
 (define tc-type-env-scoped-cache-outlives-binding-len : i64
   -1)
 (define tc-type-env-scoped-cache-outlives-binding-generation : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-binding-session-owner : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-binding-session-generation : i64
   -1)
 (define tc-type-env-scoped-cache-outlives-binding-lifetime-id : i64
   -1)
@@ -10975,6 +11012,10 @@
 (define tc-type-env-scoped-cache-outlives-lifetime-len : i64
   -1)
 (define tc-type-env-scoped-cache-outlives-lifetime-generation : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-lifetime-session-owner : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-lifetime-session-generation : i64
   -1)
 (define tc-type-env-scoped-cache-outlives-lifetime-value-id : i64
   -1)
@@ -10994,18 +11035,28 @@
   [lifetime-id : i64]) : bool
   (let
     [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
+    [session : cis.InternStructuralSessionHandle
+      (tc-type-env-structural-session carrier.env)]
+    [session-owner : i64 (cis.intern-structural-session-owner session)]
+    [session-generation : i64
+      (cis.intern-structural-session-current-reset-generation session)]
     [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
     [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
     (if (and
       tc-type-env-scoped-cache-visible-valid
       (= tc-type-env-scoped-cache-visible-len slot-count)
       (= tc-type-env-scoped-cache-visible-generation generation)
+      (= tc-type-env-scoped-cache-visible-session-owner session-owner)
+      (= tc-type-env-scoped-cache-visible-session-generation session-generation)
       (= tc-type-env-scoped-cache-visible-lifetime-id lifetime-id))
       tc-type-env-scoped-cache-visible-result
       (let
         [result : bool
           (if (>=
-            (tc-type-env-scoped-stack-find-lifetime-index stack lifetime-id)
+            (tc-type-env-scoped-stack-find-lifetime-index
+              stack
+              session
+              lifetime-id)
             0)
             true
             (tc-lifetime-visible-persistent-id?
@@ -11015,6 +11066,10 @@
           (set! tc-type-env-scoped-cache-visible-valid true)
           (set! tc-type-env-scoped-cache-visible-len slot-count)
           (set! tc-type-env-scoped-cache-visible-generation generation)
+          (set! tc-type-env-scoped-cache-visible-session-owner session-owner)
+          (set!
+            tc-type-env-scoped-cache-visible-session-generation
+            session-generation)
           (set! tc-type-env-scoped-cache-visible-lifetime-id lifetime-id)
           (set! tc-type-env-scoped-cache-visible-result result)
           result)))))
@@ -11025,18 +11080,30 @@
   [target-id : i64]) : bool
   (let
     [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
+    [session : cis.InternStructuralSessionHandle
+      (tc-type-env-structural-session carrier.env)]
+    [session-owner : i64 (cis.intern-structural-session-owner session)]
+    [session-generation : i64
+      (cis.intern-structural-session-current-reset-generation session)]
     [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
     [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
     (if (and
       tc-type-env-scoped-cache-outlives-binding-valid
       (= tc-type-env-scoped-cache-outlives-binding-len slot-count)
       (= tc-type-env-scoped-cache-outlives-binding-generation generation)
+      (= tc-type-env-scoped-cache-outlives-binding-session-owner session-owner)
+      (=
+        tc-type-env-scoped-cache-outlives-binding-session-generation
+        session-generation)
       (= tc-type-env-scoped-cache-outlives-binding-lifetime-id lifetime-id)
       (= tc-type-env-scoped-cache-outlives-binding-target-id target-id))
       tc-type-env-scoped-cache-outlives-binding-result
       (let
         [lifetime-index : i64
-          (tc-type-env-scoped-stack-find-lifetime-index stack lifetime-id)]
+          (tc-type-env-scoped-stack-find-lifetime-index
+            stack
+            session
+            lifetime-id)]
         [target-index : i64
           (tc-type-env-scoped-stack-find-id-index (& stack) target-id)]
         [result : bool
@@ -11057,6 +11124,12 @@
           (set! tc-type-env-scoped-cache-outlives-binding-len slot-count)
           (set! tc-type-env-scoped-cache-outlives-binding-generation generation)
           (set!
+            tc-type-env-scoped-cache-outlives-binding-session-owner
+            session-owner)
+          (set!
+            tc-type-env-scoped-cache-outlives-binding-session-generation
+            session-generation)
+          (set!
             tc-type-env-scoped-cache-outlives-binding-lifetime-id
             lifetime-id)
           (set! tc-type-env-scoped-cache-outlives-binding-target-id target-id)
@@ -11071,12 +11144,23 @@
     true
     (let
       [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
+      [session : cis.InternStructuralSessionHandle
+        (tc-type-env-structural-session carrier.env)]
+      [session-owner : i64 (cis.intern-structural-session-owner session)]
+      [session-generation : i64
+        (cis.intern-structural-session-current-reset-generation session)]
       [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
       [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
       (if (and
         tc-type-env-scoped-cache-outlives-lifetime-valid
         (= tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
         (= tc-type-env-scoped-cache-outlives-lifetime-generation generation)
+        (=
+          tc-type-env-scoped-cache-outlives-lifetime-session-owner
+          session-owner)
+        (=
+          tc-type-env-scoped-cache-outlives-lifetime-session-generation
+          session-generation)
         (=
           tc-type-env-scoped-cache-outlives-lifetime-value-id
           value-lifetime-id)
@@ -11088,10 +11172,12 @@
           [value-index : i64
             (tc-type-env-scoped-stack-find-lifetime-index
               stack
+              session
               value-lifetime-id)]
           [target-index : i64
             (tc-type-env-scoped-stack-find-lifetime-index
               stack
+              session
               target-lifetime-id)]
           [value-signature : bool
             (tc-type-env-scoped-stack-signature-lifetime-index?
@@ -11123,6 +11209,12 @@
             (set!
               tc-type-env-scoped-cache-outlives-lifetime-generation
               generation)
+            (set!
+              tc-type-env-scoped-cache-outlives-lifetime-session-owner
+              session-owner)
+            (set!
+              tc-type-env-scoped-cache-outlives-lifetime-session-generation
+              session-generation)
             (set!
               tc-type-env-scoped-cache-outlives-lifetime-value-id
               value-lifetime-id)
@@ -17463,45 +17555,40 @@
     (ast.AstType.Var name-id)
     TcTypeEnvScopedMarkerKind.AtomicArenaOwner))
 
-(define (tc-arena-phase-structural-base) : i64
-  (let
-    [stride : i64 (ci.intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    (+ (+ stride stride2) (* stride2 stride))))
+(define (tc-arena-phase-record-id
+  [session : cis.InternStructuralSessionHandle]
+  [record : cis.InternArenaPhaseRecord]) : i64
+  (cis.intern-arena-phase-identity-raw
+    (cis.intern-structural-session-arena-phase-identity session record)))
 
-(define (tc-arena-phase-structural-id
-  [kind : i64]
-  [first-id : i64]
-  [second-id : i64]) : i64
-  (let
-    [stride : i64 (ci.intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    (+
-      (tc-arena-phase-structural-base)
-      (+ (* kind stride2) (+ (* first-id stride) second-id)))))
+(define (tc-arena-phase-region-id
+  [env : TcTypeEnv]
+  [owner-id : i64]
+  [token-id : i64]) : i64
+  (tc-arena-phase-record-id
+    (tc-type-env-structural-session env)
+    (cis.InternArenaPhaseRecord.Region owner-id token-id)))
 
-(define (tc-arena-phase-structural-kind [value : i64]) : i64
-  (let
-    [stride : i64 (ci.intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    (/ (- value (tc-arena-phase-structural-base)) stride2)))
+(define (tc-arena-phase-current-region-marker-id
+  [env : TcTypeEnv]
+  [owner-id : i64]) : i64
+  (tc-arena-phase-record-id
+    (tc-type-env-structural-session env)
+    (cis.InternArenaPhaseRecord.CurrentRegionMarker owner-id)))
 
-(define (tc-arena-phase-structural-first-id [value : i64]) : i64
-  (let
-    [stride : i64 (ci.intern-capacity)]
-    (% (/ (- value (tc-arena-phase-structural-base)) stride) stride)))
+(define (tc-arena-phase-token-owner-marker-id
+  [env : TcTypeEnv]
+  [token-id : i64]) : i64
+  (tc-arena-phase-record-id
+    (tc-type-env-structural-session env)
+    (cis.InternArenaPhaseRecord.TokenOwnerMarker token-id)))
 
-(define (tc-arena-phase-region-id [owner-id : i64] [token-id : i64]) : i64
-  (tc-arena-phase-structural-id 0 owner-id token-id))
-
-(define (tc-arena-phase-current-region-marker-id [owner-id : i64]) : i64
-  (tc-arena-phase-structural-id 1 owner-id 0))
-
-(define (tc-arena-phase-token-owner-marker-id [token-id : i64]) : i64
-  (tc-arena-phase-structural-id 2 token-id 0))
-
-(define (tc-arena-phase-token-region-marker-id [token-id : i64]) : i64
-  (tc-arena-phase-structural-id 3 token-id 0))
+(define (tc-arena-phase-token-region-marker-id
+  [env : TcTypeEnv]
+  [token-id : i64]) : i64
+  (tc-arena-phase-record-id
+    (tc-type-env-structural-session env)
+    (cis.InternArenaPhaseRecord.TokenRegionMarker token-id)))
 
 (define (tc-qualified-name-key-id [module-id : i64] [base-id : i64]) : i64
   (csym.compiler-symbol-module-key-id-by-id module-id base-id))
@@ -17512,31 +17599,46 @@
 (define (tc-generated-name-id [name : String]) : i64
   (tc-generated-module-name-id name))
 
-(define (tc-arena-region-owned-by-id? [owner-id : i64] [region-id : i64]) : bool
+(define (tc-arena-region-owned-by-id-for-session?
+  [session : cis.InternStructuralSessionHandle]
+  [owner-id : i64]
+  [region-id : i64]) : bool
   (if (or (< owner-id 0) (< region-id 0))
     false
     (or
       (= owner-id region-id)
-      (and
-        (>= region-id (tc-arena-phase-structural-base))
-        (= (tc-arena-phase-structural-kind region-id) 0)
-        (= (tc-arena-phase-structural-first-id region-id) owner-id)))))
+      (match (cis.intern-structural-session-arena-phase-record-for-raw
+        session
+        region-id)
+        [(cis.InternMaybeArenaPhaseRecord.Some
+            (cis.InternArenaPhaseRecord.Region record-owner-id _))
+          (= record-owner-id owner-id)]
+        [_ false]))))
+
+(define (tc-arena-region-owned-by-id?
+  [env : TcTypeEnv]
+  [owner-id : i64]
+  [region-id : i64]) : bool
+  (tc-arena-region-owned-by-id-for-session?
+    (tc-type-env-structural-session env)
+    owner-id
+    region-id))
 
 (define (tc-bind-arena-phase-token
   [env : TcTypeEnv]
   [token-id : i64]
   [owner-id : i64]) : TcTypeEnv
   (let
-    [region-id : i64 (tc-arena-phase-region-id owner-id token-id)]
+    [region-id : i64 (tc-arena-phase-region-id env owner-id token-id)]
     (tc-bind-id
       (tc-bind-id
         (tc-bind-id
           env
-          (tc-arena-phase-current-region-marker-id owner-id)
+          (tc-arena-phase-current-region-marker-id env owner-id)
           (ast.AstType.Var region-id))
-        (tc-arena-phase-token-owner-marker-id token-id)
+        (tc-arena-phase-token-owner-marker-id env token-id)
         (ast.AstType.Var owner-id))
-      (tc-arena-phase-token-region-marker-id token-id)
+      (tc-arena-phase-token-region-marker-id env token-id)
       (ast.AstType.Var region-id))))
 
 (define (tc-arena-phase-token-region-head
@@ -17588,7 +17690,8 @@
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (let
-      [region-marker-id : i64 (tc-arena-phase-token-region-marker-id token-id)]
+      [region-marker-id : i64
+        (tc-arena-phase-token-region-marker-id env token-id)]
       (match (tc-type-env-view env)
         [(TcTypeEnvView.Cache _ _ _ rest _)
           (tc-arena-phase-token-region-active-scan
@@ -17629,8 +17732,10 @@
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (let
-      [owner-marker-id : i64 (tc-arena-phase-token-owner-marker-id token-id)]
-      [region-marker-id : i64 (tc-arena-phase-token-region-marker-id token-id)]
+      [owner-marker-id : i64
+        (tc-arena-phase-token-owner-marker-id env token-id)]
+      [region-marker-id : i64
+        (tc-arena-phase-token-region-marker-id env token-id)]
       (match (tc-type-env-view env)
         [(TcTypeEnvView.Cache _ _ _ rest _)
           (tc-arena-phase-token-owner-active-scan
@@ -17650,13 +17755,14 @@
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (match (tc-env-marker-type
       env
-      (tc-arena-phase-current-region-marker-id owner))
+      (tc-arena-phase-current-region-marker-id env owner))
       [(ast.AstMaybeType.Some (ast.AstType.Var region)) region]
       [_ owner])))
 
 (define (tc-active-region-owned-by-arena-id? [env : TcTypeEnv] [owner : i64]) : bool
   (match (tc-active-region env)
-    [(TcMaybeNameId.Some region) (tc-arena-region-owned-by-id? owner region)]
+    [(TcMaybeNameId.Some region)
+      (tc-arena-region-owned-by-id? env owner region)]
     [(TcMaybeNameId.No) false]))
 
 (define (tc-cleanup-owner-marker-for?
@@ -18101,6 +18207,7 @@
     false))
 
 (define (tc-env-binding-matches-lifetime-id?
+  [session : cis.InternStructuralSessionHandle]
   [key : i64]
   [ty : ast.AstType]
   [lifetime-id : i64]
@@ -18123,7 +18230,7 @@
         (= key (tc-atomic-arena-owner-marker-id)))
       (match ty
         [(ast.AstType.Var owner)
-          (tc-arena-region-owned-by-id? owner lifetime-id)]
+          (tc-arena-region-owned-by-id-for-session? session owner lifetime-id)]
         [_ false])]
     [else false]))
 
@@ -18132,6 +18239,7 @@
 ;; lexical order when several binding forms spell the same lifetime.
 (define (tc-env-cache-lifetime-match-status
   [cache-ptr : (Ptr TcTypeEnvCache)]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]) : i64
   (let
     [ids : tc_i64_i64_map.Map
@@ -18145,11 +18253,13 @@
         (tc-env-cache-lifetime-marker-key lifetime-id)
         -1)]
     [owner-id : i64
-      (if (and
-        (>= lifetime-id (tc-arena-phase-structural-base))
-        (= (tc-arena-phase-structural-kind lifetime-id) 0))
-        (tc-arena-phase-structural-first-id lifetime-id)
-        -1)]
+      (match (cis.intern-structural-session-arena-phase-record-for-raw
+        session
+        lifetime-id)
+        [(cis.InternMaybeArenaPhaseRecord.Some
+            (cis.InternArenaPhaseRecord.Region owner _))
+          owner]
+        [_ -1])]
     [owner-marker-index : i64
       (if (>= owner-id 0)
         (tc_i64_i64_map.get-value-or
@@ -18238,6 +18348,7 @@
 
 (define (tc-lifetime-visible-scan-id?
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]
   [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
@@ -18247,21 +18358,40 @@
         (if partial
           (or
             (not
-              (= (tc-env-cache-lifetime-match-status cache-ptr lifetime-id) 0))
-            (tc-lifetime-visible-scan-id? below lifetime-id signature-marker-id))
-          (tc-lifetime-visible-scan-id? rest lifetime-id signature-marker-id))
+              (=
+                (tc-env-cache-lifetime-match-status
+                  cache-ptr
+                  session
+                  lifetime-id)
+                0))
+            (tc-lifetime-visible-scan-id?
+              below
+              session
+              lifetime-id
+              signature-marker-id))
+          (tc-lifetime-visible-scan-id?
+            rest
+            session
+            lifetime-id
+            signature-marker-id))
         false)]
     [(TcTypeEnvView.Bind key ty rest)
       (if (tc-env-binding-matches-lifetime-id?
+        session
         key
         ty
         lifetime-id
         signature-marker-id)
         true
-        (tc-lifetime-visible-scan-id? rest lifetime-id signature-marker-id))]))
+        (tc-lifetime-visible-scan-id?
+          rest
+          session
+          lifetime-id
+          signature-marker-id))]))
 
 (define (tc-lifetime-nearest-binding-signature-scan-id?
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]
   [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
@@ -18271,22 +18401,25 @@
         (if partial
           (let
             [status : i64
-              (tc-env-cache-lifetime-match-status cache-ptr lifetime-id)]
+              (tc-env-cache-lifetime-match-status cache-ptr session lifetime-id)]
             (cond
               [(= status 2) true]
               [(= status 1) false]
               [else
                 (tc-lifetime-nearest-binding-signature-scan-id?
                   below
+                  session
                   lifetime-id
                   signature-marker-id)]))
           (tc-lifetime-nearest-binding-signature-scan-id?
             rest
+            session
             lifetime-id
             signature-marker-id))
         false)]
     [(TcTypeEnvView.Bind key ty rest)
       (if (tc-env-binding-matches-lifetime-id?
+        session
         key
         ty
         lifetime-id
@@ -18298,6 +18431,7 @@
           signature-marker-id)
         (tc-lifetime-nearest-binding-signature-scan-id?
           rest
+          session
           lifetime-id
           signature-marker-id))]))
 
@@ -18307,10 +18441,16 @@
   (if (< lifetime-id 0)
     false
     (let
+      [session : cis.InternStructuralSessionHandle
+        (tc-type-env-structural-session env)]
       [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
       (or
         (>= (tc-ordinary-binding-rank-id-from env lifetime-id 0) 0)
-        (tc-lifetime-visible-scan-id? env lifetime-id signature-marker-id)))))
+        (tc-lifetime-visible-scan-id?
+          env
+          session
+          lifetime-id
+          signature-marker-id)))))
 
 (define (tc-lifetime-visible-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
   (if (tc-generated-arena-brand-id? lifetime-id)
@@ -18340,6 +18480,7 @@
 
 (define (tc-lifetime-outlives-binding-scan-inner-id
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]
   [target-id : i64]
   [seen-target : bool]
@@ -18351,6 +18492,7 @@
       (if scan-through
         (tc-lifetime-outlives-binding-scan-inner-id
           rest
+          session
           lifetime-id
           target-id
           seen-target
@@ -18365,6 +18507,7 @@
           lifetime-id
           signature-marker-id)
         (tc-env-binding-matches-lifetime-id?
+          session
           key
           ty
           lifetime-id
@@ -18372,6 +18515,7 @@
         seen-target
         (tc-lifetime-outlives-binding-scan-inner-id
           rest
+          session
           lifetime-id
           target-id
           (or seen-target (= key target-id))
@@ -18380,6 +18524,7 @@
 
 (define (tc-lifetime-outlives-binding-scan-id
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]
   [target-id : i64]
   [seen-target : bool]
@@ -18389,6 +18534,7 @@
     [(TcTypeEnvView.Cache _ _ _ rest _)
       (tc-lifetime-outlives-binding-scan-inner-id
         rest
+        session
         lifetime-id
         target-id
         seen-target
@@ -18397,6 +18543,7 @@
     [_
       (tc-lifetime-outlives-binding-scan-inner-id
         env
+        session
         lifetime-id
         target-id
         seen-target
@@ -18410,10 +18557,13 @@
   (if (or (< lifetime-id 0) (< target-id 0))
     false
     (let
+      [session : cis.InternStructuralSessionHandle
+        (tc-type-env-structural-session env)]
       [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
       [signature-lifetime : bool
         (tc-lifetime-nearest-binding-signature-scan-id?
           env
+          session
           lifetime-id
           signature-marker-id)]
       [lifetime-rank : i64 (tc-ordinary-binding-rank-id-from env lifetime-id 0)]
@@ -18421,6 +18571,7 @@
       (if signature-lifetime
         (tc-lifetime-outlives-binding-scan-id
           env
+          session
           lifetime-id
           target-id
           false
@@ -18430,6 +18581,7 @@
           (> lifetime-rank target-rank)
           (tc-lifetime-outlives-binding-scan-id
             env
+            session
             lifetime-id
             target-id
             false
@@ -18470,6 +18622,7 @@
 
 (define (tc-lifetime-outlives-lifetime-scan-inner-id
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]
   [seen-target : bool]
@@ -18484,6 +18637,7 @@
         (if scan-through
           (tc-lifetime-outlives-lifetime-scan-inner-id
             rest
+            session
             value-lifetime-id
             target-lifetime-id
             seen-target
@@ -18499,6 +18653,7 @@
             value-lifetime-id
             signature-marker-id)
           (tc-env-binding-matches-lifetime-id?
+            session
             key
             ty
             value-lifetime-id
@@ -18506,6 +18661,7 @@
           seen-target
           (tc-lifetime-outlives-lifetime-scan-inner-id
             rest
+            session
             value-lifetime-id
             target-lifetime-id
             (or
@@ -18517,6 +18673,7 @@
                   target-lifetime-id
                   signature-marker-id)
                 (tc-env-binding-matches-lifetime-id?
+                  session
                   key
                   ty
                   target-lifetime-id
@@ -18527,6 +18684,7 @@
 
 (define (tc-lifetime-outlives-lifetime-scan-id
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]
   [seen-target : bool]
@@ -18537,6 +18695,7 @@
     [(TcTypeEnvView.Cache _ _ _ rest _)
       (tc-lifetime-outlives-lifetime-scan-inner-id
         rest
+        session
         value-lifetime-id
         target-lifetime-id
         seen-target
@@ -18546,6 +18705,7 @@
     [_
       (tc-lifetime-outlives-lifetime-scan-inner-id
         env
+        session
         value-lifetime-id
         target-lifetime-id
         seen-target
@@ -18562,15 +18722,19 @@
     (if (= value-lifetime-id target-lifetime-id)
       true
       (let
+        [session : cis.InternStructuralSessionHandle
+          (tc-type-env-structural-session env)]
         [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
         [value-signature : bool
           (tc-lifetime-nearest-binding-signature-scan-id?
             env
+            session
             value-lifetime-id
             signature-marker-id)]
         [target-signature : bool
           (tc-lifetime-nearest-binding-signature-scan-id?
             env
+            session
             target-lifetime-id
             signature-marker-id)]
         [value-rank : i64
@@ -18582,6 +18746,7 @@
           [(or value-signature target-signature)
             (tc-lifetime-outlives-lifetime-scan-id
               env
+              session
               value-lifetime-id
               target-lifetime-id
               false
@@ -18593,6 +18758,7 @@
           [else
             (tc-lifetime-outlives-lifetime-scan-id
               env
+              session
               value-lifetime-id
               target-lifetime-id
               false
@@ -19723,6 +19889,7 @@
   (tc-type-collect-regions-into ty TcNameIdList.Nil))
 
 (define (tc-region-list-contains-arena-owner?
+  [env : TcTypeEnv]
   [regions : TcNameIdList]
   [owner : i64]) : bool
   (let
@@ -19731,14 +19898,20 @@
     (begin
       (while (and (not found) (not (tc-name-id-list-empty? cursor)))
         (begin
-          (if (tc-arena-region-owned-by-id? owner (tc-name-id-list-head cursor))
+          (if (tc-arena-region-owned-by-id?
+            env
+            owner
+            (tc-name-id-list-head cursor))
             (set! found true)
             unit)
           (set! cursor (tc-name-id-list-rest cursor))))
       found)))
 
-(define (tc-type-contains-arena-owner-region? [ty : ast.AstType] [owner : i64]) : bool
-  (tc-region-list-contains-arena-owner? (tc-type-collect-regions ty) owner))
+(define (tc-type-contains-arena-owner-region?
+  [env : TcTypeEnv]
+  [ty : ast.AstType]
+  [owner : i64]) : bool
+  (tc-region-list-contains-arena-owner? env (tc-type-collect-regions ty) owner))
 
 (define (tc-region-list-all-atomic-arena-owners?
   [env : TcTypeEnv]
@@ -29497,6 +29670,9 @@
         (offset-of (type TcTypeEnvStore) topenv-membership-state-address))
       56)
     (= (comptime (offset-of (type TcTypeEnvStore) chain-state)) 64)
+    (=
+      (comptime (offset-of (type TcTypeEnvStore) structural-session-address))
+      72)
     ;; The structural top-env index reads these four through raw word offsets,
     ;; so they must stay first and stay one word wide.
     (= (comptime (offset-of (type TcTypeEnvCache) chain-depth)) 0)
@@ -29916,17 +30092,67 @@
 ;; or the markers disappear (with-arena escape checking was silently disabled
 ;; past 32 local binds). Scans must still terminate at the explicit
 ;; non-scan-through base cache.
+(define (tc-arena-phase-nested-structural-record-smoke?) : bool
+  (let
+    [owner-a : i64 (ci.intern "arena-phase-owner-a")]
+    [owner-b : i64 (ci.intern "arena-phase-owner-b")]
+    [token-a : i64 (ci.intern "arena-phase-token-a")]
+    [token-b : i64 (ci.intern "arena-phase-token-b")]
+    [base : TcTypeEnv (tc-empty-env)]
+    [outer-markers : TcTypeEnv (tc-bind-arena-phase-token base token-a owner-a)]
+    [outer : TcTypeEnv (tc-bind-id outer-markers token-a (ast.AstType.I64))]
+    [outer-region : i64 (tc-arena-phase-region-id base owner-a token-a)]
+    ;; Shadow the same phase token under a different owner, then nest a second
+    ;; token under that owner. Persistent snapshots model the rewind boundary:
+    ;; querying `outer` after constructing `inner` must recover outer records.
+    [shadow-markers : TcTypeEnv
+      (tc-bind-arena-phase-token outer token-a owner-b)]
+    [shadow : TcTypeEnv (tc-bind-id shadow-markers token-a (ast.AstType.I64))]
+    [shadow-region : i64 (tc-arena-phase-region-id base owner-b token-a)]
+    [inner-markers : TcTypeEnv
+      (tc-bind-arena-phase-token shadow token-b owner-b)]
+    [inner : TcTypeEnv (tc-bind-id inner-markers token-b (ast.AstType.I64))]
+    [inner-region : i64 (tc-arena-phase-region-id base owner-b token-b)]
+    [deep : TcTypeEnv
+      (tc-type-env-bind-many inner (+ (* (tc-local-cache-threshold) 2) 8))]
+    [current-marker : i64
+      (tc-arena-phase-current-region-marker-id base owner-b)]
+    [owner-marker : i64 (tc-arena-phase-token-owner-marker-id base token-b)]
+    [region-marker : i64 (tc-arena-phase-token-region-marker-id base token-b)]
+    (and
+      (not (= inner-region shadow-region))
+      (not (= inner-region current-marker))
+      (not (= current-marker owner-marker))
+      (not (= owner-marker region-marker))
+      (tc-arena-region-owned-by-id? deep owner-b inner-region)
+      (not (tc-arena-region-owned-by-id? deep owner-a inner-region))
+      (= (tc-current-arena-owner-region outer owner-a) outer-region)
+      (= (tc-current-arena-owner-region shadow owner-b) shadow-region)
+      (= (tc-current-arena-owner-region deep owner-b) inner-region)
+      (match (tc-arena-phase-token-owner-active deep token-a)
+        [(TcMaybeNameId.Some owner) (= owner owner-b)]
+        [_ false])
+      (match (tc-arena-phase-token-region-active deep token-a)
+        [(TcMaybeNameId.Some region) (= region shadow-region)]
+        [_ false])
+      (match (tc-arena-phase-token-owner-active deep token-b)
+        [(TcMaybeNameId.Some owner) (= owner owner-b)]
+        [_ false])
+      (match (tc-arena-phase-token-region-active deep token-b)
+        [(TcMaybeNameId.Some region) (= region inner-region)]
+        [_ false]))))
+
 (define (tc-type-env-local-cache-deep-scan-smoke?) : bool
   (let
     [global-id : i64 (ci.intern "global")]
     [arena-id : i64 (ci.intern "arena")]
     [atomic-arena-id : i64 (ci.intern "atomic-arena")]
     [phase-id : i64 (ci.intern "phase")]
-    [phase-region-id : i64 (tc-arena-phase-region-id arena-id phase-id)]
     [resource-id : i64 (ci.intern "resource")]
     [base : TcTypeEnv
       (tc-env-with-cache
         (tc-bind-id (tc-empty-env) global-id (ast.AstType.String)))]
+    [phase-region-id : i64 (tc-arena-phase-region-id base arena-id phase-id)]
     [marked : TcTypeEnv
       (tc-bind-id
         (tc-bind-cleanup-owner
@@ -31168,6 +31394,7 @@
     (tc-type-env-local-cache-partial-layer-smoke?)
     (tc-type-env-local-cache-default-shadow-partial-miss-smoke?)
     (tc-type-env-local-cache-depth-cap-smoke?)
+    (tc-arena-phase-nested-structural-record-smoke?)
     (tc-type-env-local-cache-deep-scan-smoke?)
     (tc-type-env-local-cache-c-abi-fnptr-smoke?)
     (tc-type-env-local-cache-lambda-capture-smoke?)
@@ -70717,7 +70944,7 @@
               (tc-name-id-list-add seen key)
               remaining
               origin)]
-          [(tc-type-contains-arena-owner-region? ty owner)
+          [(tc-type-contains-arena-owner-region? env ty owner)
             (match (tc-move-invalidate-local
               expr-bases
               locals
@@ -70871,7 +71098,7 @@
               (tc-name-id-list-add seen key)
               remaining)]
           [(and
-              (tc-type-contains-arena-owner-region? ty owner)
+              (tc-type-contains-arena-owner-region? env ty owner)
               (tc-thread-safe-user-type? ctx ty)
               (not (tc-moved-contains? moved key)))
             (TcMoveResult.Err
@@ -78746,7 +78973,7 @@
               (tc-name-id-list-add seen key)
               remaining
               primary)]
-          [(tc-type-contains-arena-owner-region? ty owner)
+          [(tc-type-contains-arena-owner-region? env ty owner)
             (match (tc-borrow-check-assign-conflict
               expr-bases
               borrowed

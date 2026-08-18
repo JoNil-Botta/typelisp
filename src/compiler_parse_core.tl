@@ -2472,6 +2472,12 @@
         out
         (compiler-parse-dispatch-bind
           out
+          "__tl_array-data"
+          (compiler-parse-tag-expr-array-data)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
           "program-argc"
           (compiler-parse-tag-expr-program-argc)))
       (set!
@@ -12020,6 +12026,16 @@
     (compiler-parse-ok?
       "(define (main) : i64 (with-arena r (let [b : (in r (Box i64)) (box 7)] (deref b))))")))
 
+(define (compiler-parse-array-data-ok?) : bool
+  (and
+    (compiler-parse-ok?
+      "(define (data [items : (Array i64)]) : (MutPtr i64) (unsafe (array-data items)))")
+    (compiler-parse-ok?
+      "(define (data [items : (Array i64)]) : (MutPtr i64) (unsafe (__tl_array-data items)))")
+    (compiler-parse-error-ok?
+      "(define (data [items : (Array i64)]) : (MutPtr i64) (unsafe (__tl_array-data items items)))"
+      "parse: array-data expects exactly one expression")))
+
 (define (compiler-parse-array-take-ok?) : bool
   (and
     (compiler-parse-ok?
@@ -14106,6 +14122,7 @@
         (reader.symbol-id-preservation-ok?)
         (compiler-parse-source-symbol-ids-preserved-ok?)
         (compiler-parse-box-ok?)
+        (compiler-parse-array-data-ok?)
         (compiler-parse-array-take-ok?)
         (compiler-parse-replace-ok?)
         (compiler-parse-reference-ok?)

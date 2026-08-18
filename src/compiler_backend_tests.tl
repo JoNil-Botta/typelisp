@@ -5498,8 +5498,9 @@
 
 ;; A classifier chain inside a loop, spelled with nested `if`s because the raw
 ;; source path lowers without the prelude that defines `or`. Its constants span
-;; a window whose 64-bit mask -- bits {0,4,9,10,12,14,33} above base 33, i.e.
-;; 8589956625 -- lands outside imm32, so no instruction operand can encode it.
+;; a window whose 64-bit mask -- bits {0,4,9,10,12,14,33,37} above base 33,
+;; i.e. 146028910097 -- lands outside imm32, so no instruction operand can
+;; encode it.
 ;;
 ;; The bit_test rewrite converts the chain, the mask is loop-invariant, LICM
 ;; hoists its `Mov` into the preheader, and the wide-literal operand rule
@@ -5508,9 +5509,7 @@
 ;; preheader plus a bare `btq` per iteration, and NO `movabsq` of the mask
 ;; anywhere -- `movabsq` is the emitter's operand-materialization spelling
 ;; (compiler-backend-emit-load-i64-absolute), so its absence is a precise
-;; witness that the constant is not being rebuilt at the test. The eighth
-;; constant (70) stays outside the window as the chain's tail compare, leaving
-;; the seven that the profitability floor needs.
+;; witness that the constant is not being rebuilt at the test.
 (define compiler-backend-wide-bit-test-mask-source : String
   "(define (wbt-classify [c : i64]) : bool
   (if (= c 33)
@@ -5557,13 +5556,13 @@
         ;; `movq $imm` form -- it is materialized once where that Mov landed.
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq $8589956625")
+          "    movq $146028910097")
         ;; ...and never as an operand materialization at the test itself, which
         ;; is what folding the literal into the shift used to emit per entry.
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "movabsq $8589956625")))]
+            "movabsq $146028910097")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-tail-dispatch-no-csr-ok?) : bool

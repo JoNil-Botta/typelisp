@@ -1336,6 +1336,45 @@
     ci.InternSourceNameSessionHandle
     TcBodyState))
 
+(defstruct TcContextRef
+  (:lifetimes ctx)
+  (value (& ctx TcContext)))
+
+(define (tc-context-seed-address [ctx : (& ctx TcContext)]) : u64
+  (let
+    [cell : (TcContextRef ctx) (TcContextRef ctx)]
+    (unsafe
+      (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))))
+
+;; The published seed lowers borrowed inline enum payloads as loads instead of
+;; addresses. For its one-shot stage1 build, recover these two hot TcContext
+;; payload references from the stable native layout: tag + AstProgram is 24
+;; bytes, and CompilerSymbols is the following 128 bytes. Later generations use
+;; the checked borrowed match below and never compile these cfg-only helpers.
+(cfg
+  stage0-borrowed-inline-bootstrap
+  (define (tc-context-seed-symbols-ref [ctx : (& ctx TcContext)]) : (&
+      ctx
+      csym.CompilerSymbols)
+    (let
+      [word : u64 (+ (tc-context-seed-address ctx) 24)]
+      [cell : (Array u64 1) (array word)]
+      (unsafe
+        (ptr-read
+          (ptr-cast (array-data cell) : (Ptr (& ctx csym.CompilerSymbols))))))))
+
+(cfg
+  stage0-borrowed-inline-bootstrap
+  (define (tc-context-seed-registries-ref [ctx : (& ctx TcContext)]) : (&
+      ctx
+      csym.CompilerRegistries)
+    (let
+      [word : u64 (+ (tc-context-seed-address ctx) 152)]
+      [cell : (Array u64 1) (array word)]
+      (unsafe
+        (ptr-read
+          (ptr-cast (array-data cell) : (Ptr (& ctx csym.CompilerRegistries))))))))
+
 (define (tc-context-expr-cell-address-live [ctx : TcContext]) : u64
   (match ctx
     [(TcContext _ _ _ _ _ _ pools _ _)
@@ -15094,7 +15133,7 @@
 
 (define (tc-stdlib-comptime-present? [ctx : TcContext]) : bool
   (let
-    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [symbols (tc-context-symbols ctx)]
     (or
       (csym.compiler-symbols-handle-found?
         (csym.compiler-symbols-lookup-type-in-module-id-or
@@ -24799,8 +24838,7 @@
                 [segmented-active : bool
                   (macro-segmented-program-active?
                     (tc-context-job-state (tc-global-shared-view ctx)))]
-                [symbols : (& ctx csym.CompilerSymbols)
-                  (tc-context-symbols ctx)]
+                [symbols (tc-context-symbols ctx)]
                 (match target
                   [(TcMaybeNameId.Some target-module-id)
                     (let
@@ -24867,7 +24905,7 @@
       option_i64.None
       (let
         [base-id : i64 (ci.intern-dotted-tail-id name-id)]
-        [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+        [symbols (tc-context-symbols ctx)]
         (if (or
           (< base-id 0)
           (not (tc-symbols-unique-nominal-name-id? symbols base-id)))
@@ -25241,7 +25279,7 @@
         (tc-global-shared-view ctx)
         source-module-id
         source-module-id)]
-    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [symbols (tc-context-symbols ctx)]
     [handle : i64
       (csym.compiler-symbols-lookup-type-id-or
         symbols
@@ -25292,7 +25330,7 @@
         [resolution-module-id : i64
           (tc-context-module-id
             (tc-context-for-type-resolution (tc-global-shared-view ctx)))]
-        [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+        [symbols (tc-context-symbols ctx)]
         [resolution-id : i64
           (if (csym.compiler-symbol-root-module-id? resolution-module-id)
             -1
@@ -34533,7 +34571,7 @@
                 ty)))))]
     [(ResultTcType.Err _)
       (let
-        [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+        [symbols (tc-context-symbols ctx)]
         (if (or
           (csym.compiler-symbols-handle-found?
             (csym.compiler-symbols-lookup-type-in-module-id-or
@@ -37044,7 +37082,7 @@
   [module-id : i64]
   [name-id : i64]) : bool
   (let
-    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [symbols (tc-context-symbols ctx)]
     [handle : i64
       (csym.compiler-symbols-lookup-value-in-module-id-or
         symbols
@@ -46399,7 +46437,7 @@
   (if (not (tc-spmd-atomic-name-candidate? (tc-global-shared-view name)))
     (TcMaybeString.No)
     (let
-      [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+      [symbols (tc-context-symbols ctx)]
       [direct : TcMaybeString
         (tc-spmd-atomic-extern-symbol-lookup-id symbols name-id)]
       [source-name : String (tc-hygiene-global-symbol-name name)]
@@ -53826,22 +53864,49 @@
   (match ctx
     [(TcContext program _ _ _ _ _ _ _ _) program]))
 
-(define (tc-context-symbols [ctx : (& ctx TcContext)]) : (&
-    ctx
-    csym.CompilerSymbols)
-  (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _ _) symbols]))
+(cfg
+  stage0-borrowed-inline-bootstrap
+  (define (tc-context-symbols [ctx : (& ctx TcContext)]) : (&
+      ctx
+      csym.CompilerSymbols)
+    (tc-context-seed-symbols-ref ctx)))
 
-(define (tc-context-symbols-ref [ctx : (& ctx TcContext)]) : (&
-    ctx
-    csym.CompilerSymbols)
-  (tc-context-symbols ctx))
+(cfg
+  (not stage0-borrowed-inline-bootstrap)
+  (define (tc-context-symbols [ctx : (& ctx TcContext)]) : (&
+      ctx
+      csym.CompilerSymbols)
+    (match ctx
+      [(TcContext _ symbols _ _ _ _ _ _ _) symbols])))
 
-(define (tc-context-registries [ctx : (& ctx TcContext)]) : (&
-    ctx
-    csym.CompilerRegistries)
-  (match ctx
-    [(TcContext _ _ registries _ _ _ _ _ _) registries]))
+(cfg
+  stage0-borrowed-inline-bootstrap
+  (define (tc-context-symbols-ref [ctx : (& ctx TcContext)]) : (&
+      ctx
+      csym.CompilerSymbols)
+    (tc-context-symbols ctx)))
+
+(cfg
+  (not stage0-borrowed-inline-bootstrap)
+  (define (tc-context-symbols-ref [ctx : (& ctx TcContext)]) : (&
+      ctx
+      csym.CompilerSymbols)
+    (tc-context-symbols ctx)))
+
+(cfg
+  stage0-borrowed-inline-bootstrap
+  (define (tc-context-registries [ctx : (& ctx TcContext)]) : (&
+      ctx
+      csym.CompilerRegistries)
+    (tc-context-seed-registries-ref ctx)))
+
+(cfg
+  (not stage0-borrowed-inline-bootstrap)
+  (define (tc-context-registries [ctx : (& ctx TcContext)]) : (&
+      ctx
+      csym.CompilerRegistries)
+    (match ctx
+      [(TcContext _ _ registries _ _ _ _ _ _) registries])))
 
 ;; Enum queries are frequent during macro expansion, and the generated-name
 ;; compatibility path cannot always use CompilerSymbols. Index the flat
@@ -56862,7 +56927,7 @@
   [lookup-id : i64]
   [not-found-message : String]) : ResultTcType
   (let
-    [registries : (& ctx csym.CompilerRegistries) (tc-context-registries ctx)]
+    [registries (tc-context-registries ctx)]
     (match (csym.compiler-registries-lookup-variant-id registries lookup-id)
       [(option_i64.Some handle)
         (tc-variant-constructor-type-for-handle
@@ -59563,7 +59628,7 @@
   [variant-name-id : i64]
   [fallback : i64]) : i64
   (let
-    [registries : (& ctx csym.CompilerRegistries) (tc-context-registries ctx)]
+    [registries (tc-context-registries ctx)]
     (if (tc-name-qualified-id? variant-name-id)
       (csym.compiler-registries-lookup-variant-id-or
         registries
@@ -60145,7 +60210,7 @@
     [(or (< enum-id 0) (< pattern-id 0) (< variant-id 0)) false]
     [else
       (let
-        [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+        [symbols (tc-context-symbols ctx)]
         [pattern-handle : i64
           (tc-source-variant-handle-for-enum-id-or
             (tc-global-shared-view ctx)
@@ -102352,7 +102417,7 @@
         (tc-macro-hygiene-produced-state-data-set! env.state produced)
         ;; The recursive walker uses one-node copy-on-write replacements. Keep
         ;; those transient cursors private and publish only the committed root.
-        (ast.ast-node-pool-context-expr-sync-installed!
+        (ast.ast-node-pool-context-publish-to-compat!
           (macro-hygiene-env-pools-shared-view env))
         (cfg compile-profile (compiler-tc-walk-hygiene-finish!))
         result))))
@@ -107198,8 +107263,9 @@
           (macro-call-decl-from-source-name
             (tc-global-shared-view ctx)
             decls
-            (tc-context-module ctx)
-            (macro-source-module-id (tc-context-module-id ctx))
+            (tc-context-module (tc-global-shared-view ctx))
+            (macro-source-module-id
+              (tc-context-module-id (tc-global-shared-view ctx)))
             (tc-hygiene-name-text-id name)
             name
             call-expr)))]
@@ -109416,7 +109482,9 @@
     (ctfe_support.ctfe-string-prefix?
       (tc-global-shared-view definition-module)
       "stdlib.")
-    (ctfe_support.ctfe-string-prefix? macro-name "stdlib."))
+    (ctfe_support.ctfe-string-prefix?
+      (tc-global-shared-view macro-name)
+      "stdlib."))
     (begin
       (cfg
         tlci-bootstrap-mutation-witness
@@ -110259,7 +110327,7 @@
                           ret
                           (tc-global-shared-view base-env)
                           call-expr
-                          (tc-global-shared-view operands)
+                          (owned_view.compiler-owned-shared-view operands)
                           count
                           true)]
                       (begin
@@ -119003,164 +119071,164 @@
     [intern-state : ci.InternCompatState
       (tc-global-shared-view intern-state-input)]
     (begin
-    (tc-macro-state-bind-source-names!
-      (tc-job-state-macro-state (tc-global-shared-view job-state))
-      (tc-global-shared-view source-names))
-    (tc-macro-walk-set!
-      (tc-job-state-macro-state (tc-global-shared-view job-state))
-      macro-dependency-catalog-handle
-      (cload.compiler-load-session-state-dependency-catalog-handle
-        (tc-global-shared-view load-state)))
-    (tc-dependency-tlci-route-counters-reset!
-      (tc-job-state-macro-state (tc-global-shared-view job-state)))
-    ;; Legacy macro expansion still reads compatibility globals; bridge the
-    ;; compile-owned pool and interner state at the phase boundary.
-    (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
-    (ci.intern-compat-state-install! (tc-global-shared-view intern-state))
-    (macro-expand-program-structural-change-reset!
-      (tc-job-state-macro-state (tc-global-shared-view job-state)))
-    ;; The route is a property of the compiler's embedded image plus the exact
-    ;; source provenance observed by this load session. Embedded source marks
-    ;; the session directly; byte-identical disk source may mark individual
-    ;; modules through the content-equivalence cache. Extra non-stdlib roots
-    ;; (for example `src` during a self-compile) do not disable the route, while
-    ;; modified/untrusted stdlib source never receives embedded provenance.
-    ;; #5926 exercised the real macro walk beyond the historical failure point
-    ;; and across five reset/release/remap cycles on hosted Linux and Windows,
-    ;; so production routing now uses this same policy on both hosts. The
-    ;; stress-only cfg controls durable telemetry, not route selection.
-    (tc-macro-walk-set!
-      (tc-job-state-macro-state job-state)
-      macro-expand-stdlib-tlci-route-active
+      (tc-macro-state-bind-source-names!
+        (tc-job-state-macro-state (tc-global-shared-view job-state))
+        (tc-global-shared-view source-names))
+      (tc-macro-walk-set!
+        (tc-job-state-macro-state (tc-global-shared-view job-state))
+        macro-dependency-catalog-handle
+        (cload.compiler-load-session-state-dependency-catalog-handle
+          (tc-global-shared-view load-state)))
+      (tc-dependency-tlci-route-counters-reset!
+        (tc-job-state-macro-state (tc-global-shared-view job-state)))
+      ;; Legacy macro expansion still reads compatibility globals; bridge the
+      ;; compile-owned pool and interner state at the phase boundary.
+      (ast.ast-node-pool-context-install! (ast.ast-place-shared-view pools))
+      (ci.intern-compat-state-install! (tc-global-shared-view intern-state))
+      (macro-expand-program-structural-change-reset!
+        (tc-job-state-macro-state (tc-global-shared-view job-state)))
+      ;; The route is a property of the compiler's embedded image plus the exact
+      ;; source provenance observed by this load session. Embedded source marks
+      ;; the session directly; byte-identical disk source may mark individual
+      ;; modules through the content-equivalence cache. Extra non-stdlib roots
+      ;; (for example `src` during a self-compile) do not disable the route, while
+      ;; modified/untrusted stdlib source never receives embedded provenance.
+      ;; #5926 exercised the real macro walk beyond the historical failure point
+      ;; and across five reset/release/remap cycles on hosted Linux and Windows,
+      ;; so production routing now uses this same policy on both hosts. The
+      ;; stress-only cfg controls durable telemetry, not route selection.
+      (tc-macro-walk-set!
+        (tc-job-state-macro-state job-state)
+        macro-expand-stdlib-tlci-route-active
+        (cfg
+          embedded-stdlib-tlci
+          (or
+            (cload.compiler-load-session-state-embedded-stdlib-source-used?
+              (tc-global-shared-view load-state))
+            (cload.compiler-load-embedded-provenance-noted?))
+          false))
       (cfg
         embedded-stdlib-tlci
-        (or
-          (cload.compiler-load-session-state-embedded-stdlib-source-used?
-            (tc-global-shared-view load-state))
-          (cload.compiler-load-embedded-provenance-noted?))
-        false))
-    (cfg
-      embedded-stdlib-tlci
-      (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-    (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
-    (cfg
-      (all embedded-stdlib-tlci tlci-native-route-stress)
-      (compiler-tc-tlci-native-stress-pass-start!
-        (ast.ast-place-shared-view pools)
-        (tc-macro-walk-field
-          (tc-job-state-macro-state job-state)
-          macro-expand-stdlib-tlci-route-active)))
-    (tc-stdlib-comptime-macro-surface-ok-reset!
-      (tc-job-state-macro-state job-state))
-    (tc-macro-identity-reset-for-state! (tc-job-state-macro-state job-state))
-    (macro-generated-module-memo-reset! (tc-job-state-macro-state job-state))
-    (tc-macro-abstract-proof-reset-for-state!
-      (tc-job-state-macro-state job-state))
-    (macro-generated-decls-memo-reset! (tc-job-state-macro-state job-state))
-    ;; Reset the CTFE base-env cache once per program (plan P2). The pass
-    ;; rebuilds it via macro-expand-ctfe-env-build-once!; it is then reused by
-    ;; every in-pass splice rebuild and by the downstream typecheck/lower
-    ;; comptime, never rebuilt per splice. This is the "build the CTFE-env
-    ;; once, after expansion" boundary. The typecheck entry wraps that boundary
-    ;; in macro-expand-then-build-envs-with-load-state.
-    (compiler-typecheck-ctfe-env-cache-clear!
-      (tc-job-state-macro-state job-state))
-    ;; Reset the live symbols/registries cache once per program (plan P2): the
-    ;; pass rebuilds them and in-pass splice rebuilds reuse or refresh them.
-    (macro-live-symbols-reset! (tc-job-state-macro-state job-state))
-    ;; Reset the hoisted whole-program prescans: computed at
-    ;; pass setup and refreshed only when a generated file import loads new
-    ;; declarations mid-walk.
-    (macro-live-prescan-reset! (tc-job-state-macro-state job-state))
-    (let
-      [macro-result : ResultMacroExpand
-        (macro-expand-program-pass-with-paths-and-pools
-          (tc-global-shared-view load-state)
-          (tc-global-shared-view program)
-          (tc-global-shared-view paths)
+        (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+      (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
+      (cfg
+        (all embedded-stdlib-tlci tlci-native-route-stress)
+        (compiler-tc-tlci-native-stress-pass-start!
           (ast.ast-place-shared-view pools)
-          (tc-global-shared-view source-names)
-          (tc-global-shared-view job-state)
-          (tc-global-shared-view stdlib-roots)
-          (tc-global-shared-view cfgs))]
-      (begin
-        ;; Publish all legacy macro mutations before inspecting Ok or Err.
-        (ast.ast-node-pool-context-capture-active!
-          (ast.ast-place-shared-view pools))
-        (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
-        (match macro-result
-          [(ResultMacroExpand.Ok expanded expanded-paths)
-            (begin
-              (cfg
-                embedded-stdlib-tlci
-                (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-              (cfg
-                (all embedded-stdlib-tlci tlci-native-route-stress)
-                (compiler-tc-tlci-native-stress-pass-finish!
-                  (ast.ast-place-shared-view pools)
-                  0))
-              (let
-                [_profile-owners : unit
-                  (macro-expand-allocation-profile-snapshot!
-                    (tc-job-state-macro-state job-state)
-                    0)]
-                [_release-scratch : unit
-                  (begin
-                    (macro-expand-scratch-release!
-                      (tc-job-state-macro-state job-state))
-                    (tc-job-state-reset-derived-caches! job-state))]
-                (if (spec.compiler-specialize-needed-with-pools
-                  (tc-global-shared-view expanded)
-                  (ast.ast-place-shared-view pools))
-                  (begin
-                    (macro-expand-program-structural-change-note!
+          (tc-macro-walk-field
+            (tc-job-state-macro-state job-state)
+            macro-expand-stdlib-tlci-route-active)))
+      (tc-stdlib-comptime-macro-surface-ok-reset!
+        (tc-job-state-macro-state job-state))
+      (tc-macro-identity-reset-for-state! (tc-job-state-macro-state job-state))
+      (macro-generated-module-memo-reset! (tc-job-state-macro-state job-state))
+      (tc-macro-abstract-proof-reset-for-state!
+        (tc-job-state-macro-state job-state))
+      (macro-generated-decls-memo-reset! (tc-job-state-macro-state job-state))
+      ;; Reset the CTFE base-env cache once per program (plan P2). The pass
+      ;; rebuilds it via macro-expand-ctfe-env-build-once!; it is then reused by
+      ;; every in-pass splice rebuild and by the downstream typecheck/lower
+      ;; comptime, never rebuilt per splice. This is the "build the CTFE-env
+      ;; once, after expansion" boundary. The typecheck entry wraps that boundary
+      ;; in macro-expand-then-build-envs-with-load-state.
+      (compiler-typecheck-ctfe-env-cache-clear!
+        (tc-job-state-macro-state job-state))
+      ;; Reset the live symbols/registries cache once per program (plan P2): the
+      ;; pass rebuilds them and in-pass splice rebuilds reuse or refresh them.
+      (macro-live-symbols-reset! (tc-job-state-macro-state job-state))
+      ;; Reset the hoisted whole-program prescans: computed at
+      ;; pass setup and refreshed only when a generated file import loads new
+      ;; declarations mid-walk.
+      (macro-live-prescan-reset! (tc-job-state-macro-state job-state))
+      (let
+        [macro-result : ResultMacroExpand
+          (macro-expand-program-pass-with-paths-and-pools
+            (tc-global-shared-view load-state)
+            (tc-global-shared-view program)
+            (tc-global-shared-view paths)
+            (ast.ast-place-shared-view pools)
+            (tc-global-shared-view source-names)
+            (tc-global-shared-view job-state)
+            (tc-global-shared-view stdlib-roots)
+            (tc-global-shared-view cfgs))]
+        (begin
+          ;; Publish all legacy macro mutations before inspecting Ok or Err.
+          (ast.ast-node-pool-context-capture-active!
+            (ast.ast-place-shared-view pools))
+          (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
+          (match macro-result
+            [(ResultMacroExpand.Ok expanded expanded-paths)
+              (begin
+                (cfg
+                  embedded-stdlib-tlci
+                  (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+                (cfg
+                  (all embedded-stdlib-tlci tlci-native-route-stress)
+                  (compiler-tc-tlci-native-stress-pass-finish!
+                    (ast.ast-place-shared-view pools)
+                    0))
+                (let
+                  [_profile-owners : unit
+                    (macro-expand-allocation-profile-snapshot!
                       (tc-job-state-macro-state job-state)
-                      8)
-                    (let
-                      [owner : spec.SpecOwnerContext
-                        (spec.spec-owner-context-new
-                          (ast.ast-place-shared-view pools)
-                          (tc-global-shared-view intern-state))]
-                      [normalized-result : spec.ResultGenProgramWithPaths
-                        (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
-                          (tc-global-shared-view expanded)
-                          (tc-global-shared-view expanded-paths)
-                          (tc-decl-path-list-last
+                      0)]
+                  [_release-scratch : unit
+                    (begin
+                      (macro-expand-scratch-release!
+                        (tc-job-state-macro-state job-state))
+                      (tc-job-state-reset-derived-caches! job-state))]
+                  (if (spec.compiler-specialize-needed-with-pools
+                    (tc-global-shared-view expanded)
+                    (ast.ast-place-shared-view pools))
+                    (begin
+                      (macro-expand-program-structural-change-note!
+                        (tc-job-state-macro-state job-state)
+                        8)
+                      (let
+                        [owner : spec.SpecOwnerContext
+                          (spec.spec-owner-context-new
+                            (ast.ast-place-shared-view pools)
+                            (tc-global-shared-view intern-state))]
+                        [normalized-result : spec.ResultGenProgramWithPaths
+                          (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+                            (tc-global-shared-view expanded)
                             (tc-global-shared-view expanded-paths)
-                            "")
-                          owner)]
-                      (begin
-                        ;; Explicit normalization mutates owner cells directly;
-                        ;; publish them before matching either result.
-                        (ast.ast-node-pool-context-install!
-                          (ast.ast-place-shared-view pools))
-                        (ci.intern-compat-state-install!
-                          (tc-global-shared-view intern-state))
-                        (match normalized-result
-                          [(spec.ResultGenProgramWithPaths.Ok
-                              normalized
-                              normalized-paths)
-                            (ResultMacroExpand.Ok normalized normalized-paths)]
-                          [(spec.ResultGenProgramWithPaths.Err diag)
-                            (ResultMacroExpand.Err diag)]))))
-                  (ResultMacroExpand.Ok expanded expanded-paths))))]
-          [(ResultMacroExpand.Err diag)
-            (begin
-              (cfg
-                embedded-stdlib-tlci
-                (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-              (cfg
-                (all embedded-stdlib-tlci tlci-native-route-stress)
-                (compiler-tc-tlci-native-stress-pass-finish!
-                  (ast.ast-place-shared-view pools)
-                  1))
-              (macro-expand-allocation-profile-snapshot!
-                (tc-job-state-macro-state job-state)
-                0)
-              (macro-expand-scratch-release!
-                (tc-job-state-macro-state job-state))
-              (tc-job-state-reset-derived-caches! job-state)
-              (ResultMacroExpand.Err diag))]))))))
+                            (tc-decl-path-list-last
+                              (tc-global-shared-view expanded-paths)
+                              "")
+                            owner)]
+                        (begin
+                          ;; Explicit normalization mutates owner cells directly;
+                          ;; publish them before matching either result.
+                          (ast.ast-node-pool-context-install!
+                            (ast.ast-place-shared-view pools))
+                          (ci.intern-compat-state-install!
+                            (tc-global-shared-view intern-state))
+                          (match normalized-result
+                            [(spec.ResultGenProgramWithPaths.Ok
+                                normalized
+                                normalized-paths)
+                              (ResultMacroExpand.Ok normalized normalized-paths)]
+                            [(spec.ResultGenProgramWithPaths.Err diag)
+                              (ResultMacroExpand.Err diag)]))))
+                    (ResultMacroExpand.Ok expanded expanded-paths))))]
+            [(ResultMacroExpand.Err diag)
+              (begin
+                (cfg
+                  embedded-stdlib-tlci
+                  (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+                (cfg
+                  (all embedded-stdlib-tlci tlci-native-route-stress)
+                  (compiler-tc-tlci-native-stress-pass-finish!
+                    (ast.ast-place-shared-view pools)
+                    1))
+                (macro-expand-allocation-profile-snapshot!
+                  (tc-job-state-macro-state job-state)
+                  0)
+                (macro-expand-scratch-release!
+                  (tc-job-state-macro-state job-state))
+                (tc-job-state-reset-derived-caches! job-state)
+                (ResultMacroExpand.Err diag))]))))))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
   [load-state : cload.CompilerLoadSessionState]

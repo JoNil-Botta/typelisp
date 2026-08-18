@@ -1105,7 +1105,9 @@
           (get-mut-entry-borrowed map ,owned-query-key))
         (define (mut-entry-present? [entry : (& entry (MutEntry map))]) : bool
           entry.present)
-        (define (mut-entry-value-or [entry : (MutEntry map)] [fallback : ,V]) : ,V
+        (define (mut-entry-value-or
+          [entry : (& entry (MutEntry map))]
+          [fallback : ,V]) : ,V
           ,mut-entry-value-or-body)
         (define (mut-entry-set! [entry : (MutEntry map)] [value : ,V]) : unit
           ,mut-entry-set-body)

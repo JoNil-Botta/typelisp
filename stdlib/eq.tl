@@ -22,19 +22,27 @@
           [field-name : String (struct-field-name T index)]
           [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
           [field-type : comptime.Expr (struct-field-type T index)]
+          [field-kind : String (type-kind field-type)]
           [left-field : comptime.Expr
             (comptime.expr-struct-get left field-name)]
           [right-field : comptime.Expr
             (comptime.expr-struct-get right field-name)]
-          `(let
-            [__eq_left_field (stdlib.eq.eq-shared-view ,left-field)]
-            [__eq_right_field (stdlib.eq.eq-shared-view ,right-field)]
-            (if (stdlib.eq.inline-eq
-              ,field-type
-              __eq_left_field
-              __eq_right_field)
-              (stdlib.eq.struct-eq-fields ,T ,next-index ,left ,right)
-              false))))]
+          (if (if (string-eq field-kind "ref")
+            true
+            (string-eq field-kind "mut-ref"))
+            (comptime.comptime-error
+              (comptime.string-append
+                "eq: unsupported type "
+                (type-key field-type)))
+            `(let
+              [__eq_left_field (stdlib.eq.eq-shared-view ,left-field)]
+              [__eq_right_field (stdlib.eq.eq-shared-view ,right-field)]
+              (if (stdlib.eq.inline-eq
+                ,field-type
+                __eq_left_field
+                __eq_right_field)
+                (stdlib.eq.struct-eq-fields ,T ,next-index ,left ,right)
+                false)))))]
     [_
       (comptime.comptime-error
         "eq: struct field index must be an integer literal")]))

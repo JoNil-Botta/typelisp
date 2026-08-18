@@ -1769,6 +1769,33 @@
 
 (define (intern-compat-state-source-slice-id-ready-ref
   [state : (& state InternCompatState)]
+  [text : (& text str)]
+  [start : i64]
+  [len : i64]) : InternId
+  (begin
+    (cfg
+      compile-profile
+      (begin
+        (set!
+          intern-profile-source-symbol-count
+          (+ intern-profile-source-symbol-count 1))
+        (set!
+          intern-profile-source-symbol-bytes-count
+          (+ intern-profile-source-symbol-bytes-count len))))
+    (intern-id-from-renderable
+      (intern-compat-state-intern-slice-ready-ref state text start len))))
+
+(define (intern-compat-state-source-slice-id
+  [state : (&mut state InternCompatState)]
+  [text : (& text str)]
+  [start : i64]
+  [len : i64]) : InternId
+  (begin
+    (intern-compat-state-ensure-ready! state)
+    (intern-compat-state-source-slice-id-ready-ref (& state) text start len)))
+
+(define (intern-compat-state-lookup
+  [state : (& state InternCompatState)]
   [name : (& name str)]) : InternLookup
   (if (array-ref state.map-ready 0)
     (let

@@ -17488,18 +17488,18 @@
         (*
           100
           (opt-count-direct-call-name-function-list
-            banked
+            (compiler_optimize.compiler-opt-global-shared-view banked)
             "main"
             "inline_switch"))
         (+
           (*
             10
             (opt-count-direct-call-name-function-list
-              banked
+              (compiler_optimize.compiler-opt-global-shared-view banked)
               "inline_nonleaf"
               "inline_switch"))
           (opt-count-direct-call-name-function-list
-            banked
+            (compiler_optimize.compiler-opt-global-shared-view banked)
             "inline_loop"
             "inline_switch")))]
     [_arm : unit
@@ -17511,25 +17511,252 @@
         (opt-inline-dup-three-caller-names symbols)
         callee-name
         (opt-inline-dup-leaf-calling callee-name symbols.external-helper))]
-    [armed-main : i64
-      (opt-count-direct-call-name-function-list
-        (compiler_optimize.compiler-opt-global-shared-view armed)
-        "main"
-        "inline_switch")]
+    [armed-code : i64
+      (+
+        (*
+          100
+          (opt-count-direct-call-name-function-list
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "main"
+            "inline_switch"))
+        (+
+          (*
+            10
+            (opt-count-direct-call-name-function-list
+              (compiler_optimize.compiler-opt-global-shared-view armed)
+              "inline_nonleaf"
+              "inline_switch"))
+          (opt-count-direct-call-name-function-list
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "inline_loop"
+            "inline_switch")))]
+    [spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-program-budget)
+        (compiler_optimize.opt-inline-checked-budget-current))]
+    [verified? : bool
+      (and
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "main")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_nonleaf")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_loop"))]
     [_disarm-after : unit
       (compiler_optimize.opt-inline-checked-set-active! false)]
-    (and
-      ;; a call-carrying callee is outside the tier's class (#6307), so the
-      ;; armed run reproduces the disarmed one exactly
-      (= armed-main banked-main)
-      (= armed-main 1)
-      (opt-inline-mb2-main-verified?
-        (compiler_optimize.compiler-opt-global-shared-view armed)
-        "main")
-      (opt-inline-mb2-main-verified?
-        (compiler_optimize.compiler-opt-global-shared-view armed)
-        "inline_nonleaf")
-      (opt-inline-mb2-main-verified? armed "inline_loop"))))
+    (if verified?
+      (+ (* 1000000 spent) (+ (* 1000 armed-code) banked-code))
+      (- 0 1))))
+
+;; spent=3, armed=000 (all three callers kept the body), banked=111 (the bands
+;; left every site out of line).
+(define (compiler-optimize-inline-checked-call-carrying-ok?) : bool
+  (= (compiler-optimize-inline-checked-call-carrying-self-test) 3000111))
+
+;; The same in-loop site, one loop deeper. entry -> outer -> header -> body,
+;; with the call in `body`, so the site's depth weight is the census ladder's
+;; second rung rather than its first. Nothing else about the site changes: the
+;; callee, its arity and its body are the ones the accept fixture uses.
+(define (opt-inline-nested-loop-site-blocks [callee-name : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "outer"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "outer")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            6
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "outer_latch")
+                compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "header")
+              (compiler_ir_types.compiler-ir-label "done"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "header")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ir_types.compiler-ir-label "outer")
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-inline-loop-site-call callee-name 5)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "latch"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "outer_latch"))
+                  compiler_ir_types.CompilerIrInstrList.Nil))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "outer_latch")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "outer"))
+                    compiler_ir_types.CompilerIrInstrList.Nil))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "done")
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 6)))
+                      compiler_ir_types.CompilerIrInstrList.Nil))
+                  compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (opt-inline-nested-loop-site-function
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    7
+    (opt-inline-nested-loop-site-blocks callee-name)))
+
+;; Two nested-loop callers of the same call-carrying leaf. Two references keep
+;; every band away -- the duplicating, hot-loop-leaf and shared-accessor bands
+;; all refuse a call-carrying body, and with no single-reference absorb bonus
+;; the ordinary cost model refuses a five-block callee on block weight alone --
+;; so both sites reach the measured tier, one loop deeper than the accept
+;; fixture's.
+(define (compiler-optimize-inline-checked-call-carrying-deep-self-test) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [armed : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-nested-loop-site-function symbols.main callee-name)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-nested-loop-site-function
+              symbols.inline-nonleaf
+              callee-name)
+            (compiler_ir_types.compiler-ir-function-cons
+              (opt-inline-dup-leaf-calling callee-name symbols.external-helper)
+              compiler_ir_types.CompilerIrFunctionList.Nil)))
+        2)]
+    [code : i64
+      (+
+        (*
+          10
+          (opt-count-direct-call-name-function-list
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "main"
+            "inline_switch"))
+        (opt-count-direct-call-name-function-list
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_nonleaf"
+          "inline_switch"))]
+    [spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-program-budget)
+        (compiler_optimize.opt-inline-checked-budget-current))]
+    [verified? : bool
+      (and
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "main")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_nonleaf")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_switch"))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    (if verified?
+      (+ (* 100 spent) code)
+      (- 0 1))))
+
+(define (compiler-optimize-inline-checked-call-carrying-deep-ok?) : bool
+  (= (compiler-optimize-inline-checked-call-carrying-deep-self-test) 200))
+
+;; ...and the other side of the same check, on the same call-carrying body.
+;;
+;; The verdict is priced here against a plan that did NOT change: the same
+;; caller stands in for both sides of the rollback, so nothing was saved and
+;; `before - after` is exactly the boundary the site would retire plus the
+;; callee's own body, priced where the inline would put it. A body that costs
+;; more than the boundary it retires is over-credit rather than saving, which
+;; is precisely what the window's upper bound refuses -- and the callee here is
+;; the call-carrying leaf the accept fixtures use, so what separates the two
+;; outcomes is the measured plan and nothing about the callee's calls.
+(define (compiler-optimize-inline-checked-call-carrying-revert-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [caller : compiler_ir_types.CompilerIrFunction
+      (opt-inline-loop-site-function
+        symbols.main
+        callee-name
+        (opt-inline-loop-site-entry-instrs))]
+    [leaf : compiler_ir_types.CompilerIrFunction
+      (opt-inline-dup-leaf-calling callee-name symbols.external-helper)]
+    [keep? : bool
+      (compiler_optimize.opt-inline-checked-verdict
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.compiler-opt-global-shared-view caller)
+        (compiler_optimize.compiler-opt-global-shared-view caller)
+        leaf
+        1
+        (compiler_optimize.opt-inline-census-depth-base)
+        3
+        (- 0 1))]
+    (not keep?)))
 
 ;; --- the sequence: one caller, one site at a time ---------------------------
 ;;
@@ -20033,7 +20260,9 @@
           [(compiler_optimize.OptInlineSpanProgram.Program
               optimized
               optimized-spans)
-            (match (compiler_optimize.opt-function-list-find optimized "main")
+            (match (compiler_optimize.opt-function-list-find
+              (compiler_optimize.compiler-opt-global-shared-view optimized)
+              "main")
               [(compiler_optimize.OptMaybeFunction.Some main)
                 (let
                   [blocks : compiler_ir_types.CompilerIrBlockList
@@ -20565,7 +20794,9 @@
           [(compiler_optimize.OptInlineSpanProgram.Program
               optimized
               optimized-spans)
-            (match (compiler_optimize.opt-function-list-find optimized "main")
+            (match (compiler_optimize.opt-function-list-find
+              (compiler_optimize.compiler-opt-global-shared-view optimized)
+              "main")
               [(compiler_optimize.OptMaybeFunction.Some main)
                 (let
                   [blocks : compiler_ir_types.CompilerIrBlockList
@@ -20573,25 +20804,34 @@
                   (and
                     (=
                       (opt-count-direct-call-name-blocks
-                        blocks
+                        (compiler_ir_types.compiler-ir-global-shared-view
+                          blocks)
                         "inline_nonleaf")
                       0)
                     (=
                       (opt-count-direct-call-name-blocks
-                        blocks
+                        (compiler_ir_types.compiler-ir-global-shared-view
+                          blocks)
                         "external_helper")
                       1)
-                    (compiler_optimize.opt-inline-structure-ok? blocks)
-                    (opt-inline-mb2-main-verified? optimized "main")
+                    (compiler_optimize.opt-inline-structure-ok?
+                      (compiler_ir_types.compiler-ir-global-shared-view blocks))
+                    (opt-inline-mb2-main-verified?
+                      (compiler_optimize.compiler-opt-global-shared-view
+                        optimized)
+                      "main")
                     ;; the callee's own line, under the caller's key
                     (opt-span-lookup-ok?
-                      optimized-spans
+                      (compiler_optimize.compiler-opt-global-shared-view
+                        optimized-spans)
                       (opt-test-symbol "main")
-                      cloned-call
+                      (compiler_optimize.compiler-opt-global-shared-view
+                        cloned-call)
                       73
                       11)
                     (opt-location-lookup-ok?
-                      optimized-spans
+                      (compiler_optimize.compiler-opt-global-shared-view
+                        optimized-spans)
                       (opt-test-symbol "main")
                       cloned-call
                       703
@@ -20648,7 +20888,9 @@
           [(compiler_optimize.OptInlineSpanProgram.Program
               optimized
               optimized-spans)
-            (match (compiler_optimize.opt-function-list-find optimized "main")
+            (match (compiler_optimize.opt-function-list-find
+              (compiler_optimize.compiler-opt-global-shared-view optimized)
+              "main")
               [(compiler_optimize.OptMaybeFunction.Some main)
                 (let
                   [blocks : compiler_ir_types.CompilerIrBlockList
@@ -20656,14 +20898,20 @@
                   (and
                     (=
                       (opt-count-direct-call-name-blocks
-                        blocks
+                        (compiler_ir_types.compiler-ir-global-shared-view
+                          blocks)
                         "inline_nonleaf")
                       0)
-                    (compiler_optimize.opt-inline-structure-ok? blocks)
-                    (opt-inline-mb2-main-verified? optimized "main")
+                    (compiler_optimize.opt-inline-structure-ok?
+                      (compiler_ir_types.compiler-ir-global-shared-view blocks))
+                    (opt-inline-mb2-main-verified?
+                      (compiler_optimize.compiler-opt-global-shared-view
+                        optimized)
+                      "main")
                     ;; the abort still points at the callee's line
                     (opt-span-lookup-ok?
-                      optimized-spans
+                      (compiler_optimize.compiler-opt-global-shared-view
+                        optimized-spans)
                       (opt-test-symbol "main")
                       cloned-call
                       61
@@ -20758,17 +21006,34 @@
               (opt-inline-nonleaf-callee symbols)
               compiler_ir_types.CompilerIrFunctionList.Nil)))
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-list-find
+      (compiler_optimize.compiler-opt-global-shared-view optimized)
+      "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
             (compiler_optimize.opt-function-blocks main)]
           (and
-            (= (opt-count-direct-call-name-blocks blocks "inline_loop") 0)
-            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 0)
-            (= (opt-count-direct-call-name-blocks blocks "external_helper") 1)
-            (compiler_optimize.opt-inline-structure-ok? blocks)
-            (opt-inline-mb2-main-verified? optimized "main")))]
+            (=
+              (opt-count-direct-call-name-blocks
+                (compiler_ir_types.compiler-ir-global-shared-view blocks)
+                "inline_loop")
+              0)
+            (=
+              (opt-count-direct-call-name-blocks
+                (compiler_ir_types.compiler-ir-global-shared-view blocks)
+                "inline_nonleaf")
+              0)
+            (=
+              (opt-count-direct-call-name-blocks
+                (compiler_ir_types.compiler-ir-global-shared-view blocks)
+                "external_helper")
+              1)
+            (compiler_optimize.opt-inline-structure-ok?
+              (compiler_ir_types.compiler-ir-global-shared-view blocks))
+            (opt-inline-mb2-main-verified?
+              (compiler_optimize.compiler-opt-global-shared-view optimized)
+              "main")))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
 (define (compiler-optimize-inline-multiblock-nonleaf-ok?) : bool
@@ -22629,7 +22894,8 @@
         (match instr
           [(compiler_ir_types.CompilerIrInstr.Word _ _ _ _) 1]
           [_ 0])
-        (opt-count-word-instrs (__tl-box-place rest)))]))
+        (opt-count-word-instrs
+          (compiler_ir_types.compiler-ir-box-shared-view rest)))]))
 
 (define (opt-count-load-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -34468,14 +34734,19 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [acc : i64]) : i64
-  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
     acc
     (opt-unroll-test-count-store-ptr-instr-seq
-      instrs
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)
       (+ index 1)
       (+
         acc
-        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+          (compiler_ir_types.compiler-ir-global-shared-view instrs)
+          index)
           [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) 1]
           [_ 0])))))
 
@@ -34483,14 +34754,19 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [acc : i64]) : i64
-  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
     acc
     (opt-unroll-test-count-load-instr-seq
-      instrs
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)
       (+ index 1)
       (+
         acc
-        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+          (compiler_ir_types.compiler-ir-global-shared-view instrs)
+          index)
           [(compiler_ir_types.CompilerIrInstr.Load _ _ _) 1]
           [_ 0])))))
 
@@ -34522,13 +34798,14 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-unroll-load-store-test-function 0))]
     [merge : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks merge-func)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view merge-func))]
     ;; Second pass over the already-rewritten function: the generated labels
     ;; and the dropped self-edge make the result ineligible to its own scan.
     [idempotent-func : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-unroll-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        merge-func)]
+        (compiler_optimize.compiler-opt-global-shared-view merge-func))]
     [idempotent : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks idempotent-func)]
     [refused-func : compiler_ir_types.CompilerIrFunction
@@ -34542,7 +34819,8 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-unroll-load-store-test-function 2))]
     [fill : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks fill-func)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view fill-func))]
     [checked-func : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-unroll-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -34552,22 +34830,28 @@
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function merge-func)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view merge-func))))
         1]
       ;; entry, guard, unrolled body, remainder loop, exit.
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count merge) 5)) 2]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view merge))
+            5))
+        2]
       ;; TWO copies, not sixteen: the load-and-store factor.
       [(not
           (=
             (opt-unroll-test-count-store-ptr-in-block
-              merge
+              (compiler_ir_types.compiler-ir-global-shared-view merge)
               (compiler_ir_types.compiler-ir-label "body__unroll_body"))
             2))
         3]
       [(not
           (=
             (opt-unroll-test-count-load-in-block
-              merge
+              (compiler_ir_types.compiler-ir-global-shared-view merge)
               (compiler_ir_types.compiler-ir-label "body__unroll_body"))
             4))
         4]
@@ -34576,17 +34860,21 @@
       [(not
           (=
             (opt-unroll-test-count-store-ptr-in-block
-              merge
+              (compiler_ir_types.compiler-ir-global-shared-view merge)
               (compiler_ir_types.compiler-ir-label "body"))
             1))
         5]
       ;; Idempotent: a second pass finds nothing left to rewrite.
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count idempotent) 5))
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view idempotent))
+            5))
         6]
       [(not
           (=
             (opt-unroll-test-count-store-ptr-in-block
-              idempotent
+              (compiler_ir_types.compiler-ir-global-shared-view idempotent)
               (compiler_ir_types.compiler-ir-label "body__unroll_body"))
             2))
         7]
@@ -34621,13 +34909,19 @@
       ;; The other side of the factor table: a store-only body keeps sixteen.
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function fill-func)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view fill-func))))
         10]
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count fill) 5)) 11]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view fill))
+            5))
+        11]
       [(not
           (=
             (opt-unroll-test-count-store-ptr-in-block
-              fill
+              (compiler_ir_types.compiler-ir-global-shared-view fill)
               (compiler_ir_types.compiler-ir-label "body__unroll_body"))
             16))
         12]
@@ -37294,6 +37588,22 @@
     [step-two-out : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.compiler-opt-global-shared-view step-two))]
+    [down : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 14)))]
+    [down-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view down))]
+    ;; Re-running the pass on its own output must find nothing: the fast
+    ;; labels now exist, which is what opt-bce-mb-fast-labels-fresh? refuses on.
+    [down-again-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (compiler_optimize.compiler-opt-global-shared-view down)))]
+    [wrong-way-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-mb-test-function (opt-bce-mb-test-blocks 15))))]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -37486,35 +37796,40 @@
       ;; of the fast region, both kept in the slow one.
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function down)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view down))))
         27]
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count down-out) 11))
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view down-out))
+            11))
         28]
       [(not
           (=
             (opt-bce-version-test-block-checks
-              down-out
+              (compiler_ir_types.compiler-ir-global-shared-view down-out)
               (compiler_ir_types.compiler-ir-label "body__bce_fast"))
             0))
         29]
       [(not
           (=
             (opt-bce-version-test-block-checks
-              down-out
+              (compiler_ir_types.compiler-ir-global-shared-view down-out)
               (compiler_ir_types.compiler-ir-label "then__bce_fast"))
             0))
         30]
       [(not
           (=
             (opt-bce-version-test-block-checks
-              down-out
+              (compiler_ir_types.compiler-ir-global-shared-view down-out)
               (compiler_ir_types.compiler-ir-label "body"))
             1))
         31]
       [(not
           (=
             (opt-bce-version-test-block-checks
-              down-out
+              (compiler_ir_types.compiler-ir-global-shared-view down-out)
               (compiler_ir_types.compiler-ir-label "then"))
             1))
         32]
@@ -37522,14 +37837,14 @@
       ;; ascending fixture's guard has no such add (its limit is the bound as
       ;; written), so this conjunct is the mirror's signature.
       [(match (compiler_optimize.opt-cfg-find-block
-          down-out
+          (compiler_ir_types.compiler-ir-global-shared-view down-out)
           (compiler_ir_types.compiler-ir-label "body__bce_guard"))
           [(compiler_optimize.OptMaybeBlock.No) true]
           [(compiler_optimize.OptMaybeBlock.Some _) false])
         33]
       [(not
           (opt-bce-version-test-block-binop-op-lit?
-            down-out
+            (compiler_ir_types.compiler-ir-global-shared-view down-out)
             (compiler_ir_types.compiler-ir-label "body__bce_guard")
             (compiler_ir_types.CompilerIrBinOp.Add)
             1))
@@ -37542,7 +37857,10 @@
         35]
       ;; Idempotent: a second pass over the versioned function changes nothing.
       [(not
-          (= (compiler_ir_types.compiler-ir-block-list-count down-again-out) 11))
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view down-again-out))
+            11))
         36]
       [(match (compiler_optimize.opt-cfg-find-block
           down-again-out
@@ -37554,7 +37872,10 @@
       ;; away from the limit it is tested against, so no range is recovered and
       ;; the function is left alone.
       [(not
-          (= (compiler_ir_types.compiler-ir-block-list-count wrong-way-out) 6))
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view wrong-way-out))
+            6))
         38]
       [(match (compiler_optimize.opt-cfg-find-block
           wrong-way-out
@@ -50829,33 +51150,27 @@
     [unique : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (compiler_ir_types.compiler-ir-instr-seq-from-list
-          (opt-alias-test-unique-instrs)))]
+        (opt-alias-test-unique-instrs))]
     [transitive : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (compiler_ir_types.compiler-ir-instr-seq-from-list
-          (opt-alias-test-transitive-instrs)))]
+        (opt-alias-test-transitive-instrs))]
     [loaded : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (compiler_ir_types.compiler-ir-instr-seq-from-list
-          (opt-alias-test-load-instrs)))]
+        (opt-alias-test-load-instrs))]
     [stored : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (compiler_ir_types.compiler-ir-instr-seq-from-list
-          (opt-alias-test-store-instrs)))]
+        (opt-alias-test-store-instrs))]
     [called : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (compiler_ir_types.compiler-ir-instr-seq-from-list
-          (opt-alias-test-call-instrs)))]
+        (opt-alias-test-call-instrs))]
     [copied : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (compiler_ir_types.compiler-ir-instr-seq-from-list
-          (opt-alias-test-copy-instrs)))]
+        (opt-alias-test-copy-instrs))]
     [joined : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-intersect
         (opt-alias-join-facts-a)
@@ -50988,15 +51303,16 @@
       [else 42])))
 
 (define (opt-load-cse-run [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
-  (compiler_optimize.opt-load-cse-instrs
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-load-header-set-empty)
-    (compiler_optimize.opt-load-cse-empty-state-for-size
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_ir_types.compiler-ir-instr-list-count
-        (compiler_optimize.compiler-opt-global-shared-view instrs)))
-    instrs))
+  (compiler_ir_types.compiler-ir-instr-seq-to-list
+    (compiler_optimize.opt-load-cse-instrs
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-load-header-set-empty)
+      (compiler_optimize.opt-load-cse-empty-state-for-size
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_ir_types.compiler-ir-instr-list-count
+          (compiler_optimize.compiler-opt-global-shared-view instrs)))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
 ;; Run with header-typed handle params (vars 0 and 1 are (Array i64)
 ;; descriptors) so the descriptor/element granularity rules can be exercised.
@@ -51011,19 +51327,24 @@
           (compiler_ir_types.CompilerIrParam.Param
             "xs"
             (compiler_ast_types.AstType.DynArray 0)
-            1)
-          (compiler_ir_types.CompilerIrParamList.Nil)))
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
-          (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_optimize.compiler-opt-global-shared-view instrs))
-        (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (compiler_optimize.opt-load-cse-empty-state-for-size
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_ir_types.compiler-ir-instr-list-count
-        (compiler_optimize.compiler-opt-global-shared-view instrs)))
-    instrs))
+            0)
+          (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.CompilerIrParam.Param
+              "ys"
+              (compiler_ast_types.AstType.DynArray 0)
+              1)
+            (compiler_ir_types.CompilerIrParamList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_optimize.compiler-opt-global-shared-view instrs))
+          (compiler_ir_types.CompilerIrBlockList.Nil)))
+      (compiler_optimize.opt-load-cse-empty-state-for-size
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_ir_types.compiler-ir-instr-list-count
+          (compiler_optimize.compiler-opt-global-shared-view instrs)))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
 (define (opt-load-cse-run-with-params
   [params : compiler_ir_types.CompilerIrParamList]
@@ -51031,25 +51352,66 @@
   (compiler_ir_types.compiler-ir-instr-seq-to-list
     (compiler_optimize.opt-load-cse-instrs
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler_optimize.compiler-opt-global-shared-view params)
+      (compiler_optimize.opt-load-header-set-from-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.compiler-opt-global-shared-view params)
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_optimize.compiler-opt-global-shared-view instrs))
+          (compiler_ir_types.CompilerIrBlockList.Nil)))
+      (compiler_optimize.opt-load-cse-state-with-caps-and-facts
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_optimize.opt-load-cse-table-cap-for-size
+          (compiler_ir_types.compiler-ir-instr-list-count
+            (compiler_optimize.compiler-opt-global-shared-view instrs)))
+        (compiler_optimize.opt-load-cse-kinds-cap-for-size
+          (compiler_ir_types.compiler-ir-instr-list-count
+            (compiler_optimize.compiler-opt-global-shared-view instrs)))
+        (compiler_optimize.opt-alias-seed-params
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          params))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
+
+;; Drive the fused block-local load/copy traversal used by optimize-block. This
+;; also exercises the native-Slice Word facts that intentionally do not belong
+;; to the standalone load-CSE helper above.
+(define (opt-load-copy-run-with-params
+  [params : compiler_ir_types.CompilerIrParamList]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [type-segment-bases : i64
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.compiler-ir-block-cons
         (compiler_ir_types.compiler-ir-block
           (compiler_ir_types.compiler-ir-label "entry")
           (compiler_optimize.compiler-opt-global-shared-view instrs))
-        (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (compiler_optimize.opt-load-cse-state-with-caps-and-facts
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_optimize.opt-load-cse-table-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count
-          (compiler_optimize.compiler-opt-global-shared-view instrs)))
-      (compiler_optimize.opt-load-cse-kinds-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count
-          (compiler_optimize.compiler-opt-global-shared-view instrs)))
-      (compiler_optimize.opt-alias-seed-params
-        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        params))
-    instrs))
+        (compiler_ir_types.CompilerIrBlockList.Nil))]
+    [hs : compiler_optimize.OptLoadHeaderSet
+      (compiler_optimize.opt-load-header-set-from-function
+        type-segment-bases
+        (compiler_optimize.compiler-opt-global-shared-view params)
+        blocks)]
+    [seq : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-from-list
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
+    (begin
+      (compiler_optimize.opt-load-copy-instr-seq-rewrite!
+        type-segment-bases
+        hs
+        (compiler_optimize.opt-load-cse-state-with-caps-and-facts
+          (profile_state.compiler-profile-state-metrics
+            (profile_state.compiler-profile-state-new))
+          (compiler_optimize.opt-load-cse-table-cap-for-size
+            (compiler_ir_types.compiler-ir-instr-list-count
+              (compiler_optimize.compiler-opt-global-shared-view instrs)))
+          (compiler_optimize.opt-load-cse-kinds-cap-for-size
+            (compiler_ir_types.compiler-ir-instr-list-count instrs))
+          (compiler_optimize.opt-alias-seed-params type-segment-bases params))
+        (compiler_optimize.compiler-opt-global-shared-view seq))
+      (compiler_ir_types.compiler-ir-instr-seq-to-list seq))))
 
 (define (opt-load-cse-run-with-params-and-call-memory
   [params : compiler_ir_types.CompilerIrParamList]
@@ -51058,30 +51420,13 @@
   (compiler_ir_types.compiler-ir-instr-seq-to-list
     (compiler_optimize.opt-load-cse-instrs-from
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler_optimize.compiler-opt-global-shared-view params)
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
-          (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_optimize.compiler-opt-global-shared-view instrs))
-        (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (opt_i64_i64_map.with-capacity 1)
-    call-memory
-    (compiler_optimize.opt-load-cse-state-with-caps-and-facts
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_optimize.opt-load-cse-table-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count
-          (compiler_optimize.compiler-opt-global-shared-view instrs)))
-      (compiler_optimize.opt-load-cse-kinds-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count
-          (compiler_optimize.compiler-opt-global-shared-view instrs)))
-      (compiler_optimize.opt-alias-seed-params
+      (compiler_optimize.opt-load-header-set-from-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        params
+        (compiler_optimize.compiler-opt-global-shared-view params)
         (compiler_ir_types.compiler-ir-block-cons
           (compiler_ir_types.compiler-ir-block
             (compiler_ir_types.compiler-ir-label "entry")
-            instrs)
+            (compiler_optimize.compiler-opt-global-shared-view instrs))
           (compiler_ir_types.CompilerIrBlockList.Nil)))
       (opt_i64_i64_map.with-capacity 1)
       call-memory
@@ -51089,9 +51434,11 @@
         (profile_state.compiler-profile-state-metrics
           (profile_state.compiler-profile-state-new))
         (compiler_optimize.opt-load-cse-table-cap-for-size
-          (compiler_ir_types.compiler-ir-instr-list-count instrs))
+          (compiler_ir_types.compiler-ir-instr-list-count
+            (compiler_optimize.compiler-opt-global-shared-view instrs)))
         (compiler_optimize.opt-load-cse-kinds-cap-for-size
-          (compiler_ir_types.compiler-ir-instr-list-count instrs))
+          (compiler_ir_types.compiler-ir-instr-list-count
+            (compiler_optimize.compiler-opt-global-shared-view instrs)))
         (compiler_optimize.opt-alias-seed-params
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           params))
@@ -54230,19 +54577,23 @@
       ;; The optimistic phase resolves the self-recursive member the
       ;; pessimistic one leaves absent. This one's body is a single self-call,
       ;; so its least fixed point is the lattice bottom: it writes nothing.
-      [(not (opt-call-memory-summary-is? call-summaries summary-recursive 0))
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view call-summaries)
+            summary-recursive
+            0))
         71]
       ;; A two-member CYCLE of element-only writers resolves at the element bit
       ;; alone -- no parameter bit, no global bit, no unknown.
       [(not
           (opt-call-memory-summary-is?
-            cycle-element
+            (compiler_optimize.compiler-opt-global-shared-view cycle-element)
             cycle-a
             (compiler_optimize.opt-call-memory-summary-add-element 0)))
         210]
       [(not
           (opt-call-memory-summary-is?
-            cycle-element
+            (compiler_optimize.compiler-opt-global-shared-view cycle-element)
             cycle-b
             (compiler_optimize.opt-call-memory-summary-add-element 0)))
         211]
@@ -54250,14 +54601,14 @@
       ;; the iteration is a fixed point and not an optimistic seed.
       [(not
           (opt-call-memory-summary-is?
-            cycle-global
+            (compiler_optimize.compiler-opt-global-shared-view cycle-global)
             cycle-a
             (compiler_optimize.opt-call-memory-summary-add-global
               (compiler_optimize.opt-call-memory-summary-add-element 0))))
         212]
       [(not
           (opt-call-memory-summary-is?
-            cycle-global
+            (compiler_optimize.compiler-opt-global-shared-view cycle-global)
             cycle-b
             (compiler_optimize.opt-call-memory-summary-add-global
               (compiler_optimize.opt-call-memory-summary-add-element 0))))
@@ -54286,7 +54637,12 @@
             cycle-a
             (compiler_optimize.opt-direct-call-clean-unconditional-global-bit)))
         217]
-      [(not (opt-call-memory-summary-is? call-summaries summary-clean 0)) 72]
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view call-summaries)
+            summary-clean
+            0))
+        72]
       [(not extern-call) 73]
       [(not volatile-call) 74]
       [(not atomic-call) 75]
@@ -54491,11 +54847,18 @@
         103]
       ;; Native Slice register-group words remain stable across a disjoint
       ;; output store, and the derived exclusive roots keep the source load.
-      [(not (= (opt-count-word-instrs slice-distinct-store) 3)) 218]
+      [(not
+          (=
+            (opt-count-word-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-distinct-store))
+            3))
+        218]
       [(not
           (=
             (opt-count-mov-dst-var-src
-              slice-distinct-store
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-distinct-store)
               8
               2
               (compiler_ast_types.AstType.U64))
@@ -54504,38 +54867,130 @@
       [(not
           (=
             (opt-count-mov-dst-var-src
-              slice-distinct-store
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-distinct-store)
               9
               3
               (compiler_ast_types.AstType.U64))
             1))
         220]
-      [(not (= (opt-count-load-instrs slice-distinct-store) 1)) 221]
+      [(not
+          (=
+            (opt-count-load-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-distinct-store))
+            1))
+        221]
       [(not
           (=
             (opt-count-mov-dst-var-src
-              slice-distinct-store
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-distinct-store)
               11
               5
               (compiler_ast_types.AstType.I64))
             1))
         222]
       ;; A same-root or unknown write still invalidates the cached element load.
-      [(not (= (opt-count-word-instrs slice-same-store) 1)) 223]
-      [(not (= (opt-count-load-instrs slice-same-store) 2)) 224]
-      [(not (= (opt-count-mov-dst-instrs slice-same-store 7) 0)) 225]
-      [(not (= (opt-count-word-instrs slice-unknown-store) 1)) 226]
-      [(not (= (opt-count-load-instrs slice-unknown-store) 2)) 227]
-      [(not (= (opt-count-mov-dst-instrs slice-unknown-store 7) 0)) 228]
+      [(not
+          (=
+            (opt-count-word-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-same-store))
+            1))
+        223]
+      [(not
+          (=
+            (opt-count-load-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-same-store))
+            2))
+        224]
+      [(not
+          (=
+            (opt-count-mov-dst-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-same-store)
+              7)
+            0))
+        225]
+      [(not
+          (=
+            (opt-count-word-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-unknown-store))
+            1))
+        226]
+      [(not
+          (=
+            (opt-count-load-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-unknown-store))
+            2))
+        227]
+      [(not
+          (=
+            (opt-count-mov-dst-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-unknown-store)
+              7)
+            0))
+        228]
       ;; Calls invalidate the stable-word run, and ordinary aggregate Word
       ;; operations never enter it in the first place.
-      [(not (= (opt-count-word-instrs slice-call-barrier) 4)) 229]
-      [(not (= (opt-count-mov-dst-instrs slice-call-barrier 5) 0)) 230]
-      [(not (= (opt-count-mov-dst-instrs slice-call-barrier 6) 0)) 231]
-      [(not (= (opt-count-word-instrs group-word-store) 2)) 232]
-      [(not (= (opt-count-mov-dst-instrs group-word-store 2) 0)) 233]
-      [(not (= (opt-count-word-instrs slice-address-store) 2)) 234]
-      [(not (= (opt-count-mov-dst-instrs slice-address-store 4) 0)) 235]
+      [(not
+          (=
+            (opt-count-word-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-call-barrier))
+            4))
+        229]
+      [(not
+          (=
+            (opt-count-mov-dst-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-call-barrier)
+              5)
+            0))
+        230]
+      [(not
+          (=
+            (opt-count-mov-dst-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-call-barrier)
+              6)
+            0))
+        231]
+      [(not
+          (=
+            (opt-count-word-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                group-word-store))
+            2))
+        232]
+      [(not
+          (=
+            (opt-count-mov-dst-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                group-word-store)
+              2)
+            0))
+        233]
+      [(not
+          (=
+            (opt-count-word-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-address-store))
+            2))
+        234]
+      [(not
+          (=
+            (opt-count-mov-dst-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                slice-address-store)
+              4)
+            0))
+        235]
       [else 44])))
 
 ;; --- constant-trip full unroll + byte-compose load combining fixtures -----------

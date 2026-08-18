@@ -15786,16 +15786,24 @@
         (compiler_lower.compiler-lower-function-state-rtf-generation
           function-state))
       (= (array-ref storage.rtf-ids slot) key)
-      (compiler_ast_types.ast-type-eq? (array-ref storage.rtf-types slot) ty)
+      (compiler_ast_types.ast-type-eq?
+        (owned_view.compiler-owned-array-element-shared-view
+          storage.rtf-types
+          slot)
+        (owned_view.compiler-owned-shared-view ty))
       (=
         (array-ref storage.variant-stamps slot)
         (compiler_lower.compiler-lower-function-state-variant-generation
           function-state))
       (= (array-ref storage.variant-keys slot) key)
       (compiler_ast_types.ast-type-eq?
-        (array-ref storage.variant-scrutinee-types slot)
-        ty)
-      (match (array-ref storage.variant-outcomes slot)
+        (owned_view.compiler-owned-array-element-shared-view
+          storage.variant-scrutinee-types
+          slot)
+        (owned_view.compiler-owned-shared-view ty))
+      (match (owned_view.compiler-owned-array-element-shared-view
+        storage.variant-outcomes
+        slot)
         [(compiler_lower.LowerVariantArmResolution.Missing name)
           (string.eq name outcome-name)]
         [_ false]))))

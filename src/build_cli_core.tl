@@ -3218,8 +3218,10 @@
     ;; Direct object emission does not yet preserve scalar f32/f64 parameter
     ;; and return registers for generated private SPMD helpers. Use the
     ;; assembler path so runtime artifacts carry the same ABI as side assembly.
-    (not (build-package-decls-have-spmd-callable? decls))
-    (build-package-direct-object-size-ok? target paths))
+    (not
+      (build-package-decls-have-spmd-callable?
+        (owned_view.compiler-owned-shared-view decls)))
+    (build-package-direct-object-size-ok? target (& paths)))
     (match target
       [(backend.CompilerBackendTarget.Linux)
         (match (compiler_driver_core.compiler-driver-emit-package-loaded-runtime
@@ -3249,7 +3251,7 @@
           [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Err diag)
             (ResultBuildPackagePreparedRuntime.Err
               (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (__tl-box-place diag)))])]
+                (owned_view.compiler-owned-box-shared-view diag)))])]
       [(backend.CompilerBackendTarget.Windows)
         ;; The shared Windows batch emitter owns the semantic gate as well as
         ;; the COFF encoding/linkability checks. Its Assembly result is an
@@ -5962,6 +5964,7 @@
   [prepared : ResultBuildPackagePreparedRuntime]
   [announce : bool]) : i64
   (match (build-package-try-prepare-direct-runtime
+    (owned_view.compiler-owned-shared-view name)
     kind
     target
     opt-level
@@ -6018,7 +6021,7 @@
     [(ResultBuildPackagePreparedRuntime.Unavailable _)
       (match (compiler_driver_core.compiler-driver-emit-package-loaded
         ""
-        name
+        (owned_view.compiler-owned-shared-view name)
         target
         true
         opt-level
@@ -6063,7 +6066,7 @@
   [decls : ast.AstDeclList]
   [owned-paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
   (match (build-package-try-prepare-direct-runtime
-    name
+    (owned_view.compiler-owned-shared-view name)
     kind
     target
     opt-level
@@ -6134,7 +6137,7 @@
       (let
         [prepared : ResultBuildPackagePreparedRuntime
           (build-package-prepare-runtime
-            name
+            (owned_view.compiler-owned-shared-view name)
             kind
             target
             opt-level
@@ -6402,22 +6405,39 @@
           unit)]
       [manifest-dir : String (load.compiler-load-dirname manifest-path)]
       [compile-context : BuildPackageCompileContext
-        (build-package-compile-context manifest-dir manifest)]
+        (build-package-compile-context
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view manifest))]
       [entry-path : String
-        (load.compiler-load-join-root-path manifest-dir manifest.entry)]
-      [name : String manifest.name]
+        (load.compiler-load-join-root-path
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view manifest.entry))]
+      [name : String (owned_view.compiler-owned-shared-view manifest.name)]
       [_package-artifact-profile : unit
         (load.compiler-load-set-package-artifact-profile!
           (build-profile-name profile))]
       [kind : load.CompilerPkgKind manifest.kind]
       [asm-path : String
-        (build-package-asm-path-profile manifest-dir name profile)]
+        (build-package-asm-path-profile
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view name)
+          profile)]
       [obj-path : String
-        (build-package-obj-path-profile manifest-dir name profile target)]
+        (build-package-obj-path-profile
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view name)
+          profile
+          target)]
       [artifact-paths : BuildPackageArtifactPaths
-        (build-package-artifact-paths manifest-dir name kind profile target)]
+        (build-package-artifact-paths
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view name)
+          kind
+          profile
+          target)]
       [artifact-path : String
-        (build-package-runtime-artifact-path artifact-paths)]
+        (build-package-runtime-artifact-path
+          (owned_view.compiler-owned-shared-view artifact-paths))]
       [tlci-path : String
         (build-package-host-tlci-artifact-path artifact-paths)]
       [_reset-file-state : unit
@@ -6425,37 +6445,44 @@
       [_dependency-catalogs : unit
         (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
           (load.compiler-load-serial-test-session-state)
-          manifest-dir
-          manifest.deps)]
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view manifest.deps))]
       (if (or
         (> (string.string-length compile-context.error) 0)
-        (not (build-ensure-package-output-dirs manifest-dir name profile)))
+        (not
+          (build-ensure-package-output-dirs
+            (owned_view.compiler-owned-shared-view manifest-dir)
+            (owned_view.compiler-owned-shared-view name)
+            profile)))
         (let
           [message : String
             (if (> (string.string-length compile-context.error) 0)
               compile-context.error
               (str_cat.str-cat
                 "build: failed to create package output directory "
-                (build-package-output-dir-profile manifest-dir name profile)))]
+                (build-package-output-dir-profile
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  (owned_view.compiler-owned-shared-view name)
+                  profile)))]
           (begin
             (io.print-error message)
             1))
         (let
           [manifest-link-inputs : build_run_core.SourceToolLinkInputs
             (build-package-manifest-link-inputs
-              manifest.link
-              manifest-dir
+              (owned_view.compiler-owned-shared-view manifest.link)
+              (owned_view.compiler-owned-shared-view manifest-dir)
               target)]
           [dep-link-inputs : build_run_core.SourceToolLinkInputs
             (build_run_core.source-tool-link-inputs-from-archives dep-libs)]
           [emit-entry : bool (build-package-kind-entry? kind)]
           [inline-test-status : i64
             (build-inline-test-typecheck-package-sources
-              manifest-path
-              stdlib-roots
-              manifest-dir
-              name
-              manifest.deps
+              (owned_view.compiler-owned-shared-view manifest-path)
+              (owned_view.compiler-owned-shared-view stdlib-roots)
+              (owned_view.compiler-owned-shared-view manifest-dir)
+              (owned_view.compiler-owned-shared-view name)
+              (owned_view.compiler-owned-shared-view manifest.deps)
               (build-package-compile-cfgs target compile-context.root-compiler))]
           [_reset-after-inline-tests : unit
             (if (= inline-test-status 0)

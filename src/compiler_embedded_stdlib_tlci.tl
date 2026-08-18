@@ -453,11 +453,15 @@
 ;; across constructor boundaries so by-value AstNodePoolContext parameters do
 ;; not detach the count/dedup state from the session that receives the result.
 (define (compiler-comptime-host-pool-cell-address [field-index : i64]) : u64
-  (unsafe
-    (ptr-read
-      (ptr-offset
-        (ptr-cast (array-data compiler-comptime-host-pools) : (Ptr u64))
-        field-index))))
+  (let
+    [descriptor-address : u64
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (ptr-cast (array-data compiler-comptime-host-pools) : (Ptr u64))
+            field-index)))]
+    (unsafe
+      (ptr-read (int->ptr descriptor-address : (Ptr u64))))))
 
 ;; Computed-body local slots for let-bound transformer bodies (refs #5603).
 ;; Slots are addressed by immediate operand and validated per session.

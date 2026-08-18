@@ -4725,7 +4725,7 @@
   [decls : compiler_ast_types.AstDeclList]
   [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriver
   (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-    input-path
+    (owned_view.compiler-owned-shared-view input-path)
     (compiler-driver-lower-package-loaded
       input-path
       package-name
@@ -4769,7 +4769,7 @@
   [decls : compiler_ast_types.AstDeclList]
   [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverPackageRuntime
   (compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
-    input-path
+    (owned_view.compiler-owned-shared-view input-path)
     (compiler-driver-lower-package-loaded
       input-path
       package-name

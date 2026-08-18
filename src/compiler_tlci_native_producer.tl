@@ -2627,43 +2627,64 @@
       (let
         [lifetimes : compiler_ast_types.AstLifetimeList
           (owned_view.compiler-owned-box-shared-view lifetimes-box)]
-        [valid : bool
-          (and
-            (= name cbi.compiler-builtin-id-fix-unquote)
-            (= (compiler_ast_types.ast-lifetime-list-len (& lifetimes)) 1))]
-        [operand-name : i64
-          (if valid
-            (compiler_ast_types.ast-lifetime-list-get
-              (& lifetimes)
-              0
-              (compiler_ast_types.ast-lifetime-fallback))
-            -1)]
-        [param : i64
-          (if valid
-            (embedded-stdlib-tlci-param-index params operand-name)
-            -1)]
-        [slot : i64
-          (if (and valid (< param 0))
-            (embedded-native-local-index (ci.intern-str operand-name))
-            -1)]
-        (if (and (< param 0) (< slot 0))
-          (embedded-native-fallback-opened "template-type:non-scalar")
-          (begin
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (if (>= param 0)
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-push-operand)
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-local-get))
-              (string.int->string
-                (if (>= param 0)
-                  param
-                  slot))
-              "0"
-              "0")
-            1)))]
+        (if (= name cbi.compiler-builtin-id-fix-unquote)
+          (let
+            [valid : bool
+              (= (compiler_ast_types.ast-lifetime-list-len (& lifetimes)) 1)]
+            [operand-name : i64
+              (if valid
+                (compiler_ast_types.ast-lifetime-list-get
+                  (& lifetimes)
+                  0
+                  (compiler_ast_types.ast-lifetime-fallback))
+                -1)]
+            [param : i64
+              (if valid
+                (embedded-stdlib-tlci-param-index params operand-name)
+                -1)]
+            [slot : i64
+              (if (and valid (< param 0))
+                (embedded-native-local-index (ci.intern-str operand-name))
+                -1)]
+            (if (and (< param 0) (< slot 0))
+              (embedded-native-fallback-opened "template-type:unquote")
+              (begin
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  (if (>= param 0)
+                    (tlci_core.tlci-host-callback-name-shared-view
+                      tlci_core.tlci-host-callback-name-push-operand)
+                    (tlci_core.tlci-host-callback-name-shared-view
+                      tlci_core.tlci-host-callback-name-local-get))
+                  (string.int->string
+                    (if (>= param 0)
+                      param
+                      slot))
+                  "0"
+                  "0")
+                1)))
+          (let
+            [payload : String
+              (embedded-native-template-type-var-args-payload
+                name
+                (& lifetimes))]
+            [count : i64
+              (compiler_ast_types.ast-lifetime-list-len (& lifetimes))]
+            (if (= count 0)
+              (embedded-native-fallback-opened "template-type:var-args-empty")
+              (begin
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-type-var-args)
+                  (string.int->string count)
+                  (embedded-native-name-arg
+                    (embedded-native-escape-string
+                      (owned_view.compiler-owned-shared-view payload)))
+                  (string.int->string (string.string-length payload)))
+                1)))))]
     [(compiler_ast_types.AstType.Var type-name-id)
       (let
         [type-name : String (ci.intern-str type-name-id)]
@@ -4757,6 +4778,54 @@
 ;; values. This is the compile-time shape used by stdlib.sort/vec and
 ;; stdlib.serialize/serialize to classify reflected type keys. Unsupported
 ;; patterns or bodies still fail closed to the registered fallback shell.
+(define (embedded-native-data-string-match-arms-value
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [scrutinee : i64]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
+  [index : i64]) : EmbeddedNativeDataValue
+  (if (>= index arms.len)
+    (embedded-native-data-value-none)
+    (match (owned_view.compiler-owned-array-element-shared-view
+      arms.slots
+      index)
+      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
+        (match pattern
+          [(compiler_ast_types.AstPattern.Literal
+              (compiler_ast_types.AstLiteral.String sid))
+            (embedded-native-data-if-values
+              (embedded-native-data-string-literal-eq-value
+                params
+                scrutinee
+                sid)
+              (embedded-native-data-value params body-node)
+              (embedded-native-data-string-match-arms-value
+                params
+                scrutinee
+                arms
+                (+ index 1)))]
+          [(compiler_ast_types.AstPattern.Wildcard)
+            (embedded-native-data-value params body-node)]
+          [_ (embedded-native-data-value-none)])])))
+
+(define (embedded-native-data-string-match-value
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [scrutinee : i64]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]) : EmbeddedNativeDataValue
+  ;; Restrict the scrutinee to an operand or session local. This preserves the
+  ;; interpreted single-evaluation rule while still covering reflected
+  ;; type-key/type-kind values bound by the surrounding let.
+  (if (or
+    (>= (embedded-native-var-param-index params scrutinee) 0)
+    (match (embedded-stdlib-tlci-unwrap-expr scrutinee)
+      [(compiler_ast_types.AstExpr.Var name)
+        (>= (embedded-native-local-index (ci.intern-str name)) 0)]
+      [_ false]))
+    (embedded-native-data-string-match-arms-value params scrutinee arms 0)
+    (embedded-native-data-value-none)))
+
+;; The boolean Expr.Var match used by the scoped string concatenator is a pure
+;; shape test. Lower it directly to the corresponding operand/local data probe
+;; when it has exactly `[Var _ => true] [_ => false]`. Refs #5656.
 (define (embedded-native-data-var-match-value
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [scrutinee : i64]
@@ -4807,48 +4876,12 @@
   [match-box : (Box compiler_ast_types.AstMatch)]) : EmbeddedNativeDataValue
   (match (owned_view.compiler-owned-box-shared-view match-box)
     [(compiler_ast_types.AstMatch.Match scrutinee arms)
-      (if (not (= arms.len 2))
-        (embedded-native-data-value-none)
-        (match (owned_view.compiler-owned-array-element-shared-view
-          arms.slots
-          0)
-          [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
-            (match (owned_view.compiler-owned-array-element-shared-view
-              arms.slots
-              1)
-              [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
-                (match first-pattern
-                  [(compiler_ast_types.AstPattern.Variant name-id args-box)
-                    (let
-                      [args : compiler_ast_types.AstPatternList
-                        (compiler_ast_types.ast-pattern-list-box-shared-view
-                          (owned_view.compiler-owned-shared-view args-box))]
-                      (if (and
-                        (string.eq
-                          (embedded-native-expr-variant-name name-id)
-                          "Var")
-                        (= args.len 1)
-                        (match (compiler_ast_types.ast-pattern-list-get
-                          (& args)
-                          0
-                          (compiler_ast_types.ast-pattern-fallback))
-                          [(compiler_ast_types.AstPattern.Wildcard) true]
-                          [_ false])
-                        (match second-pattern
-                          [(compiler_ast_types.AstPattern.Wildcard) true]
-                          [_ false])
-                        (= (embedded-native-bool-literal-flag first-body) 1)
-                        (= (embedded-native-bool-literal-flag second-body) 0))
-                        (embedded-native-data-expr-probe-value
-                          params
-                          scrutinee
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-operand-expr-var?)
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-local-expr-var?))
-                        (embedded-native-data-value-none)))]
-                  [_ (embedded-native-data-value-none)])])]
-          [_ (embedded-native-data-value-none)]))]
+      (let
+        [var-match : EmbeddedNativeDataValue
+          (embedded-native-data-var-match-value params scrutinee (& arms))]
+        (if (string.eq var-match.text "")
+          (embedded-native-data-string-match-value params scrutinee (& arms))
+          var-match))]
     [_ (embedded-native-data-value-none)]))
 
 ;; One reflection count over a type operand/session local, or no value.

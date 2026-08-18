@@ -9033,7 +9033,9 @@
 (define (lsp-workspace-semantic-facts-insert!
   [facts : (&mut facts LspWorkspaceSemanticQuery)]
   [candidate : lsp_vector_families.LspWorkspaceSemanticFact]) : unit
-  (if (lsp-workspace-semantic-facts-contain? facts candidate)
+  (if (lsp-workspace-semantic-facts-contain?
+    facts
+    (lsp-global-shared-view candidate))
     unit
     (begin
       (if (>= facts.len (array-length facts.slots))
@@ -9306,9 +9308,9 @@
     "range"
     (lsp-json-object2
       "start"
-      (lsp-semantic-span-position fact.span true)
+      (lsp-semantic-span-position (lsp-global-shared-view fact.span) true)
       "end"
-      (lsp-semantic-span-position fact.span false))))
+      (lsp-semantic-span-position (lsp-global-shared-view fact.span) false))))
 
 (define (lsp-reference-result-json
   [query : (& query LspWorkspaceSemanticQuery)]
@@ -9323,10 +9325,13 @@
             (lsp-workspace-semantic-facts-get query index)]
           (begin
             (if (and
-              (lsp-workspace-semantic-fact-real-location? fact)
+              (lsp-workspace-semantic-fact-real-location?
+                (lsp-global-shared-view fact))
               (or
                 include-declaration
-                (not (lsp-workspace-semantic-fact-definition? fact))))
+                (not
+                  (lsp-workspace-semantic-fact-definition?
+                    (lsp-global-shared-view fact)))))
               (set!
                 locations
                 (lsp-json-list-cons (lsp-reference-location fact) locations))
@@ -13368,11 +13373,16 @@
   [include-declaration : bool]) : lsp_vector_families.LspServerState
   (let
     [query : LspWorkspaceSemanticQuery
-      (lsp-workspace-semantic-query (& state) stdlib-roots canonical-key)]
+      (lsp-workspace-semantic-query
+        (& state)
+        (lsp-global-shared-view stdlib-roots)
+        (lsp-global-shared-view canonical-key))]
     (if (= query.completeness 1)
       (let
         [refreshed : lsp_vector_families.LspServerState
-          (lsp-server-state-refresh-semantic-cache state stdlib-roots)]
+          (lsp-server-state-refresh-semantic-cache
+            state
+            (lsp-global-shared-view stdlib-roots))]
         [refreshed-query : LspWorkspaceSemanticQuery
           (lsp-workspace-semantic-query
             (& refreshed)
@@ -13397,13 +13407,14 @@
   [doc : (& doc lsp_vector_families.LspDocument)]) : lsp_vector_families.LspServerState
   (if (not
     (and
-      (lsp-json-int-field-usable? position "line")
-      (lsp-json-int-field-usable? position "character")))
+      (lsp-json-int-field-usable? (lsp-global-shared-view position) "line")
+      (lsp-json-int-field-usable? (lsp-global-shared-view position) "character")))
     (begin
       (lsp-write-response id (lsp-json-array (json.list-empty)))
       state)
     (let
-      [line : i64 (lsp-json-int-field-default position "line" -1)]
+      [line : i64
+        (lsp-json-int-field-default (lsp-global-shared-view position) "line" -1)]
       [character : i64 (lsp-json-int-field-default position "character" -1)]
       (match (lsp-offset-at-position-checked
         (string.copy (& doc.text))
@@ -13433,7 +13444,7 @@
   [params : json.Json]
   [state : lsp_vector_families.LspServerState]
   [stdlib-roots : lsp_svec.Vec]) : lsp_vector_families.LspServerState
-  (match (lsp-tl-request-uri params)
+  (match (lsp-tl-request-uri (lsp-global-shared-view params))
     [(LspJsonText.Missing)
       (begin
         (lsp-write-response id (lsp-json-array (json.list-empty)))
@@ -13452,7 +13463,9 @@
                 (& state.documents)
                 doc-index
                 (lsp-document-fallback))]
-            (match (json.object-get params (& position-key))
+            (match (json.object-get
+              (lsp-global-shared-view params)
+              (& position-key))
               [(json.JsonMissing)
                 (begin
                   (lsp-write-response id (lsp-json-array (json.list-empty)))
@@ -13475,7 +13488,7 @@
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (let
     [id-key : String "id"]
-    (match (json.object-get message (& id-key))
+    (match (json.object-get (lsp-global-shared-view message) (& id-key))
       [(json.JsonMissing) (LspHandleResult.Continue state)]
       [(json.JsonFound id)
         (let

@@ -106,6 +106,8 @@ stage_seed_bootstrap_cfg_args() {
     stage_number=$1
     if [ "$stage_number" -eq 1 ]; then
         printf '%s\n' --cfg stage0-seed-intern-abort
+        printf '%s\n' --cfg stage0-token-scalar-bootstrap
+        printf '%s\n' --cfg stage0-borrowed-inline-bootstrap
         bootstrap_legacy_global_view_cfg_args
     fi
 }

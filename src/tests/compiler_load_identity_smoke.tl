@@ -4,36 +4,42 @@
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-load-identity-current-ok?) : bool
   (let
     [module-name : String "loader.identity.same"]
     [source-id : i64
-      (compiler_load.compiler-load-parse-context-name-id module-name)]
-    [generated-id : i64 (ci.intern-generated-name module-name)]
+      (compiler_load.compiler-load-parse-context-name-id
+        (owned_view.compiler-owned-shared-view module-name))]
+    [generated-id : i64
+      (ci.intern-generated-name
+        (owned_view.compiler-owned-shared-view module-name))]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons (ast.AstDecl.Module source-id) (ast.ast-decl-list-new))]
     [fallback-from-source : i64
       (compiler_load.compiler-load-module-fallback-id-for-parse
-        module-name
+        (owned_view.compiler-owned-shared-view module-name)
         (ast.AstMaybeModuleName.Some source-id))]
     [fallback-from-generated : i64
       (compiler_load.compiler-load-module-fallback-id-for-parse
-        module-name
+        (owned_view.compiler-owned-shared-view module-name)
         (ast.AstMaybeModuleName.Some generated-id))]
     (and
       (not (= source-id generated-id))
       (= fallback-from-source source-id)
       (= fallback-from-generated source-id)
-      (compiler_load.compiler-load-decl-list-has-module-id? decls source-id)
+      (compiler_load.compiler-load-decl-list-has-module-id?
+        (owned_view.compiler-owned-shared-view decls)
+        source-id)
       (not
         (compiler_load.compiler-load-decl-list-has-module-id?
-          decls
+          (owned_view.compiler-owned-shared-view decls)
           generated-id))
       (match (compiler_load.compiler-load-check-expected-module
         "src/loader_identity.tl"
         (ast.AstMaybeModuleName.Some source-id)
-        module-name
+        (owned_view.compiler-owned-shared-view module-name)
         -1)
         [(compiler_load.ResultCompilerLoadModuleId.Ok _ checked-id)
           (= checked-id source-id)]
@@ -41,7 +47,7 @@
       (match (compiler_load.compiler-load-check-expected-module
         "src/loader_identity.tl"
         (ast.AstMaybeModuleName.Some generated-id)
-        module-name
+        (owned_view.compiler-owned-shared-view module-name)
         source-id)
         [(compiler_load.ResultCompilerLoadModuleId.Ok _ _) false]
         [(compiler_load.ResultCompilerLoadModuleId.Err _) true]))))
@@ -52,7 +58,7 @@
     [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
     [_b-decoy : i64
-      (ci.intern-compat-state-intern state-b "loader.identity.decoy")]
+      (ci.intern-compat-state-intern (&mut state-b) "loader.identity.decoy")]
     [source-a : i64 -1]
     [source-b : i64 -1]
     [restored-source-a : i64 -1]
@@ -60,7 +66,8 @@
     [b-ok : bool false]
     [restored-ok : bool false]
     (begin
-      (ci.intern-compat-state-install! state-a)
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view state-a))
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (set!
@@ -68,8 +75,9 @@
         (compiler_load.compiler-load-parse-context-name-id
           "loader.identity.same"))
       (set! a-ok (compiler-load-identity-current-ok?))
-      (ci.intern-compat-state-capture-from-globals! state-a)
-      (ci.intern-compat-state-install! state-b)
+      (ci.intern-compat-state-capture-from-globals! (&mut state-a))
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view state-b))
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (set!
@@ -77,8 +85,9 @@
         (compiler_load.compiler-load-parse-context-name-id
           "loader.identity.same"))
       (set! b-ok (compiler-load-identity-current-ok?))
-      (ci.intern-compat-state-capture-from-globals! state-b)
-      (ci.intern-compat-state-install! state-a)
+      (ci.intern-compat-state-capture-from-globals! (&mut state-b))
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view state-a))
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (set!
@@ -93,7 +102,8 @@
           (not (= source-a source-b))
           (= restored-source-a source-a)
           (compiler-load-identity-current-ok?)))
-      (ci.intern-compat-state-install! home)
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view home))
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       restored-ok)))

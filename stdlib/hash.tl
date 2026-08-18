@@ -20,6 +20,16 @@
 (import stdlib.comptime)
 (import stdlib.string as string_mod)
 
+(defmacro (hash-shared-view [place : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
+
+(defmacro (hash-array-shared-view
+  [items : comptime.Expr]
+  [index : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (ptr-read (ptr-offset (array-data ,items) ,index))))
+
 ;: Return the fixed hash modulus.
 (define (modulus) : i64
   2147483647)
@@ -149,9 +159,20 @@
         `(stdlib.hash.combine 43 (stdlib.hash.normalize (cast ,value : i64)))]
       ["u8"
         `(stdlib.hash.combine 47 (stdlib.hash.normalize (cast ,value : i64)))]
-      ["string" `(stdlib.hash.combine 53 (stdlib.hash.string-key (& ,value)))]
-      ["struct" `(stdlib.hash.struct-hash-fields 0 ,value 59 ,path-expr)]
-      ["tuple" `(stdlib.hash.tuple-hash-elements 0 ,value 61 ,path-expr)]
+      ["string"
+        `(let
+          [__hash_string_value : String ,value]
+          (stdlib.hash.combine
+            53
+            (stdlib.hash.string-key (& __hash_string_value))))]
+      ["struct"
+        `(let
+          [__hash_struct_value ,value]
+          (stdlib.hash.struct-hash-fields 0 __hash_struct_value 59 ,path-expr))]
+      ["tuple"
+        `(let
+          [__hash_tuple_value ,value]
+          (stdlib.hash.tuple-hash-elements 0 __hash_tuple_value 61 ,path-expr))]
       ["array"
         (if (array-dynamic? value-type)
           (comptime.comptime-error
@@ -168,7 +189,10 @@
               ,length-expr
               ,value
               ,(comptime.expr-string element-path))))]
-      ["enum" `(stdlib.hash.enum-hash-dispatch ,value 0 ,path-expr)]
+      ["enum"
+        `(let
+          [__hash_enum_value ,value]
+          (stdlib.hash.enum-hash-dispatch __hash_enum_value 0 ,path-expr))]
       [_
         (comptime.comptime-error
           (comptime.string-append
@@ -204,7 +228,7 @@
               `(stdlib.hash.combine
                 (stdlib.hash.combine ,seed ,position-expr)
                 (stdlib.hash.inline-hash
-                  ,field-value
+                  (stdlib.hash.hash-shared-view ,field-value)
                   ,(comptime.expr-string field-path)))]
             `(stdlib.hash.struct-hash-fields
               ,next-index
@@ -243,7 +267,7 @@
               `(stdlib.hash.combine
                 (stdlib.hash.combine ,seed ,position-expr)
                 (stdlib.hash.inline-hash
-                  ,element-value
+                  (stdlib.hash.hash-shared-view ,element-value)
                   ,(comptime.expr-string element-path)))]
             `(stdlib.hash.tuple-hash-elements
               ,next-index
@@ -271,7 +295,7 @@
             (stdlib.hash.combine
               (stdlib.hash.combine __hash_seed (+ 3000 __hash_i))
               (stdlib.hash.inline-hash
-                (array-ref __hash_array __hash_i)
+                (stdlib.hash.hash-array-shared-view __hash_array __hash_i)
                 ,path-expr)))
           (set! __hash_i (+ __hash_i 1))))
       __hash_seed)))
@@ -381,7 +405,7 @@
             [fallback : comptime.Expr
               `(stdlib.hash.enum-hash-dispatch ,value ,next-index ,path-expr)]
             (comptime.expr-match
-              value
+              `(stdlib.hash.hash-shared-view ,value)
               (comptime.match-arm-list-cons
                 (comptime.match-arm pattern body)
                 (comptime.match-arm-list-cons

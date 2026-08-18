@@ -7421,8 +7421,9 @@ in documentation passes.
   deterministic fuel, and per-package `tlci` comptime interface images.
 - Tooling: package builds with lockfiles and dependency DAGs, inline tests,
   doctests, `fmt`, `lint`, `doc` generation, the published docs site, a
-  stdio LSP server with diagnostics, definition, completion, inlay hints,
-  formatting, hover, document links, flat top-level document-symbol outlines,
+  stdio LSP server with diagnostics, definition, completion, semantic signature
+  help, inlay hints, formatting, hover, document links, flat top-level
+  document-symbol outlines,
   lexical document highlights, lexical folding ranges for multiline forms and
   comment blocks, a deterministic multi-root workspace source/declaration index
   with open-document overlays and incremental file/root updates, a bounded

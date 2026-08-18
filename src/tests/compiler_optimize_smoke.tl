@@ -3205,6 +3205,10 @@
       (compiler_optimize_tests.compiler-optimize-licm-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-word-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-word-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-licm-unswitch-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-unswitch-self-test)
       42)

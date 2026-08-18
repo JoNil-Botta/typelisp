@@ -20771,6 +20771,13 @@
               (opt-licm-mode-vector? licm-mode)
               (opt-used-contains hoisted var))]
           [_ true]))]
+    ;; Register-group extraction is a pure projection. Native Slice data and
+    ;; length words otherwise stay inside scalar SPMD loops, which prevents
+    ;; loop BCE from recognizing the invariant length and leaves a bounds
+    ;; check on every logical lane. Hoist the projection whenever its packed
+    ;; source is invariant; unlike a memory Load this needs no alias proof.
+    [(ir.CompilerIrInstr.Word _ src _ _)
+      (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)]
     [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
       (and
         (not (opt-binop-traps? op))
@@ -55313,11 +55320,13 @@
         fast-block
         remap)]))
 
-(define (opt-bce-version-apply
+(define (opt-bce-version-apply-wired
+  [original-blocks : ir.CompilerIrBlockList]
   [blocks : ir.CompilerIrBlockList]
   [block : ir.CompilerIrBlock]
   [shape : OptUnrollShape]
-  [frame : i64]) : OptUnrollResult
+  [frame : i64]
+  [cell : (__tl_dyn-array i64)]) : OptUnrollResult
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (let
@@ -55366,116 +55375,155 @@
             0
             (ir.compiler-ir-instr-seq-count instrs)
             outside))
-          (OptUnrollResult.Result blocks frame false)
-          (let
-            [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-            [_cell : unit (set! (array-ref cell 0) frame)]
-            (match (opt-bce-version-guard-conds
-              instrs
-              phi-count
-              last
-              defs
-              label
-              pred-label
-              iphi
-              seed
-              bound
-              step
-              cell)
-              [(OptBceVersionGuardOut.No)
-                (OptUnrollResult.Result blocks frame false)]
-              [(OptBceVersionGuardOut.Some guard-instrs guard-value keep)
-                (let
-                  [remap : (__tl_dyn-array ir.CompilerIrValue)
-                    (array.make-array ir.CompilerIrValue frame)]
-                  [_fill : unit (opt-unroll-remap-fill remap 0)]
-                  ;; Fresh phi destinations first so the cloned body reads the
-                  ;; clone's loop-carried values.
-                  [_iphi : i64 (opt-unroll-clone-dst remap cell iphi)]
-                  [_others : unit
-                    (opt-bce-version-alloc-other-phis remap cell others)]
-                  [body-builder : ir.CompilerIrInstrBuilder
-                    (ir.compiler-ir-instr-builder-with-capacity
-                      (- last phi-count))]
-                  [_body-build : unit
-                    (opt-bce-version-push-clone-body!
-                      instrs
-                      phi-count
-                      last
-                      remap
-                      cell
-                      keep
-                      (&mut body-builder))]
-                  [body : ir.CompilerIrInstrSeq
-                    (ir.compiler-ir-instr-builder-to-seq body-builder)]
-                  [fast-builder : ir.CompilerIrInstrBuilder
-                    (ir.compiler-ir-instr-builder-with-capacity
-                      (+ 1 (- last phi-count)))]
-                  [_fast-phi : unit
-                    (ir.compiler-ir-instr-builder-push!
-                      (&mut fast-builder)
-                      (ir.CompilerIrInstr.Phi
-                        (match (opt-unroll-subst-value
-                          remap
-                          (ir.CompilerIrValue.Var iphi))
-                          [(ir.CompilerIrValue.Var fresh-id) fresh-id]
-                          [_ iphi])
+          (OptUnrollResult.Result original-blocks frame false)
+          (match (opt-bce-version-guard-conds
+            instrs
+            phi-count
+            last
+            defs
+            label
+            pred-label
+            iphi
+            seed
+            bound
+            step
+            cell)
+            [(OptBceVersionGuardOut.No)
+              (OptUnrollResult.Result original-blocks frame false)]
+            [(OptBceVersionGuardOut.Some guard-instrs guard-value keep)
+              (let
+                [remap : (__tl_dyn-array ir.CompilerIrValue)
+                  (array.make-array ir.CompilerIrValue frame)]
+                [_fill : unit (opt-unroll-remap-fill remap 0)]
+                ;; Fresh phi destinations first so the cloned body reads the
+                ;; clone's loop-carried values.
+                [_iphi : i64 (opt-unroll-clone-dst remap cell iphi)]
+                [_others : unit
+                  (opt-bce-version-alloc-other-phis remap cell others)]
+                [body-builder : ir.CompilerIrInstrBuilder
+                  (ir.compiler-ir-instr-builder-with-capacity
+                    (- last phi-count))]
+                [_body-build : unit
+                  (opt-bce-version-push-clone-body!
+                    instrs
+                    phi-count
+                    last
+                    remap
+                    cell
+                    keep
+                    (&mut body-builder))]
+                [body : ir.CompilerIrInstrSeq
+                  (ir.compiler-ir-instr-builder-to-seq body-builder)]
+                [fast-builder : ir.CompilerIrInstrBuilder
+                  (ir.compiler-ir-instr-builder-with-capacity
+                    (+ 1 (- last phi-count)))]
+                [_fast-phi : unit
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut fast-builder)
+                    (ir.CompilerIrInstr.Phi
+                      (match (opt-unroll-subst-value
+                        remap
+                        (ir.CompilerIrValue.Var iphi))
+                        [(ir.CompilerIrValue.Var fresh-id) fresh-id]
+                        [_ iphi])
+                      (ir.compiler-ir-phi-input-cons
+                        seed
+                        guard-label
                         (ir.compiler-ir-phi-input-cons
-                          seed
-                          guard-label
-                          (ir.compiler-ir-phi-input-cons
-                            (opt-unroll-subst-value
-                              remap
-                              (ir.CompilerIrValue.Var inext))
-                            fast-label
-                            (ir.CompilerIrPhiInputList.Nil)))
-                        iphi-ty))]
-                  [_fast-other-phis : unit
-                    (opt-bce-version-push-fast-phis!
-                      others
-                      remap
-                      guard-label
+                          (opt-unroll-subst-value
+                            remap
+                            (ir.CompilerIrValue.Var inext))
+                          fast-label
+                          (ir.CompilerIrPhiInputList.Nil)))
+                      iphi-ty))]
+                [_fast-other-phis : unit
+                  (opt-bce-version-push-fast-phis!
+                    others
+                    remap
+                    guard-label
+                    fast-label
+                    (&mut fast-builder))]
+                [_fast-body : unit
+                  (ir.compiler-ir-instr-builder-append-seq-range!
+                    (&mut fast-builder)
+                    body
+                    0
+                    (ir.compiler-ir-instr-seq-count body))]
+                [_fast-branch : unit
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut fast-builder)
+                    (ir.CompilerIrInstr.Branch
+                      (opt-unroll-subst-value
+                        remap
+                        (ir.CompilerIrValue.Var cond-var))
                       fast-label
-                      (&mut fast-builder))]
-                  [_fast-body : unit
-                    (ir.compiler-ir-instr-builder-append-seq-range!
-                      (&mut fast-builder)
-                      body
-                      0
-                      (ir.compiler-ir-instr-seq-count body))]
-                  [_fast-branch : unit
-                    (ir.compiler-ir-instr-builder-push!
-                      (&mut fast-builder)
-                      (ir.CompilerIrInstr.Branch
-                        (opt-unroll-subst-value
-                          remap
-                          (ir.CompilerIrValue.Var cond-var))
-                        fast-label
-                        exit-label))]
-                  [fast-block : ir.CompilerIrBlock
-                    (ir.CompilerIrBlock.Block
-                      fast-label
-                      (ir.compiler-ir-instr-builder-to-seq fast-builder))]
-                  [guard-block : ir.CompilerIrBlock
-                    (opt-bce-version-guard-block
-                      guard-label
-                      guard-instrs
-                      guard-value
-                      fast-label
-                      label)]
-                  (OptUnrollResult.Result
-                    (opt-bce-version-rewrite-blocks
-                      blocks
-                      pred-label
-                      label
-                      exit-label
-                      fast-label
-                      guard-label
-                      guard-block
-                      fast-block
-                      remap)
-                    (array-ref cell 0)
-                    true))]))))]))
+                      exit-label))]
+                [fast-block : ir.CompilerIrBlock
+                  (ir.CompilerIrBlock.Block
+                    fast-label
+                    (ir.compiler-ir-instr-builder-to-seq fast-builder))]
+                [guard-block : ir.CompilerIrBlock
+                  (opt-bce-version-guard-block
+                    guard-label
+                    guard-instrs
+                    guard-value
+                    fast-label
+                    label)]
+                (OptUnrollResult.Result
+                  (opt-bce-version-rewrite-blocks
+                    blocks
+                    pred-label
+                    label
+                    exit-label
+                    fast-label
+                    guard-label
+                    guard-block
+                    fast-block
+                    remap)
+                  (array-ref cell 0)
+                  true))])))]))
+
+;; A self-loop reduction often carries its result directly into the sole exit
+;; block instead of through an exit Phi. Reuse the multi-block versioner's
+;; conservative exit wiring to materialize that Phi before cloning: the normal
+;; single-block exit extension can then add the parallel fast-edge value. This
+;; deliberately accepts no forwarding stubs here; cloning those remains the
+;; multi-block pass's responsibility.
+(define (opt-bce-version-apply
+  [blocks : ir.CompilerIrBlockList]
+  [block : ir.CompilerIrBlock]
+  [shape : OptUnrollShape]
+  [frame : i64]) : OptUnrollResult
+  (match block
+    [(ir.CompilerIrBlock.Block label _)
+      (let
+        [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [_cell : unit (set! (array-ref cell 0) frame)]
+        [context : OptCfgContext (opt-cfg-context-build blocks)]
+        [body-labels : OptLabelSet (opt-label-add (OptLabelSet.Nil) label)]
+        [body-blocks : ir.CompilerIrBlockList
+          (ir.compiler-ir-block-cons block (ir.CompilerIrBlockList.Nil))]
+        (match (opt-bce-mb-wire-exits
+          context.pred-map
+          blocks
+          blocks
+          body-labels
+          body-blocks
+          cell
+          (OptLabelSet.Nil))
+          [(OptBceMbWiring.No) (OptUnrollResult.Result blocks frame false)]
+          [(OptBceMbWiring.Some wired stubs)
+            (match stubs
+              [(OptLabelSet.Nil)
+                (opt-bce-version-apply-wired
+                  blocks
+                  wired
+                  block
+                  shape
+                  frame
+                  cell)]
+              [(OptLabelSet.Dense _ _)
+                (OptUnrollResult.Result blocks frame false)])]))]))
 
 (define (opt-bce-version-alloc-other-phis
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
@@ -76527,8 +76575,15 @@
       (OptSccResult scc-of (opt-scc-copy-order order-scratch scc-count)))))
 
 ;; Devirtualize syntactically known function values before program-level
-;; inlining, so the existing direct-call inliner can see them.
-(define (opt-devirt-known-function-instr [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+;; inlining, so the existing direct-call inliner can see them. A typed local
+;; function binding lowers as `Mov dst, Function` followed by an indirect call
+;; through `dst`, often in a successor block. Record only variables with one
+;; definition in the whole function: that definition dominates every valid use
+;; and cannot be changed on another path. The Function-valued Mov deliberately
+;; remains in the IR, so the inliner census still sees that the callee's address
+;; is taken and does not turn an explicitly indirect large kernel into an
+;; unconditional body import.
+(define (opt-devirt-known-function-literal-instr [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match instr
     [(ir.CompilerIrInstr.CallIndirect
         dst
@@ -76543,21 +76598,183 @@
       (ir.CompilerIrInstr.TailCall name args ty)]
     [_ instr]))
 
-;; Optimization receives compact, exclusively owned IR sequences. Rewrite their
-;; mutable instruction arrays directly instead of rebuilding the entire program
-;; through temporary cons lists before the inliner.
-(define (opt-devirt-known-function-block! [block : ir.CompilerIrBlock]) : unit
-  (match block
-    [(ir.CompilerIrBlock.Block _ instrs)
-      (ir.compiler-ir-instr-seq-rewrite! instrs opt-devirt-known-function-instr)]))
+;; Keep the common literal-only case on the old allocation-free one-pass path.
+;; This scan rewrites those sites in place while reporting whether this function
+;; contains even one local alias that needs definition tables.
+(define (opt-devirt-prepare-instrs! [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [alias? : bool false]
+    (begin
+      (while (< index count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          (begin
+            (match instr
+              [(ir.CompilerIrInstr.Mov _ (ir.CompilerIrValue.Function _) _)
+                (set! alias? true)]
+              [_ unit])
+            (ir.compiler-ir-instr-seq-set!
+              instrs
+              index
+              (opt-devirt-known-function-literal-instr instr))
+            (set! index (+ index 1)))))
+      alias?)))
 
-(define (opt-devirt-known-function-blocks! [blocks : ir.CompilerIrBlockList]) : unit
+(define (opt-devirt-prepare-blocks! [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (let
+        [here? : bool
+          (match block
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (opt-devirt-prepare-instrs! instrs)])]
+        [later? : bool (opt-devirt-prepare-blocks! (__tl-box-place rest))]
+        (or here? later?))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [index : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [found? : bool false]
+        (begin
+          (while (< index count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq index)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (if (opt-devirt-prepare-instrs! instrs)
+                    (set! found? true)
+                    unit)])
+              (set! index (+ index 1))))
+          found?))]))
+
+(define (opt-devirt-note-instr!
+  [states : (__tl_dyn-array i64)]
+  [names : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (opt-instr-def-var instr)
+    [(option_i64.None) unit]
+    [(option_i64.Some dst)
+      (if (or (< dst 0) (>= dst (array-length states)))
+        unit
+        (if (= (array-ref states dst) 0)
+          (match instr
+            [(ir.CompilerIrInstr.Mov _ (ir.CompilerIrValue.Function name) _)
+              (begin
+                (set! (array-ref states dst) 1)
+                (set! (array-ref names dst) name))]
+            [_ (set! (array-ref states dst) 2)])
+          (set! (array-ref states dst) 2)))]))
+
+(define (opt-devirt-note-instrs!
+  [states : (__tl_dyn-array i64)]
+  [names : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (while (< index count)
+      (begin
+        (opt-devirt-note-instr!
+          states
+          names
+          (ir.compiler-ir-instr-seq-ref instrs index))
+        (set! index (+ index 1))))))
+
+(define (opt-devirt-note-blocks!
+  [states : (__tl_dyn-array i64)]
+  [names : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
     [(ir.CompilerIrBlockList.Cons block rest)
       (begin
-        (opt-devirt-known-function-block! block)
-        (opt-devirt-known-function-blocks! (__tl-box-place rest)))]
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-devirt-note-instrs! states names instrs)])
+        (opt-devirt-note-blocks! states names (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [index : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (while (< index count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref seq index)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (opt-devirt-note-instrs! states names instrs)])
+            (set! index (+ index 1)))))]))
+
+(define (opt-devirt-known-target
+  [states : (__tl_dyn-array i64)]
+  [names : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]) : option_i64.Option
+  (match value
+    [(ir.CompilerIrValue.Function name) (option_i64.Some name)]
+    [(ir.CompilerIrValue.Var var)
+      (if (and
+        (>= var 0)
+        (< var (array-length states))
+        (= (array-ref states var) 1))
+        (option_i64.Some (array-ref names var))
+        (option_i64.None))]
+    [_ (option_i64.None)]))
+
+(define (opt-devirt-known-function-instr
+  [states : (__tl_dyn-array i64)]
+  [names : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.CallIndirect dst target args ty)
+      (match (opt-devirt-known-target states names target)
+        [(option_i64.Some name) (ir.CompilerIrInstr.Call dst name args ty)]
+        [(option_i64.None) instr])]
+    [(ir.CompilerIrInstr.TailCallIndirect target args ty)
+      (match (opt-devirt-known-target states names target)
+        [(option_i64.Some name) (ir.CompilerIrInstr.TailCall name args ty)]
+        [(option_i64.None) instr])]
+    [_ instr]))
+
+;; Optimization receives compact, exclusively owned IR sequences. Rewrite their
+;; mutable instruction arrays directly instead of rebuilding the entire program
+;; through temporary cons lists before the inliner.
+(define (opt-devirt-known-function-instrs!
+  [states : (__tl_dyn-array i64)]
+  [names : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (while (< index count)
+      (begin
+        (ir.compiler-ir-instr-seq-set!
+          instrs
+          index
+          (opt-devirt-known-function-instr
+            states
+            names
+            (ir.compiler-ir-instr-seq-ref instrs index)))
+        (set! index (+ index 1))))))
+
+(define (opt-devirt-known-function-block!
+  [states : (__tl_dyn-array i64)]
+  [names : (__tl_dyn-array i64)]
+  [block : ir.CompilerIrBlock]) : unit
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (opt-devirt-known-function-instrs! states names instrs)]))
+
+(define (opt-devirt-known-function-blocks!
+  [states : (__tl_dyn-array i64)]
+  [names : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (opt-devirt-known-function-block! states names block)
+        (opt-devirt-known-function-blocks! states names (__tl-box-place rest)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [index : i64 0]
@@ -76565,13 +76782,22 @@
         (while (< index count)
           (begin
             (opt-devirt-known-function-block!
+              states
+              names
               (ir.compiler-ir-block-seq-ref seq index))
             (set! index (+ index 1)))))]))
 
 (define (opt-devirt-known-function-function! [func : ir.CompilerIrFunction]) : unit
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-      (opt-devirt-known-function-blocks! blocks)]))
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks)
+      (if (opt-devirt-prepare-blocks! blocks)
+        (let
+          [states : (__tl_dyn-array i64) (array.make-array i64 frame)]
+          [names : (__tl_dyn-array i64) (array.make-array i64 frame)]
+          (begin
+            (opt-devirt-note-blocks! states names blocks)
+            (opt-devirt-known-function-blocks! states names blocks)))
+        unit)]))
 
 (define (opt-devirt-known-function-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (begin

@@ -31,21 +31,15 @@
 (defmacro (process-runtime-place-shared-view [place : Expr]) : Expr
   (let
     [value-ty : comptime.Expr (comptime.expr-type place)]
-    (match (comptime.type-info value-ty)
-      [(comptime.TypeInfo.DynArray _)
-        `(let
-          [shared-ref (& ,place)]
-          (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty))]
-      [(comptime.TypeInfo.Builtin kind)
-        (if (string.eq kind "string")
-          `(let
-            [shared-ref (& ,place)]
-            (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty))
-          `(unsafe
-            (ptr-read (ptr-addr-of ,place))))]
-      [_
-        `(unsafe
-          (ptr-read (ptr-addr-of ,place)))])))
+    [kind : String (type-kind value-ty)]
+    (if (if (string.eq kind "dyn-array")
+      true
+      (string.eq kind "string"))
+      `(let
+        [shared-ref (& ,place)]
+        (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty))
+      `(unsafe
+        (ptr-read (ptr-addr-of ,place))))))
 
 (defmacro (process-runtime-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe

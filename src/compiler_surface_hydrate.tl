@@ -157,7 +157,7 @@
             "host"))]
       [identity-payload : surface_identity.SurfaceIdentityPayload
         (surface_identity.SurfaceIdentityPayload
-          key
+          (owned_view.compiler-owned-shared-view key)
           source-names
           (__tl_make-array surface_identity.SurfaceGeneratedIdentity 0))]
       [source-pools : ast.AstNodePoolContext
@@ -239,15 +239,16 @@
           [ok : bool true]
           (begin
             (surface_facts.surface-typecheck-facts-clear!)
-            (if (surface_facts.surface-typecheck-facts-publish! prior)
+            (if (surface_facts.surface-typecheck-facts-publish!
+              (owned_view.compiler-owned-shared-view prior))
               unit
               (set! ok false))
             (match (compiler-surface-hydrate-payloads
-              payloads.identity-bytes
-              payloads.ast-bytes
-              payloads.fact-one-bytes
-              payloads.key
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.identity-bytes)
+              (owned_view.compiler-owned-shared-view payloads.ast-bytes)
+              (owned_view.compiler-owned-shared-view payloads.fact-one-bytes)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Ok hydration)
                 (set! first-hydrated hydration.facts)]
               [_ (set! ok false)])
@@ -260,17 +261,18 @@
                 prior))
               unit
               (set! ok false))
-            (if (surface_facts.surface-typecheck-facts-publish! first-hydrated)
+            (if (surface_facts.surface-typecheck-facts-publish!
+              (owned_view.compiler-owned-shared-view first-hydrated))
               unit
               (set! ok false))
             ;; Decode a malformed second fact payload after a valid first one.
             ;; The explicitly published first hydration must remain unchanged.
             (match (compiler-surface-hydrate-payloads
-              payloads.identity-bytes
-              payloads.ast-bytes
+              (owned_view.compiler-owned-shared-view payloads.identity-bytes)
+              (owned_view.compiler-owned-shared-view payloads.ast-bytes)
               (__tl_make-array u8 0)
-              payloads.key
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Err _) unit]
               [_ (set! ok false)])
             (if (and
@@ -281,23 +283,23 @@
               unit
               (set! ok false))
             (match (compiler-surface-hydrate-payloads
-              payloads.identity-bytes
-              payloads.ast-bytes
-              payloads.fact-two-bytes
-              payloads.key
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.identity-bytes)
+              (owned_view.compiler-owned-shared-view payloads.ast-bytes)
+              (owned_view.compiler-owned-shared-view payloads.fact-two-bytes)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Ok hydration)
                 (begin
                   (set! second-hydrated hydration.facts)
                   (if (surface_facts.surface-typecheck-facts-publish!
-                    second-hydrated)
+                    (owned_view.compiler-owned-shared-view second-hydrated))
                     unit
                     (set! ok false)))]
               [_ (set! ok false)])
             (match (compiler-surface-hydrate
               (__tl_make-array u8 0)
-              payloads.key
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Missing) unit]
               [_ (set! ok false)])
             (if (and

@@ -2116,7 +2116,12 @@
                 1)]
             [(SourceToolCommandStatus.Ok)
               (begin
-                (io.print-format "{}" (str_cat.str-cat "Built " bin-path "\n"))
+                (io.print-format
+                  "{}"
+                  (str_cat.str-cat
+                    "Built "
+                    (owned_view.compiler-owned-shared-view bin-path)
+                    "\n"))
                 (source-tool-clean-temp
                   temp-dir
                   asm-path

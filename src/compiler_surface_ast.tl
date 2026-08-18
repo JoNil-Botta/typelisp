@@ -1766,11 +1766,11 @@
     [source-count : i64]
     [identity-count : i64]) : ResultSurfaceAstBytes
     (match (surface-ast-encode
-      decls
-      paths
-      modules
-      seen
-      source-pools
+      (owned_view.compiler-owned-shared-view decls)
+      (owned_view.compiler-owned-shared-view paths)
+      (owned_view.compiler-owned-shared-view modules)
+      (owned_view.compiler-owned-shared-view seen)
+      (owned_view.compiler-owned-shared-view source-pools)
       source-count
       identity-count)
       [(ResultSurfaceAstBytes.Err message) (ResultSurfaceAstBytes.Err message)]
@@ -1786,7 +1786,9 @@
           [(ResultSurfaceAstBytes.Err message)
             (ResultSurfaceAstBytes.Err message)]
           [(ResultSurfaceAstBytes.Ok second)
-            (if (surface-ast-byte-array-eq? first second)
+            (if (surface-ast-byte-array-eq?
+              (owned_view.compiler-owned-shared-view first)
+              second)
               (ResultSurfaceAstBytes.Ok first)
               (ResultSurfaceAstBytes.Err
                 "surface ast: repeated encoding mismatch"))])])))
@@ -1828,25 +1830,30 @@
         (ast.ast-node-pool-context-new-with-capacities 8 8)]
       [left : i64
         (ast.ast-node-pool-context-expr-push
-          source-pools
+          (owned_view.compiler-owned-shared-view source-pools)
           (ast.AstExpr.Literal (ast.AstLiteral.Int 20 "20")))]
       [right : i64
         (ast.ast-node-pool-context-expr-push
-          source-pools
+          (owned_view.compiler-owned-shared-view source-pools)
           (ast.AstExpr.Literal (ast.AstLiteral.Int 22 "22")))]
       [sum : i64
         (ast.ast-node-pool-context-expr-push
-          source-pools
+          (owned_view.compiler-owned-shared-view source-pools)
           (ast.AstExpr.Binary ast.AstBinOp.Add left right))]
       [borrow-lifetime-id : i64 (ci.intern "borrow-region")]
       [view-param-id : i64 (ci.intern "view")]
       [slice-i64 : ast.AstType
-        (ast.ast-ty-slice-with-pools source-pools ast.AstType.I64)]
+        (ast.ast-ty-slice-with-pools
+          (owned_view.compiler-owned-shared-view source-pools)
+          ast.AstType.I64)]
       [borrowed-slice : ast.AstType
-        (ast.ast-ty-ref-with-pools source-pools borrow-lifetime-id slice-i64)]
+        (ast.ast-ty-ref-with-pools
+          (owned_view.compiler-owned-shared-view source-pools)
+          borrow-lifetime-id
+          slice-i64)]
       [body : i64
         (ast.ast-node-pool-context-expr-push
-          source-pools
+          (owned_view.compiler-owned-shared-view source-pools)
           (ast.AstExpr.Borrow
             false
             (ast.ast-borrow-lifetime-to-id
@@ -1854,7 +1861,7 @@
             sum))]
       [tuple-set : i64
         (ast.ast-node-pool-context-expr-push
-          source-pools
+          (owned_view.compiler-owned-shared-view source-pools)
           (ast.AstExpr.StructSet
             left
             (ast.ast-tuple-set-field-id-from-index 3)
@@ -1862,8 +1869,11 @@
       [body-items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       [combined-body : i64
         (ast.ast-node-pool-context-expr-push
-          source-pools
-          (ast.AstExpr.Begin (ast.AstExprList body-items 2)))]
+          (owned_view.compiler-owned-shared-view source-pools)
+          (ast.AstExpr.Begin
+            (ast.AstExprList
+              (owned_view.compiler-owned-shared-view body-items)
+              2)))]
       [macro-type-kinds : ast.AstMacroTypeKindList
         (ast.ast-macro-type-kind-list-with-length 3)]
       [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
@@ -1900,7 +1910,10 @@
             macro-type-kinds))
         (set!
           (array-ref view-param-slots 0)
-          (ast.AstParam.Param view-param-id borrowed-slice false))
+          (ast.AstParam.Param
+            view-param-id
+            (owned_view.compiler-owned-shared-view borrowed-slice)
+            false))
         (set!
           (array-ref decl-slots 0)
           (ast.AstDecl.DefFn
@@ -1943,7 +1956,8 @@
               "compiler-build"
               "host")]
           [identity-payload : surface_identity.SurfaceIdentityPayload
-            (surface_identity.surface-identity-capture key)]
+            (surface_identity.surface-identity-capture
+              (owned_view.compiler-owned-shared-view key))]
           [source-count : i64 (array-length identity-payload.source-names)]
           [identity-count : i64
             (+ source-count (array-length identity-payload.generated))]
@@ -1955,7 +1969,7 @@
                 paths
                 modules
                 seen
-                source-pools
+                (owned_view.compiler-owned-shared-view source-pools)
                 source-count
                 identity-count)
                 [(ResultSurfaceAstBytes.Err _) false]
@@ -1966,7 +1980,7 @@
                       [_unrelated : i64 (ci.intern "unrelated")]
                       (match (surface_identity.surface-identity-hydrate
                         identity-bytes
-                        key)
+                        (owned_view.compiler-owned-shared-view key))
                         [(surface_identity.ResultSurfaceIdentityHydration.Err _)
                           false]
                         [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch
@@ -1988,7 +2002,8 @@
                                 (and
                                   (=
                                     (ast.ast-node-pool-context-expr-len
-                                      hydration.pools)
+                                      (owned_view.compiler-owned-shared-view
+                                        hydration.pools))
                                     6)
                                   (=
                                     (ast.ast-decl-list-len (& hydration.decls))
@@ -2007,7 +2022,9 @@
                                         0
                                         -1))
                                     "test.tl")
-                                  (match (array-ref hydration.decls.slots 0)
+                                  (match (owned_view.compiler-owned-array-element-shared-view
+                                    hydration.decls.slots
+                                    0)
                                     [(ast.AstDecl.DefFn
                                         _
                                         hydrated-name
@@ -2024,7 +2041,8 @@
                                             (& hydrated-params))
                                           1)
                                         (surface-ast-borrowed-slice-type-ok?
-                                          hydration.pools
+                                          (owned_view.compiler-owned-shared-view
+                                            hydration.pools)
                                           hydrated-ret)
                                         (match (ast.ast-param-list-get
                                           (& hydrated-params)
@@ -2040,7 +2058,8 @@
                                                   hydrated-param-name)
                                                 "view")
                                               (surface-ast-borrowed-slice-type-ok?
-                                                hydration.pools
+                                                (owned_view.compiler-owned-shared-view
+                                                  hydration.pools)
                                                 hydrated-param-ty))]
                                           [_ false])
                                         (match (ast.ast-node-pool-context-expr-get
@@ -2079,7 +2098,9 @@
                                               [_ false])]
                                           [_ false]))]
                                     [_ false])
-                                  (match (array-ref hydration.decls.slots 1)
+                                  (match (owned_view.compiler-owned-array-element-shared-view
+                                    hydration.decls.slots
+                                    1)
                                     [(ast.AstDecl.DefMacro
                                         _
                                         hydrated-macro-name

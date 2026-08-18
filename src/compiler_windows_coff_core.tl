@@ -160,7 +160,8 @@
   (begin
     (cfg
       compile-profile
-      (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
+      (compiler_driver_core.compiler-driver-profile-start-phase
+        (profile_state.compiler-profile-state-shared-view profile-state)))
     (match (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
       backend-state
       pools
@@ -170,13 +171,13 @@
       spans
       true
       false
-      profile-state)
+      (profile_state.compiler-profile-state-shared-view profile-state))
       [(compiler_backend.ResultCompilerBackendBuffer.Ok asm)
         (begin
           (cfg
             compile-profile
             (compiler_driver_core.compiler-driver-profile-finish-phase
-              profile-state
+              (profile_state.compiler-profile-state-shared-view profile-state)
               "backend.assembly"))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
             "backend.assembly")
@@ -186,7 +187,7 @@
           (cfg
             compile-profile
             (compiler_driver_core.compiler-driver-profile-finish-phase
-              profile-state
+              (profile_state.compiler-profile-state-shared-view profile-state)
               "backend.assembly"))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
             "backend.assembly-error")
@@ -221,7 +222,7 @@
       spans
       mode
       "forced-assembly"
-      profile-state)
+      (profile_state.compiler-profile-state-shared-view profile-state))
     (if (not
       (compiler-windows-coff-object-program-supported?
         (owned_view.compiler-owned-shared-view backend-state)
@@ -234,7 +235,7 @@
         spans
         mode
         (compiler_backend.compiler-backend-object-unsupported-semantics-category)
-        profile-state)
+        (profile_state.compiler-profile-state-shared-view profile-state))
       (begin
         (cfg
           compile-profile
@@ -249,13 +250,14 @@
           (owned_view.compiler-owned-shared-view spans)
           true
           false
-          profile-state)
+          (profile_state.compiler-profile-state-shared-view profile-state))
           [(compiler_backend.ResultCompilerBackendObject.Ok image)
             (begin
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-finish-phase
-                  profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    profile-state)
                   "backend.object-image"))
               (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
                 "backend.object-image")
@@ -274,7 +276,8 @@
                           (cfg
                             compile-profile
                             (compiler_driver_core.compiler-driver-profile-finish-phase
-                              profile-state
+                              (profile_state.compiler-profile-state-shared-view
+                                profile-state)
                               "render.coff-object"))
                           (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
                             "render.coff-object")
@@ -303,7 +306,8 @@
                           (cfg
                             compile-profile
                             (compiler_driver_core.compiler-driver-profile-finish-phase
-                              profile-state
+                              (profile_state.compiler-profile-state-shared-view
+                                profile-state)
                               "render.coff-object"))
                           (ResultCompilerWindowsBatchArtifact.Err
                             (compiler-windows-batch-diagnostic
@@ -326,7 +330,8 @@
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-finish-phase
-                  profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    profile-state)
                   "backend.object-image"))
               (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
                 "backend.object-image-error")
@@ -356,13 +361,14 @@
       (compiler_driver_core.compiler-driver-retire-frontend-arena!)
       (cfg
         compile-profile
-        (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
+        (compiler_driver_core.compiler-driver-profile-start-phase
+          (profile_state.compiler-profile-state-shared-view profile-state)))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
         (owned_view.compiler-owned-shared-view pools)
         (owned_view.compiler-owned-shared-view program)
         (owned_view.compiler-owned-shared-view spans)
         opt-level
-        profile-state)
+        (profile_state.compiler-profile-state-shared-view profile-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -370,7 +376,7 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                profile-state
+                (profile_state.compiler-profile-state-shared-view profile-state)
                 "optimize"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
               "optimize")

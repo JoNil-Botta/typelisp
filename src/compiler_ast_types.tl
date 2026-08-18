@@ -2544,9 +2544,49 @@
     ty-node-pool-storage-arena
     ty-node-pool-segment-count))
 
+;; Capturing through an owned aggregate return can materialize the nested
+;; `dedup-slots` descriptor in the caller's transient arena. These raw cell
+;; writers preserve the already-owned descriptor address and copy only scalar
+;; state, so retained contexts never acquire an intermediate aggregate owner.
+(define (ast-node-pool-state-capture-to-cell! [cell-address : u64]) : unit
+  (let
+    [cell : (MutPtr i64)
+      (unsafe
+        (int->ptr cell-address : (MutPtr i64)))]
+    (unsafe
+      (begin
+        (ptr-write! cell ast-node-pool-segment-bases)
+        (ptr-write! (ptr-offset cell 1) ast-node-pool-count)
+        (ptr-write! (ptr-offset cell 2) node-pool-base-arena)
+        (ptr-write! (ptr-offset cell 3) ast-node-pool-storage-arena)
+        (ptr-write! (ptr-offset cell 4) ast-node-pool-segment-count)))))
+
+(define (ty-node-pool-state-capture-to-cell! [cell-address : u64]) : unit
+  (let
+    [cell : (MutPtr i64)
+      (unsafe
+        (int->ptr cell-address : (MutPtr i64)))]
+    [dedup-descriptor : i64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of ty-node-dedup-slots) : (Ptr i64))))]
+    (unsafe
+      (begin
+        (ptr-write! cell ty-node-pool-segment-bases)
+        (ptr-write! (ptr-offset cell 1) ty-node-pool-count)
+        (ptr-write! (ptr-offset cell 2) node-pool-base-arena)
+        (ptr-write!
+          (ptr-offset cell 3)
+          (if ty-node-pool-exhausted
+            1
+            0))
+        (ptr-write! (ptr-offset cell 4) dedup-descriptor)
+        (ptr-write! (ptr-offset cell 5) ty-node-dedup-count)
+        (ptr-write! (ptr-offset cell 6) ty-node-pool-storage-arena)
+        (ptr-write! (ptr-offset cell 7) ty-node-pool-segment-count)))))
+
 (define (ast-node-pools-state-install!
-  [expr-pool : AstExprNodePoolState]
-  [type-pool : AstTypeNodePoolState]
+  [expr-pool : (& expr-pool AstExprNodePoolState)]
+  [type-pool : (& type-pool AstTypeNodePoolState)]
   [owner-arena : i64]) : unit
   (begin
     (set! ast-node-pool-segment-bases expr-pool.segment-bases)
@@ -2560,7 +2600,11 @@
     (set! ty-node-pool-generation (+ ty-node-pool-generation 1))
     (set! ty-node-pool-exhausted type-pool.exhausted)
     (set! ty-node-dedup-capacity (array-length type-pool.dedup-slots))
-    (set! ty-node-dedup-slots (ast-place-shared-view type-pool.dedup-slots))
+    (set!
+      ty-node-dedup-slots
+      (__tl-compiler-owned-shared-view-dyn-ref-as
+        type-pool.dedup-slots
+        (__tl_dyn-array i64)))
     (set! ty-node-dedup-count type-pool.dedup-count)
     ;; Driver-created states allocate both pools in one persistent arena. Keep
     ;; the shared compatibility grow/persist target there after both installs.
@@ -2585,6 +2629,83 @@
       pools.type-pool
       (__tl_dyn-array AstTypeNodePoolState))
     pools.owner-arena))
+
+;; Pool snapshots can retain different state cells while sharing the same
+;; stable segmented storage. Publish the newer cursor/dedup state between those
+;; cells without changing either context's stable arena root.
+(define (ast-node-pool-context-adopt-newer-cells!
+  [target-expr-cell-address : u64]
+  [target-type-cell-address : u64]
+  [source-expr-cell-address : u64]
+  [source-type-cell-address : u64]) : unit
+  (let
+    [target-expr-cell : (MutPtr AstExprNodePoolState)
+      (unsafe
+        (int->ptr target-expr-cell-address : (MutPtr AstExprNodePoolState)))]
+    [target-type-cell : (MutPtr AstTypeNodePoolState)
+      (unsafe
+        (int->ptr target-type-cell-address : (MutPtr AstTypeNodePoolState)))]
+    [source-expr-cell : (Ptr AstExprNodePoolState)
+      (unsafe
+        (int->ptr source-expr-cell-address : (Ptr AstExprNodePoolState)))]
+    [source-type-cell : (Ptr AstTypeNodePoolState)
+      (unsafe
+        (int->ptr source-type-cell-address : (Ptr AstTypeNodePoolState)))]
+    [target-expr : AstExprNodePoolState
+      (unsafe
+        (ptr-read target-expr-cell))]
+    [source-expr : AstExprNodePoolState
+      (unsafe
+        (ptr-read source-expr-cell))]
+    [target-type : AstTypeNodePoolState
+      (unsafe
+        (ptr-read target-type-cell))]
+    [source-type : AstTypeNodePoolState
+      (unsafe
+        (ptr-read source-type-cell))]
+    [target-dedup : (__tl_dyn-array i64)
+      (ast-place-shared-view target-type.dedup-slots)]
+    [source-dedup : (__tl_dyn-array i64)
+      (ast-place-shared-view source-type.dedup-slots)]
+    (begin
+      (if (and
+        (= target-expr.segment-bases source-expr.segment-bases)
+        (> source-expr.count target-expr.count))
+        (unsafe
+          (ptr-write! target-expr-cell source-expr))
+        unit)
+      (if (and
+        (= target-type.segment-bases source-type.segment-bases)
+        (> source-type.count target-type.count))
+        (unsafe
+          (ptr-write!
+            target-type-cell
+            (AstTypeNodePoolState
+              source-type.segment-bases
+              source-type.count
+              source-type.base-arena
+              source-type.exhausted
+              (if (> (array-length source-dedup) (array-length target-dedup))
+                source-dedup
+                target-dedup)
+              source-type.dedup-count
+              source-type.storage-arena
+              source-type.segment-count)))
+        unit)
+      (ast-node-pool-compat-context-sync-installed!))))
+
+(define (ast-node-pool-context-adopt-newer!
+  [target : AstNodePoolContext]
+  [source : AstNodePoolContext]) : unit
+  (ast-node-pool-context-adopt-newer-cells!
+    (unsafe
+      (ptr->int (array-data target.expr-pool)))
+    (unsafe
+      (ptr->int (array-data target.type-pool)))
+    (unsafe
+      (ptr->int (array-data source.expr-pool)))
+    (unsafe
+      (ptr->int (array-data source.type-pool)))))
 
 (define (ast-node-pool-context-from-cells
   [expr-pool : (__tl_dyn-array AstExprNodePoolState)]
@@ -2668,8 +2789,18 @@
           (arena.Arena allocation-owner-arena)
           (array.make-array AstTypeNodePoolState 1)))]
     (begin
-      (set! (array-ref expr-cell 0) expr-pool)
-      (set! (array-ref type-cell 0) type-pool)
+      ;; The cells and the state records already have their intended owners.
+      ;; Publish the records shallowly: an aggregate assignment would create a
+      ;; fresh nested dynamic-array descriptor for `dedup-slots` in whatever
+      ;; arena happens to be current.
+      (unsafe
+        (begin
+          (ptr-write!
+            (ptr-cast (array-data expr-cell) : (MutPtr AstExprNodePoolState))
+            expr-pool)
+          (ptr-write!
+            (ptr-cast (array-data type-cell) : (MutPtr AstTypeNodePoolState))
+            type-pool)))
       (AstNodePoolContext expr-cell type-cell pool-owner-arena))))
 
 (define (ast-node-pool-context-new
@@ -2688,11 +2819,21 @@
 ;: a generation's destroy to, so ownership is the only thing that can make it
 ;: safe.
 (define (ast-node-pool-context-capture-active-raw) : AstNodePoolContext
-  (ast-node-pool-context-new-with-pool-owner
-    (ast-node-pool-state-capture)
-    (ty-node-pool-state-capture)
-    node-pool-base-arena
-    node-pool-owner-arena))
+  (let
+    [captured : AstNodePoolContext
+      (ast-node-pool-context-new-with-pool-owner
+        (ast-node-pool-state-capture)
+        (ty-node-pool-state-capture)
+        node-pool-base-arena
+        node-pool-owner-arena)]
+    (begin
+      (ast-node-pool-state-capture-to-cell!
+        (unsafe
+          (ptr->int (array-data captured.expr-pool))))
+      (ty-node-pool-state-capture-to-cell!
+        (unsafe
+          (ptr->int (array-data captured.type-pool))))
+      captured)))
 
 ;; R3-P2c: THE BACKSTOP, and the answer to "what prevents the next one".
 ;;
@@ -2797,16 +2938,20 @@
 
 (define (ast-node-pool-active-context-capture-expr!) : unit
   (if ast-node-pool-active-context-installed?
-    (set!
-      (array-ref (__tl-project-field ast-node-pool-active-context expr-pool) 0)
-      (ast-node-pool-state-capture))
+    (ast-node-pool-state-capture-to-cell!
+      (unsafe
+        (ptr->int
+          (array-data
+            (__tl-project-field ast-node-pool-active-context expr-pool)))))
     unit))
 
 (define (ast-node-pool-active-context-capture-type!) : unit
   (if ast-node-pool-active-context-installed?
-    (set!
-      (array-ref (__tl-project-field ast-node-pool-active-context type-pool) 0)
-      (ty-node-pool-state-capture))
+    (ty-node-pool-state-capture-to-cell!
+      (unsafe
+        (ptr->int
+          (array-data
+            (__tl-project-field ast-node-pool-active-context type-pool)))))
     unit))
 
 (define ast-node-pool-reader-explicit? : bool
@@ -2829,37 +2974,22 @@
       (ast-node-pool-context-capture-active-raw))
     (set! (array-ref ast-node-pool-compat-context-cell 0) pools)
     (set! ast-node-pool-compat-context-explicit? true)
-    (ast-node-pools-state-install!
-      (ast-array-shared-view
-        (__tl-project-field
-          (ast-node-pool-compat-context-shared-view)
-          expr-pool)
-        0)
-      (ast-array-shared-view
-        (__tl-project-field
-          (ast-node-pool-compat-context-shared-view)
-          type-pool)
-        0)
-      (__tl-project-field
-        (ast-node-pool-compat-context-shared-view)
-        owner-arena))))
+    (let
+      [context : AstNodePoolContext (ast-node-pool-compat-context-shared-view)]
+      (ast-node-pools-state-install!
+        (array-ref context.expr-pool 0)
+        (array-ref context.type-pool 0)
+        context.owner-arena))))
 
 (define (ast-node-pool-compat-context-clear!) : unit
   (begin
-    (ast-node-pools-state-install!
-      (ast-array-shared-view
-        (__tl-project-field
-          (ast-node-pool-compat-saved-context-shared-view)
-          expr-pool)
-        0)
-      (ast-array-shared-view
-        (__tl-project-field
-          (ast-node-pool-compat-saved-context-shared-view)
-          type-pool)
-        0)
-      (__tl-project-field
-        (ast-node-pool-compat-saved-context-shared-view)
-        owner-arena))
+    (let
+      [context : AstNodePoolContext
+        (ast-node-pool-compat-saved-context-shared-view)]
+      (ast-node-pools-state-install!
+        (array-ref context.expr-pool 0)
+        (array-ref context.type-pool 0)
+        context.owner-arena))
     (set! ast-node-pool-compat-context-explicit? false)))
 
 (define (ast-node-pool-compat-context-active?) : bool
@@ -2870,20 +3000,12 @@
 
 (define (ast-node-pool-compat-context-sync-installed!) : unit
   (if ast-node-pool-compat-context-explicit?
-    (ast-node-pools-state-install!
-      (ast-array-shared-view
-        (__tl-project-field
-          (ast-node-pool-compat-context-shared-view)
-          expr-pool)
-        0)
-      (ast-array-shared-view
-        (__tl-project-field
-          (ast-node-pool-compat-context-shared-view)
-          type-pool)
-        0)
-      (__tl-project-field
-        (ast-node-pool-compat-context-shared-view)
-        owner-arena))
+    (let
+      [context : AstNodePoolContext (ast-node-pool-compat-context-shared-view)]
+      (ast-node-pools-state-install!
+        (array-ref context.expr-pool 0)
+        (array-ref context.type-pool 0)
+        context.owner-arena))
     unit))
 
 (define (ast-node-pool-context-snapshot [pools : AstNodePoolContext]) : AstNodePoolContext
@@ -2898,8 +3020,12 @@
   (if ast-node-pool-compat-context-explicit?
     unit
     (begin
-      (set! (array-ref pools.expr-pool 0) (ast-node-pool-state-capture))
-      (set! (array-ref pools.type-pool 0) (ty-node-pool-state-capture)))))
+      (ast-node-pool-state-capture-to-cell!
+        (unsafe
+          (ptr->int (array-data pools.expr-pool))))
+      (ty-node-pool-state-capture-to-cell!
+        (unsafe
+          (ptr->int (array-data pools.type-pool)))))))
 
 (define (ast-node-pool-active-context-clear!) : unit
   (set! ast-node-pool-active-context-installed? false))
@@ -2956,38 +3082,43 @@
 (define (ast-node-pool-context-install! [pools : AstNodePoolContext]) : unit
   (if ast-node-pool-compat-context-explicit?
     unit
-    (begin
-      (compiler-arena-debug-assert-pool-install!
-        (__tl-project-field (array-ref pools.expr-pool 0) base-arena))
-      (ast-node-pools-state-install!
-        (array-ref pools.expr-pool 0)
-        (ast-array-shared-view pools.type-pool 0)
-        pools.owner-arena)
-      ;; Update the persistent global struct's fields instead of assigning the
-      ;; struct value: the assignment heap-copies the struct in the CURRENT
-      ;; arena, leaving the global pointing into freed memory when the install
-      ;; runs inside a rewindable declaration/function scratch arena.
-      ;; These two dynamic-array handles deliberately remain owned by the pool's
-      ;; base arena. A field assignment can materialize fresh descriptors in the
-      ;; current macro generation, so publish the three-word context shallowly.
-      (let
-        [source : (Ptr i64)
+    (in-arena
+      (arena.Arena (ast-node-pool-context-base-arena pools))
+      (begin
+        (compiler-arena-debug-assert-pool-install!
+          (__tl-project-field (array-ref pools.expr-pool 0) base-arena))
+        ;; An ordinary aggregate argument may materialize the nested dynamic-
+        ;; array descriptor in the current arena. Borrow the retained state
+        ;; cells below so installation never creates that aggregate temporary.
+        (ast-node-pools-state-install!
+          (array-ref pools.expr-pool 0)
+          (array-ref pools.type-pool 0)
+          pools.owner-arena)
+        (let
+          [stable : AstNodePoolContext
+            (AstNodePoolContext
+              (ast-place-shared-view pools.expr-pool)
+              (ast-place-shared-view pools.type-pool)
+              pools.owner-arena)]
+          [source : (Ptr i64)
+            (unsafe
+              (int->ptr (ast-place-address stable) : (Ptr i64)))]
+          [dest : (MutPtr i64)
+            (unsafe
+              (ptr-cast
+                (ptr-addr-of ast-node-pool-active-context)
+                : (MutPtr i64)))]
           (unsafe
-            (int->ptr (ast-place-address pools) : (Ptr i64)))]
-        [dest : (MutPtr i64)
-          (unsafe
-            (ptr-cast (ptr-addr-of ast-node-pool-active-context) : (MutPtr i64)))]
-        (unsafe
-          (begin
-            (ptr-write! dest (ptr-read source))
-            (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
-            (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2))))))
-      ;; R3-P2c: remember WHICH transient generation, if any, was live when
-      ;; these cells were published. See `ast-node-pool-active-context-reseat!`.
-      (set!
-        ast-node-pool-active-context-owner
-        ast-node-pool-context-transient-witness)
-      (set! ast-node-pool-active-context-installed? true))))
+            (begin
+              (ptr-write! dest (ptr-read source))
+              (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+              (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2))))))
+        ;; R3-P2c: remember WHICH transient generation, if any, was live when
+        ;; these cells were published. See `ast-node-pool-active-context-reseat!`.
+        (set!
+          ast-node-pool-active-context-owner
+          ast-node-pool-context-transient-witness)
+        (set! ast-node-pool-active-context-installed? true)))))
 
 ;; Commit a completed explicit-context phase back to the compatibility context
 ;; selected for the compile. CTFE syntax and hygiene can use distinct state

@@ -3783,7 +3783,8 @@
       (unsafe
         (arena.tl_arena_set index-arena))]
     [decl-index : ModuleDeclIndex
-      (compiler-symbols-build-module-decl-index all-decls)]
+      (compiler-symbols-build-module-decl-index
+        (ast.ast-place-shared-view all-decls))]
     [_restore-enclosing : unit
       (unsafe
         (arena.tl_arena_set enclosing-arena))]

@@ -5075,7 +5075,8 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [avx512 : bool (string.eq width "zmm")]
+    [avx512 : bool
+      (string.eq (compiler-backend-global-shared-view width) "zmm")]
     [vector-bytes : i64
       (if avx512
         64
@@ -5084,13 +5085,21 @@
     [group-base : i64 (* vector-bytes 2)]
     [index-offset : i64 (* vector-bytes 6)]
     [stack-bytes : i64 (* vector-bytes 7)]
-    [move : String (compiler-backend-vector-move-for-width width elem-ty)]
+    [move : String
+      (compiler-backend-vector-move-for-width
+        (compiler-backend-global-shared-view width)
+        (compiler-backend-global-shared-view elem-ty))]
     [dword-move : String
       (compiler-backend-vector-move-for-width
-        width
+        (compiler-backend-global-shared-view width)
         (compiler_ast_types.AstType.I32))]
-    [widen : String (compiler-backend-byte-vector-widen-mnemonic elem-ty)]
-    [shift : String (compiler-backend-byte-vector-shift-mnemonic op elem-ty)]
+    [widen : String
+      (compiler-backend-byte-vector-widen-mnemonic
+        (compiler-backend-global-shared-view elem-ty))]
+    [shift : String
+      (compiler-backend-byte-vector-shift-mnemonic
+        op
+        (compiler-backend-global-shared-view elem-ty))]
     [tmp0 : String
       (if avx512
         "%zmm0"
@@ -5108,34 +5117,40 @@
         "vpord"
         "vpor")]
     (match (compiler-backend-vector-register-use
-      assignments
-      lhs
+      (compiler-backend-global-shared-view assignments)
+      (compiler-backend-global-shared-view lhs)
       "byte shift lhs"
-      width
-      elem-ty
-      (compiler-backend-vector-spill-scratch width 0)
-      backend-state)
+      (compiler-backend-global-shared-view width)
+      (compiler-backend-global-shared-view elem-ty)
+      (compiler-backend-vector-spill-scratch
+        (compiler-backend-global-shared-view width)
+        0)
+      (compiler-backend-global-shared-view backend-state))
       [(ResultBackendVectorUse.Ok lhs-use)
         (match lhs-use
           [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
             (match (compiler-backend-vector-register-use
-              assignments
-              rhs
+              (compiler-backend-global-shared-view assignments)
+              (compiler-backend-global-shared-view rhs)
               "byte shift rhs"
-              width
-              elem-ty
-              (compiler-backend-vector-spill-scratch width 1)
-              backend-state)
+              (compiler-backend-global-shared-view width)
+              (compiler-backend-global-shared-view elem-ty)
+              (compiler-backend-vector-spill-scratch
+                (compiler-backend-global-shared-view width)
+                1)
+              (compiler-backend-global-shared-view backend-state))
               [(ResultBackendVectorUse.Ok rhs-use)
                 (match rhs-use
                   [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
                     (match (compiler-backend-vector-dst-reg
-                      assignments
-                      dst
+                      (compiler-backend-global-shared-view assignments)
+                      (compiler-backend-global-shared-view dst)
                       "byte shift dst"
-                      width
-                      (compiler-backend-vector-spill-scratch width 0)
-                      backend-state)
+                      (compiler-backend-global-shared-view width)
+                      (compiler-backend-vector-spill-scratch
+                        (compiler-backend-global-shared-view width)
+                        0)
+                      (compiler-backend-global-shared-view backend-state))
                       [(ResultBackendReg.Ok dst-reg)
                         (let
                           [groups : String ""]
@@ -5150,35 +5165,40 @@
                                   (set!
                                     groups
                                     (str_cat.str-cat
-                                      groups
+                                      (compiler-backend-global-shared-view
+                                        groups)
                                       "    "
-                                      widen
+                                      (compiler-backend-global-shared-view
+                                        widen)
                                       " "
                                       (compiler-backend-address-add-byte-offset
                                         "(%rsp)"
                                         byte-offset)
                                       ", "
-                                      tmp0
+                                      (compiler-backend-global-shared-view tmp0)
                                       "\n    "
-                                      widen
+                                      (compiler-backend-global-shared-view
+                                        widen)
                                       " "
                                       (compiler-backend-address-add-byte-offset
                                         "(%rsp)"
                                         (+ vector-bytes byte-offset))
                                       ", "
-                                      tmp1
+                                      (compiler-backend-global-shared-view tmp1)
                                       "\n    "
-                                      shift
+                                      (compiler-backend-global-shared-view
+                                        shift)
                                       " "
-                                      tmp1
+                                      (compiler-backend-global-shared-view tmp1)
                                       ", "
-                                      tmp0
+                                      (compiler-backend-global-shared-view tmp0)
                                       ", "
-                                      tmp0
+                                      (compiler-backend-global-shared-view tmp0)
                                       "\n    "
-                                      dword-move
+                                      (compiler-backend-global-shared-view
+                                        dword-move)
                                       " "
-                                      tmp0
+                                      (compiler-backend-global-shared-view tmp0)
                                       ", "
                                       (compiler-backend-address-add-byte-offset
                                         "(%rsp)"
@@ -5187,159 +5207,159 @@
                                   (set! group (+ group 1)))))
                             (ResultCompilerBackend.Ok
                               (str_cat.str-cat
-                                lhs-asm
-                                rhs-asm
+                                (compiler-backend-global-shared-view lhs-asm)
+                                (compiler-backend-global-shared-view rhs-asm)
                                 "    subq $"
                                 (string.int->string stack-bytes)
                                 ", %rsp\n    "
-                                move
+                                (compiler-backend-global-shared-view move)
                                 " "
-                                lhs-reg
+                                (compiler-backend-global-shared-view lhs-reg)
                                 ", (%rsp)\n    "
-                                move
+                                (compiler-backend-global-shared-view move)
                                 " "
-                                rhs-reg
+                                (compiler-backend-global-shared-view rhs-reg)
                                 ", "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   vector-bytes)
                                 "\n"
-                                groups
+                                (compiler-backend-global-shared-view groups)
                                 (if avx512
                                   (str_cat.str-cat
                                     "    vpternlogd $255, "
-                                    tmp0
+                                    (compiler-backend-global-shared-view tmp0)
                                     ", "
-                                    tmp0
+                                    (compiler-backend-global-shared-view tmp0)
                                     ", "
-                                    tmp0
+                                    (compiler-backend-global-shared-view tmp0)
                                     "\n")
                                   (str_cat.str-cat
                                     "    vpcmpeqd "
-                                    tmp0
+                                    (compiler-backend-global-shared-view tmp0)
                                     ", "
-                                    tmp0
+                                    (compiler-backend-global-shared-view tmp0)
                                     ", "
-                                    tmp0
+                                    (compiler-backend-global-shared-view tmp0)
                                     "\n"))
                                 "    vpsrld $24, "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 ", "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 "\n    "
-                                dword-move
+                                (compiler-backend-global-shared-view dword-move)
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   group-base)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 "\n    "
-                                bit-and
+                                (compiler-backend-global-shared-view bit-and)
                                 " "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 "\n    "
-                                dword-move
+                                (compiler-backend-global-shared-view dword-move)
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   (+ group-base vector-bytes))
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 "\n    "
-                                bit-and
+                                (compiler-backend-global-shared-view bit-and)
                                 " "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 "\n    vpackusdw "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 "\n    "
-                                dword-move
+                                (compiler-backend-global-shared-view dword-move)
                                 " "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 ", "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   group-base)
                                 "\n    "
-                                dword-move
+                                (compiler-backend-global-shared-view dword-move)
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   (+ group-base (* vector-bytes 2)))
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 "\n    "
-                                bit-and
+                                (compiler-backend-global-shared-view bit-and)
                                 " "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 "\n    "
-                                dword-move
+                                (compiler-backend-global-shared-view dword-move)
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   (+ group-base (* vector-bytes 3)))
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 "\n    "
-                                bit-and
+                                (compiler-backend-global-shared-view bit-and)
                                 " "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 "\n    vpackusdw "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 "\n    "
-                                dword-move
+                                (compiler-backend-global-shared-view dword-move)
                                 " "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 ", "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   (+ group-base vector-bytes))
                                 "\n    "
-                                dword-move
+                                (compiler-backend-global-shared-view dword-move)
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   group-base)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 "\n    "
-                                dword-move
+                                (compiler-backend-global-shared-view dword-move)
                                 " "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
                                   (+ group-base vector-bytes))
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 "\n    vpackuswb "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 ", "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 "\n    movl $50462976, "
                                 (compiler-backend-address-add-byte-offset
                                   "(%rsp)"
@@ -5364,60 +5384,60 @@
                                   "(%rsp)"
                                   index-offset)
                                 ", "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 "\n    "
-                                dword-move
+                                (compiler-backend-global-shared-view dword-move)
                                 " "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 "\n    vpsrld $"
                                 (if avx512
                                   "2"
                                   "1")
                                 ", "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 ", "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 "\n    vpslld $"
                                 (if avx512
                                   "30"
                                   "31")
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 "\n    vpsrld $"
                                 (if avx512
                                   "28"
                                   "29")
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 "\n    "
-                                bit-or
+                                (compiler-backend-global-shared-view bit-or)
                                 " "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 ", "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 ", "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 "\n    vpermd "
-                                tmp1
+                                (compiler-backend-global-shared-view tmp1)
                                 ", "
-                                tmp0
+                                (compiler-backend-global-shared-view tmp0)
                                 ", "
-                                dst-reg
+                                (compiler-backend-global-shared-view dst-reg)
                                 "\n    addq $"
                                 (string.int->string stack-bytes)
                                 ", %rsp\n"
                                 (compiler-backend-vector-store-dst
                                   assignments
                                   dst
-                                  width
-                                  elem-ty
-                                  dst-reg
+                                  (compiler-backend-global-shared-view width)
+                                  (compiler-backend-global-shared-view elem-ty)
+                                  (compiler-backend-global-shared-view dst-reg)
                                   backend-state)))))]
                       [(ResultBackendReg.Err message)
                         (ResultCompilerBackend.Err
@@ -6222,7 +6242,9 @@
           (compiler-backend-global-shared-view op)
           (compiler-backend-global-shared-view elem-ty))]
       (cond
-        [(compiler-backend-byte-vector-shift? op elem-ty)
+        [(compiler-backend-byte-vector-shift?
+            (compiler-backend-global-shared-view op)
+            (compiler-backend-global-shared-view elem-ty))
           (compiler-backend-emit-byte-vector-shift
             assignments
             dst
@@ -6233,7 +6255,9 @@
             "ymm"
             instr-diag
             backend-state)]
-        [(compiler-backend-avx2-i64-vector-mul? op elem-ty)
+        [(compiler-backend-avx2-i64-vector-mul?
+            (compiler-backend-global-shared-view op)
+            (compiler-backend-global-shared-view elem-ty))
           (compiler-backend-emit-avx2-i64-vector-mul
             assignments
             dst
@@ -6242,7 +6266,7 @@
             instr-diag
             backend-state)]
         [(compiler-backend-avx2-i64-vector-shr?
-            op
+            (compiler-backend-global-shared-view op)
             (compiler-backend-global-shared-view elem-ty))
           (compiler-backend-emit-avx2-i64-vector-shr
             assignments
@@ -7467,8 +7491,12 @@
     lanes)
     (let
       [mnemonic : String
-        (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
-      (if (compiler-backend-byte-vector-shift? op elem-ty)
+        (compiler-backend-avx512-vector-binop-mnemonic
+          (compiler-backend-global-shared-view op)
+          (compiler-backend-global-shared-view elem-ty))]
+      (if (compiler-backend-byte-vector-shift?
+        (compiler-backend-global-shared-view op)
+        (compiler-backend-global-shared-view elem-ty))
         (compiler-backend-emit-byte-vector-shift
           assignments
           dst
@@ -7486,33 +7514,33 @@
                 instr-diag
                 "backend: unsupported AVX-512 vector binary op")))
           (match (compiler-backend-vector-register-use
-            assignments
+            (compiler-backend-global-shared-view assignments)
             lhs
             "lhs"
             "zmm"
-            elem-ty
+            (compiler-backend-global-shared-view elem-ty)
             (compiler-backend-vector-spill-scratch "zmm" 0)
-            backend-state)
+            (compiler-backend-global-shared-view backend-state))
             [(ResultBackendVectorUse.Ok lhs-use)
               (match lhs-use
                 [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
                   (match (compiler-backend-vector-memory-or-register-use
-                    assignments
+                    (compiler-backend-global-shared-view assignments)
                     rhs
                     "rhs"
                     "zmm"
-                    elem-ty
-                    backend-state)
+                    (compiler-backend-global-shared-view elem-ty)
+                    (compiler-backend-global-shared-view backend-state))
                     [(ResultBackendVectorUse.Ok rhs-use)
                       (match rhs-use
                         [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
                           (match (compiler-backend-vector-dst-reg
-                            assignments
+                            (compiler-backend-global-shared-view assignments)
                             dst
                             "binop dst"
                             "zmm"
                             (compiler-backend-vector-spill-scratch "zmm" 0)
-                            backend-state)
+                            (compiler-backend-global-shared-view backend-state))
                             [(ResultBackendReg.Ok dst-reg)
                               (ResultCompilerBackend.Ok
                                 (str_cat.str-cat
@@ -7525,7 +7553,7 @@
                                   ", "
                                   lhs-reg
                                   ", "
-                                  dst-reg
+                                  (compiler-backend-global-shared-view dst-reg)
                                   "\n"
                                   (compiler-backend-vector-store-dst
                                     assignments
@@ -44182,14 +44210,26 @@
           (if (string.eq dst-home "")
             (if (compiler-backend-float-type?
               (compiler-backend-global-shared-view ty))
-              (str_cat.str-cat
-                load
-                (compiler-backend-emit-store-typed-var-with-plan
-                  (compiler-backend-global-shared-view assignments)
-                  dst
-                  (compiler-backend-global-shared-view reg)
-                  (compiler-backend-global-shared-view ty)
-                  backend-state))
+              (let
+                [copy : String
+                  (str_cat.str-cat
+                    (compiler-backend-global-shared-view load)
+                    (compiler-backend-emit-store-typed-var-with-plan
+                      (compiler-backend-global-shared-view assignments)
+                      dst
+                      (compiler-backend-global-shared-view reg)
+                      (compiler-backend-global-shared-view ty)
+                      backend-state))]
+                (if (or
+                  (string.eq (compiler-backend-global-shared-view load) "")
+                  (compiler-backend-phi-staged-copy-proven?
+                    backend-state
+                    (compiler-backend-global-shared-view reg)))
+                  copy
+                  (compiler-backend-phi-xmm-local-preserve-asm
+                    (compiler-backend-global-shared-view reg)
+                    copy
+                    backend-state)))
               ;; P34 #phi-empty-load: an EMPTY load means the loader elided a
               ;; same-register move -- the source value is ALREADY in `reg`. The
               ;; pair is then just the store, which reads `reg` and writes
@@ -44199,33 +44239,57 @@
               ;; two instructions AND two memory accesses; the remaining
               ;; (clobbering) loads keep the bracket for the reason above.
               (if (or
-                (string.eq load "")
-                (not (string.eq phi-planned-stage ""))
-                (compiler-backend-phi-staged-copy-proven?
-                  backend-state
-                  (compiler-backend-global-shared-view reg)))
+                (string.eq (compiler-backend-global-shared-view load) "")
+                (and
+                  (not
+                    (string.eq
+                      (compiler-backend-global-shared-view phi-planned-stage)
+                      ""))
+                  (not
+                    (compiler-backend-planned-register-phi-preserve?
+                      (compiler-backend-global-shared-view phi-planned-stage)
+                      backend-state)))
+                (and
+                  (not
+                    (compiler-backend-planned-register-phi-preserve?
+                      (compiler-backend-global-shared-view phi-planned-stage)
+                      backend-state))
+                  (compiler-backend-phi-staged-copy-proven?
+                    backend-state
+                    (compiler-backend-global-shared-view reg))))
                 (str_cat.str-cat
-                  load
+                  (compiler-backend-global-shared-view load)
                   (compiler-backend-emit-store-typed-var-with-plan
                     (compiler-backend-global-shared-view assignments)
                     dst
                     (compiler-backend-global-shared-view reg)
                     (compiler-backend-global-shared-view ty)
                     backend-state))
-                (str_cat.str-cat
-                  "    pushq "
-                  (compiler-backend-global-shared-view reg)
-                  "\n"
-                  load
-                  (compiler-backend-emit-store-typed-var-with-plan
-                    (compiler-backend-global-shared-view assignments)
-                    dst
-                    (compiler-backend-global-shared-view reg)
-                    (compiler-backend-global-shared-view ty)
+                (let
+                  [copy : String
+                    (str_cat.str-cat
+                      (compiler-backend-global-shared-view load)
+                      (compiler-backend-emit-store-typed-var-with-plan
+                        (compiler-backend-global-shared-view assignments)
+                        dst
+                        (compiler-backend-global-shared-view reg)
+                        (compiler-backend-global-shared-view ty)
+                        backend-state))]
+                  (if (compiler-backend-planned-register-phi-preserve?
+                    (compiler-backend-global-shared-view phi-planned-stage)
                     backend-state)
-                  "    popq "
-                  (compiler-backend-global-shared-view reg)
-                  "\n")))
+                    (compiler-backend-phi-local-preserve-asm
+                      (compiler-backend-global-shared-view phi-planned-stage)
+                      copy
+                      backend-state)
+                    (str_cat.str-cat
+                      "    pushq "
+                      (compiler-backend-global-shared-view reg)
+                      "\n"
+                      copy
+                      "    popq "
+                      (compiler-backend-global-shared-view reg)
+                      "\n")))))
             load))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
@@ -44570,10 +44634,7 @@
     ;; filtered from `copies`; the recursion re-enters -with-all, never here.
     (compiler-backend-function-state-set-current-phi-dst-home-mask!
       backend-state
-      (compiler-backend-phi-copy-list-dst-home-mask
-        backend-state
-        (compiler-backend-global-shared-view assignments)
-        (compiler-backend-global-shared-view copies)))
+      dst-home-mask)
     (compiler-backend-emit-phi-copy-list-with-all
       type-segment-bases
       assignments
@@ -87694,7 +87755,7 @@
       emit-entry
       crt-entry
       true
-      profile-state)
+      (profile_state.compiler-profile-state-shared-view profile-state))
       [(ResultCompilerBackendBuffer.Ok buf)
         (match (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           backend-state
@@ -87891,16 +87952,6 @@
 (define (compiler-backend-no-stdlib-forwarding-labels? [asm : String]) : bool
   (and
     (backend-and8
-      (not (compiler-backend-string-contains? asm "tl_print_err:\n"))
-      (not (compiler-backend-string-contains? asm ".L_tl_arg_count:\n"))
-      (not (compiler-backend-string-contains? asm ".L_tl_arg:\n"))
-      (not (compiler-backend-string-contains? asm ".L_tl_read_file:\n"))
-      (not (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))
-      (not (compiler-backend-string-contains? asm ".L_tl_file_exists:\n"))
-      (not (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n"))
-      true)
-    (backend-and8
-      (not (compiler-backend-string-contains? asm ".L_tl_file_close_status:\n"))
       (not
         (compiler-backend-string-contains?
           (compiler-backend-global-shared-view asm)
@@ -88005,10 +88056,17 @@
           (compiler-backend-global-shared-view asm)
           "tl_print_char:\n"))
       (not
-        (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n"))
-      true
-      true)
-    (not (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n"))))
+        (compiler-backend-string-contains?
+          (compiler-backend-global-shared-view asm)
+          ".L_tl_fs_remove_file_status:\n"))
+      (not
+        (compiler-backend-string-contains?
+          (compiler-backend-global-shared-view asm)
+          ".L_tl_fs_remove_dir_status:\n"))
+      (not
+        (compiler-backend-string-contains?
+          (compiler-backend-global-shared-view asm)
+          ".L_tl_fs_rename_status:\n")))))
 
 ;; Backend-smoke regression for the fail-closed splice predicate.  Exercise a
 ;; missing needle at each of the three stages, plus the fully replaced and
@@ -88391,9 +88449,9 @@
       2)
     (let [input : String (io.arg 1)]
       [output : String (io.arg 2)]
-      (let [content : String (raw-read-file input)]
+      (let [content : String (raw-read-file (clone input))]
         (if (io.file-exists? input)
-          (let [n : i64 (string.>int content)]
+          (let [n : i64 (string.>int (clone content))]
             (let [rendered : String (string.int->string (+ n 1))]
               (begin
                 (if (string.eq content \"41\")

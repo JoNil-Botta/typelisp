@@ -175,14 +175,15 @@
 (define (compiler-opt-debug-dump-result) : String
   (let
     [state : OptDebugState
-      (__tl-project-field (compiler-opt-owned-state-shared-view) debug-state)]
-    (text_buf.render (clone state.dump-buf))))
+      (compiler-opt-global-shared-view compiler-opt-owned-state.debug-state)]
+    (text_buf.render (clone (compiler-opt-global-shared-view state.dump-buf)))))
 
 (define (compiler-opt-debug-verification-error) : String
   (let
     [state : OptDebugState
-      (__tl-project-field (compiler-opt-owned-state-shared-view) debug-state)]
-    (string.copy (& state.verify-error))))
+      (compiler-opt-global-shared-view compiler-opt-owned-state.debug-state)]
+    [verify-error : String (compiler-opt-global-shared-view state.verify-error)]
+    (string.copy (& verify-error))))
 
 (define (compiler-opt-debug-pass-selected?
   [state : OptDebugState]
@@ -213,40 +214,46 @@
                   (compiler-opt-global-shared-view blocks)))
               "|instructions="
               (string.int->string
-                (ir.compiler-ir-block-list-instruction-count blocks))
+                (ir.compiler-ir-block-list-instruction-count
+                  (compiler-opt-global-shared-view blocks)))
               "\n"))
           unit)
         (let
           [state : OptDebugState
-            (__tl-project-field
-              (compiler-opt-owned-state-shared-view)
-              debug-state)]
+            (compiler-opt-global-shared-view
+              compiler-opt-owned-state.debug-state)]
           (if (and
             (not compiler-opt-debug-suppressed?)
-            (compiler-opt-debug-pass-selected? state pass))
+            (compiler-opt-debug-pass-selected?
+              (compiler-opt-global-shared-view state)
+              (compiler-opt-global-shared-view pass)))
             (in-arena
-              state.dump-arena
+              (compiler-opt-global-shared-view state.dump-arena)
               (let
+                [dump-buf : text_buf.TextBuf
+                  (clone (compiler-opt-global-shared-view state.dump-buf))]
                 [next-buf : text_buf.TextBuf
                   (text_buf.append
-                    (if (text_buf.empty? (clone state.dump-buf))
-                      (clone state.dump-buf)
-                      (text_buf.append (clone state.dump-buf) "\n"))
+                    (if (text_buf.empty? (& dump-buf))
+                      dump-buf
+                      (text_buf.append dump-buf "\n"))
                     (str_cat.str-cat
                       "after "
-                      pass
+                      (compiler-opt-global-shared-view pass)
                       " @"
                       (ir.compiler-ir-symbol-text name)
                       "\n"
-                      (ir.compiler-ir-function-render type-segment-bases func)))]
+                      (ir.compiler-ir-function-render
+                        type-segment-bases
+                        (compiler-opt-global-shared-view func))))]
                 (__tl-project-set-field
                   compiler-opt-owned-state
                   debug-state
                   (OptDebugState
-                    state.dump-arena
-                    state.dump-pass
+                    (compiler-opt-global-shared-view state.dump-arena)
+                    (compiler-opt-global-shared-view state.dump-pass)
                     next-buf
-                    state.verify-error))))
+                    (compiler-opt-global-shared-view state.verify-error)))))
             unit))
         func)]))
 
@@ -13551,7 +13558,7 @@
         [owned : CompilerOptOwnedState (compiler-opt-owned-state-shared-view)]
         [state : OptDebugState owned.debug-state]
         [message : String
-          (match (opt-verify-program program)
+          (match (opt-verify-program (compiler-opt-global-shared-view program))
             [(ResultCompilerOptimizeVerify.Ok) ""]
             [(ResultCompilerOptimizeVerify.Err verify-message) verify-message])]
         (__tl-project-set-field
@@ -14557,7 +14564,7 @@
     0
     0))
 
-(define (opt-ssa-env-register [env : OptSsaRenameEnv (:consume)] [var : i64]) : OptSsaRenameEnv
+(define (opt-ssa-env-register [env : OptSsaRenameEnv] [var : i64]) : OptSsaRenameEnv
   (if (or
     (< var 0)
     (>= var (array-length env.by-var))
@@ -14566,7 +14573,7 @@
     (if (>= env.entry-count (array-length env.current))
       (string.tl_oob_abort)
       (let
-        [out : OptSsaRenameEnv env]
+        [out : OptSsaRenameEnv (compiler-opt-global-shared-view env)]
         (begin
           (set! (array-ref out.by-var var) (+ out.entry-count 1))
           (set! out.entry-count (+ out.entry-count 1))
@@ -14588,7 +14595,7 @@
       (option_i64.Some (array-ref env.current slot)))))
 
 (define (opt-ssa-env-bind
-  [env : OptSsaRenameEnv (:consume)]
+  [env : OptSsaRenameEnv]
   [original : i64]
   [current : i64]) : OptSsaRenameEnv
   (let
@@ -14600,7 +14607,7 @@
       (>= change (array-length env.change-slots)))
       (string.tl_oob_abort)
       (let
-        [out : OptSsaRenameEnv env]
+        [out : OptSsaRenameEnv (compiler-opt-global-shared-view env)]
         (begin
           (set! (array-ref out.change-slots change) slot)
           (set!
@@ -14617,14 +14624,12 @@
 (define (opt-ssa-env-checkpoint [env : OptSsaRenameEnv]) : i64
   env.change-count)
 
-(define (opt-ssa-env-rollback
-  [env : OptSsaRenameEnv (:consume)]
-  [checkpoint : i64]) : OptSsaRenameEnv
+(define (opt-ssa-env-rollback [env : OptSsaRenameEnv] [checkpoint : i64]) : OptSsaRenameEnv
   (if (or (< checkpoint 0) (> checkpoint env.change-count))
     (string.tl_oob_abort)
     (let
       [count : i64 env.change-count]
-      [out : OptSsaRenameEnv env]
+      [out : OptSsaRenameEnv (compiler-opt-global-shared-view env)]
       (begin
         (while (> count checkpoint)
           (let
@@ -14672,15 +14677,20 @@
   [types : OptSsaVarTypes]
   [index : i64]
   [count : i64]) : i64
-  (if (>= index (opt-ssa-var-types-count types))
+  (if (>=
+    index
+    (opt-ssa-var-types-count (compiler-opt-global-shared-view types)))
     count
     (let
-      [var : i64 (opt-ssa-var-types-newest-var types index)]
+      [var : i64
+        (opt-ssa-var-types-newest-var
+          (compiler-opt-global-shared-view types)
+          index)]
       (opt-ssa-env-candidate-count-from
-        facts
-        types
+        (compiler-opt-global-shared-view facts)
+        (compiler-opt-global-shared-view types)
         (+ index 1)
-        (if (opt-ssa-candidate? facts var)
+        (if (opt-ssa-candidate? (compiler-opt-global-shared-view facts) var)
           (+ count 1)
           count)))))
 
@@ -14689,16 +14699,21 @@
   [types : OptSsaVarTypes]
   [index : i64]
   [count : i64]) : i64
-  (if (>= index (opt-ssa-var-types-count types))
+  (if (>=
+    index
+    (opt-ssa-var-types-count (compiler-opt-global-shared-view types)))
     count
     (let
-      [var : i64 (opt-ssa-var-types-newest-var types index)]
+      [var : i64
+        (opt-ssa-var-types-newest-var
+          (compiler-opt-global-shared-view types)
+          index)]
       (opt-ssa-env-binding-count-from
-        facts
-        types
+        (compiler-opt-global-shared-view facts)
+        (compiler-opt-global-shared-view types)
         (+ index 1)
-        (if (opt-ssa-candidate? facts var)
-          (match facts
+        (if (opt-ssa-candidate? (compiler-opt-global-shared-view facts) var)
+          (match (compiler-opt-global-shared-view facts)
             [(OptSsaFacts.Facts counts _ _)
               (+ count (opt-ssa-count counts var))])
           count)))))
@@ -14708,14 +14723,19 @@
   [types : OptSsaVarTypes]
   [env : OptSsaRenameEnv]
   [index : i64]) : OptSsaRenameEnv
-  (if (>= index (opt-ssa-var-types-count types))
+  (if (>=
+    index
+    (opt-ssa-var-types-count (compiler-opt-global-shared-view types)))
     env
     (let
-      [var : i64 (opt-ssa-var-types-newest-var types index)]
+      [var : i64
+        (opt-ssa-var-types-newest-var
+          (compiler-opt-global-shared-view types)
+          index)]
       (opt-ssa-env-register-candidates-from
-        facts
-        types
-        (if (opt-ssa-candidate? facts var)
+        (compiler-opt-global-shared-view facts)
+        (compiler-opt-global-shared-view types)
+        (if (opt-ssa-candidate? (compiler-opt-global-shared-view facts) var)
           (opt-ssa-env-register env var)
           env)
         (+ index 1)))))
@@ -14724,18 +14744,26 @@
   [facts : OptSsaFacts]
   [sites : OptSsaPhiSites]
   [frame : i64]) : OptSsaRenameEnv
-  (match facts
+  (match (compiler-opt-global-shared-view facts)
     [(OptSsaFacts.Facts _ _ types)
       (let
         [candidate-count : i64
-          (opt-ssa-env-candidate-count-from facts types 0 0)]
+          (opt-ssa-env-candidate-count-from
+            (compiler-opt-global-shared-view facts)
+            (compiler-opt-global-shared-view types)
+            0
+            0)]
         [binding-count : i64
           (+
-            (opt-ssa-env-binding-count-from facts types 0 0)
-            (opt-ssa-phi-sites-count sites))]
+            (opt-ssa-env-binding-count-from
+              (compiler-opt-global-shared-view facts)
+              (compiler-opt-global-shared-view types)
+              0
+              0)
+            (opt-ssa-phi-sites-count (compiler-opt-global-shared-view sites)))]
         (opt-ssa-env-register-candidates-from
-          facts
-          types
+          (compiler-opt-global-shared-view facts)
+          (compiler-opt-global-shared-view types)
           (opt-ssa-env-with-capacity frame candidate-count binding-count)
           0))]))
 
@@ -14922,7 +14950,8 @@
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Mov dst src ty)
       (let
-        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        [out-src : ir.CompilerIrValue
+          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -14931,7 +14960,8 @@
               out-next)]))]
     [(ir.CompilerIrInstr.Load dst src ty)
       (let
-        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        [out-src : ir.CompilerIrValue
+          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -14940,7 +14970,8 @@
               out-next)]))]
     [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
       (let
-        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        [out-src : ir.CompilerIrValue
+          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -14949,7 +14980,8 @@
               out-next)]))]
     [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
       (let
-        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        [out-src : ir.CompilerIrValue
+          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -14958,8 +14990,10 @@
               out-next)]))]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
       (let
-        [out-lhs : ir.CompilerIrValue (opt-ssa-rewrite-value env lhs)]
-        [out-rhs : ir.CompilerIrValue (opt-ssa-rewrite-value env rhs)]
+        [out-lhs : ir.CompilerIrValue
+          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) lhs)]
+        [out-rhs : ir.CompilerIrValue
+          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) rhs)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -14968,7 +15002,8 @@
               out-next)]))]
     [(ir.CompilerIrInstr.UnOp dst op src ty)
       (let
-        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        [out-src : ir.CompilerIrValue
+          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -14977,7 +15012,8 @@
               out-next)]))]
     [(ir.CompilerIrInstr.Call dst name args ty)
       (let
-        [out-args : ir.CompilerIrCallArgs (opt-ssa-rewrite-call-args env args)]
+        [out-args : ir.CompilerIrCallArgs
+          (opt-ssa-rewrite-call-args (compiler-opt-global-shared-view env) args)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -14986,8 +15022,10 @@
               out-next)]))]
     [(ir.CompilerIrInstr.CallIndirect dst func args ty)
       (let
-        [out-func : ir.CompilerIrValue (opt-ssa-rewrite-value env func)]
-        [out-args : ir.CompilerIrCallArgs (opt-ssa-rewrite-call-args env args)]
+        [out-func : ir.CompilerIrValue
+          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) func)]
+        [out-args : ir.CompilerIrCallArgs
+          (opt-ssa-rewrite-call-args (compiler-opt-global-shared-view env) args)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -14996,8 +15034,10 @@
               out-next)]))]
     [(ir.CompilerIrInstr.CallIndirectC dst func args ty)
       (let
-        [out-func : ir.CompilerIrValue (opt-ssa-rewrite-value env func)]
-        [out-args : ir.CompilerIrCallArgs (opt-ssa-rewrite-call-args env args)]
+        [out-func : ir.CompilerIrValue
+          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) func)]
+        [out-args : ir.CompilerIrCallArgs
+          (opt-ssa-rewrite-call-args (compiler-opt-global-shared-view env) args)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -15087,9 +15127,13 @@
           [(ir.CompilerIrSpmdCallResult.Value dst class ty)
             (let
               [out-mask : ir.CompilerIrValue
-                (opt-ssa-rewrite-value env active-mask)]
+                (opt-ssa-rewrite-value
+                  (compiler-opt-global-shared-view env)
+                  active-mask)]
               [out-args : ir.CompilerIrSpmdCallArgList
-                (opt-ssa-rewrite-spmd-call-args env args)]
+                (opt-ssa-rewrite-spmd-call-args
+                  (compiler-opt-global-shared-view env)
+                  args)]
               (match (opt-ssa-rename-dst facts env next-var dst)
                 [(OptSsaDstResult.Result out-dst next-env out-next)
                   (OptSsaInstrResult.Result
@@ -15445,7 +15489,9 @@
     [(ir.CompilerIrInstr.Pack dst words ty)
       (let
         [out-words : ir.CompilerIrValueList
-          (opt-ssa-rewrite-value-list env words)]
+          (opt-ssa-rewrite-value-list
+            (compiler-opt-global-shared-view env)
+            words)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -15454,7 +15500,8 @@
               out-next)]))]
     [(ir.CompilerIrInstr.Word dst src index ty)
       (let
-        [out-src : ir.CompilerIrValue (opt-ssa-rewrite-value env src)]
+        [out-src : ir.CompilerIrValue
+          (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) src)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -15576,13 +15623,18 @@
   [outs : OptSsaBlockOuts]
   [label : i64]
   [index : i64]) : OptSsaRenameSnapshot
-  (if (>= index (opt-ssa-block-outs-count outs))
+  (if (>=
+    index
+    (opt-ssa-block-outs-count (compiler-opt-global-shared-view outs)))
     (opt-ssa-env-snapshot-empty)
-    (match (opt-ssa-block-outs-ref outs index)
+    (match (opt-ssa-block-outs-ref (compiler-opt-global-shared-view outs) index)
       [(OptSsaDenseEntry.BlockOut out-label snapshot)
         (if (= out-label label)
           snapshot
-          (opt-ssa-block-out-lookup-from outs label (+ index 1)))]
+          (opt-ssa-block-out-lookup-from
+            (compiler-opt-global-shared-view outs)
+            label
+            (+ index 1)))]
       [_ (string.tl_oob_abort)])))
 
 (define (opt-ssa-block-out-lookup [outs : OptSsaBlockOuts] [label : i64]) : OptSsaRenameSnapshot
@@ -15612,8 +15664,9 @@
   (let
     [index : OptCfgIndex context.index]
     [label : i64 (array-ref index.labels id)]
-    [checkpoint : i64 (opt-ssa-env-checkpoint env)]
-    (match (opt-cfg-index-block index id)
+    [checkpoint : i64
+      (opt-ssa-env-checkpoint (compiler-opt-global-shared-view env))]
+    (match (opt-cfg-index-block (compiler-opt-global-shared-view index) id)
       [(OptMaybeBlock.No) state]
       [(OptMaybeBlock.Some block)
         (match (compiler-opt-global-shared-view block)
@@ -15635,17 +15688,17 @@
                   (let
                     [next-state : OptSsaRenameState
                       (opt-ssa-rename-children
-                        context
-                        blocks
-                        facts
-                        sites
+                        (compiler-opt-global-shared-view context)
+                        (compiler-opt-global-shared-view blocks)
+                        (compiler-opt-global-shared-view facts)
+                        (compiler-opt-global-shared-view sites)
                         id
-                        out-env
+                        (compiler-opt-global-shared-view out-env)
                         (opt-ssa-rename-state-add-block
                           state
                           label
                           renamed
-                          out-env
+                          (compiler-opt-global-shared-view out-env)
                           next-var)
                         0)]
                     (begin
@@ -15711,10 +15764,15 @@
                   (if (opt-ssa-rename-blocks-contains? renamed label)
                     state
                     (let
-                      [checkpoint : i64 (opt-ssa-env-checkpoint initial-env)]
+                      [checkpoint : i64
+                        (opt-ssa-env-checkpoint
+                          (compiler-opt-global-shared-view initial-env))]
                       (match (opt-ssa-rename-instr-seq-from
-                        facts
-                        (opt-ssa-env-bind-phis sites label initial-env)
+                        (compiler-opt-global-shared-view facts)
+                        (opt-ssa-env-bind-phis
+                          (compiler-opt-global-shared-view sites)
+                          label
+                          (compiler-opt-global-shared-view initial-env))
                         next-var
                         instrs
                         0)
@@ -15725,16 +15783,16 @@
                                 state
                                 label
                                 out
-                                out-env
+                                (compiler-opt-global-shared-view out-env)
                                 out-next)]
                             (begin
                               (opt-ssa-env-rollback out-env checkpoint)
                               out-state))])))])]
             (opt-ssa-rename-missing-blocks
               (compiler-opt-box-shared-view rest)
-              facts
-              sites
-              initial-env
+              (compiler-opt-global-shared-view facts)
+              (compiler-opt-global-shared-view sites)
+              (compiler-opt-global-shared-view initial-env)
               next-state))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-ssa-rename-missing-blocks
@@ -15754,12 +15812,17 @@
   (let
     [initial-env : OptSsaRenameEnv
       (opt-ssa-env-from-params
-        facts
+        (compiler-opt-global-shared-view facts)
         params
-        (opt-ssa-env-for-function facts sites frame))]
-    [entry-label : i64 (opt-cfg-entry-label blocks)]
+        (opt-ssa-env-for-function
+          (compiler-opt-global-shared-view facts)
+          (compiler-opt-global-shared-view sites)
+          frame))]
+    [entry-label : i64
+      (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))]
     [index : OptCfgIndex context.index]
-    [block-capacity : i64 (opt-cfg-index-block-count index)]
+    [block-capacity : i64
+      (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
     (begin
       (opt-cfg-index-refresh-blocks!
         (compiler-opt-global-shared-view index)
@@ -15817,8 +15880,9 @@
     [(OptLabelSet.Nil) (ir.CompilerIrPhiInputList.Nil)]
     [(OptLabelSet.Dense _ _)
       (let
-        [pred : i64 (opt-label-ref preds 0)]
-        [snapshot : OptSsaRenameSnapshot (opt-ssa-block-out-lookup outs pred)]
+        [pred : i64 (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+        [snapshot : OptSsaRenameSnapshot
+          (opt-ssa-block-out-lookup (compiler-opt-global-shared-view outs) pred)]
         [value : ir.CompilerIrValue
           (match (opt-ssa-env-snapshot-lookup snapshot var)
             [(option_i64.Some current) (ir.CompilerIrValue.Var current)]
@@ -15827,7 +15891,11 @@
         (ir.compiler-ir-phi-input-cons
           value
           pred
-          (opt-ssa-phi-inputs (opt-label-tail preds) outs var ty)))]))
+          (opt-ssa-phi-inputs
+            (opt-label-tail (compiler-opt-global-shared-view preds))
+            (compiler-opt-global-shared-view outs)
+            var
+            (compiler-opt-global-shared-view ty))))]))
 
 ;; Append this label's inserted phis to `builder`, in phi-site order. The old
 ;; shape recursed to the end of `sites` first and consed each phi onto the
@@ -15971,9 +16039,11 @@
       (ir.compiler-ir-phi-input-cons
         (match (compiler-opt-global-shared-view value)
           [(ir.CompilerIrValue.Var v)
-            (if (opt-ssa-candidate? facts v)
+            (if (opt-ssa-candidate? (compiler-opt-global-shared-view facts) v)
               (match (opt-ssa-env-snapshot-lookup
-                (opt-ssa-block-out-lookup outs pred)
+                (opt-ssa-block-out-lookup
+                  (compiler-opt-global-shared-view outs)
+                  pred)
                 v)
                 [(option_i64.Some current) (ir.CompilerIrValue.Var current)]
                 [(option_i64.None)
@@ -15983,9 +16053,9 @@
         pred
         (opt-ssa-rewrite-preexisting-phi-inputs
           (compiler-opt-global-shared-view facts)
-          outs
+          (compiler-opt-global-shared-view outs)
           (compiler-opt-box-shared-view rest)
-          ty))]))
+          (compiler-opt-global-shared-view ty)))]))
 
 ;; Append the renamed block body to `builder`, rewriting pre-existing phi
 ;; inputs in place of the old cons-per-instruction rebuild. Traversal order is
@@ -38684,7 +38754,7 @@
                 (compiler-opt-global-shared-view index)
                 label
                 prev-label))))
-          (OptMaybeSwitchChain.No)
+          (opt-switch-finalize-chain index index-var items label head-prefix)
           (opt-switch-collect-chain
             blocks
             (compiler-opt-global-shared-view index)
@@ -38824,12 +38894,54 @@
                           0
                           prefix
                           (OptSwitchCopyEnv.Nil)))])])
-              (opt-switch-finalize-chain
-                (compiler-opt-global-shared-view index)
-                index-var
-                items
-                label
-                head-prefix))]
+              ;; Chain in progress: step across one empty forwarding block if
+              ;; the edge we arrived on is its only one. The rewrite deletes
+              ;; every block the chain walks, so a second predecessor would be
+              ;; left jumping into deleted code; a sole predecessor makes the
+              ;; block unreachable once the head becomes a Switch, and the
+              ;; reachable-order rebuild drops it.
+              ;;
+              ;; Reaching further can only be tried, never assumed: the longer
+              ;; chain may be the one that fails -- its wider span may miss the
+              ;; density floor, or the block it ends on may be a phi join no
+              ;; default edge can name -- while the chain that stops here would
+              ;; have formed a table. So keep the short chain as the fallback.
+              (let
+                [hop : i64 (opt-switch-block-sole-jump block)]
+                (if (and
+                  (!= hop (ir.compiler-ir-label-none))
+                  (opt-switch-single-pred-from?
+                    (compiler-opt-global-shared-view index)
+                    label
+                    prev-label))
+                  (let
+                    [hopped : OptMaybeSwitchChain
+                      (opt-switch-collect-chain
+                        (compiler-opt-global-shared-view blocks)
+                        (compiler-opt-global-shared-view index)
+                        uses
+                        hop
+                        index-var
+                        label
+                        (opt-label-add seen label)
+                        (compiler-opt-global-shared-view items)
+                        head-prefix
+                        copies)]
+                    (match (compiler-opt-global-shared-view hopped)
+                      [(OptMaybeSwitchChain.No)
+                        (opt-switch-finalize-chain
+                          index
+                          index-var
+                          items
+                          label
+                          head-prefix)]
+                      [_ hopped]))
+                  (opt-switch-finalize-chain
+                    index
+                    index-var
+                    items
+                    label
+                    head-prefix))))]
           [(OptSwitchCompare.Some
               candidate-index
               tag
@@ -43417,24 +43529,49 @@
       (if (and
         (opt-dom-cmp-foldable-op? (compiler-opt-global-shared-view op))
         (opt-integer-type? (compiler-opt-global-shared-view ty)))
-        (match (opt-dom-cmp-lookup-chained
-          type-segment-bases
-          cmp-facts
-          (opt-dom-cmp-canon-op (compiler-opt-global-shared-view op))
-          (opt-bounds-dom-resolve
-            (compiler-opt-global-shared-view copies)
-            (opt-dom-cmp-canon-lhs
-              (compiler-opt-global-shared-view op)
-              (compiler-opt-global-shared-view lhs)
-              (compiler-opt-global-shared-view rhs)))
-          (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-rhs op lhs rhs))
-          ty)
-          [(OptDomCmpLookup.No) instr]
-          [(OptDomCmpLookup.Some value)
-            (ir.CompilerIrInstr.Mov
-              dst
-              (ir.CompilerIrValue.Bool value)
-              (ast.AstType.Bool))])
+        (let
+          [canon-op : ir.CompilerIrBinOp
+            (opt-dom-cmp-canon-op (compiler-opt-global-shared-view op))]
+          [canon-lhs : ir.CompilerIrValue
+            (opt-bounds-dom-resolve
+              (compiler-opt-global-shared-view copies)
+              (opt-dom-cmp-canon-lhs
+                (compiler-opt-global-shared-view op)
+                (compiler-opt-global-shared-view lhs)
+                (compiler-opt-global-shared-view rhs)))]
+          [canon-rhs : ir.CompilerIrValue
+            (opt-bounds-dom-resolve
+              (compiler-opt-global-shared-view copies)
+              (opt-dom-cmp-canon-rhs op lhs rhs))]
+          (match (match (opt-dom-cmp-lookup-chained
+            type-segment-bases
+            cmp-facts
+            (compiler-opt-global-shared-view canon-op)
+            (compiler-opt-global-shared-view canon-lhs)
+            (compiler-opt-global-shared-view canon-rhs)
+            (compiler-opt-global-shared-view ty))
+            [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
+            [(OptDomCmpLookup.No)
+              (opt-bounds-dom-phi-carried-verdict
+                type-segment-bases
+                info
+                index
+                terms
+                defs
+                phi-defs
+                sources
+                copies
+                block-id
+                canon-op
+                canon-lhs
+                canon-rhs
+                ty)])
+            [(OptDomCmpLookup.No) instr]
+            [(OptDomCmpLookup.Some value)
+              (ir.CompilerIrInstr.Mov
+                dst
+                (ir.CompilerIrValue.Bool value)
+                (ast.AstType.Bool))]))
         instr)]
     [_ instr]))
 
@@ -85891,7 +86028,7 @@
     [memo : (__tl_dyn-array i64) (array.make-array i64 count)]
     [scratch : arena.Arena (arena.make)]
     (begin
-      (opt-cfg-fill-i64! memo count (- 0 1))
+      (opt-cfg-fill-i64! (compiler-opt-global-shared-view memo) count (- 0 1))
       (__tl-project-set-field
         compiler-opt-owned-state
         inline-state
@@ -85900,8 +86037,9 @@
 (define (opt-inline-owned-state-reset! [destroy-owner? : bool]) : unit
   (let
     [retired : OptInlineOwnedState
-      (__tl-project-field (compiler-opt-owned-state-shared-view) inline-state)]
-    [scratch : arena.Arena retired.verify-scratch]
+      (compiler-opt-global-shared-view compiler-opt-owned-state.inline-state)]
+    [scratch : arena.Arena
+      (compiler-opt-global-shared-view retired.verify-scratch)]
     (begin
       ;; Unpublish the memo and its owner together before invalidating the
       ;; scratch generation. This becomes a consuming branded-state move once
@@ -85920,10 +86058,10 @@
   [callee : ir.CompilerIrFunction]
   [caller-name : i64]) : bool
   (let
+    [inline-state : OptInlineOwnedState
+      (compiler-opt-global-shared-view compiler-opt-owned-state.inline-state)]
     [memo : (__tl_dyn-array i64)
-      (__tl-project-field
-        (__tl-project-field (compiler-opt-owned-state-shared-view) inline-state)
-        multiblock-ok-memo)]
+      (compiler-opt-global-shared-view inline-state.multiblock-ok-memo)]
     (match callee
       [(ir.CompilerIrFunction.Function cname cparams ret cvars cblocks)
         (if (ir.compiler-ir-symbol-eq? cname caller-name)
@@ -93233,9 +93371,11 @@
       [graph : OptCallGraph
         (opt-callgraph-build (compiler-opt-global-shared-view index))]
       [scc-result : OptSccResult (opt-scc-compute graph)]
-      [census : OptInlineCensus (opt-inline-census-build index devirt)]
+      [census : OptInlineCensus
+        (opt-inline-census-build (compiler-opt-global-shared-view index) devirt)]
       (begin
-        (opt-inline-owned-state-install! index)
+        (opt-inline-owned-state-install!
+          (compiler-opt-global-shared-view index))
         (opt-inline-checked-program-begin!)
         (opt-inline-process-scc-order!
           type-segment-bases
@@ -93265,8 +93405,11 @@
       [graph : OptCallGraph
         (opt-callgraph-build (compiler-opt-global-shared-view index))]
       [scc-result : OptSccResult (opt-scc-compute graph)]
-      [census : OptInlineCensus (opt-inline-census-build index devirt)]
-      [_install-owned-state : unit (opt-inline-owned-state-install! index)]
+      [census : OptInlineCensus
+        (opt-inline-census-build (compiler-opt-global-shared-view index) devirt)]
+      [_install-owned-state : unit
+        (opt-inline-owned-state-install!
+          (compiler-opt-global-shared-view index))]
       [_begin-checked : unit (opt-inline-checked-program-begin!)]
       [next-spans : ir.CompilerSourceSpans
         (opt-inline-process-scc-order-with-spans

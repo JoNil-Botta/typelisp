@@ -4,6 +4,7 @@
 ;; compiler_intern. This adapter gives worker code a nominal structural view of
 ;; an explicitly owned source-name session.
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 
 (defstruct InternStructuralKey
   (value i64))
@@ -107,7 +108,9 @@
       [session : ci.InternSourceNameSession
         (intern-structural-session-handle-session handle)]
       [table : ci.InternStructuralTable
-        (array-ref session.structural-table-cell 0)]
+        (owned_view.compiler-owned-array-element-shared-view
+          session.structural-table-cell
+          0)]
       [raw : i64 (intern-structural-key-raw key)]
       [prefix : i64
         (+
@@ -130,7 +133,9 @@
     (let
       [session : ci.InternSourceNameSession
         (intern-structural-session-handle-session handle)]
-      (array-ref
-        (__tl-project-field (array-ref session.structural-table-cell 0) middles)
-        (intern-structural-session-key-index key)))
+      [table : ci.InternStructuralTable
+        (owned_view.compiler-owned-array-element-shared-view
+          session.structural-table-cell
+          0)]
+      (array-ref table.middles (intern-structural-session-key-index key)))
     (ci.tl_oob_abort)))

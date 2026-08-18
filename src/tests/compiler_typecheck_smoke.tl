@@ -278,11 +278,11 @@
     take))")
 
 (define (compiler-typecheck-closure-owner-read-repeat-source) : String
-  "(define (read [value : String]) : i64 42)
+  "(define (read [value : (& value str)]) : i64 42)
 (define (main) : i64
   (let
     [owned : String \"repeat\"]
-    [f : (-> i64) (lambda () : i64 (read owned))]
+    [f : (-> i64) (lambda () : i64 (read (& owned)))]
     (begin (f) (f))))")
 
 (define (compiler-typecheck-reference-tuple-return-ok-source) : String
@@ -1041,7 +1041,7 @@
       found)))
 
 (define (compiler-typecheck-help-contains?
-  [diag : diagnostic.CompilerDiagnostic]
+  [diag : (& diag diagnostic.CompilerDiagnostic)]
   [needle : String]) : bool
   (match (diagnostic.compiler-diagnostic-help diag)
     [(CompilerDiagnosticSomeString text) (string.contains (& text) (& needle))]
@@ -1053,23 +1053,19 @@
   (match (tc_api.typecheck-compiler-source src)
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
-        [message : String
-          (diagnostic.compiler-diagnostic-message
-            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))]
+        [first : diagnostic.CompilerDiagnostic
+          (diagnostic.compiler-diagnostic-list-first
+            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+        [message : String (diagnostic.compiler-diagnostic-message first)]
         (and
           (string.contains (& message) (& want-message-fragment))
-          (compiler-typecheck-help-contains?
-            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))
-            "narrower lexical scope")
+          (compiler-typecheck-help-contains? first "narrower lexical scope")
           (=
             (compiler_typecheck.compiler-typecheck-secondary-count
-              (diagnostic.compiler-diagnostic-secondary-spans
-                (diagnostic.compiler-diagnostic-list-first
-                  (__tl-box-place diag))))
+              (diagnostic.compiler-diagnostic-secondary-spans first))
             1)
           (compiler-typecheck-secondary-label-contains?
-            (diagnostic.compiler-diagnostic-secondary-spans
-              (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
+            (diagnostic.compiler-diagnostic-secondary-spans first)
             "remains live")))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
@@ -1176,23 +1172,22 @@
   [want-label-fragment : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
     [(tc_core.ResultCompilerTypecheck.Err diag)
-      (and
-        (string.eq
-          (diagnostic.compiler-diagnostic-message
-            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
-          want-message)
-        (compiler-typecheck-help-contains?
-          (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))
-          "clone the owner")
-        (=
-          (compiler_typecheck.compiler-typecheck-secondary-count
-            (diagnostic.compiler-diagnostic-secondary-spans
-              (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))))
-          1)
-        (compiler-typecheck-secondary-label-contains?
-          (diagnostic.compiler-diagnostic-secondary-spans
-            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
-          want-label-fragment))]
+      (let
+        [first : diagnostic.CompilerDiagnostic
+          (diagnostic.compiler-diagnostic-list-first
+            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+        (and
+          (string.eq
+            (diagnostic.compiler-diagnostic-message first)
+            want-message)
+          (compiler-typecheck-help-contains? first "clone the owner")
+          (=
+            (compiler_typecheck.compiler-typecheck-secondary-count
+              (diagnostic.compiler-diagnostic-secondary-spans first))
+            1)
+          (compiler-typecheck-secondary-label-contains?
+            (diagnostic.compiler-diagnostic-secondary-spans first)
+            want-label-fragment)))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-labeled-cleanup-move-error-ok?
@@ -1202,27 +1197,25 @@
   [want-owner-label-fragment : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
     [(tc_core.ResultCompilerTypecheck.Err diag)
-      (and
-        (string.eq
-          (diagnostic.compiler-diagnostic-message
-            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
-          want-message)
-        (compiler-typecheck-help-contains?
-          (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))
-          "clone the owner")
-        (=
-          (compiler_typecheck.compiler-typecheck-secondary-count
-            (diagnostic.compiler-diagnostic-secondary-spans
-              (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))))
-          2)
-        (compiler-typecheck-secondary-label-contains?
-          (diagnostic.compiler-diagnostic-secondary-spans
-            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
-          want-move-label-fragment)
-        (compiler-typecheck-secondary-label-contains?
-          (diagnostic.compiler-diagnostic-secondary-spans
-            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
-          want-owner-label-fragment))]
+      (let
+        [first : diagnostic.CompilerDiagnostic
+          (diagnostic.compiler-diagnostic-list-first
+            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+        (and
+          (string.eq
+            (diagnostic.compiler-diagnostic-message first)
+            want-message)
+          (compiler-typecheck-help-contains? first "clone the owner")
+          (=
+            (compiler_typecheck.compiler-typecheck-secondary-count
+              (diagnostic.compiler-diagnostic-secondary-spans first))
+            2)
+          (compiler-typecheck-secondary-label-contains?
+            (diagnostic.compiler-diagnostic-secondary-spans first)
+            want-move-label-fragment)
+          (compiler-typecheck-secondary-label-contains?
+            (diagnostic.compiler-diagnostic-secondary-spans first)
+            want-owner-label-fragment)))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-move-diagnostic-tests-ok?) : bool
@@ -2143,7 +2136,8 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [value : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))]
+          (diagnostic.compiler-diagnostic-list-first
+            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
         [notes : diagnostic.CompilerDiagnosticNoteList
           (diagnostic.compiler-diagnostic-notes value)]
         (and
@@ -2365,7 +2359,7 @@
       (match (tc_api.typecheck-compiler-program-with-paths-cache
         program
         paths
-        stdlib-roots
+        (tc_core.tc-global-shared-view stdlib-roots)
         (tc_api.compiler-typecheck-prefix-cache-scope
           "typecheck-prefix-smoke"
           stdlib-roots
@@ -2380,15 +2374,19 @@
     [root-b : String "target/tc_prefix_root_b"]
     [entry-a : String "target/tc_prefix_root_entry_a.tl"]
     [entry-b : String "target/tc_prefix_root_entry_b.tl"]
-    [roots-a : svec.Vec (compiler-typecheck-smoke-prefix-cache-roots root-a)]
-    [roots-b : svec.Vec (compiler-typecheck-smoke-prefix-cache-roots root-b)]
+    [roots-a : svec.Vec
+      (compiler-typecheck-smoke-prefix-cache-roots
+        (tc_core.tc-global-shared-view root-a))]
+    [roots-b : svec.Vec
+      (compiler-typecheck-smoke-prefix-cache-roots
+        (tc_core.tc-global-shared-view root-b))]
     [ok : bool true]
     (begin
       (load.compiler-load-session-cache-enable!)
       (tc_core.tc-prefix-snapshot-cache-clear!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler_typecheck.compiler-typecheck-prefix-cache-source-a)
-        entry-a
+        (tc_core.tc-global-shared-view entry-a)
         (compiler-typecheck-smoke-prefix-cache-root-paths root-a entry-a)
         roots-a
         (parser.compiler-cfg-empty))
@@ -2397,9 +2395,11 @@
       (tc_core.compiler-typecheck-reset-file-state!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler_typecheck.compiler-typecheck-prefix-cache-source-b)
-        entry-b
-        (compiler-typecheck-smoke-prefix-cache-root-paths root-b entry-b)
-        roots-b
+        (tc_core.tc-global-shared-view entry-b)
+        (compiler-typecheck-smoke-prefix-cache-root-paths
+          (tc_core.tc-global-shared-view root-b)
+          entry-b)
+        (tc_core.tc-global-shared-view roots-b)
         (parser.compiler-cfg-empty))
         unit
         (set! ok false))
@@ -2433,25 +2433,31 @@
     [root : String "target/tc_prefix_cfg_root"]
     [entry-empty : String "target/tc_prefix_cfg_entry_empty.tl"]
     [entry-feature : String "target/tc_prefix_cfg_entry_feature.tl"]
-    [roots : svec.Vec (compiler-typecheck-smoke-prefix-cache-roots root)]
+    [roots : svec.Vec
+      (compiler-typecheck-smoke-prefix-cache-roots
+        (tc_core.tc-global-shared-view root))]
     [ok : bool true]
     (begin
       (load.compiler-load-session-cache-enable!)
       (tc_core.tc-prefix-snapshot-cache-clear!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler-typecheck-smoke-prefix-cache-cfg-source)
-        entry-empty
-        (compiler-typecheck-smoke-prefix-cache-root-paths root entry-empty)
-        roots
+        (tc_core.tc-global-shared-view entry-empty)
+        (compiler-typecheck-smoke-prefix-cache-root-paths
+          (tc_core.tc-global-shared-view root)
+          entry-empty)
+        (tc_core.tc-global-shared-view roots)
         (parser.compiler-cfg-empty))
         unit
         (set! ok false))
       (tc_core.compiler-typecheck-reset-file-state!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler-typecheck-smoke-prefix-cache-cfg-source)
-        entry-feature
-        (compiler-typecheck-smoke-prefix-cache-root-paths root entry-feature)
-        roots
+        (tc_core.tc-global-shared-view entry-feature)
+        (compiler-typecheck-smoke-prefix-cache-root-paths
+          (tc_core.tc-global-shared-view root)
+          entry-feature)
+        (tc_core.tc-global-shared-view roots)
         (parser.compiler-cfg-enable (parser.compiler-cfg-empty) "feature"))
         unit
         (set! ok false))
@@ -2489,7 +2495,7 @@
       (match (tc_api.typecheck-compiler-program-with-paths-cache
         (ast.ast-program decls)
         paths
-        stdlib-roots
+        (tc_core.tc-global-shared-view stdlib-roots)
         (tc_api.compiler-typecheck-prefix-cache-scope
           "typecheck-prefix-smoke"
           stdlib-roots
@@ -2506,8 +2512,8 @@
     (load.compiler-load-file-with-paths-and-roots-cfg
       entry-path
       (sym_i64_env.sym-i64-empty)
-      stdlib-roots
-      cfgs)
+      (tc_core.tc-global-shared-view stdlib-roots)
+      (tc_core.tc-global-shared-view cfgs))
     stdlib-roots
     cfgs))
 
@@ -2528,7 +2534,7 @@
     (module generated.macro_kind.family)
     (define (answer) : i64 41)))")
       (compiler-typecheck-smoke-write-text
-        entry
+        (tc_core.tc-global-shared-view entry)
         "(defstruct Ball (x i64))
 (import tc_macro_kind_provider as provider)
 (provider.emit Ball)
@@ -2556,11 +2562,11 @@
         "(module tc_prefix_local_dep)
 (define (value [x : i64]) : i64 (+ x 1))")
       (compiler-typecheck-smoke-write-text
-        entry-a
+        (tc_core.tc-global-shared-view entry-a)
         "(import tc_prefix_local_dep as dep)
 (define (main) : i64 (dep.value 1))")
       (compiler-typecheck-smoke-write-text
-        entry-b
+        (tc_core.tc-global-shared-view entry-b)
         "(import tc_prefix_local_dep as dep)
 (define (main) : i64 (dep.value 2))")
       (load.compiler-load-session-cache-enable!)
@@ -2573,19 +2579,19 @@
           (load.compiler-load-file-with-paths-and-roots-cfg
             entry-a
             (sym_i64_env.sym-i64-empty)
-            roots
-            cfgs)]
+            (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs))]
         [loaded-b : load.ResultCompilerLoadWithPaths
           (load.compiler-load-file-with-paths-and-roots-cfg
             entry-b
             (sym_i64_env.sym-i64-empty)
-            roots
-            cfgs)]
+            (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs))]
         (begin
           (if (compiler-typecheck-smoke-prefix-cache-loaded-check
             loaded-a
-            roots
-            cfgs)
+            (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs))
             unit
             (set! ok false))
           (tc_core.compiler-typecheck-reset-file-state!)
@@ -2619,11 +2625,11 @@
         dep
         "(define (flat-helper [x : i64]) : i64 (+ x 1))")
       (compiler-typecheck-smoke-write-text
-        entry-a
+        (tc_core.tc-global-shared-view entry-a)
         "(import tc_prefix_flat_dep)
 (define (main) : i64 (tc_prefix_flat_dep.flat-helper 1))")
       (compiler-typecheck-smoke-write-text
-        entry-b
+        (tc_core.tc-global-shared-view entry-b)
         "(import tc_prefix_flat_dep)
 (define (main) : i64 (tc_prefix_flat_dep.flat-helper 2))")
       (load.compiler-load-session-cache-enable!)
@@ -2633,19 +2639,19 @@
           (load.compiler-load-file-with-paths-and-roots-cfg
             entry-a
             (sym_i64_env.sym-i64-empty)
-            roots
-            cfgs)]
+            (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs))]
         [loaded-b : load.ResultCompilerLoadWithPaths
           (load.compiler-load-file-with-paths-and-roots-cfg
             entry-b
             (sym_i64_env.sym-i64-empty)
-            roots
-            cfgs)]
+            (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs))]
         (begin
           (if (compiler-typecheck-smoke-prefix-cache-loaded-check
             loaded-a
-            roots
-            cfgs)
+            (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs))
             unit
             (set! ok false))
           (tc_core.compiler-typecheck-reset-file-state!)
@@ -2686,14 +2692,14 @@
 (define (named-score) : i64
   (option_i64.value-or (option_i64.some 2) 0))")
       (compiler-typecheck-smoke-write-text
-        root-then-named
+        (tc_core.tc-global-shared-view root-then-named)
         "(import tc_4004_root_provider)
 (import tc_4004_named_provider)
 
 (define (main) : i64
   (+ (tc_4004_root_provider.root-score) (tc_4004_named_provider.named-score)))")
       (compiler-typecheck-smoke-write-text
-        named-then-root
+        (tc_core.tc-global-shared-view named-then-root)
         "(import tc_4004_named_provider)
 (import tc_4004_root_provider)
 
@@ -2702,8 +2708,8 @@
       (tc_api.compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-smoke-prefix-cache-file-check
         root-then-named
-        roots
-        cfgs)
+        (tc_core.tc-global-shared-view roots)
+        (tc_core.tc-global-shared-view cfgs))
         unit
         (set! ok false))
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -2756,22 +2762,30 @@
             env
             (ast.AstExpr.Var name-id))]
         [installed-expr-bases : i64
-          (ast.ast-node-pool-context-expr-segment-bases
-            (& installed-pools))]
+          (ast.ast-node-pool-context-expr-segment-bases (& installed-pools))]
         [installed-type-bases : i64
-          (ast.ast-node-pool-context-type-segment-bases
-            (& installed-pools))]
+          (ast.ast-node-pool-context-type-segment-bases (& installed-pools))]
+        [active-after : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
         [ok : bool
           (and
             (= result-id installed-expr-id)
-            (= (ast.ast-node-pool-context-expr-len
-              (ast.ast-node-pool-context-shared-view (& source-pools))) 1)
-            (= (ast.ast-node-pool-context-type-len
-              (ast.ast-node-pool-context-shared-view (& source-pools))) 1)
-            (= (ast.ast-node-pool-context-expr-len
-              (ast.ast-node-pool-context-shared-view (& installed-pools))) 1)
-            (= (ast.ast-node-pool-context-type-len
-              (ast.ast-node-pool-context-shared-view (& installed-pools))) 1)
+            (=
+              (ast.ast-node-pool-context-expr-len
+                (ast.ast-node-pool-context-shared-view (& source-pools)))
+              1)
+            (=
+              (ast.ast-node-pool-context-type-len
+                (ast.ast-node-pool-context-shared-view (& source-pools)))
+              1)
+            (=
+              (ast.ast-node-pool-context-expr-len
+                (ast.ast-node-pool-context-shared-view (& installed-pools)))
+              1)
+            (=
+              (ast.ast-node-pool-context-type-len
+                (ast.ast-node-pool-context-shared-view (& installed-pools)))
+              1)
             (match (ast.ast-node-pool-context-expr-get
               (& source-pools)
               result-id)
@@ -2798,8 +2812,7 @@
               (ast.ast-node-pool-active-expr-segment-bases)
               installed-expr-bases)
             (=
-              (ast.ast-node-pool-context-type-segment-bases
-                (ast.ast-node-pool-context-capture-active))
+              (ast.ast-node-pool-context-type-segment-bases (& active-after))
               installed-type-bases))]
         (begin
           (ast.ast-node-pool-context-install! active-before)
@@ -2858,16 +2871,13 @@
           (ast.ty-node-pool-generation-value)]
         [owned-explicit-answer : bool
           (tc_core.tc-type-needs-resolution-id-with-bases?
-            (ast.ast-node-pool-context-type-segment-bases
-              (& owned-pools))
+            (ast.ast-node-pool-context-type-segment-bases (& owned-pools))
             owned-parent)]
         [resolved : ast.AstType
           (tc_core.tc-resolve-type-with-pools
             ctx
             (ast.ast-node-pool-context-shared-view (& owned-pools))
-            (ast.ast-node-pool-context-type-get
-              (& owned-pools)
-              owned-parent))]
+            (ast.ast-node-pool-context-type-get (& owned-pools) owned-parent))]
         [foreign-installed-count : i64
           (ast.ast-node-pool-context-type-len
             (ast.ast-node-pool-context-shared-view (& installed-pools)))]
@@ -2886,8 +2896,7 @@
               (& installed-pools)
               installed-var-parent))]
         [installed-bases : i64
-          (ast.ast-node-pool-context-type-segment-bases
-            (& installed-pools))]
+          (ast.ast-node-pool-context-type-segment-bases (& installed-pools))]
         [installed-active : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         [ok : bool
@@ -2902,11 +2911,15 @@
               (ast.ty-node-pool-generation-value)
               installed-generation-after-prime)
             (= foreign-installed-count 2)
-            (= (ast.ast-node-pool-context-type-len
-              (ast.ast-node-pool-context-shared-view (& installed-pools))) 5)
+            (=
+              (ast.ast-node-pool-context-type-len
+                (ast.ast-node-pool-context-shared-view (& installed-pools)))
+              5)
             (= (ast.ty-node-pool-len) 5)
-            (= (ast.ast-node-pool-context-type-len
-              (ast.ast-node-pool-context-shared-view (& owned-pools))) 3)
+            (=
+              (ast.ast-node-pool-context-type-len
+                (ast.ast-node-pool-context-shared-view (& owned-pools)))
+              3)
             (match resolved
               [(ast.AstType.Array resolved-child count)
                 (and
@@ -2929,10 +2942,9 @@
                   (match (ast.ty-node-get resolved-child)
                     [(ast.AstType.Expr) true]
                     [_ false]))]
-            [_ false])
+              [_ false])
             (=
-              (ast.ast-node-pool-context-type-segment-bases
-                installed-active)
+              (ast.ast-node-pool-context-type-segment-bases installed-active)
               installed-bases))]
         (begin
           (ast.ast-node-pool-context-install! active-before)
@@ -2943,7 +2955,8 @@
   [key : String]) : ast.AstDecl
   (match (parser.parse-ast-source-diagnostic "target/tc_state_entry.tl" source)
     [(parser.ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls-box))
-      (match (ast.ast-decl-list-step (__tl-box-place decls-box))
+      (match (ast.ast-decl-list-step
+        (ast.ast-decl-list-box-shared-view decls-box))
         [(ast.AstDeclListStep.Cons decl _)
           (ast.ast-decl-comptime-decl-with-meta
             (tc_core.macro-generated-meta "state-isolation" "import" key)
@@ -2951,7 +2964,9 @@
         [(ast.AstDeclListStep.Nil)
           (io.panic "typecheck: generated import fixture parsed no declaration")])]
     [(parser.ResultAstProgramDiagnostic.Err diag)
-      (io.panic (diagnostic.compiler-diagnostic-render (__tl-box-place diag)))]))
+      (io.panic
+        (diagnostic.compiler-diagnostic-render
+          (diagnostic.compiler-diagnostic-box-shared-view diag)))]))
 
 (define (compiler-typecheck-smoke-generated-import-state-run
   [state : load.CompilerLoadSessionState]
@@ -2966,55 +2981,55 @@
       (tc_api.typecheck-compiler-source-language-cfgs)]
     [empty-seen : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     (match (tc_core.macro-materialize-generated-import
-      state
-      generated-import
-      entry
+      (tc_core.tc-global-shared-view state)
+      (tc_core.tc-global-shared-view generated-import)
+      (tc_core.tc-global-shared-view entry)
       owner-id
       ""
       cbi.compiler-builtin-id-fix-empty
-      empty-seen
-      roots
-      cfgs
-      pools)
+      (tc_core.tc-global-shared-view empty-seen)
+      (tc_core.tc-global-shared-view roots)
+      (tc_core.tc-global-shared-view cfgs)
+      (tc_core.tc-global-shared-view pools))
       [(tc_core.ResultMacroMaterializeImport.Ok _ _ first-seen)
         ;; A second traversal from an independent seen set must reuse A's
         ;; program/surface caches. The selected compatibility session is
         ;; intentionally irrelevant to both traversals.
         (match (tc_core.macro-materialize-generated-import
-          state
-          generated-import
-          entry
+          (tc_core.tc-global-shared-view state)
+          (tc_core.tc-global-shared-view generated-import)
+          (tc_core.tc-global-shared-view entry)
           owner-id
           ""
           cbi.compiler-builtin-id-fix-empty
-          empty-seen
-          roots
-          cfgs
-          pools)
+          (tc_core.tc-global-shared-view empty-seen)
+          (tc_core.tc-global-shared-view roots)
+          (tc_core.tc-global-shared-view cfgs)
+          (tc_core.tc-global-shared-view pools))
           [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
             (match (tc_core.macro-materialize-generated-import
-              state
-              generated-import
-              entry
+              (tc_core.tc-global-shared-view state)
+              (tc_core.tc-global-shared-view generated-import)
+              (tc_core.tc-global-shared-view entry)
               owner-id
               ""
               cbi.compiler-builtin-id-fix-empty
-              empty-seen
-              roots
-              cfgs
-              pools)
+              (tc_core.tc-global-shared-view empty-seen)
+              (tc_core.tc-global-shared-view roots)
+              (tc_core.tc-global-shared-view cfgs)
+              (tc_core.tc-global-shared-view pools))
               [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
                 (match (tc_core.macro-materialize-generated-import
-                  state
+                  (tc_core.tc-global-shared-view state)
                   missing-import
-                  entry
+                  (tc_core.tc-global-shared-view entry)
                   owner-id
                   ""
                   cbi.compiler-builtin-id-fix-empty
-                  first-seen
-                  roots
-                  cfgs
-                  pools)
+                  (tc_core.tc-global-shared-view first-seen)
+                  (tc_core.tc-global-shared-view roots)
+                  (tc_core.tc-global-shared-view cfgs)
+                  (tc_core.tc-global-shared-view pools))
                   [(tc_core.ResultMacroMaterializeImport.Err diag)
                     (CompilerTypecheckGeneratedImportStateSnapshot
                       (diagnostic.compiler-diagnostic-message
@@ -3038,12 +3053,16 @@
                       "typecheck: generated missing import unexpectedly loaded")])]
               [(tc_core.ResultMacroMaterializeImport.Err diag)
                 (io.panic
-                  (diagnostic.compiler-diagnostic-render (__tl-box-place diag)))])]
+                  (diagnostic.compiler-diagnostic-render
+                    (diagnostic.compiler-diagnostic-box-shared-view diag)))])]
           [(tc_core.ResultMacroMaterializeImport.Err diag)
             (io.panic
-              (diagnostic.compiler-diagnostic-render (__tl-box-place diag)))])]
+              (diagnostic.compiler-diagnostic-render
+                (diagnostic.compiler-diagnostic-box-shared-view diag)))])]
       [(tc_core.ResultMacroMaterializeImport.Err diag)
-        (io.panic (diagnostic.compiler-diagnostic-render (__tl-box-place diag)))])))
+        (io.panic
+          (diagnostic.compiler-diagnostic-render
+            (diagnostic.compiler-diagnostic-box-shared-view diag)))])))
 
 (define (compiler-typecheck-smoke-generated-import-state-isolation-ok?) : bool
   (let
@@ -3056,8 +3075,11 @@
     [state-b : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
     [_enable-baseline : unit
-      (load.compiler-load-session-state-cache-enable! baseline-state)]
-    [_enable-a : unit (load.compiler-load-session-state-cache-enable! state-a)]
+      (load.compiler-load-session-state-cache-enable!
+        (tc_core.tc-global-shared-view baseline-state))]
+    [_enable-a : unit
+      (load.compiler-load-session-state-cache-enable!
+        (tc_core.tc-global-shared-view state-a))]
     [_seed-b : unit (set! (array-ref state-b.program-cache-hit-count 0) 17)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [_fixtures : unit
@@ -3080,17 +3102,20 @@
         "(import tc_state_missing as missing)"
         "state-missing")]
     [_select-baseline : unit
-      (load.compiler-load-session-state-use! baseline-state)]
+      (load.compiler-load-session-state-use!
+        (tc_core.tc-global-shared-view baseline-state))]
     [baseline : CompilerTypecheckGeneratedImportStateSnapshot
       (compiler-typecheck-smoke-generated-import-state-run
         baseline-state
-        generated-import
-        missing-import
-        pools)]
-    [_select-b : unit (load.compiler-load-session-state-use! state-b)]
+        (tc_core.tc-global-shared-view generated-import)
+        (tc_core.tc-global-shared-view missing-import)
+        (tc_core.tc-global-shared-view pools))]
+    [_select-b : unit
+      (load.compiler-load-session-state-use!
+        (tc_core.tc-global-shared-view state-b))]
     [interleaved : CompilerTypecheckGeneratedImportStateSnapshot
       (compiler-typecheck-smoke-generated-import-state-run
-        state-a
+        (tc_core.tc-global-shared-view state-a)
         generated-import
         missing-import
         pools)]
@@ -3167,7 +3192,9 @@
     [prefix-cache-b : tc_core.TcPrefixSnapshotCacheState
       (tc_core.tc-prefix-snapshot-cache-state-new)]
     [job-state-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
-    [_enable-a : unit (load.compiler-load-session-state-cache-enable! state-a)]
+    [_enable-a : unit
+      (load.compiler-load-session-state-cache-enable!
+        (tc_core.tc-global-shared-view state-a))]
     [_seed-b : unit
       (begin
         (set! (array-ref state-b.program-cache-hit-count 0) 23)
@@ -3186,27 +3213,29 @@
       (tc_api.typecheck-compiler-source-language-cfgs)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [_reset-typecheck : unit (tc_core.compiler-typecheck-reset-file-state!)]
-    [_select-b : unit (load.compiler-load-session-state-use! state-b)]
+    [_select-b : unit
+      (load.compiler-load-session-state-use!
+        (tc_core.tc-global-shared-view state-b))]
     [result : tc_core.ResultCompilerTypecheck
       (match (load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
-        state-a
+        (tc_core.tc-global-shared-view state-a)
         entry
         source
         (sym_i64_env.sym-i64-empty)
-        roots
+        (tc_core.tc-global-shared-view roots)
         ast.AstMaybeModuleName.No
         cfgs
-        pools)
+        (tc_core.tc-global-shared-view pools))
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
           (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
-            state-a
-            prefix-cache-a
-            job-state-a
+            (tc_core.tc-global-shared-view state-a)
+            (tc_core.tc-global-shared-view prefix-cache-a)
+            (tc_core.tc-global-shared-view job-state-a)
             (ast.ast-program decls)
             (ast.ast-decl-path-list-with-modules paths modules)
-            roots
+            (tc_core.tc-global-shared-view roots)
             "typecheck-generated-import-state-threading"
-            pools)]
+            (tc_core.tc-global-shared-view pools))]
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -3218,16 +3247,16 @@
         "(define broken : i64 true)")
         [(parser.ResultAstProgramDiagnostic.Ok bad-program)
           (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
-            state-a
-            prefix-cache-a
-            job-state-a
+            (tc_core.tc-global-shared-view state-a)
+            (tc_core.tc-global-shared-view prefix-cache-a)
+            (tc_core.tc-global-shared-view job-state-a)
             bad-program
             (ast.ast-decl-root-path-cons
               "target/tc_state_controlled_failure.tl"
               (ast.ast-decl-path-list-new))
-            roots
+            (tc_core.tc-global-shared-view roots)
             "typecheck-controlled-failure-state-threading"
-            pools)]
+            (tc_core.tc-global-shared-view pools))]
         [(parser.ResultAstProgramDiagnostic.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -3239,7 +3268,7 @@
             (io.panic
               (diagnostic.compiler-diagnostic-render
                 (diagnostic.compiler-diagnostic-list-first
-                  (__tl-box-place diag))))])
+                  (diagnostic.compiler-diagnostic-list-box-shared-view diag))))])
         (match controlled-failure
           [(tc_core.ResultCompilerTypecheck.Err _) true]
           [(tc_core.ResultCompilerTypecheck.Ok _) false])
@@ -3284,23 +3313,34 @@
 (define (compiler-typecheck-smoke-moduleless-stdlib-dotted-import-ok?) : bool
   (let
     [base : String "target/tc_moduleless_stdlib"]
-    [stdlib-root : String (load.compiler-load-join-root-path base "stdlib")]
+    [stdlib-root : String
+      (load.compiler-load-join-root-path
+        (tc_core.tc-global-shared-view base)
+        "stdlib")]
     [dep : String
-      (load.compiler-load-join-root-path stdlib-root "some_name.tl")]
-    [entry : String (load.compiler-load-join-root-path base "entry.tl")]
+      (load.compiler-load-join-root-path
+        (tc_core.tc-global-shared-view stdlib-root)
+        "some_name.tl")]
+    [entry : String
+      (load.compiler-load-join-root-path
+        (tc_core.tc-global-shared-view base)
+        "entry.tl")]
     [roots : svec.Vec
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push-ref! (&mut items) stdlib-root)
+          (svec.push-ref!
+            (&mut items)
+            (tc_core.tc-global-shared-view stdlib-root))
           items))]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
     (begin
-      (load.compiler-load-test-mkdir base)
-      (load.compiler-load-test-mkdir stdlib-root)
+      (load.compiler-load-test-mkdir (tc_core.tc-global-shared-view base))
+      (load.compiler-load-test-mkdir
+        (tc_core.tc-global-shared-view stdlib-root))
       (compiler-typecheck-smoke-write-text dep "(define value : i64 42)")
       (compiler-typecheck-smoke-write-text
-        entry
+        (tc_core.tc-global-shared-view entry)
         "(import stdlib.some_name)
 (define (main) : i64 some_name.value)")
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -3309,44 +3349,50 @@
 (define (compiler-typecheck-smoke-specialized-import-path-ok?) : bool
   (let
     [dir : String "target/tc_specialized_import_path"]
-    [dep : String (load.compiler-load-join-root-path dir "dep.tl")]
-    [entry : String (load.compiler-load-join-root-path dir "entry.tl")]
+    [dep : String
+      (load.compiler-load-join-root-path
+        (tc_core.tc-global-shared-view dir)
+        "dep.tl")]
+    [entry : String
+      (load.compiler-load-join-root-path
+        (tc_core.tc-global-shared-view dir)
+        "entry.tl")]
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
     (begin
-      (load.compiler-load-test-mkdir dir)
-      (compiler-typecheck-smoke-write-text dep "(define imported : i64 true)")
+      (load.compiler-load-test-mkdir (tc_core.tc-global-shared-view dir))
       (compiler-typecheck-smoke-write-text
-        entry
+        (tc_core.tc-global-shared-view dep)
+        "(define imported : i64 true)")
+      (compiler-typecheck-smoke-write-text
+        (tc_core.tc-global-shared-view entry)
         "(define (id [comptime T : type] [value : T]) : T value)
 (import dep)
 (define (main) : i64 0)")
       (match (load.compiler-load-file-with-paths-and-roots-cfg
-        entry
+        (tc_core.tc-global-shared-view entry)
         (sym_i64_env.sym-i64-empty)
-        roots
-        cfgs)
+        (tc_core.tc-global-shared-view roots)
+        (tc_core.tc-global-shared-view cfgs))
         [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
           (match (tc_api.typecheck-compiler-program-with-paths-cache
             (ast.ast-program decls)
             paths
-            roots
+            (tc_core.tc-global-shared-view roots)
             (tc_api.compiler-typecheck-prefix-cache-scope
               "typecheck-specialized-import-path-smoke"
-              roots
+              (tc_core.tc-global-shared-view roots)
               cfgs))
             [(tc_core.ResultCompilerTypecheck.Err diag)
-              (and
-                (string.eq
-                  (diagnostic.compiler-diagnostic-path
-                    (diagnostic.compiler-diagnostic-list-first
-                      (__tl-box-place diag)))
-                  dep)
-                (string.eq
-                  (diagnostic.compiler-diagnostic-message
-                    (diagnostic.compiler-diagnostic-list-first
-                      (__tl-box-place diag)))
-                  "typecheck: value definition type mismatch: expected i64, found bool"))]
+              (let
+                [first : diagnostic.CompilerDiagnostic
+                  (diagnostic.compiler-diagnostic-list-first
+                    (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+                (and
+                  (string.eq (diagnostic.compiler-diagnostic-path first) dep)
+                  (string.eq
+                    (diagnostic.compiler-diagnostic-message first)
+                    "typecheck: value definition type mismatch: expected i64, found bool")))]
             [(tc_core.ResultCompilerTypecheck.Ok _) false])]
         [(load.ResultCompilerLoadWithPaths.Err _) false]))))
 
@@ -3379,7 +3425,7 @@
         provider
         (compiler-typecheck-smoke-macro-dependency-provider-source))
       (compiler-typecheck-smoke-write-text
-        entry
+        (tc_core.tc-global-shared-view entry)
         (compiler-typecheck-smoke-macro-dependency-entry-source))
       (tc_api.compiler-typecheck-reset-load-session!)
       (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs))))
@@ -3402,30 +3448,31 @@
     [macro-state : tc_core.TcMacroState
       (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
     [ctfe-state : ctfe.CompilerCtfeMacroState
-      (tc_core.tc-macro-ctfe-state macro-state)]
+      (tc_core.tc-macro-ctfe-state (tc_core.tc-global-shared-view macro-state))]
     (begin
       (compiler-typecheck-smoke-write-text
         provider
         (compiler-typecheck-smoke-surface-macro-provider-source))
       (compiler-typecheck-smoke-write-text
-        entry
+        (tc_core.tc-global-shared-view entry)
         (compiler-typecheck-smoke-surface-macro-entry-source))
       (tc_api.compiler-typecheck-reset-load-session!)
       (match (load.compiler-load-file-with-paths-and-roots-cfg
-        entry
+        (tc_core.tc-global-shared-view entry)
         (sym_i64_env.sym-i64-empty)
         roots
         cfgs)
         [(load.ResultCompilerLoadWithPaths.Ok _ _ _ _)
           (begin
             (tc_core.tc-macro-state-bind-source-names!
-              macro-state
+              (tc_core.tc-global-shared-view macro-state)
               (ci.intern-source-name-session-capture-active-handle))
-            (ctfe.ctfe-module-macro-export-reset-for-state! ctfe-state)
+            (ctfe.ctfe-module-macro-export-reset-for-state!
+              (tc_core.tc-global-shared-view ctfe-state))
             (let
               [names : tc_core.TcNameIdList
                 (tc_core.macro-collect-surface-summary-macro-names
-                  macro-state
+                  (tc_core.tc-global-shared-view macro-state)
                   (load.compiler-load-surface-summaries)
                   (tc_core.TcNameIdList.Nil))]
               ;; The provider stays a lazy surface summary (aliased dotted
@@ -3468,36 +3515,37 @@
                     (tc_core.macro-surface-module-has-macro?
                       generated-provider-id))
                   (match (tc_core.macro-surface-call-decl-in-module
-                    macro-state
+                    (tc_core.tc-global-shared-view macro-state)
                     provider-id
                     hook-id)
                     [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) true]
                     [(tc_core.MacroMaybeDecl.No) false])
                   (match (tc_core.macro-surface-call-decl-in-module
-                    macro-state
+                    (tc_core.tc-global-shared-view macro-state)
                     generated-provider-id
                     generated-hook-id)
                     [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) false]
                     [(tc_core.MacroMaybeDecl.No) true])
                   (ctfe.ctfe-module-macro-export-id-for-state?
-                    ctfe-state
+                    (tc_core.tc-global-shared-view ctfe-state)
                     provider-id
                     hook-id)
                   (not
                     (ctfe.ctfe-module-macro-export-id-for-state?
-                      ctfe-state
+                      (tc_core.tc-global-shared-view ctfe-state)
                       provider-id
                       non-macro-id)))]
               (begin
                 (load.compiler-load-surface-summaries-reset!)
-                (tc_core.macro-surface-call-decl-cache-reset! macro-state)
+                (tc_core.macro-surface-call-decl-cache-reset!
+                  (tc_core.tc-global-shared-view macro-state))
                 (and
                   before-reset
                   (not
                     (tc_core.macro-surface-macro-in-module? provider-id hook-id))
                   (not (tc_core.macro-surface-module-has-macro? provider-id))
                   (match (tc_core.macro-surface-call-decl-in-module
-                    macro-state
+                    (tc_core.tc-global-shared-view macro-state)
                     provider-id
                     hook-id)
                     [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) false]
@@ -3508,16 +3556,21 @@
   [path : String]
   [source : String]) : bool
   (let
-    [path-id : i64 (load.compiler-load-parse-context-name-id path)]
+    [path-id : i64
+      (load.compiler-load-parse-context-name-id
+        (tc_core.tc-global-shared-view path))]
     [fallback-id : i64
       (load.compiler-load-parse-context-name-id
-        (load.compiler-load-canonical-module-id-from-path path))]
-    (match (parser.parse-ast-source-diagnostic path source)
+        (load.compiler-load-canonical-module-id-from-path
+          (tc_core.tc-global-shared-view path)))]
+    (match (parser.parse-ast-source-diagnostic
+      (tc_core.tc-global-shared-view path)
+      source)
       [(parser.ResultAstProgramDiagnostic.Ok program)
         (match (load.compiler-load-surface-summary-build
-          path
+          (tc_core.tc-global-shared-view path)
           path-id
-          (load.compiler-load-dirname path)
+          (load.compiler-load-dirname (tc_core.tc-global-shared-view path))
           program
           fallback-id
           false)
@@ -3729,7 +3782,7 @@
 
 (define (compiler-typecheck-smoke-expr-list-parsed-id
   [exprs : (& exprs ast.AstExprList)]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (let
     [index : i64 0]
     [found : i64 -1]
@@ -3746,7 +3799,7 @@
 
 (define (compiler-typecheck-smoke-expr-parsed-id
   [expr-id : i64]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (match (ast.ast-node-get expr-id)
     [(ast.AstExpr.Spanned inner _)
       (compiler-typecheck-smoke-expr-parsed-id inner name)]
@@ -3812,7 +3865,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         [index : i64 0]
         [found : i64 -1]
         (begin
@@ -3835,19 +3888,19 @@
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
-                        (compiler-typecheck-smoke-expr-parsed-id value name))]
+                        (compiler-typecheck-smoke-expr-parsed-id value (& name)))]
                     [(ast.AstDecl.DefFn decl-meta name-id _ _ body _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
-                        (compiler-typecheck-smoke-expr-parsed-id body name))]
+                        (compiler-typecheck-smoke-expr-parsed-id body (& name)))]
                     [(ast.AstDecl.DefMacro decl-meta name-id _ _ body)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
-                        (compiler-typecheck-smoke-expr-parsed-id body name))]
+                        (compiler-typecheck-smoke-expr-parsed-id body (& name)))]
                     [(ast.AstDecl.DefStruct decl-meta name-id _ _ _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
@@ -3872,7 +3925,7 @@
     [name-id : i64
       (compiler-typecheck-smoke-program-parsed-id
         (tc_core.tc-context-program ctx)
-        name)]
+        (tc_core.tc-global-shared-view name))]
     (if (>= name-id 0)
       name-id
       (io.panic (str_cat.str-cat context name)))))
@@ -3883,7 +3936,7 @@
   [name : String]) : i64
   (compiler_symbols.compiler-symbol-module-key-id-by-id
     (compiler-typecheck-smoke-required-parsed-id
-      ctx
+      (tc_core.tc-global-shared-view ctx)
       "typecheck smoke: missing module id: "
       module)
     (compiler-typecheck-smoke-required-parsed-id
@@ -3904,11 +3957,11 @@
   (begin
     (tc_core.tc-source-dotted-alias-key-cache-reset!)
     (match (tc_core.tc-source-name-lookup-key-with-field-check
-      entry-ctx
-      env
+      (tc_core.tc-global-shared-view entry-ctx)
+      (tc_core.tc-global-shared-view env)
       "helper.value"
       (compiler-typecheck-smoke-required-parsed-id
-        entry-ctx
+        (tc_core.tc-global-shared-view entry-ctx)
         "typecheck smoke: missing dotted lookup id: "
         "helper.value")
       true)
@@ -3916,18 +3969,18 @@
         (let
           [module-id : i64
             (compiler-typecheck-smoke-required-parsed-id
-              entry-ctx
+              (tc_core.tc-global-shared-view entry-ctx)
               "typecheck smoke: missing entry module id: "
               "entry.module")]
           [name-id : i64
             (compiler-typecheck-smoke-required-parsed-id
-              entry-ctx
+              (tc_core.tc-global-shared-view entry-ctx)
               "typecheck smoke: missing dotted lookup id: "
               "helper.value")]
           (and
             (string.eq key "helper.module/value")
             (compiler-typecheck-smoke-qualified-cache-id?
-              entry-ctx
+              (tc_core.tc-global-shared-view entry-ctx)
               (tc_core.tc-source-dotted-alias-key-cache-get module-id name-id)
               "helper.module"
               "value")
@@ -3948,11 +4001,11 @@
   (begin
     (tc_core.tc-source-dotted-full-path-key-cache-reset!)
     (match (tc_core.tc-source-name-lookup-key-with-field-check
-      full-ctx
-      env
+      (tc_core.tc-global-shared-view full-ctx)
+      (tc_core.tc-global-shared-view env)
       "helper.module.value"
       (compiler-typecheck-smoke-required-parsed-id
-        full-ctx
+        (tc_core.tc-global-shared-view full-ctx)
         "typecheck smoke: missing full dotted lookup id: "
         "helper.module.value")
       true)
@@ -3960,18 +4013,18 @@
         (let
           [module-id : i64
             (compiler-typecheck-smoke-required-parsed-id
-              full-ctx
+              (tc_core.tc-global-shared-view full-ctx)
               "typecheck smoke: missing full entry module id: "
               "full.entry")]
           [name-id : i64
             (compiler-typecheck-smoke-required-parsed-id
-              full-ctx
+              (tc_core.tc-global-shared-view full-ctx)
               "typecheck smoke: missing full dotted lookup id: "
               "helper.module.value")]
           (and
             (string.eq key "helper.module/value")
             (compiler-typecheck-smoke-qualified-cache-id?
-              full-ctx
+              (tc_core.tc-global-shared-view full-ctx)
               (tc_core.tc-source-dotted-full-path-key-cache-get
                 module-id
                 name-id)
@@ -4001,7 +4054,7 @@
             [(tc_core.ResultCompilerTypecheckChecked.Ok _ ctx env _)
               (compiler-typecheck-smoke-lazy-import-full-path-cache-checked?
                 (tc_core.tc-context-with-module-id
-                  ctx
+                  (tc_core.tc-global-shared-view ctx)
                   "full.entry"
                   (compiler-typecheck-smoke-required-parsed-id
                     ctx
@@ -4047,9 +4100,10 @@
     (let
       [macro-state : tc_core.TcMacroState
         (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
+      [registries : compiler_symbols.CompilerRegistries
+        (compiler_symbols.compiler-registries-empty)]
       [registry-id : i64
-        (compiler_symbols.compiler-registries-identity
-          (compiler_symbols.compiler-registries-empty))]
+        (compiler_symbols.compiler-registries-identity registries)]
       [old-module-id : i64 (ci.intern "generation.entry")]
       [old-alias-name-id : i64 (ci.intern "alias.value")]
       [old-full-name-id : i64 (ci.intern "full.path.value")]
@@ -4152,28 +4206,28 @@
     [name-id : i64 23]
     (begin
       (tc_core.tc-source-dotted-alias-key-cache-put-for-state!
-        state-a
+        (tc_core.tc-global-shared-view state-a)
         table-a
         generation-a
         module-id
         name-id
         41)
       (tc_core.tc-source-dotted-alias-key-cache-put-for-state!
-        state-b
+        (tc_core.tc-global-shared-view state-b)
         table-b
         generation-b
         module-id
         name-id
         42)
       (tc_core.tc-source-dotted-full-path-key-cache-put-for-state!
-        state-b
+        (tc_core.tc-global-shared-view state-b)
         table-b
         generation-b
         module-id
         name-id
         43)
       (tc_core.tc-source-qualified-variant-key-cache-put-for-state!
-        state-b
+        (tc_core.tc-global-shared-view state-b)
         table-b
         generation-b
         registry-b
@@ -4186,7 +4240,7 @@
           (and
             (=
               (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                state-a
+                (tc_core.tc-global-shared-view state-a)
                 table-a
                 generation-a
                 module-id
@@ -4194,7 +4248,7 @@
               41)
             (=
               (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                state-b
+                (tc_core.tc-global-shared-view state-b)
                 table-b
                 generation-b
                 module-id
@@ -4207,7 +4261,7 @@
               (and
                 (=
                   (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                    state-a
+                    (tc_core.tc-global-shared-view state-a)
                     table-a
                     generation-a
                     module-id
@@ -4215,7 +4269,7 @@
                   -2)
                 (=
                   (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                    state-b
+                    (tc_core.tc-global-shared-view state-b)
                     table-b
                     generation-b
                     module-id
@@ -4223,7 +4277,7 @@
                   42)
                 (=
                   (tc_core.tc-source-dotted-full-path-key-cache-get-for-state
-                    state-b
+                    (tc_core.tc-global-shared-view state-b)
                     table-b
                     generation-b
                     module-id
@@ -4231,7 +4285,7 @@
                   43)
                 (=
                   (tc_core.tc-source-qualified-variant-key-cache-get-for-state
-                    state-b
+                    (tc_core.tc-global-shared-view state-b)
                     table-b
                     generation-b
                     registry-b
@@ -4240,7 +4294,7 @@
                   44)
                 (=
                   (tc_core.tc-source-qualified-variant-handle-cache-get-for-state
-                    state-b
+                    (tc_core.tc-global-shared-view state-b)
                     table-b
                     generation-b
                     registry-b
@@ -4250,7 +4304,7 @@
             [wrong-owner-miss : bool
               (=
                 (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                  state-b
+                  (tc_core.tc-global-shared-view state-b)
                   table-a
                   generation-b
                   module-id
@@ -4258,7 +4312,7 @@
                 -2)]
             (begin
               (tc_core.tc-source-dotted-full-path-key-cache-put-for-state!
-                state-b
+                (tc_core.tc-global-shared-view state-b)
                 table-b
                 generation-b
                 module-id
@@ -4268,7 +4322,7 @@
                 [stale-generation-miss : bool
                   (=
                     (tc_core.tc-source-dotted-full-path-key-cache-get-for-state
-                      state-b
+                      (tc_core.tc-global-shared-view state-b)
                       table-b
                       (+ generation-b 1)
                       module-id
@@ -4601,8 +4655,11 @@
               (match expanded
                 [(ast.AstProgram.Program decls-box)
                   (let
-                    [decls : ast.AstDeclList (__tl-box-place decls-box)]
-                    (if (tc_core.macro-module-exists? decls module-name)
+                    [decls : ast.AstDeclList
+                      (ast.ast-decl-list-box-shared-view decls-box)]
+                    (if (tc_core.macro-module-exists?
+                      (tc_core.tc-global-shared-view decls)
+                      (tc_core.tc-global-shared-view module-name))
                       (compiler-typecheck-smoke-generated-catalog-body-has-name?
                         (tc_core.macro-collect-module-body-decls
                           decls
@@ -4628,7 +4685,7 @@
               (match expanded
                 [(ast.AstProgram.Program decls-box)
                   (tc_core.macro-module-exists?
-                    (__tl-box-place decls-box)
+                    (ast.ast-decl-list-box-shared-view decls-box)
                     module-name)])]
             [(tc_core.ResultMacroExpand.Err _) false])]
         [(parser.ResultAstProgramDiagnostic.Err _) false])]
@@ -4860,7 +4917,7 @@
               (let
                 [entry-ctx : tc_core.TcContext
                   (tc_core.tc-context-with-module-id
-                    ctx
+                    (tc_core.tc-global-shared-view ctx)
                     "entry.module"
                     (compiler-typecheck-smoke-required-parsed-id
                       ctx
@@ -4871,80 +4928,81 @@
                   (= (tc_core.tc-lazy-import-summary-backed-stub-count) 1)
                   (not
                     (tc_core.tc-name-bound-id?
-                      env
+                      (tc_core.tc-global-shared-view env)
                       (compiler-typecheck-smoke-module-key-id
-                        entry-ctx
+                        (tc_core.tc-global-shared-view entry-ctx)
                         "helper"
                         "value")))
                   (tc_core.tc-name-bound-id?
-                    env
+                    (tc_core.tc-global-shared-view env)
                     (compiler-typecheck-smoke-module-key-id
-                      entry-ctx
+                      (tc_core.tc-global-shared-view entry-ctx)
                       "helper.module"
                       "value"))
                   (match (tc_core.tc-lookup-dotted-source-visible
-                    entry-ctx
-                    env
+                    (tc_core.tc-global-shared-view entry-ctx)
+                    (tc_core.tc-global-shared-view env)
                     "helper.value"
                     (compiler-typecheck-smoke-required-parsed-id
-                      entry-ctx
+                      (tc_core.tc-global-shared-view entry-ctx)
                       "typecheck smoke: missing helper.value id: "
                       "helper.value"))
                     [(tc_core.ResultTcType.Ok _) true]
                     [(tc_core.ResultTcType.Err _) false])
                   (compiler-typecheck-smoke-lazy-import-explicit-alias-cache-ok?
-                    entry-ctx
-                    env)
+                    (tc_core.tc-global-shared-view entry-ctx)
+                    (tc_core.tc-global-shared-view env))
                   (match (tc_core.tc-lookup-dotted-source-visible
-                    entry-ctx
-                    env
+                    (tc_core.tc-global-shared-view entry-ctx)
+                    (tc_core.tc-global-shared-view env)
                     "helper.get"
                     (compiler-typecheck-smoke-required-parsed-id
-                      entry-ctx
+                      (tc_core.tc-global-shared-view entry-ctx)
                       "typecheck smoke: missing helper.get id: "
                       "helper.get"))
                     [(tc_core.ResultTcType.Ok _) true]
                     [(tc_core.ResultTcType.Err _) false])
                   (match (tc_core.tc-lookup-dotted-source-visible
-                    entry-ctx
-                    env
+                    (tc_core.tc-global-shared-view entry-ctx)
+                    (tc_core.tc-global-shared-view env)
                     "helper.Choice.Full"
                     (compiler-typecheck-smoke-required-parsed-id
-                      entry-ctx
+                      (tc_core.tc-global-shared-view entry-ctx)
                       "typecheck smoke: missing helper.Choice.Full id: "
                       "helper.Choice.Full"))
                     [(tc_core.ResultTcType.Ok _) true]
                     [(tc_core.ResultTcType.Err _) false])
                   (match (tc_core.tc-dotted-type-name-lookup-key-from-id
-                    entry-ctx
+                    (tc_core.tc-global-shared-view entry-ctx)
                     "helper.Item"
                     (compiler-typecheck-smoke-required-parsed-id
-                      entry-ctx
+                      (tc_core.tc-global-shared-view entry-ctx)
                       "typecheck smoke: missing helper.Item id: "
                       "helper.Item"))
                     [(tc_core.ResultTcString.Ok key)
                       (string.eq key "helper.module/Item")]
                     [(tc_core.ResultTcString.Err _) false])
                   (match (tc_core.tc-module-local-env-id
-                    entry-ctx
+                    (tc_core.tc-global-shared-view entry-ctx)
                     env
                     "entry.module"
-                    (tc_core.tc-context-module-id entry-ctx))
+                    (tc_core.tc-context-module-id
+                      (tc_core.tc-global-shared-view entry-ctx)))
                     [(tc_core.ResultTcEnv.Ok local-env)
                       (and
                         (not
                           (tc_core.tc-name-bound-id?
-                            local-env
+                            (tc_core.tc-global-shared-view local-env)
                             (compiler-typecheck-smoke-module-key-id
-                              entry-ctx
+                              (tc_core.tc-global-shared-view entry-ctx)
                               "helper"
                               "value")))
                         (match (tc_core.tc-lookup-dotted-source-visible
-                          entry-ctx
+                          (tc_core.tc-global-shared-view entry-ctx)
                           local-env
                           "helper.value"
                           (compiler-typecheck-smoke-required-parsed-id
-                            entry-ctx
+                            (tc_core.tc-global-shared-view entry-ctx)
                             "typecheck smoke: missing helper.value id: "
                             "helper.value"))
                           [(tc_core.ResultTcType.Ok _) true]
@@ -4997,7 +5055,7 @@
             (let
               [array-materialized : bool
                 (compiler-typecheck-smoke-paths-contain?
-                  paths
+                  (tc_core.tc-global-shared-view paths)
                   "stdlib/array.tl")]
               (match (tc_api.typecheck-compiler-program-with-paths-checked
                 (ast.ast-program decls)
@@ -5010,10 +5068,12 @@
                 [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
                 [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                   (let
+                    [first : diagnostic.CompilerDiagnostic
+                      (diagnostic.compiler-diagnostic-list-first
+                        (diagnostic.compiler-diagnostic-list-box-shared-view
+                          diag))]
                     [message : String
-                      (diagnostic.compiler-diagnostic-message
-                        (diagnostic.compiler-diagnostic-list-first
-                          (__tl-box-place diag)))]
+                      (diagnostic.compiler-diagnostic-message first)]
                     (begin
                       (io.stderr-write (byte_buf.str-as-bytes (& message)))
                       (io.panic
@@ -5041,7 +5101,7 @@
               [skip-count : i64 (load.compiler-load-lazy-import-skip-count)]
               [result-materialized : bool
                 (compiler-typecheck-smoke-paths-contain?
-                  paths
+                  (tc_core.tc-global-shared-view paths)
                   "stdlib/result.tl")]
               (match (tc_api.typecheck-compiler-program-with-paths-checked
                 (ast.ast-program decls)
@@ -5051,10 +5111,12 @@
                 [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
                 [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                   (let
+                    [first : diagnostic.CompilerDiagnostic
+                      (diagnostic.compiler-diagnostic-list-first
+                        (diagnostic.compiler-diagnostic-list-box-shared-view
+                          diag))]
                     [message : String
-                      (diagnostic.compiler-diagnostic-message
-                        (diagnostic.compiler-diagnostic-list-first
-                          (__tl-box-place diag)))]
+                      (diagnostic.compiler-diagnostic-message first)]
                     (begin
                       (io.stderr-write (byte_buf.str-as-bytes (& message)))
                       false))]))]
@@ -5083,10 +5145,11 @@
               [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
               [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                 (let
+                  [first : diagnostic.CompilerDiagnostic
+                    (diagnostic.compiler-diagnostic-list-first
+                      (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
                   [message : String
-                    (diagnostic.compiler-diagnostic-message
-                      (diagnostic.compiler-diagnostic-list-first
-                        (__tl-box-place diag)))]
+                    (diagnostic.compiler-diagnostic-message first)]
                   (begin
                     (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
@@ -5115,10 +5178,11 @@
               [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
               [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                 (let
+                  [first : diagnostic.CompilerDiagnostic
+                    (diagnostic.compiler-diagnostic-list-first
+                      (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
                   [message : String
-                    (diagnostic.compiler-diagnostic-message
-                      (diagnostic.compiler-diagnostic-list-first
-                        (__tl-box-place diag)))]
+                    (diagnostic.compiler-diagnostic-message first)]
                   (begin
                     (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
@@ -5201,11 +5265,14 @@
         program
         (ast.ast-decl-root-path-cons
           "support.tl"
-          (ast.ast-decl-root-path-cons path (ast.ast-decl-path-list-new))))
+          (ast.ast-decl-root-path-cons
+            (tc_core.tc-global-shared-view path)
+            (ast.ast-decl-path-list-new))))
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : diagnostic.CompilerDiagnostic
-              (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))]
+              (diagnostic.compiler-diagnostic-list-first
+                (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
             (and
               (string.eq (diagnostic.compiler-diagnostic-message value) message)
               (string.eq (diagnostic.compiler-diagnostic-path value) path)
@@ -5833,7 +5900,7 @@
             (cis.intern-structural-session-valid? next-session-a)
             (= session-a.address next-session-a.address))]
         (begin
-          (ci.intern-compat-state-reset! intern-b)
+          (ci.intern-compat-state-reset! (&mut intern-b))
           (and
             reset-to-ok
             (cis.intern-structural-session-valid? next-session-a)
@@ -5860,7 +5927,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diagnostics)
           (=
             (diagnostic.compiler-diagnostic-list-count
-              (__tl-box-place diagnostics))
+              (diagnostic.compiler-diagnostic-list-box-shared-view diagnostics))
             1)])]
     [reused : tc_core.ResultCompilerTypecheck
       (tc_api.typecheck-compiler-source
@@ -5892,8 +5959,8 @@
   [cfgs : sym_i64_env.SymI64Env]) : load.ResultCompilerLoadWithPaths
   (match (load.compiler-load-core-macro-prelude-with-roots-cfg
     (sym_i64_env.sym-i64-empty)
-    roots
-    cfgs)
+    (tc_core.tc-global-shared-view roots)
+    (tc_core.tc-global-shared-view cfgs))
     [(load.ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
@@ -5936,17 +6003,17 @@
         (load.compiler-load-surface-summaries-reset!)
         (tc_core.tc-prefix-snapshot-cache-clear!)
         (match (compiler-typecheck-smoke-installed-proof-load-file
-          path
-          roots
-          cfgs)
+          (tc_core.tc-global-shared-view path)
+          (tc_core.tc-global-shared-view roots)
+          (tc_core.tc-global-shared-view cfgs))
           [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
             (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
               (ast.ast-program decls)
               paths
-              roots
+              (tc_core.tc-global-shared-view roots)
               (tc_api.compiler-typecheck-prefix-cache-scope
                 "proof-reuse-smoke"
-                roots
+                (tc_core.tc-global-shared-view roots)
                 cfgs))
               [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
                 (cfg
@@ -5956,10 +6023,12 @@
               [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
               [(tc_core.ResultCompilerTypecheckChecked.Err diagnostics)
                 (let
+                  [first : diagnostic.CompilerDiagnostic
+                    (diagnostic.compiler-diagnostic-list-first
+                      (diagnostic.compiler-diagnostic-list-box-shared-view
+                        diagnostics))]
                   [message : String
-                    (diagnostic.compiler-diagnostic-message
-                      (diagnostic.compiler-diagnostic-list-first
-                        (__tl-box-place diagnostics)))]
+                    (diagnostic.compiler-diagnostic-message first)]
                   (begin
                     (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
@@ -6008,17 +6077,17 @@
         (load.compiler-load-surface-summaries-reset!)
         (tc_core.tc-prefix-snapshot-cache-clear!)
         (match (compiler-typecheck-smoke-installed-proof-load-file
-          path
-          roots
-          cfgs)
+          (tc_core.tc-global-shared-view path)
+          (tc_core.tc-global-shared-view roots)
+          (tc_core.tc-global-shared-view cfgs))
           [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
             (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
               (ast.ast-program decls)
               paths
-              roots
+              (tc_core.tc-global-shared-view roots)
               (tc_api.compiler-typecheck-prefix-cache-scope
                 "proof-reuse-smoke"
-                roots
+                (tc_core.tc-global-shared-view roots)
                 cfgs))
               [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) false]
               [(tc_core.ResultCompilerTypecheckChecked.Partial
@@ -6026,17 +6095,23 @@
                   _
                   _
                   _)
-                (load.compiler-load-string-contains?
-                  (diagnostic.compiler-diagnostic-message
+                (let
+                  [first : diagnostic.CompilerDiagnostic
                     (diagnostic.compiler-diagnostic-list-first
-                      (deref diagnostics)))
-                  expected-substring)]
+                      (diagnostic.compiler-diagnostic-list-box-shared-view
+                        diagnostics))]
+                  (load.compiler-load-string-contains?
+                    (diagnostic.compiler-diagnostic-message first)
+                    expected-substring))]
               [(tc_core.ResultCompilerTypecheckChecked.Err diagnostics)
-                (load.compiler-load-string-contains?
-                  (diagnostic.compiler-diagnostic-message
+                (let
+                  [first : diagnostic.CompilerDiagnostic
                     (diagnostic.compiler-diagnostic-list-first
-                      (__tl-box-place diagnostics)))
-                  expected-substring)])]
+                      (diagnostic.compiler-diagnostic-list-box-shared-view
+                        diagnostics))]
+                  (load.compiler-load-string-contains?
+                    (diagnostic.compiler-diagnostic-message first)
+                    expected-substring))])]
           [(load.ResultCompilerLoadWithPaths.Err load-diagnostic)
             (load.compiler-load-string-contains?
               (diagnostic.compiler-diagnostic-message

@@ -3943,9 +3943,7 @@
               (ast.AstType.I64)
               specializations
               (backend.CompilerBackendMode.Scalar))]
-          [emitted : tlci.TlciSpmdSpecializations
-            (match callable
-              [(tlci.TlciSpmdCallable _ _ items) items])]
+          [emitted : tlci.TlciSpmdSpecializations callable.specializations]
           (and
             (= (tlci.tlci-spmd-specializations-len emitted) 1)
             (let

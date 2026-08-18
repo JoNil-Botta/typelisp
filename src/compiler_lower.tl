@@ -36763,7 +36763,7 @@
 
 (define (lower-c-abi-ir-return-slots-from
   [slots : LowerCAbiSlotList]
-  [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)]
+  [out : (&mut out (__tl_dyn-array ir.CompilerIrCAbiReturnSlot))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -36782,11 +36782,7 @@
     [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
       (array.make-array ir.CompilerIrCAbiReturnSlot count)]
     (begin
-      (lower-c-abi-ir-return-slots-from
-        slots
-        (lower-global-shared-view out)
-        0
-        count)
+      (lower-c-abi-ir-return-slots-from slots (&mut out) 0 count)
       (ir.CompilerIrCAbiReturnSlotSeq out count))))
 
 (define (lower-c-abi-materialize-stored-register-result

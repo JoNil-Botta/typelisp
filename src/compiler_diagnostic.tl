@@ -192,7 +192,7 @@
 
 (define (compiler-diagnostic-list-first [diagnostics : CompilerDiagnosticList]) : CompilerDiagnostic
   (if (> diagnostics.len 0)
-    (array-ref diagnostics.slots 0)
+    (compiler-diagnostic-copy-ref (& (array-ref diagnostics.slots 0)))
     (compiler-diagnostic-at-start "" "compiler: internal empty diagnostic list")))
 
 (define (compiler-diagnostic-span-path [span : (& span CompilerDiagnosticSpan)]) : String
@@ -615,6 +615,18 @@
     (compiler-diagnostic-copy-label-list diag.secondary)
     (compiler-diagnostic-copy-note-list diag.notes)
     (compiler-diagnostic-copy-fix-list diag.fixes)))
+
+(define (compiler-diagnostic-copy-ref [diag : (& diag CompilerDiagnostic)]) : CompilerDiagnostic
+  (CompilerDiagnostic
+    (string.copy (& diag.message))
+    (compiler-diagnostic-level diag)
+    (compiler-diagnostic-copy-maybe-string-ref (& diag.code))
+    (compiler-diagnostic-copy-maybe-string-ref (& diag.category))
+    (compiler-diagnostic-copy-span-ref (& diag.primary))
+    (compiler-diagnostic-copy-maybe-string-ref (& diag.help))
+    (compiler-diagnostic-copy-label-list-ref (& diag.secondary))
+    (compiler-diagnostic-copy-note-list-ref (& diag.notes))
+    (compiler-diagnostic-copy-fix-list-ref (& diag.fixes))))
 
 (define (compiler-diagnostic-position-before-or-equal?
   [left-line : i64]

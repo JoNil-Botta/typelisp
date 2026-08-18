@@ -1377,7 +1377,10 @@
               (begin
                 (io.print-format
                   "{}"
-                  (str_cat.str-cat "Wrote " object-path "\n"))
+                  (str_cat.str-cat
+                    "Wrote "
+                    (owned_view.compiler-owned-shared-view object-path)
+                    "\n"))
                 (ResultCompileCliWindowsBatchEntry.Ok
                   "coff-object"
                   object-path
@@ -1412,7 +1415,10 @@
               (begin
                 (io.print-format
                   "{}"
-                  (str_cat.str-cat "Wrote " assembly-path "\n"))
+                  (str_cat.str-cat
+                    "Wrote "
+                    (owned_view.compiler-owned-shared-view assembly-path)
+                    "\n"))
                 (ResultCompileCliWindowsBatchEntry.Ok
                   "assembly"
                   assembly-path

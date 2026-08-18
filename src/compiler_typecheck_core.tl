@@ -3476,9 +3476,13 @@
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [root-a : i64
-      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 101))]
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view pools-a)
+        (ast.AstExpr.Var 101))]
     [root-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 202))]
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view pools-b)
+        (ast.AstExpr.Var 202))]
     [ctx-a : TcContext
       (tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -3486,7 +3490,7 @@
         (csym.compiler-registries-empty)
         ""
         cbi.compiler-builtin-id-fix-empty
-        pools-a)]
+        (owned_view.compiler-owned-shared-view pools-a))]
     [ctx-b : TcContext
       (tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -3494,36 +3498,51 @@
         (csym.compiler-registries-empty)
         ""
         cbi.compiler-builtin-id-fix-empty
-        pools-b)]
+        (owned_view.compiler-owned-shared-view pools-b))]
     [next-a : i64
-      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 303))]
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view pools-a)
+        (ast.AstExpr.Var 303))]
     [next-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 404))]
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view pools-b)
+        (ast.AstExpr.Var 404))]
     [a-root-ok? : bool
-      (match (tc-context-expr-get ctx-a root-a)
+      (match (tc-context-expr-get
+        (owned_view.compiler-owned-shared-view ctx-a)
+        root-a)
         [(ast.AstExpr.Var name) (= name 101)]
         [_ false])]
     [b-root-ok? : bool
-      (match (tc-context-expr-get ctx-b root-b)
+      (match (tc-context-expr-get
+        (owned_view.compiler-owned-shared-view ctx-b)
+        root-b)
         [(ast.AstExpr.Var name) (= name 202)]
         [_ false])]
     [a-next-ok? : bool
-      (match (tc-context-expr-get ctx-a next-a)
+      (match (tc-context-expr-get
+        (owned_view.compiler-owned-shared-view ctx-a)
+        next-a)
         [(ast.AstExpr.Var name) (= name 303)]
         [_ false])]
     [b-next-ok? : bool
-      (match (tc-context-expr-get ctx-b next-b)
+      (match (tc-context-expr-get
+        (owned_view.compiler-owned-shared-view ctx-b)
+        next-b)
         [(ast.AstExpr.Var name) (= name 404)]
         [_ false])]
     [compat-ok? : bool
       (begin
-        (ast.ast-node-pool-compat-context-use! pools-a)
+        (ast.ast-node-pool-compat-context-use!
+          (owned_view.compiler-owned-shared-view pools-a))
         (let
           [ok?
             : bool
             ;; Compatibility callers intentionally follow their selected pool,
             ;; even when the TcContext argument names another owner.
-            (match (tc-context-expr-get ctx-b root-a)
+            (match (tc-context-expr-get
+              (owned_view.compiler-owned-shared-view ctx-b)
+              root-a)
               [(ast.AstExpr.Var name) (= name 101)]
               [_ false])]
           (begin
@@ -3537,8 +3556,14 @@
       a-next-ok?
       b-next-ok?
       compat-ok?
-      (= (ast.ast-node-pool-context-expr-len pools-a) 2)
-      (= (ast.ast-node-pool-context-expr-len pools-b) 2)
+      (=
+        (ast.ast-node-pool-context-expr-len
+          (owned_view.compiler-owned-shared-view pools-a))
+        2)
+      (=
+        (ast.ast-node-pool-context-expr-len
+          (owned_view.compiler-owned-shared-view pools-b))
+        2)
       (= (ast.ast-node-pool-len) installed-len))
       unit
       (io.panic "typecheck: context expression pool isolation failed"))))
@@ -6569,7 +6594,7 @@
       [start-ms : i64 (profile.now-ms)]
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcType (tc-expr ctx env expr)]
+      [result : ResultTcType (tc-expr (tc-global-shared-view ctx) env expr)]
       (begin
         (compiler-tc-reinfer-profile-record
           site
@@ -6589,7 +6614,8 @@
       [start-ms : i64 (profile.now-ms)]
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcType (tc-expr-id ctx env expr-id)]
+      [result : ResultTcType
+        (tc-expr-id (tc-global-shared-view ctx) env expr-id)]
       (begin
         (compiler-tc-reinfer-profile-record
           site
@@ -14765,7 +14791,7 @@
           (begin
             (match (tc-global-shared-view decl)
               [(ast.AstDecl.Module module-id)
-                (set! current-module (ci.intern-str module-id))]
+                (set! current-module (tc-env-key-name-text module-id))]
               [_
                 (match (tc-stdlib-check-comptime-declaration-surface-decl
                   current-module
@@ -20931,13 +20957,24 @@
   (let
     [source-name-id : i64
       (macro-hygiene-global-source-name-id-or name-id name-id)]
-    [slash : i64 (ci.intern-qualified-last-slash source-name-id)]
+    [slash : i64
+      (if (and (>= source-name-id 0) (< source-name-id (ci.intern-capacity)))
+        (ci.intern-qualified-last-slash source-name-id)
+        (tc-qualified-name-last-slash name))]
     [n : i64 (string.string-length name)]
     (and
       (not (tc-hygiene-local-name-id? name-id))
       (not (tc-hygiene-global-name-id? name-id))
       (> slash 0)
       (< slash (- n 1)))))
+
+(test
+  tc-source-slash-qualified-private-name
+  (test.assert-false
+    (tc-source-slash-qualified-id?
+      "__lower_private"
+      (- 0 (+ (* (ci.intern-capacity) 4) 5)))
+    "lowerer-private names stay outside intern metadata"))
 
 (define (tc-name-slashes-to-dots [name : String]) : String
   (let
@@ -21572,7 +21609,9 @@
                   (ast.AstExpr.Var name))
                 (ast.ast-node-set!
                   expr-id
-                  (tc-context-expr-get ctx projection-id))
+                  (tc-context-expr-get
+                    (tc-global-shared-view ctx)
+                    projection-id))
                 ResultTcUnit.Ok)]
             [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
           ResultTcUnit.Ok))]
@@ -21591,7 +21630,9 @@
                   (ast.AstExpr.Set name value-box))
                 (ast.ast-node-set!
                   expr-id
-                  (tc-context-expr-get ctx projection-id))
+                  (tc-context-expr-get
+                    (tc-global-shared-view ctx)
+                    projection-id))
                 ResultTcUnit.Ok)]
             [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
           ResultTcUnit.Ok))]
@@ -21605,7 +21646,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr-id : i64]) : ResultTcUnit
-  (match (tc-context-expr-get ctx expr-id)
+  (match (tc-context-expr-get (tc-global-shared-view ctx) expr-id)
     [(ast.AstExpr.Spanned inner-box _)
       (tc-normalize-dotted-local-field-node! ctx env inner-box)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
@@ -21636,10 +21677,10 @@
       (tc-normalize-dotted-local-field-node! ctx env place-box)]
     [_
       (tc-normalize-dotted-local-field-direct-node!
-        ctx
+        (tc-global-shared-view ctx)
         env
         expr-id
-        (tc-context-expr-get ctx expr-id))]))
+        (tc-context-expr-get (tc-global-shared-view ctx) expr-id))]))
 
 (define (tc-normalize-dotted-local-field-expr-list!
   [ctx : TcContext]
@@ -22031,7 +22072,8 @@
         (= (ast.ast-param-list-len (& params)) 1)
         (match (ast.ast-param-list-get (& params) 0 (ast.ast-param-fallback))
           [(ast.AstParam.Param _ text _)
-            (tc-str-ref-type? (tc-resolve-type ctx text))]
+            (tc-str-ref-type?
+              (tc-resolve-type (tc-global-shared-view ctx) text))]
           [_ false]))]
     [_ false]))
 
@@ -22057,7 +22099,9 @@
                 (and
                   (tc-str-ref-type?
                     (tc-resolve-type (tc-global-shared-view ctx) text))
-                  (tc-type-eq (tc-resolve-type ctx index) (ast.AstType.I64)))]
+                  (tc-type-eq
+                    (tc-resolve-type (tc-global-shared-view ctx) index)
+                    (ast.AstType.I64)))]
               [_ false])]
           [_ false]))]
     [_ false]))
@@ -22084,7 +22128,8 @@
                 (and
                   (tc-str-ref-type?
                     (tc-resolve-type (tc-global-shared-view ctx) left))
-                  (tc-str-ref-type? (tc-resolve-type ctx right)))]
+                  (tc-str-ref-type?
+                    (tc-resolve-type (tc-global-shared-view ctx) right)))]
               [_ false])]
           [_ false]))]
     [_ false]))
@@ -22111,7 +22156,8 @@
                 (and
                   (tc-str-ref-type?
                     (tc-resolve-type (tc-global-shared-view ctx) left))
-                  (tc-str-ref-type? (tc-resolve-type ctx right)))]
+                  (tc-str-ref-type?
+                    (tc-resolve-type (tc-global-shared-view ctx) right)))]
               [_ false])]
           [_ false]))]
     [_ false]))
@@ -25089,28 +25135,41 @@
         (tc-resolve-type-list
           (tc-global-shared-view ctx)
           (ast.ast-type-list-box-shared-view args))
-        (tc-resolve-type ctx (ast.ty-node-get ret)))]
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get ret)))]
     [(ast.AstType.Tuple elems)
       (ast.ast-ty-tuple
         (tc-resolve-type-list ctx (ast.ast-type-list-box-shared-view elems)))]
     [(ast.AstType.Array elem len)
-      (ast.ast-ty-array (tc-resolve-type ctx (ast.ty-node-get elem)) len)]
+      (ast.ast-ty-array
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get elem))
+        len)]
     [(ast.AstType.DynArray elem)
-      (ast.ast-ty-dyn-array (tc-resolve-type ctx (ast.ty-node-get elem)))]
+      (ast.ast-ty-dyn-array
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get elem)))]
     [(ast.AstType.Slice elem)
-      (ast.ast-ty-slice (tc-resolve-type ctx (ast.ty-node-get elem)))]
+      (ast.ast-ty-slice
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get elem)))]
     [(ast.AstType.Box elem)
-      (ast.ast-ty-box (tc-resolve-type ctx (ast.ty-node-get elem)))]
+      (ast.ast-ty-box
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get elem)))]
     [(ast.AstType.Ptr elem)
-      (ast.ast-ty-ptr (tc-resolve-type ctx (ast.ty-node-get elem)))]
+      (ast.ast-ty-ptr
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get elem)))]
     [(ast.AstType.MutPtr elem)
-      (ast.ast-ty-mut-ptr (tc-resolve-type ctx (ast.ty-node-get elem)))]
+      (ast.ast-ty-mut-ptr
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get elem)))]
     [(ast.AstType.Ref region inner)
-      (ast.ast-ty-ref region (tc-resolve-type ctx (ast.ty-node-get inner)))]
+      (ast.ast-ty-ref
+        region
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get inner)))]
     [(ast.AstType.MutRef region inner)
-      (ast.ast-ty-mut-ref region (tc-resolve-type ctx (ast.ty-node-get inner)))]
+      (ast.ast-ty-mut-ref
+        region
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get inner)))]
     [(ast.AstType.Region region inner)
-      (ast.ast-ty-region region (tc-resolve-type ctx (ast.ty-node-get inner)))]
+      (ast.ast-ty-region
+        region
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get inner)))]
     [(ast.AstType.Enum name) (ast.AstType.Enum name)]
     [(ast.AstType.EnumArgs name lifetimes)
       (ast.AstType.EnumArgs name lifetimes)]
@@ -26081,7 +26140,8 @@
   [ty : ast.AstType]) : ResultTcUnit
   (let
     [lifetimes : TcNameIdList
-      (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ty))]
+      (tc-type-collect-reference-lifetimes
+        (tc-resolve-type (tc-global-shared-view ctx) ty))]
     (if (tc-decl-lifetime-id-list-all-in? lifetimes params)
       ResultTcUnit.Ok
       (ResultTcUnit.Err "typecheck: unknown aggregate lifetime parameter"))))
@@ -29369,7 +29429,9 @@
     "typecheck: integer literal "
     (tc-integer-literal-render value text)
     " does not fit expected type "
-    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx expected)))))
+    (tc-type-render
+      (tc-type-without-regions
+        (tc-resolve-type (tc-global-shared-view ctx) expected)))))
 
 (define (tc-integer-literal-type-with-expected
   [ctx : TcContext]
@@ -29810,7 +29872,9 @@
         (tc-global-shared-view name)
         " requires a raw pointer operand"))
       [(ResultTcType.Ok elem)
-        (tc-atomic-check-elem name (tc-resolve-type ctx elem))]
+        (tc-atomic-check-elem
+          name
+          (tc-resolve-type (tc-global-shared-view ctx) elem))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])
     (match (tc-mut-pointer-elem
       (tc-resolve-type
@@ -29821,7 +29885,9 @@
         (tc-global-shared-view name)
         " requires a MutPtr pointer operand"))
       [(ResultTcType.Ok elem)
-        (tc-atomic-check-elem name (tc-resolve-type ctx elem))]
+        (tc-atomic-check-elem
+          name
+          (tc-resolve-type (tc-global-shared-view ctx) elem))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
 (define (tc-atomic-value-mismatch-message [name : String]) : String
@@ -29942,16 +30008,20 @@
   (if (> tail0.len 0)
     (let
       [value : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& tail0) 0 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& tail0) 0 0))]
       [tail1 : ast.AstExprList (ast.ast-expr-list-tail-from-ref (& tail0) 1)]
       (if (tc-atomic-cas-name? (tc-global-shared-view name))
         (if (> tail1.len 0)
           (tc-atomic-cas-call
-            ctx
+            (tc-global-shared-view ctx)
             env
             ptr
             value
-            (tc-context-expr-get ctx (ast.ast-expr-list-get (& tail1) 0 0))
+            (tc-context-expr-get
+              (tc-global-shared-view ctx)
+              (ast.ast-expr-list-get (& tail1) 0 0))
             (ast.ast-expr-list-tail-from-ref (& tail1) 1))
           (ResultTcType.Err
             "typecheck: atomic-cas! expects exactly three arguments"))
@@ -29974,7 +30044,9 @@
       (if (> args.len 0)
         (let
           [ptr : ast.AstExpr
-            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+            (tc-context-expr-get
+              (tc-global-shared-view ctx)
+              (ast.ast-expr-list-get (& args) 0 0))]
           [tail0 : ast.AstExprList (ast.ast-expr-list-tail-from-ref (& args) 1)]
           (if (tc-atomic-load-name? (tc-global-shared-view name))
             (tc-atomic-one-arg-call ctx env name ptr tail0)
@@ -30003,7 +30075,8 @@
           (tc-ptr-addr-of-local-lookup rest-env name-id)))]))
 
 (define (tc-ptr-addr-of-root-type [ctx : TcContext] [ty : ast.AstType]) : ResultTcType
-  (match (tc-type-strip-region (tc-resolve-type ctx (tc-global-shared-view ty)))
+  (match (tc-type-strip-region
+    (tc-resolve-type (tc-global-shared-view ctx) (tc-global-shared-view ty)))
     [(ast.AstType.Ref _ _)
       (ResultTcType.Err
         "typecheck: ptr-addr-of reference roots are not addressable")]
@@ -30026,8 +30099,9 @@
             [(ResultTcType.Err message) (ResultTcType.Err message)])])]
     [(ast.AstExpr.StructGet receiver-box field)
       (let
-        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
-        (match (tc-ptr-addr-of-place ctx env receiver)
+        [receiver : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) receiver-box)]
+        (match (tc-ptr-addr-of-place (tc-global-shared-view ctx) env receiver)
           [(ResultTcType.Ok receiver-ty)
             (match (tc-type-strip-region
               (tc-resolve-type
@@ -30063,10 +30137,15 @@
         [(ResultTcType.Ok index-ty)
           (if (tc-integer-type? index-ty)
             (let
-              [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
-              (match (tc-ptr-addr-of-place ctx env array)
+              [array : ast.AstExpr
+                (tc-context-expr-get (tc-global-shared-view ctx) array-box)]
+              (match (tc-ptr-addr-of-place
+                (tc-global-shared-view ctx)
+                env
+                array)
                 [(ResultTcType.Ok array-ty)
-                  (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+                  (match (tc-type-strip-region
+                    (tc-resolve-type (tc-global-shared-view ctx) array-ty))
                     [(ast.AstType.Array elem-ty _)
                       (ResultTcType.Ok (ast.ty-node-get elem-ty))]
                     [(ast.AstType.DynArray _)
@@ -30225,7 +30304,7 @@
       "typecheck: spmd-broadcast lane must be uniform")
       [(ResultTcUnit.Ok)
         (match (tc-expect
-          (tc-resolve-type ctx lane-ty)
+          (tc-resolve-type (tc-global-shared-view ctx) lane-ty)
           (ast.AstType.I64)
           "typecheck: spmd-broadcast lane must have type i64")
           [(ResultTcUnit.Ok) (tc-spmd-finish expr-ty value-class lane-env)]
@@ -30244,7 +30323,7 @@
       (tc-global-shared-view ctx)
       (tc-global-shared-view expr-ty)))
     (match (tc-expect
-      (tc-resolve-type ctx lane-ty)
+      (tc-resolve-type (tc-global-shared-view ctx) lane-ty)
       (ast.AstType.I64)
       "typecheck: spmd-shuffle lane must have type i64")
       [(ResultTcUnit.Ok) (tc-spmd-finish expr-ty value-class lane-env)]
@@ -33202,7 +33281,9 @@
                   (ast.ast-node-pool-context-expr-push
                     (tc-context-pools (tc-global-shared-view ctx))
                     (ast.AstExpr.Var name))
-                  (tc-resolve-type ctx (tc-macro-signature-type ty)))]))
+                  (tc-resolve-type
+                    (tc-global-shared-view ctx)
+                    (tc-macro-signature-type ty)))]))
           params
           (+ index 1))])))
 
@@ -33415,16 +33496,20 @@
   (match decl
     [(ast.AstDecl.Def decl-meta _ maybe-ty expr-box)
       (let
-        [expr : ast.AstExpr (tc-context-expr-get ctx expr-box)]
+        [expr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) expr-box)]
         (match maybe-ty
           [(ast.AstMaybeType.Some ty)
-            (ResultTcType.Ok (tc-resolve-type ctx ty))]
+            (ResultTcType.Ok (tc-resolve-type (tc-global-shared-view ctx) ty))]
           [(ast.AstMaybeType.No)
             (match (ast.ast-expr-unspan (tc-global-shared-view expr))
               [(ast.AstExpr.Literal lit)
                 (ResultTcType.Ok (tc-literal-type lit))]
               [(ast.AstExpr.Ann _ ty-id)
-                (ResultTcType.Ok (tc-resolve-type ctx (ast.ty-node-get ty-id)))]
+                (ResultTcType.Ok
+                  (tc-resolve-type
+                    (tc-global-shared-view ctx)
+                    (ast.ty-node-get ty-id)))]
               [_
                 (ResultTcType.Err
                   "typecheck: top-level value requires annotation")])]))]
@@ -33437,10 +33522,10 @@
           (ResultTcType.Ok
             (ast.ast-ty-func
               (tc-param-type-list (tc-global-shared-view ctx) signature.params)
-              (tc-resolve-type ctx signature.ret)))]
+              (tc-resolve-type (tc-global-shared-view ctx) signature.ret)))]
         [(ResultTcElidedSignature.Err message) (ResultTcType.Err message)])]
     [(ast.AstDecl.Extern decl-meta _ _ _ ty)
-      (ResultTcType.Ok (tc-resolve-type ctx ty))]
+      (ResultTcType.Ok (tc-resolve-type (tc-global-shared-view ctx) ty))]
     [(ast.AstDecl.DefDispatch decl-meta name variants)
       (tc-dispatch-decl-type ctx name variants)]
     [(ast.AstDecl.Unsafe inner-box)
@@ -33464,17 +33549,21 @@
   (match (tc-global-shared-view decl)
     [(ast.AstDecl.Def decl-meta _ maybe-ty expr-box)
       (let
-        [expr : ast.AstExpr (tc-context-expr-get ctx expr-box)]
+        [expr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) expr-box)]
         (match maybe-ty
           [(ast.AstMaybeType.Some ty)
-            (ResultTcType.Ok (tc-resolve-type ctx ty))]
+            (ResultTcType.Ok (tc-resolve-type (tc-global-shared-view ctx) ty))]
           [(ast.AstMaybeType.No)
             (match (ast.ast-expr-unspan (tc-global-shared-view expr))
               [(ast.AstExpr.Literal lit)
                 (ResultTcType.Ok (tc-literal-type lit))]
               [(ast.AstExpr.Ann _ ty-id)
-                (ResultTcType.Ok (tc-resolve-type ctx (ast.ty-node-get ty-id)))]
-              [_ (tc-expr ctx env expr)])]))]
+                (ResultTcType.Ok
+                  (tc-resolve-type
+                    (tc-global-shared-view ctx)
+                    (ast.ty-node-get ty-id)))]
+              [_ (tc-expr (tc-global-shared-view ctx) env expr)])]))]
     [_ (tc-top-decl-type ctx decl)]))
 
 (define (tc-field-type-list [ctx : TcContext] [fields : ast.AstFieldDefList]) : ast.AstTypeList
@@ -34175,7 +34264,7 @@
               [extern-ctx : TcContext
                 (tc-context-with-module-id
                   (tc-global-shared-view ctx)
-                  (ci.intern-str module)
+                  (tc-env-key-name-text module)
                   module)]
               (match (tc-import-alias-source-value-type env module name)
                 [(ResultTcType.Ok ty)
@@ -34251,7 +34340,7 @@
         [extern-ctx : TcContext
           (tc-context-with-module-id
             (tc-global-shared-view ctx)
-            (ci.intern-str module)
+            (tc-env-key-name-text module)
             module)]
         (match (tc-import-alias-source-value-type env module name)
           [(ResultTcType.Ok ty)
@@ -34289,7 +34378,7 @@
             (tc-bind-enum-variant-aliases
               (tc-context-with-module-id
                 (tc-global-shared-view ctx)
-                (ci.intern-str module)
+                (tc-env-key-name-text module)
                 module)
               env
               alias
@@ -34318,7 +34407,7 @@
             (tc-bind-enum-variant-aliases
               (tc-context-with-module-id
                 (tc-global-shared-view ctx)
-                (ci.intern-str module)
+                (tc-env-key-name-text module)
                 module)
               env
               alias
@@ -35717,7 +35806,7 @@
           (tc-global-shared-view ctx)
           (tc-global-shared-view expected)))]
     (match (tc-binop-contextual-operand-type op operand-expected)
-      [(ast.AstMaybeType.No) (tc-expr ctx env expr)]
+      [(ast.AstMaybeType.No) (tc-expr (tc-global-shared-view ctx) env expr)]
       [(ast.AstMaybeType.Some operand-ty)
         (match (tc-expr-with-expected-or-actual
           (tc-global-shared-view ctx)
@@ -35742,7 +35831,8 @@
                       (ResultTcType.Ok
                         (tc-contextual-result-type expected result-ty))
                       (ResultTcType.Ok result-ty))]
-                  [(ResultTcType.Err _) (tc-expr ctx env expr)])]
+                  [(ResultTcType.Err _)
+                    (tc-expr (tc-global-shared-view ctx) env expr)])]
               [(ResultTcType.Err message) (ResultTcType.Err message)])]
           [(ResultTcType.Err message) (ResultTcType.Err message)])])))
 
@@ -35779,7 +35869,7 @@
           (tc-global-shared-view ctx)
           (tc-global-shared-view expected)))]
     (match (tc-unop-contextual-operand-type op operand-expected)
-      [(ast.AstMaybeType.No) (tc-expr ctx env expr)]
+      [(ast.AstMaybeType.No) (tc-expr (tc-global-shared-view ctx) env expr)]
       [(ast.AstMaybeType.Some operand-ty)
         (match (tc-expr-with-expected-or-actual
           (tc-global-shared-view ctx)
@@ -35795,7 +35885,8 @@
                   (ResultTcType.Ok
                     (tc-contextual-result-type expected result-ty))
                   (ResultTcType.Ok result-ty))]
-              [(ResultTcType.Err _) (tc-expr ctx env expr)])]
+              [(ResultTcType.Err _)
+                (tc-expr (tc-global-shared-view ctx) env expr)])]
           [(ResultTcType.Err message) (ResultTcType.Err message)])])))
 
 (define (tc-expr-list-with-expected-elements
@@ -35853,7 +35944,7 @@
             (ResultTcType.Ok (ast.ast-ty-array elem-ty expected-len))]
           [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
       [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-    (tc-expr ctx env (ast.AstExpr.Array exprs))))
+    (tc-expr (tc-global-shared-view ctx) env (ast.AstExpr.Array exprs))))
 
 (define (tc-dyn-array-literal-element-supported
   [env : TcTypeEnv]
@@ -36077,7 +36168,7 @@
             (ResultTcType.Ok (ast.ast-ty-tuple result-elems))]
           [(ResultTcTypeList.Err message) (ResultTcType.Err message)])]
       [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-    (tc-expr ctx env (ast.AstExpr.Tuple exprs))))
+    (tc-expr (tc-global-shared-view ctx) env (ast.AstExpr.Tuple exprs))))
 
 ;; Flow the expected type into a begin's final expression so a contextual
 ;; literal in tail position resolves against it; non-final expressions keep
@@ -36135,7 +36226,7 @@
       (ResultTcType.Err
         (str_cat.str-cat
           "type value "
-          (tc-type-render (tc-resolve-type ctx ty))
+          (tc-type-render (tc-resolve-type (tc-global-shared-view ctx) ty))
           " is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.ExprList _)
       (ResultTcType.Ok (ast.AstType.ExprList))]
@@ -36277,11 +36368,12 @@
   (match (tc-global-shared-view expr)
     [(ast.AstExpr.Spanned inner-box span)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (match inner
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (match (tc-global-shared-view inner)
           [(ast.AstExpr.MacroExpansion expanded provenance-id macro-name-id)
             (tc-macro-expansion-result-with-frame
-              (tc-context-expr-get ctx expanded)
+              (tc-context-expr-get (tc-global-shared-view ctx) expanded)
               (macro-expansion-invocation-path-id provenance-id)
               (macro-expansion-origin-path-id provenance-id)
               macro-name-id
@@ -36328,8 +36420,10 @@
         allow-mut-by-value-borrow)]
     [(ast.AstExpr.Binary op left-box right-box)
       (let
-        [left : ast.AstExpr (tc-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (tc-context-expr-get ctx right-box)]
+        [left : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) left-box)]
+        [right : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) right-box)]
         (tc-binary-expr-with-expected-or-actual
           ctx
           env
@@ -36340,20 +36434,17 @@
           expected))]
     [(ast.AstExpr.Unary op inner-box)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (tc-unary-expr-with-expected-or-actual ctx env expr op inner expected))]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
-      (let
-        [cond : ast.AstExpr (tc-context-expr-get ctx cond-box)]
-        [then-branch : ast.AstExpr (tc-context-expr-get ctx then-branch-box)]
-        [else-branch : ast.AstExpr (tc-context-expr-get ctx else-branch-box)]
-        (tc-expr-if-with-expected-or-actual
-          ctx
-          env
-          cond
-          then-branch
-          else-branch
-          expected))]
+      (tc-expr-if-with-expected-or-actual
+        ctx
+        env
+        cond-box
+        then-branch-box
+        else-branch-box
+        expected)]
     [(ast.AstExpr.Match match-box)
       (match (ast.ast-match-box-shared-view match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
@@ -36370,7 +36461,7 @@
             exprs
             (ast.ty-node-get elem-ty)
             len)]
-        [_ (tc-expr ctx env expr)])]
+        [_ (tc-expr (tc-global-shared-view ctx) env expr)])]
     [(ast.AstExpr.DynArray exprs)
       (tc-expr-dyn-array-literal-with-expected-or-actual ctx env exprs expected)]
     [(ast.AstExpr.Tuple exprs)
@@ -36381,7 +36472,7 @@
             env
             exprs
             (ast.ast-type-list-box-shared-view expected-elems))]
-        [_ (tc-expr ctx env expr)])]
+        [_ (tc-expr (tc-global-shared-view ctx) env expr)])]
     [(ast.AstExpr.Begin exprs)
       (tc-begin-list-with-expected ctx env exprs expected)]
     [(ast.AstExpr.Unsafe exprs)
@@ -36395,8 +36486,13 @@
       (match (ast.ast-let-box-shared-view let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            (match (tc-let-bindings-for-body ctx env bindings body)
+            [body : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
+            (match (tc-let-bindings-for-body
+              (tc-global-shared-view ctx)
+              env
+              (tc-global-shared-view bindings)
+              (tc-global-shared-view body))
               [(ResultTcEnv.Ok next-env)
                 (match (tc-expr-with-expected-or-actual-id
                   ctx
@@ -36417,13 +36513,15 @@
       (tc-with-region-expr-with-expected-scoped ctx env region body expected)]
     [(ast.AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : ast.AstExpr (tc-context-expr-get ctx scratch-box)]
+        [scratch : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) scratch-box)]
         (tc-with-escape-expr-with-expected ctx env scratch body expected))]
     [(ast.AstExpr.WithScratch body)
       (tc-with-scratch-expr-with-expected ctx env body expected)]
     [(ast.AstExpr.InArena arena-box body)
       (let
-        [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
+        [arena : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) arena-box)]
         (tc-in-arena-expr-with-expected-scoped ctx env arena body expected))]
     [(ast.AstExpr.WithResource wr-box)
       (match (ast.ast-with-resource-box-shared-view wr-box)
@@ -36438,7 +36536,8 @@
           (let
             [lifetime : ast.AstBorrowLifetime
               (ast.ast-borrow-lifetime-from-id lifetime-id)]
-            [place : ast.AstExpr (tc-context-expr-get ctx place-box)]
+            [place : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) place-box)]
             (if (and mutable allow-mut-by-value-borrow)
               (tc-borrow-expr-with-policy
                 (tc-global-shared-view ctx)
@@ -36448,23 +36547,29 @@
                 lifetime
                 place
                 true)
-              (tc-expr ctx env expr)))]
+              (tc-expr (tc-global-shared-view ctx) env expr)))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Box inner-box)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (tc-box-expr-with-expected-or-actual ctx env inner expected))]
     [(ast.AstExpr.BoxGet inner-box)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (tc-box-get-expr-with-expected-or-actual ctx env inner expected))]
     [(ast.AstExpr.BoxTake inner-box)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (tc-deref-expr-with-expected-or-actual ctx env inner expected))]
     [(ast.AstExpr.Comptime inner-box)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        [ctfe-env : ctfe_support.CtfeEnv
+          (tc-ctfe-env (tc-global-shared-view ctx))]
         (match (ctfe_support.compiler-ctfe-eval
           inner
           ctfe-env
@@ -36500,7 +36605,8 @@
           (tc-global-shared-view expected)))
         [(ast.AstType.Box inner-ty)
           (let
-            [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+            [inner : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
             [want : ast.AstType (ast.ty-node-get inner-ty)]
             (match (tc-ensure-cleanup-resource-not-stored-expr
               env
@@ -36525,7 +36631,7 @@
                       [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
                   [(ResultTcType.Err message) (ResultTcType.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
-        [_ (tc-expr ctx env expr)])]
+        [_ (tc-expr (tc-global-shared-view ctx) env expr)])]
     [_
       (if (tc-integer-literal-expr? (tc-global-shared-view expr))
         (tc-integer-literal-expr-with-expected ctx expr expected)
@@ -36536,7 +36642,7 @@
             env
             expected
             allow-mut-by-value-borrow
-            (tc-expr ctx env expr))))]))
+            (tc-expr (tc-global-shared-view ctx) env expr))))]))
 
 (define (tc-expr-scoped-bindings? [expr : ast.AstExpr]) : bool
   (match expr
@@ -36611,11 +36717,11 @@
             expected
             true
             (tc-lambda-expr-with-capture-check
-              ctx
+              (tc-global-shared-view ctx)
               env
               params
               maybe-ret
-              (tc-context-expr-get ctx body-box)
+              (tc-context-expr-get (tc-global-shared-view ctx) body-box)
               false))])]
     [_ (tc-expr-with-expected-or-actual-call-arg ctx env expr expected)]))
 
@@ -36627,7 +36733,8 @@
   [env : TcTypeEnv]
   [expr-id : i64]) : ResultTcType
   (let
-    [expr : ast.AstExpr (tc-context-expr-get ctx expr-id)]
+    [expr : ast.AstExpr
+      (tc-context-expr-get (tc-global-shared-view ctx) expr-id)]
     [result : ResultTcType
       (match (tc-global-shared-view expr)
         [(ast.AstExpr.Var name)
@@ -36666,8 +36773,9 @@
 
 (define (tc-expr-id [ctx : TcContext] [env : TcTypeEnv] [expr-id : i64]) : ResultTcType
   (let
-    [expr : ast.AstExpr (tc-context-expr-get ctx expr-id)]
-    (match expr
+    [expr : ast.AstExpr
+      (tc-context-expr-get (tc-global-shared-view ctx) expr-id)]
+    (match (tc-global-shared-view expr)
       [(ast.AstExpr.Var name)
         (if (< (tc-dotted-name-first-dot-id name) 0)
           (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)
@@ -36726,7 +36834,7 @@
       (cfg
         compile-profile
         (compiler-tc-reinfer-profile-expr-id site ctx env expr-id)
-        (tc-expr-id ctx env expr-id))]))
+        (tc-expr-id (tc-global-shared-view ctx) env expr-id))]))
 
 (define (tc-body-type-fact-list-types-into-at
   [state : TcBodyState]
@@ -36883,8 +36991,9 @@
   [expected : ast.AstType]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
   (let
-    [expr : ast.AstExpr (tc-context-expr-get ctx expr-id)]
-    (match expr
+    [expr : ast.AstExpr
+      (tc-context-expr-get (tc-global-shared-view ctx) expr-id)]
+    (match (tc-global-shared-view expr)
       [(ast.AstExpr.Var name)
         (if (or
           (macro-hygiene-global-id? name)
@@ -36902,9 +37011,9 @@
             expr)
             [(ResultTcUnit.Ok)
               (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
-                ctx
+                (tc-global-shared-view ctx)
                 env
-                (tc-context-expr-get ctx expr-id)
+                (tc-context-expr-get (tc-global-shared-view ctx) expr-id)
                 expected
                 allow-mut-by-value-borrow)]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
@@ -36925,9 +37034,9 @@
             expr)
             [(ResultTcUnit.Ok)
               (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
-                ctx
+                (tc-global-shared-view ctx)
                 env
-                (tc-context-expr-get ctx expr-id)
+                (tc-context-expr-get (tc-global-shared-view ctx) expr-id)
                 expected
                 allow-mut-by-value-borrow)]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
@@ -37864,7 +37973,7 @@
         [(ast.AstExpr.Set _ _) (ResultTcType.Err message)]
         [(ast.AstExpr.Spanned nested-box _)
           (tc-locate-spanned-error
-            (tc-context-expr-get ctx nested-box)
+            (tc-context-expr-get (tc-global-shared-view ctx) nested-box)
             span
             message)]
         [_ (tc-locate-spanned-error inner span message)])]))
@@ -38782,11 +38891,13 @@
   (match (tc-type-strip-region (tc-global-shared-view ty))
     [(ast.AstType.Ref _ _) true]
     [(ast.AstType.Var _)
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+      (match (tc-type-strip-region
+        (tc-resolve-type (tc-global-shared-view ctx) ty))
         [(ast.AstType.Ref _ _) true]
         [_ false])]
     [(ast.AstType.VarArgs _ _)
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+      (match (tc-type-strip-region
+        (tc-resolve-type (tc-global-shared-view ctx) ty))
         [(ast.AstType.Ref _ _) true]
         [_ false])]
     [_ false]))
@@ -38845,7 +38956,9 @@
                       (tc-resolve-type
                         (tc-global-shared-view ctx)
                         (ast.ty-node-get want-elem))
-                      (tc-resolve-type ctx (ast.ty-node-get got-elem)))]
+                      (tc-resolve-type
+                        (tc-global-shared-view ctx)
+                        (ast.ty-node-get got-elem)))]
                   [_ false])]
               [_ false])]
           [_ false])]
@@ -38866,7 +38979,9 @@
                       (tc-resolve-type
                         (tc-global-shared-view ctx)
                         (ast.ty-node-get want-elem))
-                      (tc-resolve-type ctx (ast.ty-node-get got-elem)))]
+                      (tc-resolve-type
+                        (tc-global-shared-view ctx)
+                        (ast.ty-node-get got-elem)))]
                   [_ false])]
               [_ false])]
           [_ false])]
@@ -38876,11 +38991,13 @@
   (match (tc-type-strip-region (tc-global-shared-view ty))
     [(ast.AstType.MutRef _ _) true]
     [(ast.AstType.Var _)
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+      (match (tc-type-strip-region
+        (tc-resolve-type (tc-global-shared-view ctx) ty))
         [(ast.AstType.MutRef _ _) true]
         [_ false])]
     [(ast.AstType.VarArgs _ _)
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+      (match (tc-type-strip-region
+        (tc-resolve-type (tc-global-shared-view ctx) ty))
         [(ast.AstType.MutRef _ _) true]
         [_ false])]
     [_ false]))
@@ -38891,11 +39008,13 @@
   (match (tc-type-strip-region (tc-global-shared-view ty))
     [(ast.AstType.Ref _ _) true]
     [(ast.AstType.Var _)
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+      (match (tc-type-strip-region
+        (tc-resolve-type (tc-global-shared-view ctx) ty))
         [(ast.AstType.Ref _ _) true]
         [_ false])]
     [(ast.AstType.VarArgs _ _)
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+      (match (tc-type-strip-region
+        (tc-resolve-type (tc-global-shared-view ctx) ty))
         [(ast.AstType.Ref _ _) true]
         [_ false])]
     [_ false]))
@@ -38905,7 +39024,7 @@
   [want : ast.AstType]
   [got : ast.AstType]) : bool
   (and
-    (tc-str-ref-type? (tc-resolve-type ctx want))
+    (tc-str-ref-type? (tc-resolve-type (tc-global-shared-view ctx) want))
     (match (tc-type-strip-region got)
       [(ast.AstType.String) true]
       [_ false])))
@@ -39035,7 +39154,7 @@
 ;; behind an alias are still seen.
 (define (tc-lifetime-subst-formal-inert? [ctx : TcContext] [want : ast.AstType]) : bool
   (match (tc-type-collect-reference-lifetimes-into
-    (tc-resolve-type ctx want)
+    (tc-resolve-type (tc-global-shared-view ctx) want)
     TcNameIdList.Nil)
     [(TcNameIdList.Nil) true]
     [_ false]))
@@ -39296,7 +39415,9 @@
         (tc-call-arity-message func all-args all-params))
       (let
         [arg : ast.AstExpr
-          (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
+          (tc-context-expr-get
+            (tc-global-shared-view ctx)
+            (ast.ast-expr-list-get args index 0))]
         [want : ast.AstType
           (ast.ty-node-get
             (ast.ast-type-list-get params index (ast.ast-type-id-fallback)))]
@@ -39540,7 +39661,8 @@
   [kind : ast.AstExternKind]
   [ty : ast.AstType]) : bool
   (match kind
-    [(ast.AstExternKind.Value) (tc-c-abi-fnptr-type? (tc-resolve-type ctx ty))]
+    [(ast.AstExternKind.Value)
+      (tc-c-abi-fnptr-type? (tc-resolve-type (tc-global-shared-view ctx) ty))]
     [(ast.AstExternKind.Function) false]))
 
 (define (tc-expr-list-last-c-abi-fnptr?
@@ -39550,10 +39672,10 @@
   (if (ast.ast-expr-list-empty? (& exprs))
     false
     (tc-expr-c-abi-fnptr?
-      ctx
+      (tc-global-shared-view ctx)
       env
       (tc-context-expr-get
-        ctx
+        (tc-global-shared-view ctx)
         (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0)))))
 
 (define (tc-hygiene-c-abi-fnptr-binding?
@@ -39595,22 +39717,30 @@
         (tc-binding-c-abi-fnptr-id? env name))]
     [(ast.AstExpr.Ann inner-box _)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (tc-expr-c-abi-fnptr? ctx env inner))]
     [(ast.AstExpr.Let let-box)
       (match (ast.ast-let-box-shared-view let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            (match (tc-let-bindings-for-body ctx env bindings body)
+            [body : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
+            (match (tc-let-bindings-for-body
+              (tc-global-shared-view ctx)
+              env
+              (tc-global-shared-view bindings)
+              (tc-global-shared-view body))
               [(ResultTcEnv.Ok next-env)
                 (tc-expr-c-abi-fnptr? ctx next-env body)]
               [(ResultTcEnv.Err _) false]))])]
     [(ast.AstExpr.Begin exprs) (tc-expr-list-last-c-abi-fnptr? ctx env exprs)]
     [(ast.AstExpr.If _ then-box else-box)
       (let
-        [then-branch : ast.AstExpr (tc-context-expr-get ctx then-box)]
-        [else-branch : ast.AstExpr (tc-context-expr-get ctx else-box)]
+        [then-branch : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) then-box)]
+        [else-branch : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) else-box)]
         (and
           (tc-expr-c-abi-fnptr? (tc-global-shared-view ctx) env then-branch)
           (tc-expr-c-abi-fnptr? ctx env else-branch)))]
@@ -39627,7 +39757,7 @@
   [ctx : TcContext]
   [ty : ast.AstType]
   [expected-id : i64]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+  (match (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))
     [(ast.AstType.Struct actual) (tc-nominal-name-id-eq? actual expected-id)]
     [(ast.AstType.StructArgs actual _)
       (tc-nominal-name-id-eq? actual expected-id)]
@@ -39950,7 +40080,9 @@
   (match (ast.ast-expr-unspan (tc-global-shared-view expr))
     [(ast.AstExpr.Call func-box args)
       (let
-        [nid : i64 (tc-expr-var-name-id (tc-context-expr-get ctx func-box))]
+        [nid : i64
+          (tc-expr-var-name-id
+            (tc-context-expr-get (tc-global-shared-view ctx) func-box))]
         (if (>= nid 0)
           (let
             [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
@@ -39972,8 +40104,12 @@
       (if (= args.len 1)
         (let
           [owner-expr : ast.AstExpr
-            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-          [nid : i64 (tc-expr-var-name-id (tc-context-expr-get ctx func-box))]
+            (tc-context-expr-get
+              (tc-global-shared-view ctx)
+              (ast.ast-expr-list-get (& args) 0 0))]
+          [nid : i64
+            (tc-expr-var-name-id
+              (tc-context-expr-get (tc-global-shared-view ctx) func-box))]
           (if (>= nid 0)
             (let
               [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
@@ -40197,8 +40333,13 @@
     ResultTcUnit.Ok
     (let
       [arg : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
-      (match (tc-expr ctx env arg)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get args index 0))]
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view arg))
         [(ResultTcType.Ok ty)
           (let
             [resolved : ast.AstType
@@ -40242,7 +40383,9 @@
         (if (ast.ast-extern-abi-c-varargs-typed? (tc-global-shared-view abi))
           (let
             [tail-ty : ast.AstType
-              (tc-resolve-type ctx (ast.ast-extern-abi-varargs-tail-type abi))]
+              (tc-resolve-type
+                (tc-global-shared-view ctx)
+                (ast.ast-extern-abi-varargs-tail-type abi))]
             (ResultTcTypeList.Ok
               (tc-type-list-append
                 params
@@ -40642,7 +40785,7 @@
 (define (tc-thread-channel-send-result-type?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+  (match (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))
     [(ast.AstType.Enum name)
       (tc-thread-channel-send-result-name? (tc-nominal-name-id-display name))]
     [(ast.AstType.EnumArgs name _)
@@ -40666,7 +40809,7 @@
 (define (tc-thread-generated-spawn-result-module
   [ctx : TcContext]
   [ty : ast.AstType]) : TcMaybeString
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+  (match (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))
     [(ast.AstType.Enum name)
       (tc-thread-generated-name-module
         (tc-nominal-name-id-display name)
@@ -40678,7 +40821,7 @@
     [_ (TcMaybeString.No)]))
 
 (define (tc-thread-spawn-result-type-base? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+  (match (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))
     [(ast.AstType.Enum name)
       (tc-thread-type-name-base?
         (tc-nominal-name-id-display name)
@@ -40699,7 +40842,7 @@
       (string.eq base "ThreadBoxI64SpawnResult"))))
 
 (define (tc-thread-safe-user-type? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+  (match (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))
     [(ast.AstType.Struct name)
       (tc-thread-safe-handle-type-name? (tc-nominal-name-id-display name))]
     [(ast.AstType.StructArgs name _)
@@ -40767,7 +40910,8 @@
     [(TcMaybeString.Some module)
       (tc-thread-generated-spawn-result-type? ctx module ty)]
     [(TcMaybeString.No)
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+      (match (tc-type-strip-region
+        (tc-resolve-type (tc-global-shared-view ctx) ty))
         [(ast.AstType.Enum name)
           (or
             (tc-thread-legacy-safe-spawn-result-type-name?
@@ -40857,7 +41001,9 @@
             (match resolved
               [(ast.AstType.Box elem)
                 (match (tc-type-strip-region
-                  (tc-resolve-type ctx (ast.ty-node-get elem)))
+                  (tc-resolve-type
+                    (tc-global-shared-view ctx)
+                    (ast.ty-node-get elem)))
                   [(ast.AstType.I64) true]
                   [_ false])]
               [_ false])]
@@ -41330,7 +41476,8 @@
     " cannot capture `"
     name
     "` of type "
-    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))
+    (tc-type-render
+      (tc-type-without-regions (tc-resolve-type (tc-global-shared-view ctx) ty)))
     "; "
     reason))
 
@@ -41565,10 +41712,10 @@
           (if (= (ast.ast-param-list-len (& params)) 0)
             (tc-check-thread-safe-spawn-captures
               spawn-name
-              ctx
+              (tc-global-shared-view ctx)
               env
               params
-              (tc-context-expr-get ctx body-box))
+              (tc-context-expr-get (tc-global-shared-view ctx) body-box))
             (ResultTcUnit.Err
               (str_cat.str-cat
                 "typecheck: "
@@ -41630,7 +41777,9 @@
           (if (= args.len 1)
             (let
               [arg : ast.AstExpr
-                (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+                (tc-context-expr-get
+                  (tc-global-shared-view ctx)
+                  (ast.ast-expr-list-get (& args) 0 0))]
               (match (tc-check-thread-safe-spawn-direct-lambda
                 (tc-global-shared-view source-name)
                 (tc-global-shared-view ctx)
@@ -41667,7 +41816,8 @@
           send-name
           " cannot send value of type "
           (tc-type-render
-            (tc-type-without-regions (tc-resolve-type ctx message-ty)))
+            (tc-type-without-regions
+              (tc-resolve-type (tc-global-shared-view ctx) message-ty)))
           "; "
           reason))]
     [_ ResultTcUnit.Ok]))
@@ -41990,7 +42140,9 @@
       (ResultTcUnit.Err (tc-arity-message-text arity-msg))
       (let
         [arg : ast.AstExpr
-          (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
+          (tc-context-expr-get
+            (tc-global-shared-view ctx)
+            (ast.ast-expr-list-get args index 0))]
         [want : ast.AstType
           (ast.ty-node-get
             (ast.ast-type-list-get params index (ast.ast-type-id-fallback)))]
@@ -42165,13 +42317,17 @@
   [env : TcTypeEnv]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcType
-  (match (ast.ast-expr-unspan func)
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda params maybe-ret body-box)
-          (let
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            (match (tc-lambda-expr-allow-ref-captures
+  (let
+    [direct : TcDirectLambdaCheck
+      (tc-direct-lambda-check
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view func))]
+    (match direct
+      [(TcDirectLambdaCheck.Ok fn-ty)
+        (match fn-ty
+          [(ast.AstType.Func params ret)
+            (tc-call-function-type
               ctx
               env
               func
@@ -42257,8 +42413,13 @@
   (if (= args.len 1)
     (let
       [owner-expr : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-      (match (tc-expr ctx env owner-expr)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view owner-expr))
         [(ResultTcType.Ok owner-ty)
           (if (tc-arena-type? (tc-global-shared-view ctx) owner-ty)
             (let
@@ -42268,7 +42429,7 @@
                 (if (or
                   (tc-ordinary-arena-owner-active-id? env oid)
                   (tc-atomic-arena-owner-active-id? env oid))
-                  (match (tc-expr ctx env func)
+                  (match (tc-expr (tc-global-shared-view ctx) env func)
                     [(ResultTcType.Ok (ast.AstType.Func _ ret))
                       (ResultTcType.Ok (ast.ty-node-get ret))]
                     [(ResultTcType.Ok _)
@@ -42297,8 +42458,13 @@
   (if (= args.len 1)
     (let
       [phase-expr : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-      (match (tc-expr ctx env phase-expr)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view phase-expr))
         [(ResultTcType.Ok phase-ty)
           (if (tc-arena-phase-type? ctx phase-ty)
             (let
@@ -42344,8 +42510,13 @@
         "typecheck: arena.destroy-safe! expects exactly one argument")))
   (let
     [owner-expr : ast.AstExpr
-      (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-    (match (tc-expr ctx env owner-expr)
+      (tc-context-expr-get
+        (tc-global-shared-view ctx)
+        (ast.ast-expr-list-get (& args) 0 0))]
+    (match (tc-expr
+      (tc-global-shared-view ctx)
+      env
+      (tc-global-shared-view owner-expr))
       [(ResultTcType.Ok owner-ty)
         (begin
           (unless
@@ -42382,14 +42553,23 @@
   [func-id : i64]
   [args : ast.AstExprList]) : ResultTcType
   (let
-    [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
-    (match (ast.ast-expr-unspan func)
-      [(ast.AstExpr.Lambda lambda-box)
-        (match (__tl-box-place lambda-box)
-          [(ast.AstLambda.Lambda params maybe-ret body-box)
-            (let
-              [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-              (match (tc-lambda-expr-allow-ref-captures
+    [func : ast.AstExpr
+      (tc-context-expr-get (tc-global-shared-view ctx) func-id)]
+    [direct : TcDirectLambdaCheck
+      (tc-direct-lambda-check
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view func))]
+    (match direct
+      [(TcDirectLambdaCheck.Ok fn-ty)
+        (begin
+          (tc-body-type-fact-record!
+            (tc-context-body-state (tc-global-shared-view ctx))
+            func-id
+            (tc-global-shared-view fn-ty))
+          (match fn-ty
+            [(ast.AstType.Func params ret)
+              (tc-call-function-type
                 ctx
                 env
                 func
@@ -42584,7 +42764,9 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
       (match (tc-check-string-handle-arg ctx env func 0 arg)
         [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
@@ -42599,7 +42781,9 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
       (match (tc-check-length-handle-arg ctx env func 0 arg)
         [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
@@ -42614,10 +42798,19 @@
   (if (= args.len 2)
     (let
       [left : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
       [right : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
-      (match (tc-check-string-handle-arg ctx env func 0 left)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 1 0))]
+      (match (tc-check-string-handle-arg
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view func)
+        0
+        left)
         [(ResultTcUnit.Ok)
           (match (tc-check-string-handle-arg
             (tc-global-shared-view ctx)
@@ -42780,10 +42973,17 @@
   (if (= args.len 2)
     (let
       [str : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
       [index : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
-      (match (tc-expr ctx env str)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 1 0))]
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view str))
         [(ResultTcType.Ok str-ty)
           (if (tc-string-handle-type? (tc-global-shared-view str-ty))
             (match (tc-expr
@@ -42858,7 +43058,9 @@
         (ResultTcType.Ok (ast.AstType.I64))
         (let
           [arg : ast.AstExpr
-            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+            (tc-context-expr-get
+              (tc-global-shared-view ctx)
+              (ast.ast-expr-list-get (& args) 0 0))]
           (ResultTcType.Err
             (tc-locate-error-at-expr
               arg
@@ -42896,7 +43098,9 @@
     (if (tc-default-builtin-unshadowed-id? env name-id)
       (let
         [arg : ast.AstExpr
-          (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+          (tc-context-expr-get
+            (tc-global-shared-view ctx)
+            (ast.ast-expr-list-get (& args) 0 0))]
         (ResultTcType.Err
           (tc-locate-error-at-expr
             arg
@@ -42953,8 +43157,13 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-      (match (tc-expr ctx env arg)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view arg))
         [(ResultTcType.Ok arg-ty)
           (match (tc-array-length-receiver
             (tc-global-shared-view ctx)
@@ -43172,7 +43381,8 @@
             (unsafe
               (arena.tl_arena_set tc-clone-root-collection-arena))]
           [resolved : ast.AstType
-            (tc-type-without-regions (tc-resolve-type ctx ty))]
+            (tc-type-without-regions
+              (tc-resolve-type (tc-global-shared-view ctx) ty))]
           (begin
             (cfg
               compiler-surface-producer
@@ -43348,8 +43558,13 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-      (match (tc-expr ctx env arg)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view arg))
         [(ResultTcType.Ok arg-ty)
           (let
             [clone-ty : ast.AstType
@@ -43366,7 +43581,8 @@
                 (str_cat.str-cat
                   "typecheck: clone unsupported type "
                   (tc-type-render
-                    (tc-type-without-regions (tc-resolve-type ctx arg-ty)))))))]
+                    (tc-type-without-regions
+                      (tc-resolve-type (tc-global-shared-view ctx) arg-ty)))))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (ResultTcType.Err "typecheck: clone expects exactly one argument")))
 
@@ -43377,10 +43593,16 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-      (match (tc-expr ctx env arg)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view arg))
         [(ResultTcType.Ok arg-ty)
-          (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
+          (match (tc-type-strip-region
+            (tc-resolve-type (tc-global-shared-view ctx) arg-ty))
             [(ast.AstType.F64) (ResultTcType.Ok (ast.AstType.F64))]
             [(ast.AstType.F32) (ResultTcType.Ok (ast.AstType.F32))]
             [_
@@ -43399,11 +43621,17 @@
   (if (= args.len 1)
     (let
       [arg : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-      (match (tc-expr ctx env arg)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view arg))
         [(ResultTcType.Ok arg-ty)
           (if (cbi.compiler-builtin-lower-float-to-bits-id? name-id)
-            (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
+            (match (tc-type-strip-region
+              (tc-resolve-type (tc-global-shared-view ctx) arg-ty))
               [(ast.AstType.F64) (ResultTcType.Ok (ast.AstType.U64))]
               [(ast.AstType.F32) (ResultTcType.Ok (ast.AstType.U32))]
               [_
@@ -43411,7 +43639,8 @@
                   (tc-locate-error-at-expr
                     arg
                     "typecheck: __tl_float_to_bits expects f64 or f32"))])
-            (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
+            (match (tc-type-strip-region
+              (tc-resolve-type (tc-global-shared-view ctx) arg-ty))
               [(ast.AstType.U64) (ResultTcType.Ok (ast.AstType.F64))]
               [(ast.AstType.U32) (ResultTcType.Ok (ast.AstType.F32))]
               [_
@@ -43439,7 +43668,9 @@
       (if (= args.len 1)
         (let
           [value : ast.AstExpr
-            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+            (tc-context-expr-get
+              (tc-global-shared-view ctx)
+              (ast.ast-expr-list-get (& args) 0 0))]
           (match (tc-check-exact-arg
             ctx
             env
@@ -43588,7 +43819,8 @@
   [source : TcSliceViewSourceInfo]) : ast.AstType
   (match source
     [(TcSliceViewSourceInfo.Direct direct-ty)
-      (match (tc-type-strip-region (tc-resolve-type ctx direct-ty))
+      (match (tc-type-strip-region
+        (tc-resolve-type (tc-global-shared-view ctx) direct-ty))
         [(ast.AstType.Array elem _) (ast.ty-node-get elem)]
         [(ast.AstType.DynArray elem) (ast.ty-node-get elem)]
         [_ (ast.AstType.Unit)])]
@@ -43749,10 +43981,17 @@
   (if (= args.len 2)
     (let
       [source : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
       [mid : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
-      (match (tc-expr ctx env source)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 1 0))]
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view source))
         [(ResultTcType.Ok source-ty)
           (match (tc-slice-split-result-type
             (tc-global-shared-view ctx)
@@ -43791,12 +44030,21 @@
   (if (= args.len 3)
     (let
       [source : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
       [start : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 1 0))]
       [len : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 2 0))]
-      (match (tc-expr ctx env source)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 2 0))]
+      (match (tc-expr
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view source))
         [(ResultTcType.Ok source-ty)
           (match (tc-slice-view-result-type
             (tc-global-shared-view ctx)
@@ -43848,8 +44096,9 @@
   [func-id : i64]
   [args : ast.AstExprList]) : ResultTcType
   (let
-    [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
-    (match (ast.ast-expr-unspan func)
+    [func : ast.AstExpr
+      (tc-context-expr-get (tc-global-shared-view ctx) func-id)]
+    (match (ast.ast-expr-unspan (tc-global-shared-view func))
       [(ast.AstExpr.Var raw-name)
         ;; Keep builtin dispatch identical to the string-name call path; only
         ;; the ordinary fallback needs the pooled function expression id.
@@ -44054,7 +44303,7 @@
   [maybe-ty : ast.AstMaybeType]) : ast.AstMaybeType
   (match maybe-ty
     [(ast.AstMaybeType.Some want)
-      (ast.AstMaybeType.Some (tc-resolve-type ctx want))]
+      (ast.AstMaybeType.Some (tc-resolve-type (tc-global-shared-view ctx) want))]
     [(ast.AstMaybeType.No) ast.AstMaybeType.No]))
 
 (define (tc-let-binding-plain-type
@@ -44065,7 +44314,7 @@
   (match maybe-ty
     [(ast.AstMaybeType.Some want)
       (tc-expr-with-expected-or-actual ctx env init want)]
-    [(ast.AstMaybeType.No) (tc-expr ctx env init)]))
+    [(ast.AstMaybeType.No) (tc-expr (tc-global-shared-view ctx) env init)]))
 
 (define (tc-let-binding-plain-expected-ok
   [ctx : TcContext]
@@ -44111,7 +44360,8 @@
       (ast.ast-let-binding-fallback))
       [(ast.AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
+          [init : ast.AstExpr
+            (tc-context-expr-get (tc-global-shared-view ctx) init-box)]
           [resolved-maybe-ty : ast.AstMaybeType
             (tc-let-binding-resolve-maybe-type
               (tc-global-shared-view ctx)
@@ -45542,7 +45792,9 @@
                       [(ast.AstLambda.Lambda params maybe-ret lambda-body-box)
                         (let
                           [lambda-body : ast.AstExpr
-                            (tc-context-expr-get ctx lambda-body-box)]
+                            (tc-context-expr-get
+                              (tc-global-shared-view ctx)
+                              lambda-body-box)]
                           (tc-lambda-expr-allow-ref-captures
                             ctx
                             env
@@ -45589,16 +45841,18 @@
                     [(ast.AstLambda.Lambda params maybe-ret lambda-body-box)
                       (let
                         [lambda-body : ast.AstExpr
-                          (tc-context-expr-get ctx lambda-body-box)]
+                          (tc-context-expr-get
+                            (tc-global-shared-view ctx)
+                            lambda-body-box)]
                         (tc-lambda-expr-allow-ref-captures
                           ctx
                           env
                           params
                           maybe-ret
                           lambda-body))])]
-                [_ (tc-expr-id ctx env init-id)])]
+                [_ (tc-expr-id (tc-global-shared-view ctx) env init-id)])]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-          (tc-expr-id ctx env init-id))])))
+          (tc-expr-id (tc-global-shared-view ctx) env init-id))])))
 
 (define (tc-let-bindings-for-body
   [ctx : TcContext]
@@ -45621,7 +45875,8 @@
       (ast.ast-let-binding-fallback))
       [(ast.AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
+          [init : ast.AstExpr
+            (tc-context-expr-get (tc-global-shared-view ctx) init-box)]
           (match (tc-let-binding-init-type-at
             (tc-global-shared-view ctx)
             env
@@ -45731,7 +45986,8 @@
     [(ResultTcUnit.Ok)
       (match (tc-expr (tc-global-shared-view ctx) env cleanup)
         [(ResultTcType.Ok cleanup-ty)
-          (match (tc-type-strip-region (tc-resolve-type ctx cleanup-ty))
+          (match (tc-type-strip-region
+            (tc-resolve-type (tc-global-shared-view ctx) cleanup-ty))
             [(ast.AstType.Func args ret)
               (let
                 [ret-ty : ast.AstType (ast.ty-node-get ret)]
@@ -45789,9 +46045,14 @@
       (ast.ast-resource-binding-fallback))
       [(ast.AstResourceBinding.Binding name init-box cleanup-box _)
         (let
-          [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
-          [cleanup : ast.AstExpr (tc-context-expr-get ctx cleanup-box)]
-          (match (tc-resource-cleanup-resource-type ctx env cleanup)
+          [init : ast.AstExpr
+            (tc-context-expr-get (tc-global-shared-view ctx) init-box)]
+          [cleanup : ast.AstExpr
+            (tc-context-expr-get (tc-global-shared-view ctx) cleanup-box)]
+          (match (tc-resource-cleanup-resource-type
+            (tc-global-shared-view ctx)
+            env
+            (tc-global-shared-view cleanup))
             [(ResultTcType.Ok expected-init-ty)
               (match (tc-expr-with-expected-or-actual-id
                 (tc-global-shared-view ctx)
@@ -45837,7 +46098,10 @@
   (if (>= index exprs.len)
     (ResultTcType.Ok (ast.AstType.Unit))
     (if (= (+ index 1) exprs.len)
-      (tc-expr-id ctx env (ast.ast-expr-list-get exprs index 0))
+      (tc-expr-id
+        (tc-global-shared-view ctx)
+        env
+        (ast.ast-expr-list-get exprs index 0))
       (match (tc-expr-id
         (tc-global-shared-view ctx)
         env
@@ -47275,7 +47539,7 @@
               (tc-global-shared-view spmd-env)
               index)
               [(ResultTcUnit.Ok)
-                (match (tc-expr ctx env expr)
+                (match (tc-expr (tc-global-shared-view ctx) env expr)
                   [(ResultTcType.Ok ty) (tc-spmd-masked-if-lane-type-ok ty)]
                   [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
@@ -47309,7 +47573,7 @@
                   (tc-global-shared-view spmd-env)
                   (tc-global-shared-view value))
                   [(ResultTcUnit.Ok)
-                    (match (tc-expr ctx env value)
+                    (match (tc-expr (tc-global-shared-view ctx) env value)
                       [(ResultTcType.Ok ty) (tc-spmd-masked-if-lane-type-ok ty)]
                       [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
@@ -47344,7 +47608,7 @@
               spmd-env
               (tc-global-shared-view value))
               [(ResultTcUnit.Ok)
-                (match (tc-expr ctx env value)
+                (match (tc-expr (tc-global-shared-view ctx) env value)
                   [(ResultTcType.Ok ty) (tc-spmd-masked-if-lane-type-ok ty)]
                   [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
@@ -47653,7 +47917,8 @@
   [ctx : TcContext]
   [scrut-ty : ast.AstType]
   [pattern : ast.AstPattern]) : TcNameIdList
-  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+  (match (tc-type-strip-region
+    (tc-resolve-type (tc-global-shared-view ctx) scrut-ty))
     [(ast.AstType.Enum _)
       (match (tc-global-shared-view pattern)
         [(ast.AstPattern.Variant _ args-box)
@@ -48401,7 +48666,7 @@
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]
   [class : TcSpmdClass]) : ResultTcSpmdExprInfo
-  (match (tc-expr ctx env expr)
+  (match (tc-expr (tc-global-shared-view ctx) env expr)
     [(ResultTcType.Ok ty) (tc-spmd-finish ty class spmd-env)]
     [(ResultTcType.Err message) (ResultTcSpmdExprInfo.Err message)]))
 
@@ -49787,7 +50052,9 @@
                                       env
                                       (tc-global-shared-view end-env)
                                       index
-                                      (tc-resolve-type ctx index-ty)
+                                      (tc-resolve-type
+                                        (tc-global-shared-view ctx)
+                                        index-ty)
                                       body)
                                       [(ResultTcUnit.Ok)
                                         (tc-spmd-finish
@@ -57295,7 +57562,8 @@
           (ci.intern-str field-id)
           " requires struct, got "
           (tc-type-render
-            (tc-type-strip-region (tc-resolve-type ctx receiver-ty)))))]))
+            (tc-type-strip-region
+              (tc-resolve-type (tc-global-shared-view ctx) receiver-ty)))))]))
 
 (define (tc-borrow-place-var-by-value [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
   (match (tc-type-outer-region (tc-global-shared-view ty))
@@ -57410,7 +57678,9 @@
   (match place
     [(TcBorrowPlace lifetime tuple-ty)
       (match (tc-type-strip-region
-        (tc-resolve-type ctx (tc-global-shared-view tuple-ty)))
+        (tc-resolve-type
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view tuple-ty)))
         [(ast.AstType.Tuple elems)
           (match (tc-type-list-ref
             (ast.ast-type-list-box-shared-view elems)
@@ -57452,12 +57722,14 @@
             (str_cat.str-cat
               "typecheck: array-ref borrow requires array place, got "
               (tc-type-render
-                (tc-type-strip-region (tc-resolve-type ctx array-ty)))))])]))
+                (tc-type-strip-region
+                  (tc-resolve-type (tc-global-shared-view ctx) array-ty)))))])]))
 
 (define (tc-borrow-place-box-get [ctx : TcContext] [place : TcBorrowPlace]) : ResultTcBorrowPlace
   (match place
     [(TcBorrowPlace lifetime box-ty)
-      (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
+      (match (tc-type-strip-region
+        (tc-resolve-type (tc-global-shared-view ctx) box-ty))
         [(ast.AstType.Box inner-ty)
           (ResultTcBorrowPlace.Ok
             (TcBorrowPlace
@@ -57619,20 +57891,27 @@
         [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstExpr.StructGet receiver-box _)
       (let
-        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
+        [receiver : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) receiver-box)]
         (tc-mut-borrow-non-call-place-ok ctx env receiver))]
     [(ast.AstExpr.TupleRef tuple-box _)
       (let
-        [tuple : ast.AstExpr (tc-context-expr-get ctx tuple-box)]
+        [tuple : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) tuple-box)]
         (tc-mut-borrow-non-call-place-ok ctx env tuple))]
     [(ast.AstExpr.ArrayRef array-box _)
       (let
-        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
+        [array : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) array-box)]
         (tc-mut-borrow-non-call-place-ok ctx env array))]
     [(ast.AstExpr.BoxGet box-box)
       (let
-        [box-expr : ast.AstExpr (tc-context-expr-get ctx box-box)]
-        (match (tc-store-place-lifetime ctx env box-expr)
+        [box-expr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) box-box)]
+        (match (tc-store-place-lifetime
+          (tc-global-shared-view ctx)
+          env
+          (tc-global-shared-view box-expr))
           [(ResultTcNameId.Ok _)
             (match (tc-expr (tc-global-shared-view ctx) env box-expr)
               [(ResultTcType.Ok box-ty)
@@ -57643,8 +57922,12 @@
           [(ResultTcNameId.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.BoxTake receiver-box)
       (let
-        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
-        (match (tc-store-place-lifetime ctx env receiver)
+        [receiver : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) receiver-box)]
+        (match (tc-store-place-lifetime
+          (tc-global-shared-view ctx)
+          env
+          (tc-global-shared-view receiver))
           [(ResultTcNameId.Ok _)
             (match (tc-expr (tc-global-shared-view ctx) env receiver)
               [(ResultTcType.Ok receiver-ty)
@@ -57670,26 +57953,30 @@
         (match (tc-dotted-local-field-expr-id-after-check name)
           [(ResultTcExprId.Ok virtual-id)
             (tc-store-place-lifetime
-              ctx
+              (tc-global-shared-view ctx)
               env
-              (tc-context-expr-get ctx virtual-id))]
+              (tc-context-expr-get (tc-global-shared-view ctx) virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcNameId.Err message)])
         (match (tc-lookup-visible-id ctx env name)
           [(ResultTcType.Ok ty) (tc-store-place-lifetime-var name ty)]
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [(ast.AstExpr.StructGet receiver-box _)
       (let
-        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
+        [receiver : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) receiver-box)]
         (tc-store-place-lifetime ctx env receiver))]
     [(ast.AstExpr.TupleRef tuple-box _)
       (let
-        [tuple : ast.AstExpr (tc-context-expr-get ctx tuple-box)]
+        [tuple : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) tuple-box)]
         (tc-store-place-lifetime ctx env tuple))]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (let
-        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
-        [index : ast.AstExpr (tc-context-expr-get ctx index-box)]
-        (match (tc-expr ctx env index)
+        [array : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) array-box)]
+        [index : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) index-box)]
+        (match (tc-expr (tc-global-shared-view ctx) env index)
           [(ResultTcType.Ok index-ty)
             (if (tc-integer-type? index-ty)
               (tc-store-place-lifetime ctx env array)
@@ -57697,8 +57984,12 @@
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [(ast.AstExpr.BoxGet box-box)
       (let
-        [box-expr : ast.AstExpr (tc-context-expr-get ctx box-box)]
-        (match (tc-expr ctx env box-expr)
+        [box-expr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) box-box)]
+        (match (tc-expr
+          (tc-global-shared-view ctx)
+          env
+          (tc-global-shared-view box-expr))
           [(ResultTcType.Ok box-ty)
             (match (tc-box-set-inner-type (tc-global-shared-view ctx) box-ty)
               [(ResultTcType.Ok _) (tc-store-place-lifetime ctx env box-expr)]
@@ -57706,8 +57997,12 @@
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [(ast.AstExpr.BoxTake receiver-box)
       (let
-        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
-        (match (tc-expr ctx env receiver)
+        [receiver : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) receiver-box)]
+        (match (tc-expr
+          (tc-global-shared-view ctx)
+          env
+          (tc-global-shared-view receiver))
           [(ResultTcType.Ok receiver-ty)
             (match (tc-box-set-inner-type
               (tc-global-shared-view ctx)
@@ -59078,7 +59373,8 @@
           [(ast.AstMaybeType.No) (ResultTcEnv.Ok (tc-bind-id env name actual))]
           [(ast.AstMaybeType.Some annotation)
             (let
-              [expected : ast.AstType (tc-resolve-type ctx annotation)]
+              [expected : ast.AstType
+                (tc-resolve-type (tc-global-shared-view ctx) annotation)]
               (match (tc-expect
                 (tc-global-shared-view actual)
                 (tc-global-shared-view expected)
@@ -59327,8 +59623,13 @@
       (match arm
         [(ast.AstMatchArm.Arm pattern body-box)
           (let
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [body : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
+            (match (tc-bind-match-pattern
+              (tc-global-shared-view ctx)
+              env
+              scrut-ty
+              pattern)
               [(ResultTcEnv.Ok arm-env) (tc-expr ctx arm-env body)]
               [(ResultTcEnv.Err message)
                 (ResultTcType.Err (tc-locate-match-pattern-error body message))]))])]
@@ -59348,13 +59649,18 @@
       (match arm
         [(ast.AstMatchArm.Arm pattern body-box)
           (let
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [body : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
+            (match (tc-bind-match-pattern
+              (tc-global-shared-view ctx)
+              env
+              scrut-ty
+              pattern)
               [(ResultTcEnv.Ok arm-env)
                 (match (tc-expr-with-expected-or-actual
                   (tc-global-shared-view ctx)
                   arm-env
-                  body
+                  (tc-global-shared-view body)
                   (tc-global-shared-view expected))
                   [(ResultTcType.Ok got)
                     (match (tc-match-inferred-type-for-expected
@@ -61563,7 +61869,8 @@
       (match (tc-ptr-addr-of-place (tc-global-shared-view ctx) env place)
         [(ResultTcType.Ok ty)
           (let
-            [resolved : ast.AstType (tc-resolve-type ctx ty)]
+            [resolved : ast.AstType
+              (tc-resolve-type (tc-global-shared-view ctx) ty)]
             (ResultTcType.Ok
               (ast.ast-ty-mut-ptr (tc-type-without-regions resolved))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
@@ -61581,7 +61888,8 @@
             (tc-resolve-type (tc-global-shared-view ctx) ptr-ty)
             "typecheck: ptr-read requires a raw pointer operand")
             [(ResultTcType.Ok elem)
-              (ResultTcType.Ok (tc-resolve-type ctx elem))]
+              (ResultTcType.Ok
+                (tc-resolve-type (tc-global-shared-view ctx) elem))]
             [(ResultTcType.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
@@ -61609,7 +61917,7 @@
                 [(ResultTcType.Ok value-ty)
                   (match (tc-expect
                     value-ty
-                    (tc-resolve-type ctx elem)
+                    (tc-resolve-type (tc-global-shared-view ctx) elem)
                     "typecheck: ptr-write! value type mismatch")
                     [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Unit))]
                     [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
@@ -61662,7 +61970,8 @@
         (if (tc-raw-pointer-type? (tc-global-shared-view resolved-target))
           (match (tc-expr (tc-global-shared-view ctx) env ptr)
             [(ResultTcType.Ok ptr-ty)
-              (if (tc-raw-pointer-type? (tc-resolve-type ctx ptr-ty))
+              (if (tc-raw-pointer-type?
+                (tc-resolve-type (tc-global-shared-view ctx) ptr-ty))
                 (ResultTcType.Ok resolved-target)
                 (ResultTcType.Err
                   "typecheck: ptr-cast requires a raw pointer operand"))]
@@ -61679,7 +61988,8 @@
     [(ResultTcUnit.Ok)
       (match (tc-expr (tc-global-shared-view ctx) env ptr)
         [(ResultTcType.Ok ptr-ty)
-          (if (tc-raw-pointer-type? (tc-resolve-type ctx ptr-ty))
+          (if (tc-raw-pointer-type?
+            (tc-resolve-type (tc-global-shared-view ctx) ptr-ty))
             (ResultTcType.Ok (ast.AstType.U64))
             (ResultTcType.Err
               "typecheck: ptr->int requires a raw pointer operand"))]
@@ -61714,7 +62024,7 @@
   [str : ast.AstExpr]) : ResultTcType
   (match (tc-require-unsafe (tc-global-shared-view ctx) env "string-data")
     [(ResultTcUnit.Ok)
-      (match (tc-expr ctx env str)
+      (match (tc-expr (tc-global-shared-view ctx) env str)
         [(ResultTcType.Ok str-ty)
           (if (tc-length-handle-type? str-ty)
             (ResultTcType.Ok (ast.ast-ty-ptr (ast.AstType.U8)))
@@ -61777,7 +62087,8 @@
     [(ResultTcUnit.Ok)
       (match (tc-expr (tc-global-shared-view ctx) env array)
         [(ResultTcType.Ok array-ty)
-          (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+          (match (tc-type-strip-region
+            (tc-resolve-type (tc-global-shared-view ctx) array-ty))
             [(ast.AstType.Array elem-ty _)
               (ResultTcType.Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
             [(ast.AstType.DynArray elem-ty)
@@ -61849,7 +62160,9 @@
     (match (tc-expr
       (tc-global-shared-view ctx)
       env
-      (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0)))
+      (tc-context-expr-get
+        (tc-global-shared-view ctx)
+        (ast.ast-expr-list-get args index 0)))
       [(ResultTcType.Ok arg-ty)
         (if (tc-integer-type? arg-ty)
           (tc-syscall-args-at ctx env args (+ index 1))
@@ -61872,7 +62185,7 @@
     env
     (tc-global-shared-view inner))
     [(ResultTcUnit.Ok)
-      (match (tc-expr ctx env inner)
+      (match (tc-expr (tc-global-shared-view ctx) env inner)
         [(ResultTcType.Ok inner-ty)
           (ResultTcType.Ok (tc-tag-active-region env (ast.ast-ty-box inner-ty)))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
@@ -61916,7 +62229,9 @@
   (match (tc-expr (tc-global-shared-view ctx) env box-expr)
     [(ResultTcType.Ok box-ty)
       (match (tc-type-strip-region
-        (tc-resolve-type ctx (tc-global-shared-view box-ty)))
+        (tc-resolve-type
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view box-ty)))
         [(ast.AstType.Box inner-ty)
           (ResultTcType.Ok
             (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
@@ -62009,7 +62324,7 @@
 
 (define (tc-box-set-inner-type [ctx : TcContext] [box-ty : ast.AstType]) : ResultTcType
   (match (tc-type-strip-region
-    (tc-resolve-type ctx (tc-global-shared-view box-ty)))
+    (tc-resolve-type (tc-global-shared-view ctx) (tc-global-shared-view box-ty)))
     [(ast.AstType.Box inner-ty)
       (ResultTcType.Ok
         (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
@@ -62060,10 +62375,10 @@
                             "box")
                             [(ResultTcUnit.Ok)
                               (match (tc-ensure-reference-value-can-store-in-place
-                                ctx
+                                (tc-global-shared-view ctx)
                                 env
                                 (tc-context-expr-get
-                                  ctx
+                                  (tc-global-shared-view ctx)
                                   (ast.ast-expr-box-get
                                     (ast.ast-node-push box-expr)))
                                 value-ty
@@ -62084,12 +62399,14 @@
 (define (tc-init-unsupported-message [ctx : TcContext] [ty : ast.AstType]) : String
   (str_cat.str-cat
     "typecheck: init unsupported type "
-    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
+    (tc-type-render
+      (tc-type-without-regions (tc-resolve-type (tc-global-shared-view ctx) ty)))))
 
 (define (tc-init-cleanup-owning-message [ctx : TcContext] [ty : ast.AstType]) : String
   (str_cat.str-cat
     "typecheck: init does not support cleanup-owning aggregate "
-    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
+    (tc-type-render
+      (tc-type-without-regions (tc-resolve-type (tc-global-shared-view ctx) ty)))))
 
 (define (tc-init-aggregate-layout-ok [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
   (match (tc-inline-aggregate-type-layout ctx ty)
@@ -62329,7 +62646,9 @@
           (let
             [elem-ty : ast.AstType
               (tc-type-without-regions
-                (tc-resolve-type ctx (ast.ty-node-get elem)))]
+                (tc-resolve-type
+                  (tc-global-shared-view ctx)
+                  (ast.ty-node-get elem)))]
             (if (tc-dyn-array-elem-supported? env elem-ty)
               ResultTcUnit.Ok
               (ResultTcUnit.Err
@@ -62423,14 +62742,14 @@
     [(ast.AstExpr.Unquote inner-box)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (match (tc-expr ctx env inner)
+        (match (tc-expr (tc-global-shared-view ctx) env inner)
           [(ResultTcType.Ok ty)
             (tc-expect ty (ast.AstType.Expr) "typecheck: unquote expects Expr")]
           [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.UnquoteSplicing inner-box)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (match (tc-expr ctx env inner)
+        (match (tc-expr (tc-global-shared-view ctx) env inner)
           [(ResultTcType.Ok ty)
             (tc-expect
               ty
@@ -62527,7 +62846,8 @@
     "typecheck: "
     form
     " result type is not clone-supported: "
-    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
+    (tc-type-render
+      (tc-type-without-regions (tc-resolve-type (tc-global-shared-view ctx) ty)))))
 
 (define (tc-with-escape-unsupported-message
   [ctx : TcContext]
@@ -63399,7 +63719,9 @@
                 "typecheck: replace! does not support cleanup-owning places")
               (let
                 [replacement : ast.AstExpr
-                  (tc-context-expr-get ctx replacement-id)]
+                  (tc-context-expr-get
+                    (tc-global-shared-view ctx)
+                    replacement-id)]
                 (match (tc-expr-with-expected-or-actual-id
                   (tc-global-shared-view ctx)
                   (tc-global-shared-view env)
@@ -63745,8 +64067,9 @@
   [name : i64]
   [value-box : i64]) : ResultTcType
   (let
-    [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-    (match (tc-lookup-visible-id ctx env name)
+    [value : ast.AstExpr
+      (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
+    (match (tc-lookup-visible-id (tc-global-shared-view ctx) env name)
       [(ResultTcType.Ok var-ty)
         (match (tc-expr-with-expected-or-actual-id
           (tc-global-shared-view ctx)
@@ -63806,7 +64129,7 @@
           (ctfe_support.ctfe-describe-expr
             (ast.ast-expr-unspan-with-pools
               pools
-              (tc-context-expr-get ctx expr-id))))))))
+              (tc-context-expr-get (tc-global-shared-view ctx) expr-id))))))))
 
 (define (tc-for-owned-expected-type [ctx : TcContext] [expected-id : i64]) : ResultTcType
   (let
@@ -63818,7 +64141,7 @@
       (tc-ctfe-env (tc-global-shared-view ctx))
       (ctfe_support.ctfe-fuel-limit))
       [(ctfe_support.ResultCtfeQuoteType.Ok ty _)
-        (ResultTcType.Ok (tc-resolve-type ctx ty))]
+        (ResultTcType.Ok (tc-resolve-type (tc-global-shared-view ctx) ty))]
       [(ctfe_support.ResultCtfeQuoteType.Err diag)
         (let
           [diagnostic : cdiag.CompilerDiagnostic
@@ -63829,7 +64152,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [body-id : i64]) : ResultTcType
-  (match (tc-expr-id ctx env body-id)
+  (match (tc-expr-id (tc-global-shared-view ctx) env body-id)
     [(ResultTcType.Ok body-ty)
       (match (tc-expect
         body-ty
@@ -63980,11 +64303,12 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box span)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (match inner
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (match (tc-global-shared-view inner)
           [(ast.AstExpr.MacroExpansion expanded provenance-id macro-name-id)
             (tc-macro-expansion-result-with-frame
-              (tc-context-expr-get ctx expanded)
+              (tc-context-expr-get (tc-global-shared-view ctx) expanded)
               (macro-expansion-invocation-path-id provenance-id)
               (macro-expansion-origin-path-id provenance-id)
               macro-name-id
@@ -64017,7 +64341,8 @@
                     (tc-global-shared-view inner)
                     span
                     message)]))]))]
-    [(ast.AstExpr.MacroExpansion inner _ _) (tc-expr-id ctx env inner)]
+    [(ast.AstExpr.MacroExpansion inner _ _)
+      (tc-expr-id (tc-global-shared-view ctx) env inner)]
     [(ast.AstExpr.Literal lit) (tc-literal-type-checked lit)]
     [(ast.AstExpr.BinaryData _)
       (ResultTcType.Ok (ast.ast-ty-dyn-array (ast.AstType.U8)))]
@@ -64090,8 +64415,13 @@
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            (match (tc-let-bindings-for-body ctx env bindings body)
+            [body : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
+            (match (tc-let-bindings-for-body
+              (tc-global-shared-view ctx)
+              env
+              (tc-global-shared-view bindings)
+              (tc-global-shared-view body))
               [(ResultTcEnv.Ok next-env)
                 (match (tc-expr-id
                   (tc-global-shared-view ctx)
@@ -64112,7 +64442,8 @@
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
+            [body : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
             (tc-lambda-expr ctx env params maybe-ret body-box body))])]
     [(ast.AstExpr.Tuple exprs)
       (match (tc-ensure-cleanup-resource-not-stored-list
@@ -64185,7 +64516,8 @@
         (tc-global-shared-view exprs))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
-        [len : ast.AstExpr (tc-context-expr-get ctx len-box)]
+        [len : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) len-box)]
         [elem : ast.AstType
           (tc-resolve-type
             (tc-global-shared-view ctx)
@@ -64256,9 +64588,11 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-        (match (tc-expr-id ctx env array-box)
+        [array : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) array-box)]
+        [value : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
+        (match (tc-expr-id (tc-global-shared-view ctx) env array-box)
           [(ResultTcType.Ok array-ty)
             (match (tc-expr-with-expected-or-actual-id
               (tc-global-shared-view ctx)
@@ -64362,20 +64696,22 @@
       (tc-fixed-array-take-type
         (tc-global-shared-view ctx)
         env
-        (tc-context-expr-get ctx array-box)
+        (tc-context-expr-get (tc-global-shared-view ctx) array-box)
         array-box
         index-box)]
     [(ast.AstExpr.Replace place-box replacement-box)
       (tc-replace-type
-        ctx
+        (tc-global-shared-view ctx)
         env
-        (tc-context-expr-get ctx place-box)
+        (tc-context-expr-get (tc-global-shared-view ctx) place-box)
         replacement-box)]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
-        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-        (match (tc-expr-id ctx env array-box)
+        [array : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) array-box)]
+        [value : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
+        (match (tc-expr-id (tc-global-shared-view ctx) env array-box)
           [(ResultTcType.Ok array-ty)
             (match (tc-array-push-receiver
               (tc-global-shared-view ctx)
@@ -64515,7 +64851,7 @@
             (tc-global-shared-view env)
             mutable
             (ast.ast-borrow-lifetime-from-id lifetime-id)
-            (tc-context-expr-get ctx place-box))]
+            (tc-context-expr-get (tc-global-shared-view ctx) place-box))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Unary op inner-box)
       (match (tc-expr-id
@@ -64526,8 +64862,10 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Binary op left-box right-box)
       (let
-        [left : ast.AstExpr (tc-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (tc-context-expr-get ctx right-box)]
+        [left : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) left-box)]
+        [right : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) right-box)]
         (match (tc-binop-expr-types ctx env op left right)
           [(ResultTcBinOpTypes.Ok binop-types)
             (match binop-types
@@ -64571,9 +64909,11 @@
       (match (ast.ast-foreach-box-shared-view fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
-            (if (tc-integer-type? resolved-index-ty)
+            [body : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
+            [resolved-index-ty : ast.AstType
+              (tc-resolve-type (tc-global-shared-view ctx) index-ty)]
+            (if (tc-integer-type? (tc-global-shared-view resolved-index-ty))
               (match (tc-expr-with-expected-or-actual-id
                 (tc-global-shared-view ctx)
                 (tc-global-shared-view env)
@@ -64638,11 +64978,14 @@
             init-box
             value-box)
           (let
-            [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
-            [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-            [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
-            (if (tc-integer-type? resolved-index-ty)
-              (match (tc-expr-id ctx env start-box)
+            [init : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) init-box)]
+            [value : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
+            [resolved-index-ty : ast.AstType
+              (tc-resolve-type (tc-global-shared-view ctx) index-ty)]
+            (if (tc-integer-type? (tc-global-shared-view resolved-index-ty))
+              (match (tc-expr-id (tc-global-shared-view ctx) env start-box)
                 [(ResultTcType.Ok start-ty)
                   (if (tc-integer-type? (tc-global-shared-view start-ty))
                     (match (tc-expr-id
@@ -64702,12 +65045,17 @@
             value-box
             body-box)
           (let
-            [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
-            [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
-            [resolved-prefix-ty : ast.AstType (tc-resolve-type ctx prefix-ty)]
-            (if (tc-integer-type? resolved-index-ty)
+            [init : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) init-box)]
+            [value : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
+            [body : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
+            [resolved-index-ty : ast.AstType
+              (tc-resolve-type (tc-global-shared-view ctx) index-ty)]
+            [resolved-prefix-ty : ast.AstType
+              (tc-resolve-type (tc-global-shared-view ctx) prefix-ty)]
+            (if (tc-integer-type? (tc-global-shared-view resolved-index-ty))
               (match (tc-expr-with-expected-or-actual-id
                 (tc-global-shared-view ctx)
                 (tc-global-shared-view env)
@@ -64869,19 +65217,23 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.StructSet receiver-box field value-box)
       (let
-        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
+        [receiver : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) receiver-box)]
+        [value : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
         (tc-struct-field-mutation-value-id ctx env receiver field value))]
     [(ast.AstExpr.WithRegion region body)
       (tc-with-region-expr-scoped ctx env region body)]
     [(ast.AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : ast.AstExpr (tc-context-expr-get ctx scratch-box)]
+        [scratch : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) scratch-box)]
         (tc-with-escape-expr ctx env scratch body))]
     [(ast.AstExpr.WithScratch body) (tc-with-scratch-expr ctx env body)]
     [(ast.AstExpr.InArena arena-box body)
       (let
-        [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
+        [arena : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) arena-box)]
         (tc-in-arena-expr-scoped ctx env arena body))]
     [(ast.AstExpr.WithResource wr-box)
       (match (ast.ast-with-resource-box-shared-view wr-box)
@@ -64889,24 +65241,32 @@
           (tc-with-resource-expr ctx env bindings body)])]
     [(ast.AstExpr.Box inner-box)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (tc-box-expr ctx env inner))]
     [(ast.AstExpr.BoxGet inner-box)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (tc-box-get-expr ctx env inner))]
     [(ast.AstExpr.BoxTake inner-box)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (tc-deref-expr ctx env inner))]
     [(ast.AstExpr.BoxSet box-box value-box)
       (let
-        [box-expr : ast.AstExpr (tc-context-expr-get ctx box-box)]
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
+        [box-expr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) box-box)]
+        [value : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
         (tc-box-mutation-value ctx env box-expr value))]
     [(ast.AstExpr.Comptime inner-box)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        [ctfe-env : ctfe_support.CtfeEnv
+          (tc-ctfe-env (tc-global-shared-view ctx))]
         (match (ctfe_support.compiler-ctfe-eval
           inner
           ctfe-env
@@ -64921,7 +65281,8 @@
     [(ast.AstExpr.Quote _) (ResultTcType.Ok (ast.AstType.Expr))]
     [(ast.AstExpr.Quasiquote template-box)
       (let
-        [template : ast.AstExpr (tc-context-expr-get ctx template-box)]
+        [template : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) template-box)]
         (match (tc-quasiquote-template-ok ctx env template)
           [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Expr))]
           [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
@@ -64932,17 +65293,20 @@
         "typecheck: unquote-splicing is only valid inside quasiquote")]
     [(ast.AstExpr.Try inner-box)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (tc-try-expr ctx env inner))]
     [(ast.AstExpr.Return value-box)
       (let
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
+        [value : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
         (tc-return-expr ctx env value))]
     [(ast.AstExpr.Break) (tc-loop-control-expr env "break")]
     [(ast.AstExpr.Continue) (tc-loop-control-expr env "continue")]
     [(ast.AstExpr.PtrNull ty-id)
       (let
-        [resolved : ast.AstType (tc-resolve-type ctx (ast.ty-node-get ty-id))]
+        [resolved : ast.AstType
+          (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get ty-id))]
         (match (tc-global-shared-view resolved)
           [(ast.AstType.Ptr _) (ResultTcType.Ok resolved)]
           [(ast.AstType.MutPtr _) (ResultTcType.Ok resolved)]
@@ -64950,7 +65314,7 @@
             (ResultTcType.Err
               "typecheck: ptr-null requires a pointer type, e.g. (ptr-null : (Ptr i64))")]))]
     [(ast.AstExpr.PtrNullCheck inner-box)
-      (match (tc-expr-id ctx env inner-box)
+      (match (tc-expr-id (tc-global-shared-view ctx) env inner-box)
         [(ResultTcType.Ok inner-ty)
           (match (tc-type-strip-region inner-ty)
             [(ast.AstType.Ptr _) (ResultTcType.Ok (ast.AstType.Bool))]
@@ -64961,46 +65325,59 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.PtrAddrOf place-box)
       (let
-        [place : ast.AstExpr (tc-context-expr-get ctx place-box)]
+        [place : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) place-box)]
         (tc-ptr-addr-of-expr ctx env place))]
     [(ast.AstExpr.PtrRead ptr-box)
       (let
-        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
+        [ptr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) ptr-box)]
         (tc-ptr-read-expr ctx env ptr))]
     [(ast.AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
+        [ptr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) ptr-box)]
+        [value : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
         (tc-ptr-write-expr ctx env ptr value))]
     [(ast.AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
-        [offset : ast.AstExpr (tc-context-expr-get ctx offset-box)]
+        [ptr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) ptr-box)]
+        [offset : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) offset-box)]
         (tc-ptr-offset-expr ctx env ptr offset))]
     [(ast.AstExpr.PtrCast ptr-box target-id)
       (let
-        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
+        [ptr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) ptr-box)]
         (tc-ptr-cast-expr ctx env ptr (ast.ty-node-get target-id)))]
     [(ast.AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
+        [ptr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) ptr-box)]
         (tc-ptr-to-int-expr ctx env ptr))]
     [(ast.AstExpr.IntToPtr value-box target-id)
       (let
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
+        [value : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
         (tc-int-to-ptr-expr ctx env value (ast.ty-node-get target-id)))]
     [(ast.AstExpr.StringData str-box)
       (let
-        [str : ast.AstExpr (tc-context-expr-get ctx str-box)]
+        [str : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) str-box)]
         (tc-string-data-expr ctx env str))]
     [(ast.AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
-        [len : ast.AstExpr (tc-context-expr-get ctx len-box)]
+        [ptr : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) ptr-box)]
+        [len : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) len-box)]
         (tc-string-from-bytes-expr ctx env ptr len))]
     [(ast.AstExpr.ArrayData array-box)
       (let
-        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
+        [array : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) array-box)]
         (tc-array-data-expr ctx env array))]
     [(ast.AstExpr.ProgramArgc) (ResultTcType.Ok (ast.AstType.I64))]
     [(ast.AstExpr.ProgramArgv)
@@ -65009,27 +65386,36 @@
       (tc-program-entry-ptr-expr ctx env "program-envp")]
     [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : ast.AstExpr (tc-context-expr-get ctx leaf-box)]
-        [subleaf : ast.AstExpr (tc-context-expr-get ctx subleaf-box)]
+        [leaf : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) leaf-box)]
+        [subleaf : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) subleaf-box)]
         (tc-cpuid-expr ctx env leaf subleaf))]
     [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : ast.AstExpr (tc-context-expr-get ctx leaf-box)]
-        [subleaf : ast.AstExpr (tc-context-expr-get ctx subleaf-box)]
+        [leaf : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) leaf-box)]
+        [subleaf : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) subleaf-box)]
         (tc-cpuid-expr ctx env leaf subleaf))]
     [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : ast.AstExpr (tc-context-expr-get ctx leaf-box)]
-        [subleaf : ast.AstExpr (tc-context-expr-get ctx subleaf-box)]
+        [leaf : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) leaf-box)]
+        [subleaf : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) subleaf-box)]
         (tc-cpuid-expr ctx env leaf subleaf))]
     [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : ast.AstExpr (tc-context-expr-get ctx leaf-box)]
-        [subleaf : ast.AstExpr (tc-context-expr-get ctx subleaf-box)]
+        [leaf : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) leaf-box)]
+        [subleaf : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) subleaf-box)]
         (tc-cpuid-expr ctx env leaf subleaf))]
     [(ast.AstExpr.Xgetbv index-box)
       (let
-        [index : ast.AstExpr (tc-context-expr-get ctx index-box)]
+        [index : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) index-box)]
         (tc-xgetbv-expr ctx env index))]
     [(ast.AstExpr.Syscall args) (tc-syscall-expr ctx env args)]
     [(ast.AstExpr.ForOwnedState payload)
@@ -65397,7 +65783,7 @@
             (tc-global-shared-view produced))
             ResultTcUnit.Ok
             (ResultTcUnit.Err
-              "typecheck: macro body (tc-global-shared-view produced) type does not match declaration"))]
+              "typecheck: macro body produced type does not match declaration"))]
         [_ (ResultTcUnit.Err "typecheck: macro body must return Expr")]))))
 
 (define (tc-comptime-purity-chain-push [chain : TcStringList] [name : String]) : TcStringList
@@ -69212,7 +69598,7 @@
     (tc-proof-reuse-session-ast-expr-exact?
       (tc-global-shared-view ctx)
       (tc-context-expr-get (tc-global-shared-view ctx) left-id)
-      (tc-context-expr-get ctx right-id))))
+      (tc-context-expr-get (tc-global-shared-view ctx) right-id))))
 
 (define (tc-proof-reuse-session-ast-type-id-exact?
   [ctx : TcContext]
@@ -69509,7 +69895,7 @@
       (tc-proof-reuse-session-ast-expr-exact?
         (tc-global-shared-view ctx)
         (ast.AstExpr.Var (ci.intern-dotted-prefix-id left-name-id))
-        (tc-context-expr-get ctx right-receiver-id)))
+        (tc-context-expr-get (tc-global-shared-view ctx) right-receiver-id)))
     false))
 
 (define (tc-proof-reuse-session-struct-get-left-dotted-exact?
@@ -69537,7 +69923,7 @@
         true)
       (tc-proof-reuse-session-ast-expr-exact?
         (tc-global-shared-view ctx)
-        (tc-context-expr-get ctx left-receiver-id)
+        (tc-context-expr-get (tc-global-shared-view ctx) left-receiver-id)
         (ast.AstExpr.Var (ci.intern-dotted-prefix-id right-name-id))))
     false))
 
@@ -69566,7 +69952,7 @@
               (tc-context-pools (tc-global-shared-view ctx)))))
           (tc-proof-reuse-session-ast-expr-exact?
             (tc-global-shared-view ctx)
-            (tc-context-expr-get ctx inner)
+            (tc-context-expr-get (tc-global-shared-view ctx) inner)
             other)
           false)]
       ;; MacroExpansion carries diagnostic provenance only.  Like source
@@ -69580,7 +69966,7 @@
               (tc-context-pools (tc-global-shared-view ctx)))))
           (tc-proof-reuse-session-ast-expr-exact?
             (tc-global-shared-view ctx)
-            (tc-context-expr-get ctx inner)
+            (tc-context-expr-get (tc-global-shared-view ctx) inner)
             other)
           false)]
       [_
@@ -69595,7 +69981,7 @@
               (tc-proof-reuse-session-ast-expr-exact?
                 (tc-global-shared-view ctx)
                 expr
-                (tc-context-expr-get ctx second))
+                (tc-context-expr-get (tc-global-shared-view ctx) second))
               false)]
           [(ast.AstExpr.MacroExpansion second _ _)
             (if (and
@@ -69607,7 +69993,7 @@
               (tc-proof-reuse-session-ast-expr-exact?
                 (tc-global-shared-view ctx)
                 expr
-                (tc-context-expr-get ctx second))
+                (tc-context-expr-get (tc-global-shared-view ctx) second))
               false)]
           [(ast.AstExpr.Literal literal)
             (match expr
@@ -70885,7 +71271,7 @@
 ;;
 ;; Conservative syntactic scan backing the generated-declaration proof-reuse
 ;; lane. It answers one question: may this
-;; generated declaration depend on the concrete substitution that (tc-global-shared-view produced) it?
+;; generated declaration depend on the concrete substitution that produced it?
 ;; Returning true (dependent) means the declaration is counted
 ;; concrete-required; false means invariant-eligible candidate. The scan flags:
 ;;   - a fixed-size array type anywhere (signatures, fields, let annotations,
@@ -70901,7 +71287,7 @@
 ;;   - a nested generated-module import declaration (nested generator families
 ;;     keep their own concrete checks).
 ;; A `make-array` element type in expression position is NOT dependent: the
-;; (tc-global-shared-view produced) value is a length-erased dynamic array.
+;; produced value is a length-erased dynamic array.
 ;;
 ;; The exact walker performs the additional first-instance isomorphism and
 ;; kind-polymorphic operation checks before a declaration can actually skip;
@@ -71003,7 +71389,7 @@
     [maybe : ast.AstMaybeType]) : bool
     (match maybe
       [(ast.AstMaybeType.Some ty)
-        (tc-generated-type-dependent-construct? ctx ty)]
+        (tc-generated-type-dependent-construct? (tc-global-shared-view ctx) ty)]
       [(ast.AstMaybeType.No) false])))
 
 (cfg
@@ -71017,7 +71403,9 @@
       (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
         [(ast.AstParam.Param _ ty _)
           (or
-            (tc-generated-type-dependent-construct? ctx ty)
+            (tc-generated-type-dependent-construct?
+              (tc-global-shared-view ctx)
+              ty)
             (tc-generated-param-list-dependent-construct-at?
               (tc-global-shared-view ctx)
               params
@@ -71030,20 +71418,22 @@
     [pattern : ast.AstPattern]) : bool
     (match pattern
       [(ast.AstPattern.Var _ maybe-ty)
-        (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)]
+        (tc-generated-maybe-type-dependent-construct?
+          (tc-global-shared-view ctx)
+          maybe-ty)]
       [(ast.AstPattern.Tuple items)
         (tc-generated-pattern-list-dependent-construct-at?
-          ctx
+          (tc-global-shared-view ctx)
           (& (__tl-box-place items))
           0)]
       [(ast.AstPattern.Array items)
         (tc-generated-pattern-list-dependent-construct-at?
-          ctx
+          (tc-global-shared-view ctx)
           (& (__tl-box-place items))
           0)]
       [(ast.AstPattern.Variant _ items)
         (tc-generated-pattern-list-dependent-construct-at?
-          ctx
+          (tc-global-shared-view ctx)
           (& (__tl-box-place items))
           0)]
       [_ false])))
@@ -71058,10 +71448,10 @@
       false
       (or
         (tc-generated-pattern-dependent-construct?
-          ctx
+          (tc-global-shared-view ctx)
           (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback)))
         (tc-generated-pattern-list-dependent-construct-at?
-          ctx
+          (tc-global-shared-view ctx)
           items
           (+ index 1))))))
 
@@ -71075,9 +71465,14 @@
       false
       (or
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-        (tc-generated-expr-list-dependent-construct-at? ctx exprs (+ index 1))))))
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get
+            (tc-global-shared-view ctx)
+            (ast.ast-expr-list-get exprs index 0)))
+        (tc-generated-expr-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          exprs
+          (+ index 1))))))
 
 (cfg
   (any compile-profile test)
@@ -71093,12 +71488,14 @@
         (ast.ast-let-binding-fallback))
         [(ast.AstLetBinding.Binding _ maybe-ty init-id)
           (or
-            (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)
+            (tc-generated-maybe-type-dependent-construct?
+              (tc-global-shared-view ctx)
+              maybe-ty)
             (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx init-id))
+              (tc-global-shared-view ctx)
+              (tc-context-expr-get (tc-global-shared-view ctx) init-id))
             (tc-generated-let-bindings-dependent-construct-at?
-              ctx
+              (tc-global-shared-view ctx)
               bindings
               (+ index 1)))]))))
 
@@ -71116,12 +71513,14 @@
         (ast.ast-match-arm-fallback))
         [(ast.AstMatchArm.Arm pattern body-id)
           (or
-            (tc-generated-pattern-dependent-construct? ctx pattern)
+            (tc-generated-pattern-dependent-construct?
+              (tc-global-shared-view ctx)
+              pattern)
             (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx body-id))
+              (tc-global-shared-view ctx)
+              (tc-context-expr-get (tc-global-shared-view ctx) body-id))
             (tc-generated-match-arms-dependent-construct-at?
-              ctx
+              (tc-global-shared-view ctx)
               arms
               (+ index 1)))]))))
 
@@ -71140,13 +71539,13 @@
         [(ast.AstResourceBinding.Binding _ init-id cleanup-id _)
           (or
             (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx init-id))
+              (tc-global-shared-view ctx)
+              (tc-context-expr-get (tc-global-shared-view ctx) init-id))
             (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx cleanup-id))
+              (tc-global-shared-view ctx)
+              (tc-context-expr-get (tc-global-shared-view ctx) cleanup-id))
             (tc-generated-resource-bindings-dependent-construct-at?
-              ctx
+              (tc-global-shared-view ctx)
               bindings
               (+ index 1)))]))))
 
@@ -71158,43 +71557,46 @@
     (match expr
       [(ast.AstExpr.Spanned inner-id _)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.MacroExpansion inner-id _ _)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.Literal _) false]
       [(ast.AstExpr.Var _) false]
       [(ast.AstExpr.Binary _ left-id right-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx left-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) left-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx right-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) right-id)))]
       [(ast.AstExpr.Unary _ inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.Call func-id args)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx func-id))
-          (tc-generated-expr-list-dependent-construct-at? ctx (& args) 0))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) func-id))
+          (tc-generated-expr-list-dependent-construct-at?
+            (tc-global-shared-view ctx)
+            (& args)
+            0))]
       [(ast.AstExpr.If cond-id then-id else-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx cond-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) cond-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx then-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) then-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx else-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) else-id)))]
       [(ast.AstExpr.Let let-box)
         (match (__tl-box-place let-box)
           [(ast.AstLet.Let bindings body-id)
@@ -71205,112 +71607,128 @@
                 0)
               (tc-generated-expr-dependent-construct?
                 (tc-global-shared-view ctx)
-                (tc-context-expr-get ctx body-id)))])]
+                (tc-context-expr-get (tc-global-shared-view ctx) body-id)))])]
       [(ast.AstExpr.Lambda lambda-box)
         (match (__tl-box-place lambda-box)
           [(ast.AstLambda.Lambda params ret body-id)
             (or
-              (tc-generated-param-list-dependent-construct-at? ctx (& params) 0)
-              (tc-generated-maybe-type-dependent-construct? ctx ret)
+              (tc-generated-param-list-dependent-construct-at?
+                (tc-global-shared-view ctx)
+                (& params)
+                0)
+              (tc-generated-maybe-type-dependent-construct?
+                (tc-global-shared-view ctx)
+                ret)
               (tc-generated-expr-dependent-construct?
                 (tc-global-shared-view ctx)
-                (tc-context-expr-get ctx body-id)))])]
+                (tc-context-expr-get (tc-global-shared-view ctx) body-id)))])]
       [(ast.AstExpr.Tuple items)
-        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+        (tc-generated-expr-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          (& items)
+          0)]
       [(ast.AstExpr.TupleRef tuple-id _)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx tuple-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) tuple-id))]
       [(ast.AstExpr.Array items)
-        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+        (tc-generated-expr-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          (& items)
+          0)]
       [(ast.AstExpr.DynArray items)
-        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+        (tc-generated-expr-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          (& items)
+          0)]
       ;; A make-array element type in expression position is not dependent; the
-      ;; (tc-global-shared-view produced) value is a length-erased dynamic array.
+      ;; produced value is a length-erased dynamic array.
       [(ast.AstExpr.MakeArray _ len-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx len-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) len-id))]
       [(ast.AstExpr.ArrayRef array-id index-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx array-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) array-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx index-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) index-id)))]
       [(ast.AstExpr.ArraySet array-id index-id value-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx array-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) array-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx index-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) index-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx value-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) value-id)))]
       [(ast.AstExpr.ArrayTake array-id live-id index-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx array-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) array-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx live-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) live-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx index-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) index-id)))]
       [(ast.AstExpr.FixedArrayTake array-id index-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx array-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) array-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx index-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) index-id)))]
       [(ast.AstExpr.Replace place-id replacement-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx place-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) place-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx replacement-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) replacement-id)))]
       [(ast.AstExpr.ArrayPush array-id value-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx array-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) array-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx value-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) value-id)))]
       [(ast.AstExpr.StringRef str-id index-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx str-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) str-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx index-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) index-id)))]
       [(ast.AstExpr.While cond-id body-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx cond-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) cond-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx body-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) body-id)))]
       [(ast.AstExpr.ForOwnedState payload)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
+            (tc-global-shared-view ctx)
             (tc-context-expr-get
-              ctx
+              (tc-global-shared-view ctx)
               (ast.ast-for-owned-state-source (& payload))))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx (ast.ast-for-owned-state-body (& payload)))))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get
+              (tc-global-shared-view ctx)
+              (ast.ast-for-owned-state-body (& payload)))))]
       [(ast.AstExpr.ForOwnedStep payload)
         (let
           [expected-type : i64
@@ -71319,56 +71737,67 @@
             (if (>= expected-type 0)
               (tc-generated-expr-dependent-construct?
                 (tc-global-shared-view ctx)
-                (tc-context-expr-get ctx expected-type))
+                (tc-context-expr-get (tc-global-shared-view ctx) expected-type))
               false)
             (tc-generated-expr-dependent-construct?
-              ctx
+              (tc-global-shared-view ctx)
               (tc-context-expr-get
                 (tc-global-shared-view ctx)
                 (ast.ast-for-owned-step-body (& payload))))))]
       [(ast.AstExpr.Begin items)
-        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+        (tc-generated-expr-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          (& items)
+          0)]
       [(ast.AstExpr.Unsafe items)
-        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+        (tc-generated-expr-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          (& items)
+          0)]
       [(ast.AstExpr.Set _ value-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) value-id))]
       [(ast.AstExpr.Ann inner-id ty-id)
         (or
           (tc-generated-type-dependent-construct?
-            ctx
-            (tc-context-type-get ctx ty-id))
+            (tc-global-shared-view ctx)
+            (tc-context-type-get (tc-global-shared-view ctx) ty-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx inner-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) inner-id)))]
       [(ast.AstExpr.Cast _ _) true]
       [(ast.AstExpr.Borrow _ _ place-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx place-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) place-id))]
       [(ast.AstExpr.Match match-box)
         (match (__tl-box-place match-box)
           [(ast.AstMatch.Match scrutinee-id arms)
             (or
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx scrutinee-id))
-              (tc-generated-match-arms-dependent-construct-at? ctx (& arms) 0))])]
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) scrutinee-id))
+              (tc-generated-match-arms-dependent-construct-at?
+                (tc-global-shared-view ctx)
+                (& arms)
+                0))])]
       [(ast.AstExpr.Foreach fe-box)
         (match (__tl-box-place fe-box)
           [(ast.AstForeach.Foreach _ elem-ty start-id end-id body-id)
             (or
-              (tc-generated-type-dependent-construct? ctx elem-ty)
+              (tc-generated-type-dependent-construct?
+                (tc-global-shared-view ctx)
+                elem-ty)
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx start-id))
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) start-id))
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx end-id))
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) end-id))
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx body-id)))])]
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) body-id)))])]
       [(ast.AstExpr.SpmdReduce reduce-box)
         (match (__tl-box-place reduce-box)
           [(ast.AstSpmdReduce.Reduce
@@ -71380,19 +71809,21 @@
               init-id
               value-id)
             (or
-              (tc-generated-type-dependent-construct? ctx elem-ty)
+              (tc-generated-type-dependent-construct?
+                (tc-global-shared-view ctx)
+                elem-ty)
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx start-id))
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) start-id))
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx end-id))
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) end-id))
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx init-id))
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) init-id))
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx value-id)))])]
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) value-id)))])]
       [(ast.AstExpr.SpmdScan scan-box)
         (match (__tl-box-place scan-box)
           [(ast.AstSpmdScan.Scan
@@ -71407,208 +71838,230 @@
               value-id
               body-id)
             (or
-              (tc-generated-type-dependent-construct? ctx elem-ty)
-              (tc-generated-type-dependent-construct? ctx init-ty)
+              (tc-generated-type-dependent-construct?
+                (tc-global-shared-view ctx)
+                elem-ty)
+              (tc-generated-type-dependent-construct?
+                (tc-global-shared-view ctx)
+                init-ty)
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx start-id))
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) start-id))
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx end-id))
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) end-id))
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx init-id))
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) init-id))
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx value-id))
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) value-id))
               (tc-generated-expr-dependent-construct?
-                ctx
-                (tc-context-expr-get ctx body-id)))])]
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) body-id)))])]
       [(ast.AstExpr.SpmdBroadcast value-id lane-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx value-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) value-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx lane-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) lane-id)))]
       [(ast.AstExpr.SpmdShuffle value-id lane-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx value-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) value-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx lane-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) lane-id)))]
       [(ast.AstExpr.SpmdProgramIndex) false]
       [(ast.AstExpr.SpmdProgramCount) false]
       [(ast.AstExpr.StructGet receiver-id _)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx receiver-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) receiver-id))]
       [(ast.AstExpr.StructSet receiver-id _ value-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx receiver-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) receiver-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx value-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) value-id)))]
       [(ast.AstExpr.WithRegion _ body)
-        (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0)]
+        (tc-generated-expr-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          (& body)
+          0)]
       [(ast.AstExpr.WithEscape scratch-id body)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx scratch-id))
-          (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) scratch-id))
+          (tc-generated-expr-list-dependent-construct-at?
+            (tc-global-shared-view ctx)
+            (& body)
+            0))]
       [(ast.AstExpr.WithScratch body)
-        (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0)]
+        (tc-generated-expr-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          (& body)
+          0)]
       [(ast.AstExpr.InArena arena-id body)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx arena-id))
-          (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) arena-id))
+          (tc-generated-expr-list-dependent-construct-at?
+            (tc-global-shared-view ctx)
+            (& body)
+            0))]
       [(ast.AstExpr.WithResource wr-box)
         (match (__tl-box-place wr-box)
           [(ast.AstWithResource.WithResource bindings body)
             (or
               (tc-generated-resource-bindings-dependent-construct-at?
-                ctx
+                (tc-global-shared-view ctx)
                 (& bindings)
                 0)
-              (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))])]
+              (tc-generated-expr-list-dependent-construct-at?
+                (tc-global-shared-view ctx)
+                (& body)
+                0))])]
       [(ast.AstExpr.Box inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.BoxGet inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.BoxTake inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.BoxSet inner-id value-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx inner-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) inner-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx value-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) value-id)))]
       [(ast.AstExpr.TypeLiteral ty-id)
         (tc-generated-type-dependent-construct?
-          ctx
-          (tc-context-type-get ctx ty-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-type-get (tc-global-shared-view ctx) ty-id))]
       [(ast.AstExpr.Init maybe-ty-id)
         (tc-generated-maybe-type-dependent-construct?
-          ctx
+          (tc-global-shared-view ctx)
           (ast.ast-maybe-type-from-id-with-pools
             (tc-context-pools ctx)
             maybe-ty-id))]
       [(ast.AstExpr.Comptime inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.Quote inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.Quasiquote inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.Unquote inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.UnquoteSplicing inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.BracketClause items)
-        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+        (tc-generated-expr-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          (& items)
+          0)]
       [(ast.AstExpr.Try inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.Return inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.Break) false]
       [(ast.AstExpr.Continue) false]
       [(ast.AstExpr.PtrNull ty-id)
         (tc-generated-type-dependent-construct?
-          ctx
-          (tc-context-type-get ctx ty-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-type-get (tc-global-shared-view ctx) ty-id))]
       [(ast.AstExpr.PtrNullCheck inner-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
       [(ast.AstExpr.PtrAddrOf place-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx place-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) place-id))]
       [(ast.AstExpr.PtrRead ptr-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx ptr-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) ptr-id))]
       [(ast.AstExpr.PtrWrite ptr-id value-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx ptr-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) ptr-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx value-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) value-id)))]
       [(ast.AstExpr.PtrOffset ptr-id offset-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx ptr-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) ptr-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx offset-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) offset-id)))]
       [(ast.AstExpr.PtrCast ptr-id ty-id)
         (or
           (tc-generated-type-dependent-construct?
-            ctx
-            (tc-context-type-get ctx ty-id))
+            (tc-global-shared-view ctx)
+            (tc-context-type-get (tc-global-shared-view ctx) ty-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx ptr-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) ptr-id)))]
       [(ast.AstExpr.PtrToInt ptr-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx ptr-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) ptr-id))]
       [(ast.AstExpr.IntToPtr value-id ty-id)
         (or
           (tc-generated-type-dependent-construct?
-            ctx
-            (tc-context-type-get ctx ty-id))
+            (tc-global-shared-view ctx)
+            (tc-context-type-get (tc-global-shared-view ctx) ty-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx value-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) value-id)))]
       [(ast.AstExpr.StringData str-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx str-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) str-id))]
       [(ast.AstExpr.StringFromBytes ptr-id len-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx ptr-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) ptr-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx len-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) len-id)))]
       [(ast.AstExpr.ArrayData array-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx array-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) array-id))]
       [(ast.AstExpr.BinaryData _) false]
       [(ast.AstExpr.ProgramArgc) false]
       [(ast.AstExpr.ProgramArgv) false]
@@ -71616,41 +72069,44 @@
       [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx leaf-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) leaf-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx subleaf-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) subleaf-id)))]
       [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx leaf-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) leaf-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx subleaf-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) subleaf-id)))]
       [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx leaf-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) leaf-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx subleaf-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) subleaf-id)))]
       [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
         (or
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx leaf-id))
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) leaf-id))
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx subleaf-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) subleaf-id)))]
       [(ast.AstExpr.Xgetbv index-id)
         (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx index-id))]
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) index-id))]
       [(ast.AstExpr.Syscall args)
-        (tc-generated-expr-list-dependent-construct-at? ctx (& args) 0)])))
+        (tc-generated-expr-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          (& args)
+          0)])))
 
 (cfg
   (any compile-profile test)
@@ -71690,8 +72146,13 @@
         [(ast.AstFieldDef.Def _ ty cleanup)
           (or
             (tc-generated-field-cleanup-dependent? cleanup)
-            (tc-generated-type-dependent-construct? ctx ty)
-            (tc-generated-fields-dependent-construct-at? ctx fields (+ index 1)))]))))
+            (tc-generated-type-dependent-construct?
+              (tc-global-shared-view ctx)
+              ty)
+            (tc-generated-fields-dependent-construct-at?
+              (tc-global-shared-view ctx)
+              fields
+              (+ index 1)))]))))
 
 (cfg
   (any compile-profile test)
@@ -71723,12 +72184,12 @@
         [(ast.AstVariantDef.Def _ payload-types payload-cleanups)
           (or
             (tc-generated-type-list-dependent-construct-at?
-              ctx
+              (tc-global-shared-view ctx)
               (& payload-types)
               0)
             (tc-generated-payload-cleanups-dependent-at? (& payload-cleanups) 0)
             (tc-generated-variants-dependent-construct-at?
-              ctx
+              (tc-global-shared-view ctx)
               variants
               (+ index 1)))]))))
 
@@ -71740,45 +72201,66 @@
     (match decl
       [(ast.AstDecl.Def _ _ maybe-ty body-id)
         (or
-          (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)
+          (tc-generated-maybe-type-dependent-construct?
+            (tc-global-shared-view ctx)
+            maybe-ty)
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx body-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) body-id)))]
       [(ast.AstDecl.DefFn _ _ params ret body-id _)
         (or
-          (tc-generated-param-list-dependent-construct-at? ctx (& params) 0)
-          (tc-generated-type-dependent-construct? ctx ret)
+          (tc-generated-param-list-dependent-construct-at?
+            (tc-global-shared-view ctx)
+            (& params)
+            0)
+          (tc-generated-type-dependent-construct?
+            (tc-global-shared-view ctx)
+            ret)
           (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx body-id)))]
+            (tc-global-shared-view ctx)
+            (tc-context-expr-get (tc-global-shared-view ctx) body-id)))]
       ;; Macro declarations are compile-time only; they never reach the runtime
       ;; checking lane this classification feeds.
       [(ast.AstDecl.DefMacro _ _ _ _ _) false]
       [(ast.AstDecl.Extern _ _ _ _ ty)
-        (tc-generated-type-dependent-construct? ctx ty)]
+        (tc-generated-type-dependent-construct? (tc-global-shared-view ctx) ty)]
       [(ast.AstDecl.DefEnum _ _ cleanup variants)
         (or
           (tc-generated-enum-cleanup-dependent? cleanup)
-          (tc-generated-variants-dependent-construct-at? ctx (& variants) 0))]
+          (tc-generated-variants-dependent-construct-at?
+            (tc-global-shared-view ctx)
+            (& variants)
+            0))]
       [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
         (or
           (tc-generated-enum-cleanup-dependent? cleanup)
-          (tc-generated-variants-dependent-construct-at? ctx (& variants) 0))]
+          (tc-generated-variants-dependent-construct-at?
+            (tc-global-shared-view ctx)
+            (& variants)
+            0))]
       [(ast.AstDecl.DefStruct _ _ _ cleanup fields)
         (or
           (tc-generated-struct-cleanup-dependent? cleanup)
-          (tc-generated-fields-dependent-construct-at? ctx (& fields) 0))]
+          (tc-generated-fields-dependent-construct-at?
+            (tc-global-shared-view ctx)
+            (& fields)
+            0))]
       [(ast.AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
         (or
           (tc-generated-struct-cleanup-dependent? cleanup)
-          (tc-generated-fields-dependent-construct-at? ctx (& fields) 0))]
+          (tc-generated-fields-dependent-construct-at?
+            (tc-global-shared-view ctx)
+            (& fields)
+            0))]
       ;; Nested generated-module imports keep their own concrete checks.
       [(ast.AstDecl.Import _ _) true]
       [(ast.AstDecl.Unsafe inner-box)
-        (tc-generated-decl-dependent-construct? ctx (__tl-box-place inner-box))]
+        (tc-generated-decl-dependent-construct?
+          (tc-global-shared-view ctx)
+          (ast.ast-decl-box-shared-view inner-box))]
       [(ast.AstDecl.ModuleBody _ decls-box)
         (tc-generated-decl-list-dependent-construct-at?
-          ctx
+          (tc-global-shared-view ctx)
           (& (__tl-box-place decls-box))
           0)]
       [_ false])))
@@ -71793,9 +72275,12 @@
       false
       (or
         (tc-generated-decl-dependent-construct?
-          ctx
+          (tc-global-shared-view ctx)
           (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
-        (tc-generated-decl-list-dependent-construct-at? ctx decls (+ index 1))))))
+        (tc-generated-decl-list-dependent-construct-at?
+          (tc-global-shared-view ctx)
+          decls
+          (+ index 1))))))
 
 (define (tc-macro-param-list-needs-call-context?
   [params : ast.AstMacroParamList]) : bool
@@ -74332,12 +74817,12 @@
 (define (tc-param-storage-fixed-array-type?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+  (match (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))
     [(ast.AstType.Array _ _) true]
     [_ false]))
 
 (define (tc-param-storage-tuple-type? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+  (match (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))
     [(ast.AstType.Tuple _) true]
     [_ false]))
 
@@ -76553,7 +77038,9 @@
     (= args.len 1))
     (let
       [arg : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get (& args) 0 0))]
       (match (ast.ast-expr-unspan arg)
         [(ast.AstExpr.Lambda lambda-box)
           (match (__tl-box-place lambda-box)
@@ -76633,50 +77120,63 @@
   [call-expr : ast.AstExpr]
   [func : ast.AstExpr]
   [args : ast.AstExprList]
-  [params : ast.AstTypeList]) : TcMoveResult
-  (match (if (tc-move-check-constructor-call?
-    (tc-global-shared-view ctx)
-    (tc-global-shared-view func))
-    (tc-move-check-aggregate-exprs-with-types
+  [params : ast.AstTypeList]
+  [foreign-boundary : bool]) : TcMoveResult
+  (match (if foreign-boundary
+    ;; Foreign declarations describe an ABI, not TypeLisp ownership transfer.
+    ;; Validate each argument expression as a read while retaining the source
+    ;; place for subsequent TypeLisp code.
+    (tc-move-check-exprs
       (tc-global-shared-view ctx)
       expr-bases
       (tc-global-shared-view env)
       (tc-global-shared-view locals)
       (tc-global-shared-view loop-carried)
       (tc-global-shared-view moved)
-      (tc-global-shared-view args)
-      (tc-global-shared-view params))
-    (if (or
-      (tc-move-global-place-inspector-call?
-        (tc-global-shared-view ctx)
-        (tc-global-shared-view env)
-        (tc-global-shared-view func))
-      ;; Safe thread spawn requires one direct lambda and separately validates
-      ;; and transfers every capture below. Do not reject that intentional
-      ;; one-way transfer merely because its public `(-> ...)` parameter cannot
-      ;; encode the concrete environment's non-Copy fact.
-      (tc-thread-safe-spawn-call-signature?
-        (tc-global-shared-view ctx)
-        (tc-global-shared-view env)
-        (tc-global-shared-view func)
-        (tc-global-shared-view params)))
-      (tc-move-check-exprs
+      (tc-global-shared-view args))
+    (if (tc-move-check-constructor-call?
+      (tc-global-shared-view ctx)
+      (tc-global-shared-view func))
+      (tc-move-check-aggregate-exprs-with-types
         (tc-global-shared-view ctx)
         expr-bases
         (tc-global-shared-view env)
         (tc-global-shared-view locals)
         (tc-global-shared-view loop-carried)
-        moved
-        (tc-global-shared-view args))
-      (tc-move-check-exprs-with-types
-        (tc-global-shared-view ctx)
-        expr-bases
-        (tc-global-shared-view env)
-        (tc-global-shared-view locals)
-        (tc-global-shared-view loop-carried)
-        moved
+        (tc-global-shared-view moved)
         (tc-global-shared-view args)
-        (tc-global-shared-view params))))
+        (tc-global-shared-view params))
+      (if (or
+        (tc-move-global-place-inspector-call?
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          (tc-global-shared-view func))
+        ;; Safe thread spawn requires one direct lambda and separately validates
+        ;; and transfers every capture below. Do not reject that intentional
+        ;; one-way transfer merely because its public `(-> ...)` parameter cannot
+        ;; encode the concrete environment's non-Copy fact.
+        (tc-thread-safe-spawn-call-signature?
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          (tc-global-shared-view func)
+          (tc-global-shared-view params)))
+        (tc-move-check-exprs
+          (tc-global-shared-view ctx)
+          expr-bases
+          (tc-global-shared-view env)
+          (tc-global-shared-view locals)
+          (tc-global-shared-view loop-carried)
+          moved
+          (tc-global-shared-view args))
+        (tc-move-check-exprs-with-types
+          (tc-global-shared-view ctx)
+          expr-bases
+          (tc-global-shared-view env)
+          (tc-global-shared-view locals)
+          (tc-global-shared-view loop-carried)
+          moved
+          (tc-global-shared-view args)
+          (tc-global-shared-view params)))))
     [(TcMoveResult.Ok moved-args)
       (match (tc-move-check-thread-channel-send-message
         (tc-global-shared-view ctx)
@@ -76757,7 +77257,9 @@
         [(ResultTcLifetimeSubst.Ok subst)
           (TcBorrowCallReturnLifetimes.Known
             (tc-type-collect-reference-lifetimes
-              (tc-resolve-type ctx (tc-lifetime-subst-type subst ret))))]
+              (tc-resolve-type
+                (tc-global-shared-view ctx)
+                (tc-lifetime-subst-type subst ret))))]
         [(ResultTcLifetimeSubst.Err _) (TcBorrowCallReturnLifetimes.Fallback)]))))
 
 (define (tc-borrow-call-return-lifetimes-from-function
@@ -77777,7 +78279,10 @@
         [(ResultTcType.Ok func-ty)
           (match (tc-resolve-type (tc-global-shared-view ctx) func-ty)
             [(ast.AstType.Func _ ret)
-              (tc-never-type? (tc-resolve-type ctx (ast.ty-node-get ret)))]
+              (tc-never-type?
+                (tc-resolve-type
+                  (tc-global-shared-view ctx)
+                  (ast.ty-node-get ret)))]
             [_ false])]
         [(ResultTcType.Err _) false])]
     [_ false]))
@@ -78799,7 +79304,8 @@
                               (tc-global-shared-view expr)
                               (tc-global-shared-view func)
                               (tc-global-shared-view args)
-                              expanded-params)]
+                              expanded-params
+                              true)]
                           [(ResultTcTypeList.Err message)
                             (TcMoveResult.Err message)])
                         (tc-move-check-call-args-with-types
@@ -78812,7 +79318,8 @@
                           (tc-global-shared-view expr)
                           (tc-global-shared-view func)
                           (tc-global-shared-view args)
-                          params))]
+                          params
+                          true))]
                     [(TcMaybeExternAbi.No)
                       (tc-move-check-call-args-with-types
                         (tc-global-shared-view ctx)
@@ -78824,7 +79331,8 @@
                         (tc-global-shared-view expr)
                         (tc-global-shared-view func)
                         (tc-global-shared-view args)
-                        params)])]
+                        params
+                        false)])]
                 [(ResultTcTypeList.Err _)
                   (match (tc-move-check-exprs
                     (tc-global-shared-view ctx)
@@ -82640,7 +83148,8 @@
     (match (tc-lookup-visible-id (tc-global-shared-view ctx) env root-id)
       [(ResultTcType.Ok ty)
         (let
-          [resolved : ast.AstType (tc-resolve-type ctx ty)]
+          [resolved : ast.AstType
+            (tc-resolve-type (tc-global-shared-view ctx) ty)]
           (match (tc-type-strip-region (tc-global-shared-view resolved))
             [(ast.AstType.Ref lifetime _) lifetime]
             [(ast.AstType.MutRef lifetime _) lifetime]
@@ -82670,7 +83179,8 @@
   (if (tc-poison-type? (tc-global-shared-view ty))
     false
     (tc-name-id-list-contains
-      (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ty))
+      (tc-type-collect-reference-lifetimes
+        (tc-resolve-type (tc-global-shared-view ctx) ty))
       lifetime)))
 
 (define (tc-borrow-check-binding-stores-lifetime?
@@ -83541,7 +84051,7 @@
     env
     (tc-global-shared-view locals)
     (tc-global-shared-view expr)
-    (tc-resolve-type ctx target-ty))
+    (tc-resolve-type (tc-global-shared-view ctx) target-ty))
     (tc-borrow-check-after-consuming-place expr-bases locals borrowed expr)
     (TcBorrowCheckResult.Ok borrowed)))
 
@@ -83639,7 +84149,7 @@
 (define (tc-borrow-check-lending-result-type?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+  (match (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))
     [(ast.AstType.EnumArgs _ _) true]
     [(ast.AstType.StructArgs _ _) true]
     [(ast.AstType.Tuple elems)
@@ -83964,7 +84474,7 @@
         out2))))
 
 ;; Argument auto-borrows created while evaluating an assignment RHS end after
-;; that value is (tc-global-shared-view produced) unless the result or a nested store retains their
+;; that value is produced unless the result or a nested store retains their
 ;; lifetime. Drop only newly introduced facts so pre-existing live borrows keep
 ;; protecting the assigned place.
 (define (tc-borrow-check-prune-value-temporaries
@@ -84465,7 +84975,8 @@
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [arg : ast.AstExpr]
-  [ty : ast.AstType]) : TcBorrowCheckResult
+  [ty : ast.AstType]
+  [foreign-boundary : bool]) : TcBorrowCheckResult
   (match (tc-borrow-check-expr
     (tc-global-shared-view ctx)
     expr-bases
@@ -84474,26 +84985,35 @@
     borrowed
     (tc-global-shared-view arg))
     [(TcBorrowCheckResult.Ok borrowed1)
-      (match (tc-borrow-check-after-consuming-value
-        (tc-global-shared-view ctx)
-        expr-bases
-        env
-        (tc-global-shared-view locals)
-        borrowed1
-        (tc-global-shared-view arg)
-        (tc-global-shared-view ty))
-        [(TcBorrowCheckResult.Ok borrowed2)
-          (if (= (tc-moved-len (tc-global-shared-view borrowed2)) 0)
-            (TcBorrowCheckResult.Ok borrowed2)
-            (tc-borrow-check-after-reading-value
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view locals)
-              borrowed2
-              arg
-              ty))]
-        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
+      (if foreign-boundary
+        (if (= (tc-moved-len (tc-global-shared-view borrowed1)) 0)
+          (TcBorrowCheckResult.Ok borrowed1)
+          (tc-borrow-check-place-read-conflict
+            expr-bases
+            locals
+            borrowed1
+            (tc-global-shared-view arg)
+            arg))
+        (match (tc-borrow-check-after-consuming-value
+          (tc-global-shared-view ctx)
+          expr-bases
+          env
+          (tc-global-shared-view locals)
+          borrowed1
+          (tc-global-shared-view arg)
+          (tc-global-shared-view ty))
+          [(TcBorrowCheckResult.Ok borrowed2)
+            (if (= (tc-moved-len (tc-global-shared-view borrowed2)) 0)
+              (TcBorrowCheckResult.Ok borrowed2)
+              (tc-borrow-check-after-reading-value
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                borrowed2
+                arg
+                ty))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
 
 (define (tc-borrow-check-arg-with-type
@@ -84525,7 +85045,8 @@
         locals
         borrowed
         effective
-        ty)]
+        ty
+        false)]
     [(ResultTcExpr.Err message)
       (TcBorrowCheckResult.Err (tc-locate-error-at-expr arg message))]))
 
@@ -84690,7 +85211,8 @@
   [call-expr : ast.AstExpr]
   [pending-scope-id : i64]
   [exprs : ast.AstExprList]
-  [types : ast.AstTypeList]) : TcBorrowCheckResult
+  [types : ast.AstTypeList]
+  [foreign-boundary : bool]) : TcBorrowCheckResult
   (tc-borrow-check-call-args-two-phase-with-types-at
     ctx
     expr-bases
@@ -84702,6 +85224,7 @@
     pending-scope-id
     (& exprs)
     (& types)
+    foreign-boundary
     0))
 
 (define (tc-borrow-check-call-args-two-phase-retry-after-prune
@@ -84715,6 +85238,7 @@
   [pending-scope-id : i64]
   [exprs : (& exprs ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
+  [foreign-boundary : bool]
   [index : i64]
   [message : String]) : TcBorrowCheckResult
   (let
@@ -84744,6 +85268,7 @@
         pending-scope-id
         exprs
         types
+        foreign-boundary
         index))))
 
 (define (tc-borrow-check-call-args-two-phase-with-types-at
@@ -84757,6 +85282,7 @@
   [pending-scope-id : i64]
   [exprs : (& exprs ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
+  [foreign-boundary : bool]
   [index : i64]) : TcBorrowCheckResult
   (begin
     (when
@@ -84837,6 +85363,7 @@
                         pending-scope-id
                         exprs
                         types
+                        foreign-boundary
                         (+ index 1))]
                     [(TcBorrowCheckResult.Err message)
                       (tc-borrow-check-call-args-two-phase-retry-after-prune
@@ -84850,6 +85377,7 @@
                         pending-scope-id
                         exprs
                         types
+                        foreign-boundary
                         index
                         message)]))
                 (match (tc-borrow-check-effective-arg-with-type
@@ -84859,7 +85387,8 @@
                   (tc-global-shared-view locals)
                   scoped-borrowed
                   effective-head
-                  raw-ty)
+                  raw-ty
+                  foreign-boundary)
                   [(TcBorrowCheckResult.Ok borrowed1)
                     (tc-borrow-check-call-args-two-phase-with-types-at
                       ctx
@@ -84874,6 +85403,7 @@
                       pending-scope-id
                       exprs
                       types
+                      foreign-boundary
                       (+ index 1))]
                   [(TcBorrowCheckResult.Err message)
                     (tc-borrow-check-call-args-two-phase-retry-after-prune
@@ -84887,6 +85417,7 @@
                       pending-scope-id
                       exprs
                       types
+                      foreign-boundary
                       index
                       message)]))]
             [_
@@ -84897,7 +85428,8 @@
                 (tc-global-shared-view locals)
                 (tc-global-shared-view scoped-borrowed)
                 effective-head
-                raw-ty)
+                raw-ty
+                foreign-boundary)
                 [(TcBorrowCheckResult.Ok borrowed1)
                   (tc-borrow-check-call-args-two-phase-with-types-at
                     (tc-global-shared-view ctx)
@@ -84912,6 +85444,7 @@
                     pending-scope-id
                     exprs
                     types
+                    foreign-boundary
                     (+ index 1))]
                 [(TcBorrowCheckResult.Err message)
                   (tc-borrow-check-call-args-two-phase-retry-after-prune
@@ -84925,6 +85458,7 @@
                     pending-scope-id
                     exprs
                     types
+                    foreign-boundary
                     index
                     message)])])]
         [(ResultTcExpr.Err message)
@@ -85075,6 +85609,7 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [types : ast.AstTypeList]
+  [foreign-boundary : bool]
   [return-lifetimes : TcBorrowCallReturnLifetimes]) : TcBorrowCheckResult
   (let
     [validation-borrowed : TcMovedSet
@@ -85090,7 +85625,8 @@
         (tc-global-shared-view call-expr)
         pending-scope-id
         (tc-global-shared-view args)
-        (tc-global-shared-view types))]
+        (tc-global-shared-view types)
+        foreign-boundary)]
     (match validation-result
       [(TcBorrowCheckResult.Ok checked-borrowed)
         (let
@@ -88127,6 +88663,7 @@
                                 func
                                 args
                                 expanded-params
+                                true
                                 (TcBorrowCallReturnLifetimes.Fallback))]
                             [(ResultTcTypeList.Err message)
                               (TcBorrowCheckResult.Err message)])
@@ -88141,6 +88678,7 @@
                             func
                             args
                             params
+                            true
                             return-lifetimes))]
                       [(TcMaybeExternAbi.No)
                         (tc-borrow-check-call-args-with-types
@@ -88154,6 +88692,7 @@
                           func
                           args
                           params
+                          false
                           return-lifetimes)])]
                   [(ResultTcBorrowCallInfo.Err _)
                     (match (tc-borrow-check-read-exprs
@@ -90523,7 +91062,7 @@
 ;;
 ;; Pipeline: parse -> EXPAND -> typecheck. When a call head names a `defmacro`,
 ;; the unevaluated operand forms are passed as `Expr` values (CompilerCtfeValue.Expr) to the
-;; transformer, which is run via CTFE; the (tc-global-shared-view produced) `Expr` is spliced at the
+;; transformer, which is run via CTFE; the produced `Expr` is spliced at the
 ;; call site and re-expanded to a fixpoint (depth-limited). Macro calls in
 ;; ordinary evaluated positions are expanded; quoted/quasiquoted code is left
 ;; as data. Programs without macro calls pass through unchanged. The normal
@@ -90567,7 +91106,7 @@
     [(ast.AstExpr.MacroExpansion inner-id _ _)
       (tc-macro-call-head
         (tc-global-shared-view ctx)
-        (tc-context-expr-get ctx inner-id))]
+        (tc-context-expr-get (tc-global-shared-view ctx) inner-id))]
     [_ TcMaybeMacroCallHead.No]))
 
 ;; Record only call heads whose macro identity has already resolved. A source
@@ -91254,7 +91793,7 @@
 ;; function call whose name is not a macro) avoids the allocating module-key
 ;; lookup in `macro-call-decl`. Populated once per expansion run.
 ;; Exact module-qualified macro identities whose transformer bodies can call
-;; `expr-type`. Only those macros need fixed `Expr` operands to carry (tc-global-shared-view produced)
+;; `expr-type`. Only those macros need fixed `Expr` operands to carry produced
 ;; type metadata. Keep the hot per-call membership check ID-keyed: the former
 ;; TcStringList compared module/name strings linearly for every expansion.
 ;; Cached CTFE base environment (reflection + layout metadata) for the current
@@ -91559,59 +92098,52 @@
                   compile-profile
                   (compiler-tc-walk-ctfe-extension-start!)
                   unit)]
-              [previous-arena : i64 (arena.tl_arena_current)]
-              [_switch-owner : unit
-                (unsafe
-                  (arena.tl_arena_set
-                    (tc-type-env-store-owner-current-head
-                      (tc-macro-walk-field
-                        state
-                        macro-expand-ctfe-env-owner-arena))))]
-              [grown-layouts : ctfe_support.CtfeLayoutInfoList
-                (ctfe_support.ctfe-layout-info-list-ensure-capacity
-                  layouts
-                  required-layouts)]
-              [grown-reflections : ctfe_support.CtfeReflectInfoList
-                (ctfe_support.ctfe-reflect-info-list-ensure-capacity
-                  reflections
-                  required-reflections)]
-              [next-layouts : ctfe_support.CtfeLayoutInfoList
-                (tc-ctfe-layouts-from-decls
-                  (tc-global-shared-view ctx)
-                  (tc-global-shared-view decls)
-                  (tc-global-shared-view module)
-                  module-id
-                  grown-layouts)]
-              [next-reflections : ctfe_support.CtfeReflectInfoList
-                (ctfe_support.ctfe-reflections-from-decls
-                  decls
-                  module
-                  module-id
-                  grown-reflections)]
-              (begin
-                (tc-macro-walk-set!
-                  state
-                  macro-expand-ctfe-env-value
-                  (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
-                    next-layouts
-                    next-reflections
-                    (ctfe_support.ctfe-env-pools ctfe-env-value)
-                    (ctfe_support.ctfe-env-source-names ctfe-env-value)
-                    (tc-macro-ctfe-state state)))
-                (tc-type-env-store-restore-after-owner-alloc!
-                  previous-arena
+              (in-arena
+                (arena.Arena
                   (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))
-                (if grew?
-                  (cfg
-                    compile-profile
-                    (compiler-tc-walk-ctfe-extension-reject-note! 3)
-                    unit)
-                  unit)
-                (cfg
-                  compile-profile
-                  (compiler-tc-walk-ctfe-extension-finish!)
-                  unit)
-                CompilerCtfeSpliceExtensionResult.Extended))
+                (let
+                  [grown-layouts : ctfe_support.CtfeLayoutInfoList
+                    (ctfe_support.ctfe-layout-info-list-ensure-capacity
+                      layouts
+                      required-layouts)]
+                  [grown-reflections : ctfe_support.CtfeReflectInfoList
+                    (ctfe_support.ctfe-reflect-info-list-ensure-capacity
+                      reflections
+                      required-reflections)]
+                  [next-layouts : ctfe_support.CtfeLayoutInfoList
+                    (tc-ctfe-layouts-from-decls
+                      (tc-global-shared-view ctx)
+                      (tc-global-shared-view decls)
+                      (tc-global-shared-view module)
+                      module-id
+                      grown-layouts)]
+                  [next-reflections : ctfe_support.CtfeReflectInfoList
+                    (ctfe_support.ctfe-reflections-from-decls
+                      decls
+                      module
+                      module-id
+                      grown-reflections)]
+                  (begin
+                    (tc-macro-walk-set!
+                      state
+                      macro-expand-ctfe-env-value
+                      (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
+                        next-layouts
+                        next-reflections
+                        (ctfe_support.ctfe-env-pools ctfe-env-value)
+                        (ctfe_support.ctfe-env-source-names ctfe-env-value)
+                        (tc-macro-ctfe-state state)))
+                    (if grew?
+                      (cfg
+                        compile-profile
+                        (compiler-tc-walk-ctfe-extension-reject-note! 3)
+                        unit)
+                      unit)
+                    (cfg
+                      compile-profile
+                      (compiler-tc-walk-ctfe-extension-finish!)
+                      unit)
+                    CompilerCtfeSpliceExtensionResult.Extended))))
             (begin
               (cfg
                 compile-profile
@@ -92675,9 +93207,10 @@
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (macro-expansion-site-span
         (tc-global-shared-view ctx)
-        (tc-context-expr-get ctx inner-box))]
+        (tc-context-expr-get (tc-global-shared-view ctx) inner-box))]
     [(ast.AstExpr.Call func-box _)
-      (tc-expr-maybe-span (tc-context-expr-get ctx func-box))]
+      (tc-expr-maybe-span
+        (tc-context-expr-get (tc-global-shared-view ctx) func-box))]
     [_ (tc-expr-maybe-span call-expr)]))
 
 (define (macro-diagnostic-with-expansion-site
@@ -95089,7 +95622,9 @@
     (spec.ResultGenKey.Ok "" fuel)
     (let
       [head-expr : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get exprs index 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get exprs index 0))]
       (match (macro-identity-key-param-expr
         (tc-global-shared-view ctx)
         (tc-global-shared-view fallback-module)
@@ -95235,7 +95770,9 @@
         (spec.ResultGenKey.Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              (tc-context-expr-get ctx (ast.ast-expr-list-get args arg-index 0))
+              (tc-context-expr-get
+                (tc-global-shared-view ctx)
+                (ast.ast-expr-list-get args arg-index 0))
               "macro call has too many arguments"))))]
     [else
       (match (ast.ast-macro-param-list-get
@@ -95336,7 +95873,7 @@
               (let
                 [head-expr : ast.AstExpr
                   (tc-context-expr-get
-                    ctx
+                    (tc-global-shared-view ctx)
                     (ast.ast-expr-list-get args arg-index 0))]
                 (match (macro-identity-key-fixed-param
                   (tc-global-shared-view ctx)
@@ -95905,7 +96442,7 @@
 
 ;; Content-addressed module memo (plan P1). Program-global, spanning every file
 ;; and module: a generated module is expanded + materialized exactly once per
-;; (generator-id, canonical-type-args) — the `identity` string (tc-global-shared-view produced) by
+;; (generator-id, canonical-type-args) — the `identity` string produced by
 ;; macro-module-identity, whose type-args are already canonicalized via type-key.
 ;; The key maps to the single canonical target module name; every later import of
 ;; the same identity (in any file, in any pass) resolves to that module and emits
@@ -99684,7 +100221,7 @@
     [stride : i64 (ci.intern-capacity)]
     (+ (macro-hygiene-structural-base) (* 2 (* stride stride)))))
 
-;; Hygienic locals are namespaced by the macro that (tc-global-shared-view produced) them. That
+;; Hygienic locals are namespaced by the macro that produced them. That
 ;; namespace must be a *stable* property of the macro itself: the identical
 ;; macro is re-expanded for every import of a generated module whose parameter
 ;; list disables the content-addressed memo shortcut (a syntax parameter --
@@ -107206,11 +107743,13 @@
   (match func
     [(ast.AstExpr.Spanned inner-box _)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (macro-call-decl ctx inner decls call-expr))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (macro-call-decl ctx inner decls call-expr))]
     [(ast.AstExpr.Var name)
       (if (or
@@ -108079,7 +108618,9 @@
     ResultMacroCheck.Ok
     (let
       [head : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get args index 0))]
       (match (macro-check-operand
         (tc-global-shared-view ctx)
         env
@@ -108108,8 +108649,14 @@
     ResultMacroCheck.Ok
     (let
       [head : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
-      (match (macro-check-operand-with-resolved ctx env resolved-expected head)
+        (tc-context-expr-get
+          (tc-global-shared-view ctx)
+          (ast.ast-expr-list-get args index 0))]
+      (match (macro-check-operand-with-resolved
+        (tc-global-shared-view ctx)
+        env
+        (tc-global-shared-view resolved-expected)
+        (tc-global-shared-view head))
         [(ResultMacroCheck.Ok)
           (macro-check-variadic-operands-resolved-at
             ctx
@@ -108217,7 +108764,8 @@
   [clause : ast.AstExprBindingClause]) : ast.AstExprBindingClause
   (let
     [init-id : i64 clause.init]
-    [init : ast.AstExpr (tc-context-expr-get ctx init-id)]
+    [init : ast.AstExpr
+      (tc-context-expr-get (tc-global-shared-view ctx) init-id)]
     [raw-init-produced : ast.AstType
       (if capture-expr-types
         (macro-captured-binding-init-produced-type
@@ -108297,7 +108845,8 @@
       (while (< index count)
         (let
           [arg-id : i64 (ast.ast-expr-list-get (& args) index 0)]
-          [arg : ast.AstExpr (tc-context-expr-get ctx arg-id)]
+          [arg : ast.AstExpr
+            (tc-context-expr-get (tc-global-shared-view ctx) arg-id)]
           (begin
             (ast.ast-expr-list-push
               (&mut out)
@@ -108349,14 +108898,14 @@
         (tc-context-expr-cell-address-live (tc-global-shared-view ctx))
         (tc-context-type-cell-address-live (tc-global-shared-view ctx))
         first-id
-        (tc-context-expr-get ctx first-id)
+        (tc-context-expr-get (tc-global-shared-view ctx) first-id)
         true)
       (macro-captured-expr-node
         (tc-global-shared-view ctx)
         (tc-context-expr-cell-address-live (tc-global-shared-view ctx))
         (tc-context-type-cell-address-live (tc-global-shared-view ctx))
         second-id
-        (tc-context-expr-get ctx second-id)
+        (tc-context-expr-get (tc-global-shared-view ctx) second-id)
         true))))
 
 (define (macro-caller-origin-expr-clause-list
@@ -108577,7 +109126,7 @@
     [captured : i64
       (match (tc-global-shared-view arg-expr)
         [(ast.AstExpr.Spanned inner span)
-          (match (tc-context-expr-get ctx inner)
+          (match (tc-context-expr-get (tc-global-shared-view ctx) inner)
             [(ast.AstExpr.Literal (ast.AstLiteral.String string-id))
               (tc-context-expr-push-cell-addresses
                 expr-cell-address
@@ -108931,7 +109480,8 @@
                     "macro call has too few arguments")))
               (let
                 [arg : i64 (ast.ast-expr-list-get args arg-index 0)]
-                [arg-expr : ast.AstExpr (tc-context-expr-get ctx arg)]
+                [arg-expr : ast.AstExpr
+                  (tc-context-expr-get (tc-global-shared-view ctx) arg)]
                 (match (macro-bind-fixed-param
                   (tc-global-shared-view ctx)
                   (tc-global-shared-view decls)
@@ -109136,7 +109686,8 @@
                     "macro call has too few arguments")))
               (let
                 [arg : i64 (ast.ast-expr-list-get args arg-index 0)]
-                [arg-expr : ast.AstExpr (tc-context-expr-get ctx arg)]
+                [arg-expr : ast.AstExpr
+                  (tc-context-expr-get (tc-global-shared-view ctx) arg)]
                 (match (macro-capture-fixed-param
                   (tc-global-shared-view ctx)
                   (tc-context-expr-cell-address-live
@@ -110843,21 +111394,21 @@
   (match (tc-global-shared-view expr)
     [(ast.AstExpr.Spanned inner span)
       (match (macro-expand-binding-prefix-form
-        ctx
+        (tc-global-shared-view ctx)
         type-env
         decls
         depth
-        (tc-context-expr-get ctx inner))
+        (tc-context-expr-get (tc-global-shared-view ctx) inner))
         [(ResultMacroExpr.Ok ninner)
           (ResultMacroExpr.Ok (ast.ast-expr-spanned ninner span))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.MacroExpansion inner provenance-id macro-name-id)
       (match (macro-expand-binding-prefix-form
-        ctx
+        (tc-global-shared-view ctx)
         type-env
         decls
         depth
-        (tc-context-expr-get ctx inner))
+        (tc-context-expr-get (tc-global-shared-view ctx) inner))
         [(ResultMacroExpr.Ok ninner)
           (ResultMacroExpr.Ok
             (ast.ast-expr-macro-expansion ninner provenance-id macro-name-id))]
@@ -110883,9 +111434,15 @@
     ResultMacroCheck.Ok
     (let
       [head-id : i64 (ast.ast-expr-list-get args index 0)]
-      [head : ast.AstExpr (tc-context-expr-get ctx head-id)]
-      (if (macro-binding-prefix-form? head)
-        (match (macro-expand-binding-prefix-form ctx type-env decls depth head)
+      [head : ast.AstExpr
+        (tc-context-expr-get (tc-global-shared-view ctx) head-id)]
+      (if (macro-binding-prefix-form? (tc-global-shared-view head))
+        (match (macro-expand-binding-prefix-form
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view type-env)
+          (tc-global-shared-view decls)
+          depth
+          head)
           [(ResultMacroExpr.Ok nhead)
             (begin
               (ast.ast-expr-list-push out nhead)
@@ -111903,7 +112460,8 @@
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
         (let
-          [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
+          [body : ast.AstExpr
+            (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
           [body-fires : bool
             (if (<= index first-fire-index)
               (= index first-fire-index)
@@ -112051,7 +112609,10 @@
                     out))]
               [(ResultTcEnv.Err message)
                 (ResultMacroLetBindingsBuild.Err
-                  (box (tc-expr-diag (tc-context-expr-get ctx ninit) message)))])]
+                  (box
+                    (tc-expr-diag
+                      (tc-context-expr-get (tc-global-shared-view ctx) ninit)
+                      message)))])]
           [(ResultMacroExpr.Err diag) (ResultMacroLetBindingsBuild.Err diag)])])))
 
 (define (macro-expand-resource-bindings
@@ -112135,7 +112696,11 @@
                     [(ResultTcEnv.Err message)
                       (ResultMacroResourceBindingsBuild.Err
                         (box
-                          (tc-expr-diag (tc-context-expr-get ctx ninit) message)))]))]
+                          (tc-expr-diag
+                            (tc-context-expr-get
+                              (tc-global-shared-view ctx)
+                              ninit)
+                            message)))]))]
               [(ResultMacroExpr.Err diag)
                 (ResultMacroResourceBindingsBuild.Err diag)])]
           [(ResultMacroExpr.Err diag)
@@ -112215,11 +112780,13 @@
           call-expr
           (macro-compat-guard-message name))))
     (macro-expand-compat-guard-body
-      ctx
+      (tc-global-shared-view ctx)
       env
       decls
       depth
-      (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))
+      (tc-context-expr-get
+        (tc-global-shared-view ctx)
+        (ast.ast-expr-list-get (& args) 0 0))
       (ast.ast-expr-list-tail-from-ref (& args) 1)
       is-unless)))
 
@@ -112295,7 +112862,8 @@
   [depth : i64]
   [expr-id : i64]) : ResultMacroExpr
   (let
-    [expr : ast.AstExpr (tc-context-expr-get ctx expr-id)]
+    [expr : ast.AstExpr
+      (tc-context-expr-get (tc-global-shared-view ctx) expr-id)]
     [fires : bool
       (macro-expr-might-fire?
         (tc-context-macro-state (tc-global-shared-view ctx))
@@ -112332,7 +112900,8 @@
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
+        [func : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) func-box)]
         [callee-maybe-macro : bool
           (macro-call-callee-maybe-macro?
             (tc-context-macro-state (tc-global-shared-view ctx))
@@ -112544,7 +113113,12 @@
                     (cfg compile-profile (compiler-tc-walk-scrut-tc-start!))
                     (let
                       [scrut-ty-result : ResultTcType
-                        (tc-expr ctx env (tc-context-expr-get ctx nscrut))]
+                        (tc-expr
+                          (tc-global-shared-view ctx)
+                          env
+                          (tc-context-expr-get
+                            (tc-global-shared-view ctx)
+                            nscrut))]
                       (begin
                         (cfg
                           compile-profile
@@ -112568,7 +113142,9 @@
                             (ResultMacroExpr.Err
                               (box
                                 (tc-expr-diag
-                                  (tc-context-expr-get ctx nscrut)
+                                  (tc-context-expr-get
+                                    (tc-global-shared-view ctx)
+                                    nscrut)
                                   message)))])))))]
               [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
     [(ast.AstExpr.While cond-box body-box)
@@ -112642,7 +113218,10 @@
                     [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
               [(ResultTcType.Err message)
                 (ResultMacroExpr.Err
-                  (box (tc-expr-diag (tc-context-expr-get ctx nsource) message)))])]
+                  (box
+                    (tc-expr-diag
+                      (tc-context-expr-get (tc-global-shared-view ctx) nsource)
+                      message)))])]
           [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
     [(ast.AstExpr.ForOwnedStep payload)
       (let
@@ -112704,11 +113283,16 @@
                 (ResultMacroExpr.Err
                   (box
                     (tc-expr-diag
-                      (tc-context-expr-get ctx source-name)
+                      (tc-context-expr-get
+                        (tc-global-shared-view ctx)
+                        source-name)
                       "typecheck: scalar for owned step requires fixed-array state")))])]
           [(ResultTcType.Err message)
             (ResultMacroExpr.Err
-              (box (tc-expr-diag (tc-context-expr-get ctx source-name) message)))]))]
+              (box
+                (tc-expr-diag
+                  (tc-context-expr-get (tc-global-shared-view ctx) source-name)
+                  message)))]))]
     [(ast.AstExpr.Foreach fe-box)
       (match (ast.ast-foreach-box-shared-view fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
@@ -113826,7 +114410,8 @@
     (tc-global-shared-view call-expr)
     (match (ast.ast-expr-unspan call-expr)
       [(ast.AstExpr.Call head-id _)
-        (match (ast.ast-expr-unspan (tc-context-expr-get ctx head-id))
+        (match (ast.ast-expr-unspan
+          (tc-context-expr-get (tc-global-shared-view ctx) head-id))
           [(ast.AstExpr.Var name-id)
             (macro-call-not-macro-message ctx decls module-id name-id)]
           [_ "typecheck: module-scope macro call has a non-symbol head"])]
@@ -113943,7 +114528,7 @@
             ;: The module for this identity is already materialized and recorded in
             ;: the content-addressed memo. Compatible repeats are deduped without
             ;: re-expansion via the memo shortcut (plan P1). A syntax-param macro
-            ;: (an `Expr`/clause parameter) can still reach here having (tc-global-shared-view produced) a
+            ;: (an `Expr`/clause parameter) can still reach here having produced a
             ;: body that differs from the recorded one even though the canonical
             ;: identity matches -- it switches on the argument's syntactic shape,
             ;: not its value, so `(gen "i64")` and `(gen (type-key (type i64)))`
@@ -117848,7 +118433,7 @@
                                         ;; after `(import (catalog) as api)`).
                                         ;; Refresh the otherwise additive-inert
                                         ;; prescan before rebuilding the splice
-                                        ;; context so the (tc-global-shared-view macro-name) gate and CTFE
+                                        ;; context so the macro-name gate and CTFE
                                         ;; export map include that generated macro.
                                         (if (macro-program-has-defmacro?
                                           (tc-global-shared-view expanded))
@@ -119989,7 +120574,8 @@
   [ret : ast.AstType]
   [body-box : i64]) : ResultTcUnit
   (let
-    [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
+    [body : ast.AstExpr
+      (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
     [registered-params : ast.AstParamList
       (tc-check-fn-registered-params
         (tc-global-shared-view ctx)
@@ -120924,7 +121510,8 @@
         [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstDecl.DefMacro decl-meta name params ret body-box)
       (let
-        [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
+        [body : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
         (tc-check-defmacro name ctx top-env params ret body))]
     [(ast.AstDecl.Extern decl-meta _ kind metadata ty)
       (tc-check-extern-decl
@@ -121250,7 +121837,8 @@
             (let
               [next-module : String
                 (match (tc-global-shared-view decl)
-                  [(ast.AstDecl.Module next-module) (ci.intern-str next-module)]
+                  [(ast.AstDecl.Module next-module)
+                    (tc-env-key-name-text next-module)]
                   [_ module])]
               [next-module-id : i64
                 (match (tc-global-shared-view decl)
@@ -121279,7 +121867,8 @@
             (let
               [next-module : String
                 (match (tc-global-shared-view decl)
-                  [(ast.AstDecl.Module next-module) (ci.intern-str next-module)]
+                  [(ast.AstDecl.Module next-module)
+                    (tc-env-key-name-text next-module)]
                   [_ module])]
               [next-module-id : i64
                 (match (tc-global-shared-view decl)
@@ -121860,14 +122449,14 @@
                     (match (tc-module-local-env-cached-id
                       (tc-global-shared-view ctx)
                       (tc-global-shared-view top-env)
-                      (ci.intern-str next-module)
+                      (tc-env-key-name-text next-module)
                       next-module
                       (tc-global-shared-view cur-cache))
                       [(ResultTcModuleLocalEnv.Ok next-local-env next-cache)
                         (match (tc-module-local-env-cached-id
                           (tc-global-shared-view ctx)
                           (tc-global-shared-view top-env)
-                          (ci.intern-str next-module)
+                          (tc-env-key-name-text next-module)
                           next-module
                           (tc-global-shared-view cur-cache))
                           [(ResultTcModuleLocalEnv.Ok next-local-env-copy _)

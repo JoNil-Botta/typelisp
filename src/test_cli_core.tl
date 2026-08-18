@@ -929,7 +929,10 @@
   (if (>= index (array-length tests))
     (array-length tests)
     (begin
-      (io.print-format "{}" (tltest-list-line (array-ref tests index)))
+      (io.print-format
+        "{}"
+        (tltest-list-line
+          (owned_view.compiler-owned-array-element-shared-view tests index)))
       (tltest-list-tests-from tests (+ index 1)))))
 
 (define (tltest-list-loaded
@@ -4882,7 +4885,11 @@
               (ResultTestPackageTotals.Ok 0 0)
               (ResultTestPackageTotals.Err 1)))
           (begin
-            (io.print-format "{}" (tltest-package-source-line source count))
+            (io.print-format
+              "{}"
+              (tltest-package-source-line
+                (owned_view.compiler-owned-shared-view source)
+                count))
             (let
               [status : i64
                 (match test-mode
@@ -4925,8 +4932,11 @@
   [roots : cli_svec.Vec]
   [target : compiler_backend.CompilerBackendTarget]) : ResultTestPackageTotals
   (begin
-    (io.print-format "{}" (tltest-package-integration-line source))
-    (if (tltest-decls-have-main? decls)
+    (io.print-format
+      "{}"
+      (tltest-package-integration-line
+        (owned_view.compiler-owned-shared-view source)))
+    (if (tltest-decls-have-main? (owned_view.compiler-owned-shared-view decls))
       (let
         [legacy-roots : cli_svec.Vec (clone roots)]
         (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
@@ -4957,8 +4967,11 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultTestPackageTotals
   (begin
-    (io.print-format "{}" (tltest-package-integration-line source))
-    (if (tltest-decls-have-main? decls)
+    (io.print-format
+      "{}"
+      (tltest-package-integration-line
+        (owned_view.compiler-owned-shared-view source)))
+    (if (tltest-decls-have-main? (owned_view.compiler-owned-shared-view decls))
       (let
         [status : i64
           (tltest-run-direct-with-entry
@@ -5577,7 +5590,11 @@
     (owned_view.compiler-owned-shared-view paths))
     [(InlineHarness.Harness program harness-paths count)
       (begin
-        (io.print-format "{}" (tltest-package-source-line source count))
+        (io.print-format
+          "{}"
+          (tltest-package-source-line
+            (owned_view.compiler-owned-shared-view source)
+            count))
         (if tltest-list-only
           (ResultTestFileCheck.Ok (tltest-list-loaded source decls paths))
           (let
@@ -5624,7 +5641,11 @@
     (owned_view.compiler-owned-shared-view paths))
     [(InlineHarness.Harness program harness-paths count)
       (begin
-        (io.print-format "{}" (tltest-package-source-line source count))
+        (io.print-format
+          "{}"
+          (tltest-package-source-line
+            (owned_view.compiler-owned-shared-view source)
+            count))
         (let
           [status : i64
             (if (= count 0)

@@ -1284,6 +1284,26 @@
               "0"
               "0")
             (+ item-opened 1))))]
+    [(compiler_ast_types.AstExpr.Array items)
+      (let
+        [item-opened : i64
+          (embedded-native-template-args-ops
+            params
+            (& items)
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
+        (if (< item-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              (tlci_core.tlci-host-callback-name-shared-view
+                tlci_core.tlci-host-callback-name-expr-array)
+              "0"
+              "0"
+              "0")
+            (+ item-opened 1))))]
     [(compiler_ast_types.AstExpr.TupleRef target index)
       (let
         [target-opened : i64
@@ -1629,6 +1649,14 @@
           tlci_core.tlci-host-callback-name-expr-ptr-read)
         ops
         ops-count)]
+    [(compiler_ast_types.AstExpr.PtrAddrOf inner-node)
+      (embedded-native-template-unary-node-ops
+        params
+        inner-node
+        (tlci_core.tlci-host-callback-name-shared-view
+          tlci_core.tlci-host-callback-name-expr-ptr-addr-of)
+        ops
+        ops-count)]
     [(compiler_ast_types.AstExpr.PtrToInt inner-node)
       (embedded-native-template-unary-node-ops
         params
@@ -1637,6 +1665,35 @@
           tlci_core.tlci-host-callback-name-expr-ptr-to-int)
         ops
         ops-count)]
+    [(compiler_ast_types.AstExpr.IntToPtr inner-node cast-type-id)
+      (let
+        [value-opened : i64
+          (embedded-native-template-ops
+            params
+            inner-node
+            (owned_view.compiler-owned-shared-view ops)
+            (owned_view.compiler-owned-shared-view ops-count))]
+        (if (< value-opened 0)
+          -1
+          (let
+            [type-opened : i64
+              (embedded-native-template-type-ops
+                params
+                (compiler_ast_types.ty-node-get cast-type-id)
+                (owned_view.compiler-owned-shared-view ops)
+                (owned_view.compiler-owned-shared-view ops-count))]
+            (if (< type-opened 0)
+              -1
+              (begin
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-int-to-ptr)
+                  "0"
+                  "0"
+                  "0")
+                (+ value-opened type-opened 1))))))]
     [(compiler_ast_types.AstExpr.StringData inner-node)
       (embedded-native-template-unary-node-ops
         params
@@ -3638,6 +3695,20 @@
                 (embedded-native-computed-resource-scope-ops
                   params
                   (& args)
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-if")
+                    (string.eq head "expr-if"))
+                  (= argc 3))
+                (embedded-native-computed-ternary-ops
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 2 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-if)
                   ops
                   ops-count)]
               [(and
@@ -8203,6 +8274,7 @@
     "(extern comptime-host-expr-span (:symbol \"_tl_comptime_host_expr-span\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-span-unquoted (:symbol \"_tl_comptime_host_expr-span-unquoted\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-tuple (:symbol \"_tl_comptime_host_expr-tuple\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-array (:symbol \"_tl_comptime_host_expr-array\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-array-ref (:symbol \"_tl_comptime_host_expr-array-ref\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-array-take (:symbol \"_tl_comptime_host_expr-array-take\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-replace (:symbol \"_tl_comptime_host_expr-replace\") : (-> i64 i64 i64 i64 i64 i64))\n"
@@ -8282,7 +8354,9 @@
     "(extern comptime-host-expr-box-get (:symbol \"_tl_comptime_host_expr-box-get\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-box-take (:symbol \"_tl_comptime_host_expr-box-take\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-ptr-read (:symbol \"_tl_comptime_host_expr-ptr-read\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-ptr-addr-of (:symbol \"_tl_comptime_host_expr-ptr-addr-of\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-ptr-to-int (:symbol \"_tl_comptime_host_expr-ptr-to-int\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-int-to-ptr (:symbol \"_tl_comptime_host_expr-int-to-ptr\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-string-data (:symbol \"_tl_comptime_host_expr-string-data\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-array-data (:symbol \"_tl_comptime_host_expr-array-data\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-string-from-bytes (:symbol \"_tl_comptime_host_expr-string-from-bytes\") : (-> i64 i64 i64 i64 i64 i64))\n"

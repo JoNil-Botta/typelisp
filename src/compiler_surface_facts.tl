@@ -459,7 +459,7 @@
           (set! ok false)
           unit)
         (surface-typecheck-facts-clear!)
-        (if (surface-typecheck-facts-publish! first)
+        (if (surface-typecheck-facts-publish! (surface-facts-shared-view first))
           unit
           (set! ok false))
         ;; Invalid publication is atomic: the active first fragment survives.
@@ -468,7 +468,9 @@
           unit)
         (if (and
           (surface-typecheck-facts-active?)
-          (surface-typecheck-facts-eq? (surface-typecheck-facts-current) first))
+          (surface-typecheck-facts-eq?
+            (surface-typecheck-facts-current)
+            (surface-facts-shared-view first)))
           unit
           (set! ok false))
         (surface-typecheck-facts-clear!)
@@ -476,12 +478,14 @@
           (set! ok false)
           unit)
         ;; A cleared publication can be reused without retaining stale facts.
-        (if (surface-typecheck-facts-publish! first)
+        (if (surface-typecheck-facts-publish! (surface-facts-shared-view first))
           unit
           (set! ok false))
         (if (and
           (surface-typecheck-facts-active?)
-          (surface-typecheck-facts-eq? (surface-typecheck-facts-current) first))
+          (surface-typecheck-facts-eq?
+            (surface-typecheck-facts-current)
+            (surface-facts-shared-view first)))
           unit
           (set! ok false))
         (surface-typecheck-facts-clear!)

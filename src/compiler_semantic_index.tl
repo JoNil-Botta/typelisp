@@ -2381,7 +2381,10 @@
           (set! record-index 0)
           (while (< record-index record-len)
             (let
-              [record : CompilerSemanticRecord (array-ref records record-index)]
+              [record : CompilerSemanticRecord
+                (owned_view.compiler-owned-array-element-shared-view
+                  records
+                  record-index)]
               [definition? : bool
                 (match record.role
                   [(CompilerSemanticRecordRole.Definition) true]
@@ -2473,9 +2476,14 @@
                                     (>= record.symbol.local-ordinal 0)
                                     parent-occupied)
                                     (compiler-semantic-canonical-local-key
-                                      (array-ref symbols parent-canonical-index)
-                                      record)
-                                    (compiler-semantic-canonical-top-key record)))]
+                                      (owned_view.compiler-owned-array-element-shared-view
+                                        symbols
+                                        parent-canonical-index)
+                                      (owned_view.compiler-owned-shared-view
+                                        record))
+                                    (compiler-semantic-canonical-top-key
+                                      (owned_view.compiler-owned-shared-view
+                                        record))))]
                               (begin
                                 (set! assigned canonical-len)
                                 (set!

@@ -784,6 +784,82 @@
   (TypeVariant String ast.AstTypeList)
   (TypeVariantList CtfeReflectVariantList))
 
+;; CTFE environments own copied values, but captured syntax pool contexts are
+;; identity-bearing shared state cells. The compiler-generated aggregate clone
+;; recursively clones those cells (and the type-pool dedup table) into the
+;; current macro arena, leaving captured syntax pointed at storage that is
+;; destroyed with the generation. Keep ordinary payload cloning while sharing
+;; only the captured pool owners.
+(define (ctfe-value-owned-copy [value : (& value CompilerCtfeValue)]) : CompilerCtfeValue
+  (match (owned_view.compiler-owned-reference-shared-view value)
+    [(CompilerCtfeValue.I64 n) (CompilerCtfeValue.I64 n)]
+    [(CompilerCtfeValue.F64 n) (CompilerCtfeValue.F64 n)]
+    [(CompilerCtfeValue.F32 n) (CompilerCtfeValue.F32 n)]
+    [(CompilerCtfeValue.Bool enabled) (CompilerCtfeValue.Bool enabled)]
+    [(CompilerCtfeValue.Char ch) (CompilerCtfeValue.Char ch)]
+    [(CompilerCtfeValue.String text identity)
+      (CompilerCtfeValue.String (clone text) identity)]
+    [(CompilerCtfeValue.Name text identity)
+      (CompilerCtfeValue.Name (clone text) identity)]
+    [(CompilerCtfeValue.Unit) CompilerCtfeValue.Unit]
+    [(CompilerCtfeValue.Type ty) (CompilerCtfeValue.Type (clone ty))]
+    [(CompilerCtfeValue.Expr node ty) (CompilerCtfeValue.Expr node (clone ty))]
+    [(CompilerCtfeValue.CapturedExpr node ty pools)
+      (CompilerCtfeValue.CapturedExpr
+        node
+        (clone ty)
+        (ast.ast-node-pool-context-shared-view (& pools)))]
+    [(CompilerCtfeValue.ExprList items)
+      (CompilerCtfeValue.ExprList (clone items))]
+    [(CompilerCtfeValue.CapturedExprList items pools)
+      (CompilerCtfeValue.CapturedExprList
+        (clone items)
+        (ast.ast-node-pool-context-shared-view (& pools)))]
+    [(CompilerCtfeValue.ExprClause clause)
+      (CompilerCtfeValue.ExprClause (clone clause))]
+    [(CompilerCtfeValue.CapturedExprClause clause pools)
+      (CompilerCtfeValue.CapturedExprClause
+        (clone clause)
+        (ast.ast-node-pool-context-shared-view (& pools)))]
+    [(CompilerCtfeValue.ExprClauseList clauses)
+      (CompilerCtfeValue.ExprClauseList (clone clauses))]
+    [(CompilerCtfeValue.CapturedExprClauseList clauses pools)
+      (CompilerCtfeValue.CapturedExprClauseList
+        (clone clauses)
+        (ast.ast-node-pool-context-shared-view (& pools)))]
+    [(CompilerCtfeValue.ExprBindingClause binding)
+      (CompilerCtfeValue.ExprBindingClause (clone binding))]
+    [(CompilerCtfeValue.ExprBindingClauseList bindings)
+      (CompilerCtfeValue.ExprBindingClauseList (clone bindings))]
+    [(CompilerCtfeValue.Pattern pattern)
+      (CompilerCtfeValue.Pattern (clone pattern))]
+    [(CompilerCtfeValue.PatternList patterns)
+      (CompilerCtfeValue.PatternList (clone patterns))]
+    [(CompilerCtfeValue.MatchArm arm) (CompilerCtfeValue.MatchArm (clone arm))]
+    [(CompilerCtfeValue.MatchArmList arms)
+      (CompilerCtfeValue.MatchArmList (clone arms))]
+    [(CompilerCtfeValue.LetBinding binding)
+      (CompilerCtfeValue.LetBinding (clone binding))]
+    [(CompilerCtfeValue.LetBindingList bindings)
+      (CompilerCtfeValue.LetBindingList (clone bindings))]
+    [(CompilerCtfeValue.TypeInfo ty) (CompilerCtfeValue.TypeInfo (clone ty))]
+    [(CompilerCtfeValue.TypeInfoBox ty)
+      (CompilerCtfeValue.TypeInfoBox (clone ty))]
+    [(CompilerCtfeValue.TypeInfoList types)
+      (CompilerCtfeValue.TypeInfoList (clone types))]
+    [(CompilerCtfeValue.TypeField name ty)
+      (CompilerCtfeValue.TypeField (clone name) (clone ty))]
+    [(CompilerCtfeValue.TypeFieldList fields)
+      (CompilerCtfeValue.TypeFieldList (clone fields))]
+    [(CompilerCtfeValue.TypeVariantPayload ty)
+      (CompilerCtfeValue.TypeVariantPayload (clone ty))]
+    [(CompilerCtfeValue.TypeVariantPayloadList types)
+      (CompilerCtfeValue.TypeVariantPayloadList (clone types))]
+    [(CompilerCtfeValue.TypeVariant name payloads)
+      (CompilerCtfeValue.TypeVariant (clone name) (clone payloads))]
+    [(CompilerCtfeValue.TypeVariantList variants)
+      (CompilerCtfeValue.TypeVariantList (clone variants))]))
+
 (define (ctfe-name-value [name-id : i64]) : CompilerCtfeValue
   (CompilerCtfeValue.Name
     (ci.intern-syntax-name-text-or name-id "<structural-name>")
@@ -1045,7 +1121,7 @@
 (define (ctfe-capture-syntax-value-with-pools
   [value : CompilerCtfeValue]
   [pools : ast.AstNodePoolContext]) : CompilerCtfeValue
-  (match (clone value)
+  (match (ctfe-value-owned-copy (& value))
     [(CompilerCtfeValue.Expr node ty)
       (CompilerCtfeValue.CapturedExpr node ty pools)]
     [(CompilerCtfeValue.ExprList items)
@@ -2143,7 +2219,7 @@
 (define (ctfe-hygiene-enabled? [env : (& env CtfeEnv)]) : bool
   (match (ctfe-env-lookup-id env (ctfe-hygiene-enabled-id))
     [(CtfeMaybeValue.Some value)
-      (match (clone value)
+      (match (ctfe-value-owned-copy (& value))
         [(CompilerCtfeValue.Bool enabled) enabled]
         [_ false])]
     [(CtfeMaybeValue.None) false]))
@@ -3604,7 +3680,7 @@
   [fuel : i64]) : ResultCtfe
   (match (clone ty)
     [(ast.AstType.F64)
-      (match (clone value)
+      (match (ctfe-value-owned-copy (& value))
         [(CompilerCtfeValue.F64 n) (ctfe-f64-result n expr fuel)]
         [(CompilerCtfeValue.F32 n) (ctfe-f64-result n expr fuel)]
         [_
@@ -3616,7 +3692,7 @@
             expr
             fuel)])]
     [(ast.AstType.F32)
-      (match (clone value)
+      (match (ctfe-value-owned-copy (& value))
         [(CompilerCtfeValue.F64 n) (ctfe-f32-result n expr fuel)]
         [(CompilerCtfeValue.F32 n) (ctfe-f32-result n expr fuel)]
         [_
@@ -3645,7 +3721,8 @@
   (match (compiler-ctfe-eval (clone inner) env fuel)
     [(ResultCtfe.Ok value next-fuel)
       (let
-        [from-ty : ast.AstType (ctfe-cast-source-type inner (clone value) env)]
+        [from-ty : ast.AstType
+          (ctfe-cast-source-type inner (ctfe-value-owned-copy (& value)) env)]
         (ctfe-apply-cast value from-ty ty expr next-fuel))]
     [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
@@ -10732,7 +10809,7 @@
                 (ctfe-env-extend-local-typed-id
                   (ctfe-env-shared-view (& env))
                   name
-                  (clone value)
+                  (ctfe-value-owned-copy (& value))
                   (ctfe-binding-type
                     maybe-ty
                     (ctfe-cast-source-type
@@ -11078,7 +11155,7 @@
       [(ast.AstMatchArm.Arm pattern body-box)
         (match (ctfe-match-pattern
           pattern
-          (clone value)
+          (ctfe-value-owned-copy (& value))
           (clone value-ty)
           (ctfe-env-shared-view (& env)))
           [(CtfePatternMatch.Matched arm-env)
@@ -11102,7 +11179,7 @@
   (match (compiler-ctfe-eval (clone scrutinee) env fuel)
     [(ResultCtfe.Ok value scrutinee-fuel)
       (ctfe-eval-match-arms
-        (clone value)
+        (ctfe-value-owned-copy (& value))
         (ctfe-cast-source-type scrutinee value (ctfe-env-shared-view (& env)))
         arms
         origin
@@ -15521,7 +15598,7 @@
   [ty : ast.AstType]) : ast.AstLiteral
   (match ty
     [(ast.AstType.F32)
-      (match (clone value)
+      (match (ctfe-value-owned-copy (& value))
         [(CompilerCtfeValue.F64 n)
           (ast.AstLiteral.Float
             (cfloat.compiler-float-format-f64
@@ -15798,7 +15875,7 @@
       env
       (ctfe-fuel-limit))
       [(ResultCtfe.Ok value _)
-        (match (clone value)
+        (match (ctfe-value-owned-copy (& value))
           [(CompilerCtfeValue.Type actual)
             (and
               (ctfe-type-eq actual want)

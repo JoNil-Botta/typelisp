@@ -1972,13 +1972,16 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
+      (cfg
+        compile-profile
+        (compiler-driver-profile-start-phase
+          (profile_state.compiler-profile-state-shared-view profile-state)))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
         (owned_view.compiler-owned-shared-view pools)
         (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
-        profile-state
+        (profile_state.compiler-profile-state-shared-view profile-state)
         (compiler-driver-representation-index-for-backend
           (owned_view.compiler-owned-shared-view pools)
           (owned_view.compiler-owned-shared-view program)
@@ -2001,7 +2004,9 @@
                   (>= opt-level 2))
                 (cfg
                   compile-profile
-                  (compiler-driver-profile-start-phase profile-state))
+                  (compiler-driver-profile-start-phase
+                    (profile_state.compiler-profile-state-shared-view
+                      profile-state)))
                 (match (if has-target
                   (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
@@ -2012,7 +2017,8 @@
                     optimized-spans
                     emit-entry
                     crt-entry
-                    profile-state)
+                    (profile_state.compiler-profile-state-shared-view
+                      profile-state))
                   (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
                     pools
@@ -2028,7 +2034,8 @@
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
-                          profile-state
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)
                           "backend"))
                       (ResultCompilerDriver.Ok asm))]
                   [(compiler_backend.ResultCompilerBackend.Err diag)
@@ -2036,7 +2043,8 @@
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
-                          profile-state
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)
                           "backend"))
                       (ResultCompilerDriver.Err
                         (box
@@ -2065,13 +2073,16 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
+      (cfg
+        compile-profile
+        (compiler-driver-profile-start-phase
+          (profile_state.compiler-profile-state-shared-view profile-state)))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
         (owned_view.compiler-owned-shared-view pools)
         (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
-        profile-state
+        (profile_state.compiler-profile-state-shared-view profile-state)
         (compiler-driver-representation-index-for-backend
           (owned_view.compiler-owned-shared-view pools)
           (owned_view.compiler-owned-shared-view program)
@@ -2095,7 +2106,9 @@
                   (>= opt-level 2))
                 (cfg
                   compile-profile
-                  (compiler-driver-profile-start-phase profile-state))
+                  (compiler-driver-profile-start-phase
+                    (profile_state.compiler-profile-state-shared-view
+                      profile-state)))
                 (match (if has-target
                   (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
@@ -2106,7 +2119,8 @@
                     optimized-spans
                     emit-entry
                     crt-entry
-                    profile-state)
+                    (profile_state.compiler-profile-state-shared-view
+                      profile-state))
                   (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
                     pools
@@ -2122,7 +2136,8 @@
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
-                          profile-state
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)
                           "backend"))
                       (compiler-driver-allocation-profile-snapshot! "backend")
                       (compiler-driver-allocation-profile-backend-output-snapshot!
@@ -2133,7 +2148,8 @@
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
-                          profile-state
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)
                           "backend"))
                       (compiler-driver-allocation-profile-snapshot! "backend")
                       (compiler-driver-allocation-profile-backend-output-snapshot!
@@ -2165,13 +2181,16 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
+      (cfg
+        compile-profile
+        (compiler-driver-profile-start-phase
+          (profile_state.compiler-profile-state-shared-view profile-state)))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
         (owned_view.compiler-owned-shared-view pools)
         (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
-        profile-state
+        (profile_state.compiler-profile-state-shared-view profile-state)
         (compiler-driver-representation-index-for-backend
           (owned_view.compiler-owned-shared-view pools)
           (owned_view.compiler-owned-shared-view program)
@@ -2208,7 +2227,9 @@
                       (compiler-driver-release-lowered-ir! opt-level)
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-start-phase profile-state))
+                        (compiler-driver-profile-start-phase
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)))
                       (match (if has-target
                         (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                           backend-state
@@ -2219,7 +2240,8 @@
                           optimized-spans
                           emit-entry
                           crt-entry
-                          profile-state)
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state))
                         (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                           backend-state
                           pools
@@ -2235,7 +2257,8 @@
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
-                                profile-state
+                                (profile_state.compiler-profile-state-shared-view
+                                  profile-state)
                                 "backend"))
                             (ResultCompilerDriverObject.Ok image))]
                         [(compiler_backend.ResultCompilerBackendObject.Err diag)
@@ -2243,7 +2266,8 @@
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
-                                profile-state
+                                (profile_state.compiler-profile-state-shared-view
+                                  profile-state)
                                 "backend"))
                             (ResultCompilerDriverObject.Err
                               (box
@@ -2279,7 +2303,7 @@
       opt-level
       emit-entry
       crt-entry
-      profile-state
+      (profile_state.compiler-profile-state-shared-view profile-state)
       backend-state
       (compiler_typecheck_core.tc-serial-job-state))))
 
@@ -2303,13 +2327,16 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
+      (cfg
+        compile-profile
+        (compiler-driver-profile-start-phase
+          (profile_state.compiler-profile-state-shared-view profile-state)))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
         (owned_view.compiler-owned-shared-view pools)
         (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
-        profile-state
+        (profile_state.compiler-profile-state-shared-view profile-state)
         (compiler-driver-representation-index-for-backend
           (owned_view.compiler-owned-shared-view pools)
           (owned_view.compiler-owned-shared-view program)
@@ -2341,7 +2368,9 @@
                       (compiler-driver-release-lowered-ir! opt-level)
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-start-phase profile-state))
+                        (compiler-driver-profile-start-phase
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)))
                       (match (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                         backend-state
                         pools
@@ -2351,13 +2380,15 @@
                         optimized-spans
                         emit-entry
                         crt-entry
-                        profile-state)
+                        (profile_state.compiler-profile-state-shared-view
+                          profile-state))
                         [(compiler_backend.ResultCompilerBackend.Ok asm)
                           (begin
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
-                                profile-state
+                                (profile_state.compiler-profile-state-shared-view
+                                  profile-state)
                                 "backend"))
                             (ResultCompilerDriverPackageRuntime.Assembly
                               asm
@@ -2367,7 +2398,8 @@
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
-                                profile-state
+                                (profile_state.compiler-profile-state-shared-view
+                                  profile-state)
                                 "backend"))
                             (ResultCompilerDriverPackageRuntime.Err
                               (box
@@ -2380,7 +2412,9 @@
                       (compiler-driver-release-lowered-ir! opt-level)
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-start-phase profile-state))
+                        (compiler-driver-profile-start-phase
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)))
                       (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                         backend-state
                         (owned_view.compiler-owned-shared-view pools)
@@ -2390,13 +2424,15 @@
                         (owned_view.compiler-owned-shared-view optimized-spans)
                         emit-entry
                         crt-entry
-                        (owned_view.compiler-owned-shared-view profile-state))
+                        (profile_state.compiler-profile-state-shared-view
+                          profile-state))
                         [(compiler_backend.ResultCompilerBackendObject.Ok image)
                           (begin
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
-                                profile-state
+                                (profile_state.compiler-profile-state-shared-view
+                                  profile-state)
                                 "backend.object-image"))
                             (let
                               [side-backend-state : compiler_backend.CompilerBackendState
@@ -2419,14 +2455,16 @@
                                   optimized-spans
                                   emit-entry
                                   crt-entry
-                                  profile-state)
+                                  (profile_state.compiler-profile-state-shared-view
+                                    profile-state))
                                   [(compiler_backend.ResultCompilerBackend.Ok
                                       asm)
                                     (begin
                                       (cfg
                                         compile-profile
                                         (compiler-driver-profile-finish-phase
-                                          profile-state
+                                          (profile_state.compiler-profile-state-shared-view
+                                            profile-state)
                                           "backend.side-assembly"))
                                       (ResultCompilerDriverPackageRuntime.Object
                                         image
@@ -2437,7 +2475,8 @@
                                       (cfg
                                         compile-profile
                                         (compiler-driver-profile-finish-phase
-                                          profile-state
+                                          (profile_state.compiler-profile-state-shared-view
+                                            profile-state)
                                           "backend.side-assembly"))
                                       (ResultCompilerDriverPackageRuntime.Err
                                         (box
@@ -2450,7 +2489,8 @@
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
-                                profile-state
+                                (profile_state.compiler-profile-state-shared-view
+                                  profile-state)
                                 "backend"))
                             (ResultCompilerDriverPackageRuntime.Err
                               (box
@@ -2480,13 +2520,16 @@
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
+      (cfg
+        compile-profile
+        (compiler-driver-profile-start-phase
+          (profile_state.compiler-profile-state-shared-view profile-state)))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
         (owned_view.compiler-owned-shared-view pools)
         (owned_view.compiler-owned-shared-view program)
         spans
         opt-level
-        profile-state
+        (profile_state.compiler-profile-state-shared-view profile-state)
         (compiler-driver-representation-index-for-backend
           (owned_view.compiler-owned-shared-view pools)
           (owned_view.compiler-owned-shared-view program)
@@ -2509,7 +2552,9 @@
                   (>= opt-level 2))
                 (cfg
                   compile-profile
-                  (compiler-driver-profile-start-phase profile-state))
+                  (compiler-driver-profile-start-phase
+                    (profile_state.compiler-profile-state-shared-view
+                      profile-state)))
                 (match (if has-target
                   (compiler_backend.compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
@@ -2520,7 +2565,8 @@
                     optimized-spans
                     emit-entry
                     crt-entry
-                    profile-state)
+                    (profile_state.compiler-profile-state-shared-view
+                      profile-state))
                   (compiler_backend.compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                     backend-state
                     pools
@@ -2536,7 +2582,8 @@
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
-                          profile-state
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)
                           "backend"))
                       (ResultCompilerDriverPic.Ok output))]
                   [(compiler_backend.ResultCompilerBackendPic.Err diag)
@@ -2544,7 +2591,8 @@
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
-                          profile-state
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)
                           "backend"))
                       (ResultCompilerDriverPic.Err
                         (box

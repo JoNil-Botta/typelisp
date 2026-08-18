@@ -1249,7 +1249,8 @@
         (opt-switch-test-function (opt-switch-test-span-blocks 8 0 65)))]
     [long-sparse-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.opt-function-blocks long-sparse)
+        (opt.opt-function-blocks
+          (opt.compiler-opt-global-shared-view long-sparse))
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1266,9 +1267,12 @@
       (opt.opt-switch-form-function
         (opt-switch-test-function
           (opt-switch-test-hop-blocks 2 4 (ir.CompilerIrBlockList.Nil))))]
-    [hop-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks hop)]
+    [hop-blocks : ir.CompilerIrBlockList
+      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view hop))]
     [hop-entry : ir.CompilerIrBlock
-      (match (opt.opt-cfg-find-block hop-blocks (ir.compiler-ir-label "entry"))
+      (match (opt.opt-cfg-find-block
+        (opt.compiler-opt-global-shared-view hop-blocks)
+        (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
         [(opt.OptMaybeBlock.Some block) block])]
@@ -1280,18 +1284,21 @@
         (opt-switch-test-function
           (opt-switch-test-hop-blocks 1 80 (ir.CompilerIrBlockList.Nil))))]
     [hop-fallback-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks hop-fallback)]
-    [hop-twice : ir.CompilerIrFunction (opt.opt-switch-form-function hop)]
+      (opt.opt-function-blocks
+        (opt.compiler-opt-global-shared-view hop-fallback))]
+    [hop-twice : ir.CompilerIrFunction
+      (opt.opt-switch-form-function (opt.compiler-opt-global-shared-view hop))]
     [hop-twice-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        (opt.opt-function-blocks hop-twice)
+        (opt.opt-function-blocks
+          (opt.compiler-opt-global-shared-view hop-twice))
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
         [(opt.OptMaybeBlock.Some block) block])]
     [hop-fallback-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        hop-fallback-blocks
+        (opt.compiler-opt-global-shared-view hop-fallback-blocks)
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1302,10 +1309,10 @@
       (opt.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-hop-shared-blocks)))]
     [hop-shared-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks hop-shared)]
+      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view hop-shared))]
     [hop-shared-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        hop-shared-blocks
+        (opt.compiler-opt-global-shared-view hop-shared-blocks)
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1316,10 +1323,10 @@
       (opt.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-repeat-tag-blocks)))]
     [repeat-tag-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks repeat-tag)]
+      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view repeat-tag))]
     [repeat-tag-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        repeat-tag-blocks
+        (opt.compiler-opt-global-shared-view repeat-tag-blocks)
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1330,10 +1337,11 @@
       (opt.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-forwarded-arm-blocks false)))]
     [forwarded-arm-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks forwarded-arm)]
+      (opt.opt-function-blocks
+        (opt.compiler-opt-global-shared-view forwarded-arm))]
     [forwarded-arm-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        forwarded-arm-blocks
+        (opt.compiler-opt-global-shared-view forwarded-arm-blocks)
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1342,10 +1350,11 @@
       (opt.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-forwarded-arm-blocks true)))]
     [forwarded-phi-arm-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks forwarded-phi-arm)]
+      (opt.opt-function-blocks
+        (opt.compiler-opt-global-shared-view forwarded-phi-arm))]
     [forwarded-phi-arm-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
-        forwarded-phi-arm-blocks
+        (opt.compiler-opt-global-shared-view forwarded-phi-arm-blocks)
         (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1712,24 +1721,41 @@
       ;; a 67-slot span at eight compares, and a 58-slot span at seven, are
       ;; both back under the 50% floor and stay chains.
       [(not
-          (= (opt-count-switch-blocks (opt.opt-function-blocks long-sparse)) 1))
+          (=
+            (opt-count-switch-blocks
+              (opt.opt-function-blocks
+                (opt.compiler-opt-global-shared-view long-sparse)))
+            1))
         70]
-      [(not (= (opt-switch-test-block-tail-case-count long-sparse-entry) 66))
+      [(not
+          (=
+            (opt-switch-test-block-tail-case-count
+              (opt.compiler-opt-global-shared-view long-sparse-entry))
+            66))
         71]
-      [(not (= (opt-switch-test-block-tail-base long-sparse-entry) 0)) 72]
+      [(not
+          (=
+            (opt-switch-test-block-tail-base
+              (opt.compiler-opt-global-shared-view long-sparse-entry))
+            0))
+        72]
       [(not
           (opt-switch-test-block-tail-has-case?
-            long-sparse-entry
+            (opt.compiler-opt-global-shared-view long-sparse-entry)
             65
             (opt-switch-test-arm-label 7)))
         73]
       [(not
           (opt-switch-test-block-tail-has-case?
-            long-sparse-entry
+            (opt.compiler-opt-global-shared-view long-sparse-entry)
             9
             (ir.compiler-ir-label "fallback")))
         74]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function long-sparse))) 75]
+      [(not
+          (opt.opt-verify-ok?
+            (opt.opt-verify-function
+              (opt.compiler-opt-global-shared-view long-sparse))))
+        75]
       [(not
           (=
             (opt-count-switch-blocks (opt.opt-function-blocks long-too-sparse))
@@ -1740,26 +1766,42 @@
         77]
       ;; One empty forwarding block between the halves of one chain: six
       ;; compares, one table, and the forwarding block is gone with them.
-      [(not (= (opt-count-switch-blocks hop-blocks) 1)) 78]
-      [(not (= (opt-switch-test-block-tail-case-count hop-entry) 6)) 79]
-      [(not (= (opt-switch-test-block-tail-base hop-entry) 0)) 80]
       [(not
           (=
-            (opt-switch-test-block-tail-default hop-entry)
+            (opt-count-switch-blocks
+              (opt.compiler-opt-global-shared-view hop-blocks))
+            1))
+        78]
+      [(not
+          (=
+            (opt-switch-test-block-tail-case-count
+              (opt.compiler-opt-global-shared-view hop-entry))
+            6))
+        79]
+      [(not
+          (=
+            (opt-switch-test-block-tail-base
+              (opt.compiler-opt-global-shared-view hop-entry))
+            0))
+        80]
+      [(not
+          (=
+            (opt-switch-test-block-tail-default
+              (opt.compiler-opt-global-shared-view hop-entry))
             (ir.compiler-ir-label "fallback")))
         81]
       [(not
           (opt-switch-test-block-tail-has-case?
-            hop-entry
+            (opt.compiler-opt-global-shared-view hop-entry)
             5
             (opt-switch-test-arm-label 5)))
         82]
       [(compiler_optimize_tests.opt-block-list-has-label?
-          hop-blocks
+          (opt.compiler-opt-global-shared-view hop-blocks)
           (ir.compiler-ir-label "hop"))
         83]
       [(compiler_optimize_tests.opt-block-list-has-label?
-          hop-blocks
+          (opt.compiler-opt-global-shared-view hop-blocks)
           (ir.compiler-ir-label "cmp4"))
         84]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function hop))) 85]
@@ -1769,75 +1811,117 @@
         109]
       [(not (= (opt-switch-test-block-tail-case-count hop-twice-entry) 6)) 110]
       ;; Reaching across it must never cost the chain the table it already had.
-      [(not (= (opt-count-switch-blocks hop-fallback-blocks) 1)) 86]
-      [(not (= (opt-switch-test-block-tail-case-count hop-fallback-entry) 4))
+      [(not
+          (=
+            (opt-count-switch-blocks
+              (opt.compiler-opt-global-shared-view hop-fallback-blocks))
+            1))
+        86]
+      [(not
+          (=
+            (opt-switch-test-block-tail-case-count
+              (opt.compiler-opt-global-shared-view hop-fallback-entry))
+            4))
         87]
       [(not
           (=
-            (opt-switch-test-block-tail-default hop-fallback-entry)
+            (opt-switch-test-block-tail-default
+              (opt.compiler-opt-global-shared-view hop-fallback-entry))
             (ir.compiler-ir-label "hop")))
         88]
       [(not
           (compiler_optimize_tests.opt-block-list-has-label?
-            hop-fallback-blocks
+            (opt.compiler-opt-global-shared-view hop-fallback-blocks)
             (ir.compiler-ir-label "hop")))
         89]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function hop-fallback))) 90]
       ;; A forwarding block something else also reaches cannot be deleted, so
       ;; the chain stops in front of it and it stays where it is.
-      [(not (= (opt-count-switch-blocks hop-shared-blocks) 1)) 91]
-      [(not (= (opt-switch-test-block-tail-case-count hop-shared-entry) 4)) 92]
       [(not
           (=
-            (opt-switch-test-block-tail-default hop-shared-entry)
+            (opt-count-switch-blocks
+              (opt.compiler-opt-global-shared-view hop-shared-blocks))
+            1))
+        91]
+      [(not
+          (=
+            (opt-switch-test-block-tail-case-count
+              (opt.compiler-opt-global-shared-view hop-shared-entry))
+            4))
+        92]
+      [(not
+          (=
+            (opt-switch-test-block-tail-default
+              (opt.compiler-opt-global-shared-view hop-shared-entry))
             (ir.compiler-ir-label "hop")))
         93]
       [(not
           (compiler_optimize_tests.opt-block-list-has-label?
-            hop-shared-blocks
+            (opt.compiler-opt-global-shared-view hop-shared-blocks)
             (ir.compiler-ir-label "hop")))
         94]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function hop-shared))) 95]
       ;; A repeated tag stops the chain instead of refusing it.
-      [(not (= (opt-count-switch-blocks repeat-tag-blocks) 1)) 96]
-      [(not (= (opt-switch-test-block-tail-case-count repeat-tag-entry) 4)) 97]
       [(not
           (=
-            (opt-switch-test-block-tail-default repeat-tag-entry)
+            (opt-count-switch-blocks
+              (opt.compiler-opt-global-shared-view repeat-tag-blocks))
+            1))
+        96]
+      [(not
+          (=
+            (opt-switch-test-block-tail-case-count
+              (opt.compiler-opt-global-shared-view repeat-tag-entry))
+            4))
+        97]
+      [(not
+          (=
+            (opt-switch-test-block-tail-default
+              (opt.compiler-opt-global-shared-view repeat-tag-entry))
             (ir.compiler-ir-label "cmp4")))
         98]
       [(not
           (compiler_optimize_tests.opt-block-list-has-label?
-            repeat-tag-blocks
+            (opt.compiler-opt-global-shared-view repeat-tag-blocks)
             (ir.compiler-ir-label "cmp4")))
         99]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function repeat-tag))) 100]
       ;; A forwarding arm is followed to the body it forwards to; the empty
       ;; block goes with the chain.
-      [(not (= (opt-count-switch-blocks forwarded-arm-blocks) 1)) 101]
+      [(not
+          (=
+            (opt-count-switch-blocks
+              (opt.compiler-opt-global-shared-view forwarded-arm-blocks))
+            1))
+        101]
       [(not
           (opt-switch-test-block-tail-has-case?
-            forwarded-arm-entry
+            (opt.compiler-opt-global-shared-view forwarded-arm-entry)
             2
             (ir.compiler-ir-label "body")))
         102]
       [(compiler_optimize_tests.opt-block-list-has-label?
-          forwarded-arm-blocks
+          (opt.compiler-opt-global-shared-view forwarded-arm-blocks)
           (ir.compiler-ir-label "forward"))
         103]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function forwarded-arm))) 104]
       ;; A phi in the body has to name the edge it came in on, so that
       ;; forwarding block stays and the case keeps naming it.
-      [(not (= (opt-count-switch-blocks forwarded-phi-arm-blocks) 1)) 105]
+      [(not
+          (=
+            (opt-count-switch-blocks
+              (opt.compiler-opt-global-shared-view forwarded-phi-arm-blocks))
+            1))
+        105]
       [(not
           (opt-switch-test-block-tail-has-case?
-            forwarded-phi-arm-entry
+            (opt.compiler-opt-global-shared-view forwarded-phi-arm-entry)
             2
             (ir.compiler-ir-label "forward")))
         106]
       [(not
           (compiler_optimize_tests.opt-block-list-has-label?
-            forwarded-phi-arm-blocks
+            (opt.compiler-opt-global-shared-view forwarded-phi-arm-blocks)
             (ir.compiler-ir-label "forward")))
         107]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function forwarded-phi-arm)))

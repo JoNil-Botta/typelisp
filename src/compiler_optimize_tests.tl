@@ -86,8 +86,10 @@
               right-instr)
             (opt-test-instr-list-eq
               type-segment-bases
-              (__tl-box-place left-rest)
-              (__tl-box-place right-rest)))]
+              (compiler_ir_types.compiler-ir-instr-list-box-shared-view
+                left-rest)
+              (compiler_ir_types.compiler-ir-instr-list-box-shared-view
+                right-rest)))]
         [_ false])]))
 
 (define (opt-test-cse-instrs
@@ -103,11 +105,7 @@
 (define (opt-test-copy-instrs
   [env : compiler_optimize.OptCopyEnv]
   [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
-  (let
-    [seq : compiler_ir_types.CompilerIrInstrSeq (opt-test-instr-seq instrs)]
-    (begin
-      (compiler_optimize.opt-copy-instrs! env (&mut seq))
-      (opt-test-instr-list seq))))
+  (compiler_optimize.opt-copy-instrs env instrs))
 
 (define (opt-test-bounds-instrs
   [type-segment-bases : i64]
@@ -476,7 +474,7 @@
     [_ false]))
 
 (define (opt-dense-test-ssa-env-register-range
-  [env : compiler_optimize.OptSsaRenameEnv (:consume)]
+  [env : compiler_optimize.OptSsaRenameEnv]
   [next : i64]
   [last : i64]) : compiler_optimize.OptSsaRenameEnv
   (if (> next last)
@@ -487,7 +485,7 @@
       last)))
 
 (define (opt-dense-test-ssa-env-bind-range
-  [env : compiler_optimize.OptSsaRenameEnv (:consume)]
+  [env : compiler_optimize.OptSsaRenameEnv]
   [next : i64]
   [last : i64]) : compiler_optimize.OptSsaRenameEnv
   (if (> next last)
@@ -546,7 +544,9 @@
     [registered-count : i64 registered.entry-count]
     [base : compiler_optimize.OptSsaRenameEnv
       (opt-dense-test-ssa-env-bind-range registered 0 11)]
-    [checkpoint : i64 (compiler_optimize.opt-ssa-env-checkpoint base)]
+    [checkpoint : i64
+      (compiler_optimize.opt-ssa-env-checkpoint
+        (compiler_optimize.compiler-opt-global-shared-view base))]
     [branch-a : compiler_optimize.OptSsaRenameEnv
       (compiler_optimize.opt-ssa-env-bind
         (compiler_optimize.opt-ssa-env-bind base 3 303)
@@ -556,18 +556,35 @@
       (compiler_optimize.opt-ssa-block-outs-prepend
         (compiler_optimize.opt-ssa-block-outs-new)
         10
-        branch-a)]
+        (compiler_optimize.compiler-opt-global-shared-view branch-a))]
     [restored : compiler_optimize.OptSsaRenameEnv
       (compiler_optimize.opt-ssa-env-rollback branch-a checkpoint)]
     [restored-ok? : bool
       (and
-        (opt-dense-test-ssa-env-value? restored 0 100)
-        (opt-dense-test-ssa-env-value? restored 3 103)
-        (opt-dense-test-ssa-env-value? restored 11 111)
-        (opt-dense-test-ssa-env-missing? restored 12)
-        (opt-dense-test-ssa-env-missing? restored 15)
-        (opt-dense-test-ssa-env-missing? restored (- 0 1))
-        (opt-dense-test-ssa-env-missing? restored 16))]
+        (opt-dense-test-ssa-env-value?
+          (compiler_optimize.compiler-opt-global-shared-view restored)
+          0
+          100)
+        (opt-dense-test-ssa-env-value?
+          (compiler_optimize.compiler-opt-global-shared-view restored)
+          3
+          103)
+        (opt-dense-test-ssa-env-value?
+          (compiler_optimize.compiler-opt-global-shared-view restored)
+          11
+          111)
+        (opt-dense-test-ssa-env-missing?
+          (compiler_optimize.compiler-opt-global-shared-view restored)
+          12)
+        (opt-dense-test-ssa-env-missing?
+          (compiler_optimize.compiler-opt-global-shared-view restored)
+          15)
+        (opt-dense-test-ssa-env-missing?
+          (compiler_optimize.compiler-opt-global-shared-view restored)
+          (- 0 1))
+        (opt-dense-test-ssa-env-missing?
+          (compiler_optimize.compiler-opt-global-shared-view restored)
+          16))]
     [branch-b : compiler_optimize.OptSsaRenameEnv
       (compiler_optimize.opt-ssa-env-bind
         (compiler_optimize.opt-ssa-env-bind restored 3 403)
@@ -579,11 +596,30 @@
       (= checkpoint 12)
       (= registered-count 13)
       restored-ok?
-      (opt-dense-test-ssa-snapshot-value? outs 10 3 303)
-      (opt-dense-test-ssa-snapshot-value? outs 10 12 312)
-      (opt-dense-test-ssa-snapshot-value? outs 20 3 403)
-      (opt-dense-test-ssa-snapshot-value? outs 20 12 412)
-      (opt-dense-test-ssa-snapshot-missing? outs 99 3))))
+      (opt-dense-test-ssa-snapshot-value?
+        (compiler_optimize.compiler-opt-global-shared-view outs)
+        10
+        3
+        303)
+      (opt-dense-test-ssa-snapshot-value?
+        (compiler_optimize.compiler-opt-global-shared-view outs)
+        10
+        12
+        312)
+      (opt-dense-test-ssa-snapshot-value?
+        (compiler_optimize.compiler-opt-global-shared-view outs)
+        20
+        3
+        403)
+      (opt-dense-test-ssa-snapshot-value?
+        (compiler_optimize.compiler-opt-global-shared-view outs)
+        20
+        12
+        412)
+      (opt-dense-test-ssa-snapshot-missing?
+        (compiler_optimize.compiler-opt-global-shared-view outs)
+        99
+        3))))
 
 (define (opt-dense-test-ssa-var-block-index) : compiler_optimize.OptCfgIndex
   (compiler_optimize.opt-cfg-index-build
@@ -4270,8 +4306,8 @@
         (compiler_optimize.OptConstEnv.Nil)
         (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [dce : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs
-        (compiler_optimize.opt-collect-instrs-uses
+      (opt-test-dce-instrs
+        (opt-test-collect-instrs-uses
           (opt_i64_i64_map.with-capacity 64)
           (compiler_optimize.compiler-opt-global-shared-view instrs))
         (compiler_optimize.compiler-opt-global-shared-view instrs))]
@@ -5883,7 +5919,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
   (let
     [used : opt_i64_i64_map.Map
-      (compiler_optimize.opt-collect-instrs-uses
+      (opt-test-collect-instrs-uses
         (opt_i64_i64_map.with-capacity 64)
         (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [cleaned : compiler_ir_types.CompilerIrInstrList
@@ -5975,11 +6011,11 @@
   (let
     [instrs : compiler_ir_types.CompilerIrInstrList (opt-dce-self-test-instrs)]
     [used : opt_i64_i64_map.Map
-      (compiler_optimize.opt-collect-instrs-uses
+      (opt-test-collect-instrs-uses
         (opt_i64_i64_map.with-capacity 64)
         (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [cleaned : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs
+      (opt-test-dce-instrs
         (compiler_optimize.compiler-opt-global-shared-view used)
         (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [again : compiler_ir_types.CompilerIrInstrList
@@ -6095,11 +6131,11 @@
     [instrs : compiler_ir_types.CompilerIrInstrList
       (opt-dce-mem-self-test-instrs)]
     [used : opt_i64_i64_map.Map
-      (compiler_optimize.opt-collect-instrs-uses
+      (opt-test-collect-instrs-uses
         (opt_i64_i64_map.with-capacity 64)
         (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [cleaned : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs
+      (opt-test-dce-instrs
         (compiler_optimize.compiler-opt-global-shared-view used)
         instrs)]
     (if (compiler_optimize.opt-used-contains used 0)
@@ -10147,8 +10183,8 @@
           (compiler_optimize.OptExprTable.Nil)
           (opt-copy-cse-instrs)))]
     [cse-dce : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs
-        (compiler_optimize.opt-collect-instrs-uses
+      (opt-test-dce-instrs
+        (opt-test-collect-instrs-uses
           (opt_i64_i64_map.with-capacity 64)
           (compiler_optimize.compiler-opt-global-shared-view cse))
         (compiler_optimize.compiler-opt-global-shared-view cse))]
@@ -12392,7 +12428,8 @@
 (define (opt-phi-carried-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
   (compiler_optimize.opt-bounds-dom-blocks-with-context
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-cfg-context-build blocks)
+    (compiler_optimize.opt-cfg-context-build
+      (compiler_optimize.compiler-opt-global-shared-view blocks))
     (opt-phi-carried-params)
     12
     blocks))
@@ -12402,33 +12439,87 @@
     [admitted : compiler_ir_types.CompilerIrBlockList
       (opt-phi-carried-blocks 0)]
     [after : compiler_ir_types.CompilerIrBlockList
-      (opt-phi-carried-run admitted)]
+      (opt-phi-carried-run
+        (compiler_optimize.compiler-opt-global-shared-view admitted))]
     ;; IDEMPOTENCE: the rewritten function is a fixed point of the same pass.
-    [again : compiler_ir_types.CompilerIrBlockList (opt-phi-carried-run after)]
+    [again : compiler_ir_types.CompilerIrBlockList
+      (opt-phi-carried-run
+        (compiler_optimize.compiler-opt-global-shared-view after))]
     [disagree : compiler_ir_types.CompilerIrBlockList
       (opt-phi-carried-blocks 1)]
     [after-disagree : compiler_ir_types.CompilerIrBlockList
-      (opt-phi-carried-run disagree)]
+      (opt-phi-carried-run
+        (compiler_optimize.compiler-opt-global-shared-view disagree))]
     [undecided : compiler_ir_types.CompilerIrBlockList
       (opt-phi-carried-blocks 2)]
     [after-undecided : compiler_ir_types.CompilerIrBlockList
-      (opt-phi-carried-run undecided)]
+      (opt-phi-carried-run
+        (compiler_optimize.compiler-opt-global-shared-view undecided))]
     (cond
       ;; four BinOps go in: the entry test, the header test, the step, the
       ;; latch test.
-      [(not (= (opt-rule-a-count-compares admitted) 4)) 1]
+      [(not
+          (=
+            (opt-rule-a-count-compares
+              (compiler_optimize.compiler-opt-global-shared-view admitted))
+            4))
+        1]
       ;; ADMITTED: the header test became a Mov; nothing else moved.
-      [(not (= (opt-rule-a-count-compares after) 3)) 2]
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count after) 5)) 3]
-      [(not (compiler_optimize.opt-cfg-successor-targets-known? after)) 4]
-      [(not (= (opt-rule-a-count-compares again) 3)) 5]
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count again) 5)) 6]
+      [(not
+          (=
+            (opt-rule-a-count-compares
+              (compiler_optimize.compiler-opt-global-shared-view after))
+            3))
+        2]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_optimize.compiler-opt-global-shared-view after))
+            5))
+        3]
+      [(not
+          (compiler_optimize.opt-cfg-successor-targets-known?
+            (compiler_optimize.compiler-opt-global-shared-view after)))
+        4]
+      [(not
+          (=
+            (opt-rule-a-count-compares
+              (compiler_optimize.compiler-opt-global-shared-view again))
+            3))
+        5]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_optimize.compiler-opt-global-shared-view again))
+            5))
+        6]
       ;; REFUSED (edges disagree): all four survive.
-      [(not (= (opt-rule-a-count-compares disagree) 4)) 7]
-      [(not (= (opt-rule-a-count-compares after-disagree) 4)) 8]
+      [(not
+          (=
+            (opt-rule-a-count-compares
+              (compiler_optimize.compiler-opt-global-shared-view disagree))
+            4))
+        7]
+      [(not
+          (=
+            (opt-rule-a-count-compares
+              (compiler_optimize.compiler-opt-global-shared-view after-disagree))
+            4))
+        8]
       ;; REFUSED (one edge decides nothing): all four survive.
-      [(not (= (opt-rule-a-count-compares undecided) 4)) 9]
-      [(not (= (opt-rule-a-count-compares after-undecided) 4)) 10]
+      [(not
+          (=
+            (opt-rule-a-count-compares
+              (compiler_optimize.compiler-opt-global-shared-view undecided))
+            4))
+        9]
+      [(not
+          (=
+            (opt-rule-a-count-compares
+              (compiler_optimize.compiler-opt-global-shared-view
+                after-undecided))
+            4))
+        10]
       [else 42])))
 
 (define (compiler-optimize-bounds-self-test) : i64
@@ -13141,12 +13232,28 @@
     [level1-globals : compiler_ir_types.CompilerIrGlobalSeq
       (opt-program-globals level1)]
     (and
-      (= (compiler_ir_types.compiler-ir-function-list-count level0-functions) 6)
-      (= (compiler_ir_types.compiler-ir-function-list-count level1-functions) 4)
-      (= (compiler_ir_types.compiler-ir-global-seq-count level0-globals) 5)
-      (= (compiler_ir_types.compiler-ir-global-seq-count level1-globals) 3)
-      (compiler_optimize.opt-function-list-defines? level1-functions "main")
-      (compiler_optimize.opt-function-list-defines? level1-functions "helper")
+      (=
+        (compiler_ir_types.compiler-ir-function-list-count
+          (compiler_optimize.compiler-opt-global-shared-view level0-functions))
+        6)
+      (=
+        (compiler_ir_types.compiler-ir-function-list-count
+          (compiler_optimize.compiler-opt-global-shared-view level1-functions))
+        4)
+      (=
+        (compiler_ir_types.compiler-ir-global-seq-count
+          (compiler_optimize.compiler-opt-global-shared-view level0-globals))
+        5)
+      (=
+        (compiler_ir_types.compiler-ir-global-seq-count
+          (compiler_optimize.compiler-opt-global-shared-view level1-globals))
+        3)
+      (compiler_optimize.opt-function-list-defines?
+        (compiler_optimize.compiler-opt-global-shared-view level1-functions)
+        "main")
+      (compiler_optimize.opt-function-list-defines?
+        (compiler_optimize.compiler-opt-global-shared-view level1-functions)
+        "helper")
       (compiler_optimize.opt-function-list-defines?
         (compiler_optimize.compiler-opt-global-shared-view level1-functions)
         "callback-target")
@@ -13158,7 +13265,9 @@
           (compiler_optimize.compiler-opt-global-shared-view level1-functions)
           "C:/repo/stdlib/runtime.tl::int-to-string"))
       (not
-        (compiler_optimize.opt-function-list-defines? level1-functions "dead"))
+        (compiler_optimize.opt-function-list-defines?
+          (compiler_optimize.compiler-opt-global-shared-view level1-functions)
+          "dead"))
       (opt-global-list-defines?
         (compiler_optimize.compiler-opt-global-shared-view level1-globals)
         "used-global")
@@ -21193,11 +21302,26 @@
           [blocks : compiler_ir_types.CompilerIrBlockList
             (compiler_optimize.opt-function-blocks main)]
           (and
-            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 0)
-            (= (opt-count-direct-call-name-blocks blocks "external_helper") 1)
-            (= (opt-count-tail-call-blocks blocks) 0)
-            (= (opt-count-phi-blocks blocks) 1)
-            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+            (=
+              (opt-count-direct-call-name-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks)
+                "inline_nonleaf")
+              0)
+            (=
+              (opt-count-direct-call-name-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks)
+                "external_helper")
+              1)
+            (=
+              (opt-count-tail-call-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks))
+              0)
+            (=
+              (opt-count-phi-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks))
+              1)
+            (compiler_optimize.opt-inline-structure-ok?
+              (compiler_optimize.compiler-opt-global-shared-view blocks))))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
 ;; The same program with an INDIRECT tail call: the call site keeps its call.
@@ -21215,8 +21339,13 @@
           [blocks : compiler_ir_types.CompilerIrBlockList
             (compiler_optimize.opt-function-blocks main)]
           (and
-            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 1)
-            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+            (=
+              (opt-count-direct-call-name-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks)
+                "inline_nonleaf")
+              1)
+            (compiler_optimize.opt-inline-structure-ok?
+              (compiler_optimize.compiler-opt-global-shared-view blocks))))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
 ;; Idempotence: re-running the inliner over its own output leaves the merged
@@ -21233,7 +21362,7 @@
     [twice : compiler_ir_types.CompilerIrFunctionList
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        once
+        (compiler_optimize.compiler-opt-global-shared-view once)
         2)]
     (match (compiler_optimize.opt-function-list-find once "main")
       [(compiler_optimize.OptMaybeFunction.Some once-main)
@@ -21246,18 +21375,33 @@
                 (compiler_optimize.opt-function-blocks twice-main)]
               (and
                 (=
-                  (compiler_ir_types.compiler-ir-block-list-count once-blocks)
-                  (compiler_ir_types.compiler-ir-block-list-count twice-blocks))
+                  (compiler_ir_types.compiler-ir-block-list-count
+                    (compiler_optimize.compiler-opt-global-shared-view
+                      once-blocks))
+                  (compiler_ir_types.compiler-ir-block-list-count
+                    (compiler_optimize.compiler-opt-global-shared-view
+                      twice-blocks)))
                 (=
                   (opt-count-direct-call-name-blocks
-                    twice-blocks
+                    (compiler_optimize.compiler-opt-global-shared-view
+                      twice-blocks)
                     "external_helper")
                   1)
-                (= (opt-count-tail-call-blocks twice-blocks) 0)
                 (=
-                  (opt-count-phi-blocks once-blocks)
-                  (opt-count-phi-blocks twice-blocks))
-                (compiler_optimize.opt-inline-structure-ok? twice-blocks)))]
+                  (opt-count-tail-call-blocks
+                    (compiler_optimize.compiler-opt-global-shared-view
+                      twice-blocks))
+                  0)
+                (=
+                  (opt-count-phi-blocks
+                    (compiler_optimize.compiler-opt-global-shared-view
+                      once-blocks))
+                  (opt-count-phi-blocks
+                    (compiler_optimize.compiler-opt-global-shared-view
+                      twice-blocks)))
+                (compiler_optimize.opt-inline-structure-ok?
+                  (compiler_optimize.compiler-opt-global-shared-view
+                    twice-blocks))))]
           [(compiler_optimize.OptMaybeFunction.No) false])]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
@@ -22619,13 +22763,16 @@
     (and
       (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
         [(compiler_ir_types.CompilerIrInstr.Phi _ _ phi-ty)
-          (compiler_optimize.opt-type-eq type-segment-bases phi-ty ty)]
+          (compiler_optimize.opt-type-eq
+            type-segment-bases
+            phi-ty
+            (compiler_ast_types.ast-global-shared-view ty))]
         [_ true])
       (opt-phi-types-match-instr-seq-from?
         type-segment-bases
         instrs
         (+ index 1)
-        ty))))
+        (compiler_ast_types.ast-global-shared-view ty)))))
 
 (define (opt-phi-types-match-blocks?
   [type-segment-bases : i64]
@@ -22637,16 +22784,20 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (and
-            (opt-phi-types-match-instr-seq-from? type-segment-bases instrs 0 ty)
+            (opt-phi-types-match-instr-seq-from?
+              type-segment-bases
+              instrs
+              0
+              (compiler_ast_types.ast-global-shared-view ty))
             (opt-phi-types-match-blocks?
               type-segment-bases
-              (__tl-box-place rest)
-              ty))])]
+              (compiler_ir_types.compiler-ir-block-list-box-shared-view rest)
+              (compiler_ast_types.ast-global-shared-view ty)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-phi-types-match-blocks?
         type-segment-bases
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
-        ty)]))
+        (compiler_ast_types.ast-global-shared-view ty))]))
 
 (define (opt-count-mov-dst-instrs
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -27640,9 +27791,15 @@
       (compiler_ast_types.AstType.Bool)
       0)
     (compiler_ir_types.compiler-ir-param-cons
-      (compiler_ir_types.CompilerIrParam.Param "left" ty 1)
+      (compiler_ir_types.CompilerIrParam.Param
+        "left"
+        (compiler_ast_types.ast-global-shared-view ty)
+        1)
       (compiler_ir_types.compiler-ir-param-cons
-        (compiler_ir_types.CompilerIrParam.Param "right" ty 2)
+        (compiler_ir_types.CompilerIrParam.Param
+          "right"
+          (compiler_ast_types.ast-global-shared-view ty)
+          2)
         (compiler_ir_types.CompilerIrParamList.Nil)))))
 
 (define (opt-ssa-fixed-handle-diamond-blocks [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrBlockList
@@ -27662,7 +27819,7 @@
           (compiler_ir_types.CompilerIrInstr.Mov
             3
             (compiler_ir_types.CompilerIrValue.Var 1)
-            ty)
+            (compiler_ast_types.ast-global-shared-view ty))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Jump
               (compiler_ir_types.compiler-ir-label "join"))
@@ -27674,7 +27831,7 @@
             (compiler_ir_types.CompilerIrInstr.Mov
               3
               (compiler_ir_types.CompilerIrValue.Var 2)
-              ty)
+              (compiler_ast_types.ast-global-shared-view ty))
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Jump
                 (compiler_ir_types.compiler-ir-label "join"))
@@ -27693,34 +27850,50 @@
   [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (opt-test-symbol "ssa_fixed_handle_diamond")
-    (opt-ssa-fixed-handle-params ty)
-    ty
+    (opt-ssa-fixed-handle-params (compiler_ast_types.ast-global-shared-view ty))
+    (compiler_ast_types.ast-global-shared-view ty)
     4
-    (opt-ssa-fixed-handle-diamond-blocks ty)))
+    (opt-ssa-fixed-handle-diamond-blocks
+      (compiler_ast_types.ast-global-shared-view ty))))
 
 (define (opt-ssa-fixed-handle-diamond-ok? [ty : compiler_ast_types.AstType]) : bool
   (let
     [out : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-ssa-construct-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (opt-ssa-fixed-handle-diamond-function ty))]
+        (opt-ssa-fixed-handle-diamond-function
+          (compiler_ast_types.ast-global-shared-view ty)))]
     [blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks out)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view out))]
     (and
       (compiler_optimize.opt-verify-ok?
         (compiler_optimize.opt-verify-function out))
-      (= (opt-count-phi-blocks blocks) 1)
-      (= (opt-count-mov-dst-blocks blocks 3) 0)
+      (=
+        (opt-count-phi-blocks
+          (compiler_optimize.compiler-opt-global-shared-view blocks))
+        1)
+      (=
+        (opt-count-mov-dst-blocks
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          3)
+        0)
       (opt-phi-types-match-blocks?
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        blocks
+        (compiler_optimize.compiler-opt-global-shared-view blocks)
         ty))))
 
 (define (opt-ssa-fixed-handle-loop-params [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrParamList
   (compiler_ir_types.compiler-ir-param-cons
-    (compiler_ir_types.CompilerIrParam.Param "seed" ty 0)
+    (compiler_ir_types.CompilerIrParam.Param
+      "seed"
+      (compiler_ast_types.ast-global-shared-view ty)
+      0)
     (compiler_ir_types.compiler-ir-param-cons
-      (compiler_ir_types.CompilerIrParam.Param "next" ty 1)
+      (compiler_ir_types.CompilerIrParam.Param
+        "next"
+        (compiler_ast_types.ast-global-shared-view ty)
+        1)
       (compiler_ir_types.compiler-ir-param-cons
         (compiler_ir_types.CompilerIrParam.Param
           "cond"
@@ -27736,7 +27909,7 @@
         (compiler_ir_types.CompilerIrInstr.Mov
           3
           (compiler_ir_types.CompilerIrValue.Var 0)
-          ty)
+          (compiler_ast_types.ast-global-shared-view ty))
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Jump
             (compiler_ir_types.compiler-ir-label "loop"))
@@ -27757,7 +27930,7 @@
             (compiler_ir_types.CompilerIrInstr.Mov
               3
               (compiler_ir_types.CompilerIrValue.Var 1)
-              ty)
+              (compiler_ast_types.ast-global-shared-view ty))
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Jump
                 (compiler_ir_types.compiler-ir-label "loop"))
@@ -27775,27 +27948,38 @@
 (define (opt-ssa-fixed-handle-loop-function [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (opt-test-symbol "ssa_fixed_handle_loop")
-    (opt-ssa-fixed-handle-loop-params ty)
-    ty
+    (opt-ssa-fixed-handle-loop-params
+      (compiler_ast_types.ast-global-shared-view ty))
+    (compiler_ast_types.ast-global-shared-view ty)
     4
-    (opt-ssa-fixed-handle-loop-blocks ty)))
+    (opt-ssa-fixed-handle-loop-blocks
+      (compiler_ast_types.ast-global-shared-view ty))))
 
 (define (opt-ssa-fixed-handle-loop-ok? [ty : compiler_ast_types.AstType]) : bool
   (let
     [out : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-ssa-construct-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (opt-ssa-fixed-handle-loop-function ty))]
+        (opt-ssa-fixed-handle-loop-function
+          (compiler_ast_types.ast-global-shared-view ty)))]
     [blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks out)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view out))]
     (and
       (compiler_optimize.opt-verify-ok?
         (compiler_optimize.opt-verify-function out))
-      (= (opt-count-phi-blocks blocks) 1)
-      (= (opt-count-mov-dst-blocks blocks 3) 0)
+      (=
+        (opt-count-phi-blocks
+          (compiler_optimize.compiler-opt-global-shared-view blocks))
+        1)
+      (=
+        (opt-count-mov-dst-blocks
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          3)
+        0)
       (opt-phi-types-match-blocks?
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        blocks
+        (compiler_optimize.compiler-opt-global-shared-view blocks)
         ty))))
 
 (define (opt-ssa-fixed-handle-address-taken-function
@@ -27803,9 +27987,12 @@
   (compiler_ir_types.CompilerIrFunction.Function
     (opt-test-symbol "ssa_fixed_handle_address_taken")
     (compiler_ir_types.compiler-ir-param-cons
-      (compiler_ir_types.CompilerIrParam.Param "value" ty 0)
+      (compiler_ir_types.CompilerIrParam.Param
+        "value"
+        (compiler_ast_types.ast-global-shared-view ty)
+        0)
       (compiler_ir_types.CompilerIrParamList.Nil))
-    ty
+    (compiler_ast_types.ast-global-shared-view ty)
     3
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.compiler-ir-block
@@ -27814,14 +28001,14 @@
           (compiler_ir_types.CompilerIrInstr.Mov
             1
             (compiler_ir_types.CompilerIrValue.Var 0)
-            ty)
+            (compiler_ast_types.ast-global-shared-view ty))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.AddrOf 2 1)
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Mov
                 1
                 (compiler_ir_types.CompilerIrValue.Var 0)
-                ty)
+                (compiler_ast_types.ast-global-shared-view ty))
               (compiler_ir_types.compiler-ir-instr-cons
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -27834,20 +28021,25 @@
   (compiler_ir_types.CompilerIrFunction.Function
     (opt-test-symbol "ssa_fixed_handle_unsupported_dst")
     (compiler_ir_types.compiler-ir-param-cons
-      (compiler_ir_types.CompilerIrParam.Param "value" ty 0)
+      (compiler_ir_types.CompilerIrParam.Param
+        "value"
+        (compiler_ast_types.ast-global-shared-view ty)
+        0)
       (compiler_ir_types.CompilerIrParamList.Nil))
-    ty
+    (compiler_ast_types.ast-global-shared-view ty)
     2
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.compiler-ir-block
         (compiler_ir_types.compiler-ir-label "entry")
         (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Alloc 1 ty)
+          (compiler_ir_types.CompilerIrInstr.Alloc
+            1
+            (compiler_ast_types.ast-global-shared-view ty))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Mov
               1
               (compiler_ir_types.CompilerIrValue.Var 0)
-              ty)
+              (compiler_ast_types.ast-global-shared-view ty))
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -27897,9 +28089,6 @@
         (compiler_ast_types.ast-ty-slice (compiler_ast_types.AstType.I64))))
     (not
       (compiler_optimize.opt-ssa-register-value-type?
-        (compiler_ast_types.ast-ty-consume (compiler_ast_types.AstType.I64))))
-    (not
-      (compiler_optimize.opt-ssa-register-value-type?
         (compiler_ast_types.AstType.Enum (opt-test-symbol "SsaBoundaryEnum"))))
     (not
       (compiler_optimize.opt-ssa-register-value-type?
@@ -27937,17 +28126,19 @@
     [box-ty : compiler_ast_types.AstType
       (compiler_ast_types.ast-ty-box (compiler_ast_types.AstType.I64))]
     [address-taken : compiler_ir_types.CompilerIrFunction
-      (opt-ssa-fixed-handle-address-taken-function box-ty)]
+      (opt-ssa-fixed-handle-address-taken-function
+        (compiler_ast_types.ast-global-shared-view box-ty))]
     [address-taken-out : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-ssa-construct-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        address-taken)]
+        (compiler_optimize.compiler-opt-global-shared-view address-taken))]
     [unsupported-dst : compiler_ir_types.CompilerIrFunction
-      (opt-ssa-fixed-handle-unsupported-dst-function dyn-array-ty)]
+      (opt-ssa-fixed-handle-unsupported-dst-function
+        (compiler_ast_types.ast-global-shared-view dyn-array-ty))]
     [unsupported-dst-out : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-ssa-construct-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        unsupported-dst)]
+        (compiler_optimize.compiler-opt-global-shared-view unsupported-dst))]
     (cond
       [(not (opt-ssa-fixed-handle-boundary-ok?)) 1]
       [(not
@@ -27955,13 +28146,28 @@
         2]
       [(not (opt-ssa-fixed-handle-diamond-ok? (compiler_ast_types.AstType.Str)))
         3]
-      [(not (opt-ssa-fixed-handle-diamond-ok? func-ty)) 4]
-      [(not (opt-ssa-fixed-handle-diamond-ok? array-ty)) 5]
-      [(not (opt-ssa-fixed-handle-diamond-ok? dyn-array-ty)) 6]
-      [(not (opt-ssa-fixed-handle-diamond-ok? box-ty)) 7]
+      [(not
+          (opt-ssa-fixed-handle-diamond-ok?
+            (compiler_ast_types.ast-global-shared-view func-ty)))
+        4]
+      [(not
+          (opt-ssa-fixed-handle-diamond-ok?
+            (compiler_ast_types.ast-global-shared-view array-ty)))
+        5]
+      [(not
+          (opt-ssa-fixed-handle-diamond-ok?
+            (compiler_ast_types.ast-global-shared-view dyn-array-ty)))
+        6]
+      [(not
+          (opt-ssa-fixed-handle-diamond-ok?
+            (compiler_ast_types.ast-global-shared-view box-ty)))
+        7]
       [(not (opt-ssa-fixed-handle-loop-ok? (compiler_ast_types.AstType.String)))
         8]
-      [(not (opt-ssa-fixed-handle-loop-ok? func-ty)) 9]
+      [(not
+          (opt-ssa-fixed-handle-loop-ok?
+            (compiler_ast_types.ast-global-shared-view func-ty)))
+        9]
       [(not
           (compiler_optimize.opt-function-eq
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -28543,10 +28749,12 @@
   [direct-call-clean : opt_i64_i64_map.Map]) : compiler_ir_types.CompilerIrFunction
   (let
     [func : compiler_ir_types.CompilerIrFunction
-      (opt-licm-array-test-function blocks)]
+      (opt-licm-array-test-function
+        (compiler_optimize.compiler-opt-global-shared-view blocks))]
     (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler_optimize.opt-cfg-context-build blocks)
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_optimize.compiler-opt-global-shared-view blocks))
       false
       direct-call-clean
       (compiler_optimize.opt-global-cell-summary-empty)
@@ -30662,6 +30870,40 @@
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.compiler-opt-global-shared-view
           header-clean-call-func))]
+    ;; Run the post-BCE descriptor-header case once per callee memory class.
+    ;; An element-only callee cannot change a descriptor word, a global-clean
+    ;; callee can still write through an object named by a parameter, and an
+    ;; unresolved callee remains opaque.
+    [header-element-call-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-late-optimized-function-with-direct-call-clean
+        (opt-licm-header-handle-load-call-blocks symbols)
+        (opt-licm-touch-clean-map
+          symbols
+          (+
+            (compiler_optimize.opt-direct-call-clean-global-bit)
+            (compiler_optimize.opt-direct-call-clean-unconditional-global-bit))))]
+    [header-element-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view
+          header-element-call-func))]
+    [header-global-call-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-late-optimized-function-with-direct-call-clean
+        (opt-licm-header-handle-load-call-blocks symbols)
+        (opt-licm-touch-clean-map
+          symbols
+          (compiler_optimize.opt-direct-call-clean-global-bit)))]
+    [header-global-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view
+          header-global-call-func))]
+    [header-opaque-call-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-late-optimized-function-with-direct-call-clean
+        (opt-licm-header-handle-load-call-blocks symbols)
+        (opt_i64_i64_map.with-capacity 1))]
+    [header-opaque-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view
+          header-opaque-call-func))]
     [unknown-store-func : compiler_ir_types.CompilerIrFunction
       (opt-licm-array-optimized-function
         (opt-licm-header-load-unknown-store-blocks))]
@@ -31394,14 +31636,16 @@
       [(not
           (=
             (opt-count-load-label-blocks
-              header-element-call
+              (compiler_optimize.compiler-opt-global-shared-view
+                header-element-call)
               (compiler_ir_types.compiler-ir-label "entry"))
             1))
         211]
       [(not
           (=
             (opt-count-load-label-blocks
-              header-element-call
+              (compiler_optimize.compiler-opt-global-shared-view
+                header-element-call)
               (compiler_ir_types.compiler-ir-label "loop"))
             0))
         212]
@@ -31412,14 +31656,16 @@
       [(not
           (=
             (opt-count-load-label-blocks
-              header-global-call
+              (compiler_optimize.compiler-opt-global-shared-view
+                header-global-call)
               (compiler_ir_types.compiler-ir-label "loop"))
             1))
         214]
       [(not
           (=
             (opt-count-load-label-blocks
-              header-global-call
+              (compiler_optimize.compiler-opt-global-shared-view
+                header-global-call)
               (compiler_ir_types.compiler-ir-label "entry"))
             0))
         215]
@@ -31826,15 +32072,19 @@
     [chained : compiler_ir_types.CompilerIrFunction
       (opt-licm-unswitch-test-run (opt-licm-unswitch-chain-test-function true))]
     [chained-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks chained)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view chained))]
     [repeat : compiler_ir_types.CompilerIrFunction
-      (opt-licm-unswitch-test-run chained)]
+      (opt-licm-unswitch-test-run
+        (compiler_optimize.compiler-opt-global-shared-view chained))]
     [repeat-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks repeat)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view repeat))]
     [single : compiler_ir_types.CompilerIrFunction
       (opt-licm-unswitch-test-run (opt-licm-unswitch-chain-test-function false))]
     [single-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks single)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view single))]
     [dispatch-a : i64 (compiler_ir_types.compiler-ir-label "dispatch-a")]
     [dispatch-a-clone : i64
       (compiler_ir_types.compiler-ir-label "dispatch-a__licm_false")]
@@ -31846,19 +32096,24 @@
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function chained)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view chained))))
         1]
-      [(not (opt-block-list-has-label? chained-blocks outer-clone)) 2]
+      [(not
+          (opt-block-list-has-label?
+            (compiler_optimize.compiler-opt-global-shared-view chained-blocks)
+            outer-clone))
+        2]
       ;; The kept side resolves the WHOLE dispatch: both tests are gone.
       [(not
           (opt-licm-unswitch-one-successor?
-            chained-blocks
+            (compiler_optimize.compiler-opt-global-shared-view chained-blocks)
             dispatch-a
             dispatch-b))
         3]
       [(not
           (opt-licm-unswitch-one-successor?
-            chained-blocks
+            (compiler_optimize.compiler-opt-global-shared-view chained-blocks)
             dispatch-b
             (compiler_ir_types.compiler-ir-label "inner-pre")))
         4]
@@ -31866,52 +32121,69 @@
       ;; single conjunct.
       [(not
           (=
-            (opt-licm-unswitch-successor-count chained-blocks dispatch-a-clone)
+            (opt-licm-unswitch-successor-count
+              (compiler_optimize.compiler-opt-global-shared-view chained-blocks)
+              dispatch-a-clone)
             2))
         5]
       [(not
           (=
-            (opt-licm-unswitch-successor-count chained-blocks dispatch-b-clone)
+            (opt-licm-unswitch-successor-count
+              (compiler_optimize.compiler-opt-global-shared-view chained-blocks)
+              dispatch-b-clone)
             2))
         6]
       ;; The nested loop's own test is not dispatch and stays a branch.
       [(not
           (=
             (opt-licm-unswitch-successor-count
-              chained-blocks
+              (compiler_optimize.compiler-opt-global-shared-view chained-blocks)
               (compiler_ir_types.compiler-ir-label "inner"))
             2))
         7]
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function repeat)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view repeat))))
         8]
       [(not
           (=
-            (compiler_ir_types.compiler-ir-block-list-count chained-blocks)
-            (compiler_ir_types.compiler-ir-block-list-count repeat-blocks)))
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_optimize.compiler-opt-global-shared-view chained-blocks))
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_optimize.compiler-opt-global-shared-view repeat-blocks))))
         9]
       [(opt-block-list-has-label?
-          repeat-blocks
+          (compiler_optimize.compiler-opt-global-shared-view repeat-blocks)
           (compiler_ir_types.compiler-ir-label "outer__licm_false__licm_false"))
         10]
       ;; The refused neighbour still unswitches, on the selected branch alone.
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function single)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view single))))
         11]
-      [(not (opt-block-list-has-label? single-blocks outer-clone)) 12]
-      [(not (= (opt-licm-unswitch-successor-count single-blocks dispatch-a) 2))
+      [(not
+          (opt-block-list-has-label?
+            (compiler_optimize.compiler-opt-global-shared-view single-blocks)
+            outer-clone))
+        12]
+      [(not
+          (=
+            (opt-licm-unswitch-successor-count
+              (compiler_optimize.compiler-opt-global-shared-view single-blocks)
+              dispatch-a)
+            2))
         13]
       [(not
           (opt-licm-unswitch-one-successor?
-            single-blocks
+            (compiler_optimize.compiler-opt-global-shared-view single-blocks)
             dispatch-b
             (compiler_ir_types.compiler-ir-label "inner-pre")))
         14]
       [(not
           (opt-licm-unswitch-one-successor?
-            single-blocks
+            (compiler_optimize.compiler-opt-global-shared-view single-blocks)
             dispatch-b-clone
             (compiler_ir_types.compiler-ir-label "inner-exit__licm_false")))
         15]
@@ -48619,12 +48891,14 @@
       ;; the two cloned guards take 6 and 7) and its `escape` input keeps the moved
       ;; phi (var 1), which the body block dominates after rotation.
       [(opt-block-list-has-label?
-          second-exit-live-out-blocks
+          (compiler_optimize.compiler-opt-global-shared-view
+            second-exit-live-out-blocks)
           (compiler_ir_types.compiler-ir-label "header"))
         22]
       [(not
           (opt-block-list-has-label?
-            second-exit-live-out-blocks
+            (compiler_optimize.compiler-opt-global-shared-view
+              second-exit-live-out-blocks)
             (compiler_ir_types.compiler-ir-label "header__rotate_land")))
         46]
       [(not
@@ -48634,18 +48908,21 @@
         47]
       [(not
           (opt-rotate-ssa-test-starts-with-phi?
-            second-exit-live-out-blocks
+            (compiler_optimize.compiler-opt-global-shared-view
+              second-exit-live-out-blocks)
             (compiler_ir_types.compiler-ir-label "exit")))
         48]
       [(not
           (opt-rotate-ssa-test-ends-with-branch?
-            second-exit-live-out-blocks
+            (compiler_optimize.compiler-opt-global-shared-view
+              second-exit-live-out-blocks)
             (compiler_ir_types.compiler-ir-label "latch")))
         49]
       [(not
           (=
             (opt-rotate-ssa-test-block-phi-input-value
-              second-exit-live-out-blocks
+              (compiler_optimize.compiler-opt-global-shared-view
+                second-exit-live-out-blocks)
               "done"
               "exit")
             8))
@@ -48653,7 +48930,8 @@
       [(not
           (=
             (opt-rotate-ssa-test-block-phi-input-value
-              second-exit-live-out-blocks
+              (compiler_optimize.compiler-opt-global-shared-view
+                second-exit-live-out-blocks)
               "done"
               "escape")
             1))
@@ -48664,7 +48942,8 @@
             (compiler_optimize.opt-function-blocks
               (opt-rotate-ssa-test-rerun
                 (opt-rotate-ssa-test-second-exit-run true)))
-            second-exit-live-out-blocks))
+            (compiler_optimize.compiler-opt-global-shared-view
+              second-exit-live-out-blocks)))
         52]
       ;; the flag class is DEFERRED to flag_exit, not rotated here
       [(not
@@ -63949,3 +64228,585 @@
           gen1)
         (return 11))
       42)))
+
+(define (opt-ubound-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "n"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "buf"
+        (compiler_ast_types.AstType.I64)
+        1)
+      compiler_ir_types.CompilerIrParamList.Nil)))
+
+(define (opt-ubound-label [name : String]) : i64
+  (compiler_ir_types.compiler-ir-label name))
+
+;; `entry`: the rotation guard. `guard?` false drops it, which is the refusal
+;; case where nothing proves `n > seed >= 0` at the preheader.
+(define (opt-ubound-entry-block [guard? : bool] [seed : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-ubound-label "entry")
+    (if guard?
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          2
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.I64 seed)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (opt-ubound-label "pre")
+            (opt-ubound-label "exit"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          2
+          (compiler_ir_types.CompilerIrBinOp.Eq)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (opt-ubound-label "pre")
+            (opt-ubound-label "exit"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+;; `pre`: the length load. `slot?` false makes the length an opaque parameter
+;; instead, which is the refusal case where `len >= 0` is not established.
+(define (opt-ubound-pre-block [slot? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-ubound-label "pre")
+    (if slot?
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          3
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            4
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump (opt-ubound-label "head"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          4
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump (opt-ubound-label "head"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+;; `head`: the checked phi. `first?` false pushes an ordinary instruction ahead
+;; of the check, which is the refusal case where an effect could be observed
+;; between the header's entry and the abort the exit edge inherits.
+(define (opt-ubound-head-block [seed : i64] [first? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-ubound-label "head")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        5
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 seed)
+          (opt-ubound-label "pre")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (opt-ubound-label "latch")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (opt-ubound-head-tail seed first?))))
+
+(define (opt-ubound-head-tail [seed : i64] [first? : bool]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [checked : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (opt-ubound-label "head_ok"))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            6
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.CompilerIrValue.I64 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (opt-ubound-label "arm_a")
+              (opt-ubound-label "arm_b"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))]
+    (if first?
+      checked
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          11
+          (compiler_ir_types.CompilerIrValue.I64 seed)
+          (compiler_ast_types.AstType.I64))
+        checked))))
+
+(define (opt-ubound-arm-block [label : String] [dst : i64] [step : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-ubound-label label)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        dst
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.CompilerIrValue.I64 step)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump (opt-ubound-label "latch"))
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; `latch`: the merged advance and the loop test. `sole-use?` false gives the
+;; compare a second reader, which is the refusal case where retyping it in
+;; place would change another reader's meaning.
+(define (opt-ubound-latch-block [sole-use? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-ubound-label "latch")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        9
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          (opt-ubound-label "arm_a")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (opt-ubound-label "arm_b")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          10
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 9)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64))
+        (if sole-use?
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 10)
+              (opt-ubound-label "head")
+              (opt-ubound-label "exit"))
+            compiler_ir_types.CompilerIrInstrList.Nil)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 10)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 10)
+                (opt-ubound-label "head")
+                (opt-ubound-label "exit"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+(define (opt-ubound-exit-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-ubound-label "exit")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        12
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (opt-ubound-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (opt-ubound-label "latch")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 12)))
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-ubound-blocks
+  [guard? : bool]
+  [slot? : bool]
+  [first? : bool]
+  [sole-use? : bool]
+  [seed : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-ubound-entry-block guard? seed)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-ubound-pre-block slot?)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-ubound-head-block seed first?)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-ubound-arm-block "arm_a" 7 1)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-ubound-arm-block "arm_b" 8 5)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-ubound-latch-block sole-use?)
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-ubound-exit-block)
+                compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-ubound-function
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (opt-ubound-test-params)
+    (compiler_ast_types.AstType.I64)
+    13
+    blocks))
+
+(define (opt-ubound-run
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_optimize.OptFunctionPassResult
+  (compiler_optimize.opt-ubound-function-pass
+    0
+    (opt-ubound-function name blocks)))
+
+(define (opt-ubound-changed?
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (opt-ubound-run name blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
+
+(define (opt-ubound-result
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (match (opt-ubound-run name blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result f _) f]))
+
+(define (opt-ubound-accepted-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-ubound-blocks true true true true 0))
+
+;; Does `label` start with the phi prefix and then the instruction kind the
+;; rewrite is supposed to leave first?
+(define (opt-ubound-block-of
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : compiler_ir_types.CompilerIrBlock
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.Some block) block]
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.compiler-ir-block
+        label
+        compiler_ir_types.CompilerIrInstrList.Nil)]))
+
+(define (opt-ubound-has-check?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [index : i64]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock
+      (opt-ubound-block-of blocks label)]
+    (and
+      (>
+        (opt-block-instr-count
+          (compiler_optimize.compiler-opt-global-shared-view block))
+        index)
+      (match (opt-block-instr-at
+        (compiler_optimize.compiler-opt-global-shared-view block)
+        index)
+        [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _) true]
+        [_ false]))))
+
+;; Is the latch's compare the UNSIGNED one, against `bound-var`?
+(define (opt-ubound-latch-unsigned?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [bound-var : i64]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock
+      (opt-ubound-block-of blocks (opt-ubound-label "latch"))]
+    [count : i64
+      (opt-block-instr-count
+        (compiler_optimize.compiler-opt-global-shared-view block))]
+    (and
+      (>= count 2)
+      (match (opt-block-instr-at
+        (compiler_optimize.compiler-opt-global-shared-view block)
+        (- count 2))
+        [(compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
+          (and
+            (= dst 10)
+            (compiler_optimize.opt-binop-eq
+              op
+              (compiler_ir_types.CompilerIrBinOp.Lt))
+            (compiler_optimize.opt-value-is-var? lhs 9)
+            (compiler_optimize.opt-value-is-var? rhs bound-var)
+            (compiler_optimize.opt-type-eq
+              0
+              ty
+              (compiler_ast_types.AstType.U64)))]
+        [_ false]))))
+
+;; Every phi input label in `label`'s block, as a membership test.
+(define (opt-ubound-phi-has-label?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [pred : i64]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock
+      (opt-ubound-block-of blocks label)]
+    (and
+      (>
+        (opt-block-instr-count
+          (compiler_optimize.compiler-opt-global-shared-view block))
+        0)
+      (match (opt-block-instr-at
+        (compiler_optimize.compiler-opt-global-shared-view block)
+        0)
+        [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+          (compiler_optimize.opt-bool-branch-phi-input-has-label? inputs pred)]
+        [_ false]))))
+
+;; Returns 42 only when every arm of the narrowing contract holds.
+(define (compiler-optimize-ubound-self-test) : i64
+  (let
+    [result : compiler_ir_types.CompilerIrFunction
+      (opt-ubound-result "ubound_accept" (opt-ubound-accepted-blocks))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view result))]
+    [join : i64 (opt-ubound-label "pre__ubound_join")]
+    [lo : i64 (opt-ubound-label "pre__ubound_lo")]
+    [chk : i64 (opt-ubound-label "latch__ubound_exit")]
+    [trap : i64 (opt-ubound-label "latch__ubound_trap")]
+    (begin
+      ;; Three fresh vars: the smaller-bound compare, the narrowed bound, the
+      ;; exit re-test.
+      (unless
+        (=
+          (compiler_optimize.opt-function-frame
+            (compiler_optimize.compiler-opt-global-shared-view result))
+          16)
+        (return 1))
+      ;; The header's check is gone: the phi prefix is followed straight by the
+      ;; body's first ordinary instruction.
+      (unless
+        (not
+          (opt-ubound-has-check?
+            (compiler_optimize.compiler-opt-global-shared-view blocks)
+            (opt-ubound-label "head")
+            1))
+        (return 2))
+      ;; The narrowed bound is a phi of the two bounds, and the seed's check
+      ;; rides the preheader edge behind it.
+      (unless
+        (opt-ubound-has-check?
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          join
+          1)
+        (return 3))
+      (unless
+        (opt-ubound-phi-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          join
+          lo)
+        (return 4))
+      (unless
+        (opt-ubound-phi-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          join
+          (opt-ubound-label "pre"))
+        (return 5))
+      ;; The header now arrives from the join block, not the preheader.
+      (unless
+        (opt-ubound-phi-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          (opt-ubound-label "head")
+          join)
+        (return 6))
+      (unless
+        (not
+          (opt-ubound-phi-has-label?
+            (compiler_optimize.compiler-opt-global-shared-view blocks)
+            (opt-ubound-label "head")
+            (opt-ubound-label "pre")))
+        (return 7))
+      ;; The loop test is unsigned against the narrowed bound (var 14 = frame+1).
+      (unless
+        (opt-ubound-latch-unsigned?
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          14)
+        (return 8))
+      ;; The exit edge re-tests the signed condition and keeps the original
+      ;; abort on its true side.
+      (unless
+        (opt-ubound-has-check?
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          trap
+          0)
+        (return 9))
+      (unless
+        (opt-block-list-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          chk)
+        (return 10))
+      ;; The exit block's phi now names both blocks that sit on the old edge.
+      (unless
+        (opt-ubound-phi-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          (opt-ubound-label "exit")
+          chk)
+        (return 11))
+      (unless
+        (opt-ubound-phi-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          (opt-ubound-label "exit")
+          trap)
+        (return 12))
+      (unless
+        (not
+          (opt-ubound-phi-has-label?
+            (compiler_optimize.compiler-opt-global-shared-view blocks)
+            (opt-ubound-label "exit")
+            (opt-ubound-label "latch")))
+        (return 13))
+      ;; Idempotence: the header it leaves behind carries no check, and the
+      ;; join block it introduced is entered on a FALSE edge and checks a
+      ;; literal, so a second round finds nothing.
+      (unless
+        (not
+          (match (compiler_optimize.opt-ubound-function-pass 0 result)
+            [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
+        (return 14))
+      42)))
+
+;; Returns 42 only when each neighbour of the admitted shape is refused.
+(define (compiler-optimize-ubound-refusal-self-test) : i64
+  (begin
+    ;; The admitted shape, for contrast.
+    (unless
+      (opt-ubound-changed? "ubound_ref_base" (opt-ubound-accepted-blocks))
+      (return 1))
+    ;; No dominating `seed < n` at the preheader: `min(n, len)` could then be
+    ;; negative, and a negative bound reads as a huge UNSIGNED one.
+    (unless
+      (not
+        (opt-ubound-changed?
+          "ubound_ref_guard"
+          (opt-ubound-blocks false true true true 0)))
+      (return 2))
+    ;; An opaque length: nothing establishes `len >= 0`, and a negative length
+    ;; makes the unsigned check pass where the narrowed test would exit.
+    (unless
+      (not
+        (opt-ubound-changed?
+          "ubound_ref_len"
+          (opt-ubound-blocks true false true true 0)))
+      (return 3))
+    ;; An instruction ahead of the check: the abort the exit edge inherits
+    ;; would then move across it.
+    (unless
+      (not
+        (opt-ubound-changed?
+          "ubound_ref_first"
+          (opt-ubound-blocks true true false true 0)))
+      (return 4))
+    ;; A second reader of the loop compare: retyping it in place would change
+    ;; what that reader sees.
+    (unless
+      (not
+        (opt-ubound-changed?
+          "ubound_ref_use"
+          (opt-ubound-blocks true true true false 0)))
+      (return 5))
+    ;; A negative seed is not nonnegative, so the preheader's own check would
+    ;; not stand in for the header's.
+    (unless
+      (not
+        (opt-ubound-changed?
+          "ubound_ref_seed"
+          (opt-ubound-blocks true true true true (- 0 1))))
+      (return 6))
+    42))
+
+;; A header phi wired to ANOTHER header phi rather than to the latch value, and
+;; a phi with a third input. Both are outside the two-edge shape the rewrite
+;; reasons about; recognition walks each list once and refuses, so the search
+;; terminates on a web no counter analysis would.
+(define (opt-ubound-tangled-head-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-ubound-label "head")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        5
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (opt-ubound-label "pre")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (opt-ubound-label "latch")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          11
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (opt-ubound-label "pre")
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (opt-ubound-label "latch")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64))
+        (opt-ubound-head-tail 0 true)))))
+
+(define (opt-ubound-wide-head-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-ubound-label "head")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        5
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (opt-ubound-label "pre")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (opt-ubound-label "latch")
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (opt-ubound-label "arm_a")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+        (compiler_ast_types.AstType.I64))
+      (opt-ubound-head-tail 0 true))))
+
+(define (opt-ubound-with-head [head : compiler_ir_types.CompilerIrBlock]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-ubound-entry-block true 0)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-ubound-pre-block true)
+      (compiler_ir_types.compiler-ir-block-cons
+        head
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-ubound-arm-block "arm_a" 7 1)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-ubound-arm-block "arm_b" 8 5)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-ubound-latch-block true)
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-ubound-exit-block)
+                compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (compiler-optimize-ubound-tangled-self-test) : i64
+  (begin
+    (unless
+      (not
+        (opt-ubound-changed?
+          "ubound_tangled"
+          (opt-ubound-with-head (opt-ubound-tangled-head-block))))
+      (return 1))
+    (unless
+      (not
+        (opt-ubound-changed?
+          "ubound_wide"
+          (opt-ubound-with-head (opt-ubound-wide-head-block))))
+      (return 2))
+    42))

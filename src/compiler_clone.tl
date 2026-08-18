@@ -683,7 +683,7 @@
                           target-store
                           target-start
                           (+ target-len 1))))))]
-              [_ target]))]))))
+              [(CloneRootEntries.Empty) CloneRootEntries.Empty]))))]))
 
 (define (clone-root-entries-take [roots : CloneRootEntries] [count : i64]) : CloneRootEntries
   (if (<= count 0)
@@ -726,10 +726,9 @@
   (let
     [empty : CloneNameSet (clone-name-set-empty)]
     [one : CloneNameSet (clone-name-set-insert-id empty 1)]
-    [dupe : CloneNameSet (clone-name-set-insert-id (clone-shared-view one) 1)]
+    [dupe : CloneNameSet (clone-name-set-insert-id (clone one) 1)]
     [seed-capacity : i64 (clone-name-set-capacity dupe)]
-    [grown : CloneNameSet
-      (clone-name-set-smoke-insert-count (clone-shared-view dupe) 10)]
+    [grown : CloneNameSet (clone-name-set-smoke-insert-count (clone dupe) 10)]
     [base-id : i64 (ci.intern "CloneSmokeKey")]
     [first-key : i64
       (clone-name-pair-key-id (ci.intern "clone.smoke.first") base-id)]

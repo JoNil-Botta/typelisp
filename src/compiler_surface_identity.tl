@@ -1067,7 +1067,8 @@
           (ci.intern-dotted-tail-id dotted-source))]
       [_canonical : i64 (ci.intern-generated-canonical-name "canonical")]
       [key : SurfaceIdentityKey (surface-identity-test-key)]
-      [payload : SurfaceIdentityPayload (surface-identity-capture key)]
+      [payload : SurfaceIdentityPayload
+        (surface-identity-capture (surface-identity-shared-view key))]
       [source-count : i64 (array-length payload.source-names)]
       [identity-count : i64 (+ source-count (array-length payload.generated))]
       [pair-id : i64 (ci.intern-composite-pair-id module-id base-id)]
@@ -1108,29 +1109,33 @@
           identity-count)]
       (if (not (= alpha 0))
         false
-        (match (surface-identity-encode payload)
+        (match (surface-identity-encode (surface-identity-shared-view payload))
           [(ResultSurfaceIdentityBytes.Err _) false]
           [(ResultSurfaceIdentityBytes.Ok bytes)
             (let
               [copy : (__tl_dyn-array u8)
-                (surface-identity-test-copy-bytes bytes)]
+                (surface-identity-test-copy-bytes
+                  (surface-identity-shared-view bytes))]
               (begin
                 (ci.intern-reset!)
                 (let
                   [unrelated : i64 (ci.intern "unrelated")]
-                  (match (surface-identity-hydrate bytes key)
+                  (match (surface-identity-hydrate
+                    bytes
+                    (surface-identity-shared-view key))
                     [(ResultSurfaceIdentityHydration.Err _) false]
                     [(ResultSurfaceIdentityHydration.KeyMismatch _) false]
                     [(ResultSurfaceIdentityHydration.Ok hydration)
                       (let
-                        [remap : (__tl_dyn-array i64) hydration.remap]
+                        [remap : (__tl_dyn-array i64)
+                          (surface-identity-shared-view hydration.remap)]
                         [mapped-module : i64 (array-ref remap 1)]
                         [mapped-base : i64 (array-ref remap 2)]
                         [mapped-alpha : i64 (array-ref remap 0)]
                         (and
                           (= unrelated 0)
                           (surface-identity-remap-test-ok?
-                            hydration
+                            (surface-identity-shared-view hydration)
                             source-count
                             (array-length payload.generated))
                           (=

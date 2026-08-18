@@ -75,13 +75,13 @@
   (str_cat.str-cat
     "(define (string.int->string [value : i64]) : String
   (if (= value 0) \"0\" \"1\"))
-(define (string.substring [text : String] [start : i64] [len : i64]) : String
-  text)
-(define (string.slice [text : String] [start : i64] [len : i64]) : String
+(define (string.substring [text : (& text str)] [start : i64] [len : i64]) : String
+  \"slice\")
+(define (string.slice [text : (& text str)] [start : i64] [len : i64]) : String
   (string.substring text start len))
-(define (string.append [left : String] [right : String]) : String
-  left)
-(define (string.concat [left : String] [right : String]) : String
+(define (string.append [left : (& left str)] [right : (& right str)]) : String
+  \"append\")
+(define (string.concat [left : (& left str)] [right : (& right str)]) : String
   (string.append left right))
 "
     src))
@@ -110,8 +110,8 @@
 
 (define (compiler-typecheck-with-env-source [src : String]) : String
   (str_cat.str-cat
-    "(define (var-exists? [name : String]) : bool true)
-(define (var-value [name : String]) : String name)
+    "(define (var-exists? [name : (& name str)]) : bool true)
+(define (var-value [name : (& name str)]) : String \"value\")
 (define (path-separator) : String \":\")
 "
     src))
@@ -1940,7 +1940,10 @@
         (tc_core.tc-agg-layout-cache-store!
           0
           4242
-          (tc_core.TcInlineAggregateLayout.Struct 8 8 fields))]
+          (tc_core.TcInlineAggregateLayout.Struct
+            8
+            8
+            (tc_core.tc-global-shared-view fields)))]
       [ok : bool
         (and
           (> storage 0)
@@ -4447,6 +4450,14 @@
 (define (main) : i64
   (local-add 1 2))")
 
+(define (compiler-typecheck-extern-retain-value-source) : String
+  "(extern (observe [value : String]) : unit)
+(define (main) : String
+  (let [value : String \"retained\"]
+    (begin
+      (observe value)
+      value)))")
+
 (define (compiler-typecheck-extern-head-varargs-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-extern-head-fixed-source))
@@ -4466,6 +4477,7 @@
 (define (compiler-typecheck-extern-abi-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-extern-abi-source))
+    (compiler-typecheck-ok? (compiler-typecheck-extern-retain-value-source))
     (compiler-typecheck-extern-head-varargs-tests-ok?)
     (compiler-typecheck-error-location-ok?
       (compiler-typecheck-extern-abi-tuple-source)
@@ -9559,64 +9571,113 @@
         [empty : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-empty macro-state pools)]
         [parent : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw empty 7 70)]
+          (tc_core.macro-hygiene-env-bind-raw
+            (tc_core.tc-global-shared-view empty)
+            7
+            70)]
         [left : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw parent 8 80)]
+          (tc_core.macro-hygiene-env-bind-raw
+            (tc_core.tc-global-shared-view parent)
+            8
+            80)]
         [right : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw parent 9 90)]
+          (tc_core.macro-hygiene-env-bind-raw
+            (tc_core.tc-global-shared-view parent)
+            9
+            90)]
         [shadow-one : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw parent 7 71)]
+          (tc_core.macro-hygiene-env-bind-raw
+            (tc_core.tc-global-shared-view parent)
+            7
+            71)]
         [shadow-two : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-bind-raw shadow-one 7 72)]
         [pattern : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-pattern-name-raw empty 10 100)]
+          (tc_core.macro-hygiene-env-bind-pattern-name-raw
+            (tc_core.tc-global-shared-view empty)
+            10
+            100)]
         [pattern-with-bind : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-bind-raw pattern 10 101)]
+          (tc_core.macro-hygiene-env-bind-raw
+            (tc_core.tc-global-shared-view pattern)
+            10
+            101)]
         [pattern-shadow : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-bind-pattern-name-raw
-            pattern-with-bind
+            (tc_core.tc-global-shared-view pattern-with-bind)
             10
             102)]
         ;; Force two capacity growths while retaining earlier sibling heads.
         [deep : tc_core.MacroHygieneEnv
-          (compiler-typecheck-macro-hygiene-env-extend parent 0 80)]
+          (compiler-typecheck-macro-hygiene-env-extend
+            (tc_core.tc-global-shared-view parent)
+            0
+            80)]
         (and
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup empty 7))
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view empty)
+              7))
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup parent 7)
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view parent)
+              7)
             70)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup left 8)
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view left)
+              8)
             80)
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup left 9))
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view left)
+              9))
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup right 9)
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view right)
+              9)
             90)
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup right 8))
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view right)
+              8))
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup parent 8))
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view parent)
+              8))
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup shadow-two 7)
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view shadow-two)
+              7)
             72)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup pattern-with-bind 10)
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view pattern-with-bind)
+              10)
             101)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup-pattern-name pattern-with-bind 10)
+            (tc_core.macro-hygiene-env-lookup-pattern-name
+              (tc_core.tc-global-shared-view pattern-with-bind)
+              10)
             100)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup-pattern-name pattern-shadow 10)
+            (tc_core.macro-hygiene-env-lookup-pattern-name
+              (tc_core.tc-global-shared-view pattern-shadow)
+              10)
             102)
           (compiler-typecheck-hygiene-name-missing?
-            (tc_core.macro-hygiene-env-lookup-pattern-name left 8))
+            (tc_core.macro-hygiene-env-lookup-pattern-name
+              (tc_core.tc-global-shared-view left)
+              8))
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup parent 7)
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view parent)
+              7)
             70)
           (compiler-typecheck-hygiene-name-is?
-            (tc_core.macro-hygiene-env-lookup deep 179)
+            (tc_core.macro-hygiene-env-lookup
+              (tc_core.tc-global-shared-view deep)
+              179)
             1079))))))
 
 (define (compiler-typecheck-macro-own-when-source) : String
@@ -10115,11 +10176,11 @@
 (defstruct OrdinaryWrapper
   (packet OrdinaryPacket))
 (defenum MaybeCount (SomeCount i64) (NoCount))
-(define (inspect-packet [p : OrdinaryPacket]) : i64 p.count)
+(define (inspect-packet [p : (& p OrdinaryPacket)]) : i64 p.count)
 (define (ordinary-sharing [p : OrdinaryPacket] [m : MaybeCount]) : i64
   (begin
-    (inspect-packet p)
-    (let [w : OrdinaryWrapper (OrdinaryWrapper p)]
+    (inspect-packet (& p))
+    (let [w : OrdinaryWrapper (OrdinaryWrapper (clone p))]
       (begin
         (match m [(SomeCount v) v] [NoCount 0])
         (+ p.count w.packet.count)))))")
@@ -11599,26 +11660,26 @@
         shadowed-root)
         [(tc_core.TcMoveConflict.Some _ _) false]
         [tc_core.TcMoveConflict.No true])]
-    [retained-parent : tc_core.TcMovedSet (tc_core.tc-moved-empty)]
-    [growth-successor : tc_core.TcMovedSet
+    [retained-parent : tc_core.TcMovedSet
       (compiler-typecheck-moved-set-growth
-        (tc_core.tc-global-shared-view retained-parent)
+        (tc_core.tc-moved-empty)
         items-id
-        32
+        0
+        2
         (ast.ast-global-shared-view origin-a))]
     [sibling-successor : tc_core.TcMovedSet
       (tc_core.tc-moved-add-path-fact
         (tc_core.tc-global-shared-view retained-parent)
         shadowed-root
         (tc_core.TcMovedPathKind.BorrowShared)
-        (ast.ast-node-push origin-b))]
+        (ast.ast-node-push (ast.ast-global-shared-view origin-b)))]
     [growth-successor : tc_core.TcMovedSet
       (compiler-typecheck-moved-set-growth
-        retained-parent
+        (tc_core.tc-global-shared-view retained-parent)
         growth-id
         0
         64
-        origin-a)]
+        (ast.ast-global-shared-view origin-a))]
     [retained-parent-isolated : bool
       (and
         (match (tc_core.tc-moved-path-exact-conflict-kind
@@ -11628,14 +11689,14 @@
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          retained-parent
+          (tc_core.tc-global-shared-view retained-parent)
           shadowed-root
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
           [tc_core.TcMoveConflict.No true])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           (tc_core.tc-global-shared-view retained-parent)
-          shadowed-root
+          growth63
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
           [tc_core.TcMoveConflict.No true]))]
@@ -11650,24 +11711,30 @@
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           (tc_core.tc-global-shared-view growth-successor)
+          growth63
+          (tc_core.TcMovedPathKind.BorrowShared))
+          [(tc_core.TcMoveConflict.Some _ _) true]
+          [tc_core.TcMoveConflict.No false])
+        (match (tc_core.tc-moved-path-exact-conflict-kind
+          (tc_core.tc-global-shared-view growth-successor)
           shadowed-root
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
           [tc_core.TcMoveConflict.No true])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          sibling-successor
+          (tc_core.tc-global-shared-view sibling-successor)
           items0
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          sibling-successor
+          (tc_core.tc-global-shared-view sibling-successor)
           shadowed-root
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          sibling-successor
+          (tc_core.tc-global-shared-view sibling-successor)
           growth63
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
@@ -11693,57 +11760,69 @@
         2
         origin-b)]
     [cross-store-union : tc_core.TcMovedSet
-      (tc_core.tc-moved-union retained-parent separate-store)]
+      (tc_core.tc-moved-union
+        (tc_core.tc-global-shared-view retained-parent)
+        separate-store)]
+    [cross-store-facts : tc_core.TcMovedPathFacts
+      (tc_core.tc-moved-paths (tc_core.tc-global-shared-view cross-store-union))]
     [cross-store-destination-ok : bool
       (compiler-typecheck-moved-facts-same-dense-store?
-        (tc_core.tc-moved-paths retained-parent)
-        (tc_core.tc-moved-paths cross-store-union))]
+        (tc_core.tc-moved-paths (tc_core.tc-global-shared-view retained-parent))
+        (tc_core.tc-global-shared-view cross-store-facts))]
     [cross-store-order-ok : bool
       (tc_core.tc-move-path-eq?
         (tc_core.tc-moved-path-fact-path
-          (tc_core.tc-moved-path-facts-head
-            (tc_core.tc-moved-paths cross-store-union)))
+          (tc_core.tc-moved-path-facts-head cross-store-facts))
         growth0)]
     [cross-store-removed : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-path-kind
-        cross-store-union
+        (tc_core.tc-global-shared-view cross-store-union)
         growth1
         (tc_core.TcMovedPathKind.BorrowShared))]
     [cross-store-remove-ok : bool
       (and
         (=
           (tc_core.tc-moved-path-facts-len
-            (tc_core.tc-moved-paths cross-store-removed))
+            (tc_core.tc-moved-paths
+              (tc_core.tc-global-shared-view cross-store-removed)))
           3)
         (tc_core.tc-moved-path-facts-contains-exact-kind?
-          (tc_core.tc-moved-paths cross-store-removed)
+          (tc_core.tc-moved-paths
+            (tc_core.tc-global-shared-view cross-store-removed))
           growth0
           (tc_core.TcMovedPathKind.BorrowShared))
         (not
           (tc_core.tc-moved-path-facts-contains-exact-kind?
-            (tc_core.tc-moved-paths cross-store-removed)
+            (tc_core.tc-moved-paths
+              (tc_core.tc-global-shared-view cross-store-removed))
             growth1
             (tc_core.TcMovedPathKind.BorrowShared))))]
     [missing-removal : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-path-kind
-        cross-store-union
+        (tc_core.tc-global-shared-view cross-store-union)
         shadowed-root
         (tc_core.TcMovedPathKind.Move))]
     [missing-removal-preserves-snapshot : bool
       (compiler-typecheck-moved-facts-same-dense-snapshot?
-        (tc_core.tc-moved-paths cross-store-union)
+        (tc_core.tc-moved-paths
+          (tc_core.tc-global-shared-view cross-store-union))
         (tc_core.tc-moved-paths missing-removal))]
     [missing-filter : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state cross-store-union shadowed-id)]
+      (tc_core.tc-moved-remove-root-state
+        (tc_core.tc-global-shared-view cross-store-union)
+        shadowed-id)]
     [missing-filter-preserves-snapshot : bool
       (compiler-typecheck-moved-facts-same-dense-snapshot?
-        (tc_core.tc-moved-paths cross-store-union)
+        (tc_core.tc-moved-paths
+          (tc_core.tc-global-shared-view cross-store-union))
         (tc_core.tc-moved-paths missing-filter))]
     [filtered-growth : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state cross-store-union growth-id)]
+      (tc_core.tc-moved-remove-root-state
+        (tc_core.tc-global-shared-view cross-store-union)
+        growth-id)]
     [changed-filter-reuses-tail : bool
       (compiler-typecheck-moved-facts-same-dense-snapshot?
-        (tc_core.tc-moved-paths retained-parent)
+        (tc_core.tc-moved-paths (tc_core.tc-global-shared-view retained-parent))
         (tc_core.tc-moved-paths filtered-growth))]
     [union-left : tc_core.TcMovedSet
       (tc_core.tc-moved-add-value (tc_core.tc-moved-empty) shared-id 101)]

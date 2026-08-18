@@ -4665,7 +4665,10 @@
               name-case)]
           (if (string.eq selfhost-lint-typed-unused-unsafe-error "")
             (begin
-              (selfhost-lint-print-findings input-path source findings)
+              (selfhost-lint-print-findings
+                input-path
+                source
+                (owned_view.compiler-owned-shared-view findings))
               (io.print-format
                 "{}"
                 (str_cat.str-cat
@@ -4781,7 +4784,12 @@
       [file-status : i64
         (begin
           (if print-headers
-            (io.print-format "{}" (str_cat.str-cat "--- " input-path "\n"))
+            (io.print-format
+              "{}"
+              (str_cat.str-cat
+                "--- "
+                (owned_view.compiler-owned-shared-view input-path)
+                "\n"))
             unit)
           (selfhost-lint-run-file-in-scratch
             input-path
@@ -4848,7 +4856,12 @@
       [file-status : i64
         (begin
           (if print-headers
-            (io.print-format "{}" (str_cat.str-cat "--- " input-path "\n"))
+            (io.print-format
+              "{}"
+              (str_cat.str-cat
+                "--- "
+                (owned_view.compiler-owned-shared-view input-path)
+                "\n"))
             unit)
           (selfhost-lint-run-file-with-package-dead-in-scratch
             input-path

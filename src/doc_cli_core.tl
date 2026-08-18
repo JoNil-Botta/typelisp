@@ -339,11 +339,17 @@
     [report : doc_test.DocTestRunReport
       (doc_test.doc-test-run-file-with-roots input-path stdlib-roots)]
     (begin
-      (if (doc_test.doc-test-run-report-ok? report)
+      (if (doc_test.doc-test-run-report-ok?
+        (owned_view.compiler-owned-shared-view report))
         (io.print-format
           "{}"
-          (str_cat.str-cat (doc_test.doc-test-run-report-render report) "\n"))
-        (io.print-error (doc_test.doc-test-run-report-render report)))
+          (str_cat.str-cat
+            (doc_test.doc-test-run-report-render
+              (owned_view.compiler-owned-shared-view report))
+            "\n"))
+        (io.print-error
+          (doc_test.doc-test-run-report-render
+            (owned_view.compiler-owned-shared-view report))))
       (doc_test.doc-test-run-report-status report))))
 
 (define (doc-flag? [value : String]) : bool
@@ -629,7 +635,12 @@
       [file-status : i64
         (begin
           (if print-headers
-            (io.print-format "{}" (str_cat.str-cat "--- " input-path "\n"))
+            (io.print-format
+              "{}"
+              (str_cat.str-cat
+                "--- "
+                (owned_view.compiler-owned-shared-view input-path)
+                "\n"))
             unit)
           (doc-test-file
             input-path
@@ -661,8 +672,15 @@
       [input-path : String (doc_svec.get (& input-paths) index "")]
       [file-status : i64
         (begin
-          (io.print-format "{}" (str_cat.str-cat "--- " input-path "\n"))
-          (doc-test-file input-path stdlib-roots))]
+          (io.print-format
+            "{}"
+            (str_cat.str-cat
+              "--- "
+              (owned_view.compiler-owned-shared-view input-path)
+              "\n"))
+          (doc-test-file
+            input-path
+            (owned_view.compiler-owned-shared-view stdlib-roots)))]
       (doc-test-package-files-from
         (owned_view.compiler-owned-shared-view input-paths)
         (+ index 1)

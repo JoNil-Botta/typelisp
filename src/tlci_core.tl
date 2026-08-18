@@ -909,7 +909,8 @@
 
 ;; Raw-pointer and `unsafe` template node kinds (refs #5605). expr-unsafe pops
 ;; an expression list and pushes the `(unsafe ...)` node; expr-ptr-read,
-;; expr-ptr-to-int, and expr-string-data each pop one expression;
+;; expr-ptr-addr-of, expr-ptr-to-int, and expr-string-data each pop one
+;; expression;
 ;; expr-ptr-write, expr-ptr-offset, and expr-string-from-bytes pop the second
 ;; then the first operand; expr-array-data pops one. expr-ptr-cast pops the type
 ;; value then the pointer expression. These complete the template subset the
@@ -918,8 +919,12 @@
   "expr-unsafe")
 (define tlci-host-callback-name-expr-ptr-read : String
   "expr-ptr-read")
+(define tlci-host-callback-name-expr-ptr-addr-of : String
+  "expr-ptr-addr-of")
 (define tlci-host-callback-name-expr-ptr-to-int : String
   "expr-ptr-to-int")
+(define tlci-host-callback-name-expr-int-to-ptr : String
+  "expr-int-to-ptr")
 (define tlci-host-callback-name-expr-string-data : String
   "expr-string-data")
 (define tlci-host-callback-name-expr-ptr-write : String
@@ -1065,11 +1070,13 @@
 (define tlci-host-callback-name-match-arm-list-cons-from-values : String
   "match-arm-list-cons-from-values")
 
-;; Tuple templates consume the ExprList assembled by the shared template
-;; argument/splice path and push the `(tuple ...)` expression reconstructed by
-;; interpreted quasiquote. Refs #5724.
+;; Tuple and array templates consume the ExprList assembled by the shared
+;; template argument/splice path and push the corresponding expression
+;; reconstructed by interpreted quasiquote. Refs #5724, #6215.
 (define tlci-host-callback-name-expr-tuple : String
   "expr-tuple")
+(define tlci-host-callback-name-expr-array : String
+  "expr-array")
 (define tlci-header-size : i64
   176)
 (define tlci-page-align : i64

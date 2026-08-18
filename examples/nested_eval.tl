@@ -74,6 +74,6 @@
         (array (SexprAtom.Int 1) (SexprAtom.List (box inner))))]
     [result : i64 (eval-sexpr prog)]
     (begin
-      (io.print-string "nested evaluator result: ")
-      (io.print result)
+      (io.print-format "{}" "nested evaluator result: ")
+      (io.println "{}" result)
       result)))

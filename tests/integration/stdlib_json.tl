@@ -83,7 +83,7 @@
     (begin
       (set! (array-ref buf 0) bits)
       (unsafe
-        (ptr-read (ptr-cast (array-data buf) : (Ptr f64)))))))
+        (ptr-read (ptr-cast (__tl_array-data buf) : (Ptr f64)))))))
 
 (define (json-test-f32-from-bits [bits : u32]) : f32
   (let
@@ -91,7 +91,7 @@
     (begin
       (set! (array-ref buf 0) bits)
       (unsafe
-        (ptr-read (ptr-cast (array-data buf) : (Ptr f32)))))))
+        (ptr-read (ptr-cast (__tl_array-data buf) : (Ptr f32)))))))
 
 (define (json-test-nonfinite-render) : bool
   (and

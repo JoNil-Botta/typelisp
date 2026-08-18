@@ -1247,36 +1247,29 @@
       next)))
 
 ;; Install a larger buffer holding at least `required` slots, preserving the
-;; first `used` records. The arena is restored before the copy so the copy
-;; cannot extend the storage arena.
+;; first `used` records. `in-arena` restores the caller before the copy so the
+;; copy cannot extend the storage arena; the stored root remains stable if the
+;; allocation grows its physical segment chain.
 (define (spanned-token-buffer-grow-to! [required : i64] [used : i64]) : unit
   (let
-    [previous-arena : i64 (arena.tl_arena_current)]
     [old-storage-arena : i64 lex-spanned-token-buffer-arena]
     [storage-root : i64
       (if (= old-storage-arena 0)
         (arena.tl_arena_make)
         old-storage-arena)]
-    [_set-arena : unit
-      (unsafe
-        (arena.tl_arena_set storage-root))]
     [new-buffer : (__tl_dyn-array token.SpannedToken)
-      (__tl_make-array
-        token.SpannedToken
-        (spanned-token-buffer-next-capacity required))]
-    [new-storage-arena : i64 (arena.tl_arena_current)]
+      (in-arena
+        (arena.Arena storage-root)
+        (__tl_make-array
+          token.SpannedToken
+          (spanned-token-buffer-next-capacity required)))]
     [j : i64 0]
     (begin
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous-arena old-storage-arena)
-            new-storage-arena
-            previous-arena)))
       (while (< j used)
         (begin
           (set! (array-ref new-buffer j) (array-ref lex-spanned-token-buffer j))
           (set! j (+ j 1))))
-      (set! lex-spanned-token-buffer-arena new-storage-arena)
+      (set! lex-spanned-token-buffer-arena storage-root)
       (set! lex-spanned-token-buffer new-buffer))))
 
 (define (spanned-token-buffer-ensure! [required : i64] [used : i64]) : unit
@@ -1403,7 +1396,7 @@
       (token.tag
         (token.spanned-token-tok
           (unsafe
-            (ptr-read (array-data lex-spanned-token-buffer)))))
+            (ptr-read (__tl_array-data lex-spanned-token-buffer)))))
       (token.tag-lbracket))
     (= (token.spanned-token-line (array-ref lex-spanned-token-buffer 0)) 7)
     (= (token.spanned-token-col (array-ref lex-spanned-token-buffer 0)) 11)))

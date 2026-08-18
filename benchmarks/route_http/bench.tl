@@ -415,5 +415,5 @@
     [requests : i64 (string.>int (io.arg 2))]
     [rounds : i64 (string.>int (io.arg 3))]
     (begin
-      (io.print (rt-bench routes requests rounds))
+      (io.println "{}" (rt-bench routes requests rounds))
       0)))

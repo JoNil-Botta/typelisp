@@ -57,7 +57,7 @@
         [out : (__tl_dyn-array u8) (array.make-array u8 total)]
         [dst : (MutPtr u8)
           (unsafe
-            (array-data out))]
+            (__tl_array-data out))]
         (begin
           (fixture-copy-chunk-into a dst 0)
           (fixture-copy-chunk-into b dst la)

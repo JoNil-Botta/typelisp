@@ -51,10 +51,11 @@ compile and run in `avx2` and `avx512`.
   generated vectors and native slices. Vec- and fixed-array-backed views cover
   empty, sub-gang, full-gang, multi-gang, offset, and masked-tail ranges while
   surrounding sentinels prove that stores stay within the logical Slice;
-  native-Slice `spmd-reduce` and `spmd-scan` paths run in the same fixture. The
-  verifier also pins native AVX2/AVX-512 load, arithmetic, store, and tail-mask
-  code shapes. This guards the array-surface migration away from public
-  `(Array T)` signatures.
+  a varying scalar loop repeatedly reads and writes four Slices at one lane
+  index, and native-Slice `spmd-reduce` and `spmd-scan` paths run in the same
+  fixture. The verifier pins one scalar bounds-abort site per Slice plus native
+  AVX2/AVX-512 load, arithmetic, store, and tail-mask code shapes. This guards
+  the array-surface migration away from public `(Array T)` signatures.
 - `native_slice_multi_output_i64.tl` - one native-Slice `foreach` reads both
   source slices twice at the same lane index and writes two distinct outputs.
   Offset views, surrounding sentinels, and a 19-element masked tail run in all
@@ -123,9 +124,6 @@ compile and run in `avx2` and `avx512`.
 - `masked_if_shift_negative_trap.tl` and
   `masked_if_shift_large_trap.tl` - active negative i64 and width-equal u32
   counts take `tl_shift_abort` with exit 129 in every runnable mode.
-- `masked_if_shift_i16_reject.tl` - scalar reference execution plus stable
-  AVX2/AVX-512 operator/type/backend diagnostics for the deferred 16-bit shift
-  surface.
 - `masked_if_value_types.tl` - AVX2/AVX-512 value-producing masked `if` over
   u32, u64, f32, f64, and bool lane results, each with a non-full tail. Exit
   42.
@@ -177,8 +175,7 @@ compile and run in `avx2` and `avx512`.
 - `map_shift_value_types.tl` - direct contiguous `shl`/`shr` maps over
   i32/u32/i64/u64 values with varying counts, signed/logical right shifts,
   full gangs, and partial tails whose inactive backing counts are invalid.
-  `map_shift_{negative,large}_trap.tl` pin active-count exit 129 behavior, and
-  `map_shift_i16_reject.tl` pins the 16-bit operator/type diagnostic.
+  `map_shift_{negative,large}_trap.tl` pin active-count exit 129 behavior.
 - `byte_shift_value_types.tl` - direct and nested masked `shl`/`shr` over
   i8/u8 lanes in scalar, AVX2, and AVX-512 modes, covering zero, sub-gang,
   exact-gang, multi-gang, and tail lengths, varying and literal counts,
@@ -186,6 +183,14 @@ compile and run in `avx2` and `avx512`.
   `byte_shift_inactive_invalid.tl` keeps negative and width-equal counts in
   inactive branch and tail lanes. The two `byte_shift_*_trap.tl` fixtures pin
   active negative and width-equal exit 129 behavior.
+- `word_shift_value_types.tl` - direct and nested masked `shl`/`shr` over
+  i16/u16 lanes in scalar, AVX2, and AVX-512 modes, covering zero, sub-gang,
+  exact-gang, multi-gang, and tail lengths, varying and literal counts,
+  signed/logical right shifts, AVX2 widening/packing, native AVX-512 word
+  shifts, and varying `while`. `word_shift_inactive_invalid.tl` keeps negative
+  and width-equal counts in inactive branch and tail lanes. The two
+  `word_shift_*_trap.tl` fixtures pin active negative and width-equal exit 129
+  behavior.
 - `map_compare_surface.tl` - direct maps for all six comparison predicates
   plus unsigned and f32/f64 comparison lanes, producing bool-array masks.
   Scalar, AVX2, and AVX-512 modes exit 42.
@@ -212,9 +217,10 @@ compile and run in `avx2` and `avx512`.
   single post-loop horizontal reduction.
 - `../integration/spmd_scan_scalar.tl` - `spmd-scan` inclusive prefixes for
   i64 sum/min/max, i32 sum/min/max, and bool all/any across empty, sub-lane,
-  exact-lane, multiple-gang, and tail lengths. Scalar and AVX2 execute the
-  same result; AVX2 opcode gates require real shift/permute prefix stages.
-  AVX-512 currently retains the scalar reference. Exit 42.
+  exact-lane, multiple-gang, and tail lengths. Scalar, AVX2, and AVX-512
+  execute the same result; AVX2 opcode gates require real shift/permute prefix
+  stages, while AVX-512 gates require `valignd`/`valignq`, prefix arithmetic,
+  and bool-mask instructions. Exit 42.
 - `../integration/spmd_scan_{negative_start,short_output}_trap.tl` - active
   negative-start and post-gang short-destination bounds traps checked in every
   runnable backend mode by `scripts/verify-spmd-simd.sh`.
@@ -243,10 +249,9 @@ Coverage map:
   `../integration/spmd_foreach.tl`, the two tail fixtures, and
   `uniform_zip_i64.tl`. Direct sub/bit-or/bit-xor opcode coverage lives in
   `../integration/spmd_foreach.tl`; direct checked shifts and comparisons live
-  in `map_shift_value_types.tl`, `byte_shift_value_types.tl`, and
-  `map_compare_surface.tl`. The intentionally unsupported byte multiply and
-  16-bit-shift policies are covered by
-  `i8_mul_reject.tl` and `map_shift_i16_reject.tl`.
+  in `map_shift_value_types.tl`, `byte_shift_value_types.tl`,
+  `word_shift_value_types.tl`, and `map_compare_surface.tl`. The intentionally
+  unsupported byte multiply policy is covered by `i8_mul_reject.tl`.
 - Vector/native-Slice public-surface coverage for borrowed backing storage
   lives in `native_slice_surface_i64.tl`.
 - Scalar and AVX2/AVX-512 gather-read coverage for generated Vec backing
@@ -262,12 +267,13 @@ Coverage map:
   `masked_if_bitand_value_i64.tl`, `masked_if_bitwise_value_types.tl`,
   `masked_if_shift_value_types.tl`, `masked_if_shift_inactive.tl`,
   `byte_shift_value_types.tl`, `byte_shift_inactive_invalid.tl`,
+  `word_shift_value_types.tl`, `word_shift_inactive_invalid.tl`,
   `masked_if_value_types.tl`, `masked_if_nested_i64.tl`, and
   `masked_if_i16_u16.tl`. The bitwise fixture covers `bit-or`/`bit-xor` IR
   and native opcode shapes for all eight contiguous integer lane types. The
-  shift fixtures cover native dword/qword opcodes, byte widening/shift/packing
-  expansions, the AVX2 signed-i64 expansion, reduced active-lane trap guards,
-  inactive branch/tail counts, and staged 16-bit diagnostics.
+  shift fixtures cover native dword/qword and AVX-512 word opcodes, byte and
+  AVX2 word widening/shift/packing expansions, the AVX2 signed-i64 expansion,
+  reduced active-lane trap guards, and inactive branch/tail counts.
 - AVX2/AVX-512 scalar-lane varying `match` coverage lives in
   `varying_match_i64.tl` and `masked_if_match_i64.tl`; enum tag/payload
   varying-match coverage lives in `varying_match_enum_payload.tl` through the
@@ -280,18 +286,20 @@ Coverage map:
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
   `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. The
-  `private_helper_*` fixtures execute the scalar and AVX-512 private ABI for
-  i64/f64/bool values, nested calls, direct helper loads/bounds checks, branch
-  masks, and tails. Focused source-to-private-call IR coverage also lives in
-  `src/tests/compiler_spmd_call_lower_*_smoke.tl`. Function-value/indirect
-  varying calls remain rejected by the safety fixtures.
+  `private_helper_*` fixtures execute the scalar, AVX2, and AVX-512 private
+  ABIs for i64/f64/bool values, nested calls, direct helper loads/bounds
+  checks, branch masks, and tails. Focused source-to-private-call IR coverage
+  also lives in `src/tests/compiler_spmd_call_lower_*_smoke.tl`.
+  Function-value/indirect varying calls remain rejected by the safety
+  fixtures.
 - `spmd-reduce` and `spmd-scan` coverage for the documented
   operator/type surface lives in `../integration/spmd_reduce_scalar.tl` and
   `../integration/spmd_scan_scalar.tl`. `map_fused_reduce_i64.tl` covers
   contiguous array reads combined with uniform/lane terms and mapped
   sub/bitwise/checked-shift operators. The former also executes f32 sums; the
-  latter requires native AVX2 prefixes for canonical contiguous shapes and
-  scalar reference lowering elsewhere through `scripts/verify-spmd-simd.sh`.
+  latter requires native AVX2 and AVX-512 prefixes for canonical contiguous
+  shapes and scalar reference lowering elsewhere through
+  `scripts/verify-spmd-simd.sh`.
 - `spmd-broadcast` executable coverage lives in the `broadcast_lane*_{i64,u64,u32}.tl`
   fixtures, with mode-specific expectations in `scripts/verify-spmd-broadcast.sh`.
 - `spmd-shuffle` scalar and native AVX2/AVX-512 coverage lives in

@@ -39,7 +39,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present), and
@@ -428,7 +428,8 @@
   (if (< index 0)
     printed
     (begin
-      (io.print-string
+      (io.print-format
+        "{}"
         (selfhost-lint-render-finding-line
           path
           source
@@ -4166,7 +4167,8 @@
           (string.eq decl.path path)
           (selfhost-lint-package-dead-finding-active? source decl))
           (begin
-            (io.print-string
+            (io.print-format
+              "{}"
               (selfhost-lint-render-finding-line
                 path
                 source
@@ -4357,7 +4359,8 @@
           (if (string.eq selfhost-lint-typed-unused-unsafe-error "")
             (begin
               (selfhost-lint-print-findings input-path source findings)
-              (io.print-string
+              (io.print-format
+                "{}"
                 (str_cat.str-cat
                   "lint: "
                   (string.int->string (lint_core.lint-findings-count findings))
@@ -4425,7 +4428,8 @@
                   dead-decls)]
               [total-count : i64 (+ ordinary-count dead-count)]
               (begin
-                (io.print-string
+                (io.print-format
+                  "{}"
                   (str_cat.str-cat
                     "lint: "
                     (string.int->string total-count)
@@ -4461,7 +4465,7 @@
       [file-status : i64
         (begin
           (if print-headers
-            (io.print-string (str_cat.str-cat "--- " input-path "\n"))
+            (io.print-format "{}" (str_cat.str-cat "--- " input-path "\n"))
             unit)
           (selfhost-lint-run-file-in-scratch
             input-path
@@ -4528,7 +4532,7 @@
       [file-status : i64
         (begin
           (if print-headers
-            (io.print-string (str_cat.str-cat "--- " input-path "\n"))
+            (io.print-format "{}" (str_cat.str-cat "--- " input-path "\n"))
             unit)
           (selfhost-lint-run-file-with-package-dead-in-scratch
             input-path

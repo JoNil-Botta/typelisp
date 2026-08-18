@@ -126,8 +126,8 @@
       (fill-pattern! items n)
       (unsafe
         (runtime.mem-copy-fwd
-          (ptr-offset (array-data items) 1)
-          (ptr-cast (ptr-offset (array-data items) 0) : (Ptr u8))
+          (ptr-offset (__tl_array-data items) 1)
+          (ptr-cast (ptr-offset (__tl_array-data items) 0) : (Ptr u8))
           (- n 2)))
       (if (= (array-ref items 0) (pattern 0))
         unit
@@ -144,13 +144,13 @@
       (fill-pattern! items n)
       (unsafe
         (runtime.mem-copy-fwd
-          (ptr-offset (array-data items) 0)
-          (ptr-cast (ptr-offset (array-data items) 8) : (Ptr u8))
+          (ptr-offset (__tl_array-data items) 0)
+          (ptr-cast (ptr-offset (__tl_array-data items) 8) : (Ptr u8))
           0))
       (unsafe
         (runtime.mem-copy-fwd
-          (ptr-offset (array-data items) 0)
-          (ptr-cast (ptr-offset (array-data items) 8) : (Ptr u8))
+          (ptr-offset (__tl_array-data items) 0)
+          (ptr-cast (ptr-offset (__tl_array-data items) 8) : (Ptr u8))
           (- 0 5)))
       (if (= (count-pattern items 0 n) n)
         unit

@@ -301,7 +301,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 (defmacro (compiler-backend-phi-copy-seq-rev-ref
   [copies : CompilerBackendPhiCopySeq]
@@ -1037,7 +1037,7 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr CompilerBackendStateData))))
+              (ptr-cast (__tl_array-data cell) : (Ptr CompilerBackendStateData))))
           : i64)))))
 
 (define (compiler-backend-state-set-representations!
@@ -1213,7 +1213,7 @@
           (unsafe
             (ptr->int
               (ptr-cast
-                (array-data cell)
+                (__tl_array-data cell)
                 : (Ptr CompilerBackendStreamStateData))))
           : i64)))))
 
@@ -1346,27 +1346,6 @@
 (define (compiler-backend-state-owner-arena [state : CompilerBackendState]) : i64
   (__tl-project-field (compiler-backend-state-data state) owner-arena))
 
-(define (compiler-backend-arena-owner-current-head [owner : arena.Arena]) : arena.Arena
-  (let
-    [handle : i64 (arena.raw-handle owner)]
-    (if (= handle 0)
-      owner
-      (let
-        [root-candidate : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-        [root : i64
-          (if (= root-candidate 0)
-            handle
-            root-candidate)]
-        [head : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
-        (arena.Arena
-          (if (= head 0)
-            root
-            head))))))
-
 (define (compiler-backend-state-emission-arena [state : CompilerBackendState]) : i64
   (__tl-project-field (compiler-backend-state-data state) emission-arena))
 
@@ -1407,7 +1386,7 @@
     [stored : i64 (compiler-backend-state-emission-arena state)]
     (if (= stored 0)
       (arena.current)
-      (compiler-backend-arena-owner-current-head (arena.Arena stored)))))
+      (arena.Arena stored))))
 
 (define (compiler-backend-state-scalar-registers-enabled?
   [state : CompilerBackendState]) : bool
@@ -2883,7 +2862,7 @@
           (unsafe
             (ptr->int
               (ptr-cast
-                (array-data cell)
+                (__tl_array-data cell)
                 : (Ptr CompilerBackendFunctionStateData))))
           : i64)))))
 
@@ -3527,7 +3506,7 @@
                         [hash : i64
                           (ci.intern-hash-words
                             (unsafe
-                              (ptr-cast (array-data bytes) : (Ptr u8)))
+                              (ptr-cast (__tl_array-data bytes) : (Ptr u8)))
                             off
                             len)]
                         [slot : i64 (bit-and hash (- new-cap 1))]
@@ -3861,6 +3840,7 @@
 
 (defstruct CompilerBackendProgramCollections
   (functions BackendSymbolSet)
+  (references BackendSymbolSet)
   (strings BackendStringSet)
   (floats BackendFloatSet)
   (bytes BackendStringSet)
@@ -3952,6 +3932,7 @@
 (define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-new 256)
+    (compiler-backend-symbol-set-new 256)
     (compiler-backend-string-set-new 256)
     (compiler-backend-float-set-new 256)
     (compiler-backend-string-set-new 64)
@@ -3964,6 +3945,20 @@
   [name : i64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-add collections.functions name)
+    (compiler-backend-symbol-set-add collections.references name)
+    collections.strings
+    collections.floats
+    collections.bytes
+    collections.uses-avx2-i64-lane-id
+    collections.uses-avx512-i64-lane-id
+    collections.uses-f64-neg))
+
+(define (compiler-backend-program-collections-add-reference
+  [collections : CompilerBackendProgramCollections (:consume)]
+  [name : i64]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    collections.functions
+    (compiler-backend-symbol-set-add collections.references name)
     collections.strings
     collections.floats
     collections.bytes
@@ -3976,6 +3971,7 @@
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     (compiler-backend-string-set-add collections.strings text)
     collections.floats
     collections.bytes
@@ -3989,6 +3985,7 @@
   [bits : u64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     (compiler-backend-float-set-add collections.floats ty bits)
     collections.bytes
@@ -4001,6 +3998,7 @@
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     (compiler-backend-string-set-add collections.bytes text)
@@ -4012,6 +4010,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -4023,6 +4022,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -4034,6 +4034,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -4989,6 +4990,223 @@
       [(compiler_ir_types.CompilerIrBinOp.Shl _) true]
       [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
       [_ false])))
+
+(define (compiler-backend-word-vector-shift?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]) : bool
+  (and
+    (match elem-ty
+      [(compiler_ast_types.AstType.I16) true]
+      [(compiler_ast_types.AstType.U16) true]
+      [_ false])
+    (match op
+      [(compiler_ir_types.CompilerIrBinOp.Shl _) true]
+      [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
+      [_ false])))
+
+(define (compiler-backend-word-vector-shift-mnemonic
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]) : String
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Shl _) "vpsllvd"]
+    [(compiler_ir_types.CompilerIrBinOp.Shr _)
+      (match elem-ty
+        [(compiler_ast_types.AstType.I16) "vpsravd"]
+        [(compiler_ast_types.AstType.U16) "vpsrlvd"]
+        [_ ""])]
+    [_ ""]))
+
+(define (compiler-backend-word-vector-widen-mnemonic
+  [elem-ty : compiler_ast_types.AstType]) : String
+  (match elem-ty
+    [(compiler_ast_types.AstType.I16) "vpmovsxwd"]
+    [(compiler_ast_types.AstType.U16) "vpmovzxwd"]
+    [_ ""]))
+
+;; AVX2 has no per-word variable shift. Widen the low and high 128-bit word
+;; groups to dwords, use the native dword shift, mask each result to its exact
+;; low 16 bits, then pack. `vpackusdw` interleaves its two inputs inside each
+;; 128-bit sublane, so the final qword permutation restores source lane order.
+(define (compiler-backend-emit-avx2-word-vector-shift
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [vector-bytes : i64 32]
+    [group-bytes : i64 16]
+    [result-base : i64 64]
+    [move : String (compiler-backend-vector-move-for-width "ymm" elem-ty)]
+    [dword-move : String
+      (compiler-backend-vector-move-for-width
+        "ymm"
+        (compiler_ast_types.AstType.I32))]
+    [widen : String (compiler-backend-word-vector-widen-mnemonic elem-ty)]
+    [shift : String (compiler-backend-word-vector-shift-mnemonic op elem-ty)]
+    [tmp0 : String "%ymm0"]
+    [tmp1 : String "%ymm1"]
+    (match (compiler-backend-vector-register-use
+      assignments
+      lhs
+      "word shift lhs"
+      "ymm"
+      elem-ty
+      (compiler-backend-vector-spill-scratch "ymm" 0)
+      backend-state)
+      [(ResultBackendVectorUse.Ok lhs-use)
+        (match lhs-use
+          [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+            (match (compiler-backend-vector-register-use
+              assignments
+              rhs
+              "word shift rhs"
+              "ymm"
+              elem-ty
+              (compiler-backend-vector-spill-scratch "ymm" 1)
+              backend-state)
+              [(ResultBackendVectorUse.Ok rhs-use)
+                (match rhs-use
+                  [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
+                    (match (compiler-backend-vector-dst-reg
+                      assignments
+                      dst
+                      "word shift dst"
+                      "ymm"
+                      (compiler-backend-vector-spill-scratch "ymm" 0)
+                      backend-state)
+                      [(ResultBackendReg.Ok dst-reg)
+                        (let
+                          [groups : String ""]
+                          [group : i64 0]
+                          (begin
+                            (while (< group 2)
+                              (let
+                                [word-offset : i64 (* group group-bytes)]
+                                [result-offset : i64
+                                  (+ result-base (* group vector-bytes))]
+                                (begin
+                                  (set!
+                                    groups
+                                    (str_cat.str-cat
+                                      groups
+                                      "    "
+                                      widen
+                                      " "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        word-offset)
+                                      ", "
+                                      tmp0
+                                      "\n    "
+                                      widen
+                                      " "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        (+ vector-bytes word-offset))
+                                      ", "
+                                      tmp1
+                                      "\n    "
+                                      shift
+                                      " "
+                                      tmp1
+                                      ", "
+                                      tmp0
+                                      ", "
+                                      tmp0
+                                      "\n    "
+                                      dword-move
+                                      " "
+                                      tmp0
+                                      ", "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        result-offset)
+                                      "\n"))
+                                  (set! group (+ group 1)))))
+                            (ResultCompilerBackend.Ok
+                              (str_cat.str-cat
+                                lhs-asm
+                                rhs-asm
+                                "    subq $128, %rsp\n    "
+                                move
+                                " "
+                                lhs-reg
+                                ", (%rsp)\n    "
+                                move
+                                " "
+                                rhs-reg
+                                ", 32(%rsp)\n"
+                                groups
+                                "    vpcmpeqd "
+                                tmp0
+                                ", "
+                                tmp0
+                                ", "
+                                tmp0
+                                "\n    vpsrld $16, "
+                                tmp0
+                                ", "
+                                tmp0
+                                "\n    "
+                                dword-move
+                                " 64(%rsp), "
+                                tmp1
+                                "\n    vpand "
+                                tmp0
+                                ", "
+                                tmp1
+                                ", "
+                                tmp1
+                                "\n    "
+                                dword-move
+                                " 96(%rsp), "
+                                dst-reg
+                                "\n    vpand "
+                                tmp0
+                                ", "
+                                dst-reg
+                                ", "
+                                dst-reg
+                                "\n    vpackusdw "
+                                dst-reg
+                                ", "
+                                tmp1
+                                ", "
+                                tmp1
+                                "\n    vpermq $216, "
+                                tmp1
+                                ", "
+                                dst-reg
+                                "\n    addq $128, %rsp\n"
+                                (compiler-backend-vector-store-dst
+                                  assignments
+                                  dst
+                                  "ymm"
+                                  elem-ty
+                                  dst-reg
+                                  backend-state)))))]
+                      [(ResultBackendReg.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler_diagnostic.compiler-diagnostic-with-message
+                              instr-diag
+                              message)))])])]
+              [(ResultBackendVectorUse.Err message)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-with-message
+                      instr-diag
+                      message)))])])]
+      [(ResultBackendVectorUse.Err message)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-with-message
+              instr-diag
+              message)))])))
 
 (define (compiler-backend-byte-vector-shift-mnemonic
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -6142,6 +6360,16 @@
       [mnemonic : String
         (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
       (cond
+        [(compiler-backend-word-vector-shift? op elem-ty)
+          (compiler-backend-emit-avx2-word-vector-shift
+            assignments
+            dst
+            op
+            lhs
+            rhs
+            elem-ty
+            instr-diag
+            backend-state)]
         [(compiler-backend-byte-vector-shift? op elem-ty)
           (compiler-backend-emit-byte-vector-shift
             assignments
@@ -6692,6 +6920,8 @@
         [(compiler_ast_types.AstType.U64) "vpsllvq"]
         [(compiler_ast_types.AstType.I32) "vpsllvd"]
         [(compiler_ast_types.AstType.U32) "vpsllvd"]
+        [(compiler_ast_types.AstType.I16) "vpsllvw"]
+        [(compiler_ast_types.AstType.U16) "vpsllvw"]
         [_ ""])]
     [(compiler_ir_types.CompilerIrBinOp.Shr _)
       (match elem-ty
@@ -6699,6 +6929,8 @@
         [(compiler_ast_types.AstType.U64) "vpsrlvq"]
         [(compiler_ast_types.AstType.I32) "vpsravd"]
         [(compiler_ast_types.AstType.U32) "vpsrlvd"]
+        [(compiler_ast_types.AstType.I16) "vpsravw"]
+        [(compiler_ast_types.AstType.U16) "vpsrlvw"]
         [_ ""])]
     [(compiler_ir_types.CompilerIrBinOp.BitAnd)
       (match elem-ty
@@ -26679,6 +26911,13 @@
 ;; with the displacement negated, which replaces a `mov` + arithmetic pair. Only
 ;; a displacement that still encodes as imm32 qualifies (i64 MIN has no
 ;; negation, so it falls out here).
+;;
+;; #6288: centralize the FPO `%rbp` value-home invariant here rather than in
+;; selected callers. `K(%rbp)` is textually indistinguishable from a frame
+;; address to the final rsp rebase. The no-base SIB form `K(,%rbp,1)` computes
+;; the same value but cannot be classified as a frame reference. Any current or
+;; retried register plan that reaches this formatter is therefore safe by
+;; construction.
 (define (compiler-backend-binop-immediate-lea-asm
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs-reg : String]
@@ -26692,7 +26931,9 @@
           "    leaq "
           (compiler-backend-immediate-displacement imm)
           "("
-          lhs-reg
+          (if (string.eq lhs-reg "%rbp")
+            ",%rbp,1"
+            lhs-reg)
           "), "
           dst-home
           "\n"))]
@@ -26705,7 +26946,9 @@
                 "    leaq "
                 (string.int->string (- 0 value))
                 "("
-                lhs-reg
+                (if (string.eq lhs-reg "%rbp")
+                  ",%rbp,1"
+                  lhs-reg)
                 "), "
                 dst-home
                 "\n"))
@@ -26737,10 +26980,6 @@
         (compiler-backend-mul-immediate-direct-asm lhs-reg dst-home imm rhs))
       (match (if (and
         (not (string.eq lhs-reg ""))
-        ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
-        ;; reference and silently rebased by the FPO rsp-rebase pass
-        ;; (miscompile) -- an rbp-homed lhs takes the mov+add path below.
-        (not (string.eq lhs-reg "%rbp"))
         (not (string.eq lhs-reg dst-home))
         (not (string.eq imm "$0"))
         (= (compiler-backend-type-size type-segment-bases ty) 8))
@@ -26836,10 +27075,6 @@
     (match (if (and
       (not zero-addsub?)
       (not (string.eq lhs-reg ""))
-      ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
-      ;; reference and silently rebased by the FPO rsp-rebase pass
-      ;; (miscompile) -- an rbp-homed lhs takes the mov+add path below.
-      (not (string.eq lhs-reg "%rbp"))
       (= (compiler-backend-type-size type-segment-bases operand-ty) 8))
       ;; A register-homed lhs makes the three-operand lea form a strict
       ;; win over load+op: one instruction fewer before the home store.
@@ -36738,14 +36973,6 @@
 
 (define (compiler-backend-runtime-param-types-id [name-id : i64]) : compiler_ast_types.AstTypeList
   (cond
-    [(cbi.compiler-builtin-backend-tl-print-char-id? name-id)
-      (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.AstType.Char)
-        (compiler_ast_types.ast-type-list-new))]
-    [(cbi.compiler-builtin-backend-tl-print-f64-id? name-id)
-      (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.AstType.F64)
-        (compiler_ast_types.ast-type-list-new))]
     [(cbi.compiler-builtin-backend-tl-array-fill8-id? name-id)
       (compiler_ast_types.ast-type-cons
         (compiler_ast_types.ast-ty-mut-ptr (compiler_ast_types.AstType.U8))
@@ -64276,9 +64503,10 @@
 ;; %rbp in the pool and re-emits).
 ;;
 ;; #rbp-base invariant: in fpo mode every "(%rbp" occurrence is a frame
-;; reference -- %rbp pool VALUES never appear as memory-operand bases (the
-;; emitters stage them through a scratch; see address-base-filter) and bare
-;; `%rbp` register operands contain no "(%rbp".
+;; reference. Emitters structurally distinguish %rbp pool VALUES with a
+;; no-base SIB spelling `(,%rbp,1)` where possible and otherwise stage through
+;; a scratch (see address-base-filter); bare `%rbp` register operands also
+;; contain no "(%rbp".
 ;; GAP1: 3-arg spelling for the stage-1 / adapter / fallback call sites --
 ;; byte-identical to the pre-GAP1 pass (no push mode).
 (define (compiler-backend-rsp-rebase
@@ -70051,6 +70279,10 @@
   [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
   (compiler-backend-symbol-set-list collections.functions))
 
+(define (compiler-backend-program-collections-references
+  [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
+  (compiler-backend-symbol-set-list collections.references))
+
 (define (compiler-backend-program-collections-strings
   [collections : CompilerBackendProgramCollections]) : BackendStringSeq
   (compiler-backend-string-set-list collections.strings))
@@ -70117,6 +70349,10 @@
   (match value
     [(compiler_ir_types.CompilerIrValue.Function name)
       (compiler-backend-program-collections-add-function collections name)]
+    [(compiler_ir_types.CompilerIrValue.Global name)
+      (compiler-backend-program-collections-add-reference collections name)]
+    [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
+      (compiler-backend-program-collections-add-reference collections name)]
     [(compiler_ir_types.CompilerIrValue.String text)
       (compiler-backend-program-collections-add-string collections text)]
     [(compiler_ir_types.CompilerIrValue.F64 bits)
@@ -71761,23 +71997,22 @@
   [runtime-index : CompilerBackendRuntimeIndex]
   [referenced-functions : BackendSymbolSeq]
   [extern-name-id : i64]
+  [source-name-id : i64]
   [link-symbol-id : i64]) : bool
-  (let
-    [foreign-link-symbol : bool
-      (and
-        (not (= extern-name-id link-symbol-id))
-        (not (compiler-backend-runtime-helper-known-id? extern-name-id))
-        (not (compiler-backend-runtime-helper-known-id? link-symbol-id)))]
-    (or
-      foreign-link-symbol
-      (backend-or4
-        (compiler-backend-runtime-index-calls? runtime-index extern-name-id)
-        (compiler-backend-runtime-index-calls? runtime-index link-symbol-id)
-        (compiler-backend-symbol-list-contains-id?
-          referenced-functions
-          extern-name-id)
-        false)
-      false)))
+  (or
+    (backend-or4
+      (compiler-backend-runtime-index-calls? runtime-index extern-name-id)
+      (compiler-backend-runtime-index-calls? runtime-index source-name-id)
+      (compiler-backend-runtime-index-calls? runtime-index link-symbol-id)
+      (compiler-backend-symbol-list-contains-id?
+        referenced-functions
+        extern-name-id))
+    (compiler-backend-symbol-list-contains-id?
+      referenced-functions
+      source-name-id)
+    (compiler-backend-symbol-list-contains-id?
+      referenced-functions
+      link-symbol-id)))
 
 (define (compiler-backend-emit-externs-into
   [backend-state : CompilerBackendState]
@@ -71792,7 +72027,7 @@
       (match item
         [(compiler_ir_types.CompilerIrExtern.Extern
             name-id
-            _
+            source-name-id
             name
             _
             _
@@ -71810,6 +72045,7 @@
               runtime-index
               referenced-functions
               name-id
+              source-name-id
               link-symbol-id))
             (compiler-backend-emit-externs-into
               backend-state
@@ -71889,10 +72125,6 @@
               (compiler-backend-plan-provides-id?
                 plan
                 cbi.compiler-builtin-id-tl-region-reset))]
-          [print-f64 : bool
-            (compiler-backend-plan-provides-id?
-              plan
-              cbi.compiler-builtin-id-tl-print-f64)]
           (runtime_common.CompilerBackendRuntimeFeatures
             alloc
             region-mark
@@ -71901,7 +72133,6 @@
             (compiler-backend-runtime-tail-profile? tail-plan)
             (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
             write-exit
-            print-f64
             (compiler-backend-runtime-tail-startup-profile? tail-plan)))])))
 
 (define (compiler-backend-current-arena-load
@@ -72239,6 +72470,7 @@
   [program-index : CompilerBackendProgramIndex]
   [runtime-index : CompilerBackendRuntimeIndex]
   [closure-names : BackendSymbolSeq]
+  [referenced-symbols : BackendSymbolSeq]
   [strings : BackendStringSeq]
   [bytes : BackendStringSeq]
   [floats : BackendFloatSeq]
@@ -72341,7 +72573,7 @@
                             externs
                             plan
                             runtime-index
-                            closure-names
+                            referenced-symbols
                             runtime-data-buf)]
                         (begin
                           (cfg
@@ -72411,6 +72643,8 @@
         spans)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
+    [referenced-symbols : BackendSymbolSeq
+      (compiler-backend-program-collections-references collections)]
     [strings : BackendStringSeq
       (compiler-backend-program-collections-strings collections)]
     [bytes : BackendStringSeq
@@ -72458,6 +72692,7 @@
             program-index
             runtime-index
             closure-names
+            referenced-symbols
             strings
             bytes
             floats
@@ -75884,11 +76119,10 @@
                   link-symbol-id
                   provided
                   plan)
-                (compiler-backend-extern-symbol-referenced?
-                  runtime-index
-                  referenced-functions
-                  name-id
-                  link-symbol-id)
+                ;; Object relocations are the exact reference inventory. In
+                ;; particular, generated indirect C calls can relocate through
+                ;; a resolved identity that is not one of the extern record's
+                ;; parser, logical, or link ids.
                 has-relocation)
                 (object_target.compiler-backend-object-symbol-extern
                   parts
@@ -76976,7 +77210,7 @@
                         [hash : i64
                           (ci.intern-hash-words
                             (unsafe
-                              (ptr-cast (array-data bytes) : (Ptr u8)))
+                              (ptr-cast (__tl_array-data bytes) : (Ptr u8)))
                             off
                             len)]
                         [slot : i64 (bit-and hash (- new-cap 1))]
@@ -80754,7 +80988,7 @@
         [out : (__tl_dyn-array u8) (array.make-array u8 total)]
         [dst : (MutPtr u8)
           (unsafe
-            (array-data out))]
+            (__tl_array-data out))]
         (begin
           (compiler-backend-peephole-records-blit! v dst)
           (unsafe
@@ -80854,16 +81088,13 @@
 (define (compiler-backend-assembly-stream-carry-home-current!
   [stream : CompilerBackendStreamState]
   [home-arena : arena.Arena]) : unit
-  ;; Rendering/appending the retained group can grow `home-arena`. Carry its
-  ;; root-tracked current head into the next flush instead of re-entering the
-  ;; old segment and creating a detached sibling overflow chain.
+  ;; Rendering/appending the retained group can grow `home-arena`; its stable
+  ;; root remains the owner used by every later flush.
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set!
-        data.assembly-home-arena
-        (compiler-backend-arena-owner-current-head home-arena))
+      (set! data.assembly-home-arena home-arena)
       (compiler-backend-stream-state-data-set! stream data))))
 
 ;; Flush one raw function group through the record pipeline. `scratch` is active
@@ -82704,13 +82935,13 @@
   (and
     (backend-and8
       (not (compiler-backend-string-contains? asm "tl_print_err:\n"))
-      (not (compiler-backend-string-contains? asm "tl_print_string:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_arg_count:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_arg:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_read_file:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_file_exists:\n"))
-      (not (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")))
+      (not (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n"))
+      true)
     (backend-and8
       (not (compiler-backend-string-contains? asm ".L_tl_file_close_status:\n"))
       (not
@@ -82735,12 +82966,12 @@
       (not (compiler-backend-string-contains? asm "tl_cpuid_eax:\n"))
       (not (compiler-backend-string-contains? asm "tl_xgetbv:\n")))
     (backend-and4
-      (not (compiler-backend-string-contains? asm "tl_print_char:\n"))
-      (not (compiler-backend-string-contains? asm "tl_print_f64:\n"))
       (not
         (compiler-backend-string-contains? asm ".L_tl_fs_remove_file_status:\n"))
       (not
-        (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n")))
+        (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n"))
+      true
+      true)
     (not (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n"))))
 
 ;; Backend-smoke regression for the fail-closed splice predicate.  Exercise a
@@ -82942,6 +83173,103 @@
         (compiler-backend-string-contains? asm ".globl tl_str_view\n")
         (compiler-backend-string-contains? asm "tl_str_view:\n")
         (not (compiler-backend-string-contains? asm ".extern tl_str_view\n")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-unused-foreign-link-extern-program) : compiler_ir_types.CompilerIrProgram
+  (let
+    [name-id : i64 (compiler-backend-test-symbol "fixture.tl::unused-foreign")]
+    [link-symbol-id : i64
+      (compiler-backend-test-symbol "unused_foreign_symbol")]
+    (compiler_ir_types.CompilerIrProgram.Program
+      (compiler_ir_types.compiler-ir-global-seq-empty)
+      (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.CompilerIrFunction.Function
+          cbi.compiler-builtin-id-fix-main
+          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ast_types.AstType.I64)
+          0
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-instr-seq1
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 42)))))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-extern-cons
+        (compiler_ir_types.CompilerIrExtern.Extern
+          name-id
+          name-id
+          "fixture.tl::unused-foreign"
+          (compiler_ast_types.AstType.I64)
+          (compiler_ast_types.AstExternAbi.C)
+          link-symbol-id
+          (compiler_ast_types.ast-extern-link-input-list-new)
+          false)
+        compiler_ir_types.CompilerIrExternList.Nil))))
+
+(define (compiler-backend-unused-foreign-link-extern-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-unused-foreign-link-extern-program))
+    [(ResultCompilerBackend.Ok asm)
+      (not
+        (compiler-backend-string-contains?
+          asm
+          ".extern unused_foreign_symbol\n"))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-source-referenced-foreign-link-extern-program) : compiler_ir_types.CompilerIrProgram
+  (let
+    [name-id : i64 (compiler-backend-test-symbol "fixture.tl::foreign")]
+    [source-name-id : i64 (compiler-backend-test-symbol "foreign")]
+    [link-symbol-id : i64
+      (compiler-backend-test-symbol "required_foreign_symbol")]
+    [globals : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
+    (begin
+      (compiler_ir_types.compiler-ir-global-builder-push!
+        (&mut globals)
+        (compiler_ir_types.CompilerIrGlobal.Global
+          (compiler-backend-test-symbol "fixture.tl::foreign-value")
+          (compiler_ast_types.AstType.I64)
+          (compiler_ir_types.CompilerIrValue.Function source-name-id)))
+      (compiler_ir_types.CompilerIrProgram.Program
+        (compiler_ir_types.compiler-ir-global-builder-to-seq globals)
+        (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.CompilerIrFunction.Function
+            cbi.compiler-builtin-id-fix-main
+            compiler_ir_types.CompilerIrParamList.Nil
+            (compiler_ast_types.AstType.I64)
+            0
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-instr-seq1
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 42)))))
+              compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrFunctionList.Nil)
+        (compiler_ir_types.compiler-ir-extern-cons
+          (compiler_ir_types.CompilerIrExtern.Extern
+            name-id
+            source-name-id
+            "fixture.tl::foreign"
+            (compiler_ast_types.AstType.I64)
+            (compiler_ast_types.AstExternAbi.C)
+            link-symbol-id
+            (compiler_ast_types.ast-extern-link-input-list-new)
+            false)
+          compiler_ir_types.CompilerIrExternList.Nil)))))
+
+(define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-source-referenced-foreign-link-extern-program))
+    [(ResultCompilerBackend.Ok asm)
+      (compiler-backend-string-contains?
+        asm
+        ".extern required_foreign_symbol\n")]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool

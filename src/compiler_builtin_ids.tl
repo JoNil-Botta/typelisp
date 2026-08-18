@@ -145,10 +145,6 @@
   -1)
 (define compiler-builtin-id-tl-mem-copy-fwd : i64
   -1)
-(define compiler-builtin-id-tl-print-char : i64
-  -1)
-(define compiler-builtin-id-tl-print-f64 : i64
-  -1)
 (define compiler-builtin-id-tl-tlci-call-macro-entry : i64
   -1)
 (define compiler-builtin-id-tl-private-float-sqrt : i64
@@ -970,8 +966,6 @@
     (state-set! state 39 compiler-builtin-id-tl-shift-abort)
     (state-set! state 40 compiler-builtin-id-tl-array-fill8)
     (state-set! state 41 compiler-builtin-id-tl-array-zero)
-    (state-set! state 42 compiler-builtin-id-tl-print-char)
-    (state-set! state 43 compiler-builtin-id-tl-print-f64)
     (state-set! state 44 compiler-builtin-id-string-length)
     (state-set! state 45 compiler-builtin-id-length)
     (state-set! state 46 compiler-builtin-id-string-eq)
@@ -1354,8 +1348,6 @@
     (set! compiler-builtin-id-tl-array-zero (state-ref state 41))
     (set! compiler-builtin-id-tl-mem-fill8 (state-ref state 316))
     (set! compiler-builtin-id-tl-mem-copy-fwd (state-ref state 317))
-    (set! compiler-builtin-id-tl-print-char (state-ref state 42))
-    (set! compiler-builtin-id-tl-print-f64 (state-ref state 43))
     (set! compiler-builtin-id-string-length (state-ref state 44))
     (set! compiler-builtin-id-length (state-ref state 45))
     (set! compiler-builtin-id-string-eq (state-ref state 46))
@@ -2287,12 +2279,6 @@
     (set!
       compiler-builtin-id-tl-mem-copy-fwd
       (compiler-builtin-resolve-name insert-missing "tl_mem_copy_fwd"))
-    (set!
-      compiler-builtin-id-tl-print-char
-      (compiler-builtin-resolve-name insert-missing "tl_print_char"))
-    (set!
-      compiler-builtin-id-tl-print-f64
-      (compiler-builtin-resolve-name insert-missing "tl_print_f64"))
     (set!
       compiler-builtin-id-tl-tlci-call-macro-entry
       (compiler-builtin-resolve-name insert-missing "tl_tlci_call_macro_entry"))
@@ -3689,16 +3675,6 @@
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-mem-copy-fwd)))
-
-(define (compiler-builtin-backend-tl-print-char-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-print-char)))
-
-(define (compiler-builtin-backend-tl-print-f64-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-print-f64)))
 
 (define (compiler-builtin-backend-tlci-call-macro-entry-id? [name-id : i64]) : bool
   (begin

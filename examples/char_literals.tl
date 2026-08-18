@@ -21,6 +21,6 @@
     [result : i64
       (+ (code ' ') (+ (code '\n') (+ (code '\t') (+ (code '\r') (code '\0')))))]
     (begin
-      (io.print-string "character literal code sum: ")
-      (io.print result)
+      (io.print-format "{}" "character literal code sum: ")
+      (io.println "{}" result)
       result)))

@@ -24,7 +24,7 @@
     (let
       [data : (MutPtr u8)
         (unsafe
-          (array-data bytes))]
+          (__tl_array-data bytes))]
       (unsafe
         (string-from-bytes (ptr-cast data : (Ptr u8)) (array-length bytes))))))
 

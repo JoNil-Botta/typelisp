@@ -191,10 +191,12 @@
         `(let
           [old-data : (Ptr GeneratedHashmapSlot)
             (unsafe
-              (ptr-cast (array-data map.slots) : (Ptr GeneratedHashmapSlot)))]
+              (ptr-cast
+                (__tl_array-data map.slots)
+                : (Ptr GeneratedHashmapSlot)))]
           [fresh-data : (MutPtr GeneratedHashmapSlot)
             (unsafe
-              (ptr-cast (array-data fresh) : (MutPtr GeneratedHashmapSlot)))]
+              (ptr-cast (__tl_array-data fresh) : (MutPtr GeneratedHashmapSlot)))]
           (while (< scan old-capacity)
             (begin
               (let
@@ -267,7 +269,9 @@
           [slots : (& map (__tl_dyn-array GeneratedHashmapSlot)) (& map.slots)]
           [data : (Ptr GeneratedHashmapSlot)
             (unsafe
-              (ptr-cast (array-data map.slots) : (Ptr GeneratedHashmapSlot)))]
+              (ptr-cast
+                (__tl_array-data map.slots)
+                : (Ptr GeneratedHashmapSlot)))]
           [cap : i64 (array_ops.length slots)]
           ;; A zero-length table is reachable through a ZII-initialized map, and
           ;; its mask would be -1 -- the guard is what keeps the masked cursor
@@ -329,7 +333,7 @@
               [data : (MutPtr GeneratedHashmapSlot)
                 (unsafe
                   (ptr-cast
-                    (array-data map.slots)
+                    (__tl_array-data map.slots)
                     : (MutPtr GeneratedHashmapSlot)))]
               ;; with-capacity and grow! preserve a positive power-of-two
               ;; capacity, making the masked initial cursor in bounds.
@@ -562,7 +566,9 @@
               (& map.slots)]
             [data : (Ptr GeneratedHashmapSlot)
               (unsafe
-                (ptr-cast (array-data map.slots) : (Ptr GeneratedHashmapSlot)))]
+                (ptr-cast
+                  (__tl_array-data map.slots)
+                  : (Ptr GeneratedHashmapSlot)))]
             [cap : i64 (array_ops.length slots)]
             (if (<= cap 0)
               -1
@@ -607,7 +613,7 @@
         [slots : (& map (__tl_dyn-array GeneratedHashmapSlot)) (& map.slots)]
         [data : (Ptr GeneratedHashmapSlot)
           (unsafe
-            (ptr-cast (array-data map.slots) : (Ptr GeneratedHashmapSlot)))]
+            (ptr-cast (__tl_array-data map.slots) : (Ptr GeneratedHashmapSlot)))]
         [cap : i64 (array_ops.length slots)]
         (if (<= cap 0)
           (LookupMissing)
@@ -702,7 +708,9 @@
           [slots : (& map (__tl_dyn-array GeneratedHashmapSlot)) (& map.slots)]
           [data : (Ptr GeneratedHashmapSlot)
             (unsafe
-              (ptr-cast (array-data map.slots) : (Ptr GeneratedHashmapSlot)))]
+              (ptr-cast
+                (__tl_array-data map.slots)
+                : (Ptr GeneratedHashmapSlot)))]
           [cap : i64 (array_ops.length slots)]
           [index : i64
             (if (< from 0)
@@ -738,7 +746,9 @@
           (let
             [data : (Ptr GeneratedHashmapSlot)
               (unsafe
-                (ptr-cast (array-data map.slots) : (Ptr GeneratedHashmapSlot)))]
+                (ptr-cast
+                  (__tl_array-data map.slots)
+                  : (Ptr GeneratedHashmapSlot)))]
             [slot : GeneratedHashmapSlot
               (unsafe
                 (ptr-read (ptr-offset data index)))]

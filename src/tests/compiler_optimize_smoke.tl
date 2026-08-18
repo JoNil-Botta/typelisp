@@ -3121,6 +3121,10 @@
       (compiler_optimize_tests.compiler-optimize-bounds-dom-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bounds-dom-slice-word-self-test"
+      (compiler_optimize_tests.compiler-optimize-bounds-dom-slice-word-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-dom-cmp-rule-a-self-test"
       (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-self-test)
       42)

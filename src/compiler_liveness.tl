@@ -175,7 +175,7 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data compiler-live-set-empty-value)
+        (__tl_array-data compiler-live-set-empty-value)
         : (Ptr CompilerLiveI64Set)))))
 
 (define (compiler-live-set-empty) : CompilerLiveI64Set
@@ -198,7 +198,7 @@
   [word-index : i64]) : i64
   (unsafe
     (ptr-read
-      (ptr-offset (array-data (compiler-live-set-words set)) word-index))))
+      (ptr-offset (__tl_array-data (compiler-live-set-words set)) word-index))))
 
 ;; The backing pointer `compiler-live-set-word-at-bounded` reloads on every
 ;; call: the set handle, the array handle behind it, and the data pointer behind
@@ -210,7 +210,7 @@
 ;; allocate, as long as they do not write to this set.
 (define (compiler-live-set-word-data [set : CompilerLiveI64Set]) : (MutPtr i64)
   (unsafe
-    (array-data (compiler-live-set-words set))))
+    (__tl_array-data (compiler-live-set-words set))))
 
 ;; Same word `compiler-live-set-word-at-bounded` returns for this index, read
 ;; through a pointer the caller hoisted with `compiler-live-set-word-data`.
@@ -244,10 +244,10 @@
       (let
         [src-data : (MutPtr i64)
           (unsafe
-            (array-data src))]
+            (__tl_array-data src))]
         [dst-data : (MutPtr i64)
           (unsafe
-            (array-data dst))]
+            (__tl_array-data dst))]
         (if (< words (compiler-live-set-bulk-copy-words))
           (let
             [at : i64 index]
@@ -334,7 +334,7 @@
           (=
             (bit-and
               (unsafe
-                (ptr-read (ptr-offset (array-data words) word-index)))
+                (ptr-read (ptr-offset (__tl_array-data words) word-index)))
               (compiler-live-set-bit-mask value))
             0))))))
 
@@ -395,7 +395,7 @@
       [old-bits : i64
         (if (< word-index word-count)
           (unsafe
-            (ptr-read (ptr-offset (array-data words) word-index)))
+            (ptr-read (ptr-offset (__tl_array-data words) word-index)))
           0)]
       (if (not (= (bit-and old-bits mask) 0))
         set
@@ -452,10 +452,10 @@
               (let
                 [left-bits : i64
                   (unsafe
-                    (ptr-read (ptr-offset (array-data left-words) probe)))]
+                    (ptr-read (ptr-offset (__tl_array-data left-words) probe)))]
                 [right-bits : i64
                   (unsafe
-                    (ptr-read (ptr-offset (array-data right-words) probe)))]
+                    (ptr-read (ptr-offset (__tl_array-data right-words) probe)))]
                 (begin
                   (if (not (= (bit-and right-bits (bit-xor left-bits -1)) 0))
                     (set! changed true)
@@ -474,13 +474,13 @@
                 [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
                 [left-data : (MutPtr i64)
                   (unsafe
-                    (array-data left-words))]
+                    (__tl_array-data left-words))]
                 [right-data : (MutPtr i64)
                   (unsafe
-                    (array-data right-words))]
+                    (__tl_array-data right-words))]
                 [out-data : (MutPtr i64)
                   (unsafe
-                    (ptr-cast (array-data out) : (MutPtr i64)))]
+                    (ptr-cast (__tl_array-data out) : (MutPtr i64)))]
                 [index : i64 0]
                 (begin
                   ;; The loop bounds prove every raw access. Split the common
@@ -533,10 +533,10 @@
         (let
           [left-bits : i64
             (unsafe
-              (ptr-read (ptr-offset (array-data left-words) probe)))]
+              (ptr-read (ptr-offset (__tl_array-data left-words) probe)))]
           [right-bits : i64
             (unsafe
-              (ptr-read (ptr-offset (array-data right-words) probe)))]
+              (ptr-read (ptr-offset (__tl_array-data right-words) probe)))]
           (begin
             (if (not (= (bit-and left-bits right-bits) 0))
               (set! changed true)
@@ -551,11 +551,12 @@
               (let
                 [left-bits : i64
                   (unsafe
-                    (ptr-read (ptr-offset (array-data left-words) index)))]
+                    (ptr-read (ptr-offset (__tl_array-data left-words) index)))]
                 [right-bits : i64
                   (if (< index right-count)
                     (unsafe
-                      (ptr-read (ptr-offset (array-data right-words) index)))
+                      (ptr-read
+                        (ptr-offset (__tl_array-data right-words) index)))
                     0)]
                 (begin
                   (set!
@@ -593,10 +594,10 @@
         left-count)]
     [left-data : (MutPtr i64)
       (unsafe
-        (array-data left-words))]
+        (__tl_array-data left-words))]
     [right-data : (MutPtr i64)
       (unsafe
-        (array-data right-words))]
+        (__tl_array-data right-words))]
     [index : i64 0]
     [same : bool true]
     (begin
@@ -625,7 +626,7 @@
   (let
     [data : (MutPtr i64)
       (unsafe
-        (array-data words))]
+        (__tl_array-data words))]
     [count : i64 (array-length words)]
     [index : i64 0]
     (while (< index count)
@@ -640,11 +641,11 @@
   (let
     [dst : (MutPtr i64)
       (unsafe
-        (array-data words))]
+        (__tl_array-data words))]
     [src-words : (__tl_dyn-array i64) (compiler-live-set-words set)]
     [src : (MutPtr i64)
       (unsafe
-        (array-data src-words))]
+        (__tl_array-data src-words))]
     [src-count : i64 (array-length src-words)]
     [count : i64 (array-length words)]
     [index : i64 0]
@@ -670,11 +671,11 @@
   (let
     [dst : (MutPtr i64)
       (unsafe
-        (array-data words))]
+        (__tl_array-data words))]
     [src-words : (__tl_dyn-array i64) (compiler-live-set-words set)]
     [src : (MutPtr i64)
       (unsafe
-        (array-data src-words))]
+        (__tl_array-data src-words))]
     [count : i64 (array-length src-words)]
     [index : i64 0]
     (begin
@@ -742,15 +743,15 @@
   (let
     [dst : (MutPtr i64)
       (unsafe
-        (array-data words))]
+        (__tl_array-data words))]
     [use-words : (__tl_dyn-array i64) (compiler-live-set-words uses)]
     [def-words : (__tl_dyn-array i64) (compiler-live-set-words defs)]
     [use-data : (MutPtr i64)
       (unsafe
-        (array-data use-words))]
+        (__tl_array-data use-words))]
     [def-data : (MutPtr i64)
       (unsafe
-        (array-data def-words))]
+        (__tl_array-data def-words))]
     [use-count : i64 (array-length use-words)]
     [def-count : i64 (array-length def-words)]
     [count : i64
@@ -791,11 +792,11 @@
     [set-count : i64 (compiler-live-set-word-count set)]
     [data : (MutPtr i64)
       (unsafe
-        (array-data words))]
+        (__tl_array-data words))]
     [set-words : (__tl_dyn-array i64) (compiler-live-set-words set)]
     [set-data : (MutPtr i64)
       (unsafe
-        (array-data set-words))]
+        (__tl_array-data set-words))]
     [index : i64 0]
     [same : bool (= active-count set-count)]
     (begin
@@ -822,10 +823,10 @@
         [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [src : (MutPtr i64)
           (unsafe
-            (array-data words))]
+            (__tl_array-data words))]
         [dst : (MutPtr i64)
           (unsafe
-            (array-data out))]
+            (__tl_array-data out))]
         [index : i64 0]
         (begin
           ;; `out` is the allocation two lines up, so it can never be the array
@@ -1761,7 +1762,7 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data compiler-live-instr-ids-buffer)
+        (__tl_array-data compiler-live-instr-ids-buffer)
         : (Ptr (__tl_dyn-array i64))))))
 
 (define (compiler-live-instr-ids) : (__tl_dyn-array i64)
@@ -1887,20 +1888,20 @@
   (let
     [use-data : (MutPtr i64)
       (unsafe
-        (array-data uses))]
+        (__tl_array-data uses))]
     [def-data : (MutPtr i64)
       (unsafe
-        (array-data defs))]
+        (__tl_array-data defs))]
     [instr-use-words : (__tl_dyn-array i64)
       (compiler-live-set-words instr-uses)]
     [instr-def-words : (__tl_dyn-array i64)
       (compiler-live-set-words instr-defs)]
     [instr-use-data : (MutPtr i64)
       (unsafe
-        (array-data instr-use-words))]
+        (__tl_array-data instr-use-words))]
     [instr-def-data : (MutPtr i64)
       (unsafe
-        (array-data instr-def-words))]
+        (__tl_array-data instr-def-words))]
     [instr-use-count : i64 (array-length instr-use-words)]
     [instr-def-count : i64 (array-length instr-def-words)]
     [count : i64 (compiler-live-set-max instr-use-count instr-def-count)]

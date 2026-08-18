@@ -348,7 +348,6 @@ contains|_tl_source_tool_build_source:
 contains|_tl_source_tool_run_source:
 contains|_tl_source_tool_run_command:
 contains|_tl_source_tool_augment_assembly_for_target:
-not-contains|.globl _tl_print_string
 contains|tl_process_output:
 contains|_tl_fs_mkdir_status:
 end
@@ -496,6 +495,7 @@ decision|src/compiler_intern_state.tl|nominal structural-session adapter over ex
 
 decision|src/compiler_builtin_ids.tl|reset-aware interned builtin/runtime id predicates (#2380/#2464): imports only src/compiler_intern.tl; used by src/compiler_lower.tl dispatch, src/compiler_typecheck_core.tl dispatch, backend runtime-plan id dispatch, and backend target-lowering cache resets
 
+decision|src/compiler_load.tl|session-owned source loader and transactional dependency frontend-surface consumer (#5527): exact identity admission hydrates catalog AST/facts/SPMD state in private arenas, publishes only an all-image composite, imports selected declarations with stable provenance, and restores the ordinary source route on any fragment failure
 case|selfhost_compiler_load|src/compiler_load.tl|assembly|skip|direct
 contains|_tl_compiler_load_file_with_paths_and_roots_cfg_with_pools:
 contains|_tl_compiler_load_file_with_paths_and_roots_expect_cfg_root_cache_current_with_pools:
@@ -570,6 +570,7 @@ contains|typecheck: return type mismatch
 contains|source-level type parameters
 end
 
+decision|src/compiler_typecheck_core.tl|frontend typecheck and macro-expansion core including dependency surface prefix reuse (#5527): locates the authenticated composite prefix by loader provenance, rebases published fact scalars to its consumer layout, and skips dependency macro/typecheck walks while preserving the ordinary cold path on mismatch
 case|selfhost_compiler_typecheck_core|src/compiler_typecheck_core.tl|assembly|skip|direct
 contains|_tl_typecheck_compiler_specialized_program_with_paths_cache_with_pools_and_prefix_cache_state_and_intern_state:
 contains|tc_inline_aggregate_layout_for_id:
@@ -730,13 +731,13 @@ decision|src/compiler_surface_identity.tl|package-agnostic relocatable identity 
 decision|src/compiler_surface_ast_codec_core.tl|portable frontend AST scalar/list/type codec primitives (#5519/#5522): serializes dense image-local pool references and relocatable identity references without arena handles or pointers
 decision|src/compiler_surface_ast_expr.tl|portable exhaustive AstExpr codec shard (#5519/#5522): main-less helper split from the frontend AST surface to keep selfhost translation units tractable
 decision|src/compiler_surface_ast.tl|package-agnostic parsed frontend surface codec and round-trip selftest (#5519/#5522): compacts reachable pools and serializes declarations, paths, module ownership, seen imports, types, expressions, strings, and metadata
-decision|src/compiler_surface_facts.tl|package-agnostic checked-prefix fact schema (#5519/#5522): relocates summary and per-declaration clone-root observations through image-local identities and installs no producer-generation ids or pointers
+decision|src/compiler_surface_facts.tl|package-agnostic checked-prefix fact schema (#5519/#5522/#5527): relocates summary and per-declaration clone-root observations through image-local identities, transactionally composes independently hydrated dependency fragments with rebased clone-call ranges, and installs no producer-generation ids or pointers
 decision|src/compiler_surface_hydrate.tl|package-agnostic tlci frontend surface lookup and hydration (#5519/#5522): validates section/schema identity, remaps compiler identities, and decodes portable AST state into caller-owned pools
 decision|src/compiler_prelude_surface_producer.tl|shared deterministic module-set helper for package and standalone prelude surface producers; the standalone cold-load/typecheck/encode implementation is tool-owned beside tools/embedded-stdlib-tlci/build-surface.tl (#6635)
 decision|src/compiler_package_surface_producer.tl|single-pass checked package frontend surface capture (#5526): main-less, enabled for surface producers, root compiler identity builds, and embedded-stdlib-tlci; imported by build_cli_core.tl and completed by compiler_lower.tl
 
 decision|src/compiler_comptime_diagnostics_core.tl|shared interpreted/native comptime fuel diagnostic prefix (#2656): main-less helper module imported by compiler_ctfe and tlci_loader so status-2 native failures retain interpreted message parity before appending the registered macro name
-decision|src/compiler_dependency_tlci.tl|dependency TLCI discovery, trust admission, mapping lifecycle, and defining-module catalog registry (#5482): main-less helper module imported by build_cli_core and check_cli_core; exercised by their selfhost cases and compiler dependency registry self-tests
+decision|src/compiler_dependency_tlci.tl|dependency TLCI discovery, trust admission, mapping lifecycle, defining-module catalog registry, stable SPMD metadata ownership, and frontend-surface verification telemetry (#5482/#5527): main-less helper module imported by build_cli_core and check_cli_core; exercised by their selfhost cases, compiler dependency registry self-tests, and package TLCI gates
 
 
 decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader

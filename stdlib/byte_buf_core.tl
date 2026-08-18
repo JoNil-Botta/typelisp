@@ -221,7 +221,7 @@
         [out : (__tl_dyn-array u8) (byte-buf-builder-to-array buf)]
         [dst : (MutPtr u8)
           (unsafe
-            (array-data out))]
+            (__tl_array-data out))]
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) n))))))
 

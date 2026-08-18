@@ -53,7 +53,7 @@
 (define (raw-addr-of [items : (__tl_dyn-array i64)]) : i64
   (cast
     (unsafe
-      (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
+      (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))))
     : i64))
 
 (define (read-i64-at [addr : i64]) : i64

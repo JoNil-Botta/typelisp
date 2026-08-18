@@ -287,10 +287,10 @@
         ;; data like the put path instead of paying a bounds check per probe.
         [key-data : (Ptr i64)
           (unsafe
-            (ptr-cast (array-data keys) : (Ptr i64)))]
+            (ptr-cast (__tl_array-data keys) : (Ptr i64)))]
         [value-data : (Ptr i64)
           (unsafe
-            (ptr-cast (array-data values) : (Ptr i64)))]
+            (ptr-cast (__tl_array-data values) : (Ptr i64)))]
         [encoded : i64 (+ key 1)]
         [slot : i64 (compiler-symbol-map-first-slot key capacity)]
         [mask : i64 (- capacity 1)]
@@ -321,10 +321,10 @@
     [values : (__tl_dyn-array i64) map.values]
     [key-data : (MutPtr i64)
       (unsafe
-        (ptr-cast (array-data keys) : (MutPtr i64)))]
+        (ptr-cast (__tl_array-data keys) : (MutPtr i64)))]
     [value-data : (MutPtr i64)
       (unsafe
-        (ptr-cast (array-data values) : (MutPtr i64)))]
+        (ptr-cast (__tl_array-data values) : (MutPtr i64)))]
     [capacity : i64 (array-length keys)]
     [mask : i64 (- capacity 1)]
     [encoded : i64 (+ key 1)]
@@ -3587,7 +3587,6 @@
         (arena.tl_arena_set index-arena))]
     [decl-index : ModuleDeclIndex
       (compiler-symbols-build-module-decl-index all-decls)]
-    [index-arena-head : i64 (arena.tl_arena_current)]
     [_restore-enclosing : unit
       (unsafe
         (arena.tl_arena_set enclosing-arena))]
@@ -3634,7 +3633,7 @@
           cur-registries))]
     (begin
       (unsafe
-        (arena.tl_arena_destroy index-arena-head))
+        (arena.tl_arena_destroy index-arena))
       result)))
 
 (define (build-compiler-registry-aliases-list
@@ -4416,7 +4415,7 @@
   "(import stdlib.test)
 (defstruct Point (x i64) (y i64))
 (defenum Maybe (None) (Some i64))
-(extern (io.print-string [arg0 : String]) : unit)
+(extern (io.emit-string [arg0 : String]) : unit)
 (define answer : i64 42)
 (define (main [argc : i64] [name : String]) : i64
   (let

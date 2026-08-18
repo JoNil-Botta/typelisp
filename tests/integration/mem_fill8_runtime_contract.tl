@@ -69,7 +69,7 @@
   (let
     [slots : (MutPtr u64)
       (unsafe
-        (ptr-cast (array-data items) : (MutPtr u64)))]
+        (ptr-cast (__tl_array-data items) : (MutPtr u64)))]
     (unsafe
       (runtime.mem-fill8
         (ptr-cast (ptr-offset slots start) : (MutPtr u8))

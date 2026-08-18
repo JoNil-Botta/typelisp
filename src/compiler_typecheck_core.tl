@@ -12,6 +12,7 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_diagnostic as cdiag)
 (import compiler_float as cfloat)
 (import compiler_ctfe as ctfe_support)
@@ -52,7 +53,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 ;; TcTypeEnv cache fields: ids map, values, unsafe flags, raw C fnptr flags,
 ;; default-shadow flags, scan-through, partial, rest head, below head. The flag
@@ -250,7 +251,11 @@
   ;; Address of this store's TcChainIndex cell, or 0 before the first explicit
   ;; top-env layer is built. Word offset 8; the eight fields above are one word
   ;; each, which the raw accessors below rely on.
-  (chain-state i64))
+  (chain-state i64)
+  ;; Explicit source-name/structural-intern session owned by this environment.
+  ;; Arena-phase marker handles resolve only through this capability; snapshots
+  ;; share the store, so the hot three-word TcTypeEnv ABI stays unchanged.
+  (structural-session-address i64))
 
 ;; Structural index over one store's explicit top-env layer forest. `map` sends
 ;; a binding key to the packed reference of the newest layer that binds it;
@@ -460,7 +465,9 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcTopEnvMembershipStateData))))
+              (ptr-cast
+                (__tl_array-data cell)
+                : (Ptr TcTopEnvMembershipStateData))))
           : i64)))))
 
 (define (tc-thread-name-kind-state-new) : TcThreadNameKindState
@@ -481,7 +488,9 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcThreadNameKindStateData))))
+              (ptr-cast
+                (__tl_array-data cell)
+                : (Ptr TcThreadNameKindStateData))))
           : i64)))))
 
 (define (tc-inlay-hint-state-new) : TcInlayHintState
@@ -502,7 +511,8 @@
       (TcInlayHintState
         (cast
           (unsafe
-            (ptr->int (ptr-cast (array-data cell) : (Ptr TcInlayHintStateData))))
+            (ptr->int
+              (ptr-cast (__tl_array-data cell) : (Ptr TcInlayHintStateData))))
           : i64)))))
 
 (define (tc-macro-call-site-state-new) : TcMacroCallSiteState
@@ -529,7 +539,7 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcMacroCallSiteStateData))))
+              (ptr-cast (__tl_array-data cell) : (Ptr TcMacroCallSiteStateData))))
           : i64)))))
 
 (define (tc-source-key-cache-state-new) : TcSourceKeyCacheState
@@ -556,7 +566,7 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcScratchArenaStateData))))
+              (ptr-cast (__tl_array-data cell) : (Ptr TcScratchArenaStateData))))
           : i64)))))
 
 (define (tc-unused-unsafe-state-new) : TcUnusedUnsafeState
@@ -580,7 +590,7 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcUnusedUnsafeStateData))))
+              (ptr-cast (__tl_array-data cell) : (Ptr TcUnusedUnsafeStateData))))
           : i64)))))
 
 (define (tc-job-state-new) : TcJobState
@@ -610,7 +620,7 @@
       (TcJobState
         (cast
           (unsafe
-            (ptr->int (ptr-cast (array-data cell) : (Ptr TcJobStateData))))
+            (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr TcJobStateData))))
           : i64)))))
 
 (define (tc-job-state-data [state : TcJobState]) : TcJobStateData
@@ -622,7 +632,7 @@
     (cast
       (unsafe
         (ptr->int
-          (array-data
+          (__tl_array-data
             (tc-job-state-field
               state
               macro-state-addresses
@@ -3909,7 +3919,7 @@
             (cast
               (ptr->int
                 (ptr-cast
-                  (array-data compiler-tc-walk-clock-scratch)
+                  (__tl_array-data compiler-tc-walk-clock-scratch)
                   : (Ptr u8)))
               : i64))]
         [status : i64
@@ -8777,42 +8787,9 @@
 (define tc-type-env-store-epoch : i64
   0)
 
-(define (tc-type-env-store-owner-root [handle : i64]) : i64
-  (if (= handle 0)
-    0
-    (let
-      [root : i64
-        (unsafe
-          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-      (if (= root 0)
-        handle
-        root))))
-
-(define (tc-type-env-store-owner-current-head [handle : i64]) : i64
-  (let
-    [root : i64 (tc-type-env-store-owner-root handle)]
-    (if (= root 0)
-      0
-      (let
-        [head : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
-        (if (= head 0)
-          root
-          head)))))
-
-(define (tc-type-env-store-restore-after-owner-alloc!
-  [previous-arena : i64]
-  [owner : i64]) : unit
-  (if (=
-    (tc-type-env-store-owner-root previous-arena)
-    (tc-type-env-store-owner-root owner))
-    unit
-    (unsafe
-      (arena.tl_arena_set (tc-type-env-store-owner-current-head previous-arena)))))
-
 (define (tc-type-env-store-new-with-topenv-state-address
-  [topenv-state-address : i64]) : TcTypeEnvStore
+  [topenv-state-address : i64]
+  [structural-session-address : i64]) : TcTypeEnvStore
   (TcTypeEnvStore
     (array.make-array TcTypeEnvBinding 1)
     0
@@ -8820,24 +8797,33 @@
     (array.make-array TcTypeEnvCache 1)
     0
     0
-    (tc-type-env-store-owner-root (arena.tl_arena_current))
+    (arena.tl_arena_current)
     topenv-state-address
-    0))
+    0
+    structural-session-address))
 
 (define (tc-type-env-store-handle-new-with-topenv-state-address
-  [topenv-state-address : i64]) : i64
+  [topenv-state-address : i64]
+  [structural-session-address : i64]) : i64
   (let
     [cell : (__tl_dyn-array TcTypeEnvStore) (array.make-array TcTypeEnvStore 1)]
     (begin
       (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
       (set!
         (array-ref cell 0)
-        (tc-type-env-store-new-with-topenv-state-address topenv-state-address))
+        (tc-type-env-store-new-with-topenv-state-address
+          topenv-state-address
+          structural-session-address))
       (unsafe
-        (cast (ptr->int (ptr-cast (array-data cell) : (Ptr u8))) : i64)))))
+        (cast (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr u8))) : i64)))))
 
 (define (tc-type-env-store-handle-new) : i64
-  (tc-type-env-store-handle-new-with-topenv-state-address 0))
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-capture-active-handle)]
+    (tc-type-env-store-handle-new-with-topenv-state-address
+      0
+      source-names.address)))
 
 (define (tc-type-env-store-read [handle : i64]) : TcTypeEnvStore
   (unsafe
@@ -8851,11 +8837,20 @@
   (TcTypeEnv (tc-type-env-store-handle-new) -1 0))
 
 (define (tc-type-env-new-with-job-state [state : TcJobState]) : TcTypeEnv
-  (TcTypeEnv
-    (tc-type-env-store-handle-new-with-topenv-state-address
-      (__tl-project-field (tc-job-state-topenv-membership state) address))
-    -1
-    0))
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (tc-macro-state-source-names (tc-job-state-macro-state state))]
+    (TcTypeEnv
+      (tc-type-env-store-handle-new-with-topenv-state-address
+        (__tl-project-field (tc-job-state-topenv-membership state) address)
+        source-names.address)
+      -1
+      0)))
+
+(define (tc-type-env-structural-session [env : TcTypeEnv]) : cis.InternStructuralSessionHandle
+  (cis.InternStructuralSessionHandle
+    (unsafe
+      (ptr-read (ptr-offset (int->ptr env.store : (Ptr i64)) 9)))))
 
 (define (tc-type-env-topenv-membership-state [env : TcTypeEnv]) : TcTopEnvMembershipState
   (TcTopEnvMembershipState
@@ -9006,7 +9001,7 @@
           (unsafe
             (cast
               (ptr->int
-                (ptr-cast (ptr-offset (array-data items) index) : (Ptr u8)))
+                (ptr-cast (ptr-offset (__tl_array-data items) index) : (Ptr u8)))
               : i64)))))))
 
 (define (tc-type-env-store-push-cache!
@@ -9025,7 +9020,9 @@
       (unsafe
         (cast
           (ptr->int
-            (ptr-cast (ptr-offset (array-data store.caches) index) : (Ptr u8)))
+            (ptr-cast
+              (ptr-offset (__tl_array-data store.caches) index)
+              : (Ptr u8)))
           : i64)))))
 
 ;; Cleanup-owner markers are only ever introduced by `with`-resource bindings, so
@@ -9182,7 +9179,7 @@
                 (unsafe
                   (ptr-read
                     (ptr-offset
-                      (ptr-cast (array-data unsafe-flags) : (Ptr i64))
+                      (ptr-cast (__tl_array-data unsafe-flags) : (Ptr i64))
                       index)))
                 1))]
           [(tc_i64_i64_map.LookupMissing)
@@ -10367,6 +10364,7 @@
 
 (define (tc-type-env-scoped-stack-find-lifetime-index-from
   [stack : TcTypeEnvScopedStack]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]
   [signature-marker-id : i64]
   [index : i64]) : i64
@@ -10375,6 +10373,7 @@
     (let
       [slot : TcTypeEnvScopedSlot (array-ref stack.slots index)]
       (if (tc-env-binding-matches-lifetime-id?
+        session
         slot.name-id
         slot.ty
         lifetime-id
@@ -10382,15 +10381,18 @@
         index
         (tc-type-env-scoped-stack-find-lifetime-index-from
           stack
+          session
           lifetime-id
           signature-marker-id
           (- index 1))))))
 
 (define (tc-type-env-scoped-stack-find-lifetime-index
   [stack : TcTypeEnvScopedStack]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]) : i64
   (tc-type-env-scoped-stack-find-lifetime-index-from
     stack
+    session
     lifetime-id
     (tc-signature-lifetime-marker-id)
     (- (tc-type-env-scoped-stack-len stack) 1)))
@@ -10988,6 +10990,10 @@
   -1)
 (define tc-type-env-scoped-cache-visible-generation : i64
   -1)
+(define tc-type-env-scoped-cache-visible-session-owner : i64
+  -1)
+(define tc-type-env-scoped-cache-visible-session-generation : i64
+  -1)
 (define tc-type-env-scoped-cache-visible-lifetime-id : i64
   -1)
 (define tc-type-env-scoped-cache-visible-result : bool
@@ -10997,6 +11003,10 @@
 (define tc-type-env-scoped-cache-outlives-binding-len : i64
   -1)
 (define tc-type-env-scoped-cache-outlives-binding-generation : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-binding-session-owner : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-binding-session-generation : i64
   -1)
 (define tc-type-env-scoped-cache-outlives-binding-lifetime-id : i64
   -1)
@@ -11009,6 +11019,10 @@
 (define tc-type-env-scoped-cache-outlives-lifetime-len : i64
   -1)
 (define tc-type-env-scoped-cache-outlives-lifetime-generation : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-lifetime-session-owner : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-lifetime-session-generation : i64
   -1)
 (define tc-type-env-scoped-cache-outlives-lifetime-value-id : i64
   -1)
@@ -11028,18 +11042,28 @@
   [lifetime-id : i64]) : bool
   (let
     [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
+    [session : cis.InternStructuralSessionHandle
+      (tc-type-env-structural-session carrier.env)]
+    [session-owner : i64 (cis.intern-structural-session-owner session)]
+    [session-generation : i64
+      (cis.intern-structural-session-current-reset-generation session)]
     [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
     [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
     (if (and
       tc-type-env-scoped-cache-visible-valid
       (= tc-type-env-scoped-cache-visible-len slot-count)
       (= tc-type-env-scoped-cache-visible-generation generation)
+      (= tc-type-env-scoped-cache-visible-session-owner session-owner)
+      (= tc-type-env-scoped-cache-visible-session-generation session-generation)
       (= tc-type-env-scoped-cache-visible-lifetime-id lifetime-id))
       tc-type-env-scoped-cache-visible-result
       (let
         [result : bool
           (if (>=
-            (tc-type-env-scoped-stack-find-lifetime-index stack lifetime-id)
+            (tc-type-env-scoped-stack-find-lifetime-index
+              stack
+              session
+              lifetime-id)
             0)
             true
             (tc-lifetime-visible-persistent-id?
@@ -11049,6 +11073,10 @@
           (set! tc-type-env-scoped-cache-visible-valid true)
           (set! tc-type-env-scoped-cache-visible-len slot-count)
           (set! tc-type-env-scoped-cache-visible-generation generation)
+          (set! tc-type-env-scoped-cache-visible-session-owner session-owner)
+          (set!
+            tc-type-env-scoped-cache-visible-session-generation
+            session-generation)
           (set! tc-type-env-scoped-cache-visible-lifetime-id lifetime-id)
           (set! tc-type-env-scoped-cache-visible-result result)
           result)))))
@@ -11059,18 +11087,30 @@
   [target-id : i64]) : bool
   (let
     [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
+    [session : cis.InternStructuralSessionHandle
+      (tc-type-env-structural-session carrier.env)]
+    [session-owner : i64 (cis.intern-structural-session-owner session)]
+    [session-generation : i64
+      (cis.intern-structural-session-current-reset-generation session)]
     [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
     [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
     (if (and
       tc-type-env-scoped-cache-outlives-binding-valid
       (= tc-type-env-scoped-cache-outlives-binding-len slot-count)
       (= tc-type-env-scoped-cache-outlives-binding-generation generation)
+      (= tc-type-env-scoped-cache-outlives-binding-session-owner session-owner)
+      (=
+        tc-type-env-scoped-cache-outlives-binding-session-generation
+        session-generation)
       (= tc-type-env-scoped-cache-outlives-binding-lifetime-id lifetime-id)
       (= tc-type-env-scoped-cache-outlives-binding-target-id target-id))
       tc-type-env-scoped-cache-outlives-binding-result
       (let
         [lifetime-index : i64
-          (tc-type-env-scoped-stack-find-lifetime-index stack lifetime-id)]
+          (tc-type-env-scoped-stack-find-lifetime-index
+            stack
+            session
+            lifetime-id)]
         [target-index : i64
           (tc-type-env-scoped-stack-find-id-index (& stack) target-id)]
         [result : bool
@@ -11091,6 +11131,12 @@
           (set! tc-type-env-scoped-cache-outlives-binding-len slot-count)
           (set! tc-type-env-scoped-cache-outlives-binding-generation generation)
           (set!
+            tc-type-env-scoped-cache-outlives-binding-session-owner
+            session-owner)
+          (set!
+            tc-type-env-scoped-cache-outlives-binding-session-generation
+            session-generation)
+          (set!
             tc-type-env-scoped-cache-outlives-binding-lifetime-id
             lifetime-id)
           (set! tc-type-env-scoped-cache-outlives-binding-target-id target-id)
@@ -11105,12 +11151,23 @@
     true
     (let
       [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
+      [session : cis.InternStructuralSessionHandle
+        (tc-type-env-structural-session carrier.env)]
+      [session-owner : i64 (cis.intern-structural-session-owner session)]
+      [session-generation : i64
+        (cis.intern-structural-session-current-reset-generation session)]
       [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
       [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
       (if (and
         tc-type-env-scoped-cache-outlives-lifetime-valid
         (= tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
         (= tc-type-env-scoped-cache-outlives-lifetime-generation generation)
+        (=
+          tc-type-env-scoped-cache-outlives-lifetime-session-owner
+          session-owner)
+        (=
+          tc-type-env-scoped-cache-outlives-lifetime-session-generation
+          session-generation)
         (=
           tc-type-env-scoped-cache-outlives-lifetime-value-id
           value-lifetime-id)
@@ -11122,10 +11179,12 @@
           [value-index : i64
             (tc-type-env-scoped-stack-find-lifetime-index
               stack
+              session
               value-lifetime-id)]
           [target-index : i64
             (tc-type-env-scoped-stack-find-lifetime-index
               stack
+              session
               target-lifetime-id)]
           [value-signature : bool
             (tc-type-env-scoped-stack-signature-lifetime-index?
@@ -11157,6 +11216,12 @@
             (set!
               tc-type-env-scoped-cache-outlives-lifetime-generation
               generation)
+            (set!
+              tc-type-env-scoped-cache-outlives-lifetime-session-owner
+              session-owner)
+            (set!
+              tc-type-env-scoped-cache-outlives-lifetime-session-generation
+              session-generation)
             (set!
               tc-type-env-scoped-cache-outlives-lifetime-value-id
               value-lifetime-id)
@@ -12225,7 +12290,7 @@
                   (TcChainIndex (tc_i64_i64_map.with-capacity 1024) 0 owner))
                 (unsafe
                   (cast
-                    (ptr->int (ptr-cast (array-data slots) : (Ptr u8)))
+                    (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
                     : i64)))))]
         (begin
           (tc-chain-state-set! store-handle cell)
@@ -13058,7 +13123,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroModuleEnvStateData))))
                 : i64)]
             (begin
@@ -13138,28 +13203,12 @@
     [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
     (if (= data.hygiene-cache-arena-root 0)
       unit
-      (let
-        [previous : i64 (arena.tl_arena_current)]
-        [head : i64 data.hygiene-cache-arena]
-        [root : i64 data.hygiene-cache-arena-root]
-        (if (= head root)
-          (begin
-            (unsafe
-              (begin
-                (arena.tl_arena_set head)
-                (arena.tl_region_reset data.hygiene-cache-arena-mark)))
-            (set! data.hygiene-cache-arena (arena.tl_arena_current))
-            (tc-macro-module-env-state-data-set! state data)
-            (unsafe
-              (arena.tl_arena_set previous)))
-          (begin
-            ;; A large cache outgrew the small root. Replacing the chain with one
-            ;; general root here avoids another overflow on every later reset.
-            (unsafe
-              (arena.tl_arena_destroy head))
-            (tc-hygiene-module-env-cache-arena-install!
-              state
-              (arena.tl_arena_make))))))))
+      ;; Growth appends segments behind the stable root, so the original mark
+      ;; can reset the complete chain without recapturing or replacing a head.
+      (in-arena
+        (arena.Arena data.hygiene-cache-arena-root)
+        (unsafe
+          (arena.tl_region_reset data.hygiene-cache-arena-mark))))))
 
 (define (tc-macro-module-env-cache-clear! [state : TcMacroState]) : unit
   (let
@@ -16107,7 +16156,9 @@
               (cast
                 (unsafe
                   (ptr->int
-                    (ptr-cast (array-data cell) : (Ptr TcMacroHelperStateData))))
+                    (ptr-cast
+                      (__tl_array-data cell)
+                      : (Ptr TcMacroHelperStateData))))
                 : i64)]
             (begin
               (tc-macro-state-slot-address-set!
@@ -16439,7 +16490,7 @@
                               (ptr-read
                                 (ptr-offset
                                   (ptr-cast
-                                    (array-data cache.unsafe-flags)
+                                    (__tl_array-data cache.unsafe-flags)
                                     : (Ptr i64))
                                   index)))
                             1))
@@ -17156,13 +17207,14 @@
       (array.make-array TcStringListStoreData 1)]
     [nodes : (__tl_dyn-array TcStringListNode)
       (array.make-array TcStringListNode 4)]
-    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcStringListNode first -1))
       (set! (array-ref cell 0) (TcStringListStoreData nodes 1 owner))
       (unsafe
         (cast
-          (ptr->int (ptr-cast (array-data cell) : (Ptr TcStringListStoreData)))
+          (ptr->int
+            (ptr-cast (__tl_array-data cell) : (Ptr TcStringListStoreData)))
           : i64)))))
 
 (define (tc-string-list-store-grow!
@@ -17314,13 +17366,14 @@
       (array.make-array TcNameIdListStoreData 1)]
     [nodes : (__tl_dyn-array TcNameIdListNode)
       (array.make-array TcNameIdListNode 4)]
-    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcNameIdListNode first -1))
       (set! (array-ref cell 0) (TcNameIdListStoreData nodes 1 owner))
       (unsafe
         (cast
-          (ptr->int (ptr-cast (array-data cell) : (Ptr TcNameIdListStoreData)))
+          (ptr->int
+            (ptr-cast (__tl_array-data cell) : (Ptr TcNameIdListStoreData)))
           : i64)))))
 
 (define (tc-name-id-list-store-grow!
@@ -17513,45 +17566,40 @@
     (ast.AstType.Var name-id)
     TcTypeEnvScopedMarkerKind.AtomicArenaOwner))
 
-(define (tc-arena-phase-structural-base) : i64
-  (let
-    [stride : i64 (ci.intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    (+ (+ stride stride2) (* stride2 stride))))
+(define (tc-arena-phase-record-id
+  [session : cis.InternStructuralSessionHandle]
+  [record : cis.InternArenaPhaseRecord]) : i64
+  (cis.intern-arena-phase-identity-raw
+    (cis.intern-structural-session-arena-phase-identity session record)))
 
-(define (tc-arena-phase-structural-id
-  [kind : i64]
-  [first-id : i64]
-  [second-id : i64]) : i64
-  (let
-    [stride : i64 (ci.intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    (+
-      (tc-arena-phase-structural-base)
-      (+ (* kind stride2) (+ (* first-id stride) second-id)))))
+(define (tc-arena-phase-region-id
+  [env : TcTypeEnv]
+  [owner-id : i64]
+  [token-id : i64]) : i64
+  (tc-arena-phase-record-id
+    (tc-type-env-structural-session env)
+    (cis.InternArenaPhaseRecord.Region owner-id token-id)))
 
-(define (tc-arena-phase-structural-kind [value : i64]) : i64
-  (let
-    [stride : i64 (ci.intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    (/ (- value (tc-arena-phase-structural-base)) stride2)))
+(define (tc-arena-phase-current-region-marker-id
+  [env : TcTypeEnv]
+  [owner-id : i64]) : i64
+  (tc-arena-phase-record-id
+    (tc-type-env-structural-session env)
+    (cis.InternArenaPhaseRecord.CurrentRegionMarker owner-id)))
 
-(define (tc-arena-phase-structural-first-id [value : i64]) : i64
-  (let
-    [stride : i64 (ci.intern-capacity)]
-    (% (/ (- value (tc-arena-phase-structural-base)) stride) stride)))
+(define (tc-arena-phase-token-owner-marker-id
+  [env : TcTypeEnv]
+  [token-id : i64]) : i64
+  (tc-arena-phase-record-id
+    (tc-type-env-structural-session env)
+    (cis.InternArenaPhaseRecord.TokenOwnerMarker token-id)))
 
-(define (tc-arena-phase-region-id [owner-id : i64] [token-id : i64]) : i64
-  (tc-arena-phase-structural-id 0 owner-id token-id))
-
-(define (tc-arena-phase-current-region-marker-id [owner-id : i64]) : i64
-  (tc-arena-phase-structural-id 1 owner-id 0))
-
-(define (tc-arena-phase-token-owner-marker-id [token-id : i64]) : i64
-  (tc-arena-phase-structural-id 2 token-id 0))
-
-(define (tc-arena-phase-token-region-marker-id [token-id : i64]) : i64
-  (tc-arena-phase-structural-id 3 token-id 0))
+(define (tc-arena-phase-token-region-marker-id
+  [env : TcTypeEnv]
+  [token-id : i64]) : i64
+  (tc-arena-phase-record-id
+    (tc-type-env-structural-session env)
+    (cis.InternArenaPhaseRecord.TokenRegionMarker token-id)))
 
 (define (tc-qualified-name-key-id [module-id : i64] [base-id : i64]) : i64
   (csym.compiler-symbol-module-key-id-by-id module-id base-id))
@@ -17562,31 +17610,46 @@
 (define (tc-generated-name-id [name : String]) : i64
   (tc-generated-module-name-id name))
 
-(define (tc-arena-region-owned-by-id? [owner-id : i64] [region-id : i64]) : bool
+(define (tc-arena-region-owned-by-id-for-session?
+  [session : cis.InternStructuralSessionHandle]
+  [owner-id : i64]
+  [region-id : i64]) : bool
   (if (or (< owner-id 0) (< region-id 0))
     false
     (or
       (= owner-id region-id)
-      (and
-        (>= region-id (tc-arena-phase-structural-base))
-        (= (tc-arena-phase-structural-kind region-id) 0)
-        (= (tc-arena-phase-structural-first-id region-id) owner-id)))))
+      (match (cis.intern-structural-session-arena-phase-record-for-raw
+        session
+        region-id)
+        [(cis.InternMaybeArenaPhaseRecord.Some
+            (cis.InternArenaPhaseRecord.Region record-owner-id _))
+          (= record-owner-id owner-id)]
+        [_ false]))))
+
+(define (tc-arena-region-owned-by-id?
+  [env : TcTypeEnv]
+  [owner-id : i64]
+  [region-id : i64]) : bool
+  (tc-arena-region-owned-by-id-for-session?
+    (tc-type-env-structural-session env)
+    owner-id
+    region-id))
 
 (define (tc-bind-arena-phase-token
   [env : TcTypeEnv]
   [token-id : i64]
   [owner-id : i64]) : TcTypeEnv
   (let
-    [region-id : i64 (tc-arena-phase-region-id owner-id token-id)]
+    [region-id : i64 (tc-arena-phase-region-id env owner-id token-id)]
     (tc-bind-id
       (tc-bind-id
         (tc-bind-id
           env
-          (tc-arena-phase-current-region-marker-id owner-id)
+          (tc-arena-phase-current-region-marker-id env owner-id)
           (ast.AstType.Var region-id))
-        (tc-arena-phase-token-owner-marker-id token-id)
+        (tc-arena-phase-token-owner-marker-id env token-id)
         (ast.AstType.Var owner-id))
-      (tc-arena-phase-token-region-marker-id token-id)
+      (tc-arena-phase-token-region-marker-id env token-id)
       (ast.AstType.Var region-id))))
 
 (define (tc-arena-phase-token-region-head
@@ -17638,7 +17701,8 @@
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (let
-      [region-marker-id : i64 (tc-arena-phase-token-region-marker-id token-id)]
+      [region-marker-id : i64
+        (tc-arena-phase-token-region-marker-id env token-id)]
       (match (tc-type-env-view env)
         [(TcTypeEnvView.Cache _ _ _ rest _)
           (tc-arena-phase-token-region-active-scan
@@ -17679,8 +17743,10 @@
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (let
-      [owner-marker-id : i64 (tc-arena-phase-token-owner-marker-id token-id)]
-      [region-marker-id : i64 (tc-arena-phase-token-region-marker-id token-id)]
+      [owner-marker-id : i64
+        (tc-arena-phase-token-owner-marker-id env token-id)]
+      [region-marker-id : i64
+        (tc-arena-phase-token-region-marker-id env token-id)]
       (match (tc-type-env-view env)
         [(TcTypeEnvView.Cache _ _ _ rest _)
           (tc-arena-phase-token-owner-active-scan
@@ -17700,13 +17766,14 @@
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (match (tc-env-marker-type
       env
-      (tc-arena-phase-current-region-marker-id owner))
+      (tc-arena-phase-current-region-marker-id env owner))
       [(ast.AstMaybeType.Some (ast.AstType.Var region)) region]
       [_ owner])))
 
 (define (tc-active-region-owned-by-arena-id? [env : TcTypeEnv] [owner : i64]) : bool
   (match (tc-active-region env)
-    [(TcMaybeNameId.Some region) (tc-arena-region-owned-by-id? owner region)]
+    [(TcMaybeNameId.Some region)
+      (tc-arena-region-owned-by-id? env owner region)]
     [(TcMaybeNameId.No) false]))
 
 (define (tc-cleanup-owner-marker-for?
@@ -17990,14 +18057,14 @@
       (array.make-array TcLifetimeSubstStoreData 1)]
     [nodes : (__tl_dyn-array TcLifetimeSubstNode)
       (array.make-array TcLifetimeSubstNode 4)]
-    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcLifetimeSubstNode from to -1))
       (set! (array-ref cell 0) (TcLifetimeSubstStoreData nodes 1 owner))
       (unsafe
         (cast
           (ptr->int
-            (ptr-cast (array-data cell) : (Ptr TcLifetimeSubstStoreData)))
+            (ptr-cast (__tl_array-data cell) : (Ptr TcLifetimeSubstStoreData)))
           : i64)))))
 
 (define (tc-lifetime-subst-store-grow!
@@ -18151,6 +18218,7 @@
     false))
 
 (define (tc-env-binding-matches-lifetime-id?
+  [session : cis.InternStructuralSessionHandle]
   [key : i64]
   [ty : ast.AstType]
   [lifetime-id : i64]
@@ -18173,7 +18241,7 @@
         (= key (tc-atomic-arena-owner-marker-id)))
       (match ty
         [(ast.AstType.Var owner)
-          (tc-arena-region-owned-by-id? owner lifetime-id)]
+          (tc-arena-region-owned-by-id-for-session? session owner lifetime-id)]
         [_ false])]
     [else false]))
 
@@ -18182,6 +18250,7 @@
 ;; lexical order when several binding forms spell the same lifetime.
 (define (tc-env-cache-lifetime-match-status
   [cache-ptr : (Ptr TcTypeEnvCache)]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]) : i64
   (let
     [ids : tc_i64_i64_map.Map
@@ -18195,11 +18264,13 @@
         (tc-env-cache-lifetime-marker-key lifetime-id)
         -1)]
     [owner-id : i64
-      (if (and
-        (>= lifetime-id (tc-arena-phase-structural-base))
-        (= (tc-arena-phase-structural-kind lifetime-id) 0))
-        (tc-arena-phase-structural-first-id lifetime-id)
-        -1)]
+      (match (cis.intern-structural-session-arena-phase-record-for-raw
+        session
+        lifetime-id)
+        [(cis.InternMaybeArenaPhaseRecord.Some
+            (cis.InternArenaPhaseRecord.Region owner _))
+          owner]
+        [_ -1])]
     [owner-marker-index : i64
       (if (>= owner-id 0)
         (tc_i64_i64_map.get-value-or
@@ -18288,6 +18359,7 @@
 
 (define (tc-lifetime-visible-scan-id?
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]
   [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
@@ -18297,21 +18369,40 @@
         (if partial
           (or
             (not
-              (= (tc-env-cache-lifetime-match-status cache-ptr lifetime-id) 0))
-            (tc-lifetime-visible-scan-id? below lifetime-id signature-marker-id))
-          (tc-lifetime-visible-scan-id? rest lifetime-id signature-marker-id))
+              (=
+                (tc-env-cache-lifetime-match-status
+                  cache-ptr
+                  session
+                  lifetime-id)
+                0))
+            (tc-lifetime-visible-scan-id?
+              below
+              session
+              lifetime-id
+              signature-marker-id))
+          (tc-lifetime-visible-scan-id?
+            rest
+            session
+            lifetime-id
+            signature-marker-id))
         false)]
     [(TcTypeEnvView.Bind key ty rest)
       (if (tc-env-binding-matches-lifetime-id?
+        session
         key
         ty
         lifetime-id
         signature-marker-id)
         true
-        (tc-lifetime-visible-scan-id? rest lifetime-id signature-marker-id))]))
+        (tc-lifetime-visible-scan-id?
+          rest
+          session
+          lifetime-id
+          signature-marker-id))]))
 
 (define (tc-lifetime-nearest-binding-signature-scan-id?
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]
   [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
@@ -18321,22 +18412,25 @@
         (if partial
           (let
             [status : i64
-              (tc-env-cache-lifetime-match-status cache-ptr lifetime-id)]
+              (tc-env-cache-lifetime-match-status cache-ptr session lifetime-id)]
             (cond
               [(= status 2) true]
               [(= status 1) false]
               [else
                 (tc-lifetime-nearest-binding-signature-scan-id?
                   below
+                  session
                   lifetime-id
                   signature-marker-id)]))
           (tc-lifetime-nearest-binding-signature-scan-id?
             rest
+            session
             lifetime-id
             signature-marker-id))
         false)]
     [(TcTypeEnvView.Bind key ty rest)
       (if (tc-env-binding-matches-lifetime-id?
+        session
         key
         ty
         lifetime-id
@@ -18348,6 +18442,7 @@
           signature-marker-id)
         (tc-lifetime-nearest-binding-signature-scan-id?
           rest
+          session
           lifetime-id
           signature-marker-id))]))
 
@@ -18357,10 +18452,16 @@
   (if (< lifetime-id 0)
     false
     (let
+      [session : cis.InternStructuralSessionHandle
+        (tc-type-env-structural-session env)]
       [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
       (or
         (>= (tc-ordinary-binding-rank-id-from env lifetime-id 0) 0)
-        (tc-lifetime-visible-scan-id? env lifetime-id signature-marker-id)))))
+        (tc-lifetime-visible-scan-id?
+          env
+          session
+          lifetime-id
+          signature-marker-id)))))
 
 (define (tc-lifetime-visible-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
   (if (tc-generated-arena-brand-id? lifetime-id)
@@ -18390,6 +18491,7 @@
 
 (define (tc-lifetime-outlives-binding-scan-inner-id
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]
   [target-id : i64]
   [seen-target : bool]
@@ -18401,6 +18503,7 @@
       (if scan-through
         (tc-lifetime-outlives-binding-scan-inner-id
           rest
+          session
           lifetime-id
           target-id
           seen-target
@@ -18415,6 +18518,7 @@
           lifetime-id
           signature-marker-id)
         (tc-env-binding-matches-lifetime-id?
+          session
           key
           ty
           lifetime-id
@@ -18422,6 +18526,7 @@
         seen-target
         (tc-lifetime-outlives-binding-scan-inner-id
           rest
+          session
           lifetime-id
           target-id
           (or seen-target (= key target-id))
@@ -18430,6 +18535,7 @@
 
 (define (tc-lifetime-outlives-binding-scan-id
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [lifetime-id : i64]
   [target-id : i64]
   [seen-target : bool]
@@ -18439,6 +18545,7 @@
     [(TcTypeEnvView.Cache _ _ _ rest _)
       (tc-lifetime-outlives-binding-scan-inner-id
         rest
+        session
         lifetime-id
         target-id
         seen-target
@@ -18447,6 +18554,7 @@
     [_
       (tc-lifetime-outlives-binding-scan-inner-id
         env
+        session
         lifetime-id
         target-id
         seen-target
@@ -18460,10 +18568,13 @@
   (if (or (< lifetime-id 0) (< target-id 0))
     false
     (let
+      [session : cis.InternStructuralSessionHandle
+        (tc-type-env-structural-session env)]
       [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
       [signature-lifetime : bool
         (tc-lifetime-nearest-binding-signature-scan-id?
           env
+          session
           lifetime-id
           signature-marker-id)]
       [lifetime-rank : i64 (tc-ordinary-binding-rank-id-from env lifetime-id 0)]
@@ -18471,6 +18582,7 @@
       (if signature-lifetime
         (tc-lifetime-outlives-binding-scan-id
           env
+          session
           lifetime-id
           target-id
           false
@@ -18480,6 +18592,7 @@
           (> lifetime-rank target-rank)
           (tc-lifetime-outlives-binding-scan-id
             env
+            session
             lifetime-id
             target-id
             false
@@ -18520,6 +18633,7 @@
 
 (define (tc-lifetime-outlives-lifetime-scan-inner-id
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]
   [seen-target : bool]
@@ -18534,6 +18648,7 @@
         (if scan-through
           (tc-lifetime-outlives-lifetime-scan-inner-id
             rest
+            session
             value-lifetime-id
             target-lifetime-id
             seen-target
@@ -18549,6 +18664,7 @@
             value-lifetime-id
             signature-marker-id)
           (tc-env-binding-matches-lifetime-id?
+            session
             key
             ty
             value-lifetime-id
@@ -18556,6 +18672,7 @@
           seen-target
           (tc-lifetime-outlives-lifetime-scan-inner-id
             rest
+            session
             value-lifetime-id
             target-lifetime-id
             (or
@@ -18567,6 +18684,7 @@
                   target-lifetime-id
                   signature-marker-id)
                 (tc-env-binding-matches-lifetime-id?
+                  session
                   key
                   ty
                   target-lifetime-id
@@ -18577,6 +18695,7 @@
 
 (define (tc-lifetime-outlives-lifetime-scan-id
   [env : TcTypeEnv]
+  [session : cis.InternStructuralSessionHandle]
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]
   [seen-target : bool]
@@ -18587,6 +18706,7 @@
     [(TcTypeEnvView.Cache _ _ _ rest _)
       (tc-lifetime-outlives-lifetime-scan-inner-id
         rest
+        session
         value-lifetime-id
         target-lifetime-id
         seen-target
@@ -18596,6 +18716,7 @@
     [_
       (tc-lifetime-outlives-lifetime-scan-inner-id
         env
+        session
         value-lifetime-id
         target-lifetime-id
         seen-target
@@ -18612,15 +18733,19 @@
     (if (= value-lifetime-id target-lifetime-id)
       true
       (let
+        [session : cis.InternStructuralSessionHandle
+          (tc-type-env-structural-session env)]
         [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
         [value-signature : bool
           (tc-lifetime-nearest-binding-signature-scan-id?
             env
+            session
             value-lifetime-id
             signature-marker-id)]
         [target-signature : bool
           (tc-lifetime-nearest-binding-signature-scan-id?
             env
+            session
             target-lifetime-id
             signature-marker-id)]
         [value-rank : i64
@@ -18632,6 +18757,7 @@
           [(or value-signature target-signature)
             (tc-lifetime-outlives-lifetime-scan-id
               env
+              session
               value-lifetime-id
               target-lifetime-id
               false
@@ -18643,6 +18769,7 @@
           [else
             (tc-lifetime-outlives-lifetime-scan-id
               env
+              session
               value-lifetime-id
               target-lifetime-id
               false
@@ -19773,6 +19900,7 @@
   (tc-type-collect-regions-into ty TcNameIdList.Nil))
 
 (define (tc-region-list-contains-arena-owner?
+  [env : TcTypeEnv]
   [regions : TcNameIdList]
   [owner : i64]) : bool
   (let
@@ -19781,14 +19909,20 @@
     (begin
       (while (and (not found) (not (tc-name-id-list-empty? cursor)))
         (begin
-          (if (tc-arena-region-owned-by-id? owner (tc-name-id-list-head cursor))
+          (if (tc-arena-region-owned-by-id?
+            env
+            owner
+            (tc-name-id-list-head cursor))
             (set! found true)
             unit)
           (set! cursor (tc-name-id-list-rest cursor))))
       found)))
 
-(define (tc-type-contains-arena-owner-region? [ty : ast.AstType] [owner : i64]) : bool
-  (tc-region-list-contains-arena-owner? (tc-type-collect-regions ty) owner))
+(define (tc-type-contains-arena-owner-region?
+  [env : TcTypeEnv]
+  [ty : ast.AstType]
+  [owner : i64]) : bool
+  (tc-region-list-contains-arena-owner? env (tc-type-collect-regions ty) owner))
 
 (define (tc-region-list-all-atomic-arena-owners?
   [env : TcTypeEnv]
@@ -21753,12 +21887,9 @@
         (set! tc-module-decl-index-decl-offset decl-offset)
         (set! tc-module-decl-index-generation (ci.intern-generation))
         (set! tc-module-decl-index-maybe-stale false)
-        ;; The arena head advances as it grows; re-capture it so the next
-        ;; rebuild destroys the whole chain, then restore the caller's arena.
-        ;; The previous rebuild's arena (kept alive across maybe-stale
-        ;; revalidation) is destroyed only now that every index global points
-        ;; into the fresh one.
-        (set! tc-module-decl-index-arena (arena.tl_arena_current))
+        ;; The stable arena root names the complete grown chain. The previous
+        ;; rebuild (kept alive across maybe-stale revalidation) is destroyed
+        ;; only now that every index global points into the fresh one.
         (unsafe
           (arena.tl_arena_set prev-arena))
         (if (= old-arena 0)
@@ -22307,15 +22438,14 @@
             [cell : (__tl_dyn-array TcLazyImportStateData)
               (array.make-array TcLazyImportStateData 1)]
             [_init : unit
-              (set!
-                (array-ref cell 0)
-                (tc-lazy-import-state-data-new
-                  (tc-type-env-store-owner-root owner)))]
+              (set! (array-ref cell 0) (tc-lazy-import-state-data-new owner))]
             [next : i64
               (cast
                 (unsafe
                   (ptr->int
-                    (ptr-cast (array-data cell) : (Ptr TcLazyImportStateData))))
+                    (ptr-cast
+                      (__tl_array-data cell)
+                      : (Ptr TcLazyImportStateData))))
                 : i64)]
             (begin
               (tc-macro-state-slot-address-set!
@@ -29553,6 +29683,9 @@
         (offset-of (type TcTypeEnvStore) topenv-membership-state-address))
       56)
     (= (comptime (offset-of (type TcTypeEnvStore) chain-state)) 64)
+    (=
+      (comptime (offset-of (type TcTypeEnvStore) structural-session-address))
+      72)
     ;; The structural top-env index reads these four through raw word offsets,
     ;; so they must stay first and stay one word wide.
     (= (comptime (offset-of (type TcTypeEnvCache) chain-depth)) 0)
@@ -29602,10 +29735,7 @@
           [(ResultTcType.Ok (ast.AstType.String)) true]
           [_ false]))
       (let
-        [scratch-restored? : bool
-          (=
-            (tc-type-env-store-owner-root (arena.tl_arena_current))
-            (tc-type-env-store-owner-root scratch))]
+        [scratch-restored? : bool (= (arena.tl_arena_current) scratch)]
         (begin
           (unsafe
             (begin
@@ -29975,17 +30105,67 @@
 ;; or the markers disappear (with-arena escape checking was silently disabled
 ;; past 32 local binds). Scans must still terminate at the explicit
 ;; non-scan-through base cache.
+(define (tc-arena-phase-nested-structural-record-smoke?) : bool
+  (let
+    [owner-a : i64 (ci.intern "arena-phase-owner-a")]
+    [owner-b : i64 (ci.intern "arena-phase-owner-b")]
+    [token-a : i64 (ci.intern "arena-phase-token-a")]
+    [token-b : i64 (ci.intern "arena-phase-token-b")]
+    [base : TcTypeEnv (tc-empty-env)]
+    [outer-markers : TcTypeEnv (tc-bind-arena-phase-token base token-a owner-a)]
+    [outer : TcTypeEnv (tc-bind-id outer-markers token-a (ast.AstType.I64))]
+    [outer-region : i64 (tc-arena-phase-region-id base owner-a token-a)]
+    ;; Shadow the same phase token under a different owner, then nest a second
+    ;; token under that owner. Persistent snapshots model the rewind boundary:
+    ;; querying `outer` after constructing `inner` must recover outer records.
+    [shadow-markers : TcTypeEnv
+      (tc-bind-arena-phase-token outer token-a owner-b)]
+    [shadow : TcTypeEnv (tc-bind-id shadow-markers token-a (ast.AstType.I64))]
+    [shadow-region : i64 (tc-arena-phase-region-id base owner-b token-a)]
+    [inner-markers : TcTypeEnv
+      (tc-bind-arena-phase-token shadow token-b owner-b)]
+    [inner : TcTypeEnv (tc-bind-id inner-markers token-b (ast.AstType.I64))]
+    [inner-region : i64 (tc-arena-phase-region-id base owner-b token-b)]
+    [deep : TcTypeEnv
+      (tc-type-env-bind-many inner (+ (* (tc-local-cache-threshold) 2) 8))]
+    [current-marker : i64
+      (tc-arena-phase-current-region-marker-id base owner-b)]
+    [owner-marker : i64 (tc-arena-phase-token-owner-marker-id base token-b)]
+    [region-marker : i64 (tc-arena-phase-token-region-marker-id base token-b)]
+    (and
+      (not (= inner-region shadow-region))
+      (not (= inner-region current-marker))
+      (not (= current-marker owner-marker))
+      (not (= owner-marker region-marker))
+      (tc-arena-region-owned-by-id? deep owner-b inner-region)
+      (not (tc-arena-region-owned-by-id? deep owner-a inner-region))
+      (= (tc-current-arena-owner-region outer owner-a) outer-region)
+      (= (tc-current-arena-owner-region shadow owner-b) shadow-region)
+      (= (tc-current-arena-owner-region deep owner-b) inner-region)
+      (match (tc-arena-phase-token-owner-active deep token-a)
+        [(TcMaybeNameId.Some owner) (= owner owner-b)]
+        [_ false])
+      (match (tc-arena-phase-token-region-active deep token-a)
+        [(TcMaybeNameId.Some region) (= region shadow-region)]
+        [_ false])
+      (match (tc-arena-phase-token-owner-active deep token-b)
+        [(TcMaybeNameId.Some owner) (= owner owner-b)]
+        [_ false])
+      (match (tc-arena-phase-token-region-active deep token-b)
+        [(TcMaybeNameId.Some region) (= region inner-region)]
+        [_ false]))))
+
 (define (tc-type-env-local-cache-deep-scan-smoke?) : bool
   (let
     [global-id : i64 (ci.intern "global")]
     [arena-id : i64 (ci.intern "arena")]
     [atomic-arena-id : i64 (ci.intern "atomic-arena")]
     [phase-id : i64 (ci.intern "phase")]
-    [phase-region-id : i64 (tc-arena-phase-region-id arena-id phase-id)]
     [resource-id : i64 (ci.intern "resource")]
     [base : TcTypeEnv
       (tc-env-with-cache
         (tc-bind-id (tc-empty-env) global-id (ast.AstType.String)))]
+    [phase-region-id : i64 (tc-arena-phase-region-id base arena-id phase-id)]
     [marked : TcTypeEnv
       (tc-bind-id
         (tc-bind-cleanup-owner
@@ -31227,6 +31407,7 @@
     (tc-type-env-local-cache-partial-layer-smoke?)
     (tc-type-env-local-cache-default-shadow-partial-miss-smoke?)
     (tc-type-env-local-cache-depth-cap-smoke?)
+    (tc-arena-phase-nested-structural-record-smoke?)
     (tc-type-env-local-cache-deep-scan-smoke?)
     (tc-type-env-local-cache-c-abi-fnptr-smoke?)
     (tc-type-env-local-cache-lambda-capture-smoke?)
@@ -35765,22 +35946,15 @@
             [(TcMaybeNameId.Some target-id) target-id]
             [(TcMaybeNameId.No) -1])]))))
 
-;; These are the compiler-recognized unqualified compatibility names whose
-;; definitions deliberately live in stdlib modules. Keep this catalog beside
-;; the typecheck suggestion policy so a missing import can be diagnosed without
-;; loading or parsing unrelated stdlib modules on an error path.
+;; These are compiler-recognized unqualified public names whose definitions
+;; live in stdlib modules. Keep this catalog beside the typecheck suggestion
+;; policy so a missing import can be diagnosed without loading or parsing
+;; unrelated stdlib modules on an error path.
 (define (tc-unbound-stdlib-provider [name : String]) : String
   (cond
     [(or
-        (string.eq name "print")
-        (string.eq name "print-bool")
-        (string.eq name "print-char")
         (string.eq name "print-error")
-        (string.eq name "print-float")
         (string.eq name "print-format")
-        (string.eq name "print-newline")
-        (string.eq name "print-str")
-        (string.eq name "print-string")
         (string.eq name "println")
         (string.eq name "panic")
         (string.eq name "error")
@@ -62574,7 +62748,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroAbstractStateData))))
                 : i64)]
             (begin
@@ -62767,7 +62941,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroProofReuseStateData))))
                 : i64)]
             (begin
@@ -62951,7 +63125,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroIdentityStateData))))
                 : i64)]
             (begin
@@ -67582,7 +67756,7 @@
   (let
     [nodes : (__tl_dyn-array TcMovedPathFactNode)
       (array.make-array TcMovedPathFactNode 4)]
-    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcMovedPathFactNode first -1))
       (box (TcMovedPathFactStoreData nodes 1 owner)))))
@@ -67656,7 +67830,7 @@
   [data : (& data TcMovedPathFactStoreData)]
   [index : i64]) : TcMovedPathFactNode
   (unsafe
-    (ptr-read (ptr-offset (array-data data.nodes) index))))
+    (ptr-read (ptr-offset (__tl_array-data data.nodes) index))))
 
 (define (tc-moved-path-facts-empty? [facts : TcMovedPathFacts]) : bool
   (match facts
@@ -67741,7 +67915,7 @@
       (unsafe
         (cast
           (ptr->int
-            (ptr-cast (array-data cell) : (Ptr TcParamStorageOriginNode)))
+            (ptr-cast (__tl_array-data cell) : (Ptr TcParamStorageOriginNode)))
           : i64)))))
 
 (define (tc-param-storage-origin-lookup [head : i64] [name-id : i64]) : TcMaybeNameId
@@ -68008,7 +68182,7 @@
   (let
     [cell : (__tl_dyn-array TcMovePathSegmentStoreData)
       (array.make-array TcMovePathSegmentStoreData 1)]
-    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    [owner : i64 (arena.tl_arena_current)]
     (begin
       (set!
         (array-ref cell 0)
@@ -68019,7 +68193,7 @@
       (unsafe
         (cast
           (ptr->int
-            (ptr-cast (array-data cell) : (Ptr TcMovePathSegmentStoreData)))
+            (ptr-cast (__tl_array-data cell) : (Ptr TcMovePathSegmentStoreData)))
           : i64)))))
 
 (define (tc-move-path-segment-store-grow!
@@ -70783,7 +70957,7 @@
               (tc-name-id-list-add seen key)
               remaining
               origin)]
-          [(tc-type-contains-arena-owner-region? ty owner)
+          [(tc-type-contains-arena-owner-region? env ty owner)
             (match (tc-move-invalidate-local
               expr-bases
               locals
@@ -70937,7 +71111,7 @@
               (tc-name-id-list-add seen key)
               remaining)]
           [(and
-              (tc-type-contains-arena-owner-region? ty owner)
+              (tc-type-contains-arena-owner-region? env ty owner)
               (tc-thread-safe-user-type? ctx ty)
               (not (tc-moved-contains? moved key)))
             (TcMoveResult.Err
@@ -78812,7 +78986,7 @@
               (tc-name-id-list-add seen key)
               remaining
               primary)]
-          [(tc-type-contains-arena-owner-region? ty owner)
+          [(tc-type-contains-arena-owner-region? env ty owner)
             (match (tc-borrow-check-assign-conflict
               expr-bases
               borrowed
@@ -84941,7 +85115,9 @@
               (cast
                 (unsafe
                   (ptr->int
-                    (ptr-cast (array-data cell) : (Ptr TcMacroWalkStateData))))
+                    (ptr-cast
+                      (__tl_array-data cell)
+                      : (Ptr TcMacroWalkStateData))))
                 : i64)]
             (begin
               (tc-macro-state-slot-address-set!
@@ -85184,7 +85360,7 @@
                   (unsafe
                     (ptr->int
                       (ptr-cast
-                        (array-data cell)
+                        (__tl_array-data cell)
                         : (Ptr ci.InternSourceNameSession))))
                   : i64))]
             (tc-macro-state-slot-address-set! state 13 next-address))))
@@ -85647,7 +85823,7 @@
           (if (=
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena)
             0)
-            (tc-type-env-store-owner-root previous-arena)
+            previous-arena
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))]
         (in-arena
           (arena.Arena owner-arena)
@@ -85709,7 +85885,8 @@
     [cell : (__tl_dyn-array csym.CompilerRegistries)
       (tc-macro-walk-field state macro-live-registries-cell)]
     (unsafe
-      (ptr-read (ptr-cast (array-data cell) : (Ptr csym.CompilerRegistries))))))
+      (ptr-read
+        (ptr-cast (__tl_array-data cell) : (Ptr csym.CompilerRegistries))))))
 
 ;; Whole-program symbol/registry rebuilds replace the previous tables, but the
 ;; ordinary compile arena retains every obsolete generation until process exit.
@@ -85902,7 +86079,6 @@
       (tc-macro-walk-set! state macro-live-registries-fallback true)]
     [built : csym.ResultCompilerSymbols
       (macro-live-symbols-build-fresh-current state program paths)]
-    [next-head : i64 (arena.tl_arena_current)]
     (begin
       (unsafe
         (arena.tl_arena_set enclosing))
@@ -85914,7 +86090,7 @@
             [retired : i64
               (tc-macro-walk-field state macro-live-symbols-retired-arena)]
             (begin
-              (tc-macro-walk-set! state macro-live-symbols-arena next-head)
+              (tc-macro-walk-set! state macro-live-symbols-arena next-arena)
               (tc-macro-walk-set!
                 state
                 macro-live-symbols-retired-arena
@@ -85931,7 +86107,7 @@
             [stable-message : String (string.copy (& message))]
             (begin
               (unsafe
-                (arena.tl_arena_destroy next-head))
+                (arena.tl_arena_destroy next-arena))
               (csym.ResultCompilerSymbols.Err stable-message)))]))))
 
 (define (macro-live-symbols-build-or-reuse!
@@ -86828,8 +87004,8 @@
       (not
         (unsafe
           (=
-            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
-            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (__tl_array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
         (begin
@@ -87073,8 +87249,8 @@
       (not
         (unsafe
           (=
-            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
-            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (__tl_array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
         (begin
@@ -87117,13 +87293,17 @@
   test
   (define (macro-decl-list-slots-address [items : ast.AstDeclList]) : i64
     (unsafe
-      (cast (ptr->int (ptr-cast (array-data items.slots) : (Ptr u8))) : i64))))
+      (cast
+        (ptr->int (ptr-cast (__tl_array-data items.slots) : (Ptr u8)))
+        : i64))))
 
 (cfg
   test
   (define (macro-decl-path-list-slots-address [items : ast.AstDeclPathList]) : i64
     (unsafe
-      (cast (ptr->int (ptr-cast (array-data items.slots) : (Ptr u8))) : i64))))
+      (cast
+        (ptr->int (ptr-cast (__tl_array-data items.slots) : (Ptr u8)))
+        : i64))))
 
 (cfg
   test
@@ -87411,7 +87591,9 @@
       (cast
         (unsafe
           (ptr->int
-            (ptr-cast (array-data cell) : (Ptr MacroProgramSegmentNodeData))))
+            (ptr-cast
+              (__tl_array-data cell)
+              : (Ptr MacroProgramSegmentNodeData))))
         : i64))))
 
 (define (macro-segmented-program-view-new-current
@@ -87439,7 +87621,9 @@
       (cast
         (unsafe
           (ptr->int
-            (ptr-cast (array-data cell) : (Ptr MacroSegmentedProgramViewData))))
+            (ptr-cast
+              (__tl_array-data cell)
+              : (Ptr MacroSegmentedProgramViewData))))
         : i64))))
 
 (define (macro-segmented-program-begin!
@@ -89707,7 +89891,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroGeneratedModuleStateData))))
                 : i64)]
             (begin
@@ -90013,7 +90197,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroGeneratedDeclsStateData))))
                 : i64)]
             (begin
@@ -90177,10 +90361,9 @@
 ;; maps. Sharing the maps with the survivor's copy-out is what keeps a node that
 ;; appears in both from being persisted (and re-allocated) twice.
 ;;
-;; Sequencing mirrors `macro-decl-generation-copy-out`: resume from the head the
-;; pool recorded, allocate the program shell there, publish the new head, and
-;; only then call the copy -- which reads that head, works from it, and restores
-;; the caller's arena itself.
+;; Sequencing mirrors `macro-decl-generation-copy-out`: resume from the pool's
+;; stable root, allocate the program shell there, and then call the copy, which
+;; restores the caller's arena itself.
 (define (macro-decl-generation-persist-decls
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
@@ -90193,10 +90376,6 @@
       (unsafe
         (arena.tl_arena_set (ast.ast-node-pool-context-base-arena pools)))]
     [program : ast.AstProgram (ast.ast-program decls)]
-    [_sync : unit
-      (ast.ast-node-pool-context-sync-base-arena!
-        pools
-        (arena.tl_arena_current))]
     (match (ast.ast-program-copy-append-above-with-maps
       pools
       pools
@@ -90277,10 +90456,6 @@
                             owned-path
                             owned-summary
                             closure))]
-                      [_sync : unit
-                        (ast.ast-node-pool-context-sync-base-arena!
-                          pools
-                          (arena.tl_arena_current))]
                       unit)]
                   [(MacroGeneratedModuleCatalogEntry.Empty) unit])
                 (set! done true))
@@ -92719,7 +92894,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroSurfaceCallStateData))))
                 : i64)]
             (begin
@@ -93543,23 +93718,6 @@
       unit)
     (tc-macro-walk-field state macro-hygiene-env-storage-arena)))
 
-(define (macro-hygiene-env-storage-restore!
-  [state : TcMacroState]
-  [previous : i64]
-  [storage : i64]) : unit
-  (let
-    [head : i64 (arena.tl_arena_current)]
-    (begin
-      ;; Large array growth can advance the arena to a new segment. Retain that
-      ;; newest head, and keep it active when the caller was already allocating
-      ;; in this owner, rather than restoring a stale pre-growth handle.
-      (tc-macro-walk-set! state macro-hygiene-env-storage-arena head)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous storage)
-            head
-            previous))))))
-
 (define (macro-hygiene-env-grow-copy!
   [dst-kinds : (__tl_dyn-array i64)]
   [dst-keys : (__tl_dyn-array i64)]
@@ -93600,15 +93758,11 @@
           (if (< old-capacity 1)
             64
             (* old-capacity 2))]
-        [previous-arena : i64 (arena.tl_arena_current)]
         [storage : i64 (macro-hygiene-env-storage-handle state)]
-        (begin
-          ;; Snapshots can cross every scratch rewind involved in an expansion.
-          ;; This path intentionally retains its explicit restoration helper:
-          ;; when growth advances a nested caller's physical head, restoring the
-          ;; pre-growth handle causes severe selfhost retention on Windows.
-          (unsafe
-            (arena.tl_arena_set storage))
+        ;; Snapshots can cross every scratch rewind involved in an expansion.
+        ;; The stable storage root remains valid across physical chain growth.
+        (in-arena
+          (arena.Arena storage)
           (let
             [next-kinds : (__tl_dyn-array i64)
               (array.make-array i64 next-capacity)]
@@ -93633,8 +93787,7 @@
               (tc-macro-walk-set! state macro-hygiene-env-kinds next-kinds)
               (tc-macro-walk-set! state macro-hygiene-env-keys next-keys)
               (tc-macro-walk-set! state macro-hygiene-env-values next-values)
-              (tc-macro-walk-set! state macro-hygiene-env-parents next-parents)
-              (macro-hygiene-env-storage-restore! state previous-arena storage))))))))
+              (tc-macro-walk-set! state macro-hygiene-env-parents next-parents))))))))
 
 (define (macro-hygiene-env-push
   [kind : i64]
@@ -94281,7 +94434,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroHygieneProducedStateData))))
                 : i64)]
             (begin
@@ -96938,7 +97091,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroImportIndexStateData))))
                 : i64)]
             (begin
@@ -97695,7 +97848,7 @@
 (define (macro-decl-list-slots-data-addr [decls : ast.AstDeclList]) : i64
   (cast
     (unsafe
-      (ptr->int (ptr-cast (array-data decls.slots) : (Ptr u8))))
+      (ptr->int (ptr-cast (__tl_array-data decls.slots) : (Ptr u8))))
     : i64))
 
 ;; The mapping is program-derived, so the cache must not survive into the next
@@ -99648,7 +99801,7 @@
                 (unsafe
                   (ptr->int
                     (ptr-cast
-                      (array-data cell)
+                      (__tl_array-data cell)
                       : (Ptr TcMacroResultIdentityStateData))))
                 : i64)]
             (begin
@@ -107095,7 +107248,7 @@
 ;; Move one expansion result out of its generation and into the committed pool.
 ;; Everything the survivor still owns in the generation is rebuilt in the pool's
 ;; base arena; every node id below the shared bases is left alone. Leaves the
-;; base arena's newest head synced into `pools` and current.
+;; pool's stable base root current for the caller.
 ;;
 ;; PERSIST IN PLACE, not copy-append: the expression rows this expansion created
 ;; are rewritten where they already are, so the pool does not grow and the
@@ -107134,10 +107287,6 @@
                   (ast.ast-node-pool-context-base-arena pools)))]
             [paths : ast.AstDeclPathList
               (macro-decl-generation-copy-paths expanded-paths)]
-            [_sync : unit
-              (ast.ast-node-pool-context-sync-base-arena!
-                pools
-                (arena.tl_arena_current))]
             (match copied
               [(ast.AstProgram.Program decls-box)
                 (ResultMacroDeclExpansion.Ok (__tl-box-place decls-box) paths)]))])]
@@ -107149,10 +107298,6 @@
         [owned : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-copy (__tl-box-place diag))]
         [boxed : (Box cdiag.CompilerDiagnostic) (box owned)]
-        [_sync : unit
-          (ast.ast-node-pool-context-sync-base-arena!
-            pools
-            (arena.tl_arena_current))]
         (ResultMacroDeclExpansion.Err boxed))]))
 
 ;; R3-P1: run one firing declaration's expansion inside its own arena generation
@@ -107174,11 +107319,9 @@
 ;; `macro-hygiene-produced-floor`, which is itself taken during the expansion,
 ;; so it can never mutate a shared node into the generation.
 ;;
-;; The pool's base arena IS the enclosing arena here, and a type push can grow
-;; it while the generation is current, so the enclosing handle is restored
-;; through `node-pool-restore-arena-after-base-alloc!` rather than written back
-;; raw -- restoring a filled segment head would start a sibling chain that the
-;; owner's destroy-from-head never reaches.
+;; The pool's base arena IS the enclosing arena here. Arena handles are stable
+;; roots, so a type push can grow its physical chain without changing the
+;; enclosing handle restored after the generation.
 (define (macro-expand-decl-with-path-generational
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -107253,7 +107396,6 @@
     (let
       [macro-state : TcMacroState (tc-context-macro-state ctx)]
       [enclosing : i64 (arena.tl_arena_current)]
-      [entry-base-arena : i64 (ast.ast-node-pool-base-arena-handle)]
       [entry-expr-len : i64 (ast.ast-node-pool-len)]
       [_profile-entry-type-len : i64 (ast.ty-node-pool-len)]
       [_profile-live-before-enter : i64
@@ -107349,20 +107491,6 @@
               _profile-generation-mark)
             0)
           0)]
-      ;; The generation is reused by the rest of its batch, so its newest head
-      ;; has to be published before the arena is switched away -- keeping the
-      ;; `make` root would restart the next declaration on a filled segment and
-      ;; grow a sibling chain the retiring destroy never reaches (H4).
-      [_track-head : unit
-        (if splice?
-          (tc-macro-walk-set!
-            macro-state
-            macro-splice-generation-arena
-            (arena.tl_arena_current))
-          (tc-macro-walk-set!
-            macro-state
-            macro-decl-generation-arena
-            (arena.tl_arena_current)))]
       ;; The expansion can install a different pool context -- captured CTFE
       ;; syntax pools rebase the active pools -- so the context to append into
       ;; must be re-read HERE. Carrying a context across the call and installing
@@ -107372,10 +107500,8 @@
       [_capture-expanded : unit
         (ast.ast-node-pool-context-capture-active! pools)]
       [_leave : unit
-        (ast.node-pool-restore-arena-after-base-alloc!
-          enclosing
-          entry-base-arena
-          (ast.ast-node-pool-context-base-arena pools))]
+        (unsafe
+          (arena.tl_arena_set enclosing))]
       [_profile-copy-start-total : i64
         (cfg compile-profile (profile.alloc-total) 0)]
       [_profile-copy-start-live : i64
@@ -107445,10 +107571,8 @@
           compile-profile
           (compiler-tc-walk-decl-generation-note!
             (- (ast.ast-node-pool-context-expr-len pools) _copy-start-len)))
-        (ast.node-pool-restore-arena-after-base-alloc!
-          enclosing
-          entry-base-arena
-          (ast.ast-node-pool-context-base-arena pools))
+        (unsafe
+          (arena.tl_arena_set enclosing))
         (ast.ast-node-pool-context-install! pools)
         escaped))))
 
@@ -110275,14 +110399,80 @@
             (string.int->string count)
             "\n"))))))
 
+;; Package imports are flattened at their source import sites, between
+;; entry-owned module/alias markers. Provenance is the stable discriminator:
+;; scan through the last declaration copied from an admitted dependency and
+;; include every harmless marker before it in the authenticated prefix.
+(define (tc-dependency-surface-prefix-candidate
+  [load-state : cload.CompilerLoadSessionState]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [cache-scope : String]
+  [surface-count : i64]) : TcPrefixCandidate
+  (let
+    [decl-count : i64 (ast.ast-decl-list-len (& decls))]
+    [path-count : i64 (ast.ast-decl-path-list-len (& paths))]
+    [index : i64 0]
+    [remaining : i64 surface-count]
+    [module : String ""]
+    [module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    (if (<= surface-count 0)
+      TcPrefixCandidate.No
+      (begin
+        (while (and (> remaining 0) (< index decl-count) (< index path-count))
+          (let
+            [decl : ast.AstDecl
+              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
+            [provenance-id : i64
+              (ast.ast-decl-path-list-provenance-id
+                (& paths)
+                index
+                cbi.compiler-builtin-id-fix-empty)]
+            (begin
+              (if (cload.compiler-load-session-state-dependency-surface-provenance?
+                load-state
+                provenance-id)
+                (set! remaining (- remaining 1))
+                unit)
+              (match decl
+                [(ast.AstDecl.Module next-module)
+                  (begin
+                    (set! module (tc-env-key-name-text next-module))
+                    (set! module-id next-module))]
+                [_ unit])
+              (set! index (+ index 1)))))
+        (if (= remaining 0)
+          (TcPrefixCandidate.Some
+            (tc-prefix-key-start cache-scope)
+            index
+            module
+            module-id)
+          TcPrefixCandidate.No)))))
+
 (define (macro-surface-prefix-plan
+  [load-state : cload.CompilerLoadSessionState]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : MacroSurfacePrefixPlan
   (if (surface_facts.surface-typecheck-facts-active?)
     (let
       [facts : surface_facts.SurfaceTypecheckFacts
         (surface_facts.surface-typecheck-facts-current)]
-      [count : i64 facts.macro-prefix-decl-count]
+      [count : i64
+        (if (surface_facts.surface-typecheck-facts-composite-active?)
+          (match (tc-dependency-surface-prefix-candidate
+            load-state
+            decls
+            paths
+            (tc-prefix-default-cache-scope)
+            (cload.compiler-load-session-state-dependency-surface-provenance-count
+              load-state))
+            [(TcPrefixCandidate.Some _ candidate-count _ _)
+              (if (surface_facts.surface-typecheck-facts-rebase-composite-macro-prefix!
+                candidate-count)
+                candidate-count
+                0)]
+            [(TcPrefixCandidate.No) 0])
+          facts.macro-prefix-decl-count)]
       [decl-count : i64 (ast.ast-decl-list-len (& decls))]
       [path-count : i64 (ast.ast-decl-path-list-len (& paths))]
       (if (and (> count 0) (< count decl-count) (<= count path-count))
@@ -110293,6 +110483,11 @@
           [module : MacroSurfacePrefixModule
             (macro-surface-prefix-module prefix-decls)]
           (begin
+            (if (surface_facts.surface-typecheck-facts-composite-active?)
+              (cload.compiler-load-session-state-dependency-surface-note-macro-skip!
+                load-state
+                count)
+              unit)
             (cfg compile-profile (macro-profile-surface-prefix-hit count))
             (MacroSurfacePrefixPlan.Hydrated
               (tc-decl-list-drop decls count)
@@ -110307,7 +110502,11 @@
               (macro-decl-list-reverse prefix-decls)
               (macro-decl-path-list-reverse prefix-paths)
               count)))
-        (MacroSurfacePrefixPlan.Cold)))
+        (begin
+          (if (surface_facts.surface-typecheck-facts-composite-active?)
+            (surface_facts.surface-typecheck-facts-clear!)
+            unit)
+          (MacroSurfacePrefixPlan.Cold))))
     (MacroSurfacePrefixPlan.Cold)))
 
 (define (macro-expand-decls-with-surface-prefix
@@ -110318,7 +110517,7 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroDeclsWithPaths
-  (match (macro-surface-prefix-plan decls paths)
+  (match (macro-surface-prefix-plan load-state decls paths)
     [(MacroSurfacePrefixPlan.Cold)
       (macro-expand-decls
         load-state
@@ -113136,7 +113335,25 @@
       module-id
       (tc-empty-module-local-env-cache))))
 
+(define (tc-summary-decl-prefix [decls : ast.AstDeclList] [count : i64]) : CompilerTypecheckSummary
+  (let
+    [cursor : ast.AstDeclList decls]
+    [index : i64 0]
+    [summary : CompilerTypecheckSummary (CompilerTypecheckSummary 0 0 0)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (match (ast.ast-decl-list-step cursor)
+          [(ast.AstDeclListStep.Nil) (set! done true)]
+          [(ast.AstDeclListStep.Cons decl rest)
+            (begin
+              (set! summary (tc-summary-add-decl summary decl))
+              (set! cursor rest)
+              (set! index (+ index 1)))]))
+      summary)))
+
 (define (tc-check-decls-with-paths
+  [load-state : cload.CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
   [prefix-cache-active : bool]
   [ctx : TcContext]
@@ -113150,28 +113367,52 @@
   ;; the declarations it skipped. Clone-root collection therefore takes the
   ;; ordinary declaration walk even when the interactive prefix cache is on.
   (if (surface_facts.surface-typecheck-facts-active?)
-    (let
-      [facts : surface_facts.SurfaceTypecheckFacts
-        (surface_facts.surface-typecheck-facts-current)]
-      (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
-        [(TcPrefixCandidate.Some _ count module module-id)
-          (if (= count facts.prefix-decl-count)
-            (tc-check-decls-with-surface-prefix-hit
-              ctx
-              top-env
-              decls
-              paths
-              count
-              module
-              module-id
-              facts)
+    (match (if (surface_facts.surface-typecheck-facts-composite-active?)
+      (tc-dependency-surface-prefix-candidate
+        load-state
+        decls
+        paths
+        cache-scope
+        (cload.compiler-load-session-state-dependency-surface-provenance-count
+          load-state))
+      (tc-prefix-candidate decls paths stdlib-roots cache-scope))
+      [(TcPrefixCandidate.Some _ count module module-id)
+        (let
+          [rebased : bool
+            (if (surface_facts.surface-typecheck-facts-composite-active?)
+              (match (tc-summary-decl-prefix decls count)
+                [(CompilerTypecheckSummary values functions externs)
+                  (surface_facts.surface-typecheck-facts-rebase-composite-typecheck-prefix!
+                    count
+                    values
+                    functions
+                    externs)])
+              true)]
+          [facts : surface_facts.SurfaceTypecheckFacts
+            (surface_facts.surface-typecheck-facts-current)]
+          (if (and rebased (= count facts.prefix-decl-count))
+            (begin
+              (if (surface_facts.surface-typecheck-facts-composite-active?)
+                (cload.compiler-load-session-state-dependency-surface-note-typecheck-skip!
+                  load-state
+                  count)
+                unit)
+              (tc-check-decls-with-surface-prefix-hit
+                ctx
+                top-env
+                decls
+                paths
+                count
+                module
+                module-id
+                facts))
             (begin
               (surface_facts.surface-typecheck-facts-clear!)
-              (tc-check-decls-with-paths-cold ctx top-env decls paths summary)))]
-        [(TcPrefixCandidate.No)
-          (begin
-            (surface_facts.surface-typecheck-facts-clear!)
-            (tc-check-decls-with-paths-cold ctx top-env decls paths summary))]))
+              (tc-check-decls-with-paths-cold ctx top-env decls paths summary))))]
+      [(TcPrefixCandidate.No)
+        (begin
+          (surface_facts.surface-typecheck-facts-clear!)
+          (tc-check-decls-with-paths-cold ctx top-env decls paths summary))])
     (if (and prefix-cache-active (not tc-clone-root-collection-active))
       (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
         [(TcPrefixCandidate.Some key count module module-id)
@@ -113730,6 +113971,7 @@
                                   (tc-macro-helper-env-cache-reset!
                                     (tc-context-macro-state ctx))
                                   (match (tc-check-decls-with-paths
+                                    load-state
                                     prefix-cache
                                     (tc-prefix-snapshot-cache-active-for-state?
                                       prefix-cache

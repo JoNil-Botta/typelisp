@@ -8,7 +8,7 @@
   (let
     [cell : (Array (& text str) 1) (array value)]
     (unsafe
-      (ptr-read (ptr-cast (array-data cell) : (Ptr u64))))))
+      (ptr-read (ptr-cast (__tl_array-data cell) : (Ptr u64))))))
 
 (define (borrowed-from-word [_anchor : (& text str)] [word : u64]) : (&
     text
@@ -16,7 +16,7 @@
   (let
     [cell : (Array u64 1) (array word)]
     (unsafe
-      (ptr-read (ptr-cast (array-data cell) : (Ptr (& text str)))))))
+      (ptr-read (ptr-cast (__tl_array-data cell) : (Ptr (& text str)))))))
 
 (define (main) : i64
   (let

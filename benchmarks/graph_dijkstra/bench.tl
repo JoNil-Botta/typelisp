@@ -258,5 +258,5 @@
     [vertices : i64 (string.>int (io.arg 1))]
     [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (io.print (gd-bench vertices rounds))
+      (io.println "{}" (gd-bench vertices rounds))
       0)))

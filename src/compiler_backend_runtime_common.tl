@@ -10,7 +10,6 @@
   (profile bool)
   (tlci-macro-entry bool)
   (write-exit bool)
-  (print-f64 bool)
   (startup-profile bool))
 
 (define (compiler-backend-runtime-features-alloc?
@@ -40,10 +39,6 @@
 (define (compiler-backend-runtime-features-write-exit?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
   features.write-exit)
-
-(define (compiler-backend-runtime-features-print-f64?
-  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  features.print-f64)
 
 (define (compiler-backend-runtime-features-startup-profile?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool

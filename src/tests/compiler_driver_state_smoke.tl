@@ -409,7 +409,9 @@
       (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main)
       42))
     (begin
-      (io.print-string "driver state reader-context isolation smoke failed\n")
+      (io.print-format
+        "{}"
+        "driver state reader-context isolation smoke failed\n")
       1)
     (let
       [a : ci.InternCompatState (ci.intern-compat-state-new)]
@@ -426,5 +428,5 @@
           (driver-state-specialize-ab-case-ok? true))
           0
           (begin
-            (io.print-string "driver state isolation smoke failed\n")
+            (io.print-format "{}" "driver state isolation smoke failed\n")
             1))))))

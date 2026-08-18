@@ -1,7 +1,7 @@
 (import std)
 (import ffi)
 
-(extern (print-string [arg0 : String]) : unit (:abi c) (:symbol "tl_print_string"))
+(extern (emit-string [arg0 : String]) : unit (:abi c) (:symbol "external_emit_string"))
 (extern (print-int [arg0 : i64]) : unit)
 
 (define KEY_A : i64

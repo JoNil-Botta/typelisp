@@ -140,12 +140,12 @@
     [buf : Buf
       (Buf
         (unsafe
-          (array-data items))
+          (__tl_array-data items))
         512
         0)]
     [p : (MutPtr u8)
       (unsafe
-        (array-data items))]
+        (__tl_array-data items))]
     ;; Every part has a non-empty byte TAIL (length % 8 >= 2), so the tail loop
     ;; must run more than one iteration.
     [a : String

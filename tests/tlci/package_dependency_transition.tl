@@ -212,7 +212,8 @@
                         old-capability.key
                         restored-capability.key))
                     "package tlci transition: exact restored key was not reused")
-                  (io.print-string
+                  (io.print-format
+                    "{}"
                     (str_cat.str-cat
                       "package-tlci-transition|package="
                       old-capability.key.package-name

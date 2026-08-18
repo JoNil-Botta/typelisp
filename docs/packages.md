@@ -30,61 +30,106 @@ Local packages are described by a std-only S-expression manifest named
 ```
 
 `typelisp build [--manifest-path <typelisp.pkg>]` resolves `entry` relative
-to the manifest directory and writes outputs under `target/<profile>/`
-(profiles: `release` default, `--profile dev`; release defaults to
-`--opt-level 2`, dev to `0`). `kind "bin"` builds a native executable;
-`kind "staticlib"` builds a static archive. When both are omitted, `bin` is
-inferred from `src/main.tl` and `staticlib` from `src/lib.tl`. Package
-builds also emit a host comptime image `<name>.tlci` beside the native
-artifact. Macro-free packages use a metadata-only image; macro-defining
-packages include one deterministic registration-table record per package-owned
-macro. Supported expression/value transformer bodies compile into native
-template (nested calls, literals, plain symbols, unquoted operands, and
-unquote-splicing), literal, computed-if, and fold entries; supported
-let-rooted bodies evaluate computed binding inits through host session locals
-and emit compiled template, bracket, borrow, array, match, and let
-declarations the same way; unsupported bodies
-retain explicit shells for interpreted fallback. `typelisp inspect <file.tlci>`
-renders the image
-header, sections, and package metadata.
+to the manifest directory and writes two separate package interfaces under
+`target/<profile>/` (profiles: `release` default, `--profile dev`; release
+defaults to `--opt-level 2`, dev to `0`). The runtime side is a
+target-specific executable or static archive. The compile-time side is the
+build-host image `<name>.tlci`, beside the runtime artifact but independent of
+its selected runtime target. `kind "bin"` builds the executable; `kind
+"staticlib"` builds the archive. When both are omitted, `bin` is inferred from
+`src/main.tl` and `staticlib` from `src/lib.tl`.
 
-Package consumers discover dependency images from the resolved package DAG and
-verify both the package identity and exact source-set binding before admission.
-That binding is an integrity and rebuild identity, not proof of publisher
-authenticity. Code-bearing images are mapped only when their host platform
-matches the compiler's build host; that host remains independent of the
-program's selected runtime target. Metadata-only images are portable and are
-admitted without mapping executable pages or registering entries. The
-zero-entry/no-map behavior is covered by the metadata-only gate tracked in
-[#2778](https://github.com/JoNil-Botta/typelisp/issues/2778) and landed through
-[#6594](https://github.com/JoNil-Botta/typelisp/pull/6594).
+Macro-free packages use a metadata-only image. Macro-defining packages include
+one deterministic registration-table record per package-owned macro. Supported
+expression/value transformer bodies compile into native template (nested calls,
+literals, plain symbols, unquoted operands, and unquote-splicing), literal,
+computed-if, and fold entries; supported let-rooted bodies evaluate computed
+binding inits through host session locals and emit compiled template, bracket,
+borrow, array, match, and let declarations the same way. Unsupported bodies
+retain explicit registration shells for interpreted fallback. For example,
+after building the manifest above in the default profile, inspect its
+compile-time interface with:
 
-Ordinary declaration resolution carries the physical defining source and then
-selects its owning, job-scoped dependency catalog. A selected dependency
-catalog currently stands down to deterministic source CTFE: native dependency
-entry invocation and transactional result commit remain staged in
-[#2755](https://github.com/JoNil-Botta/typelisp/issues/2755), followed by the
-stale-source/rebuild verification in
-[#2777](https://github.com/JoNil-Botta/typelisp/issues/2777).
+```text
+typelisp inspect target/release/my-app.tlci
+```
+
+The command validates and renders the image header, sections, package metadata,
+source binding, and frontend-surface inventory. It does not execute image code.
+
+Package builds discover dependency images from the resolved package DAG and
+retain their admission state in a job-owned registry. Container integrity,
+package name/version, and the exact package-owned source set are checked before
+native use. A code-bearing image must also match the compiler's build-host
+platform and callback ABI, and every named host import must resolve before the
+loader maps it. The producer-compiler identity participates in the stable image
+key; exact identity with the running compiler is additionally required before
+hydrating compiler-internal frontend payloads. Native callback catalogs remain
+governed by their format, source, host, and callback-schema checks.
+
+Ordinary source resolution still decides which macro declaration is visible,
+including aliases and shadowing, before a catalog can affect execution. The
+resolved declaration's physical defining source selects its owning dependency
+catalog. Metadata-only images are portable trusted zero-entry catalogs: they
+are admitted without executable mappings, fixups, imports, or registrations.
+Code-bearing mappings are writable only while the loader applies fixups and
+binds imports; rodata is then read-only and code is read/execute. The registry
+owns the mapping and its indexed entries for the compiler job's lifetime.
+
+A resolved native entry is a lifetime-bound capability containing its registry
+handle, slot, package/image key, registry generation, and mapped-entry
+generation. The compiler revalidates the complete capability immediately before
+dispatch. `Expr` transformers consume the already checked direct operands;
+`Module` and `Decls` transformers consume the exact bound environment. A
+status-0 call that returns a result commits exactly one host-owned handle
+through the ordinary transactional expansion path, while any nonzero status
+discards the session without partially inserting generated syntax. A status-0
+no-result call commits nothing and follows the shell policy below. Native
+dispatch failures name the package and version, image path, and macro identity.
+
+A first status-0 native no-result outcome marks that entry as a shell for its
+current mapping generation and reuses the prepared operands for deterministic
+source CTFE. Known shells, uncataloged identities, metadata-only catalogs, and
+missing, stale, malformed, wrong-platform, unsupported, or otherwise
+unavailable images never enter mapped code and follow the same source policy.
+If package source no longer matches an image, admission records a stale,
+zero-map replacement generation and invalidates capabilities from the old
+mapping. Rebuilding the image admits a new generation and restores native
+execution; an unchanged exact key is then reused within that generation.
+
+The image content hash and exact-source binding are deterministic integrity and
+rebuild identities. They establish that a local/source-built artifact matches
+the resolved source, but they are not cryptographic signatures or proof of a
+publisher's identity. A future distributed or prebuilt-package authenticity
+scheme therefore remains a separate trust layer.
 
 Runtime outputs and the host comptime image have independent freshness. A
 second identical build reports each as `Fresh`, preserves the assembly,
 object, runtime artifact, and `.tlci` bytes and modification times, and does
-not rerun the native assembler, archiver, or linker. A comptime-only edit may
-therefore update `.tlci` while leaving the runtime side untouched; conversely,
-a target, profile, backend, optimization, debug, link-input, dependency
-archive, or native-tool identity change rebuilds only the affected runtime
-side. The adjacent `<runtime-artifact>.runtime-inputs` file binds the retained
-runtime outputs to those inputs and is managed as package build state. Changed
-outputs are staged and committed together, so a failed build retains the last
-complete artifact set. `typelisp clean` removes the sidecar with the runtime
+not rerun the native assembler, archiver, or linker. Every package-owned source
+path and byte participates in the `.tlci` source binding, so any source
+add/remove/edit updates that image even when its native runtime assembly is
+unchanged. A comptime-only edit may therefore build only `.tlci`; a runtime
+source edit normally builds both sides. Conversely, a runtime target, profile,
+optimization/debug setting, link input, dependency archive, or native-tool
+identity change builds the affected runtime side while preserving byte-identical
+host `.tlci` output. Backend settings also affect `.tlci` when they change its
+compile-time metadata or code.
+
+The adjacent `<runtime-artifact>.runtime-inputs` file binds retained runtime
+outputs to all material codegen, assembler, archiver, linker, compiler, tool,
+and dependency inputs and is managed as package build state. The two freshness
+decisions are independent, but every changed side is staged and committed in
+one transaction. A failed build or commit restores the previous complete
+runtime/image pair. `typelisp clean` removes the sidecar with the runtime
 artifact.
 
 Self-host bootstrap builds the compiler's exact embedded stdlib source set into
 a source-bound `stdlib.tlci`, embeds it in the next compiler stage, and validates
 all registered macro identities through the production loader. A bootstrapped
 compiler exposes that payload as `typelisp inspect embedded:stdlib.tlci`.
-Published compilers use that trusted catalog by default on Linux and Windows.
+Published compilers use that trusted catalog, and trusted dependency catalogs,
+by default on Linux and Windows.
 Macro expansion maps the image once per expansion pass and checks each stdlib
 macro whose source has exact embedded provenance against the native catalog. A
 byte-identical checked-in source root may retain that provenance; any modified,

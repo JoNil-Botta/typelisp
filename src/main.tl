@@ -371,7 +371,8 @@ Options:
 
 (define (cli-print-version) : i64
   (begin
-    (io.print-string
+    (io.print-format
+      "{}"
       (cli-cat
         "typelisp "
         (cli-cat
@@ -381,7 +382,8 @@ Options:
 
 (define (cli-print-producer-identity) : i64
   (begin
-    (io.print-string
+    (io.print-format
+      "{}"
       (cli-cat (build_identity.compiler-build-git-hash-shared-view) "\n"))
     0))
 

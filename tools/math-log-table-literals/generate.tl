@@ -42,8 +42,8 @@
           (if (= (math.f64-to-bits parsed) bits)
             (begin
               (set! (array-ref seen index) bits)
-              (io.print-string text)
-              (io.print-string "\n")
+              (io.print-format "{}" text)
+              (io.print-format "{}" "\n")
               true)
             false)]
         [(io.IoFloatNoF64) false]))))

@@ -1049,8 +1049,8 @@
     [items64 : (Array i64) (__tl_make-array i64 1)]
     [items32 : (Array i32) (__tl_make-array i32 1)]
     (atomic-wrapper-root
-      (unsafe (array-data items64))
-      (unsafe (array-data items32)))))")
+      (unsafe (__tl_array-data items64))
+      (unsafe (__tl_array-data items32)))))")
 
 (define (compiler-backend-emit-runtime-atomic-wrapper-source
   [target : compiler_backend.CompilerBackendTarget]) : compiler_backend.ResultCompilerBackend
@@ -2444,10 +2444,10 @@
     \"x\"))
 (define (string.concat [left : String] [right : String]) : String
   left)
-(define (io.print-string [text : String]) : unit
+(define (io.emit-string [text : String]) : unit
   unit)
-(define (io.print-str [text : String]) : unit
-  (io.print-string text))
+(define (io.emit-str [text : String]) : unit
+  (io.emit-string text))
 (define (parse-and-render [s : String]) : i64
   (+
     (if (__tl_string_eq s \"42\") 1 0)
@@ -2460,8 +2460,8 @@
           (__tl_string_length (string.concat s \"!\")))))))
 (define (emit-stdout [s : String]) : unit
   (begin
-    (io.print-string s)
-    (io.print-str s)))
+    (io.emit-string s)
+    (io.emit-str s)))
 (define (main) : i64
   (begin
     (emit-stdout \"42\")
@@ -2552,21 +2552,6 @@
           (if (compiler_backend.compiler-backend-string-contains?
             asm
             ".extern tl_string_concat\n")
-            (set! ok false)
-            unit)
-          (if (compiler_backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_print_string\n")
-            (set! ok false)
-            unit)
-          (if (compiler_backend.compiler-backend-string-contains?
-            asm
-            "    call tl_print_string\n")
-            (set! ok false)
-            unit)
-          (if (compiler_backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_print_string\n")
             (set! ok false)
             unit)
           (if (compiler_backend.compiler-backend-string-contains?
@@ -2677,51 +2662,45 @@
             (compiler-backend-todo-marker))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-windows-print-runtime-source) : String
+(define (compiler-backend-windows-external-call-source) : String
   "(define (string.int->string [value : i64]) : String
   \"3\")
-(extern (runtime-print-string [arg0 : String]) : unit (:symbol \"tl_print_string\"))
-(define (io.print-string [text : String]) : unit
-  (runtime-print-string text))
-(define (print-newline) : unit
-  (io.print-string \"\\n\"))
-(define (io.print [value : i64]) : unit
+(extern (runtime-emit-string [arg0 : String]) : unit (:symbol \"external_emit_string\"))
+(define (io.emit-string [text : String]) : unit
+  (runtime-emit-string text))
+(define (emit-newline) : unit
+  (io.emit-string \"\\n\"))
+(define (io.emit-int [value : i64]) : unit
   (begin
-    (io.print-string (string.int->string value))
-    (print-newline)))
+    (io.emit-string (string.int->string value))
+    (emit-newline)))
 (define (main) : i64
   (begin
-    (io.print 3)
+    (io.emit-int 3)
     0))")
 
-(define (compiler-backend-windows-print-runtime-ok?) : bool
+(define (compiler-backend-windows-external-call-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source-for-target
-    (compiler-backend-windows-print-runtime-source)
+    (compiler-backend-windows-external-call-source)
     (compiler_backend.CompilerBackendTarget.Windows))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-string-contains?
           asm
-          ".extern tl_print_string\n")
+          ".extern external_emit_string\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    call tl_print_string\n")
+          "    call external_emit_string\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            ".globl tl_print_string\n"))
+            ".globl external_emit_string\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "\ntl_print_string:\n"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            "    call _tl_tl_print_str\n"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_print_str\n"))
+            "\nexternal_emit_string:\n"))
+        true
+        true
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -21549,6 +21528,100 @@
             "    addq $224, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-avx2-word-vector-shift-shape?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]
+  [widen : String]
+  [shift : String]) : bool
+  (match (compiler_backend.compiler-backend-emit-avx2-vector-binop
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler-backend-vector-binop-test-assignments)
+    2
+    op
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    16
+    elem-ty
+    (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.backend-and8
+          (= (compiler_backend.compiler-backend-string-count asm widen) 4)
+          (= (compiler_backend.compiler-backend-string-count asm shift) 2)
+          (= (compiler_backend.compiler-backend-string-count asm "vpackusdw") 1)
+          (= (compiler_backend.compiler-backend-string-count asm "vpermq") 1)
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    subq $128, %rsp\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    addq $128, %rsp\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vpsrld $16, %ymm0, %ymm0\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vpermq $216, %ymm1, %ymm8\n"))
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          (str_cat.str-cat "    " widen " (%rsp), %ymm0\n"))
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          (str_cat.str-cat "    " widen " 16(%rsp), %ymm0\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-word-vector-shift-spill-ok? [avx512 : bool]) : bool
+  (match (if avx512
+    (compiler_backend.compiler-backend-emit-avx512-vector-binop
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-byte-vector-shift-spill-assignments)
+      2
+      (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I16))
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      32
+      (compiler_ast_types.AstType.I16)
+      (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (compiler_backend.compiler-backend-emit-avx2-vector-binop
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-byte-vector-shift-spill-assignments)
+      2
+      (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I16))
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      16
+      (compiler_ast_types.AstType.I16)
+      (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (if avx512
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu16 -64(%rbp), %zmm14\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vpsllvw -128(%rbp), %zmm14, %zmm14\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu16 %zmm14, -192(%rbp)\n"))
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu -64(%rbp), %ymm14\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    vmovdqu -128(%rbp), %ymm15\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    addq $128, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-vector-bitwise-binop-ok?) : bool
   (and
     (compiler_backend.backend-and8
@@ -21667,11 +21740,19 @@
         (compiler_ast_types.AstType.I64)
         4
         "    vpxor %ymm1, %ymm1, %ymm1\n    vpcmpgtq %ymm6, %ymm1, %ymm0\n    vpcmpeqd %ymm1, %ymm1, %ymm1\n    vpsllq $63, %ymm1, %ymm1\n    vpsrlq $57, %ymm1, %ymm1\n    vpsubq %ymm7, %ymm1, %ymm1\n    vpsllvq %ymm1, %ymm0, %ymm0\n    vpsrlvq %ymm7, %ymm6, %ymm8\n    vpor %ymm0, %ymm8, %ymm8\n")
-      (compiler-backend-avx2-vector-binop-diagnostic?
-        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I16))
-        (compiler_ast_types.AstType.I16)
-        16
-        "backend: unsupported AVX2 vector binary op")
+      (and
+        (compiler-backend-avx2-word-vector-shift-shape?
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.I16))
+          (compiler_ast_types.AstType.I16)
+          "vpmovsxwd"
+          "vpsllvd")
+        (compiler-backend-avx2-word-vector-shift-shape?
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.U16))
+          (compiler_ast_types.AstType.U16)
+          "vpmovzxwd"
+          "vpsrlvd"))
       (and
         (compiler-backend-byte-vector-shift-shape?
           false
@@ -21722,11 +21803,25 @@
         (compiler_ast_types.AstType.U64)
         8
         "    vpsrlvq %zmm7, %zmm6, %zmm8\n")
-      (compiler-backend-avx512-vector-binop-diagnostic?
-        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.U16))
-        (compiler_ast_types.AstType.U16)
-        32
-        "backend: unsupported AVX-512 vector binary op")
+      (and
+        (compiler-backend-avx512-vector-binop-emits?
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.U16))
+          (compiler_ast_types.AstType.U16)
+          32
+          "    vpsllvw %zmm7, %zmm6, %zmm8\n")
+        (compiler-backend-avx512-vector-binop-emits?
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.I16))
+          (compiler_ast_types.AstType.I16)
+          32
+          "    vpsravw %zmm7, %zmm6, %zmm8\n")
+        (compiler-backend-avx512-vector-binop-emits?
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.U16))
+          (compiler_ast_types.AstType.U16)
+          32
+          "    vpsrlvw %zmm7, %zmm6, %zmm8\n"))
       (and
         (compiler-backend-byte-vector-shift-shape?
           true
@@ -21892,6 +21987,8 @@
     (compiler-backend-vector-spill-pressure-ok?)
     (compiler-backend-vector-bitwise-binop-ok?)
     (compiler-backend-vector-shift-binop-ok?)
+    (compiler-backend-word-vector-shift-spill-ok? false)
+    (compiler-backend-word-vector-shift-spill-ok? true)
     (compiler-backend-byte-vector-shift-spill-ok? false)
     (compiler-backend-byte-vector-shift-spill-ok? true)
     (compiler-backend-avx2-unsigned-compare-alias-ok?)
@@ -22955,23 +23052,13 @@
     (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
       plan
       "tl_print_err")
-    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-      plan
-      "tl_print_str")
-    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-      plan
-      "tl_print_string")
+    true
+    true
     true))
 
 (define (compiler-backend-runtime-helper-inventory-retired-compat-ok?
   [plan : compiler_backend.CompilerBackendRuntimePlan]) : bool
   (compiler_backend.backend-and8
-    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-      plan
-      "tl_print_char")
-    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-      plan
-      "tl_print_f64")
     (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
       plan
       ".L_tl_arg_count")
@@ -22983,13 +23070,9 @@
       ".L_tl_arg")
     (compiler-backend-runtime-helper-inventory-retired-symbol-ok? plan "tl_arg")
     true
-    (and
-      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-        plan
-        "tl_print_err")
-      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
-        plan
-        "tl_print_string"))))
+    true
+    true
+    true))
 
 (define (compiler-backend-runtime-helper-inventory-negative-ok?
   [plan : compiler_backend.CompilerBackendRuntimePlan]) : bool
@@ -32210,6 +32293,132 @@
                 "%rax")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; #6288: in Linux FPO mode `%rbp` is both the historical frame-address
+;; spelling and an admissible value home. Force the value home directly so a
+;; harmless allocator-order change cannot make this regression disappear.
+;; Exercise both destination plans through save/restore emission and the final
+;; rsp rebase: the accepted text must retain `n + 31` in the structurally
+;; distinct no-base SIB spelling, while the spilled result's real frame store
+;; is still rebased normally.
+(define (compiler-backend-rbp-immediate-add-assignments [spill-dst? : bool]) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        compiler_abi.compiler-reg-id-rbp))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (if spill-dst?
+          (compiler_regalloc.CompilerRegLocation.Spill -16)
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
+
+(define (compiler-backend-rbp-immediate-add-final-asm [spill-dst? : bool]) : String
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_linux : unit
+      (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler-backend-rbp-immediate-add-assignments spill-dst?)]
+    [slot-vars : i64 2]
+    [frame : i64
+      (compiler_backend.compiler-backend-frame-size
+        (compiler_backend.compiler-backend-frame-slots
+          slot-vars
+          assignments
+          backend-state))]
+    [push-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (compiler_backend.compiler-backend-fill-push-csr-regs!
+        assignments
+        push-regs
+        backend-state)]
+    [vars : compiler_regalloc.CompilerRegVarTypes
+      (compiler_regalloc.compiler-reg-var-types-insert
+        (compiler_regalloc.compiler-reg-var-types-insert
+          (compiler_regalloc.compiler-reg-var-types-empty)
+          1
+          (compiler_ast_types.AstType.I64))
+        0
+        (compiler_ast_types.AstType.I64))]
+    (match (compiler_backend.compiler-backend-emit-binop
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      vars
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      1
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 31)
+      (compiler_ast_types.AstType.I64)
+      backend-state)
+      [(compiler_backend.ResultCompilerBackend.Ok binop-asm)
+        (compiler_backend.compiler-backend-peephole-asm
+          (compiler_backend.compiler-backend-rsp-rebase-full
+            (str_cat.str-cat
+              (compiler_backend.compiler-backend-emit-save-callee-regs
+                assignments
+                slot-vars
+                backend-state)
+              binop-asm
+              (compiler_backend.compiler-backend-emit-restore-callee-regs
+                assignments
+                slot-vars
+                backend-state)
+              "    leave\n    ret\n")
+            frame
+            true
+            push-regs
+            push-count
+            slot-vars
+            backend-state))]
+      [(compiler_backend.ResultCompilerBackend.Err _) ""])))
+
+(define (compiler-backend-rbp-immediate-add-final-ok?) : bool
+  (let
+    [direct : String (compiler-backend-rbp-immediate-add-final-asm false)]
+    [direct-rebase-ok : bool
+      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
+    [spilled : String (compiler-backend-rbp-immediate-add-final-asm true)]
+    [spilled-rebase-ok : bool
+      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
+    (and
+      direct-rebase-ok
+      spilled-rebase-ok
+      (compiler_backend.compiler-backend-string-contains?
+        direct
+        "    leaq 31(,%rbp,1), %r12\n")
+      (compiler_backend.compiler-backend-string-contains?
+        spilled
+        "    leaq 31(,%rbp,1), %r8\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains? direct "31(%rsp)"))
+      (not
+        (compiler_backend.compiler-backend-string-contains? spilled "31(%rsp)"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          direct
+          "    addq $31"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          spilled
+          "    addq $31"))
+      ;; The spilled destination remains a genuine rebased frame write.
+      (compiler_backend.compiler-backend-string-contains?
+        spilled
+        "    movq %r8, 48(%rsp)\n")
+      (compiler_backend.compiler-backend-string-contains?
+        direct
+        "    popq %rbp\n")
+      (compiler_backend.compiler-backend-string-contains?
+        spilled
+        "    popq %rbp\n"))))
 
 (define (compiler-backend-direct-immediate-zero-asm
   [op : compiler_ir_types.CompilerIrBinOp]) : compiler_backend.ResultCompilerBackend
@@ -45883,7 +46092,7 @@
           "    movq %rbx, %r14\n    cpuid\n")))
     true))
 
-(define (compiler-backend-stream-home-carries-grown-head-ok?) : bool
+(define (compiler-backend-stream-home-keeps-stable-root-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]
     [backend-state : compiler_backend.CompilerBackendState
@@ -45898,8 +46107,8 @@
         (arena.set! home))]
     ;; Leave eight bytes in the Linux root segment. The first retained chunk
     ;; stays Inline; appending the second chunk forces dense-store materialization
-    ;; and advances the home chain without touching 64 MiB of pages,
-    ;; making the stale-handle regression cheap to exercise.
+    ;; and grows the home chain without touching 64 MiB of pages. The public
+    ;; handle must remain the stable owner root throughout.
     [_fill-home : i64 (compiler-backend-test-runtime-alloc 67108792)]
     [home-before-copy : arena.Arena (arena.current)]
     [_set-scratch : unit
@@ -45920,7 +46129,7 @@
       (and
         (arena.eq? (arena.current) scratch)
         (string.eq (text_buf.render copied) "xy")
-        (not (arena.eq? carried-home home-before-copy)))]
+        (arena.eq? carried-home home-before-copy))]
     (begin
       (unsafe
         (arena.set! caller))
@@ -47277,7 +47486,7 @@ b_keep:
         (compiler-backend-stream-flush-preserves-grown-state-ok?)
         (compiler-backend-stream-state-growth-ok?)
         (compiler-backend-stream-record-growth-ok?)
-        (compiler-backend-stream-home-carries-grown-head-ok?))
+        (compiler-backend-stream-home-keeps-stable-root-ok?))
       (and
         (pmove.compiler-parallel-move-self-test?)
         (compiler-backend-phi-parallel-copy-ok?)
@@ -47348,6 +47557,8 @@ b_keep:
         (compiler_backend.compiler-backend-runtime-helper-asm-ok?)
         (compiler_backend.compiler-backend-str-view-runtime-helper-asm-ok?)
         (compiler_backend.compiler-backend-unused-str-view-extern-ok?)
+        (compiler_backend.compiler-backend-unused-foreign-link-extern-ok?)
+        (compiler_backend.compiler-backend-source-referenced-foreign-link-extern-ok?)
         (compiler-backend-runtime-helper-inventory-ok?)
         (compiler-backend-runtime-memchr-functions-ok?)
         (compiler-backend-runtime-atomic-wrapper-asm-ok?)
@@ -47375,7 +47586,7 @@ b_keep:
       (and
         (compiler-backend-string-runtime-ok?)
         (compiler-backend-shadowed-string-helpers-ok?)
-        (compiler-backend-windows-print-runtime-ok?))
+        (compiler-backend-windows-external-call-ok?))
       (and
         (compiler-backend-env-runtime-ok?)
         (compiler-backend-stdlib-env-runtime-ok?))
@@ -47430,6 +47641,7 @@ b_keep:
         (compiler-backend-direct-immediate-shift-home-ok?)
         (compiler-backend-direct-rcx-shift-home-ok?)
         (compiler-backend-spill-immediate-binop-home-ok?)
+        (compiler-backend-rbp-immediate-add-final-ok?)
         (compiler-backend-immediate-zero-compaction-ok?)
         (compiler-backend-spill-source-binop-home-ok?)
         (compiler-backend-spill-unop-home-ok?))

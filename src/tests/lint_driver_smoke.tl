@@ -1781,9 +1781,9 @@
     ;; This smoke's manifest intentionally covers the stable machine-readable
     ;; path while verify-public-tools.sh covers the default rich CLI renderer.
     (lint_driver_core.selfhost-lint-set-flat-output! true)
-    ;; The imported driver core defines printing helpers; keep the print-string
+    ;; The imported driver core defines output helpers; keep the output
     ;; runtime linked even when this smoke only exercises the pure source path.
-    (io.print-string "")
+    (io.print-format "{}" "")
     (let
       [core-result : i64
         (lint_driver_core_tests.compiler-lint-driver-self-test)]

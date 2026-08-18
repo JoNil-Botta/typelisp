@@ -209,7 +209,7 @@
 
 (define (selfhost-check-print-passed) : i64
   (begin
-    (io.print-string "Type checking passed!\n")
+    (io.print-format "{}" "Type checking passed!\n")
     0))
 
 (define (selfhost-check-file-doctests

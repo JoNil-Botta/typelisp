@@ -1355,10 +1355,10 @@
     [(compiler_parse_core.ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-string-runtime-source) : String
-  "(define (io.print-string [text : String]) : unit
+  "(define (io.emit-string [text : String]) : unit
   unit)
-(define (io.print-str [text : String]) : unit
-  (io.print-string text))
+(define (io.emit-str [text : String]) : unit
+  (io.emit-string text))
 (define (string.append [left : (& left str)] [right : (& right str)]) : String
   \"joined\")
 (define (string.substring [text : (& text str)] [start : i64] [len : i64]) : String
@@ -1378,8 +1378,8 @@
     [spaced : String \" x\"]
     [digits : String \"7\"]
     (begin
-      (io.print-string joined)
-      (io.print-str extended)
+      (io.emit-string joined)
+      (io.emit-str extended)
       (+ (__tl_string_length (& joined))
         (+ (__tl_string_length (& extended))
           (+ (__tl_string_to_int (& digits))
@@ -1403,15 +1403,15 @@
     (+ (__tl_string_length three)
       (+ (__tl_string_length four) (__tl_string_length five)))))")
 
-(define (compiler-lower-print-string-stdlib-source) : String
-  "(define (io.print-string [text : String]) : unit
+(define (compiler-lower-emit-string-stdlib-source) : String
+  "(define (io.emit-string [text : String]) : unit
   unit)
-(define (io.print-str [text : String]) : unit
-  (io.print-string text))
+(define (io.emit-str [text : String]) : unit
+  (io.emit-string text))
 (define (main [text : String]) : i64
   (begin
-    (io.print-string text)
-    (io.print-str text)
+    (io.emit-string text)
+    (io.emit-str text)
     0))")
 
 (define (compiler-lower-borrowed-str-param-source) : String
@@ -7970,28 +7970,14 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "tl_print_str")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  "__tl_rt_print_string")
-                0)
-                unit
-                (set! ok false))
-              (if (=
                 (lower-test-functions-direct-call-count
                   functions
-                  "io.print-string")
+                  "io.emit-string")
                 2)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-direct-call-count
-                  functions
-                  "io.print-str")
+                (lower-test-functions-direct-call-count functions "io.emit-str")
                 1)
                 unit
                 (set! ok false))
@@ -8037,21 +8023,20 @@
               ok))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-print-string-stdlib-shape-ok?) : bool
+(define (compiler-lower-emit-string-stdlib-shape-ok?) : bool
   (match (compiler_lower.lower-compiler-source
-    (compiler-lower-print-string-stdlib-source))
+    (compiler-lower-emit-string-stdlib-source))
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-functions-call-count functions "tl_print_str") 0)
             (=
               (lower-test-functions-direct-call-count
                 functions
-                "io.print-string")
+                "io.emit-string")
               2)
             (=
-              (lower-test-functions-direct-call-count functions "io.print-str")
+              (lower-test-functions-direct-call-count functions "io.emit-str")
               1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -10188,15 +10173,17 @@
 (define (compiler-lower-masked-if-narrow-shift-source) : String
   "(define (fill
   [xs : (Array i16)]
+  [counts : (Array i16)]
   [out : (Array i16)]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (let
       [x : i16 (array-ref xs i)]
+      [count : i16 (array-ref counts i)]
       (set! (array-ref out i) (if (< x 0)
-          (shr x 1)
-          (shl x 1))))))")
+          (shr x count)
+          (shl x count))))))")
 
 (define (compiler-lower-avx512-masked-if-nested-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
@@ -10514,16 +10501,68 @@
       (io.panic
         (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))
 
-(define (compiler-lower-masked-if-narrow-shift-diagnostic-ok?
-  [mode : compiler_lower.CompilerLowerMode]
-  [mode-name : String]) : bool
-  (compiler-lower-mode-error-ok?
+(define (compiler-lower-masked-if-narrow-shift-shape-ok?
+  [mode : compiler_lower.CompilerLowerMode]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
     (compiler-lower-masked-if-narrow-shift-source)
-    mode
-    (str_cat.str-cat
-      "lower: SPMD masked if does not support masked shift 'shr' for lane type i16 in "
-      mode-name
-      " backend mode; supported lane types are i8, u8, i32, u32, i64, and u64")))
+    mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (let
+            [lanes : i64
+              (compiler_lower.lower-simd-lanes-for-elem
+                mode
+                (compiler_ast_types.AstType.I16))]
+            [shl-count : i64
+              (lower-test-function-vector-binop-op-count
+                functions
+                "fill"
+                (compiler_ir_types.CompilerIrBinOp.Shl
+                  (compiler_ast_types.AstType.I16)))]
+            [shr-count : i64
+              (lower-test-function-vector-binop-op-count
+                functions
+                "fill"
+                (compiler_ir_types.CompilerIrBinOp.Shr
+                  (compiler_ast_types.AstType.I16)))]
+            [abort-count : i64
+              (lower-test-functions-call-count functions "tl_shift_abort")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                lanes
+                (compiler_ast_types.AstType.I16))]
+            (begin
+              (unless
+                (= shl-count 2)
+                (io.panic
+                  (str_cat.str-cat
+                    "lower: narrow masked shift shl IR count mismatch: "
+                    (string.int->string shl-count))))
+              (unless
+                (= shr-count 2)
+                (io.panic
+                  (str_cat.str-cat
+                    "lower: narrow masked shift shr IR count mismatch: "
+                    (string.int->string shr-count))))
+              (unless
+                (= abort-count 4)
+                (io.panic
+                  (str_cat.str-cat
+                    "lower: narrow masked shift abort call count mismatch: "
+                    (string.int->string abort-count))))
+              (unless
+                (>= shape-count 10)
+                (io.panic
+                  (str_cat.str-cat
+                    "lower: narrow masked shift vector shape count mismatch: "
+                    (string.int->string shape-count))))
+              true))])]
+    [(compiler_lower.ResultCompilerLower.Err diag)
+      (io.panic
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))
 
 (define (compiler-lower-masked-shift-tests-ok?) : bool
   (begin
@@ -10536,15 +10575,13 @@
         (compiler_lower.CompilerLowerMode.Avx512))
       (io.panic "lower: AVX-512 masked shift shape mismatch"))
     (unless
-      (compiler-lower-masked-if-narrow-shift-diagnostic-ok?
-        (compiler_lower.CompilerLowerMode.Avx2)
-        "AVX2")
-      (io.panic "lower: AVX2 narrow masked shift diagnostic mismatch"))
+      (compiler-lower-masked-if-narrow-shift-shape-ok?
+        (compiler_lower.CompilerLowerMode.Avx2))
+      (io.panic "lower: AVX2 narrow masked shift shape mismatch"))
     (unless
-      (compiler-lower-masked-if-narrow-shift-diagnostic-ok?
-        (compiler_lower.CompilerLowerMode.Avx512)
-        "AVX-512")
-      (io.panic "lower: AVX-512 narrow masked shift diagnostic mismatch"))
+      (compiler-lower-masked-if-narrow-shift-shape-ok?
+        (compiler_lower.CompilerLowerMode.Avx512))
+      (io.panic "lower: AVX-512 narrow masked shift shape mismatch"))
     true))
 
 (define (compiler-lower-avx512-masked-if-nested-shape-ok?) : bool
@@ -11931,7 +11968,7 @@
       (if (compiler-lower-string-concat-fusion-shape-ok?)
         unit
         (set! ok false))
-      (if (compiler-lower-print-string-stdlib-shape-ok?)
+      (if (compiler-lower-emit-string-stdlib-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-borrowed-str-param-shape-ok?)

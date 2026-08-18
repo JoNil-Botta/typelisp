@@ -287,7 +287,7 @@
                   unit)
                 (unsafe
                   (ptr-write!
-                    (ptr-offset (array-data v.state.slots) index)
+                    (ptr-offset (__tl_array-data v.state.slots) index)
                     value))
                 (set! (array-ref v.state.live index) true)))
             (,cleanup-function-expr value)))

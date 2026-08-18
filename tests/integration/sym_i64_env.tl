@@ -11,12 +11,12 @@
 (define (check-equal [got : i64] [want : i64] [msg : String]) : unit
   (begin
     (if (= got want)
-      (io.print-string "PASS: ")
+      (io.print-format "{}" "PASS: ")
       (begin
-        (io.print-string "FAIL: ")
+        (io.print-format "{}" "FAIL: ")
         (io.panic msg)))
-    (io.print-string msg)
-    (io.print-string "\n")))
+    (io.print-format "{}" msg)
+    (io.print-format "{}" "\n")))
 
 (define (check-true [got : bool] [msg : String]) : unit
   (check-equal
@@ -224,5 +224,5 @@
           "arena-growth-child")
         (unsafe
           (arena.destroy owner))))
-    (io.print-string "All sym-i64-env tests passed.\n")
+    (io.print-format "{}" "All sym-i64-env tests passed.\n")
     0))

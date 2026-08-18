@@ -12,7 +12,7 @@
     [items : (Array i64 3) (array 10 20 3)]
     [mut-data : (MutPtr i64)
       (unsafe
-        (array-data items))]
+        (__tl_array-data items))]
     [read-data : (Ptr i64)
       (unsafe
         (ptr-cast mut-data : (Ptr i64)))]

@@ -323,26 +323,28 @@
   (unsafe
     (ptr-read
       (ptr-offset
-        (ptr-cast (array-data sp-node-pool-slots) : (Ptr SpannedSexpr))
+        (ptr-cast (__tl_array-data sp-node-pool-slots) : (Ptr SpannedSexpr))
         id))))
 
 (define (sexpr-node-pool-shared-view [id : i64]) : Sexpr
   (unsafe
     (ptr-read
       (ptr-offset
-        (ptr-cast (array-data sexpr-node-pool-slots) : (Ptr Sexpr))
+        (ptr-cast (__tl_array-data sexpr-node-pool-slots) : (Ptr Sexpr))
         id))))
 
 (define (sexpr-builder-shared-view [id : i64]) : Sexpr
   (unsafe
     (ptr-read
-      (ptr-offset (ptr-cast (array-data sexpr-builder-slots) : (Ptr Sexpr)) id))))
+      (ptr-offset
+        (ptr-cast (__tl_array-data sexpr-builder-slots) : (Ptr Sexpr))
+        id))))
 
 (define (sp-builder-shared-view [id : i64]) : SpannedSexpr
   (unsafe
     (ptr-read
       (ptr-offset
-        (ptr-cast (array-data sp-builder-slots) : (Ptr SpannedSexpr))
+        (ptr-cast (__tl_array-data sp-builder-slots) : (Ptr SpannedSexpr))
         id))))
 
 (define (sp-node-get [id : i64]) : SpannedSexpr

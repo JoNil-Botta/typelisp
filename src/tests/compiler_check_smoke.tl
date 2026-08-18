@@ -126,10 +126,10 @@
                             updated))]
                       [cdiag.CompilerDiagnosticNoString false])))))))])))
 
-(define (compiler-check-import-help-not-machine-fix-ok?) : bool
+(define (compiler-check-stdlib-import-help-not-machine-fix-ok?) : bool
   (match (compiler_check_core.compiler-check-source
     "tests/import_help_only.tl"
-    "(define (main) : i64 (begin (print 1) 0))")
+    "(define (main) : i64 (begin (println \"value\") 0))")
     [(compiler_check_core.ResultCompilerCheck.Ok _) false]
     [(compiler_check_core.ResultCompilerCheck.Err diag)
       (=
@@ -227,12 +227,12 @@
 (define (compiler-check-qualified-near-miss-ok?) : bool
   (match (tc_api.typecheck-compiler-source
     "(module data)
-(define (print [text : String]) : unit unit)
+(define (emit [text : String]) : unit unit)
 (module main)
 (import data as io)
 (define (main) : i64
   (begin
-    (io.prnit \"hello\")
+    (io.emti \"hello\")
     0))")
     [(tc_core.ResultCompilerTypecheck.Ok _) false]
     [(tc_core.ResultCompilerTypecheck.Err diagnostics-box)
@@ -247,7 +247,7 @@
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
             (cdiag.compiler-diagnostic-message diagnostic)
-            "typecheck: unbound name io.prnit")
+            "typecheck: unbound name io.emti")
           (= fixes.len 1)
           (let
             [fix : cdiag.CompilerDiagnosticFix (array-ref fixes.slots 0)]
@@ -261,12 +261,12 @@
               (string.eq
                 (cdiag.compiler-diagnostic-text-edit-replacement
                   (array-ref edits.slots 0))
-                "io.print")))))]))
+                "io.emit")))))]))
 
 (define (compiler-check-qualified-unbound-display-ok?) : bool
   (match (tc_api.typecheck-compiler-source
     "(module data)
-(define (print [text : String]) : unit unit)
+(define (emit [text : String]) : unit unit)
 (module main)
 (import data as io)
 (define (main) : i64
@@ -705,7 +705,7 @@
       [(and
           (= (compiler_check_core.compiler-check-self-test) 42)
           (compiler-check-near-miss-fix-ok?)
-          (compiler-check-import-help-not-machine-fix-ok?)
+          (compiler-check-stdlib-import-help-not-machine-fix-ok?)
           (compiler-check-duplicate-type-location-ok?)
           (compiler-check-independent-diagnostics-ok?)
           (compiler-check-parser-recovery-diagnostics-ok?)

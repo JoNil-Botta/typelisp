@@ -165,11 +165,11 @@ Fix:
       (match (diagnostic-explain-lookup code)
         [(DiagnosticExplainDetailed text)
           (begin
-            (io.print-string text)
+            (io.print-format "{}" text)
             0)]
         [DiagnosticExplainKnownWithoutProse
           (begin
-            (io.print-string (diagnostic-explain-known-without-prose code))
+            (io.print-format "{}" (diagnostic-explain-known-without-prose code))
             0)]
         [DiagnosticExplainUnknown
           (begin

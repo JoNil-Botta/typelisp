@@ -40,7 +40,7 @@
     [items : (__tl_dyn-array u8) (array.make-array u8 80)]
     [buf : (MutPtr u8)
       (unsafe
-        (array-data items))]
+        (__tl_array-data items))]
     [count : i64
       (if (> (io.arg-count) 100)
         (keep-array-zero array-zero-count buf 80)

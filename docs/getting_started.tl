@@ -19,7 +19,7 @@
 ;#
 ;# (define (main) : i64
 ;#   (begin
-;#     (io.print-string "Hello, TypeLisp!\n")
+;#     (io.print-format "{}" "Hello, TypeLisp!\n")
 ;#     0))
 ;# ```
 ;#

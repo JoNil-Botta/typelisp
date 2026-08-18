@@ -95,5 +95,5 @@
   (let
     [rounds : i64 (string.>int (io.arg 1))]
     (begin
-      (io.print (vm-bench rounds))
+      (io.println "{}" (vm-bench rounds))
       0)))

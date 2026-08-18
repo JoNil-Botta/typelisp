@@ -3462,16 +3462,16 @@
         segment-limit)]
     [starts-data : (MutPtr i64)
       (unsafe
-        (array-data starts))]
+        (__tl_array-data starts))]
     [ends-data : (MutPtr i64)
       (unsafe
-        (array-data ends))]
+        (__tl_array-data ends))]
     [segment-starts-data : (MutPtr i64)
       (unsafe
-        (array-data segment-starts))]
+        (__tl_array-data segment-starts))]
     [segment-ends-data : (MutPtr i64)
       (unsafe
-        (array-data segment-ends))]
+        (__tl_array-data segment-ends))]
     [next : i64 (+ point 1)]
     [index : i64 0]
     (while (< index after-words)
@@ -4360,7 +4360,7 @@
     [mask-len : i64 (array-length mask-words)]
     [mask-data : (MutPtr i64)
       (unsafe
-        (array-data mask-words))]
+        (__tl_array-data mask-words))]
     [word-limit : i64
       (if (< after-words mask-limit)
         after-words
@@ -4377,10 +4377,10 @@
         segment-ends-len)]
     [segment-starts-data : (MutPtr i64)
       (unsafe
-        (array-data segment-starts))]
+        (__tl_array-data segment-starts))]
     [segment-ends-data : (MutPtr i64)
       (unsafe
-        (array-data segment-ends))]
+        (__tl_array-data segment-ends))]
     [next : i64 (+ point 1)]
     [index : i64 0]
     (while (< index limit)
@@ -26765,9 +26765,7 @@
       (compiler-reg-greedy-pool-index-build reg-arr rcount)]
     ;; Every register starts empty and only allocates entry storage when it
     ;; first takes a resident: in the average function almost no pool register
-    ;; is ever occupied. The slots are initialised by
-    ;; compiler-reg-fill-live-union-array!, the same shape the segment tables
-    ;; use -- see that helper for why the fill is not written inline here.
+    ;; is ever occupied.
     [live-union : (__tl_dyn-array CompilerRegLiveUnion)
       (array.make-array CompilerRegLiveUnion storage-reg-count)]
     [live-union-coarse : (__tl_dyn-array i64)
@@ -26787,7 +26785,11 @@
       (compiler-reg-fill-i64-array words 0)
       (compiler-reg-fill-i64-array primary -1)
       (compiler-reg-fill-i64-array secondary -1)
-      (compiler-reg-fill-live-union-array! live-union 0)
+      (while (< var storage-reg-count)
+        (begin
+          (set! (array-ref live-union var) (compiler-reg-live-union-empty))
+          (set! var (+ var 1))))
+      (set! var 0)
       (while (< var n)
         (begin
           (if (= (array-ref present var) 1)
@@ -37401,25 +37403,6 @@
     (begin
       (set! (array-ref items i) (compiler-reg-interval-seq-empty))
       (compiler-reg-fill-interval-seq-array! items (+ i 1)))))
-
-;; Same shape as the interval-seq filler above: a small recursive helper that
-;; gives every slot its own empty value.
-;;
-;; This MUST stay a separate function. Writing the identical loop inline in
-;; compiler-reg-greedy-occupancy-make miscompiles on linux-x86_64 (the built
-;; compiler aborts with "tl: allocation failed" on any opt2 compile, while the
-;; windows-x86_64 build of the same source is fine); hoisting the fill here
-;; makes both targets correct. Reduced repro and evidence: an
-;; occupancy-make-local `while` filling a `(__tl_dyn-array T)` whose element
-;; type is a struct holding a dynamic array, versus the same fill in a helper.
-(define (compiler-reg-fill-live-union-array!
-  [items : (__tl_dyn-array CompilerRegLiveUnion)]
-  [i : i64]) : unit
-  (if (>= i (array-length items))
-    unit
-    (begin
-      (set! (array-ref items i) (compiler-reg-live-union-empty))
-      (compiler-reg-fill-live-union-array! items (+ i 1)))))
 
 ;; Generic constrained scratch-plan construction.  These builders attach the
 ;; deterministic instruction/ordinal identity, interval, and physical-home policy.

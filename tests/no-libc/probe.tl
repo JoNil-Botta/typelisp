@@ -13,13 +13,13 @@
     [exists : bool (io.file-exists? "tests/no-libc/probe.tl")]
     [cwd : String (fs.current-dir)]
     (begin
-      (io.print-string "no-libc probe\n")
-      (io.print-float 1.5)
-      (io.print-string (string.int->string (+ 40 2)))
-      (io.print-string "\n")
+      (io.print-format "{}" "no-libc probe\n")
+      (io.println "{}" 1.5)
+      (io.print-format "{}" (string.int->string (+ 40 2)))
+      (io.print-format "{}" "\n")
       (match (env.get (& name))
-        [(EnvSomeString _) (io.print-string "have-path\n")]
-        [(EnvNoString) (io.print-string "no-path\n")])
+        [(EnvSomeString _) (io.print-format "{}" "have-path\n")]
+        [(EnvNoString) (io.print-format "{}" "no-path\n")])
       (if (and exists (> (string-length cwd) 0))
         0
         1))))

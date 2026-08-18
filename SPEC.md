@@ -1470,7 +1470,7 @@ definition environment even when the use site shadows the same printed name.
 
 (define (main) : unit
   (let [macro-helper : bool true]
-    (unless2 false (print-string "ok"))))
+    (unless2 false (io.print-format "{}" "ok"))))
 ```
 
 The `macro-helper` referenced by the template is the top-level function
@@ -1533,7 +1533,7 @@ arrays are **not** region-tagged because they do not allocate through
 
 A region-tagged type `(in r T)` is a **subtype** of the plain type `T` for
 operations that do not escape the region: field access, `array-ref`,
-`array-set!`, `match` arms, `print-string`, and function calls whose parameter
+`array-set!`, `match` arms, `io.print-format`, and function calls whose parameter
 types accept `T`. It is **not** a subtype where the value would leave the
 region's scope: as the result of the `with-arena` form, stored into an outer
 `let` or global, captured by an escaping closure, or returned from an enclosing
@@ -2613,7 +2613,7 @@ and owned `String` results for allocation sites.
 | Category | Members | Ownership contract |
 |----------|---------|--------------------|
 | Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string.>int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
-| Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Text-to-binary I/O conversion is explicit. |
+| Text output and diagnostics | `format.format`, `io.print-format`/`io.println`, `io.print-error`, `io.stdout-write`/`io.stderr-write`, `panic`/`error`, process stdin strings | Format macros accept supported values and materialize one active-arena `String`; diagnostic text accepts borrowed `(& r str)`, and raw output accepts borrowed `(& r bytes)`. Text-to-binary I/O conversion is explicit. |
 | Active-arena owned string results | `arg`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
 | Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` `ByteBuf` fallback paths; companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The I/O companion is an explicit binary-to-text materialization boundary for callers that need a borrowed textual fallback. |
@@ -2823,8 +2823,8 @@ declared by the resolved module.
 
 Two unqualified imports, whether through `.*` or `.item`, that bring in the
 same name are a namespace collision. The diagnostic names both module
-identities and suggests alias-qualified access instead. Prelude bare names such
-as `panic`, `print*`, and the deliberately retained prelude exceptions come
+identities and suggests alias-qualified access instead. Prelude bare names and
+deliberately retained prelude exceptions come
 from the implicit prelude and are not affected by these import rules.
 
 Multi-item selected imports are deferred in v1. Spellings such as
@@ -3341,6 +3341,20 @@ Example:
   executes on the host platform that produced it and stays separate from the
   selected runtime target's artifacts; it is not portable code across host
   operating systems.
+  Runtime artifacts and the host image have independent freshness decisions.
+  The `.tlci` binds the complete deterministic package-owned source set, so
+  every source path/byte/add/remove change updates it, including a source edit
+  that leaves runtime assembly unchanged. A comptime-only edit may therefore
+  rebuild only `.tlci`; a runtime source edit normally rebuilds both sides.
+  Target, profile, optimization/debug, native-tool, link-input, and dependency
+  archive changes rebuild the affected runtime side without rewriting an
+  identical host image. Backend configuration also changes `.tlci` when it
+  changes emitted compile-time metadata or code. A no-op reports both sides as
+  `Fresh`, preserves bytes and modification times, and invokes no assembler,
+  archiver, or linker. Changed sides are staged separately and committed as one
+  rollback-capable transaction, so failure retains the preceding complete
+  runtime/image pair. The adjacent `<runtime-artifact>.runtime-inputs` sidecar
+  binds all material runtime inputs and is removed by `typelisp clean`.
 - The optional top-level `(link ...)` section declares native link inputs for
   `bin` package builds, so a package that links system or vendored libraries
   does not need `(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)`
@@ -4192,7 +4206,7 @@ guards.
 
 ```lisp test=ignore name=when-unless-guards reason=fragment
 (when (< x 0) (return 0))
-(unless (< x 100) (print-string "large\n"))
+(unless (< x 100) (io.println "large"))
 ```
 
 ### 5.7 `(let [name [: type] init] ... body...)` — local bindings
@@ -4534,10 +4548,10 @@ runtime-sized buffers, reading through `array-ref` and writing through
 - Straight-line contiguous numeric maps vectorize `+` and `-` for every
   numeric lane type; `bit-and`, `bit-or`, and `bit-xor` for every integer lane
   type; and `*` for every numeric lane type except `i8`/`u8`. Direct `shl` and
-  `shr` maps vectorize `i8`, `u8`, `i32`, `u32`, `i64`, and `u64`, preserving
-  the section 5.4 invalid-count trap on active lanes only, including partial
-  tails. Direct `i16`/`u16` shifts and byte multiplication are rejected with
-  operator/type-specific diagnostics rather than silently scalarizing.
+  `shr` maps vectorize every integer lane type, preserving the section 5.4
+  invalid-count trap on active lanes only, including partial tails. Byte
+  multiplication is rejected with an operator/type-specific diagnostic rather
+  than silently scalarizing.
   Numeric `=`, `!=`, `<`, `<=`, `>`, and `>=` maps produce private masks that
   are stored through `bool` array lanes.
 
@@ -4734,17 +4748,15 @@ Masked varying control flow:
   every contiguous integer array lane type (`i8`/`u8` through `i64`/`u64`).
   Leading integer literals are contextually typed from the other operand.
   These operators do not accept `f32` or `f64` lanes.
-- Masked `shl` and `shr` value lanes support `i8`, `u8`, `i32`, `u32`, `i64`,
-  and `u64` in AVX2 and AVX-512 modes. Signed `shr` is arithmetic and unsigned
-  `shr` is logical. The section 5.4 shift-count rule remains normative: an
-  invalid count traps only when its lane is active after intersecting the
-  current branch and tail masks. Unsupported `i16` and `u16` masked shifts are
-  rejected with an operator-, lane-type-, and backend-specific diagnostic;
-  they do not silently use a scalar loop.
+- Masked `shl` and `shr` value lanes support every integer lane type in AVX2
+  and AVX-512 modes. Signed `shr` is arithmetic and unsigned `shr` is logical.
+  The section 5.4 shift-count rule remains normative: an invalid count traps
+  only when its lane is active after intersecting the current branch and tail
+  masks.
 - Side effects other than supported contiguous `array-set!` and explicit
   `stdlib/atomic.tl` integer element operations are rejected in masked
   branches. This includes `set!` to bindings declared outside the `foreach`,
-  `print*`, file/process I/O, `panic`/`error`, allocation whose result
+  formatted output, file/process I/O, `panic`/`error`, allocation whose result
   escapes the branch, nested `foreach`/`spmd-reduce`, and calls outside the
   accepted SPMD helper surface.
 - `match` on a varying scalar lane or enum scrutinee supports literal
@@ -4948,7 +4960,7 @@ Purity and varying rules:
   `spmd-broadcast`, `spmd-shuffle`, and local `let` bindings whose values
   satisfy the same rules.
 - `value` must not perform writes or other side effects. In particular,
-  `set!`, `array-set!`, `print*`, file I/O, `panic`/`error`, nested
+  `set!`, `array-set!`, formatted output, file I/O, `panic`/`error`, nested
   `foreach`/`spmd-reduce`/`spmd-scan`, and user-defined calls with varying
   arguments are rejected.
 - `spmd-scan` applies the same purity and index restrictions to `value`.
@@ -5427,16 +5439,26 @@ comptime code. The
 runtime archive (`lib<name>.a` / `<name>.lib`) is separate. This section
 specifies the v2 container and its independently versioned metadata schemas.
 
-Package producers make freshness and commit decisions for the runtime artifact
-and host `.tlci` independently. If the newly emitted bytes and all material
-inputs for a side are unchanged, the producer preserves that side byte-for-byte
-without changing its modification time; a fresh runtime side does not invoke
-the assembler, archiver, or linker. Runtime freshness includes target, profile,
-backend mode, optimization/debug configuration, compiler and native-tool
-identity, exact link inputs/arguments, and dependency archive content. Changed
-outputs are staged before atomic replacement, and a failed build must retain
-the preceding complete runtime/host-image pair. CLI status reports `Built` for
-committed sides and `Fresh` for retained sides.
+Package producers make freshness decisions for the runtime artifact and host
+`.tlci` independently. If the newly emitted bytes and all material inputs for a
+side are unchanged, the producer preserves that side byte-for-byte without
+changing its modification time; a fresh runtime side does not invoke the
+assembler, archiver, or linker. Runtime freshness includes emitted
+assembly/object content, target, profile, backend mode, optimization/debug
+configuration, compiler and native-tool identity, exact link inputs/arguments,
+and dependency archive content. The host image includes package identity,
+producer identity, build-host/callback ABI, frontend metadata, package-owned
+macro records/code, and the exact deterministic package-owned source set. Every
+source path/byte/add/remove change therefore updates its source binding. A
+comptime-only edit can change only `.tlci`; a runtime source edit normally
+changes both sides; a runtime configuration/tool/link change can change only
+the runtime side. A backend change also changes `.tlci` when it changes emitted
+compile-time metadata or code.
+
+Changed sides are staged independently, then committed as one rollback-capable
+transaction. A build or commit failure must retain the preceding complete
+runtime/host-image pair. CLI status reports `Built` for committed sides and
+`Fresh` for retained sides.
 
 The container is a custom little-endian binary format shared by Linux and
 Windows. It is not ELF or COFF. The first 176 bytes are a fixed header:
@@ -5824,13 +5846,73 @@ target-independent TypeLisp linker symbol in the package runtime archive.
 Helper names and signatures are nonempty. Metadata v1 images continue to parse
 and emit without this field and remain byte-layout compatible.
 
-Metadata-only tlci files are valid: rodata, code, fixups, entries, symbols, and
-imports are all empty. Emission is deterministic: an image's layout and
-content hash round-trip byte-identically.
+Metadata-only tlci files are valid: code, fixups, entries, symbols, and imports
+are all empty. Their rodata may carry the auxiliary package identity,
+source-set binding, frontend AST, and checked facts described above. Emission
+is deterministic: an image's layout and content hash round-trip
+byte-identically.
 
 `typelisp inspect <file.tlci>` parses a tlci image with the same validation
 path as loaders and prints a stable human-readable header, section table, and
 package metadata. Malformed images surface the tlci parse diagnostic.
+
+##### 5.17.1.3 Package consumer admission and dispatch
+
+Package consumers discover dependency images from the resolved package DAG and
+own their parsed images, keys, mappings, and status in one registry per compiler
+job. Normal source visibility, alias, and shadowing rules first resolve the
+macro declaration. Its physical defining-source provenance then identifies the
+owning registry slot; a same-named declaration from another package cannot
+select that slot.
+
+Admission validates the container and content hash, package name/version, and
+exact current source-set binding before native use. A code-bearing image must
+also pass format/callback ABI and build-host platform admission. Its imports are
+resolved against the static named host registry before any entry runs. The
+producer-compiler identity is retained in the stable package/image key. Exact
+producer identity with the running compiler is additionally required before
+hydrating compiler-internal frontend surfaces; native callback catalogs are
+governed by their callback/schema checks and do not reinterpret compiler AST
+memory. These checks establish integrity and exact-source trust, not publisher
+authenticity or a security signature for future distributed/prebuilt packages.
+
+A valid metadata-only image is a trusted zero-entry catalog. It is never passed
+to the mapping API and contributes no code, fixup, entry, or import bytes. A
+valid code-bearing image is writable only during relocation and import binding;
+the loader then seals rodata read-only and code read/execute. The job registry
+owns that mapping, its registration record, indexed macro entries, and terminal
+shell state until it releases the mapping before destroying their arena.
+
+Entry lookup returns a capability containing the registry handle and slot,
+complete package/image key, registry generation, and mapped-entry generation.
+Every component is revalidated immediately before dispatch. A dependency
+`Expr` entry receives the already checked direct operand handles without
+rebinding. `Module` and `Decls` entries receive the exact bound environment and
+commit through the ordinary generated-module or ordered declaration-splice
+transaction. A status-0 call that returns a result commits exactly one
+host-owned result handle. A status-0 no-result call commits nothing and follows
+the shell path below. On any nonzero status, the invocation session is discarded
+and no partial AST, module, or declaration insertion survives. Dependency
+dispatch failures are qualified by package name/version, image path, and macro
+identity.
+
+The first status-0 native call that returns no result marks that indexed
+entry as a terminal shell for the current mapping generation, then reuses its
+prepared operands for deterministic source CTFE. Known shells do not dispatch
+again in that generation. No catalog, an uncataloged identity, a metadata-only
+catalog, or an unavailable catalog takes the explicit source path without
+entering mapped code. Unavailable classifications distinguish missing,
+stale-source, package mismatch, wrong platform, unsupported format/schema,
+malformed content, and mapping failure.
+
+Source binding is rechecked before mapping. If current package source differs
+from the image binding, the registry records an unavailable stale-source entry
+with zero mapped bytes. Replacing an existing package slot increments the
+registry generation and invalidates every capability from its previous key or
+mapping. After rebuilding, the new source/image key is admitted as a new trusted
+generation and native expansion resumes; repeated admission of that exact key
+reuses the current generation. Source fallback and rebuilt native execution
+must produce the same consumer output for the supported transformer.
 
 ### 5.18 Layout queries
 
@@ -6074,9 +6156,12 @@ names are unbound source names. The backend may emit private runtime symbols
 used by the stdlib extern wrappers; user code must not call private names
 directly.
 
-**Printing and failure.** `print`, `print-bool`, `print-newline`,
-`print-string`, `print-error`, `panic`, and `error` are ordinary `stdlib.io`
-definitions; unimported uses are unbound source names. `panic` and `error`
+**Printing and failure.** `print-format` and `println` are the `stdlib.io`
+value-output macros; `format.format` returns the same formatted text as a
+`String`. `stdout-write` and `stderr-write` provide lower-level borrowed-byte
+output, while `print-error`, `panic`, and `error` accept borrowed text. These
+are ordinary standard-library definitions; unimported uses are unbound source
+names. `panic` and `error`
 report a failure and terminate the process; `error` is an alias for `panic`,
 and both have return type `never` (section 9).
 
@@ -6278,11 +6363,12 @@ contracts:
   initialized per the `init` eligibility rules in section 5.12.1; bulk
   zero/fill helpers are implementation details, and safe code observes
   initialized source values.
-- `array-data` returns a raw `(MutPtr T)` to element storage, requires an
-  enclosing `(unsafe ...)` expression, and exists only for runtime, FFI, and
-  internal compatibility code that must pass raw storage pointers. It operates
-  on array owner storage and does not accept a borrowed Slice receiver or
-  extract a Slice's pointer/length pair.
+- `array-data` and its compiler-private `__tl_array-data` spelling return a raw
+  `(MutPtr T)` to element storage, require an enclosing `(unsafe ...)`
+  expression, and exist only for runtime, FFI, and internal compatibility code
+  that must pass raw storage pointers. They share one AST, typecheck, and
+  lowering route, operate on array owner storage, and do not accept a borrowed
+  Slice receiver or extract a Slice's pointer/length pair.
 - `__tl_array-take!` is the private three-operand compatibility primitive used
   by generated vector internals: `(__tl_array-take! items live index)` returns
   `(Tuple bool T)` and updates the separate dynamic-array liveness bitmap. The
@@ -6378,7 +6464,6 @@ Each alias expands to its base name and resolves wherever that name is bound
 | `string=?` | `string-eq` |
 | `string-slice` | `substring` |
 | `char-at` | `string-ref` |
-| `print-str` | `print-string` |
 
 ### 6.4 Stdlib file I/O handles
 
@@ -6908,7 +6993,7 @@ from escaping.
 | Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib.string` `string-replace` when no match is found; `stdlib.io` `read-file-or` when the path is missing | Returns the caller-provided aggregate unchanged. Reference-typed signatures express the caller-owned result; without lifetime information in the signature, the conservative arena-tagging rule above applies inside a scoped arena. |
 | Mutates caller-provided storage | `array-set!`, `byte-buf-set!`/`bytes-set!` mutation helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
-| Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO. Binary writes borrow `bytes` directly; text helpers may allocate active-arena strings only where their own contract says so. |
+| Host/runtime IO | `print-format`/`println`, `stdout-write`/`stderr-write`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO. Format macros allocate one active-arena result string; binary writes borrow `bytes` directly. |
 
 The owned `String` / borrowed `str` source contract, together with the
 `ByteBuf` / borrowed `bytes` binary-storage contract, is specified in section
@@ -7322,7 +7407,7 @@ in documentation passes.
   i32/u32/i64/u64/f32/f64 maps and reduction values, including active-count
   preserving tails and ordered bounds traps; AVX2/AVX-512 masked varying `if` subsets including
   nested branch-mask composition, value-producing selects, and guarded native
-  `i8`/`u8`/`i32`/`u32`/`i64`/`u64` direct and masked shifts with
+  `i8`/`u8`/`i16`/`u16`/`i32`/`u32`/`i64`/`u64` direct and masked shifts with
   active-lane-only invalid-count traps;
   AVX2/AVX-512
   scalar-lane varying `match`; AVX2/AVX-512 enum tag/payload varying `match` with
@@ -7348,19 +7433,49 @@ in documentation passes.
   structured source locations for source-authored semantic diagnostics, plus
   a REPL that evaluates through the real compile/link/run pipeline.
 
-### 8.2 Not yet implemented, in migration, or deferred
+### 8.2 SPMD backend support
+
+Section 5.15 defines one SPMD semantic surface across scalar, AVX2, and AVX-512
+modes. A backend asymmetry called out below is an implementation bug tracked by
+an open issue, not a permanent language limitation. "Native" means that
+eligible full gangs use SIMD instructions while preserving protected tails.
+"Scalar reference" is also supported behavior where section 5.15 specifies
+ordered or non-canonical execution; it is not an unsupported fallback.
+
+| Surface | Scalar | AVX2 | AVX-512 | Coverage / open gap |
+|---------|--------|------|---------|---------------------|
+| Contiguous `foreach` map/zip and native `Slice` map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates; `i8`/`u8` multiplication is pending under [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684) |
+| Gather-only reads | Supported: reference semantics | Supported: native gather with active-lane checks | Supported: native gather with active-lane checks | Gather integration and benchmark gates |
+| Explicit atomic scatter | Supported: ordered reference | Supported: scalarized atomic lanes | Supported: scalarized atomic lanes | Atomic-scatter fixtures; this is the specified overlap-safe path |
+| Masked varying `if`, `while`, and scalar/enum `match` | Supported: reference semantics | Supported: native masked gangs | Supported: native masked gangs | Masked-control differential and shape gates; masked `i8`/`u8` multiplication is pending under [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684) |
+| `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates |
+| `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
+| `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `scripts/verify-spmd-broadcast.sh` |
+| `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
+| `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `scripts/verify-spmd-lane-identity.sh` |
+| Same-program private out-of-line varying helpers | Supported: scalar ABI | Supported: native AVX2 private ABI | Supported: native AVX-512 private ABI | Private-helper differential/shape gates; imported package helpers retain the separately specified scalar/AVX-512 `spmd-call-v1` catalog ABI |
+| `defdispatch` | Supported: scalar variant | Supported: cached runtime AVX2 selection | Supported: cached runtime AVX-512 selection | Runtime-dispatch gate |
+
+Deliberate language exclusions are separate from backend gaps. Public vector,
+mask, and `(varying T)` source value types remain deferred by design. Source
+`return`/`break`/`continue` from SPMD regions, ordinary potentially overlapping
+scatter, aggregate/string/function lane and call values, nested public SPMD
+forms, and indirect/extern/recursive varying helper calls remain rejected as
+specified in section 5.15. The matrix does not turn those forms into silently
+scalarized extensions.
+
+### 8.3 Not yet implemented, in migration, or deferred
 
 | Feature | Status |
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
-| 16-bit integer shifts | AVX2/AVX-512 direct-map and masked `i8`/`u8`/`i32`/`u32`/`i64`/`u64` shifts are implemented. `i16`/`u16` widening/packing expansions are deferred and rejected with stable operator/type/backend diagnostics. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Fact-erasing closure flows; mutation of captured names | Rejected by design: closure captures are by-value snapshots. All-Copy closures may copy while preserving reference provenance; non-Copy closures may move through checker-known local facts; mutable/consuming capabilities and required lifetime/ownership facts fail closed when erased. |
 | Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
-| Compiled comptime execution from embedded/package `tlci` images | Partially implemented: published Linux and Windows compilers use trusted embedded-stdlib and dependency-package images. Exact embedded or byte-identical source provenance admits a stdlib module to its native registration catalog; dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Two-host differential, sustained reset/remap stress, bootstrap fixpoint, and focused package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable; broad dependency graph and stale-rebuild verification remain staged. |
+| Compiled comptime execution from embedded/package `tlci` images | Partially implemented: published Linux and Windows compilers use trusted embedded-stdlib and dependency-package images. Exact embedded or byte-identical source provenance admits a stdlib module to its native registration catalog; dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Two-host differential, sustained reset/remap stress, bootstrap fixpoint, and focused package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable. The focused stale-source/rebuild gate proves pre-map stand-down, zero mapped stale bytes, capability invalidation, replacement generations, changed native expansion, and byte-identical restoration. Only the broader multi-package dependency-graph native/source differential remains staged. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
 | Richer LSP/IDE features | The immutable workspace source/declaration index, overlay/event plumbing, and standard semantic workspace references are implemented. Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, and rename through the standard method remain pending. |
 
@@ -7863,9 +7978,9 @@ storage. Target C ABI call/return lowering is a separate backend contract.
   (let
     [result : i64 (factorial 5)]
     (begin
-      (io.print-string "Hello, TypeLisp!\n")
-      (io.print-string "factorial(5) = ")
-      (io.print result)
+      (io.print-format "{}" "Hello, TypeLisp!\n")
+      (io.print-format "{}" "factorial(5) = ")
+      (io.println "{}" result)
       0)))  ; prints the greeting/result and exits successfully
 ```
 
@@ -7924,24 +8039,22 @@ every element zero-initialized per section 5.12.1, and `array-ref` reads and
     (string.string-length s)))  ; returns 5
 ```
 
-```lisp test=run name=print-string exit=0 stdout="hello\n"
+```lisp test=run name=formatted-output exit=0 stdout="hello\n"
 (import stdlib.io)
 
 (define (main) : i64
   (begin
-    (io.print-string "hello\n")
+    (io.print-format "{}" "hello\n")
     0))  ; prints hello + newline, returns 0
 ```
 
-`io.print-format` and `io.println` are format-backed macros. Their first argument
+`format.format`, `io.print-format`, and `io.println` are the public
+value-formatting conveniences. The output macros' first argument
 is a Rust-style literal template using `{}` placeholders and `{{` / `}}`
 escapes; `print-format` writes exactly the formatted text and `println` performs
-one additional newline write. The explicit compatibility-preserving
-`print-format` name leaves the historical newline-writing integer
-`(io.print value)` function unchanged. `print-string`, `print-str`,
-`print-newline`, `print-error`, `print-bool`, `print-char`, and `print-float`
-retain their existing behavior, as do the low-level borrowed `stdout-write` and
-`stderr-write` helpers. All placeholder conversion, including the canonical
+one additional newline write. `print-error` remains the direct borrowed-text
+diagnostic helper, and `stdout-write` / `stderr-write` remain the low-level
+borrowed-byte output surface. All placeholder conversion, including the canonical
 owner-module nominal display protocol specified in section 6.1, is therefore
 identical between `format.format`, `io.print-format`, and `io.println`.
 

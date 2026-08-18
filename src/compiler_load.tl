@@ -11,6 +11,11 @@
 (import read as reader)
 (import compiler_intern as ci)
 (import compiler_cfg_core as cfg_core)
+(import compiler_build_identity as build_identity)
+(import compiler_surface_facts as surface_facts)
+(import compiler_surface_hydrate as surface_hydrate)
+(import compiler_surface_ast as surface_ast)
+(import compiler_surface_identity as surface_identity)
 (import sym_i64_env)
 (import stdlib.env)
 (import stdlib.fs)
@@ -40,7 +45,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 ;; Sources, manifests, and include payloads are interpreted as text here.
 ;; Make that conversion explicit at the binary IO boundary.
@@ -530,6 +535,9 @@
 (defstruct CompilerLoadDependencyCatalogEntry
   (key CompilerLoadDependencyCatalogKey)
   (image CompilerLoadDependencyCatalogImage)
+  ;; Metadata parser strings are reader-session views. Admission deep-copies
+  ;; the SPMD interface into the registry owner before that session retires.
+  (spmd-callables tlci.TlciSpmdCallables)
   (status CompilerLoadDependencyCatalogStatus))
 
 (defstruct CompilerLoadDependencyCatalogList
@@ -542,6 +550,38 @@
   (owner-arena (__tl_dyn-array i64))
   (entries (__tl_dyn-array CompilerLoadDependencyCatalogList))
   (generation (__tl_dyn-array i64)))
+
+;; Hydrated frontend fragments are a derived view of the admitted catalog, not
+;; a second image registry. They retain catalog slot ordering and are rebuilt
+;; whenever the session interner generation or target cfg changes. Each view
+;; owns private AST storage so decoding cannot alias the parsed image arena.
+(defenum CompilerLoadDependencySurfaceFragment
+  (Unavailable)
+  (Ready surface_hydrate.CompilerSurfaceHydration tlci.TlciSpmdCallables))
+
+(defstruct CompilerLoadDependencySurfaceList
+  (slots (__tl_dyn-array CompilerLoadDependencySurfaceFragment))
+  (imported (__tl_dyn-array bool))
+  (len i64))
+
+(defenum CompilerLoadDependencySurfaceBaseFacts
+  (None)
+  (Some surface_facts.SurfaceTypecheckFacts))
+
+(defstruct CompilerLoadDependencySurfaceState
+  (intern-generation (__tl_dyn-array i64))
+  (configuration (__tl_dyn-array String))
+  (prepared (__tl_dyn-array bool))
+  (enabled (__tl_dyn-array bool))
+  (fragments (__tl_dyn-array CompilerLoadDependencySurfaceList))
+  (base-facts (__tl_dyn-array CompilerLoadDependencySurfaceBaseFacts))
+  (facts-builder (__tl_dyn-array surface_facts.SurfaceTypecheckFactsBuilder))
+  (surface-decl-count (__tl_dyn-array i64))
+  (surface-provenance-count (__tl_dyn-array i64))
+  (hit-count (__tl_dyn-array i64))
+  (fallback-count (__tl_dyn-array i64))
+  (macro-skip-count (__tl_dyn-array i64))
+  (typecheck-skip-count (__tl_dyn-array i64)))
 
 ;; Small lifetime-bound capability used by typechecking after dependency
 ;; discovery is complete. The address points at the registry's stable one-slot
@@ -596,7 +636,14 @@
   (code-bytes i64)
   (fixup-bytes i64)
   (entry-bytes i64)
-  (import-bytes i64))
+  (import-bytes i64)
+  (surface-enabled bool)
+  (surface-fragments i64)
+  (surface-hits i64)
+  (surface-fallbacks i64)
+  (surface-decls i64)
+  (surface-macro-skipped i64)
+  (surface-typecheck-skipped i64))
 
 (defenum ResultCompilerLoadDependencyCatalogUnit
   (Ok)
@@ -617,6 +664,37 @@
     (__tl_make-array 0)
     (__tl_make-array (compiler-load-dependency-catalog-empty-list))
     (__tl_make-array 0)))
+
+(define (compiler-load-dependency-surface-list-empty) : CompilerLoadDependencySurfaceList
+  (CompilerLoadDependencySurfaceList
+    (__tl_make-array CompilerLoadDependencySurfaceFragment 0)
+    (__tl_make-array bool 0)
+    0))
+
+(define (compiler-load-dependency-surface-state-new) : CompilerLoadDependencySurfaceState
+  (CompilerLoadDependencySurfaceState
+    (__tl_make-array -1)
+    (__tl_make-array "")
+    (__tl_make-array false)
+    (__tl_make-array false)
+    (__tl_make-array (compiler-load-dependency-surface-list-empty))
+    (__tl_make-array CompilerLoadDependencySurfaceBaseFacts.None)
+    (__tl_make-array (surface_facts.surface-typecheck-facts-builder-empty))
+    (__tl_make-array 0)
+    (__tl_make-array 0)
+    (__tl_make-array 0)
+    (__tl_make-array 0)
+    (__tl_make-array 0)
+    (__tl_make-array 0)))
+
+(cfg
+  dependency-tlci-verification
+  (define (compiler-load-dependency-surface-verify-reject-last?) : bool
+    (let
+      [name : String "TYPELISP_DEPENDENCY_TLCI_VERIFY_SURFACE_REJECT_LAST"]
+      (match (env.get (& name))
+        [(env.EnvSomeString value) (string.eq value "1")]
+        [(env.EnvNoString) false]))))
 
 ;; Loader cache and traversal data is owned by an explicit session state. The
 ;; no-argument compatibility helpers below are serial/test-only adapters over
@@ -646,6 +724,7 @@
   (lazy-import-skip-record-count (__tl_dyn-array i64))
   (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState)
   (dependency-catalog CompilerLoadDependencyCatalogRegistry)
+  (dependency-surfaces CompilerLoadDependencySurfaceState)
   ;; Verification policy is snapshotted per package build before admission.
   ;; A process environment lookup must never become mutable route state shared
   ;; by interleaved compiler jobs.
@@ -779,6 +858,7 @@
       lazy-import-skip-record-count
       lazy-qualified-observer
       (compiler-load-dependency-catalog-registry-new)
+      (compiler-load-dependency-surface-state-new)
       (compiler-load-session-state-bool-cell false)
       (array.make-array ci.InternCompatState 1)
       (compiler-load-session-state-bool-cell false)
@@ -812,14 +892,14 @@
       (unsafe
         (ptr->int
           (ptr-cast
-            (array-data state.dependency-catalog.entries)
+            (__tl_array-data state.dependency-catalog.entries)
             : (Ptr CompilerLoadDependencyCatalogList))))
       : i64)
     (cast
       (unsafe
         (ptr->int
           (ptr-cast
-            (array-data state.dependency-catalog.generation)
+            (__tl_array-data state.dependency-catalog.generation)
             : (Ptr i64))))
       : i64)))
 
@@ -998,10 +1078,14 @@
   [state : CompilerLoadSessionState]) : ResultCompilerLoadDependencyCatalogUnit
   (let
     [registry : CompilerLoadDependencyCatalogRegistry state.dependency-catalog]
+    [surface-state : CompilerLoadDependencySurfaceState
+      state.dependency-surfaces]
     [items : CompilerLoadDependencyCatalogList (array-ref registry.entries 0)]
     [owner : i64 (array-ref registry.owner-arena 0)]
     [error : String (compiler-load-dependency-catalog-release-from! items 0 "")]
     (begin
+      (compiler-load-dependency-surface-list-destroy-storage!
+        (array-ref surface-state.fragments 0))
       (if (> owner 0)
         (unsafe
           (arena.tl_arena_destroy owner))
@@ -1013,6 +1097,23 @@
       (set!
         (array-ref registry.generation 0)
         (+ (array-ref registry.generation 0) 1))
+      (set!
+        (array-ref surface-state.fragments 0)
+        (compiler-load-dependency-surface-list-empty))
+      (set! (array-ref surface-state.prepared 0) false)
+      (set! (array-ref surface-state.enabled 0) false)
+      (set! (array-ref surface-state.intern-generation 0) -1)
+      (set! (array-ref surface-state.configuration 0) "")
+      (set!
+        (array-ref surface-state.base-facts 0)
+        CompilerLoadDependencySurfaceBaseFacts.None)
+      (set!
+        (array-ref surface-state.facts-builder 0)
+        (surface_facts.surface-typecheck-facts-builder-empty))
+      (set! (array-ref surface-state.surface-decl-count 0) 0)
+      (set! (array-ref surface-state.surface-provenance-count 0) 0)
+      (set! (array-ref surface-state.macro-skip-count 0) 0)
+      (set! (array-ref surface-state.typecheck-skip-count 0) 0)
       (if (= (string.string-length error) 0)
         ResultCompilerLoadDependencyCatalogUnit.Ok
         (ResultCompilerLoadDependencyCatalogUnit.Err error)))))
@@ -1262,6 +1363,305 @@
                   (CompilerLoadDependencyCatalogFailure.Malformed
                     "dependency catalog: trusted code entry has no image"))])])))))
 
+(define (compiler-load-dependency-surface-configuration
+  [cfgs : sym_i64_env.SymI64Env]) : String
+  (let
+    [windows-id : i64 (ci.intern "windows")]
+    [linux-id : i64 (ci.intern "linux")]
+    (cond
+      [(cfg_core.compiler-cfg-enabled? cfgs windows-id) "windows-x86_64"]
+      [(cfg_core.compiler-cfg-enabled? cfgs linux-id) "linux-x86_64"]
+      [else ""])))
+
+(define (compiler-load-dependency-surface-list-destroy-storage!
+  [surfaces : CompilerLoadDependencySurfaceList]) : unit
+  (let
+    [index : i64 0]
+    (while (< index surfaces.len)
+      (begin
+        (match (array-ref surfaces.slots index)
+          [(CompilerLoadDependencySurfaceFragment.Ready hydration _)
+            (begin
+              (ast.ast-node-pool-context-destroy-storage! hydration.ast.pools)
+              (unsafe
+                (arena.tl_arena_destroy
+                  (ast.ast-node-pool-context-base-arena hydration.ast.pools))))]
+          [(CompilerLoadDependencySurfaceFragment.Unavailable) unit])
+        (set! index (+ index 1))))))
+
+(define (compiler-load-dependency-surface-reset-use!
+  [state : CompilerLoadSessionState]) : unit
+  (let
+    [surface-state : CompilerLoadDependencySurfaceState
+      state.dependency-surfaces]
+    [fragments : CompilerLoadDependencySurfaceList
+      (array-ref surface-state.fragments 0)]
+    [base-facts : CompilerLoadDependencySurfaceBaseFacts
+      (if (and
+        (surface_facts.surface-typecheck-facts-active?)
+        (not (surface_facts.surface-typecheck-facts-composite-active?)))
+        (CompilerLoadDependencySurfaceBaseFacts.Some
+          (surface_facts.surface-typecheck-facts-current))
+        CompilerLoadDependencySurfaceBaseFacts.None)]
+    [base-builder : surface_facts.SurfaceTypecheckFactsBuilder
+      (match base-facts
+        [(CompilerLoadDependencySurfaceBaseFacts.None)
+          (surface_facts.surface-typecheck-facts-builder-empty)]
+        [(CompilerLoadDependencySurfaceBaseFacts.Some facts)
+          (match (surface_facts.surface-typecheck-facts-builder-append
+            (surface_facts.surface-typecheck-facts-builder-empty)
+            facts)
+            [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok next) next]
+            [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err _)
+              (surface_facts.surface-typecheck-facts-builder-empty)])])]
+    [index : i64 0]
+    (begin
+      (while (< index fragments.len)
+        (begin
+          (set! (array-ref fragments.imported index) false)
+          (set! index (+ index 1))))
+      (set! (array-ref surface-state.fragments 0) fragments)
+      (set! (array-ref surface-state.base-facts 0) base-facts)
+      (set! (array-ref surface-state.facts-builder 0) base-builder)
+      (set! (array-ref surface-state.surface-decl-count 0) 0)
+      (set! (array-ref surface-state.surface-provenance-count 0) 0)
+      (set! (array-ref surface-state.hit-count 0) 0)
+      (set! (array-ref surface-state.macro-skip-count 0) 0)
+      (set! (array-ref surface-state.typecheck-skip-count 0) 0)
+      (if (surface_facts.surface-typecheck-facts-composite-active?)
+        (surface_facts.surface-typecheck-facts-clear!)
+        unit))))
+
+(define (compiler-load-dependency-surface-key-current?
+  [catalog-key : CompilerLoadDependencyCatalogKey]
+  [surface-key : surface_identity.SurfaceIdentityKey]
+  [configuration : String]) : bool
+  (and
+    (string.eq surface-key.package-name catalog-key.package-name)
+    (string.eq
+      surface-key.source-hash
+      (string.int->string catalog-key.source-digest))
+    (string.eq surface-key.compiler-build catalog-key.compiler-identity)
+    (string.eq surface-key.configuration configuration)
+    (match (tlci.tlci-producer-identity-admit
+      catalog-key.compiler-identity
+      (build_identity.compiler-build-git-hash-shared-view))
+      [(tlci.TlciProducerIdentityAdmission.ExactMatch) true]
+      [_ false])))
+
+(define (compiler-load-dependency-surface-copy-specializations
+  [source : tlci.TlciSpmdSpecializations]) : tlci.TlciSpmdSpecializations
+  (let
+    [count : i64 (tlci.tlci-spmd-specializations-len source)]
+    [out : tlci.TlciSpmdSpecializations
+      (tlci.tlci-spmd-specializations-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [item : tlci.TlciSpmdSpecialization
+            (tlci.tlci-spmd-specializations-ref source index)]
+          (begin
+            (tlci.tlci-spmd-specializations-push!
+              (&mut out)
+              (tlci.TlciSpmdSpecialization
+                (string.copy (& item.abi))
+                (string.copy (& item.backend))
+                item.lanes
+                (string.copy (& item.args))
+                (string.copy (& item.result))
+                item.index-param
+                (string.copy (& item.symbol))))
+            (set! index (+ index 1)))))
+      out)))
+
+(define (compiler-load-dependency-surface-copy-spmd-callables
+  [source : tlci.TlciSpmdCallables]) : tlci.TlciSpmdCallables
+  (let
+    [count : i64 (tlci.tlci-spmd-callables-len source)]
+    [out : tlci.TlciSpmdCallables
+      (tlci.tlci-spmd-callables-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [item : tlci.TlciSpmdCallable
+            (tlci.tlci-spmd-callables-ref source index)]
+          (begin
+            (tlci.tlci-spmd-callables-push!
+              (&mut out)
+              (tlci.TlciSpmdCallable
+                (string.copy (& item.name))
+                (string.copy (& item.signature))
+                (compiler-load-dependency-surface-copy-specializations
+                  item.specializations)))
+            (set! index (+ index 1)))))
+      out)))
+
+(define (compiler-load-dependency-surface-hydrate-entry
+  [_owner : i64]
+  [entry : CompilerLoadDependencyCatalogEntry]
+  [configuration : String]) : CompilerLoadDependencySurfaceFragment
+  (match entry.status
+    [(CompilerLoadDependencyCatalogStatus.Unavailable _)
+      CompilerLoadDependencySurfaceFragment.Unavailable]
+    [_
+      (match entry.image
+        [(CompilerLoadDependencyCatalogImage.None)
+          CompilerLoadDependencySurfaceFragment.Unavailable]
+        [(CompilerLoadDependencyCatalogImage.Some image)
+          (match (surface_hydrate.compiler-surface-key image.rodata)
+            [(surface_hydrate.ResultCompilerSurfaceKey.Missing)
+              CompilerLoadDependencySurfaceFragment.Unavailable]
+            [(surface_hydrate.ResultCompilerSurfaceKey.Err _)
+              CompilerLoadDependencySurfaceFragment.Unavailable]
+            [(surface_hydrate.ResultCompilerSurfaceKey.Ok key)
+              (if (not
+                (compiler-load-dependency-surface-key-current?
+                  entry.key
+                  key
+                  configuration))
+                CompilerLoadDependencySurfaceFragment.Unavailable
+                (let
+                  [pool-arena : i64 (ast.ast-node-pool-arena-make)]
+                  [pools : ast.AstNodePoolContext
+                    (in-arena
+                      (arena.Arena pool-arena)
+                      (ast.ast-node-pool-context-new-with-capacities-in-arena
+                        1
+                        1
+                        pool-arena))]
+                  [spmd-callables : tlci.TlciSpmdCallables
+                    (in-arena
+                      (arena.Arena (ast.ast-node-pool-context-base-arena pools))
+                      (compiler-load-dependency-surface-copy-spmd-callables
+                        entry.spmd-callables))]
+                  [hydrated : surface_hydrate.ResultCompilerSurfaceHydration
+                    (in-arena
+                      (arena.Arena (ast.ast-node-pool-context-base-arena pools))
+                      (surface_hydrate.compiler-surface-hydrate
+                        image.rodata
+                        key
+                        pools))]
+                  (match hydrated
+                    [(surface_hydrate.ResultCompilerSurfaceHydration.Ok
+                        hydration)
+                      (CompilerLoadDependencySurfaceFragment.Ready
+                        hydration
+                        spmd-callables)]
+                    [_
+                      (begin
+                        (ast.ast-node-pool-context-destroy-storage! pools)
+                        (unsafe
+                          (arena.tl_arena_destroy
+                            (ast.ast-node-pool-context-base-arena pools)))
+                        CompilerLoadDependencySurfaceFragment.Unavailable)])))])])]))
+
+(define (compiler-load-dependency-surfaces-build-cache!
+  [state : CompilerLoadSessionState]
+  [configuration : String]) : bool
+  (let
+    [surface-state : CompilerLoadDependencySurfaceState
+      state.dependency-surfaces]
+    [catalog : CompilerLoadDependencyCatalogList
+      (array-ref state.dependency-catalog.entries 0)]
+    [owner : i64 (compiler-load-dependency-catalog-owner-arena-ensure! state)]
+    [prior : CompilerLoadDependencySurfaceList
+      (array-ref surface-state.fragments 0)]
+    [verify-reject-last : bool
+      (cfg
+        dependency-tlci-verification
+        (compiler-load-dependency-surface-verify-reject-last?)
+        false)]
+    (begin
+      (compiler-load-dependency-surface-list-destroy-storage! prior)
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [slots : (__tl_dyn-array CompilerLoadDependencySurfaceFragment)
+            (__tl_make-array CompilerLoadDependencySurfaceFragment catalog.len)]
+          [imported : (__tl_dyn-array bool) (__tl_make-array bool catalog.len)]
+          [index : i64 0]
+          [ok : bool (> catalog.len 0)]
+          [preflight-facts : surface_facts.SurfaceTypecheckFactsBuilder
+            (surface_facts.surface-typecheck-facts-builder-empty)]
+          (begin
+            (while (< index catalog.len)
+              (let
+                [fragment : CompilerLoadDependencySurfaceFragment
+                  (if (and
+                    verify-reject-last
+                    (> catalog.len 1)
+                    (= index (- catalog.len 1)))
+                    CompilerLoadDependencySurfaceFragment.Unavailable
+                    (compiler-load-dependency-surface-hydrate-entry
+                      owner
+                      (array-ref catalog.slots index)
+                      configuration))]
+                (begin
+                  (set! (array-ref slots index) fragment)
+                  (match fragment
+                    [(CompilerLoadDependencySurfaceFragment.Unavailable)
+                      (set! ok false)]
+                    [(CompilerLoadDependencySurfaceFragment.Ready hydration _)
+                      (match (surface_facts.surface-typecheck-facts-builder-append
+                        preflight-facts
+                        hydration.facts)
+                        [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err
+                            _)
+                          (set! ok false)]
+                        [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok
+                            next)
+                          (set! preflight-facts next)])])
+                  (set! index (+ index 1)))))
+            (set!
+              (array-ref surface-state.fragments 0)
+              (CompilerLoadDependencySurfaceList slots imported catalog.len))
+            (set!
+              (array-ref surface-state.intern-generation 0)
+              (ci.intern-generation))
+            (set!
+              (array-ref surface-state.configuration 0)
+              (string.copy (& configuration)))
+            (set! (array-ref surface-state.prepared 0) true)
+            (set! (array-ref surface-state.enabled 0) ok)
+            (if ok
+              unit
+              (set!
+                (array-ref surface-state.fallback-count 0)
+                (+ (array-ref surface-state.fallback-count 0) 1)))
+            ok))))))
+
+(define (compiler-load-dependency-surfaces-prepare!
+  [state : CompilerLoadSessionState]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : bool
+  (let
+    [surface-state : CompilerLoadDependencySurfaceState
+      state.dependency-surfaces]
+    [configuration : String
+      (compiler-load-dependency-surface-configuration cfgs)]
+    (begin
+      (compiler-load-dependency-surface-reset-use! state)
+      (if (or
+        (compiler-load-stdlib-root-configured? stdlib-roots)
+        (= (string.string-length configuration) 0)
+        (= (array-ref state.dependency-catalog.entries 0).len 0))
+        (begin
+          (set! (array-ref surface-state.enabled 0) false)
+          false)
+        (if (and
+          (array-ref surface-state.prepared 0)
+          (=
+            (array-ref surface-state.intern-generation 0)
+            (ci.intern-generation))
+          (string.eq (array-ref surface-state.configuration 0) configuration)
+          (=
+            (array-ref surface-state.fragments 0).len
+            (array-ref state.dependency-catalog.entries 0).len))
+          (array-ref surface-state.enabled 0)
+          (compiler-load-dependency-surfaces-build-cache! state configuration))))))
+
 (define (compiler-load-dependency-catalog-observe
   [state : CompilerLoadSessionState]) : CompilerLoadDependencyCatalogObservation
   (let
@@ -1312,7 +1712,14 @@
         code-bytes
         fixup-bytes
         entry-bytes
-        import-bytes))))
+        import-bytes
+        (array-ref state.dependency-surfaces.enabled 0)
+        (array-ref state.dependency-surfaces.fragments 0).len
+        (array-ref state.dependency-surfaces.hit-count 0)
+        (array-ref state.dependency-surfaces.fallback-count 0)
+        (array-ref state.dependency-surfaces.surface-decl-count 0)
+        (array-ref state.dependency-surfaces.macro-skip-count 0)
+        (array-ref state.dependency-surfaces.typecheck-skip-count 0)))))
 
 (define compiler-load-default-session-state : (__tl_dyn-array
     CompilerLoadSessionState)
@@ -4164,8 +4571,8 @@
         (not
           (unsafe
             (=
-              (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
-              (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
+              (ptr->int (ptr-cast (__tl_array-data left.slots) : (Ptr u8)))
+              (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
         (let
           [new-offset : i64 (- right.offset left-len)]
           (begin
@@ -4226,8 +4633,8 @@
       (not
         (unsafe
           (=
-            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
-            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (__tl_array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
         (begin
@@ -4293,8 +4700,8 @@
       (not
         (unsafe
           (=
-            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
-            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (__tl_array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
         (begin
@@ -10291,12 +10698,11 @@
         (if (< estimate 256)
           256
           estimate))]
-    [scratch-base : i64 (arena.tl_arena_current)]
     [scratch-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities-in-arena
         expr-capacity
         type-capacity
-        scratch-base)]
+        scratch-root)]
     [records-start : i64 (reader.sp-node-pool-len)]
     [parsed : parser.ResultAstProgramDiagnostic
       (compiler-load-parse-source-diagnostic-escaping-with-pools
@@ -10323,7 +10729,6 @@
                 (parser.compiler-parse-member-records-compact!
                   records-start
                   records-end)]
-              [scratch-head : i64 (arena.tl_arena_current)]
               [_restore-caller : unit
                 (unsafe
                   (arena.tl_arena_set caller-arena))]
@@ -10332,11 +10737,10 @@
               (begin
                 (ast.ast-node-pool-context-destroy-storage! scratch-pools)
                 (unsafe
-                  (arena.tl_arena_destroy scratch-head))
+                  (arena.tl_arena_destroy scratch-root))
                 out))])]
       [(parser.ResultAstProgramDiagnostic.Err diag)
         (let
-          [scratch-head : i64 (arena.tl_arena_current)]
           [_restore-caller : unit
             (unsafe
               (arena.tl_arena_set caller-arena))]
@@ -10348,7 +10752,7 @@
             (reader.sp-node-pool-truncate! records-start)
             (ast.ast-node-pool-context-destroy-storage! scratch-pools)
             (unsafe
-              (arena.tl_arena_destroy scratch-head))
+              (arena.tl_arena_destroy scratch-root))
             out))])))
 
 (define (compiler-load-cache-program-result
@@ -12062,6 +12466,354 @@
                 manifest.name
                 manifest.version)))])]))
 
+(defstruct CompilerLoadDependencySurfaceSelection
+  (decls ast.AstDeclList)
+  (paths ast.AstDeclPathList)
+  (modules ast.AstDeclModuleList))
+
+(defenum CompilerLoadDependencySurfaceImport
+  (Unavailable)
+  (Ok ResultCompilerLoadWithPaths))
+
+(define (compiler-load-dependency-surface-decl-seen?
+  [seen : sym_i64_env.SymI64Env]
+  [decl : ast.AstDecl]
+  [paths : ast.AstDeclPathList]
+  [modules : ast.AstDeclModuleList]
+  [index : i64]) : bool
+  (let
+    [owner-id : i64
+      (ast.ast-decl-path-list-owner-id
+        (& paths)
+        index
+        cbi.compiler-builtin-id-fix-empty)]
+    [module-id : i64
+      (ast.ast-decl-module-list-get-id
+        (& modules)
+        index
+        cbi.compiler-builtin-id-fix-empty)]
+    (match decl
+      ;; A module declaration's side-table entry names the module that was
+      ;; active *before* the marker.  Select the marker by the module it
+      ;; introduces, otherwise the first declaration from a dependency can be
+      ;; rebound under the final module of an already-seen prelude surface.
+      [(ast.AstDecl.Module name) (sym_i64_env.sym-i64-contains-id seen name)]
+      [_
+        (or
+          (and
+            (not (= module-id cbi.compiler-builtin-id-fix-empty))
+            (sym_i64_env.sym-i64-contains-id seen module-id))
+          (and
+            (not (= owner-id cbi.compiler-builtin-id-fix-empty))
+            (sym_i64_env.sym-i64-contains-id
+              seen
+              (compiler-load-seen-path-key-id owner-id module-id))))])))
+
+(define (compiler-load-dependency-surface-select
+  [hydration : surface_hydrate.CompilerSurfaceHydration]
+  [seen : sym_i64_env.SymI64Env]) : CompilerLoadDependencySurfaceSelection
+  (let
+    [surface : surface_ast.SurfaceAstHydration hydration.ast]
+    [count : i64 (ast.ast-decl-list-len (& surface.decls))]
+    [decls : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
+    [paths : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
+    [modules : ast.AstDeclModuleList
+      (ast.ast-decl-module-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-load-dependency-surface-decl-seen?
+            seen
+            (ast.ast-decl-list-get
+              (& surface.decls)
+              index
+              (ast.ast-decl-fallback))
+            surface.paths
+            surface.modules
+            index)
+            unit
+            (begin
+              (ast.ast-decl-list-push-from
+                (&mut decls)
+                (& surface.decls.slots)
+                (+ surface.decls.offset index))
+              (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+                (&mut paths)
+                (ast.ast-decl-path-list-get (& surface.paths) index "")
+                (ast.ast-decl-path-list-owner-id
+                  (& surface.paths)
+                  index
+                  cbi.compiler-builtin-id-fix-empty)
+                (ast.ast-decl-path-list-provenance-id
+                  (& surface.paths)
+                  index
+                  cbi.compiler-builtin-id-fix-empty))
+              (ast.ast-decl-module-list-push-id
+                (&mut modules)
+                (ast.ast-decl-module-list-get-id
+                  (& surface.modules)
+                  index
+                  cbi.compiler-builtin-id-fix-empty))))
+          (set! index (+ index 1))))
+      (CompilerLoadDependencySurfaceSelection decls paths modules))))
+
+(define (compiler-load-dependency-surface-merge-seen
+  [base : sym_i64_env.SymI64Env]
+  [extra : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (let
+    [cursor : sym_i64_env.SymI64Env extra]
+    [out : sym_i64_env.SymI64Env base]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (sym_i64_env.sym-i64-view cursor)
+          [(sym_i64_env.SymI64ViewNil) (set! done true)]
+          [(sym_i64_env.SymI64ViewBind key value rest)
+            (begin
+              (if (and
+                (sym_i64_env.sym-i64-contains-id out key)
+                (= (sym_i64_env.sym-i64-lookup-id-or out key -1) value))
+                unit
+                (set! out (sym_i64_env.sym-i64-bind-id out key value)))
+              (set! cursor rest))]))
+      out)))
+
+(define (compiler-load-dependency-surface-interface
+  [spmd-callables : tlci.TlciSpmdCallables]) : CompilerLoadPackageSpmdInterface
+  (CompilerLoadPackageSpmdInterface.Available spmd-callables))
+
+(define (compiler-load-dependency-surface-final-module-id
+  [decls : ast.AstDeclList]
+  [fallback : i64]) : i64
+  (let
+    [cursor : ast.AstDeclList decls]
+    [module-id : i64 fallback]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast.ast-decl-list-step cursor)
+          [(ast.AstDeclListStep.Nil) (set! done true)]
+          [(ast.AstDeclListStep.Cons decl rest)
+            (begin
+              (match decl
+                [(ast.AstDecl.Module next-module) (set! module-id next-module)]
+                [_ unit])
+              (set! cursor rest))]))
+      module-id)))
+
+(define (compiler-load-session-state-dependency-surface-decl-count
+  [state : CompilerLoadSessionState]) : i64
+  (array-ref state.dependency-surfaces.surface-decl-count 0))
+
+(define (compiler-load-session-state-dependency-surface-provenance?
+  [state : CompilerLoadSessionState]
+  [provenance-id : i64]) : bool
+  (>=
+    (compiler-load-dependency-catalog-slot-for-provenance-id
+      state
+      provenance-id)
+    0))
+
+(define (compiler-load-dependency-surface-provenance-count
+  [state : CompilerLoadSessionState]
+  [paths : ast.AstDeclPathList]) : i64
+  (let
+    [count : i64 (ast.ast-decl-path-list-len (& paths))]
+    [index : i64 0]
+    [matched : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-load-session-state-dependency-surface-provenance?
+            state
+            (ast.ast-decl-path-list-provenance-id
+              (& paths)
+              index
+              cbi.compiler-builtin-id-fix-empty))
+            (set! matched (+ matched 1))
+            unit)
+          (set! index (+ index 1))))
+      matched)))
+
+(define (compiler-load-session-state-dependency-surface-provenance-count
+  [state : CompilerLoadSessionState]) : i64
+  (array-ref state.dependency-surfaces.surface-provenance-count 0))
+
+(define (compiler-load-session-state-dependency-surface-note-macro-skip!
+  [state : CompilerLoadSessionState]
+  [count : i64]) : unit
+  (set! (array-ref state.dependency-surfaces.macro-skip-count 0) count))
+
+(define (compiler-load-session-state-dependency-surface-note-typecheck-skip!
+  [state : CompilerLoadSessionState]
+  [count : i64]) : unit
+  (set! (array-ref state.dependency-surfaces.typecheck-skip-count 0) count))
+
+(define (compiler-load-dependency-surface-decl-count) : i64
+  (compiler-load-session-state-dependency-surface-decl-count
+    (compiler-load-active-session-state-shared-view)))
+
+(define (compiler-load-dependency-surface-import
+  [resolved : String]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [entry : CompilerLoadPackageEntry]
+  [expected-module : ast.AstMaybeModuleName]
+  [module-id-fallback : String]
+  [source-module-fallback : String]) : CompilerLoadDependencySurfaceImport
+  (let
+    [state : CompilerLoadSessionState
+      (compiler-load-active-session-state-shared-view)]
+    [surface-state : CompilerLoadDependencySurfaceState
+      state.dependency-surfaces]
+    (if (not (array-ref surface-state.enabled 0))
+      CompilerLoadDependencySurfaceImport.Unavailable
+      (let
+        [slot : i64
+          (compiler-load-dependency-catalog-slot-for-provenance-id
+            state
+            (compiler-load-source-path-id resolved))]
+        [fragments : CompilerLoadDependencySurfaceList
+          (array-ref surface-state.fragments 0)]
+        (if (or (< slot 0) (>= slot fragments.len))
+          CompilerLoadDependencySurfaceImport.Unavailable
+          (match (array-ref fragments.slots slot)
+            [(CompilerLoadDependencySurfaceFragment.Unavailable)
+              CompilerLoadDependencySurfaceImport.Unavailable]
+            [(CompilerLoadDependencySurfaceFragment.Ready
+                hydration
+                spmd-callables)
+              (let
+                [selection : CompilerLoadDependencySurfaceSelection
+                  (compiler-load-dependency-surface-select hydration seen)]
+                [active-pools : ast.AstNodePoolContext
+                  (if (ast.ast-node-pool-has-active-context?)
+                    (ast.ast-node-pool-context-active-live)
+                    (ast.ast-node-pool-context-capture-active))]
+                [copy : ast.AstProgramCompaction
+                  (ast.ast-program-copy-append-with-pools
+                    hydration.ast.pools
+                    active-pools
+                    (ast.ast-program selection.decls))]
+                [copied-program : ast.AstProgram
+                  (match copy
+                    [(ast.AstProgramCompaction program _) program])]
+                [copied-decls : ast.AstDeclList
+                  (match copied-program
+                    [(ast.AstProgram.Program decls-box)
+                      (__tl-box-place decls-box)])]
+                [copied-pools : ast.AstNodePoolContext
+                  (match copy
+                    [(ast.AstProgramCompaction _ pools) pools])]
+                [explicit-module : bool
+                  (compiler-load-decl-list-has-module? copied-decls)]
+                [module-id-fallback-id : i64
+                  (compiler-load-module-fallback-id-for-parse
+                    module-id-fallback
+                    expected-module)]
+                [source-module-id : i64
+                  (if explicit-module
+                    (compiler-load-dependency-surface-final-module-id
+                      copied-decls
+                      cbi.compiler-builtin-id-fix-empty)
+                    (cond
+                      [(= (string.string-length source-module-fallback) 0)
+                        cbi.compiler-builtin-id-fix-empty]
+                      [(string.eq source-module-fallback module-id-fallback)
+                        module-id-fallback-id]
+                      [else
+                        (compiler-load-parse-context-name-id
+                          source-module-fallback)]))]
+                [merged-seen : sym_i64_env.SymI64Env
+                  (compiler-load-dependency-surface-merge-seen
+                    seen
+                    hydration.ast.seen)]
+                (begin
+                  (ast.ast-node-pool-context-install! copied-pools)
+                  ;; Source loading publishes this compact summary before
+                  ;; traversing a file. Rebuild the same summary from the
+                  ;; hydrated AST so qualified macro imports retain their
+                  ;; ordinary visibility rules. The registry's exact package
+                  ;; and source binding already authenticated these decls;
+                  ;; package import spellings need not equal a declared module.
+                  (compiler-load-surface-summary-remove-source!
+                    (compiler-load-source-path-id resolved))
+                  (compiler-load-record-surface-summary!
+                    (compiler-load-surface-summary-from-decls
+                      resolved
+                      (compiler-load-source-path-id resolved)
+                      entry.manifest-dir
+                      source-module-id
+                      source-module-id
+                      explicit-module
+                      (not (compiler-load-no-expected-module? expected-module))
+                      copied-decls))
+                  (match (compiler-load-package-extern-decls
+                    entry.owner
+                    entry.manifest-dir
+                    stdlib-roots
+                    copied-decls
+                    selection.paths
+                    merged-seen
+                    ""
+                    cbi.compiler-builtin-id-fix-empty
+                    (compiler-load-dependency-surface-interface spmd-callables))
+                    [(ResultCompilerLoadWithPaths.Err _)
+                      CompilerLoadDependencySurfaceImport.Unavailable]
+                    [(ResultCompilerLoadWithPaths.Ok
+                        decls
+                        paths
+                        modules
+                        loaded-seen)
+                      (let
+                        [decl-count : i64 (ast.ast-decl-list-len (& decls))]
+                        [provenance-count : i64
+                          (compiler-load-dependency-surface-provenance-count
+                            state
+                            paths)]
+                        (begin
+                          (if (array-ref fragments.imported slot)
+                            unit
+                            (match (surface_facts.surface-typecheck-facts-builder-append
+                              (array-ref surface-state.facts-builder 0)
+                              hydration.facts)
+                              [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err
+                                  _)
+                                (return
+                                  CompilerLoadDependencySurfaceImport.Unavailable)]
+                              [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok
+                                  next)
+                                (begin
+                                  (set!
+                                    (array-ref surface-state.facts-builder 0)
+                                    next)
+                                  (set!
+                                    (array-ref fragments.imported slot)
+                                    true))]))
+                          (set! (array-ref surface-state.fragments 0) fragments)
+                          (set!
+                            (array-ref surface-state.surface-decl-count 0)
+                            (+
+                              (array-ref surface-state.surface-decl-count 0)
+                              decl-count))
+                          (set!
+                            (array-ref surface-state.surface-provenance-count 0)
+                            (+
+                              (array-ref
+                                surface-state.surface-provenance-count
+                                0)
+                              provenance-count))
+                          (set!
+                            (array-ref surface-state.hit-count 0)
+                            (+ (array-ref surface-state.hit-count 0) 1))
+                          (CompilerLoadDependencySurfaceImport.Ok
+                            (ResultCompilerLoadWithPaths.Ok
+                              decls
+                              paths
+                              modules
+                              loaded-seen))))])))]))))))
+
 (define (compiler-load-package-externs-from-import
   [resolved : String]
   [seen : sym_i64_env.SymI64Env]
@@ -12075,39 +12827,49 @@
       (ResultCompilerLoadWithPaths.Err
         (box (cdiag.compiler-diagnostic-at-start resolved message)))]
     [(ResultCompilerLoadPackageEntry.Ok entry)
-      (match (compiler-load-package-spmd-interface
-        entry.manifest-dir
-        entry.owner
-        entry.version)
-        [(ResultCompilerLoadPackageSpmdInterface.Err message)
-          (ResultCompilerLoadWithPaths.Err
-            (box (cdiag.compiler-diagnostic-at-start resolved message)))]
-        [(ResultCompilerLoadPackageSpmdInterface.Ok spmd-interface)
-          (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
-            resolved
-            seen
-            stdlib-roots
-            expected-module
-            cfgs
-            module-id-fallback
-            source-module-fallback)
-            [(ResultCompilerLoadWithPaths.Ok
-                imported-decls
-                imported-paths
-                _
-                import-seen)
-              (compiler-load-package-extern-decls
-                entry.owner
-                entry.manifest-dir
+      (match (compiler-load-dependency-surface-import
+        resolved
+        seen
+        stdlib-roots
+        entry
+        expected-module
+        module-id-fallback
+        source-module-fallback)
+        [(CompilerLoadDependencySurfaceImport.Ok loaded) loaded]
+        [(CompilerLoadDependencySurfaceImport.Unavailable)
+          (match (compiler-load-package-spmd-interface
+            entry.manifest-dir
+            entry.owner
+            entry.version)
+            [(ResultCompilerLoadPackageSpmdInterface.Err message)
+              (ResultCompilerLoadWithPaths.Err
+                (box (cdiag.compiler-diagnostic-at-start resolved message)))]
+            [(ResultCompilerLoadPackageSpmdInterface.Ok spmd-interface)
+              (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
+                resolved
+                seen
                 stdlib-roots
-                imported-decls
-                imported-paths
-                import-seen
-                ""
-                cbi.compiler-builtin-id-fix-empty
-                spmd-interface)]
-            [(ResultCompilerLoadWithPaths.Err diag)
-              (ResultCompilerLoadWithPaths.Err diag)])])]))
+                expected-module
+                cfgs
+                module-id-fallback
+                source-module-fallback)
+                [(ResultCompilerLoadWithPaths.Ok
+                    imported-decls
+                    imported-paths
+                    _
+                    import-seen)
+                  (compiler-load-package-extern-decls
+                    entry.owner
+                    entry.manifest-dir
+                    stdlib-roots
+                    imported-decls
+                    imported-paths
+                    import-seen
+                    ""
+                    cbi.compiler-builtin-id-fix-empty
+                    spmd-interface)]
+                [(ResultCompilerLoadWithPaths.Err diag)
+                  (ResultCompilerLoadWithPaths.Err diag)])])])]))
 
 (define (compiler-load-package-expand-include-str
   [importer-path : String]
@@ -13163,7 +13925,7 @@
       deps
       cfgs)))
 
-(define (compiler-load-package-file-with-runtime-cfg
+(define (compiler-load-package-file-with-runtime-cfg-inner
   [input-path : String]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
@@ -13261,6 +14023,83 @@
             (ResultCompilerLoadWithPaths.Err diag)])]
       [(ResultCompilerLoadWithPaths.Err diag)
         (ResultCompilerLoadWithPaths.Err diag)])))
+
+(define (compiler-load-dependency-surfaces-restore-base!
+  [surface-state : CompilerLoadDependencySurfaceState]) : unit
+  (match (array-ref surface-state.base-facts 0)
+    [(CompilerLoadDependencySurfaceBaseFacts.None)
+      (surface_facts.surface-typecheck-facts-clear!)]
+    [(CompilerLoadDependencySurfaceBaseFacts.Some facts)
+      (if (surface_facts.surface-typecheck-facts-publish! facts)
+        unit
+        (surface_facts.surface-typecheck-facts-clear!))]))
+
+(define (compiler-load-dependency-surfaces-finalize!
+  [state : CompilerLoadSessionState]
+  [loaded : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
+  (let
+    [surface-state : CompilerLoadDependencySurfaceState
+      state.dependency-surfaces]
+    [surface-count : i64 (array-ref surface-state.surface-decl-count 0)]
+    (match loaded
+      [(ResultCompilerLoadWithPaths.Err diag)
+        (begin
+          (compiler-load-dependency-surfaces-restore-base! surface-state)
+          (ResultCompilerLoadWithPaths.Err diag))]
+      [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
+        (if (or (not (array-ref surface-state.enabled 0)) (<= surface-count 0))
+          (begin
+            (compiler-load-dependency-surfaces-restore-base! surface-state)
+            (ResultCompilerLoadWithPaths.Ok decls paths modules seen))
+          (match (surface_facts.surface-typecheck-facts-builder-finish
+            (array-ref surface-state.facts-builder 0))
+            [(surface_facts.ResultSurfaceTypecheckFacts.Err _)
+              (begin
+                (compiler-load-dependency-surfaces-restore-base! surface-state)
+                (ResultCompilerLoadWithPaths.Ok decls paths modules seen))]
+            [(surface_facts.ResultSurfaceTypecheckFacts.Ok composed)
+              (let
+                [candidate : surface_facts.SurfaceTypecheckFacts
+                  (surface_facts.SurfaceTypecheckFacts
+                    composed.macro-prefix-decl-count
+                    composed.prefix-decl-count
+                    composed.summary-values
+                    composed.summary-functions
+                    composed.summary-externs
+                    composed.clone-decl-keys
+                    composed.clone-root-keys
+                    composed.clone-call-indices)]
+                [published : bool
+                  (surface_facts.surface-typecheck-facts-publish-composite!
+                    candidate)]
+                (begin
+                  (if published
+                    unit
+                    (compiler-load-dependency-surfaces-restore-base!
+                      surface-state))
+                  (ResultCompilerLoadWithPaths.Ok decls paths modules seen)))]))])))
+
+(define (compiler-load-package-file-with-runtime-cfg
+  [input-path : String]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [emit-entry : bool]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
+  (let
+    [state : CompilerLoadSessionState
+      (compiler-load-active-session-state-shared-view)]
+    [_surface-preflight : bool
+      (compiler-load-dependency-surfaces-prepare! state stdlib-roots cfgs)]
+    [loaded : ResultCompilerLoadWithPaths
+      (compiler-load-package-file-with-runtime-cfg-inner
+        input-path
+        stdlib-roots
+        manifest-dir
+        deps
+        emit-entry
+        cfgs)]
+    (compiler-load-dependency-surfaces-finalize! state loaded)))
 
 (define (compiler-load-decl-list-count [decls : ast.AstDeclList]) : i64
   (match (ast.ast-decl-list-step decls)
@@ -13401,7 +14240,7 @@
       (set! (array-ref bytes 4) (cast 255 : u8))
       (set! (array-ref bytes 5) (cast 10 : u8))
       (unsafe
-        (string-from-bytes (ptr-cast (array-data bytes) : (Ptr u8)) 6)))))
+        (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 6)))))
 
 (define (compiler-load-decl-list-has-import-alias?
   [decls : ast.AstDeclList]
@@ -17773,7 +18612,7 @@
 (define (compiler-load-module-list-slots-address
   [items : ast.AstDeclModuleList]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data items.slots) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data items.slots) : (Ptr u8))) : i64)))
 
 (define (compiler-load-append-onto-reuse-ok?) : bool
   (let
@@ -18687,18 +19526,21 @@
             (CompilerLoadDependencyCatalogEntry
               outer-key
               CompilerLoadDependencyCatalogImage.None
+              (tlci.tlci-spmd-callables-empty)
               (CompilerLoadDependencyCatalogStatus.Unavailable
                 (CompilerLoadDependencyCatalogFailure.Missing "outer missing")))]
           [nested-entry : CompilerLoadDependencyCatalogEntry
             (CompilerLoadDependencyCatalogEntry
               nested-key
               CompilerLoadDependencyCatalogImage.None
+              (tlci.tlci-spmd-callables-empty)
               (CompilerLoadDependencyCatalogStatus.Unavailable
                 (CompilerLoadDependencyCatalogFailure.Missing "nested missing")))]
           [metadata-entry : CompilerLoadDependencyCatalogEntry
             (CompilerLoadDependencyCatalogEntry
               metadata-key
               (CompilerLoadDependencyCatalogImage.Some metadata-image)
+              (tlci.tlci-spmd-callables-empty)
               CompilerLoadDependencyCatalogStatus.TrustedMetadataOnly)]
           [outer-slot : i64
             (compiler-load-dependency-catalog-record-owned! state outer-entry)]
@@ -18819,6 +19661,7 @@
               (CompilerLoadDependencyCatalogEntry
                 replacement-key
                 CompilerLoadDependencyCatalogImage.None
+                (tlci.tlci-spmd-callables-empty)
                 (CompilerLoadDependencyCatalogStatus.Unavailable
                   (CompilerLoadDependencyCatalogFailure.Missing
                     "nested replacement missing")))]

@@ -58941,10 +58941,47 @@
         (compiler_ir_types.CompilerIrValue.Unit))
       (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
 
+;; `lp_callee` seen as the PROGRAM sees it. The per-global mod-ref table reads
+;; every callee's row off its body, and a name absent from the program's
+;; function list is an extern (no IR body, hence no `set!`). `lp_callee` is a
+;; program function whose memory class these fixtures vary through
+;; `direct-call-clean` alone, so it has to be in the list and it has to stay
+;; opaque to the table: the indirect call is what makes its row "may write any
+;; cell", which is exactly the fact these fixtures assume when they expect an
+;; unresolved callee to block promotion.
+(define (opt-lp-test-opaque-callee-function [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.callee
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    8
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.CallIndirect
+            30
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-lp-test-program-functions [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-lp-test-writer-function symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-lp-test-opaque-callee-function symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
 (define (opt-lp-test-cells [symbols : OptLpTestSymbols]) : compiler_optimize.OptGlobalCellSummary
   (compiler_optimize.opt-global-cell-summary-build
     (opt-lp-test-globals symbols)
-    compiler_ir_types.CompilerIrFunctionList.Nil))
+    (opt-lp-test-program-functions symbols)))
 
 ;; A second program function whose `set!`s disqualify both cells from the
 ;; proven-constant substitution the level-2 pipeline would otherwise apply.
@@ -59805,6 +59842,417 @@
         15]
       [else 42])))
 
+;; --- P18: per-global call mod-ref over global cells --------------------------
+;;
+;; The table's own question ("which global CELLS may this callee write?") and
+;; the one decision it moves: a loop the loop-wide `globals-promote-clean?` gate
+;; refuses because SOME cell may be written now promotes every cell that is not
+;; the one. `mr_a` and `mr_b` are both `Store` targets (so both carry a bit);
+;; `mr_c` is stored nowhere, so it has no bit at all and no execution can write
+;; its cell.
+(defstruct OptMrTestSymbols
+  (a i64)
+  (b i64)
+  (c i64)
+  (write-a i64)
+  (write-via i64)
+  (write-b i64)
+  (elem i64)
+  (opaque i64)
+  (addr i64)
+  (extern i64))
+
+(define (opt-mr-test-symbols) : OptMrTestSymbols
+  (OptMrTestSymbols
+    (opt-test-symbol "mr_a")
+    (opt-test-symbol "mr_b")
+    (opt-test-symbol "mr_c")
+    (opt-test-symbol "mr_write_a")
+    (opt-test-symbol "mr_write_via")
+    (opt-test-symbol "mr_write_b")
+    (opt-test-symbol "mr_elem")
+    (opt-test-symbol "mr_opaque")
+    (opt-test-symbol "mr_addr")
+    (opt-test-symbol "mr_extern")))
+
+(define (opt-mr-test-globals [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 3)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.a
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 1))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.b
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 2))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.c
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 3))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-mr-one-block-function
+  [name : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    8
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        instrs)
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-mr-return-zero) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.I64 0)))
+    compiler_ir_types.CompilerIrInstrList.Nil))
+
+;; `(set! mr_a 5)` -- the only instruction whose write target is a symbol.
+(define (opt-mr-write-function [name : i64] [cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    name
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Store
+        cell
+        (compiler_ir_types.CompilerIrValue.I64 5)
+        (compiler_ast_types.AstType.I64))
+      (opt-mr-return-zero))))
+
+;; A caller of the above: its row has to pick the callee's bit up through the
+;; call graph, which is the whole point of the fixpoint.
+(define (opt-mr-write-via-function [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.write-via
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Call
+        30
+        symbols.write-a
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))
+      (opt-mr-return-zero))))
+
+;; Writes through a POINTER only. No `GlobalAddr` exists in this program, so no
+;; pointer in it can name a cell and this callee writes none.
+(define (opt-mr-elem-function [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.elem
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (opt-mr-return-zero))))
+
+;; An INDIRECT call: its target is some function of this program, so it may
+;; reach any `Store` in it.
+(define (opt-mr-opaque-function [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.opaque
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.CallIndirect
+        31
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))
+      (opt-mr-return-zero))))
+
+;; Forms a cell ADDRESS. One of these anywhere in the program withdraws the
+;; table's precondition, because a pointer write can then reach a cell.
+(define (opt-mr-addr-function [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.addr
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        32
+        (compiler_ir_types.CompilerIrValue.GlobalAddr symbols.c)
+        (compiler_ast_types.AstType.U64))
+      (opt-mr-return-zero))))
+
+(define (opt-mr-test-functions [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-mr-write-function symbols.write-a symbols.a)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-mr-write-via-function symbols)
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-mr-write-function symbols.write-b symbols.b)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-mr-elem-function symbols)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-mr-opaque-function symbols)
+            compiler_ir_types.CompilerIrFunctionList.Nil))))))
+
+(define (opt-mr-addr-functions [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-mr-addr-function symbols)
+    (opt-mr-test-functions symbols)))
+
+(define (opt-mr-test-cells [symbols : OptMrTestSymbols]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-global-cell-summary-build
+    (opt-mr-test-globals symbols)
+    (opt-mr-test-functions symbols)))
+
+(define (opt-mr-addr-cells [symbols : OptMrTestSymbols]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-global-cell-summary-build
+    (opt-mr-test-globals symbols)
+    (opt-mr-addr-functions symbols)))
+
+(define (opt-mr-mod-ref [cells : compiler_optimize.OptGlobalCellSummary]) : compiler_optimize.OptGlobalModRef
+  cells.mod-ref)
+
+;; `@mr_a * i`, a call, then `+ @mr_b`: two cell operands with the call between
+;; them, so nothing can promote unless the callee's row allows it.
+(define (opt-mr-call-body-blocks [symbols : OptMrTestSymbols] [callee : i64]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        8
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Global symbols.a)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Call
+          11
+          callee
+          compiler_ir_types.CompilerIrCallArgs.Nil
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.CompilerIrValue.Global symbols.b)
+            (compiler_ast_types.AstType.I64))
+          (opt-licm-loop-finish-instrs))))
+    9))
+
+;; The same two operands with the loop itself storing `mr_a`.
+(define (opt-mr-store-body-blocks [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        8
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Global symbols.a)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Store
+          symbols.a
+          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.CompilerIrValue.Global symbols.b)
+            (compiler_ast_types.AstType.I64))
+          (opt-licm-loop-finish-instrs))))
+    9))
+
+;; The loop under an EMPTY direct-call-clean map: the loop-wide gate always
+;; refuses, so every promotion these arms see is the per-global path's.
+(define (opt-mr-promoted
+  [cells : compiler_optimize.OptGlobalCellSummary]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (opt-lp-promoted-with-clean-map-and-cells
+    blocks
+    (opt_i64_i64_map.with-capacity 1)
+    cells))
+
+;; A globals sequence of `count` cells, all of them `Store` targets, for the
+;; packed row's capacity check.
+(define (opt-mr-wide-globals-fill!
+  [builder : (&mut builder compiler_ir_types.CompilerIrGlobalBuilder)]
+  [at : i64]
+  [count : i64]) : unit
+  (if (>= at count)
+    unit
+    (begin
+      (opt-test-global-builder-push!
+        builder
+        (opt-test-symbol (str_cat.str-cat "mr_wide_" (string.int->string at)))
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 at))
+      (opt-mr-wide-globals-fill! builder (+ at 1) count))))
+
+(define (opt-mr-wide-globals [count : i64]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 64)]
+    (begin
+      (opt-mr-wide-globals-fill! (&mut builder) 0 count)
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-mr-wide-stores
+  [count : i64]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [at : i64]) : opt_i64_i64_map.Map
+  (if (>= at count)
+    out
+    (let
+      [next : opt_i64_i64_map.Map out]
+      (begin
+        (opt_i64_i64_map.insert-ref!
+          (&mut next)
+          (compiler_ir_types.compiler-ir-symbol-id
+            (opt-test-symbol
+              (str_cat.str-cat "mr_wide_" (string.int->string at))))
+          1)
+        (opt-mr-wide-stores count next (+ at 1))))))
+
+(define (opt-mr-wide-index-built? [count : i64]) : bool
+  (match (compiler_optimize.opt-global-mod-ref-index-fill
+    (opt-mr-wide-globals count)
+    (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0)
+    (opt_i64_i64_map.with-capacity 128)
+    0
+    0)
+    [(compiler_optimize.OptGlobalModRefIndex.No) false]
+    [(compiler_optimize.OptGlobalModRefIndex.Some _ _) true]))
+
+(define (compiler-optimize-licm-global-mod-ref-self-test) : i64
+  (let
+    [symbols : OptMrTestSymbols (opt-mr-test-symbols)]
+    [cells : compiler_optimize.OptGlobalCellSummary (opt-mr-test-cells symbols)]
+    [mod-ref : compiler_optimize.OptGlobalModRef (opt-mr-mod-ref cells)]
+    [addr-cells : compiler_optimize.OptGlobalCellSummary
+      (opt-mr-addr-cells symbols)]
+    [addr-mod-ref : compiler_optimize.OptGlobalModRef
+      (opt-mr-mod-ref addr-cells)]
+    [a-mask : i64
+      (compiler_optimize.opt-global-mod-ref-call-mask mod-ref symbols.write-a)]
+    [via-mask : i64
+      (compiler_optimize.opt-global-mod-ref-call-mask mod-ref symbols.write-via)]
+    [b-mask : i64
+      (compiler_optimize.opt-global-mod-ref-call-mask mod-ref symbols.write-b)]
+    [elem-mask : i64
+      (compiler_optimize.opt-global-mod-ref-call-mask mod-ref symbols.elem)]
+    [opaque-mask : i64
+      (compiler_optimize.opt-global-mod-ref-call-mask mod-ref symbols.opaque)]
+    [extern-mask : i64
+      (compiler_optimize.opt-global-mod-ref-call-mask mod-ref symbols.extern)]
+    ;; the loop decisions, all under an empty direct-call-clean map
+    [via-a : compiler_ir_types.CompilerIrBlockList
+      (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.write-a))]
+    [via-a-transitive : compiler_ir_types.CompilerIrBlockList
+      (opt-mr-promoted
+        cells
+        (opt-mr-call-body-blocks symbols symbols.write-via))]
+    [via-b : compiler_ir_types.CompilerIrBlockList
+      (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.write-b))]
+    [via-elem : compiler_ir_types.CompilerIrBlockList
+      (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.elem))]
+    [via-opaque : compiler_ir_types.CompilerIrBlockList
+      (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.opaque))]
+    [via-extern : compiler_ir_types.CompilerIrBlockList
+      (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.extern))]
+    [in-loop-store : compiler_ir_types.CompilerIrBlockList
+      (opt-mr-promoted cells (opt-mr-store-body-blocks symbols))]
+    ;; the same write-a loop in a program that takes a cell's address: the
+    ;; table's precondition is gone, so nothing is refined and nothing promotes
+    [via-a-addr-taken : compiler_ir_types.CompilerIrBlockList
+      (opt-mr-promoted
+        addr-cells
+        (opt-mr-call-body-blocks symbols symbols.write-a))]
+    (cond
+      ;; --- the table itself ---
+      [(not mod-ref.built?) 1]
+      ;; `mr_write_a` writes exactly mr_a's cell
+      [(compiler_optimize.opt-global-mod-ref-any? a-mask) 2]
+      [(not
+          (compiler_optimize.opt-global-mod-ref-mask-may-write?
+            mod-ref.index
+            a-mask
+            symbols.a))
+        3]
+      [(compiler_optimize.opt-global-mod-ref-mask-may-write?
+          mod-ref.index
+          a-mask
+          symbols.b)
+        4]
+      ;; a global no `Store` in the program targets has no bit at all
+      [(compiler_optimize.opt-global-mod-ref-mask-may-write?
+          mod-ref.index
+          a-mask
+          symbols.c)
+        5]
+      ;; the fixpoint carries the callee's bit up one call-graph edge
+      [(not (= via-mask a-mask)) 6]
+      ;; the other writer names the other cell
+      [(not
+          (compiler_optimize.opt-global-mod-ref-mask-may-write?
+            mod-ref.index
+            b-mask
+            symbols.b))
+        7]
+      [(compiler_optimize.opt-global-mod-ref-mask-may-write?
+          mod-ref.index
+          b-mask
+          symbols.a)
+        8]
+      ;; a pointer write reaches no cell while no cell address exists
+      [(not (= elem-mask 0)) 9]
+      ;; an indirect call may reach any `Store` in the program
+      [(not (compiler_optimize.opt-global-mod-ref-any? opaque-mask)) 10]
+      ;; an extern has no IR body and so performs no `Store`
+      [(not (= extern-mask 0)) 11]
+      ;; one `GlobalAddr` anywhere withdraws the table
+      [addr-mod-ref.built? 12]
+      [(not
+          (compiler_optimize.opt-global-mod-ref-any?
+            (compiler_optimize.opt-global-mod-ref-call-mask
+              addr-mod-ref
+              symbols.write-a)))
+        13]
+      ;; the packed row's capacity: one bit per stored global, and no table
+      ;; past it
+      [(not
+          (opt-mr-wide-index-built?
+            (compiler_optimize.opt-global-mod-ref-limit)))
+        14]
+      [(opt-mr-wide-index-built?
+          (+ (compiler_optimize.opt-global-mod-ref-limit) 1))
+        15]
+      ;; --- the decision the table moves ---
+      ;; a callee that writes mr_a keeps mr_b's cell promotable and refuses
+      ;; mr_a's
+      [(not (= (opt-lp-loop-body-cell-operands via-a) 1)) 20]
+      [(not (= (opt-lp-preheader-cell-loads via-a) 1)) 21]
+      [(not (= (opt-lp-loop-body-cell-operands via-a-transitive) 1)) 22]
+      [(not (= (opt-lp-preheader-cell-loads via-a-transitive) 1)) 23]
+      ;; and symmetrically for the other cell
+      [(not (= (opt-lp-loop-body-cell-operands via-b) 1)) 24]
+      [(not (= (opt-lp-preheader-cell-loads via-b) 1)) 25]
+      ;; a callee whose only writes go through a pointer refuses neither
+      [(not (= (opt-lp-loop-body-cell-operands via-elem) 0)) 26]
+      [(not (= (opt-lp-preheader-cell-loads via-elem) 2)) 27]
+      [(not (= (opt-lp-loop-body-cell-operands via-extern) 0)) 28]
+      [(not (= (opt-lp-preheader-cell-loads via-extern) 2)) 29]
+      ;; an indirect call inside the callee refuses both
+      [(not (= (opt-lp-loop-body-cell-operands via-opaque) 2)) 30]
+      [(not (= (opt-lp-preheader-cell-loads via-opaque) 0)) 31]
+      ;; the loop's OWN `set!` names one cell and refuses only it
+      [(not (= (opt-lp-loop-body-cell-operands in-loop-store) 1)) 32]
+      [(not (= (opt-lp-preheader-cell-loads in-loop-store) 1)) 33]
+      ;; and with a cell address in the program, the refinement is withdrawn
+      ;; and the older loop-wide refusal stands for both cells
+      [(not (= (opt-lp-loop-body-cell-operands via-a-addr-taken) 2)) 34]
+      [(not (= (opt-lp-preheader-cell-loads via-a-addr-taken) 0)) 35]
+      [else 42])))
+
 ;; --- element-storage write attribution --------------------------------------
 ;;
 ;; The shape a `(&mut Vec)` slot accessor lowers to, and the reason its writes
@@ -60142,7 +60590,9 @@
       (opt-lp-promoted-blocks symbols (opt-lp-test-blocks symbols false))]
     [plain : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks plain-func)]
-    ;; (b) a `set!` of one cell closes the loop-wide gate: nothing promotes
+    ;; (b) a `set!` of ONE cell. The loop-wide gate closes, and before P18 that
+    ;; refused every cell in the body; the per-global mod-ref set names exactly
+    ;; the stored cell, so `lp_g2` still promotes and `lp_g1` does not.
     [store-func : compiler_ir_types.CompilerIrFunction
       (opt-lp-promoted-blocks symbols (opt-lp-test-blocks symbols true))]
     [store-blocks : compiler_ir_types.CompilerIrBlockList
@@ -60228,14 +60678,19 @@
       [(not (= (opt-lp-binop-rhs-var plain 8) 17)) 4]
       [(not (= (opt-lp-binop-rhs-var plain 9) 16)) 5]
       [(not (= (compiler_optimize.opt-function-frame plain-func) 18)) 6]
-      ;; (b) the store closes the gate for the whole loop
+      ;; (b) the store names one cell: the OTHER one still promotes
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function store-func)))
         7]
-      [(not (= (opt-lp-count-label store-blocks entry-label true) 0)) 8]
-      [(not (= (opt-lp-count-label store-blocks loop-label false) 3)) 9]
-      [(not (= (compiler_optimize.opt-function-frame store-func) 16)) 10]
+      [(not (= (opt-lp-count-label store-blocks entry-label true) 1)) 8]
+      ;; what is left in the body: `@lp_g1` (the stored cell) and the aggregate
+      ;; read, which is not a word cell in the first place
+      [(not (= (opt-lp-count-label store-blocks loop-label false) 2)) 9]
+      ;; and it is `%9 = add %8, @lp_g2` that took the one fresh var
+      [(not (= (opt-lp-binop-rhs-var store-blocks 9) 16)) 23]
+      [(not (= (opt-lp-binop-rhs-var store-blocks 8) -1)) 24]
+      [(not (= (compiler_optimize.opt-function-frame store-func) 17)) 10]
       ;; (c) zero-trip-capable loop still promotes into its preheader
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -60544,6 +60999,13 @@
     (compiler-optimize-licm-global-clean-call-self-test)
     42
     "a callee the call-memory fixpoint proves writes no global storage stops blocking cell promotion, and a memory-clean one is admitted under the live-in budget; an unresolved callee, a GlobalAddr argument, and a memory-clean callee in an over-budget loop each still refuse"))
+
+(test
+  licm-global-cell-mod-ref
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-mod-ref-self-test)
+    42
+    "the per-global mod-ref table names the cells a callee may write, carries them one call-graph edge, and lets a loop promote every OTHER cell across it; a pointer-writing and an extern callee refuse nothing, an indirect callee and a program-wide cell address refuse everything, an in-loop set! refuses only its own cell, and the packed row declines past its capacity"))
 
 (test
   call-memory-element-write-attribution

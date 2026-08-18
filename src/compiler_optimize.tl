@@ -19538,7 +19538,17 @@
   ;; `(and (not global-write?) (not mem-clean-call?))` and nothing outside the
   ;; newly priced class moves. See
   ;; opt-licm-direct-call-keeps-globals-clean?.
-  (mem-clean-call? bool))
+  (mem-clean-call? bool)
+  ;; P18. The per-global refinement of `global-write?`: the packed set of
+  ;; global CELLS the body may write, read against the program's
+  ;; OptGlobalModRef index. `global-write?` above answers "some cell"; this
+  ;; answers "which", and the two are contributed by exactly the same terms --
+  ;; a `Store g` names g, a direct call contributes its callee's row, an
+  ;; indirect call and an unknown effect contribute "any cell", and everything
+  ;; that leaves `global-write?` alone contributes nothing. When the program
+  ;; carries no table the loop is seeded with "any cell", so every consumer
+  ;; falls back to the older loop-wide answer and no decision moves.
+  (global-cell-writes i64))
 
 (define (opt-licm-root-env-with-capacity
   [capacity : i64]
@@ -19774,6 +19784,69 @@
 ;; (opt-licm-store-state-direct-call, opt-direct-call-noreturn?).
 (define (opt-licm-globals-clean? [global-write? : bool]) : bool
   (not global-write?))
+
+;; P18. What the loop passes know about `Global` operands: the loop-wide answer
+;; the older gate computed, plus the per-global refinement of it.
+;;
+;; `clean?` is unchanged -- `opt-licm-globals-clean?` composed with the
+;; memory-clean-call tier's refusal at the loop site. It stays the answer the
+;; ADDRESS-forming Gep arm asks, for the register-pressure reason recorded at
+;; that arm.
+;;
+;; `mask` / `index` are the per-global answer: the packed set of global CELLS
+;; this loop may write (see OptGlobalModRef). A `Global g` operand is a
+;; rip-relative read of g's OWN cell, so it reads the same value on every
+;; iteration exactly when g is outside that set -- a strictly weaker condition
+;; than `clean?`, and the one the scalar operand arms now ask. When the program
+;; carries no mod-ref table the loop is seeded with "any cell" and the two
+;; conditions coincide, which is what keeps every level below 2 and every
+;; program outside the table's preconditions byte-identical.
+(defstruct OptLicmGlobalFacts
+  (clean? bool)
+  (mask i64)
+  (index opt_i64_i64_map.Map))
+
+(define (opt-licm-global-facts
+  [clean? : bool]
+  [cells : OptGlobalCellSummary]
+  [mask : i64]) : OptLicmGlobalFacts
+  (let
+    [mod-ref : OptGlobalModRef cells.mod-ref]
+    (OptLicmGlobalFacts clean? mask mod-ref.index)))
+
+(define (opt-licm-global-facts-invariant?
+  [facts : OptLicmGlobalFacts]
+  [name : i64]) : bool
+  (or
+    facts.clean?
+    (not (opt-global-mod-ref-mask-may-write? facts.index facts.mask name))))
+
+;; opt-licm-value-invariant? with the per-global answer in place of the
+;; loop-wide bool. The Var and literal arms are identical to it; only a
+;; `Global` operand is decided differently.
+(define (opt-licm-global-value-invariant?
+  [facts : OptLicmGlobalFacts]
+  [loop-defs : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (or
+        (not (opt-used-contains loop-defs var))
+        (opt-used-contains hoisted var))]
+    [(ir.CompilerIrValue.Global name)
+      (opt-licm-global-facts-invariant? facts name)]
+    [_ true]))
+
+(define (opt-licm-global-values-invariant?
+  [facts : OptLicmGlobalFacts]
+  [loop-defs : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map]
+  [a : ir.CompilerIrValue]
+  [b : ir.CompilerIrValue]) : bool
+  (and
+    (opt-licm-global-value-invariant? facts loop-defs hoisted a)
+    (opt-licm-global-value-invariant? facts loop-defs hoisted b)))
 
 (define (opt-licm-store-summary-empty) : OptLicmStoreSummary
   (OptLicmStoreSummary false false false false))
@@ -20472,7 +20545,8 @@
 
 (define (opt-licm-store-state-with-provenance
   [ptrs : OptLicmPtrEnv]
-  [roots : OptLicmRootEnv]) : OptLicmStoreState
+  [roots : OptLicmRootEnv]
+  [cell-writes : i64]) : OptLicmStoreState
   (OptLicmStoreState
     (opt-licm-store-summary-empty)
     (opt-licm-store-summary-empty)
@@ -20481,7 +20555,8 @@
     (opt-licm-store-roots-new)
     false
     false
-    false))
+    false
+    cell-writes))
 
 ;; The part of a store summary that can reach a global cell: an unknown call and
 ;; an unknown-or-header store both can, an element-only store cannot (its
@@ -20501,7 +20576,8 @@
     state.store-roots
     state.any-call?
     state.global-write?
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-add-summary
   [state : OptLicmStoreState]
@@ -20514,7 +20590,8 @@
     state.store-roots
     state.any-call?
     (or state.global-write? (opt-licm-store-summary-global-write? summary))
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-bind-ptr
   [state : OptLicmStoreState]
@@ -20528,7 +20605,8 @@
     state.store-roots
     state.any-call?
     state.global-write?
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-bind-root
   [state : OptLicmStoreState (:consume)]
@@ -20550,7 +20628,8 @@
     (opt-licm-store-roots-add state.store-roots root)
     state.any-call?
     (or state.global-write? (opt-licm-store-summary-global-write? summary))
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-mark-call [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
@@ -20561,7 +20640,28 @@
     state.store-roots
     true
     state.global-write?
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
+
+;; Fold one instruction's cell-write mask into the body state. A zero mask --
+;; the answer for everything that provably writes no cell -- returns the state
+;; untouched, so a loop whose instructions all answer zero keeps the empty set
+;; it was seeded with.
+(define (opt-licm-store-state-add-cell-writes
+  [state : OptLicmStoreState]
+  [mask : i64]) : OptLicmStoreState
+  (if (= mask 0)
+    state
+    (OptLicmStoreState
+      state.summary
+      state.rooted-summary
+      state.ptrs
+      state.roots
+      state.store-roots
+      state.any-call?
+      state.global-write?
+      state.mem-clean-call?
+      (bit-or state.global-cell-writes mask))))
 
 (define (opt-licm-store-state-mark-global-write [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
@@ -20572,7 +20672,8 @@
     state.store-roots
     state.any-call?
     true
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-mark-mem-clean-call [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
@@ -20583,7 +20684,8 @@
     state.store-roots
     state.any-call?
     state.global-write?
-    true))
+    true
+    state.global-cell-writes))
 
 ;; Fold a DIRECT call (`Call` or `TailCall`) into the body state: the call
 ;; boundary plus the callee's store facts. A non-returning trap helper
@@ -20669,7 +20771,15 @@
   (if (opt-direct-call-noreturn? name)
     state
     (let
-      [called : OptLicmStoreState (opt-licm-store-state-mark-call state)]
+      [called
+        : OptLicmStoreState
+        ;; P18: the callee's own cell-write row, whatever the coarse verdict
+        ;; below decides. A callee proven to write no memory at all, or only
+        ;; element storage, contributes an empty row for the same reasons those
+        ;; tiers keep `global-write?` clear.
+        (opt-licm-store-state-add-cell-writes
+          (opt-licm-store-state-mark-call state)
+          (opt-global-mod-ref-call-mask global-cells.mod-ref name))]
       [summary : OptLicmStoreSummary
         (opt-licm-store-summary-for-direct-call direct-call-clean name)]
       (if (opt-licm-direct-call-keeps-globals-clean?
@@ -20699,7 +20809,8 @@
     state.store-roots
     state.any-call?
     state.global-write?
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-invalidate-ptr-instr
   [state : OptLicmStoreState]
@@ -20806,6 +20917,15 @@
           [(ir.CompilerIrMaybeValue.No) invalid])]
       [_ invalid])))
 
+;; An INDIRECT call may land on any function of the program, so it may reach
+;; any `Store` in it: the one call class the per-global table cannot refine.
+(define (opt-licm-store-state-indirect-call [state : OptLicmStoreState]) : OptLicmStoreState
+  (opt-licm-store-state-add-summary
+    (opt-licm-store-state-add-cell-writes
+      (opt-licm-store-state-mark-call state)
+      (opt-global-mod-ref-any))
+    (opt-licm-store-summary-call-or-unknown)))
+
 (define (opt-licm-store-state-instr
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
@@ -20827,25 +20947,15 @@
           global-cells
           name)]
       [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.CallIndirectC _ _ _ _)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.SpmdCall payload-box)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.TailCall name _ _)
         (opt-licm-store-state-direct-call
           provenance
@@ -20853,9 +20963,7 @@
           global-cells
           name)]
       [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.StorePtr ptr _ _)
         (let
           [root : OptLicmRoot (opt-licm-root-of-value provenance.roots ptr)]
@@ -20931,13 +21039,22 @@
       ;; hoist available, while the global-write flag is raised EXPLICITLY so
       ;; `Global` operand promotion still refuses: that pass reasons about cell
       ;; CONTENTS, which is exactly what this instruction changes.
-      [(ir.CompilerIrInstr.Store _ _ _)
+      [(ir.CompilerIrInstr.Store name _ _)
         (opt-licm-store-state-add-summary-keeping-globals
-          (opt-licm-store-state-mark-global-write provenance)
+          ;; P18: a named cell write names exactly ONE cell, which is the whole
+          ;; reason the per-global set is finer than `global-write?` here.
+          (opt-licm-store-state-add-cell-writes
+            (opt-licm-store-state-mark-global-write provenance)
+            (opt-global-mod-ref-instr-store-mask global-cells.mod-ref name))
           (opt-licm-store-summary-element-only-store))]
       [_
         (opt-licm-store-state-add-summary
-          provenance
+          ;; Everything the arms above do not name: the effect classification
+          ;; decides both the store summary and the cell-write mask, and the
+          ;; two agree by construction (see opt-global-mod-ref-effect-mask).
+          (opt-licm-store-state-add-cell-writes
+            provenance
+            (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr)))
           (opt-licm-store-summary-from-effect
             (ir.compiler-ir-instr-effect instr)))])))
 
@@ -21089,8 +21206,13 @@
     [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17 return-alias)]
     [_params : unit
       (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)]
-    [initial : OptLicmStoreState
-      (opt-licm-store-state-with-provenance (OptLicmPtrEnv.Nil) roots)]
+    [initial
+      : OptLicmStoreState
+      ;; Provenance only; this state's cell-write set is never consulted.
+      (opt-licm-store-state-with-provenance
+        (OptLicmPtrEnv.Nil)
+        roots
+        (opt-global-mod-ref-any))]
     [first : OptLicmStoreState
       (opt-licm-provenance-state-blocks type-segment-bases types blocks initial)]
     (opt-licm-provenance-state-blocks type-segment-bases types blocks first)))
@@ -21116,7 +21238,8 @@
           (opt-licm-store-roots-new)
           false
           false
-          false))]
+          false
+          (opt-global-mod-ref-any)))]
     (opt-licm-store-summary-merge state.summary state.rooted-summary)))
 
 (define (opt-licm-memory-safe?
@@ -21287,16 +21410,16 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
-  ;; Whether a `Global` operand -- a hidden rip-relative load of that global's
-  ;; cell -- reads the same value on every iteration of this loop. See
+  ;; What this loop knows about `Global` operands -- each a hidden rip-relative
+  ;; load of that global's cell. See OptLicmGlobalFacts,
   ;; opt-licm-value-invariant? and opt-licm-globals-clean?.
-  [globals-clean? : bool]
+  [globals : OptLicmGlobalFacts]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _)
       (and
         (opt-licm-mode-late? licm-mode)
-        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted src)
         ;; In scalar loops, do not lengthen an arbitrary outside value's live
         ;; range merely to move its copy (the quicksort copy-c-string
         ;; regression). Literal seeds still unlock folding/motion. Vector loops
@@ -21308,7 +21431,7 @@
     [(ir.CompilerIrInstr.Cast _ src _ _)
       (and
         (opt-licm-mode-late? licm-mode)
-        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted src)
         (match src
           [(ir.CompilerIrValue.Var var)
             (or
@@ -21318,7 +21441,7 @@
     [(ir.CompilerIrInstr.Bitcast _ src _ _)
       (and
         (opt-licm-mode-late? licm-mode)
-        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted src)
         (match src
           [(ir.CompilerIrValue.Var var)
             (or
@@ -21331,13 +21454,13 @@
     ;; check on every logical lane. Hoist the projection whenever its packed
     ;; source is invariant; unlike a memory Load this needs no alias proof.
     [(ir.CompilerIrInstr.Word _ src _ _)
-      (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)]
+      (opt-licm-global-value-invariant? globals loop-defs hoisted src)]
     [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
       (and
         (not (opt-binop-traps? op))
-        (opt-licm-values-invariant? globals-clean? loop-defs hoisted lhs rhs))]
+        (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs))]
     [(ir.CompilerIrInstr.UnOp _ _ src _)
-      (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)]
+      (opt-licm-global-value-invariant? globals loop-defs hoisted src)]
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (and
         (opt-gvn-stable-var? sources dst)
@@ -21362,8 +21485,29 @@
         ;; gate: moving a descriptor-length address too early can hide the
         ;; shared bound identity BCE needs. The post-LFTR run can use purity
         ;; after BCE and unrolling have consumed that fact.
+        ;;
+        ;; P18 DELIBERATELY LEAVES THIS ARM ON THE LOOP-WIDE ANSWER, and the
+        ;; reason is measured, not conservative bookkeeping. This is the one
+        ;; operand position that starts a CHAIN: `gep @g, <literal>` is a
+        ;; GlobalSlot address, the load through it is the descriptor the cell
+        ;; designates, and that descriptor's length and data words follow it
+        ;; out, so admitting the operand here lets three or four new values per
+        ;; global span the whole loop. On cfg_domloops' `cfg-natural-loops` --
+        ;; whose five read-only globals are already OUTSIDE the loop's
+        ;; per-global cell-write set, so the refinement WOULD admit them --
+        ;; letting the chain out puts fourteen values in the function's
+        ;; preheader, ten of which land in the frame, and costs that one
+        ;; function 108,369,216 -> 118,358,256 Ir (+9,989,040; the whole row
+        ;; +1.42%) with every other function in the benchmark byte-identical:
+        ;; the loop-carried hash accumulator loses its register, and the
+        ;; versioned inner loop grows an eight-compare guard on a path that
+        ;; averages 1.06 trips. That is P8's "WHY INVARIANCE LOSES" verdict
+        ;; reproduced with a per-global proof in hand, so the proof changes
+        ;; nothing here. The scalar arms above carry no such chain -- each
+        ;; admits exactly one instruction and at most one new loop-spanning
+        ;; value -- which is why they take the refinement and this arm does not.
         (opt-licm-values-invariant?
-          globals-clean?
+          globals.clean?
           loop-defs
           hoisted
           base
@@ -21388,7 +21532,10 @@
       (and
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources src)
-        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
+        ;; A `Global` SOURCE here is a load THROUGH the pointer that cell holds
+        ;; -- the head of the very chain the Gep arm above prices -- so it keeps
+        ;; the loop-wide answer for the same measured reason.
+        (opt-licm-value-invariant? globals.clean? loop-defs hoisted src)
         (or
           (opt-licm-memory-safe?
             store-summary
@@ -21466,7 +21613,7 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
-  [globals-clean? : bool]
+  [globals : OptLicmGlobalFacts]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -21497,7 +21644,7 @@
               any-call?
               licm-mode
               descriptor-header-hoist?
-              globals-clean?
+              globals
               instr)
               (begin
                 (ir.compiler-ir-instr-builder-push! (&mut moved) instr)
@@ -21527,7 +21674,7 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
-  [globals-clean? : bool]
+  [globals : OptLicmGlobalFacts]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     type-segment-bases
@@ -21544,7 +21691,7 @@
     any-call?
     licm-mode
     descriptor-header-hoist?
-    globals-clean?
+    globals
     hoisted))
 
 (define (opt-licm-filter-body-blocks
@@ -21561,7 +21708,7 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
-  [globals-clean? : bool]
+  [globals : OptLicmGlobalFacts]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmBlocksResult
   (match blocks
     [(ir.CompilerIrBlockList.Nil)
@@ -21587,7 +21734,7 @@
             any-call?
             licm-mode
             descriptor-header-hoist?
-            globals-clean?
+            globals
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
@@ -21604,7 +21751,7 @@
                 any-call?
                 licm-mode
                 descriptor-header-hoist?
-                globals-clean?
+                globals
                 next-hoisted)
                 [(OptLicmBlocksResult.Result
                     rest-blocks
@@ -21633,7 +21780,7 @@
         any-call?
         licm-mode
         descriptor-header-hoist?
-        globals-clean?
+        globals
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -22137,11 +22284,23 @@
 ;; loads THROUGH pointers, where a zero-trip loop can leave the pointer
 ;; unallocated -- LICM keeps its memory gates for those.
 ;;
-;; The gate is the loop-wide `globals-promote-clean?`, which is the same
-;; `globals-clean?` the Load and Gep arms of opt-licm-candidate? ask plus the
-;; memory-clean call tier those arms still refuse, admitted under a live-in
-;; budget (opt-licm-global-promote-live-in-budget). A body that writes any cell
-;; promotes nothing either way. Only single-word cells qualify, for the reason the
+;; The gate has two tiers. The LOOP-WIDE one is `globals-promote-clean?`: the
+;; same `globals-clean?` the Load and Gep arms of opt-licm-candidate? ask, plus
+;; the memory-clean call tier those arms still refuse, admitted under a live-in
+;; budget (opt-licm-global-promote-live-in-budget). It answers for every cell at
+;; once, so before P18 a body that wrote ANY cell promoted none of them.
+;;
+;; P18 adds the PER-GLOBAL tier for exactly that body. The loop's cell-write set
+;; (OptGlobalModRef, accumulated on OptLicmStoreState.global-cell-writes) names
+;; the cells this body may write; a referenced cell OUTSIDE that set reads the
+;; same value on every iteration whatever the body does to other cells, because
+;; a global's cell is its own storage and is named by its symbol alone -- two
+;; distinct symbols are two distinct cells, with no aliasing question to answer.
+;; That tier pays the same live-in budget for the same register-file reason (a
+;; loop it admits contains a call, or the loop-wide tier would have taken it),
+;; and it is withdrawn entirely for a program that carries no mod-ref table
+;; (opt-licm-global-cell-writes-seed), which is what keeps every level below 2
+;; byte-identical. Only single-word cells qualify, for the reason the
 ;; function-scope pass gives (opt-global-cell-word-type?): the Mov's declared
 ;; type drives the backend's load width, so a wider cell would silently load
 ;; only its first word. Declared types come from the program-wide
@@ -22210,17 +22369,47 @@
 (define (opt-licm-global-promote-live-in-budget) : i64
   6)
 
+;; The cell-write set a loop starts from: empty when the program carries a
+;; mod-ref table, "any cell" when it does not, so a table-less program answers
+;; every per-global question exactly as the loop-wide gate does.
+(define (opt-licm-global-cell-writes-seed [cells : OptGlobalCellSummary]) : i64
+  (let
+    [mod-ref : OptGlobalModRef cells.mod-ref]
+    (if mod-ref.built?
+      0
+      (opt-global-mod-ref-any))))
+
+;; Does the loop's per-global cell-write set forbid promoting `name`? A zero
+;; set forbids nothing, which is what the loop-wide path passes.
+(define (opt-licm-global-promote-refused?
+  [cells : OptGlobalCellSummary]
+  [cell-writes : i64]
+  [name : i64]) : bool
+  (let
+    [mod-ref : OptGlobalModRef cells.mod-ref]
+    (opt-global-mod-ref-mask-may-write? mod-ref.index cell-writes name)))
+
 ;; Allocate one fresh var per promotable cell referenced by the body. Unlike
 ;; the function-scope plan (opt-global-cell-plan-build) this filters on neither
-;; the program's address-taken set nor a store set: `globals-clean?` has
-;; already proven the body performs no store, no store through any pointer, and
-;; no call that may write, which covers every way a cell could be reached --
-;; including through a pointer derived from `GlobalAddr`, which the store
-;; summaries never classify as element-only.
+;; the program's address-taken set nor a store set: the loop-wide
+;; `globals-promote-clean?` gate has already proven the body performs no store,
+;; no store through any pointer, and no call that may write, which covers every
+;; way a cell could be reached -- including through a pointer derived from
+;; `GlobalAddr`, which the store summaries never classify as element-only.
+;;
+;; P18 adds a SECOND way in, for a body that gate refuses: `cell-writes` is the
+;; loop's per-global cell-write set (OptGlobalModRef), and a global outside it
+;; is invariant across this body whatever the rest of the body does to other
+;; cells. `cell-writes` is 0 -- accepting every name -- on the loop-wide path,
+;; which keeps that path byte-identical; the caller passes the real set only on
+;; the per-global path (opt-licm-apply-loop). A body that writes g promotes
+;; every other cell it references and refuses g alone, where before it refused
+;; all of them.
 (define (opt-licm-global-promote-plan
   [cells : OptGlobalCellSummary]
   [refs : OptI64List]
   [frame-cell : (__tl_dyn-array i64)]
+  [cell-writes : i64]
   [plan : opt_i64_i64_map.Map (:consume)]
   [count : i64]) : OptGlobalCellPlan
   (match refs
@@ -22232,10 +22421,13 @@
             cells
             (__tl-box-place rest)
             frame-cell
+            cell-writes
             plan
             count)]
         [(OptMaybeAstType.Some ty)
-          (if (opt-global-cell-word-type? ty)
+          (if (and
+            (opt-global-cell-word-type? ty)
+            (not (opt-licm-global-promote-refused? cells cell-writes name)))
             (let
               [fresh : i64 (array-ref frame-cell 0)]
               [next : opt_i64_i64_map.Map plan]
@@ -22246,12 +22438,14 @@
                   cells
                   (__tl-box-place rest)
                   frame-cell
+                  cell-writes
                   next
                   (+ count 1))))
             (opt-licm-global-promote-plan
               cells
               (__tl-box-place rest)
               frame-cell
+              cell-writes
               plan
               count))])]))
 
@@ -22311,6 +22505,7 @@
 (define (opt-licm-global-promote
   [cells : OptGlobalCellSummary]
   [frame-cell : (__tl_dyn-array i64)]
+  [cell-writes : i64]
   [blocks : ir.CompilerIrBlockList]) : OptLicmGlobalPromotion
   (if (= cells.word-cell 0)
     (OptLicmGlobalPromotion blocks (ir.compiler-ir-instr-seq-empty) false)
@@ -22328,6 +22523,7 @@
                 cells
                 refs
                 frame-cell
+                cell-writes
                 (opt_i64_i64_map.with-capacity 8)
                 0)]
             (if (= planned.count 0)
@@ -22380,7 +22576,10 @@
             false
             (opt-licm-store-state-with-provenance
               provenance.ptrs
-              provenance.roots))]
+              provenance.roots
+              ;; No mod-ref table: seed the loop at "may write any cell" so
+              ;; every per-global question falls back to the loop-wide answer.
+              (opt-licm-global-cell-writes-seed global-cells)))]
         [raw-summary : OptLicmStoreSummary store-state.summary]
         [raw-rooted-summary : OptLicmStoreSummary store-state.rooted-summary]
         [raw-legacy-summary : OptLicmStoreSummary
@@ -22454,6 +22653,11 @@
         [globals-clean-strict? : bool
           (and globals-clean-relaxed? (not store-state.mem-clean-call?))]
         [globals-clean? : bool globals-clean-strict?]
+        ;; P18: the per-global refinement of `global-write?`, and the facts
+        ;; bundle the hoist filter reads it through.
+        [cell-writes : i64 store-state.global-cell-writes]
+        [globals : OptLicmGlobalFacts
+          (opt-licm-global-facts globals-clean? global-cells cell-writes)]
         [globals-promote-clean? : bool
           (and
             globals-clean-relaxed?
@@ -22462,6 +22666,24 @@
               (<=
                 (opt-unroll-mb-live-in-count body-blocks)
                 (opt-licm-global-promote-live-in-budget))))]
+        ;; The per-global promotion path, for a body the loop-wide gate above
+        ;; refuses. It promotes exactly the referenced cells that are outside
+        ;; `cell-writes`, and pays the same live-in budget the memory-clean
+        ;; tier pays, for the same reason: every cell it promotes is one more
+        ;; value that has to stay live across the whole loop, and a loop this
+        ;; path admits contains a call (that is why the loop-wide gate refused
+        ;; it), so the only registers such a value can occupy are the
+        ;; callee-saved file. The `any?` test is what makes a program without a
+        ;; mod-ref table -- every level below 2, and every program outside the
+        ;; table's preconditions -- take neither this path nor its live-in
+        ;; count, so nothing there moves and nothing there is recomputed.
+        [globals-promote-filtered? : bool
+          (and
+            (not globals-promote-clean?)
+            (not (opt-global-mod-ref-any? cell-writes))
+            (<=
+              (opt-unroll-mb-live-in-count body-blocks)
+              (opt-licm-global-promote-live-in-budget)))]
         (match (opt-licm-filter-body-blocks
           type-segment-bases
           loop-defs
@@ -22480,7 +22702,7 @@
               1)
             0)
           descriptor-header-hoist?
-          globals-clean?
+          globals
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             ;; Loop-scope global operand promotion runs on what the hoist
@@ -22490,10 +22712,13 @@
             ;; the gate is closed, which keeps this byte-identical there).
             (let
               [promotion : OptLicmGlobalPromotion
-                (if globals-promote-clean?
+                (if (or globals-promote-clean? globals-promote-filtered?)
                   (opt-licm-global-promote
                     global-cells
                     frame-cell
+                    (if globals-promote-clean?
+                      0
+                      cell-writes)
                     filtered-body)
                   (OptLicmGlobalPromotion
                     filtered-body
@@ -43354,14 +43579,22 @@
   (addr-taken opt_i64_i64_map.Map)
   (type-index opt_i64_i64_map.Map)
   (types (__tl_dyn-array ast.AstType))
-  (word-cell i64))
+  (word-cell i64)
+  ;; P18's per-global call mod-ref table over global CELLS. See
+  ;; opt-global-mod-ref-build for what it proves and the whole-program
+  ;; preconditions it rests on. A summary built without it (every level below
+  ;; 2, and every program outside those preconditions) carries
+  ;; opt-global-mod-ref-none, which answers "may write any cell" to every
+  ;; question and so leaves the loop-wide gates exactly as they were.
+  (mod-ref OptGlobalModRef))
 
 (define (opt-global-cell-summary-empty) : OptGlobalCellSummary
   (OptGlobalCellSummary
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
     (array.make-array ast.AstType 0)
-    0))
+    0
+    (opt-global-mod-ref-none)))
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
@@ -94452,6 +94685,392 @@
 ;; Build the per-program global-cell summary: the declared-type table, the
 ;; address-taken set, and the count of globals that survive both filters (the
 ;; per-function pass skips its scan when that count is zero).
+;; --- P18: per-global call mod-ref over global CELLS ---------------------------
+;;
+;; THE QUESTION IT REPLACES. `opt-licm-globals-clean?` answers "can ANYTHING in
+;; this loop write ANY global cell?" -- one bit for the whole loop and the
+;; whole program's globals. Both of its consumers actually want a narrower
+;; answer, because both have a NAME in hand: a `CompilerIrValue.Global g`
+;; operand is a rip-relative read of g's own cell (opt-licm-value-invariant?),
+;; and the loop-scope promotion rewrites the operands of one named cell at a
+;; time (opt-licm-global-promote). A helper that writes cfg-marks through a
+;; `&mut` parameter says nothing about cfg-reachable, and today both refuse it
+;; and every other global with it.
+;;
+;; WHY THE QUESTION IS ABOUT CELLS, AND WHY IT STOPS THERE. A global's CELL is
+;; its own statically allocated storage (`.comm <symbol>`), named by that
+;; symbol and by nothing else, so "does this write g's cell" is decided by
+;; NAMES alone: two distinct global symbols are two distinct cells, always,
+;; with no aliasing question to answer. The word a cell POINTS AT is a
+;; different matter -- for a memory-class global the cell holds a pointer to a
+;; heap object, and nothing in the IR proves that two cells hold different
+;; pointers (one `Store h, <a value read from g>` makes them equal). So this
+;; table refines exactly the cell question, which is the one a `Global` operand's
+;; invariance and the cell promotion ask, and deliberately does NOT refine the
+;; object/descriptor question the header-load proofs ask; those keep the
+;; loop-wide opt-licm-store-summary-header-load-safe? gate, whose argument
+;; (element storage is disjoint from every descriptor header word) needs no
+;; per-global distinctness.
+;;
+;; WHAT CAN WRITE A CELL, exhaustively.
+;;   * `CompilerIrInstr.Store g` -- the lowering of `(set! g ...)`, and the only
+;;     IR instruction whose write target is a SYMBOL rather than a pointer. It
+;;     writes g's cell and no other cell.
+;;   * a write through a pointer that names a cell. `CompilerIrValue.GlobalAddr`
+;;     is the only IR value form that produces a cell address, so when the
+;;     program's address-taken set is EMPTY no pointer in the program can name a
+;;     cell, and no `StorePtr`, `CopyBytes`, vector store, syscall or extern
+;;     callee can reach one. That is the same whole-program argument
+;;     opt-licm-direct-call-keeps-globals-clean? already rests on; this table
+;;     requires it as a precondition and is not built at all when it fails, so
+;;     the argument is never stretched.
+;;   * a call that reaches either of the above. A DIRECT callee is resolved
+;;     through this table. An INDIRECT one (`CallIndirect`, the two C-ABI
+;;     store-result forms, `SpmdCall`, `TailCallIndirect`) may land on any
+;;     function of the program and so contributes "any cell", as does any
+;;     instruction whose effect is `Unknown` or `CpuProbe`. An EXTERN callee has
+;;     no IR body, hence performs no `Store`, and under the empty address-taken
+;;     precondition cannot reach a cell through a pointer either, so it
+;;     contributes nothing -- the same verdict opt-call-memory-apply-direct-call
+;;     gives a name outside the program's function set.
+;;
+;; THE LATTICE AND THE FIXPOINT. A row is a bit set: one bit per global that is
+;; a direct `Store` target somewhere in the program (bits 0..61), plus bit 62
+;; for "may write any cell". Order by inclusion, join is `bit-or`, bottom is 0,
+;; height 63, so ascending Kleene iteration terminates. The transfer is
+;; monotone: a round ORs a function's previous row into the union of its own
+;; instructions' masks, and a callee's row only ever ADDS bits to its callers'.
+;; Bits originate at a `Store` and travel one call-graph edge per round, so the
+;; longest path bounds the round count at the function count; the loop commits
+;; only a map the transfer REPRODUCES (`changed` false), and DISCARDS the whole
+;; table if the budget runs out -- an over-budget program falls back to the
+;; loop-wide gate rather than shipping a non-fixed-point.
+(defstruct OptGlobalModRef
+  ;; False = no table. Every query then answers "may write any cell", which is
+  ;; exactly the loop-wide verdict, so an absent table changes no decision.
+  (built? bool)
+  ;; global symbol id -> bit index. Only globals that are a direct `Store`
+  ;; target ANYWHERE in the program get one; a global absent from this map is
+  ;; never stored, so no execution writes its cell at all and every query for
+  ;; it is false.
+  (index opt_i64_i64_map.Map)
+  ;; function symbol id -> that function's packed cell-write set. Every
+  ;; function of the program has a row; an absent name is an extern.
+  (writes opt_i64_i64_map.Map))
+
+;; One bit per directly-stored global; bit 62 is the "any cell" marker, so a
+;; program with more `Store` targets than this gets no table.
+(define (opt-global-mod-ref-limit) : i64
+  62)
+
+(define (opt-global-mod-ref-any) : i64
+  (shl 1 62))
+
+(define (opt-global-mod-ref-any? [mask : i64]) : bool
+  (not (= (bit-and mask (opt-global-mod-ref-any)) 0)))
+
+(define (opt-global-mod-ref-none) : OptGlobalModRef
+  (OptGlobalModRef
+    false
+    (opt_i64_i64_map.with-capacity 1)
+    (opt_i64_i64_map.with-capacity 1)))
+
+;; The bit that stands for g's cell, or 0 when the program never stores g.
+(define (opt-global-mod-ref-cell-bit [index : opt_i64_i64_map.Map] [name : i64]) : i64
+  (match (opt_i64_i64_map.get (& index) (ir.compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound bit) (shl 1 bit)]
+    [(opt_i64_i64_map.LookupMissing) 0]))
+
+;; The mask a `Store g` contributes. The index is built from the program's whole
+;; `Store`-target set, so every store reaching this has a bit; a miss can only
+;; mean the two walks disagree about which globals exist, and the safe answer to
+;; that is "any cell", never "no cell".
+(define (opt-global-mod-ref-store-mask
+  [index : opt_i64_i64_map.Map]
+  [name : i64]) : i64
+  (let
+    [bit : i64 (opt-global-mod-ref-cell-bit index name)]
+    (if (= bit 0)
+      (opt-global-mod-ref-any)
+      bit)))
+
+(define (opt-global-mod-ref-mask-may-write?
+  [index : opt_i64_i64_map.Map]
+  [mask : i64]
+  [name : i64]) : bool
+  (or
+    (opt-global-mod-ref-any? mask)
+    (not (= (bit-and mask (opt-global-mod-ref-cell-bit index name)) 0))))
+
+;; The cells a DIRECT callee may write. No table, or a resolved row; an absent
+;; name is an extern and writes none (see the header's exhaustive list).
+(define (opt-global-mod-ref-call-mask [mod-ref : OptGlobalModRef] [name : i64]) : i64
+  (if (not mod-ref.built?)
+    (opt-global-mod-ref-any)
+    (match (opt_i64_i64_map.get
+      (& mod-ref.writes)
+      (ir.compiler-ir-symbol-id name))
+      [(opt_i64_i64_map.LookupFound mask) mask]
+      [(opt_i64_i64_map.LookupMissing) 0])))
+
+;; The cells a `Store name` writes: exactly name's, when there is a table.
+(define (opt-global-mod-ref-instr-store-mask
+  [mod-ref : OptGlobalModRef]
+  [name : i64]) : i64
+  (if (not mod-ref.built?)
+    (opt-global-mod-ref-any)
+    (opt-global-mod-ref-store-mask mod-ref.index name)))
+
+(defenum OptGlobalModRefIndex
+  (No)
+  (Some opt_i64_i64_map.Map i64))
+
+(define (opt-global-mod-ref-index-fill
+  [globals : ir.CompilerIrGlobalSeq]
+  [stores : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [at : i64]
+  [next : i64]) : OptGlobalModRefIndex
+  (if (>= at globals.len)
+    (OptGlobalModRefIndex.Some out next)
+    (match (ir.compiler-ir-global-seq-ref globals at)
+      [(ir.CompilerIrGlobal.Global name _ _)
+        (if (not
+          (opt_i64_i64_map.contains? (& stores) (ir.compiler-ir-symbol-id name)))
+          (opt-global-mod-ref-index-fill globals stores out (+ at 1) next)
+          (if (>= next (opt-global-mod-ref-limit))
+            (OptGlobalModRefIndex.No)
+            (let
+              [assigned : opt_i64_i64_map.Map out]
+              (begin
+                (opt_i64_i64_map.insert-ref!
+                  (&mut assigned)
+                  (ir.compiler-ir-symbol-id name)
+                  next)
+                (opt-global-mod-ref-index-fill
+                  globals
+                  stores
+                  assigned
+                  (+ at 1)
+                  (+ next 1))))))])))
+
+(define (opt-global-mod-ref-callee-mask
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [name : i64]) : i64
+  (if (not
+    (opt_i64_i64_map.contains? (& function-set) (ir.compiler-ir-symbol-id name)))
+    0
+    (match (opt_i64_i64_map.get (& current) (ir.compiler-ir-symbol-id name))
+      [(opt_i64_i64_map.LookupFound mask) mask]
+      [(opt_i64_i64_map.LookupMissing) 0])))
+
+;; The classification for every instruction the arms below do not name. It is
+;; read off the closed `CompilerIrEffect` enum rather than a second total match
+;; over the instruction set, so a new IR instruction has to be given an effect
+;; before it can reach here at all. `MemoryWrite` is a write THROUGH A POINTER
+;; for every instruction except `Store`, which is matched first, and the empty
+;; address-taken precondition denies every pointer a cell; `ControlFlow` covers
+;; branches, returns, bounds checks and `TailCall`, of which only the last can
+;; reach program code and is likewise matched first.
+(define (opt-global-mod-ref-effect-mask [effect : ir.CompilerIrEffect]) : i64
+  (match effect
+    [(ir.CompilerIrEffect.Pure) 0]
+    [(ir.CompilerIrEffect.MemoryRead) 0]
+    [(ir.CompilerIrEffect.ControlFlow) 0]
+    [(ir.CompilerIrEffect.MemoryWrite) 0]
+    [(ir.CompilerIrEffect.CpuProbe) (opt-global-mod-ref-any)]
+    [(ir.CompilerIrEffect.Unknown) (opt-global-mod-ref-any)]))
+
+(define (opt-global-mod-ref-instr-mask
+  [index : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Store name _ _)
+      (opt-global-mod-ref-store-mask index name)]
+    [(ir.CompilerIrInstr.Call _ name _ _)
+      (opt-global-mod-ref-callee-mask current function-set name)]
+    [(ir.CompilerIrInstr.TailCall name _ _)
+      (opt-global-mod-ref-callee-mask current function-set name)]
+    ;; The one call form the effect table classifies `ControlFlow` rather than
+    ;; `Unknown`; its target is a function of this program, so name it here.
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
+    [_ (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr))]))
+
+(define (opt-global-mod-ref-instrs-mask
+  [index : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [at : i64]
+  [mask : i64]) : i64
+  (if (>= at (ir.compiler-ir-instr-seq-count instrs))
+    mask
+    (opt-global-mod-ref-instrs-mask
+      index
+      current
+      function-set
+      instrs
+      (+ at 1)
+      (bit-or
+        mask
+        (opt-global-mod-ref-instr-mask
+          index
+          current
+          function-set
+          (ir.compiler-ir-instr-seq-ref instrs at))))))
+
+(define (opt-global-mod-ref-blocks-mask
+  [index : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]
+  [mask : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) mask]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-mod-ref-blocks-mask
+            index
+            current
+            function-set
+            (__tl-box-place rest)
+            (opt-global-mod-ref-instrs-mask
+              index
+              current
+              function-set
+              instrs
+              0
+              mask))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-mod-ref-blocks-mask
+        index
+        current
+        function-set
+        (ir.compiler-ir-block-seq-to-list seq)
+        mask)]))
+
+(defenum OptGlobalModRefPass
+  (Pass opt_i64_i64_map.Map bool))
+
+(define (opt-global-mod-ref-pass
+  [functions : ir.CompilerIrFunctionList]
+  [index : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [changed : bool]) : OptGlobalModRefPass
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) (OptGlobalModRefPass.Pass out changed)]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ blocks)
+          (let
+            [name-id : i64 (ir.compiler-ir-symbol-id name)]
+            [previous : i64
+              (match (opt_i64_i64_map.get (& current) name-id)
+                [(opt_i64_i64_map.LookupFound mask) mask]
+                [(opt_i64_i64_map.LookupMissing) 0])]
+            [mask : i64
+              (opt-global-mod-ref-blocks-mask
+                index
+                current
+                function-set
+                blocks
+                previous)]
+            [next : opt_i64_i64_map.Map out]
+            (begin
+              (opt_i64_i64_map.insert-ref! (&mut next) name-id mask)
+              (opt-global-mod-ref-pass
+                (__tl-box-place rest)
+                index
+                current
+                function-set
+                next
+                (or changed (not (= mask previous))))))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-global-mod-ref-pass
+        (ir.compiler-ir-function-seq-to-list seq)
+        index
+        current
+        function-set
+        out
+        changed)]))
+
+(defenum OptGlobalModRefWrites
+  (No)
+  (Some opt_i64_i64_map.Map))
+
+(define (opt-global-mod-ref-fixed
+  [functions : ir.CompilerIrFunctionList]
+  [index : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [capacity : i64]
+  [remaining : i64]) : OptGlobalModRefWrites
+  (if (<= remaining 0)
+    (OptGlobalModRefWrites.No)
+    (match (opt-global-mod-ref-pass
+      functions
+      index
+      current
+      function-set
+      (opt_i64_i64_map.with-capacity capacity)
+      false)
+      [(OptGlobalModRefPass.Pass next changed)
+        (if changed
+          (opt-global-mod-ref-fixed
+            functions
+            index
+            function-set
+            next
+            capacity
+            (- remaining 1))
+          (OptGlobalModRefWrites.Some next))])))
+
+;; Build the table, or decline. The three preconditions are stated in the
+;; header: no global cell ADDRESS exists in the program (otherwise a pointer
+;; write could reach a cell and the per-instruction classification above would
+;; be wrong), the program is small enough that the summary passes run at all
+;; (the same gate opt-build-program-summaries applies, so a big program pays
+;; nothing for a table its LICM would not consult), and the directly-stored
+;; globals fit the packed row.
+(define (opt-global-mod-ref-build
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : ir.CompilerIrFunctionList]
+  [stores : opt_i64_i64_map.Map]
+  [addr-taken : opt_i64_i64_map.Map]
+  [capacity : i64]) : OptGlobalModRef
+  (let
+    [count : i64 (opt-function-list-count functions)]
+    (if (or
+      (> (opt_i64_i64_map.len (& addr-taken)) 0)
+      (> count (opt-loop-bce-summary-function-limit)))
+      (opt-global-mod-ref-none)
+      (match (opt-global-mod-ref-index-fill
+        globals
+        stores
+        (opt_i64_i64_map.with-capacity capacity)
+        0
+        0)
+        [(OptGlobalModRefIndex.No) (opt-global-mod-ref-none)]
+        [(OptGlobalModRefIndex.Some index _)
+          (match (opt-global-mod-ref-fixed
+            functions
+            index
+            (opt-call-memory-function-set
+              functions
+              (opt_i64_i64_map.with-capacity capacity))
+            (opt_i64_i64_map.with-capacity capacity)
+            capacity
+            (+ count 1))
+            [(OptGlobalModRefWrites.No) (opt-global-mod-ref-none)]
+            [(OptGlobalModRefWrites.Some writes)
+              (OptGlobalModRef true index writes)])]))))
+
 (define (opt-global-cell-summary-build
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]) : OptGlobalCellSummary
@@ -94486,7 +95105,13 @@
           addr-taken
           type-index
           types
-          (opt-global-cell-word-count globals addr-taken 0 0))))))
+          (opt-global-cell-word-count globals addr-taken 0 0)
+          (opt-global-mod-ref-build
+            globals
+            functions
+            scan.stores
+            addr-taken
+            capacity))))))
 
 ;; --- condition (a): stores a later read can OBSERVE ---------------------------
 ;;

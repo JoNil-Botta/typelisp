@@ -12193,6 +12193,505 @@
     (not (compiler-backend-peephole-single-dest-mnemonic? "testq"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "cmpq"))))
 
+;; #block-layout: the two post-emission layout rewrites, over assembly text.
+;; Each case names the rule it pins; `mode` selects the mechanism so a case can
+;; never pass by accident through the other one.
+(define (compiler-backend-layout-case?
+  [mode : i64]
+  [input : String]
+  [want : String]) : bool
+  (string.eq
+    (compiler_backend.compiler-backend-layout-asm-with-mode input mode)
+    want))
+
+(define (compiler-backend-layout-unchanged? [mode : i64] [input : String]) : bool
+  (compiler-backend-layout-case? mode input input))
+
+;; TAIL DUPLICATION. The straight-line run at the target -- across the label
+;; that splits it in two, up to the unconditional jump that ends it -- replaces
+;; the `jmp`, and the block it came from stays put for its other predecessors.
+(define (compiler-backend-layout-tail-duplication-ok?) : bool
+  (and
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+"
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    cmpq %rdx, %r9
+    jl .Lf0_body
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; REFUSED above the run cap: one more instruction than the budget.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    addq $2, %rdi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; REFUSED for a run that carries a directive: an alignment or data blob
+    ;; belongs to the block that defines it and may not be emitted twice.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+    .balign 8
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; REFUSED for a run that touches the stack: a second epilogue copy would
+    ;; need its own unwind description.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    popq %r12
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; REFUSED behind a noreturn abort call: that `jmp` is dead text.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %rdx, %r9
+    jb .Lf0_ok
+    call tl_oob_abort_at
+    jmp .Lf0_join
+.Lf0_ok:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_entry
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; REFUSED when the target is where execution arrives anyway: the assembled
+    ;; peephole deletes that `jmp` for free.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_alias:
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_alias
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; PHI EDGE COPIES: the copies this edge owes its target are emitted before
+    ;; the `jmp` today, and the duplicated run lands behind them unchanged.
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry_branch_true:
+    movq %rax, %rbx
+    movq %rcx, %r8
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+"
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry_branch_true:
+    movq %rax, %rbx
+    movq %rcx, %r8
+    cmpq %rdx, %r9
+    jl .Lf0_body
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")))
+
+;; PREDICTED-COLD ARM OUT-OF-LINING, one case per prediction rule.
+(define (compiler-backend-layout-cold-arm-ok?) : bool
+  (and
+    ;; RANGE CHECK: `i < 0` predicted false, and the `i >= n` clause bailing to
+    ;; the same arm inherits that prediction. The arm moves behind the body and
+    ;; the hot arm falls into the join.
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rdi, %rdi
+    jl .Lf1_if_else.7
+.Lf1_if_then.0:
+    cmpq %r9, %rdi
+    jge .Lf1_if_else.7
+.Lf1_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf1_cont
+.Lf1_if_else.7:
+    movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
+.Lf1_cont:
+    cmpq $40, %rcx
+    ret
+    .size g, . - g
+"
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rdi, %rdi
+    jl .Lf1_if_else.7
+.Lf1_if_then.0:
+    cmpq %r9, %rdi
+    jge .Lf1_if_else.7
+.Lf1_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf1_cont:
+    cmpq $40, %rcx
+    ret
+.Lf1_if_else.7:
+    movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
+    jmp .Lf1_cont
+    .size g, . - g
+")
+    ;; SENTINEL ARM: one lone `i >= n` says nothing on its own, but an arm that
+    ;; is nothing except a literal is the failure arm of a checked read.
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_if_else.7
+.Lf0_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf0_cont
+.Lf0_if_else.7:
+    movq $-1, %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    ret
+    .size f, . - f
+"
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_if_else.7
+.Lf0_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    ret
+.Lf0_if_else.7:
+    movq $-1, %rcx
+    jmp .Lf0_cont
+    .size f, . - f
+")
+    ;; EQUALITY WITH A CONSTANT predicted false, twice over: the guard shape the
+    ;; opcode heuristics are trusted in.
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl h
+    .type h,@function
+h:
+.Lf2_entry:
+    cmpq $40, %rcx
+    je .Lf2_else
+.Lf2_a:
+    cmpq $41, %rcx
+    je .Lf2_else
+.Lf2_then:
+    movq %rdx, %rax
+    imulq %rsi, %rax
+    jmp .Lf2_cont
+.Lf2_else:
+    subq %rdx, %rax
+    addq %rsi, %rax
+.Lf2_cont:
+    ret
+    .size h, . - h
+"
+      ".globl h
+    .type h,@function
+h:
+.Lf2_entry:
+    cmpq $40, %rcx
+    je .Lf2_else
+.Lf2_a:
+    cmpq $41, %rcx
+    je .Lf2_else
+.Lf2_then:
+    movq %rdx, %rax
+    imulq %rsi, %rax
+.Lf2_cont:
+    ret
+.Lf2_else:
+    subq %rdx, %rax
+    addq %rsi, %rax
+    jmp .Lf2_cont
+    .size h, . - h
+")
+    ;; `x != c` is predicted TRUE, so the arm it names is the HOT one and stays.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl h
+    .type h,@function
+h:
+.Lf2_entry:
+    cmpq $40, %rcx
+    jne .Lf2_else
+.Lf2_a:
+    cmpq $41, %rcx
+    jne .Lf2_else
+.Lf2_then:
+    movq %rdx, %rax
+    imulq %rsi, %rax
+    jmp .Lf2_cont
+.Lf2_else:
+    subq %rdx, %rax
+    addq %rsi, %rax
+.Lf2_cont:
+    ret
+    .size h, . - h
+")
+    ;; ONE opcode-predicted clause is not the guard shape: a lone `x < 0` over a
+    ;; real arm is a coin flip, and paying a jump on a coin flip is not a win.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl h
+    .type h,@function
+h:
+.Lf2_entry:
+    testq %rax, %rax
+    jl .Lf2_else
+.Lf2_then:
+    movq %rdx, %rcx
+    imulq %rsi, %rcx
+    jmp .Lf2_cont
+.Lf2_else:
+    subq %rdx, %rcx
+    addq %rsi, %rcx
+.Lf2_cont:
+    ret
+    .size h, . - h
+")
+    ;; NO PREDICTION AT ALL: two register operands the opcode set says nothing
+    ;; about. IR order is kept.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl h
+    .type h,@function
+h:
+.Lf2_entry:
+    cmpq %r9, %rdi
+    jge .Lf2_if_else.7
+.Lf2_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf2_cont
+.Lf2_if_else.7:
+    subq %rdx, %rcx
+    imulq %rsi, %rcx
+.Lf2_cont:
+    cmpq $40, %rcx
+    ret
+    .size h, . - h
+")
+    ;; An unconditional jump into the arm is an entry no heuristic predicted:
+    ;; the arm keeps its place.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rdi, %rdi
+    jl .Lf1_if_else.7
+.Lf1_if_then.0:
+    cmpq %r9, %rdi
+    jge .Lf1_if_else.7
+.Lf1_if_then.5:
+    testq %rsi, %rsi
+    jne .Lf1_if_then.6
+.Lf1_if_then.5b:
+    jmp .Lf1_if_else.7
+.Lf1_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf1_cont
+.Lf1_if_else.7:
+    movq $-1, %rcx
+    addq $3, %rcx
+.Lf1_cont:
+    cmpq $40, %rcx
+    ret
+    .size g, . - g
+")
+    ;; An arm whose last line is a LABEL still needs the jump behind it: those
+    ;; labels are entry points of their own and fell straight into the join.
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rax, %rax
+    jl .Lf1_else
+.Lf1_a:
+    cmpq %rsi, %rax
+    jge .Lf1_else
+.Lf1_then:
+    movq %rdx, %rcx
+    jmp .Lf1_join
+.Lf1_else:
+    xorl %ecx, %ecx
+    jmp .Lf1_other
+.Lf1_alias:
+.Lf1_join:
+    movq %rcx, %rax
+    ret
+.Lf1_other:
+    movq $7, %rax
+    ret
+    .size g, . - g
+"
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rax, %rax
+    jl .Lf1_else
+.Lf1_a:
+    cmpq %rsi, %rax
+    jge .Lf1_else
+.Lf1_then:
+    movq %rdx, %rcx
+.Lf1_join:
+    movq %rcx, %rax
+    ret
+.Lf1_other:
+    movq $7, %rax
+    ret
+.Lf1_else:
+    xorl %ecx, %ecx
+    jmp .Lf1_other
+.Lf1_alias:
+    jmp .Lf1_join
+    .size g, . - g
+")))
+
+(define (compiler-backend-layout-ok?) : bool
+  (and
+    (compiler-backend-layout-tail-duplication-ok?)
+    (compiler-backend-layout-cold-arm-ok?)))
+
 (define (compiler-backend-peephole-ok?) : bool
   (and
     true
@@ -12221,6 +12720,7 @@
     (compiler-backend-peephole-detailed-abort-guard-ok?)
     (compiler-backend-peephole-drop-fallthrough-chain-ok?)
     (compiler-backend-peephole-drop-fallthrough-abort-guard-ok?)
+    (compiler-backend-layout-ok?)
     true
     (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)

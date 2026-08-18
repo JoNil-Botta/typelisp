@@ -35789,29 +35789,78 @@
 ;; different vars for the one dispatch value; resolving every candidate var
 ;; through these facts unifies them onto one logical index var. A pair is
 ;; dropped as soon as its src is redefined (the copy no longer tracks it),
-;; and a redefined dst simply shadows its earlier pair (newest-first lookup).
-(defenum OptSwitchCopyEnv
-  (Nil)
-  (Cons i64 i64 (Box OptSwitchCopyEnv)))
+;; and a redefined dst simply replaces its earlier pair.
+;;
+;; Function-local vreg ids are dense, so destination lookup is direct. `-1` is
+;; explicit absence; valid vreg sources are non-negative. A compact active-dst
+;; sidecar bounds source invalidation by actual occupancy instead of the largest
+;; vreg id, while preserving the old all-matches removal without rebuilding a
+;; boxed chain. Both fields reuse the module's existing dense i64 vector instead
+;; of generating another collection family.
+(defstruct OptSwitchCopyEnv
+  (sources opt_dense_i64_vec.Vec)
+  (active opt_dense_i64_vec.Vec))
+
+(define (opt-switch-copy-env-new) : OptSwitchCopyEnv
+  (OptSwitchCopyEnv (opt_dense_i64_vec.new) (opt_dense_i64_vec.new)))
 
 (define (opt-switch-copy-env-resolve [env : OptSwitchCopyEnv] [var : i64]) : i64
-  (match env
-    [(OptSwitchCopyEnv.Nil) var]
-    [(OptSwitchCopyEnv.Cons dst src rest)
-      (if (= dst var)
-        src
-        (opt-switch-copy-env-resolve (__tl-box-place rest) var))]))
-
-(define (opt-switch-copy-env-drop-src [env : OptSwitchCopyEnv] [var : i64]) : OptSwitchCopyEnv
-  (match env
-    [(OptSwitchCopyEnv.Nil) env]
-    [(OptSwitchCopyEnv.Cons dst src rest)
-      (if (= src var)
-        (opt-switch-copy-env-drop-src (__tl-box-place rest) var)
-        (OptSwitchCopyEnv.Cons
-          dst
+  (let
+    [sources : opt_dense_i64_vec.Vec env.sources]
+    (if (or (< var 0) (>= var (opt_dense_i64_vec.len (& sources))))
+      var
+      (let
+        [src : i64 (array-ref (opt_dense_i64_vec.slots (& sources)) var)]
+        (if (>= src 0)
           src
-          (box (opt-switch-copy-env-drop-src (__tl-box-place rest) var))))]))
+          var)))))
+
+(define (opt-switch-copy-env-drop-src
+  [env : OptSwitchCopyEnv (:consume)]
+  [var : i64]) : OptSwitchCopyEnv
+  (let
+    [sources : opt_dense_i64_vec.Vec env.sources]
+    [active : opt_dense_i64_vec.Vec env.active]
+    [count : i64 (opt_dense_i64_vec.len (& active))]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (let
+          [dst : i64 (array-ref (opt_dense_i64_vec.slots (& active)) read)]
+          [src : i64 (array-ref (opt_dense_i64_vec.slots (& sources)) dst)]
+          (begin
+            (if (= src var)
+              (opt_dense_i64_vec.set-ref! (&mut sources) dst (- 0 1))
+              (begin
+                (when
+                  (!= write read)
+                  (opt_dense_i64_vec.set-ref! (&mut active) write dst))
+                (set! write (+ write 1))))
+            (set! read (+ read 1)))))
+      (set! active.len write)
+      (OptSwitchCopyEnv sources active))))
+
+(define (opt-switch-copy-env-bind
+  [env : OptSwitchCopyEnv (:consume)]
+  [dst : i64]
+  [src : i64]) : OptSwitchCopyEnv
+  (if (< dst 0)
+    env
+    (let
+      [sources : opt_dense_i64_vec.Vec env.sources]
+      [active : opt_dense_i64_vec.Vec env.active]
+      [old-count : i64 (opt_dense_i64_vec.len (& sources))]
+      [was-present? : bool
+        (and
+          (< dst old-count)
+          (>= (array-ref (opt_dense_i64_vec.slots (& sources)) dst) 0))]
+      (begin
+        (while (<= (opt_dense_i64_vec.len (& sources)) dst)
+          (opt_dense_i64_vec.push-ref! (&mut sources) (- 0 1)))
+        (opt_dense_i64_vec.set-ref! (&mut sources) dst src)
+        (unless was-present? (opt_dense_i64_vec.push-ref! (&mut active) dst))
+        (OptSwitchCopyEnv sources active)))))
 
 ;; Fold one prefix instruction into the copy facts: any definition of var D
 ;; invalidates pairs whose src is D; a `Mov dst, src` then records dst as a
@@ -35821,13 +35870,13 @@
   [instr : ir.CompilerIrInstr]) : OptSwitchCopyEnv
   (match (opt-instr-def-var instr)
     [(option_i64.Some dst)
-      (match instr
-        [(ir.CompilerIrInstr.Mov _ (ir.CompilerIrValue.Var src) _)
-          (OptSwitchCopyEnv.Cons
-            dst
-            src
-            (box (opt-switch-copy-env-drop-src env dst)))]
-        [_ (opt-switch-copy-env-drop-src env dst)])]
+      (let
+        [without-dependents : OptSwitchCopyEnv
+          (opt-switch-copy-env-drop-src env dst)]
+        (match instr
+          [(ir.CompilerIrInstr.Mov _ (ir.CompilerIrValue.Var src) _)
+            (opt-switch-copy-env-bind without-dependents dst src)]
+          [_ without-dependents]))]
     [(option_i64.None) env]))
 
 (define (opt-switch-prefix-copies-from
@@ -36551,7 +36600,7 @@
                           head-instrs
                           0
                           prefix
-                          (OptSwitchCopyEnv.Nil)))])])
+                          (opt-switch-copy-env-new)))])])
               ;; Chain in progress: step across one empty forwarding block if
               ;; the edge we arrived on is its only one. The rewrite deletes
               ;; every block the chain walks, so a second predecessor would be
@@ -36729,7 +36778,7 @@
               (OptLabelSet.Nil)
               (OptSwitchCandidateList.Nil)
               0
-              (OptSwitchCopyEnv.Nil))
+              (opt-switch-copy-env-new))
               [(OptMaybeSwitchChain.Some
                   index-var
                   min-tag

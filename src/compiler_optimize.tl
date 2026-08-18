@@ -13488,23 +13488,22 @@
                           ;; them in list order retains the recursive walk's
                           ;; ascending-id visitation order when popped.
                           (while (> child-link 0)
-                            (begin
-                              (let
-                                [child-id : i64 (- child-link 1)]
-                                (begin
-                                  (set!
-                                    (array-ref work-ids next-work-count)
-                                    child-id)
-                                  (set!
-                                    (array-ref work-exits next-work-count)
-                                    false)
-                                  (set!
-                                    (array-ref work-checkpoints next-work-count)
-                                    0)
-                                  (set! next-work-count (+ next-work-count 1))
-                                  (set!
-                                    child-link
-                                    (array-ref child-next child-id))))))
+                            (let
+                              [child-id : i64 (- child-link 1)]
+                              (begin
+                                (set!
+                                  (array-ref work-ids next-work-count)
+                                  child-id)
+                                (set!
+                                  (array-ref work-exits next-work-count)
+                                  false)
+                                (set!
+                                  (array-ref work-checkpoints next-work-count)
+                                  0)
+                                (set! next-work-count (+ next-work-count 1))
+                                (set!
+                                  child-link
+                                  (array-ref child-next child-id)))))
                           (opt-ssa-rename-tree-work
                             context
                             facts

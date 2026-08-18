@@ -81442,21 +81442,18 @@
   [raw-asm : String]
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]) : unit
-  ;; #block-layout runs here, on one whole emitted text, before the peephole
-  ;; sees it: the layout rewrites are stated over blocks and their jumps, and
-  ;; this is the last point at which a function's text is still one contiguous
-  ;; piece owned by the raw arena.
+  ;; #block-layout does NOT run here. The text is appended to the batch exactly
+  ;; as the emitter left it and each chunk is laid out inside the peephole's own
+  ;; line walk at flush time: a batch chunk IS one whole emitted text, which is
+  ;; the unit the layout rewrites are stated over, so folding the pass into that
+  ;; walk keeps its input and its result while parsing the text once.
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (when
       data.assembly-active
       (begin
-        (set!
-          data.assembly-batch
-          (text_buf.append
-            data.assembly-batch
-            (compiler-backend-layout-asm raw-asm)))
+        (set! data.assembly-batch (text_buf.append data.assembly-batch raw-asm))
         (set! data.assembly-batch-count (+ data.assembly-batch-count 1))
         (compiler-backend-stream-state-data-set! stream data)
         (when
@@ -81540,6 +81537,14 @@
 ;; (an indented directive, `.globl sym`, a label with a trailing comment) or an
 ;; interior colon disqualifies it, so only real label definitions -- the one
 ;; thing that emits zero bytes -- can separate a `jmp` from its target.
+;; Is [start, end) `name:` with nothing but name bytes before the colon? The
+;; name is checked eight bytes at a time, for the same reason the line splitter
+;; is: emitted local names run to thirty-odd bytes, this is asked of every
+;; unindented line of every function, and the byte loop it replaced was the
+;; single most expensive piece of the layout index. One word rejects a space, a
+;; tab and a second colon at once -- three `x - ones & ~x & highs` probes ORed
+;; together -- and the sub-word tail is covered by one final word that OVERLAPS
+;; the last full one, so no byte loop remains for a name of eight bytes or more.
 (define (compiler-backend-asm-label-def-line?
   [data : (Ptr u8)]
   [start : i64]
@@ -81548,20 +81553,74 @@
     false
     (if (not (= (compiler-backend-peephole-byte-at data (- end 1)) 58))
       false
-      (let
-        [limit : i64 (- end 1)]
-        [i : i64 start]
-        [ok : bool true]
+      (compiler-backend-asm-label-name-clean? data start end))))
+
+;; The walk itself, for a caller that has already established the length and the
+;; trailing colon.
+(define (compiler-backend-asm-label-name-clean?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    ;; 0x0101..., 0x8080..., 0x2020..., 0x0909..., 0x3a3a...
+    [ones : i64 72340172838076673]
+    [highs : i64 -9187201950435737472]
+    [spaces : i64 2314885530818453536]
+    [tabs : i64 651061555542690057]
+    [colons : i64 4195730024608447034]
+    [limit : i64 (- end 1)]
+    [word-limit : i64 (- limit 8)]
+    [i : i64 start]
+    (begin
+      (while (<= i word-limit)
+        (let
+          [w : i64
+            (unsafe
+              (ptr-read (ptr-cast (ptr-offset data i) : (Ptr i64))))]
+          [xs : i64 (bit-xor w spaces)]
+          [xt : i64 (bit-xor w tabs)]
+          [xc : i64 (bit-xor w colons)]
+          (begin
+            (unless
+              (=
+                (bit-and
+                  (bit-or
+                    (bit-and (- xs ones) (bit-xor xs -1))
+                    (bit-or
+                      (bit-and (- xt ones) (bit-xor xt -1))
+                      (bit-and (- xc ones) (bit-xor xc -1))))
+                  highs)
+                0)
+              (return false))
+            (set! i (+ i 8)))))
+      (if (> i start)
+        ;; One overlapping word covers whatever the stride left behind.
+        (if (>= word-limit start)
+          (let
+            [w : i64
+              (unsafe
+                (ptr-read (ptr-cast (ptr-offset data word-limit) : (Ptr i64))))]
+            [xs : i64 (bit-xor w spaces)]
+            [xt : i64 (bit-xor w tabs)]
+            [xc : i64 (bit-xor w colons)]
+            (=
+              (bit-and
+                (bit-or
+                  (bit-and (- xs ones) (bit-xor xs -1))
+                  (bit-or
+                    (bit-and (- xt ones) (bit-xor xt -1))
+                    (bit-and (- xc ones) (bit-xor xc -1))))
+                highs)
+              0))
+          true)
         (begin
-          (while (and ok (< i limit))
+          (while (< i limit)
             (let
               [b : i64 (compiler-backend-peephole-byte-at data i)]
               (begin
-                (if (or (= b 32) (= b 9) (= b 58))
-                  (set! ok false)
-                  unit)
+                (when (or (= b 32) (= b 9) (= b 58)) (return false))
                 (set! i (+ i 1)))))
-          ok)))))
+          true)))))
 
 ;; Does the line begin with the emitted direct-jump prefix `"    jmp "`?
 ;; Tested byte-wise, `j` first: this runs on every line of the body, and the `j`
@@ -81607,10 +81666,14 @@
             ok))))))
 
 ;; ---------------------------------------------------------------------------
-;; #block-layout: post-register-allocation block layout, applied to one emitted
-;; function's assembly text on its way into the peephole stream. Two
-;; independent rewrites share one line index; `compiler-backend-layout-mode`
-;; selects which run, so each can be measured on its own.
+;; #block-layout: post-register-allocation block layout of one emitted
+;; function's assembly text, run INSIDE the streaming peephole's line walk:
+;; the walk's own line split is the layout index, the analysis reorders that
+;; index into a plan, and the walk then visits the plan's lines instead of the
+;; text's, so the layout rewrites cost no second parse and no second copy of
+;; the text. Two independent rewrites share the one index;
+;; `compiler-backend-layout-mode` selects which run, so each can be measured on
+;; its own.
 ;;
 ;;  1. TAIL DUPLICATION (mode bit 1). A `jmp L` whose target block starts a
 ;;     short straight-line run that ends in an unconditional `jmp` is replaced
@@ -81716,20 +81779,43 @@
 (define compiler-backend-layout-guard-chain-entries : i64
   2)
 
-;; Per-line index of one emitted assembly text. `refs` holds four counters per
-;; LABEL line (all / unconditional / predicted-cold / predicted-hot references),
-;; so a region's entry set is a sum over its own label lines instead of a scan.
-(defstruct CompilerBackendLayoutIndex
-  (data (Ptr u8))
+;; Per-line index of one emitted assembly text, shared by the standalone entry
+;; and by the streaming peephole's record walk. Two words per line:
+;;
+;;  * `starts`  line k runs from `starts[k]` to `starts[k + 1] - 1`. The split
+;;              the peephole performs anyway IS the index, so there is no
+;;              second scan and no `ends` array; the array holds `lines + 1`
+;;              entries and its last one closes the last line.
+;;  * `flags`   the nine line predicates in the low bits, plus -- for a branch
+;;              line only -- its operand's byte offset from the line start, in
+;;              bits `flag-ops-shift` and up. A label line's name is its whole
+;;              span minus the trailing colon and no other line carries an
+;;              operand either rewrite reads, so the operand-range arrays are
+;;              gone as well. The offset stays OUT of a non-branch word on
+;;              purpose: `flag-setter-kind` recognises a plain instruction by a
+;;              flags word of exactly zero.
+;;
+;; The lines a rewrite ever revisits are listed as the index is built --
+;; `labels` for the label table, `flow` for every branch, return and delimiting
+;; directive -- so each analysis pass walks its own short list instead of every
+;; line of the function again.
+(define compiler-backend-layout-flag-ops-shift : i64
+  16)
+
+;; Lines to size the index for, from the byte count. Emitted assembly averages
+;; well over twenty bytes per line; a text that beats the estimate is served by
+;; one doubling retry rather than by a counting pass over every text.
+(define (compiler-backend-layout-line-capacity [n : i64]) : i64
+  (+ (/ n 20) 16))
+
+;; The plan the analysis hands its two consumers. `len` = 0 is the identity: no
+;; line moved, so the walk visits `lines` lines in order and the standalone
+;; entry returns its input String untouched.
+(defstruct CompilerBackendLayoutPlan
   (starts (__tl_dyn-array i64))
-  (ends (__tl_dyn-array i64))
-  (flags (__tl_dyn-array i64))
-  (ops (__tl_dyn-array i64))
-  (ope (__tl_dyn-array i64))
-  (target (__tl_dyn-array i64))
-  (pred (__tl_dyn-array i64))
-  (refs (__tl_dyn-array i64))
-  (count i64))
+  (plan (__tl_dyn-array i64))
+  (lines i64)
+  (len i64))
 
 (define (compiler-backend-layout-flag? [flags : i64] [bit : i64]) : bool
   (not (= (bit-and flags bit) 0)))
@@ -81766,11 +81852,6 @@
         (set! k (+ k 1)))
       k)))
 
-;; A jump operand this pass may reason about: a bare symbol. `*`, `%`, `(` and
-;; `,` open the indirect register/memory/table forms and are rejected on the
-;; first byte; a space anywhere rejects an operand with a suffix or a comment,
-;; and the word-at-a-time scan finds one for about what a single byte compare
-;; costs.
 (define (compiler-backend-layout-bare-symbol?
   [data : (Ptr u8)]
   [s : i64]
@@ -81790,22 +81871,44 @@
 ;; and the first of them after a join is where an out-of-lined region is
 ;; re-inserted. Every `.seh_` note counts -- Windows unwind describes a
 ;; prologue/epilogue by position, so no `.seh_` line may be moved or copied.
-(define (compiler-backend-layout-barrier-token?
+;;
+;; The second byte selects the arm: no two of these names share it except the
+;; three `s` spellings, so a directive pays one byte compare and at most three
+;; name compares instead of the eight it used to walk through -- and the token
+;; end, which is a walk of its own, is only measured once that byte has already
+;; said a barrier is possible. Every emitted `.quad`, `.byte` and `.zero` leaves
+;; here on the byte compare alone.
+(define (compiler-backend-layout-barrier-line?
   [data : (Ptr u8)]
   [t : i64]
-  [tend : i64]) : bool
-  (or
-    (compiler-backend-peephole-range-eq? data t tend ".globl")
-    (compiler-backend-peephole-range-eq? data t tend ".size")
-    (compiler-backend-peephole-range-eq? data t tend ".type")
-    (compiler-backend-peephole-range-eq? data t tend ".text")
-    (compiler-backend-peephole-range-eq? data t tend ".data")
-    (compiler-backend-peephole-range-eq? data t tend ".section")
-    (compiler-backend-peephole-range-eq? data t tend ".comm")
-    (compiler-backend-peephole-range-eq? data t tend ".extern")
-    (and
-      (>= (- tend t) 5)
-      (compiler-backend-peephole-range-eq? data t (+ t 5) ".seh_"))))
+  [e : i64]) : bool
+  (if (< (+ t 1) e)
+    (let
+      [b1 : i64 (compiler-backend-peephole-byte-at data (+ t 1))]
+      (if (or (= b1 103) (= b1 115) (= b1 116) (= b1 100) (= b1 99) (= b1 101))
+        (let
+          [tend : i64 (compiler-backend-layout-token-end data t e)]
+          (cond
+            [(= b1 103)
+              (compiler-backend-peephole-range-eq? data t tend ".globl")]
+            [(= b1 115)
+              (or
+                (compiler-backend-peephole-range-eq? data t tend ".size")
+                (compiler-backend-peephole-range-eq? data t tend ".section")
+                (and
+                  (>= (- tend t) 5)
+                  (compiler-backend-peephole-range-eq? data t (+ t 5) ".seh_")))]
+            [(= b1 116)
+              (or
+                (compiler-backend-peephole-range-eq? data t tend ".type")
+                (compiler-backend-peephole-range-eq? data t tend ".text"))]
+            [(= b1 100)
+              (compiler-backend-peephole-range-eq? data t tend ".data")]
+            [(= b1 99)
+              (compiler-backend-peephole-range-eq? data t tend ".comm")]
+            [else (compiler-backend-peephole-range-eq? data t tend ".extern")]))
+        false))
+    false))
 
 ;; Are two label names equal? Eight bytes at a time: emitted local names run to
 ;; thirty-odd bytes and share long prefixes, so the byte-wise compare the rest
@@ -81916,8 +82019,9 @@
   [e : i64]) : bool
   (compiler-backend-peephole-line-noreturn-abort? data s e))
 
-;; One line's predicate set, plus the operand range every consumer needs: the
-;; jump target for a branch line, the defined name for a label line.
+;; One line's predicate set, packed with the operand offset its consumers need:
+;; the jump target for a branch line. A label line needs no offset (its name
+;; starts at the line start) and no other line has an operand at all.
 ;;
 ;; This runs on every line of every emitted function and almost every line is of
 ;; no interest to either rewrite, so the reject is what it is written around.
@@ -81928,14 +82032,74 @@
 ;; at further. The literal-materialisation and noreturn-abort questions are NOT
 ;; asked here: only a candidate arm and the line behind a duplication site ever
 ;; need them.
-(define (compiler-backend-layout-classify-token!
-  [index : CompilerBackendLayoutIndex]
-  [i : i64]
+(define (compiler-backend-layout-classify-token
+  [data : (Ptr u8)]
+  [s : i64]
   [t : i64]
   [e : i64]) : i64
   (let
-    [data : (Ptr u8) index.data]
     [b0 : i64 (compiler-backend-peephole-byte-at data t)]
+    (if (= b0 46)
+      ;; A directive is settled by its name; the bytes behind the head are of
+      ;; no use to it, so they are not read on this arm at all.
+      (bit-or
+        compiler-backend-layout-flag-directive
+        (if (compiler-backend-layout-barrier-line? data t e)
+          compiler-backend-layout-flag-barrier
+          0))
+      (let
+        [b1 : i64
+          (if (< (+ t 1) e)
+            (compiler-backend-peephole-byte-at data (+ t 1))
+            0)]
+        [b2 : i64
+          (if (< (+ t 2) e)
+            (compiler-backend-peephole-byte-at data (+ t 2))
+            0)]
+        [b3 : i64
+          (if (< (+ t 3) e)
+            (compiler-backend-peephole-byte-at data (+ t 3))
+            0)]
+        (cond
+          [(= b0 106)
+            (let
+              [jmp? : bool (and (= b1 109) (= b2 112) (= b3 32))]
+              [tend : i64
+                (if jmp?
+                  (+ t 3)
+                  (compiler-backend-layout-token-end data t e))]
+              [ops : i64 (compiler-backend-layout-skip-spaces data tend e)]
+              (if (and
+                (>= (- tend t) 2)
+                (compiler-backend-layout-bare-symbol? data ops e))
+                (bit-or
+                  (if jmp?
+                    compiler-backend-layout-flag-jmp
+                    compiler-backend-layout-flag-jcc)
+                  (shl (- ops s) compiler-backend-layout-flag-ops-shift))
+                0))]
+          [(and (= b0 114) (= b1 101) (= b2 116) (or (= b3 32) (= b3 113)))
+            compiler-backend-layout-flag-ret]
+          [(and (= b0 99) (= b1 97) (= b2 108) (= b3 108))
+            compiler-backend-layout-flag-call]
+          [(and (= b0 112) (or (= b1 117) (= b1 111)) (not (= b2 32)))
+            compiler-backend-layout-flag-stack]
+          [(and (= b0 108) (= b1 101) (= b2 97) (= b3 118))
+            compiler-backend-layout-flag-stack]
+          [else 0])))))
+
+;; The one-shape mnemonics, settled by the three bytes behind the head: `ret`,
+;; `call`, `pushq`/`popq` and `leave` carry a flag and nothing else, so they
+;; never need the token walk a directive or a branch does. `kind` is the head
+;; table's answer, and the byte reads keep that table's zero-past-the-line
+;; convention, so this agrees with `classify-token` on every line either can
+;; see.
+(define (compiler-backend-layout-classify-simple
+  [data : (Ptr u8)]
+  [t : i64]
+  [e : i64]
+  [kind : i64]) : i64
+  (let
     [b1 : i64
       (if (< (+ t 1) e)
         (compiler-backend-peephole-byte-at data (+ t 1))
@@ -81949,191 +82113,280 @@
         (compiler-backend-peephole-byte-at data (+ t 3))
         0)]
     (cond
-      [(= b0 46)
-        (let
-          [tend : i64 (compiler-backend-layout-token-end data t e)]
-          (bit-or
-            compiler-backend-layout-flag-directive
-            (if (compiler-backend-layout-barrier-token? data t tend)
-              compiler-backend-layout-flag-barrier
-              0)))]
-      [(= b0 106)
-        (let
-          [jmp? : bool (and (= b1 109) (= b2 112) (= b3 32))]
-          [tend : i64
-            (if jmp?
-              (+ t 3)
-              (compiler-backend-layout-token-end data t e))]
-          [ops : i64 (compiler-backend-layout-skip-spaces data tend e)]
-          (begin
-            (set! (array-ref index.ops i) ops)
-            (set! (array-ref index.ope i) e)
-            (if (and
-              (>= (- tend t) 2)
-              (compiler-backend-layout-bare-symbol? data ops e))
-              (if jmp?
-                compiler-backend-layout-flag-jmp
-                compiler-backend-layout-flag-jcc)
-              0)))]
-      [(and (= b0 114) (= b1 101) (= b2 116) (or (= b3 32) (= b3 113)))
-        compiler-backend-layout-flag-ret]
-      [(and (= b0 99) (= b1 97) (= b2 108) (= b3 108))
-        compiler-backend-layout-flag-call]
-      [(and (= b0 112) (or (= b1 117) (= b1 111)) (not (= b2 32)))
-        compiler-backend-layout-flag-stack]
-      [(and (= b0 108) (= b1 101) (= b2 97) (= b3 118))
-        compiler-backend-layout-flag-stack]
-      [else 0])))
+      [(= kind 50)
+        (if (and (= b1 101) (= b2 116) (or (= b3 32) (= b3 113)))
+          compiler-backend-layout-flag-ret
+          0)]
+      [(= kind 51)
+        (if (and (= b1 97) (= b2 108) (= b3 108))
+          compiler-backend-layout-flag-call
+          0)]
+      [(= kind 52)
+        (if (and (or (= b1 117) (= b1 111)) (not (= b2 32)))
+          compiler-backend-layout-flag-stack
+          0)]
+      [else
+        (if (and (= b1 101) (= b2 97) (= b3 118))
+          compiler-backend-layout-flag-stack
+          0)])))
 
-(define (compiler-backend-layout-classify!
-  [index : CompilerBackendLayoutIndex]
-  [i : i64]
+(define (compiler-backend-layout-classify-line
+  [data : (Ptr u8)]
   [s : i64]
-  [e : i64]) : unit
-  (let
-    [data : (Ptr u8) index.data]
-    [flags : i64 0]
-    (begin
-      (if (= (compiler-backend-peephole-byte-at data s) 32)
+  [e : i64]) : i64
+  (if (= (compiler-backend-peephole-byte-at data s) 32)
+    (let
+      [t : i64
+        (if (and
+          (< (+ s 4) e)
+          (= (compiler-backend-peephole-byte-at data (+ s 3)) 32)
+          (not (= (compiler-backend-peephole-byte-at data (+ s 4)) 32)))
+          (+ s 4)
+          (compiler-backend-layout-skip-spaces data s e))]
+      (if (>= t e)
+        compiler-backend-layout-flag-blank
         (let
-          [t : i64
-            (if (and
-              (< (+ s 4) e)
-              (= (compiler-backend-peephole-byte-at data (+ s 3)) 32)
-              (not (= (compiler-backend-peephole-byte-at data (+ s 4)) 32)))
-              (+ s 4)
-              (compiler-backend-layout-skip-spaces data s e))]
-          [head : i64 0]
-          (begin
-            (set!
-              head
-              (if (< t e)
-                (compiler-backend-peephole-byte-at data t)
-                0))
-            (set!
-              flags
-              (cond
-                [(>= t e) compiler-backend-layout-flag-blank]
-                [(or
-                    (= head 106)
-                    (= head 46)
-                    (= head 114)
-                    (= head 99)
-                    (= head 112)
-                    (= head 108))
-                  (compiler-backend-layout-classify-token! index i t e)]
-                [else 0]))))
-        (let
-          [t : i64 (compiler-backend-layout-skip-spaces data s e)]
-          (set!
-            flags
-            (cond
-              [(>= t e) compiler-backend-layout-flag-blank]
-              [(and
-                  (= (compiler-backend-peephole-byte-at data (- e 1)) 58)
-                  (>= (- e s) 2)
-                  (compiler-backend-asm-label-def-line? data s e))
-                (begin
-                  (set! (array-ref index.ops i) s)
-                  (set! (array-ref index.ope i) (- e 1))
-                  compiler-backend-layout-flag-label)]
-              [else (compiler-backend-layout-classify-token! index i t e)]))))
-      (set! (array-ref index.flags i) flags)
-      unit)))
+          [head : i64 (compiler-backend-peephole-byte-at data t)]
+          (if (or
+            (= head 106)
+            (= head 46)
+            (= head 114)
+            (= head 99)
+            (= head 112)
+            (= head 108))
+            (compiler-backend-layout-classify-token data s t e)
+            0))))
+    (let
+      [head : i64 (compiler-backend-peephole-byte-at data s)]
+      [t : i64
+        (if (or (= head 32) (= head 9))
+          (compiler-backend-layout-skip-spaces data s e)
+          s)]
+      (cond
+        [(>= t e) compiler-backend-layout-flag-blank]
+        [(and
+            (= (compiler-backend-peephole-byte-at data (- e 1)) 58)
+            (>= (- e s) 2)
+            (compiler-backend-asm-label-name-clean? data s e))
+          compiler-backend-layout-flag-label]
+        [else (compiler-backend-layout-classify-token data s t e)]))))
 
-;; Number of `\n`-terminated lines in [0, n). The text this pass accepts is
-;; always newline terminated (every emitted function chunk is), so the count is
-;; exactly the number of newlines.
-(define (compiler-backend-layout-count-lines [data : (Ptr u8)] [n : i64]) : i64
+;; What a mnemonic's first byte can make of a line, as a byte per possible head:
+;; `0` nothing, `1` walk the token (`.` 46 for a directive, `j` 106 for a
+;; branch), `2` `ret` (114), `3` `call` (99), `4` `pushq`/`popq` (112), `5`
+;; `leave` (108). Seventy per cent of emitted lines are `0`, and for them this
+;; is one indexed byte load where six compare-and-branch pairs used to stand;
+;; the four one-shape kinds are then settled by three byte compares in a leaf
+;; instead of a call into the token dispatch and its spill frame, which is two
+;; thirds of the calls that dispatch used to take. A shift over a bit set would
+;; filter as well but costs the shift-amount guards the language inserts around
+;; a variable shift, and would not carry the kind.
+(define compiler-backend-layout-head-table : String
+  "0000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000003000000105000402000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+
+(define (compiler-backend-layout-split-lines
+  [data : (Ptr u8)]
+  [n : i64]
+  [cap : i64]
+  [starts : (MutPtr i64)]) : i64
   (let
+    [k : i64 0]
     [i : i64 0]
-    [lines : i64 0]
     (begin
       (while (< i n)
         (begin
+          (when (>= k cap) (return -1))
+          (unsafe
+            (ptr-write! (ptr-offset starts k) i))
           (set! i (+ (compiler-backend-peephole-scan-byte-range data i n 10) 1))
-          (set! lines (+ lines 1))))
-      lines)))
-
-;; Line index of one emitted text: spans plus per-line predicates. Target,
-;; prediction and reference counters stay zero-initialised -- zero is "no
-;; target" plus one, "no prediction" and "no reference" -- so the walk writes
-;; only the three words it computes. `counts` returns the number of `jmp` lines
-;; seen, which decides whether any of the later passes has anything to do.
-(define (compiler-backend-layout-index-build
-  [asm : String]
-  [n : i64]
-  [lines : i64]
-  [counts : (__tl_dyn-array i64)]) : CompilerBackendLayoutIndex
-  (let
-    [data : (Ptr u8)
+          (set! k (+ k 1))))
       (unsafe
-        (string-data asm))]
-    [index : CompilerBackendLayoutIndex
-      (CompilerBackendLayoutIndex
-        data
-        (array.make-array i64 lines)
-        (array.make-array i64 lines)
-        (array.make-array i64 lines)
-        (array.make-array i64 lines)
-        (array.make-array i64 lines)
-        (array.make-array i64 lines)
-        (array.make-array i64 lines)
-        (array.make-array i64 (* 4 lines))
-        lines)]
-    [starts : (__tl_dyn-array i64) index.starts]
-    [ends : (__tl_dyn-array i64) index.ends]
-    [target : (__tl_dyn-array i64) index.target]
-    [flags : (__tl_dyn-array i64) index.flags]
-    [jumps : i64 0]
-    [i : i64 0]
+        (ptr-write! (ptr-offset starts k) i))
+      k)))
+
+;; Classify each split line into `flags`.
+;;
+;; The emitted instruction shape -- four leading spaces, then a mnemonic -- is
+;; recognised inline here, because it is the shape of nearly every line and the
+;; general classifier's call, frame and dispatch cost more than its answer.
+;; Anything else (a label definition, a directive at column zero, an oddly
+;; indented or very short line) falls out to `classify-line`, which is the
+;; function this fast path is a specialisation of.
+;;
+;; Listing the classified lines is a SEPARATE walk below, not a tail of this
+;; loop: the four list cursors and their counters are dead weight on the ninety
+;; per cent of lines that are never listed, and holding them here pushed the
+;; span and flag cursors into memory, where every iteration paid for reloading
+;; them.
+(define (compiler-backend-layout-classify-lines!
+  [data : (Ptr u8)]
+  [lines : i64]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]) : unit
+  (let
+    [head-table : (Ptr u8)
+      (unsafe
+        (string-data compiler-backend-layout-head-table))]
     [k : i64 0]
+    [i : i64
+      (unsafe
+        (ptr-read (ptr-offset starts 0)))]
     (begin
       (while (< k lines)
         (let
-          [e : i64 (compiler-backend-peephole-scan-byte-range data i n 10)]
+          [next : i64
+            (unsafe
+              (ptr-read (ptr-offset starts (+ k 1))))]
+          [e : i64 (- next 1)]
+          [head : i64
+            (if (< (+ i 4) e)
+              (compiler-backend-peephole-byte-at data (+ i 4))
+              32)]
           (begin
-            (set! (array-ref starts k) i)
-            (set! (array-ref ends k) e)
-            (set! (array-ref target k) -1)
-            (compiler-backend-layout-classify! index k i e)
-            (unless
-              (=
-                (bit-and (array-ref flags k) compiler-backend-layout-flag-jmp)
-                0)
-              (set! jumps (+ jumps 1)))
-            (set! i (+ e 1))
+            (unsafe
+              (ptr-write!
+                (ptr-offset flags k)
+                (if (and
+                  (not (= head 32))
+                  (= (compiler-backend-peephole-byte-at data i) 32)
+                  (= (compiler-backend-peephole-byte-at data (+ i 3)) 32))
+                  (let
+                    [kind : i64
+                      (compiler-backend-peephole-byte-at head-table head)]
+                    (cond
+                      [(= kind 48) 0]
+                      [(= kind 49)
+                        (compiler-backend-layout-classify-token
+                          data
+                          i
+                          (+ i 4)
+                          e)]
+                      [else
+                        (compiler-backend-layout-classify-simple
+                          data
+                          (+ i 4)
+                          e
+                          kind)]))
+                  (compiler-backend-layout-classify-line data i e))))
+            (set! i next)
             (set! k (+ k 1)))))
-      (set! (array-ref counts 0) jumps)
-      index)))
+      unit)))
 
-;; Label name hash, over the length and the last twelve bytes. Emitted local
-;; labels share long prefixes and differ in their tails, so a bounded tail hash
-;; spreads them as well as the whole name for a fixed cost -- and a collision
-;; only ever costs the exact compare the probe already does. Folded to 30 bits
-;; after every byte so the multiply stays exact.
+;; List the lines the analysis revisits -- `labels` for the label table, `flow`
+;; for every branch, return and delimiting directive -- so each later pass walks
+;; its own short list instead of every line of the function again. `counts`
+;; returns the label, flow and `jmp` totals; the `jmp` total decides whether
+;; either rewrite has anything to look at.
+(define (compiler-backend-layout-list-lines!
+  [lines : i64]
+  [flags : (MutPtr i64)]
+  [labels : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [counts : (__tl_dyn-array i64)]) : unit
+  (let
+    [flow-bits : i64
+      (bit-or
+        compiler-backend-layout-flag-jmp
+        (bit-or
+          compiler-backend-layout-flag-jcc
+          (bit-or
+            compiler-backend-layout-flag-ret
+            compiler-backend-layout-flag-barrier)))]
+    [listed-bits : i64 (bit-or flow-bits compiler-backend-layout-flag-label)]
+    [k : i64 0]
+    [label-count : i64 0]
+    [flow-count : i64 0]
+    [jumps : i64 0]
+    (begin
+      (while (< k lines)
+        (let
+          [line-flags : i64
+            (unsafe
+              (ptr-read (ptr-offset flags k)))]
+          (begin
+            (unless
+              (= (bit-and line-flags listed-bits) 0)
+              (begin
+                (unless
+                  (= (bit-and line-flags compiler-backend-layout-flag-label) 0)
+                  (begin
+                    (unsafe
+                      (ptr-write! (ptr-offset labels label-count) k))
+                    ;; The label's ORDINAL rides in the same high half a branch
+                    ;; line spends on its operand offset -- no line is both --
+                    ;; so the reference counters are four words per label
+                    ;; instead of four per line.
+                    (unsafe
+                      (ptr-write!
+                        (ptr-offset flags k)
+                        (bit-or
+                          line-flags
+                          (shl
+                            label-count
+                            compiler-backend-layout-flag-ops-shift))))
+                    (set! label-count (+ label-count 1))))
+                (unless
+                  (= (bit-and line-flags flow-bits) 0)
+                  (begin
+                    (unsafe
+                      (ptr-write! (ptr-offset flow flow-count) k))
+                    (set! flow-count (+ flow-count 1))
+                    (unless
+                      (=
+                        (bit-and line-flags compiler-backend-layout-flag-jmp)
+                        0)
+                      (set! jumps (+ jumps 1)))))))
+            (set! k (+ k 1)))))
+      (set! (array-ref counts 0) label-count)
+      (set! (array-ref counts 1) flow-count)
+      (set! (array-ref counts 2) jumps)
+      unit)))
+
+;; Label name hash: three word reads and a multiply-shift. Emitted local labels
+;; share a long per-function prefix AND, once inlining has run, a long common
+;; tail (`.Lf7_inl.entry.4.if_then` beside `.Lf7_inl.entry.9.if_then`), so both
+;; ends alone leave the distinguishing bytes unread -- the middle word is what
+;; separates them. Measured over this compiler's own emitted labels, grouped per
+;; function as production sees them: 1.36 probes per insert against 1.65 for the
+;; byte-at-a-time fold this replaced, at a fraction of its cost. The multiply is
+;; the standard Fibonacci-constant scramble and wraps deliberately; the ranked
+;; bits are the high ones, which every input bit reaches. The hash is private to
+;; one analysis and only ever orders probes, so its spelling is free to change.
 (define (compiler-backend-layout-hash [data : (Ptr u8)] [s : i64] [e : i64]) : i64
   (let
-    [k : i64
-      (if (> (- e s) 12)
-        (- e 12)
-        s)]
-    [h : i64 (bit-and (+ 2166136261 (* 131 (- e s))) 1073741823)]
-    (begin
-      (while (< k e)
+    [len : i64 (- e s)]
+    (if (< len 8)
+      (let
+        [h : i64 (bit-and (+ 2166136261 (* 131 len)) 1073741823)]
+        [k : i64 s]
         (begin
-          (set!
-            h
-            (bit-and
-              (+ (* h 131) (compiler-backend-peephole-byte-at data k))
-              1073741823))
-          (set! k (+ k 1))))
-      h)))
+          (while (< k e)
+            (begin
+              (set!
+                h
+                (bit-and
+                  (+ (* h 131) (compiler-backend-peephole-byte-at data k))
+                  1073741823))
+              (set! k (+ k 1))))
+          h))
+      (let
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-cast (ptr-offset data s) : (Ptr i64))))]
+        [tail : i64
+          (unsafe
+            (ptr-read (ptr-cast (ptr-offset data (- e 8)) : (Ptr i64))))]
+        [middle : i64
+          (unsafe
+            (ptr-read
+              (ptr-cast (ptr-offset data (+ s (- (shr len 1) 4))) : (Ptr i64))))]
+        [mixed : i64
+          (bit-xor (bit-xor head tail) (bit-xor (* 3 middle) (* 131 len)))]
+        [folded : i64 (bit-xor mixed (shr mixed 32))]
+        (bit-and (shr (* folded 2654435761) 34) 1073741823)))))
 
-;; Power-of-two table for `count` possible names. Sized from the LINE count, an
-;; over-estimate of the label count, so the walk that fills it needs no counting
-;; pass ahead of it: the extra slots are zero words the allocator already
-;; cleared.
+;; Power-of-two table for `count` names. The extra slots are zero words the
+;; allocator already cleared.
 (define (compiler-backend-layout-table-capacity [count : i64]) : i64
   (let
     [cap : i64 16]
@@ -82150,122 +82403,194 @@
 ;; first is the conservative answer if a caller ever hands this pass a whole
 ;; program.
 (define (compiler-backend-layout-table-insert!
-  [index : CompilerBackendLayoutIndex]
-  [table : (__tl_dyn-array i64)]
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [table : (MutPtr i64)]
   [cap : i64]
   [line : i64]) : unit
   (let
-    [data : (Ptr u8) index.data]
-    [s : i64 (array-ref index.ops line)]
-    [e : i64 (array-ref index.ope line)]
+    [s : i64
+      (unsafe
+        (ptr-read (ptr-offset starts line)))]
+    [e : i64
+      (-
+        (unsafe
+          (ptr-read (ptr-offset starts (+ line 1))))
+        2)]
     [h : i64 (compiler-backend-layout-hash data s e)]
-    [slot : i64 (bit-and h (- cap 1))]
+    [mask : i64 (- cap 1)]
+    [slot : i64 (bit-and h mask)]
     [placed : bool false]
     [probes : i64 0]
     (begin
       (while (and (not placed) (< probes cap))
         (let
-          [held : i64 (array-ref table (* 2 slot))]
+          [cell : i64 (* 2 slot)]
+          [held : i64
+            (unsafe
+              (ptr-read (ptr-offset table cell)))]
           (begin
             (cond
               [(= held 0)
                 (begin
-                  (set! (array-ref table (* 2 slot)) (+ line 1))
-                  (set! (array-ref table (+ (* 2 slot) 1)) h)
+                  (unsafe
+                    (ptr-write! (ptr-offset table cell) (+ line 1)))
+                  (unsafe
+                    (ptr-write! (ptr-offset table (+ cell 1)) h))
                   (set! placed true))]
               [(and
-                  (= (array-ref table (+ (* 2 slot) 1)) h)
+                  (=
+                    (unsafe
+                      (ptr-read (ptr-offset table (+ cell 1))))
+                    h)
                   (compiler-backend-layout-name-eq?
                     data
                     s
                     e
-                    (array-ref index.ops (- held 1))
-                    (array-ref index.ope (- held 1))))
+                    (unsafe
+                      (ptr-read (ptr-offset starts (- held 1))))
+                    (-
+                      (unsafe
+                        (ptr-read (ptr-offset starts held)))
+                      2)))
                 (set! placed true)]
-              [else (set! slot (bit-and (+ slot 1) (- cap 1)))])
+              [else (set! slot (bit-and (+ slot 1) mask))])
             (set! probes (+ probes 1)))))
       unit)))
 
 ;; Defining line of the label spelled in [s, e), or -1.
 (define (compiler-backend-layout-table-lookup
-  [index : CompilerBackendLayoutIndex]
-  [table : (__tl_dyn-array i64)]
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [table : (MutPtr i64)]
   [cap : i64]
   [s : i64]
   [e : i64]) : i64
   (let
-    [data : (Ptr u8) index.data]
     [h : i64 (compiler-backend-layout-hash data s e)]
-    [slot : i64 (bit-and h (- cap 1))]
+    [mask : i64 (- cap 1)]
+    [slot : i64 (bit-and h mask)]
     [found : i64 -1]
     [done : bool false]
     [probes : i64 0]
     (begin
       (while (and (not done) (< probes cap))
         (let
-          [held : i64 (array-ref table (* 2 slot))]
+          [cell : i64 (* 2 slot)]
+          [held : i64
+            (unsafe
+              (ptr-read (ptr-offset table cell)))]
           (begin
             (cond
               [(= held 0) (set! done true)]
               [(and
-                  (= (array-ref table (+ (* 2 slot) 1)) h)
+                  (=
+                    (unsafe
+                      (ptr-read (ptr-offset table (+ cell 1))))
+                    h)
                   (compiler-backend-layout-name-eq?
                     data
                     s
                     e
-                    (array-ref index.ops (- held 1))
-                    (array-ref index.ope (- held 1))))
+                    (unsafe
+                      (ptr-read (ptr-offset starts (- held 1))))
+                    (-
+                      (unsafe
+                        (ptr-read (ptr-offset starts held)))
+                      2)))
                 (begin
                   (set! found (- held 1))
                   (set! done true))]
-              [else (set! slot (bit-and (+ slot 1) (- cap 1)))])
+              [else (set! slot (bit-and (+ slot 1) mask))])
             (set! probes (+ probes 1)))))
       found)))
 
-;; Resolve every direct branch operand to the line that defines it.
-(define (compiler-backend-layout-resolve-targets!
-  [index : CompilerBackendLayoutIndex]) : unit
+;; Fill the label table from the label lines.
+(define (compiler-backend-layout-build-table!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [labels : (MutPtr i64)]
+  [label-count : i64]
+  [table : (MutPtr i64)]
+  [cap : i64]) : unit
   (let
-    [lines : i64 index.count]
-    [cap : i64 (compiler-backend-layout-table-capacity lines)]
-    [table : (__tl_dyn-array i64) (array.make-array i64 (* 2 cap))]
-    [branch-bits : i64
-      (bit-or compiler-backend-layout-flag-jmp compiler-backend-layout-flag-jcc)]
     [k : i64 0]
     (begin
-      (while (< k lines)
+      (while (< k label-count)
         (begin
-          (unless
-            (=
-              (bit-and
-                (array-ref index.flags k)
-                compiler-backend-layout-flag-label)
-              0)
-            (compiler-backend-layout-table-insert! index table cap k))
+          (compiler-backend-layout-table-insert!
+            data
+            starts
+            table
+            cap
+            (unsafe
+              (ptr-read (ptr-offset labels k))))
           (set! k (+ k 1))))
-      (set! k 0)
-      (while (< k lines)
-        (begin
-          (unless
-            (= (bit-and (array-ref index.flags k) branch-bits) 0)
-            (let
-              [ops : i64 (array-ref index.ops k)]
-              [ope : i64 (array-ref index.ope k)]
-              (when
-                (compiler-backend-layout-local-label? index.data ops ope)
-                (set!
-                  (array-ref index.target k)
-                  (compiler-backend-layout-table-lookup index table cap ops ope)))))
-          (set! k (+ k 1))))
+      unit)))
+
+;; Resolve the direct branch operands selected by `which` to the lines that
+;; define them. The unconditional jumps are resolved first because both
+;; rewrites are stated over them; the conditional ones are resolved only if a
+;; region shape turns out to want a prediction, which is the only thing that
+;; ever reads their targets.
+(define (compiler-backend-layout-resolve-targets!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [flow-count : i64]
+  [which : i64]
+  [target : (MutPtr i64)]
+  [table : (MutPtr i64)]
+  [cap : i64]) : unit
+  (let
+    [k : i64 0]
+    (begin
+      (while (< k flow-count)
+        (let
+          [i : i64
+            (unsafe
+              (ptr-read (ptr-offset flow k)))]
+          [line-flags : i64
+            (unsafe
+              (ptr-read (ptr-offset flags i)))]
+          (begin
+            (unless
+              (= (bit-and line-flags which) 0)
+              (let
+                [ops : i64
+                  (+
+                    (unsafe
+                      (ptr-read (ptr-offset starts i)))
+                    (shr line-flags compiler-backend-layout-flag-ops-shift))]
+                [ope : i64
+                  (-
+                    (unsafe
+                      (ptr-read (ptr-offset starts (+ i 1))))
+                    1)]
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset target i)
+                    (if (compiler-backend-layout-local-label? data ops ope)
+                      (compiler-backend-layout-table-lookup
+                        data
+                        starts
+                        table
+                        cap
+                        ops
+                        ope)
+                      -1)))))
+            (set! k (+ k 1)))))
       unit)))
 
 ;; The flag setter a branch reads: 0 none, 1 a comparison against zero
 ;; (`testq r, r` or `cmpq $0, r`), 2 a comparison against a non-zero literal.
 (define (compiler-backend-layout-flag-setter-kind
-  [index : CompilerBackendLayoutIndex]
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
   [i : i64]) : i64
   (let
-    [data : (Ptr u8) index.data]
     [j : i64 (- i 1)]
     [kind : i64 0]
     [done : bool false]
@@ -82273,7 +82598,8 @@
       (while (and (not done) (>= j 0))
         (if (=
           (bit-and
-            (array-ref index.flags j)
+            (unsafe
+              (ptr-read (ptr-offset flags j)))
             (bit-or
               compiler-backend-layout-flag-label
               compiler-backend-layout-flag-blank))
@@ -82283,10 +82609,19 @@
       (when
         (>= j 0)
         (when
-          (= (array-ref index.flags j) 0)
+          (=
+            (unsafe
+              (ptr-read (ptr-offset flags j)))
+            0)
           (let
-            [s : i64 (array-ref index.starts j)]
-            [e : i64 (array-ref index.ends j)]
+            [s : i64
+              (unsafe
+                (ptr-read (ptr-offset starts j)))]
+            [e : i64
+              (-
+                (unsafe
+                  (ptr-read (ptr-offset starts (+ j 1))))
+                1)]
             [t : i64 (compiler-backend-layout-skip-spaces data s e)]
             [tend : i64 (compiler-backend-layout-token-end data t e)]
             [ops : i64 (compiler-backend-layout-skip-spaces data tend e)]
@@ -82346,16 +82681,23 @@
 ;; `ge` `ns` `ne` `nz`. Everything else -- the unsigned codes, the flag codes --
 ;; predicts nothing.
 (define (compiler-backend-layout-opcode-prediction
-  [index : CompilerBackendLayoutIndex]
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
   [i : i64]) : i64
   (let
-    [data : (Ptr u8) index.data]
-    [kind : i64 (compiler-backend-layout-flag-setter-kind index i)]
+    [kind : i64 (compiler-backend-layout-flag-setter-kind data starts flags i)]
     (if (= kind 0)
       compiler-backend-layout-predict-unknown
       (let
-        [s : i64 (array-ref index.starts i)]
-        [e : i64 (array-ref index.ends i)]
+        [s : i64
+          (unsafe
+            (ptr-read (ptr-offset starts i)))]
+        [e : i64
+          (-
+            (unsafe
+              (ptr-read (ptr-offset starts (+ i 1))))
+            1)]
         [t : i64 (compiler-backend-layout-skip-spaces data s e)]
         [tend : i64 (compiler-backend-layout-token-end data t e)]
         [n : i64 (- (- tend t) 1)]
@@ -82381,105 +82723,132 @@
             compiler-backend-layout-predict-hot]
           [else compiler-backend-layout-predict-unknown])))))
 
-;; Per-branch prediction, with the guard chain applied in emission order: a
-;; branch the opcode set cannot call inherits COLD when it bails to the same
-;; label the previous predicted-cold branch bailed to. The chain breaks at any
-;; unconditional transfer and at any branch naming a different label.
-(define (compiler-backend-layout-predict! [index : CompilerBackendLayoutIndex]) : unit
+;; Per-branch prediction and the per-label reference tally, in one walk of the
+;; flow list. The guard chain is applied in emission order: a branch the opcode
+;; set cannot call inherits COLD when it bails to the same label the previous
+;; predicted-cold branch bailed to. The chain breaks at any unconditional
+;; transfer and at any branch naming a different label. `refs` holds four
+;; counters per LABEL line (all / unconditional / predicted-cold /
+;; predicted-hot), so a region's entry set is a sum over its own label lines
+;; instead of a scan; tallying in this same walk is exact because the only
+;; prediction a branch's tally reads is its own.
+(define (compiler-backend-layout-predict-and-tally!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [pred : (MutPtr i64)]
+  [refs : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [flow-count : i64]) : unit
   (let
-    [lines : i64 index.count]
     [chain : i64 -1]
-    [i : i64 0]
+    [k : i64 0]
     (begin
-      (while (< i lines)
+      (while (< k flow-count)
         (let
-          [flags : i64 (array-ref index.flags i)]
+          [i : i64
+            (unsafe
+              (ptr-read (ptr-offset flow k)))]
+          [line-flags : i64
+            (unsafe
+              (ptr-read (ptr-offset flags i)))]
           (begin
             (cond
-              [(not (= (bit-and flags compiler-backend-layout-flag-jcc) 0))
+              [(not (= (bit-and line-flags compiler-backend-layout-flag-jcc) 0))
                 (let
-                  [target : i64 (array-ref index.target i)]
+                  [to : i64
+                    (unsafe
+                      (ptr-read (ptr-offset target i)))]
                   [base : i64
-                    (compiler-backend-layout-opcode-prediction index i)]
+                    (compiler-backend-layout-opcode-prediction
+                      data
+                      starts
+                      flags
+                      i)]
                   [final : i64 0]
                   (begin
                     (set!
                       final
                       (if (and
                         (= base compiler-backend-layout-predict-unknown)
-                        (>= target 0)
-                        (= target chain))
+                        (>= to 0)
+                        (= to chain))
                         compiler-backend-layout-predict-cold
                         base))
-                    (set! (array-ref index.pred i) final)
+                    (unsafe
+                      (ptr-write! (ptr-offset pred i) final))
                     (if (= final compiler-backend-layout-predict-cold)
-                      (set! chain target)
-                      (unless (= target chain) (set! chain -1)))))]
-              [(not
-                  (=
-                    (bit-and
-                      flags
-                      (bit-or
-                        compiler-backend-layout-flag-jmp
-                        (bit-or
-                          compiler-backend-layout-flag-ret
-                          compiler-backend-layout-flag-barrier)))
-                    0))
-                (set! chain -1)]
-              [else unit])
-            (set! i (+ i 1)))))
-      unit)))
-
-;; Tally, per label line, how many branches name it and how each is predicted.
-(define (compiler-backend-layout-tally-refs!
-  [index : CompilerBackendLayoutIndex]) : unit
-  (let
-    [lines : i64 index.count]
-    [i : i64 0]
-    (begin
-      (while (< i lines)
-        (let
-          [flags : i64 (array-ref index.flags i)]
-          [target : i64 (array-ref index.target i)]
-          (begin
-            (when
-              (and
-                (>= target 0)
-                (not
-                  (=
-                    (bit-and
-                      flags
-                      (bit-or
-                        compiler-backend-layout-flag-jmp
-                        compiler-backend-layout-flag-jcc))
-                    0)))
-              (let
-                [base : i64 (* 4 target)]
-                [slot : i64
-                  (cond
-                    [(not
-                        (= (bit-and flags compiler-backend-layout-flag-jmp) 0))
-                      1]
-                    [(=
-                        (array-ref index.pred i)
-                        compiler-backend-layout-predict-cold)
-                      2]
-                    [(=
-                        (array-ref index.pred i)
-                        compiler-backend-layout-predict-hot)
-                      3]
-                    [else 0])]
-                (begin
-                  (set!
-                    (array-ref index.refs base)
-                    (+ (array-ref index.refs base) 1))
-                  (when
-                    (> slot 0)
-                    (set!
-                      (array-ref index.refs (+ base slot))
-                      (+ (array-ref index.refs (+ base slot)) 1)))
-                  unit)))
-            (set! i (+ i 1)))))
+                      (set! chain to)
+                      (unless (= to chain) (set! chain -1)))
+                    (when
+                      (>= to 0)
+                      (let
+                        [cell : i64
+                          (*
+                            4
+                            (shr
+                              (unsafe
+                                (ptr-read (ptr-offset flags to)))
+                              compiler-backend-layout-flag-ops-shift))]
+                        [slot : i64
+                          (cond
+                            [(= final compiler-backend-layout-predict-cold) 2]
+                            [(= final compiler-backend-layout-predict-hot) 3]
+                            [else 0])]
+                        (begin
+                          (unsafe
+                            (ptr-write!
+                              (ptr-offset refs cell)
+                              (+
+                                (unsafe
+                                  (ptr-read (ptr-offset refs cell)))
+                                1)))
+                          (when
+                            (> slot 0)
+                            (unsafe
+                              (ptr-write!
+                                (ptr-offset refs (+ cell slot))
+                                (+
+                                  (unsafe
+                                    (ptr-read (ptr-offset refs (+ cell slot))))
+                                  1))))
+                          unit)))))]
+              [(not (= (bit-and line-flags compiler-backend-layout-flag-jmp) 0))
+                (let
+                  [to : i64
+                    (unsafe
+                      (ptr-read (ptr-offset target i)))]
+                  (begin
+                    (set! chain -1)
+                    (when
+                      (>= to 0)
+                      (let
+                        [cell : i64
+                          (*
+                            4
+                            (shr
+                              (unsafe
+                                (ptr-read (ptr-offset flags to)))
+                              compiler-backend-layout-flag-ops-shift))]
+                        (begin
+                          (unsafe
+                            (ptr-write!
+                              (ptr-offset refs cell)
+                              (+
+                                (unsafe
+                                  (ptr-read (ptr-offset refs cell)))
+                                1)))
+                          (unsafe
+                            (ptr-write!
+                              (ptr-offset refs (+ cell 1))
+                              (+
+                                (unsafe
+                                  (ptr-read (ptr-offset refs (+ cell 1))))
+                                1)))
+                          unit)))))]
+              [else (set! chain -1)])
+            (set! k (+ k 1)))))
       unit)))
 
 ;; Everything the selector needs to know about the region [rs, re) -- the lines
@@ -82503,14 +82872,19 @@
   4)
 
 (define (compiler-backend-layout-region-scan
-  [index : CompilerBackendLayoutIndex]
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
   [rs : i64]
   [re : i64]) : i64
   (if (or
     (>= rs re)
     (> (- re rs) compiler-backend-layout-region-line-cap)
     (=
-      (bit-and (array-ref index.flags rs) compiler-backend-layout-flag-label)
+      (bit-and
+        (unsafe
+          (ptr-read (ptr-offset flags rs)))
+        compiler-backend-layout-flag-label)
       0))
     0
     (let
@@ -82529,13 +82903,15 @@
       (begin
         (while (< k re)
           (let
-            [flags : i64 (array-ref index.flags k)]
+            [line-flags : i64
+              (unsafe
+                (ptr-read (ptr-offset flags k)))]
             (begin
               (unless
-                (= (bit-and flags compiler-backend-layout-flag-barrier) 0)
+                (= (bit-and line-flags compiler-backend-layout-flag-barrier) 0)
                 (set! barrier true))
               (when
-                (= (bit-and flags skip-bits) 0)
+                (= (bit-and line-flags skip-bits) 0)
                 (begin
                   (set! body (+ body 1))
                   (when
@@ -82544,9 +82920,13 @@
                       (<= body compiler-backend-layout-sentinel-arm-cap))
                     (unless
                       (compiler-backend-layout-const-line?
-                        index.data
-                        (array-ref index.starts k)
-                        (array-ref index.ends k))
+                        data
+                        (unsafe
+                          (ptr-read (ptr-offset starts k)))
+                        (-
+                          (unsafe
+                            (ptr-read (ptr-offset starts (+ k 1))))
+                          1))
                       (set! only-const false)))))
               (set! k (+ k 1)))))
         (if (or barrier (= body 0))
@@ -82554,7 +82934,12 @@
           (bit-or
             compiler-backend-layout-region-shape-ok
             (bit-or
-              (if (= (bit-and (array-ref index.flags (- re 1)) stop-bits) 0)
+              (if (=
+                (bit-and
+                  (unsafe
+                    (ptr-read (ptr-offset flags (- re 1))))
+                  stop-bits)
+                0)
                 compiler-backend-layout-region-needs-jump
                 0)
               (if (and
@@ -82562,31 +82947,6 @@
                 (<= body compiler-backend-layout-sentinel-arm-cap))
                 compiler-backend-layout-region-sentinel
                 0))))))))
-
-;; Where an out-of-lined region is re-inserted: the first delimiting directive
-;; at or after the join, which is the `.size` / `.seh_endproc` that closes the
-;; function the join belongs to. With none, the end of the text. Answered from a
-;; table built in one backward walk, so a function with many arms does not
-;; re-scan its own tail once per arm.
-(define (compiler-backend-layout-build-tails!
-  [index : CompilerBackendLayoutIndex]
-  [tails : (__tl_dyn-array i64)]) : unit
-  (let
-    [lines : i64 index.count]
-    [flags : (__tl_dyn-array i64) index.flags]
-    [next : i64 lines]
-    [k : i64 (- lines 1)]
-    (begin
-      (while (>= k 0)
-        (begin
-          (unless
-            (=
-              (bit-and (array-ref flags k) compiler-backend-layout-flag-barrier)
-              0)
-            (set! next k))
-          (set! (array-ref tails k) next)
-          (set! k (- k 1))))
-      unit)))
 
 ;; Is every branch into the region predicted NOT-TAKEN? Counted as a sum over
 ;; the region's own label lines minus the branches that stay inside it: an
@@ -82596,11 +82956,16 @@
 ;; constant-arm heuristic, which needs only that nothing entering the arm is
 ;; predicted TAKEN and that no unconditional jump names it.
 (define (compiler-backend-layout-region-cold?
-  [index : CompilerBackendLayoutIndex]
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [pred : (MutPtr i64)]
+  [refs : (MutPtr i64)]
   [rs : i64]
   [re : i64]
   [sentinel? : bool]) : bool
   (let
+    [branch-bits : i64
+      (bit-or compiler-backend-layout-flag-jmp compiler-backend-layout-flag-jcc)]
     [total : i64 0]
     [uncond : i64 0]
     [cold : i64 0]
@@ -82609,45 +82974,70 @@
     (begin
       (while (< k re)
         (let
-          [flags : i64 (array-ref index.flags k)]
-          [target : i64 (array-ref index.target k)]
+          [line-flags : i64
+            (unsafe
+              (ptr-read (ptr-offset flags k)))]
           (begin
-            (when
-              (not (= (bit-and flags compiler-backend-layout-flag-label) 0))
+            (unless
+              (= (bit-and line-flags compiler-backend-layout-flag-label) 0)
               (let
-                [base : i64 (* 4 k)]
+                [cell : i64
+                  (* 4 (shr line-flags compiler-backend-layout-flag-ops-shift))]
                 (begin
-                  (set! total (+ total (array-ref index.refs base)))
-                  (set! uncond (+ uncond (array-ref index.refs (+ base 1))))
-                  (set! cold (+ cold (array-ref index.refs (+ base 2))))
-                  (set! hot (+ hot (array-ref index.refs (+ base 3))))
+                  (set!
+                    total
+                    (+
+                      total
+                      (unsafe
+                        (ptr-read (ptr-offset refs cell)))))
+                  (set!
+                    uncond
+                    (+
+                      uncond
+                      (unsafe
+                        (ptr-read (ptr-offset refs (+ cell 1))))))
+                  (set!
+                    cold
+                    (+
+                      cold
+                      (unsafe
+                        (ptr-read (ptr-offset refs (+ cell 2))))))
+                  (set!
+                    hot
+                    (+
+                      hot
+                      (unsafe
+                        (ptr-read (ptr-offset refs (+ cell 3))))))
                   unit)))
-            (when
-              (and
-                (>= target rs)
-                (< target re)
-                (not
-                  (=
-                    (bit-and
-                      flags
-                      (bit-or
-                        compiler-backend-layout-flag-jmp
-                        compiler-backend-layout-flag-jcc))
-                    0)))
-              (begin
-                (set! total (- total 1))
-                (cond
-                  [(not (= (bit-and flags compiler-backend-layout-flag-jmp) 0))
-                    (set! uncond (- uncond 1))]
-                  [(=
-                      (array-ref index.pred k)
-                      compiler-backend-layout-predict-cold)
-                    (set! cold (- cold 1))]
-                  [(=
-                      (array-ref index.pred k)
-                      compiler-backend-layout-predict-hot)
-                    (set! hot (- hot 1))]
-                  [else unit])))
+            (unless
+              (= (bit-and line-flags branch-bits) 0)
+              (let
+                [to : i64
+                  (unsafe
+                    (ptr-read (ptr-offset target k)))]
+                (when
+                  (and (>= to rs) (< to re))
+                  (begin
+                    (set! total (- total 1))
+                    (cond
+                      [(not
+                          (=
+                            (bit-and
+                              line-flags
+                              compiler-backend-layout-flag-jmp)
+                            0))
+                        (set! uncond (- uncond 1))]
+                      [(=
+                          (unsafe
+                            (ptr-read (ptr-offset pred k)))
+                          compiler-backend-layout-predict-cold)
+                        (set! cold (- cold 1))]
+                      [(=
+                          (unsafe
+                            (ptr-read (ptr-offset pred k)))
+                          compiler-backend-layout-predict-hot)
+                        (set! hot (- hot 1))]
+                      [else unit])))))
             (set! k (+ k 1)))))
       (and
         (> total 0)
@@ -82658,74 +83048,186 @@
             (= cold total)
             (>= cold compiler-backend-layout-guard-chain-entries)))))))
 
-;; Choose the regions to lay out of line. Accepted regions never overlap: a
-;; candidate whose `jmp` sits inside one already taken is skipped, so each line
-;; moves at most once. Returns the number selected.
-(define (compiler-backend-layout-select-sinks!
-  [index : CompilerBackendLayoutIndex]
-  [sink-p : (__tl_dyn-array i64)]
-  [sink-q : (__tl_dyn-array i64)]
-  [sink-tail : (__tl_dyn-array i64)]
-  [sink-jump : (__tl_dyn-array i64)]
-  [tails : (__tl_dyn-array i64)]) : i64
+;; Choose the regions to lay out of line, walking the flow list rather than
+;; every line. Accepted regions never overlap: a candidate whose `jmp` sits
+;; inside one already taken is skipped, so each line moves at most once. An
+;; accepted region is re-inserted at the first delimiting directive at or after
+;; its join -- the `.size` / `.seh_endproc` that closes the function the join
+;; belongs to -- found by advancing one cursor along the same flow list, which
+;; is sound because the accepted joins only ever move forward. Returns the
+;; number selected.
+;; Collect the regions whose SHAPE admits out-of-lining: a forward `jmp` whose
+;; target block starts right behind it, holds a real line, stays under the line
+;; cap and carries no delimiting directive. Nothing here needs a prediction, so
+;; a function without a single candidate never pays for one -- which is what
+;; this phase is separated out for. The non-overlap guard is NOT applied here:
+;; it turns on acceptance, which the second phase decides, and scanning a region
+;; the guard will later drop costs a walk and changes no answer.
+(define (compiler-backend-layout-collect-sink-shapes!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [flow-count : i64]
+  [cand-p : (MutPtr i64)]
+  [cand-q : (MutPtr i64)]
+  [cand-shape : (MutPtr i64)]) : i64
   (let
-    [lines : i64 index.count]
+    [count : i64 0]
+    [k : i64 0]
+    (begin
+      (while (< k flow-count)
+        (let
+          [i : i64
+            (unsafe
+              (ptr-read (ptr-offset flow k)))]
+          (begin
+            (unless
+              (=
+                (bit-and
+                  (unsafe
+                    (ptr-read (ptr-offset flags i)))
+                  compiler-backend-layout-flag-jmp)
+                0)
+              (let
+                [q : i64
+                  (unsafe
+                    (ptr-read (ptr-offset target i)))]
+                [rs : i64 (+ i 1)]
+                (when
+                  (> q rs)
+                  (let
+                    [shape : i64
+                      (compiler-backend-layout-region-scan
+                        data
+                        starts
+                        flags
+                        rs
+                        q)]
+                    (unless
+                      (=
+                        (bit-and shape compiler-backend-layout-region-shape-ok)
+                        0)
+                      (begin
+                        (unsafe
+                          (ptr-write! (ptr-offset cand-p count) i))
+                        (unsafe
+                          (ptr-write! (ptr-offset cand-q count) q))
+                        (unsafe
+                          (ptr-write! (ptr-offset cand-shape count) shape))
+                        (set! count (+ count 1))))))))
+            (set! k (+ k 1)))))
+      count)))
+
+;; Choose the regions to lay out of line from the shape candidates, in emission
+;; order. Accepted regions never overlap: a candidate whose `jmp` sits inside
+;; one already taken is skipped, so each line moves at most once. An accepted
+;; region is re-inserted at the first delimiting directive at or after its join
+;; -- the `.size` / `.seh_endproc` that closes the function the join belongs to
+;; -- found by advancing one cursor along the flow list, which is sound because
+;; the accepted joins only ever move forward. The candidate arrays are compacted
+;; in place: the write index never runs ahead of the read index. Returns the
+;; number selected.
+(define (compiler-backend-layout-select-sinks!
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [pred : (MutPtr i64)]
+  [refs : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [flow-count : i64]
+  [lines : i64]
+  [candidates : i64]
+  [sink-p : (MutPtr i64)]
+  [sink-q : (MutPtr i64)]
+  [cand-shape : (MutPtr i64)]
+  [sink-tail : (MutPtr i64)]
+  [sink-jump : (MutPtr i64)]) : i64
+  (let
     [count : i64 0]
     [guard : i64 0]
-    [i : i64 0]
+    [tail-cursor : i64 0]
+    [k : i64 0]
     (begin
-      (while (< i lines)
-        (begin
-          (when
-            (and
-              (>= i guard)
-              (not
-                (=
-                  (bit-and
-                    (array-ref index.flags i)
-                    compiler-backend-layout-flag-jmp)
-                  0)))
-            (let
-              [q : i64 (array-ref index.target i)]
-              [rs : i64 (+ i 1)]
-              (when
-                (> q rs)
-                (let
-                  [shape : i64 (compiler-backend-layout-region-scan index rs q)]
-                  (when
-                    (and
-                      (not
-                        (=
-                          (bit-and
-                            shape
-                            compiler-backend-layout-region-shape-ok)
-                          0))
-                      (or
-                        (compiler-backend-layout-region-cold? index rs q false)
-                        (and
-                          (not
-                            (=
-                              (bit-and
-                                shape
-                                compiler-backend-layout-region-sentinel)
-                              0))
-                          (compiler-backend-layout-region-cold? index rs q true))))
-                    (begin
-                      (set! (array-ref sink-p count) i)
-                      (set! (array-ref sink-q count) q)
-                      (set! (array-ref sink-tail count) (array-ref tails q))
-                      (set!
-                        (array-ref sink-jump count)
-                        (if (=
-                          (bit-and
-                            shape
-                            compiler-backend-layout-region-needs-jump)
-                          0)
-                          0
-                          1))
-                      (set! count (+ count 1))
-                      (set! guard q)))))))
-          (set! i (+ i 1))))
+      (while (< k candidates)
+        (let
+          [i : i64
+            (unsafe
+              (ptr-read (ptr-offset sink-p k)))]
+          [q : i64
+            (unsafe
+              (ptr-read (ptr-offset sink-q k)))]
+          [shape : i64
+            (unsafe
+              (ptr-read (ptr-offset cand-shape k)))]
+          [rs : i64 (+ i 1)]
+          (begin
+            (when
+              (and
+                (>= i guard)
+                (or
+                  (compiler-backend-layout-region-cold?
+                    flags
+                    target
+                    pred
+                    refs
+                    rs
+                    q
+                    false)
+                  (and
+                    (not
+                      (=
+                        (bit-and shape compiler-backend-layout-region-sentinel)
+                        0))
+                    (compiler-backend-layout-region-cold?
+                      flags
+                      target
+                      pred
+                      refs
+                      rs
+                      q
+                      true))))
+              (begin
+                (while (and
+                  (< tail-cursor flow-count)
+                  (or
+                    (<
+                      (unsafe
+                        (ptr-read (ptr-offset flow tail-cursor)))
+                      q)
+                    (=
+                      (bit-and
+                        (unsafe
+                          (ptr-read
+                            (ptr-offset
+                              flags
+                              (unsafe
+                                (ptr-read (ptr-offset flow tail-cursor))))))
+                        compiler-backend-layout-flag-barrier)
+                      0)))
+                  (set! tail-cursor (+ tail-cursor 1)))
+                (unsafe
+                  (ptr-write! (ptr-offset sink-p count) i))
+                (unsafe
+                  (ptr-write! (ptr-offset sink-q count) q))
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset sink-tail count)
+                    (if (< tail-cursor flow-count)
+                      (unsafe
+                        (ptr-read (ptr-offset flow tail-cursor)))
+                      lines)))
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset sink-jump count)
+                    (if (=
+                      (bit-and shape compiler-backend-layout-region-needs-jump)
+                      0)
+                      0
+                      1)))
+                (set! count (+ count 1))
+                (set! guard q)))
+            (set! k (+ k 1)))))
       count)))
 
 ;; The straight-line run a `jmp L` may absorb: the instructions from L onward,
@@ -82733,11 +83235,11 @@
 ;; first unconditional `jmp`. Returns that terminator's line, or -1 when the run
 ;; is too long or holds anything a copy must not carry.
 (define (compiler-backend-layout-dup-run-end
-  [index : CompilerBackendLayoutIndex]
+  [flags : (MutPtr i64)]
+  [lines : i64]
   [site : i64]
   [label : i64]) : i64
   (let
-    [lines : i64 index.count]
     [refuse-bits : i64
       (bit-or
         compiler-backend-layout-flag-blank
@@ -82755,18 +83257,22 @@
     (begin
       (while (and (not failed) (< term 0) (< k lines))
         (let
-          [flags : i64 (array-ref index.flags k)]
+          [line-flags : i64
+            (unsafe
+              (ptr-read (ptr-offset flags k)))]
           (cond
-            [(not (= (bit-and flags compiler-backend-layout-flag-label) 0))
+            [(not (= (bit-and line-flags compiler-backend-layout-flag-label) 0))
               (set! k (+ k 1))]
-            [(or (= k site) (not (= (bit-and flags refuse-bits) 0)))
+            [(or (= k site) (not (= (bit-and line-flags refuse-bits) 0)))
               (set! failed true)]
             [else
               (begin
                 (set! taken (+ taken 1))
                 (if (> taken compiler-backend-layout-dup-run-cap)
                   (set! failed true)
-                  (if (= (bit-and flags compiler-backend-layout-flag-jmp) 0)
+                  (if (=
+                    (bit-and line-flags compiler-backend-layout-flag-jmp)
+                    0)
                     (set! k (+ k 1))
                     (set! term k))))])))
       (if failed
@@ -82778,7 +83284,7 @@
 ;; peephole deletes it outright -- and copying a run over it would replace a
 ;; free edge with real instructions.
 (define (compiler-backend-layout-fallthrough-target?
-  [index : CompilerBackendLayoutIndex]
+  [flags : (MutPtr i64)]
   [site : i64]
   [label : i64]) : bool
   (if (< label site)
@@ -82794,7 +83300,12 @@
         (while (and only-labels (< k label))
           (begin
             (when
-              (= (bit-and (array-ref index.flags k) skip-bits) 0)
+              (=
+                (bit-and
+                  (unsafe
+                    (ptr-read (ptr-offset flags k)))
+                  skip-bits)
+                0)
               (set! only-labels false))
             (set! k (+ k 1))))
         only-labels))))
@@ -82802,7 +83313,9 @@
 ;; Is the line before this site a call that never returns? The `jmp` behind an
 ;; abort call is dead text; copying a run into it only grows the function.
 (define (compiler-backend-layout-after-abort?
-  [index : CompilerBackendLayoutIndex]
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
   [i : i64]) : bool
   (let
     [skip-bits : i64
@@ -82813,7 +83326,12 @@
     [done : bool false]
     (begin
       (while (and (not done) (>= j 0))
-        (if (= (bit-and (array-ref index.flags j) skip-bits) 0)
+        (if (=
+          (bit-and
+            (unsafe
+              (ptr-read (ptr-offset flags j)))
+            skip-bits)
+          0)
           (set! done true)
           (set! j (- j 1))))
       (and
@@ -82821,69 +83339,111 @@
         (not
           (=
             (bit-and
-              (array-ref index.flags j)
+              (unsafe
+                (ptr-read (ptr-offset flags j)))
               compiler-backend-layout-flag-call)
             0))
         (compiler-backend-layout-abort-line?
-          index.data
-          (array-ref index.starts j)
-          (array-ref index.ends j))))))
+          data
+          (unsafe
+            (ptr-read (ptr-offset starts j)))
+          (-
+            (unsafe
+              (ptr-read (ptr-offset starts (+ j 1))))
+            1))))))
 
-;; Choose the duplication sites. A `jmp` inside a region already chosen for
-;; out-of-lining is left alone, so the two mechanisms never rewrite the same
-;; line. Returns the number selected.
+;; Choose the duplication sites, again over the flow list. A `jmp` inside a
+;; region already chosen for out-of-lining is left alone, so the two mechanisms
+;; never rewrite the same line. Returns the number selected.
 (define (compiler-backend-layout-select-dups!
-  [index : CompilerBackendLayoutIndex]
-  [sink-p : (__tl_dyn-array i64)]
-  [sink-q : (__tl_dyn-array i64)]
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [flow-count : i64]
+  [lines : i64]
+  [sink-p : (MutPtr i64)]
+  [sink-q : (MutPtr i64)]
   [sinks : i64]
-  [dup-p : (__tl_dyn-array i64)]
-  [dup-from : (__tl_dyn-array i64)]
-  [dup-to : (__tl_dyn-array i64)]) : i64
+  [dup-p : (MutPtr i64)]
+  [dup-from : (MutPtr i64)]
+  [dup-to : (MutPtr i64)]) : i64
   (let
-    [lines : i64 index.count]
     [count : i64 0]
     [cursor : i64 0]
-    [i : i64 0]
+    [k : i64 0]
     (begin
-      (while (< i lines)
-        (begin
-          (unless
-            (=
-              (bit-and
-                (array-ref index.flags i)
-                compiler-backend-layout-flag-jmp)
-              0)
-            (begin
-              (while (and (< cursor sinks) (< (array-ref sink-q cursor) i))
-                (set! cursor (+ cursor 1)))
-              (unless
-                (and
+      (while (< k flow-count)
+        (let
+          [i : i64
+            (unsafe
+              (ptr-read (ptr-offset flow k)))]
+          (begin
+            (unless
+              (=
+                (bit-and
+                  (unsafe
+                    (ptr-read (ptr-offset flags i)))
+                  compiler-backend-layout-flag-jmp)
+                0)
+              (begin
+                (while (and
                   (< cursor sinks)
-                  (>= i (array-ref sink-p cursor))
-                  (< i (array-ref sink-q cursor)))
-                (let
-                  [label : i64 (array-ref index.target i)]
-                  (when
-                    (>= label 0)
-                    (let
-                      [term : i64
-                        (compiler-backend-layout-dup-run-end index i label)]
-                      (when
-                        (and
-                          (>= term 0)
-                          (not
-                            (compiler-backend-layout-fallthrough-target?
-                              index
-                              i
-                              label))
-                          (not (compiler-backend-layout-after-abort? index i)))
-                        (begin
-                          (set! (array-ref dup-p count) i)
-                          (set! (array-ref dup-from count) (+ label 1))
-                          (set! (array-ref dup-to count) term)
-                          (set! count (+ count 1))))))))))
-          (set! i (+ i 1))))
+                  (<
+                    (unsafe
+                      (ptr-read (ptr-offset sink-q cursor)))
+                    i))
+                  (set! cursor (+ cursor 1)))
+                (unless
+                  (and
+                    (< cursor sinks)
+                    (>=
+                      i
+                      (unsafe
+                        (ptr-read (ptr-offset sink-p cursor))))
+                    (<
+                      i
+                      (unsafe
+                        (ptr-read (ptr-offset sink-q cursor)))))
+                  (let
+                    [label : i64
+                      (unsafe
+                        (ptr-read (ptr-offset target i)))]
+                    (when
+                      (>= label 0)
+                      (let
+                        [term : i64
+                          (compiler-backend-layout-dup-run-end
+                            flags
+                            lines
+                            i
+                            label)]
+                        (when
+                          (and
+                            (>= term 0)
+                            (not
+                              (compiler-backend-layout-fallthrough-target?
+                                flags
+                                i
+                                label))
+                            (not
+                              (compiler-backend-layout-after-abort?
+                                data
+                                starts
+                                flags
+                                i)))
+                          (begin
+                            (unsafe
+                              (ptr-write! (ptr-offset dup-p count) i))
+                            (unsafe
+                              (ptr-write!
+                                (ptr-offset dup-from count)
+                                (+ label 1)))
+                            (unsafe
+                              (ptr-write! (ptr-offset dup-to count) term))
+                            (set! count (+ count 1))))))))))
+            (set! k (+ k 1)))))
       count)))
 
 ;; The output as a sequence of source lines: every entry names a line of the
@@ -82892,23 +83452,23 @@
 ;; where they stood. The jump appended behind a moved region is the very `jmp T`
 ;; line the move deleted, so no text is ever synthesized.
 (define (compiler-backend-layout-build-plan
-  [index : CompilerBackendLayoutIndex]
-  [sink-p : (__tl_dyn-array i64)]
-  [sink-q : (__tl_dyn-array i64)]
-  [sink-tail : (__tl_dyn-array i64)]
-  [sink-jump : (__tl_dyn-array i64)]
+  [flags : (MutPtr i64)]
+  [lines : i64]
+  [sink-p : (MutPtr i64)]
+  [sink-q : (MutPtr i64)]
+  [sink-tail : (MutPtr i64)]
+  [sink-jump : (MutPtr i64)]
   [sinks : i64]
-  [dup-p : (__tl_dyn-array i64)]
-  [dup-from : (__tl_dyn-array i64)]
-  [dup-to : (__tl_dyn-array i64)]
+  [dup-p : (MutPtr i64)]
+  [dup-from : (MutPtr i64)]
+  [dup-to : (MutPtr i64)]
   [dups : i64]
-  [plan : (__tl_dyn-array i64)]
-  [counts : (__tl_dyn-array i64)]) : i64
+  [plan : (MutPtr i64)]) : i64
   (let
-    [lines : i64 index.count]
-    [starts : (__tl_dyn-array i64) index.starts]
-    [ends : (__tl_dyn-array i64) index.ends]
-    [total : i64 0]
+    [skip-bits : i64
+      (bit-or
+        compiler-backend-layout-flag-label
+        compiler-backend-layout-flag-blank)]
     [len : i64 0]
     [skipped : i64 0]
     [placed : i64 0]
@@ -82917,271 +83477,500 @@
     (begin
       (while (< i lines)
         (begin
-          (while (and (< placed skipped) (= (array-ref sink-tail placed) i))
+          (while (and
+            (< placed skipped)
+            (=
+              (unsafe
+                (ptr-read (ptr-offset sink-tail placed)))
+              i))
             (let
-              [k : i64 (+ (array-ref sink-p placed) 1)]
+              [k : i64
+                (+
+                  (unsafe
+                    (ptr-read (ptr-offset sink-p placed)))
+                  1)]
               (begin
-                (while (< k (array-ref sink-q placed))
+                (while (<
+                  k
+                  (unsafe
+                    (ptr-read (ptr-offset sink-q placed))))
                   (begin
-                    (set! (array-ref plan len) k)
+                    (unsafe
+                      (ptr-write! (ptr-offset plan len) k))
                     (set! len (+ len 1))
-                    (set!
-                      total
-                      (+
-                        total
-                        (+ (- (array-ref ends k) (array-ref starts k)) 1)))
                     (set! k (+ k 1))))
                 (when
-                  (= (array-ref sink-jump placed) 1)
+                  (=
+                    (unsafe
+                      (ptr-read (ptr-offset sink-jump placed)))
+                    1)
                   (begin
-                    (set! (array-ref plan len) (array-ref sink-p placed))
-                    (set! len (+ len 1))
-                    (let
-                      [pj : i64 (array-ref sink-p placed)]
-                      (set!
-                        total
-                        (+
-                          total
-                          (+ (- (array-ref ends pj) (array-ref starts pj)) 1))))))
+                    (unsafe
+                      (ptr-write!
+                        (ptr-offset plan len)
+                        (unsafe
+                          (ptr-read (ptr-offset sink-p placed)))))
+                    (set! len (+ len 1))))
                 (set! placed (+ placed 1)))))
           (cond
-            [(and (< skipped sinks) (= i (array-ref sink-p skipped)))
+            [(and
+                (< skipped sinks)
+                (=
+                  i
+                  (unsafe
+                    (ptr-read (ptr-offset sink-p skipped)))))
               (begin
-                (set! i (array-ref sink-q skipped))
+                (set!
+                  i
+                  (unsafe
+                    (ptr-read (ptr-offset sink-q skipped))))
                 (set! skipped (+ skipped 1)))]
-            [(and (< di dups) (= i (array-ref dup-p di)))
+            [(and
+                (< di dups)
+                (=
+                  i
+                  (unsafe
+                    (ptr-read (ptr-offset dup-p di)))))
               (let
-                [k : i64 (array-ref dup-from di)]
-                [stop : i64 (array-ref dup-to di)]
+                [k : i64
+                  (unsafe
+                    (ptr-read (ptr-offset dup-from di)))]
+                [stop : i64
+                  (unsafe
+                    (ptr-read (ptr-offset dup-to di)))]
                 (begin
                   (while (<= k stop)
                     (begin
                       (when
                         (=
                           (bit-and
-                            (array-ref index.flags k)
-                            (bit-or
-                              compiler-backend-layout-flag-label
-                              compiler-backend-layout-flag-blank))
+                            (unsafe
+                              (ptr-read (ptr-offset flags k)))
+                            skip-bits)
                           0)
                         (begin
-                          (set! (array-ref plan len) k)
-                          (set! len (+ len 1))
-                          (set!
-                            total
-                            (+
-                              total
-                              (+ (- (array-ref ends k) (array-ref starts k)) 1)))))
+                          (unsafe
+                            (ptr-write! (ptr-offset plan len) k))
+                          (set! len (+ len 1))))
                       (set! k (+ k 1))))
                   (set! di (+ di 1))
                   (set! i (+ i 1))))]
             [else
               (begin
-                (set! (array-ref plan len) i)
+                (unsafe
+                  (ptr-write! (ptr-offset plan len) i))
                 (set! len (+ len 1))
-                (set!
-                  total
-                  (+ total (+ (- (array-ref ends i) (array-ref starts i)) 1)))
                 (set! i (+ i 1)))])))
       (while (< placed skipped)
         (let
-          [k : i64 (+ (array-ref sink-p placed) 1)]
+          [k : i64
+            (+
+              (unsafe
+                (ptr-read (ptr-offset sink-p placed)))
+              1)]
           (begin
-            (while (< k (array-ref sink-q placed))
+            (while (<
+              k
+              (unsafe
+                (ptr-read (ptr-offset sink-q placed))))
               (begin
-                (set! (array-ref plan len) k)
+                (unsafe
+                  (ptr-write! (ptr-offset plan len) k))
                 (set! len (+ len 1))
-                (set!
-                  total
-                  (+ total (+ (- (array-ref ends k) (array-ref starts k)) 1)))
                 (set! k (+ k 1))))
             (when
-              (= (array-ref sink-jump placed) 1)
+              (=
+                (unsafe
+                  (ptr-read (ptr-offset sink-jump placed)))
+                1)
               (begin
-                (set! (array-ref plan len) (array-ref sink-p placed))
-                (set! len (+ len 1))
-                (let
-                  [pj : i64 (array-ref sink-p placed)]
-                  (set!
-                    total
-                    (+
-                      total
-                      (+ (- (array-ref ends pj) (array-ref starts pj)) 1))))))
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset plan len)
+                    (unsafe
+                      (ptr-read (ptr-offset sink-p placed)))))
+                (set! len (+ len 1))))
             (set! placed (+ placed 1)))))
-      (set! (array-ref counts 0) total)
       len)))
 
-;; Blit the plan. Consecutive entries that are also consecutive source lines
-;; copy as one range, so the untouched stretches of a function cost one memcpy
-;; each.
-(define (compiler-backend-layout-blit!
-  [index : CompilerBackendLayoutIndex]
-  [plan : (__tl_dyn-array i64)]
-  [len : i64]
-  [dst : (MutPtr u8)]) : unit
+;; The analysis proper. Everything here is scratch except the two words the plan
+;; carries out: `starts`, which the caller's line walk reads instead of
+;; splitting the text a second time, and `plan` itself. `len` = 0 means neither
+;; mechanism fired and the caller walks the lines in order. With `layout?` off
+;; -- the bare peephole the unit tests exercise -- only the line split runs.
+(define (compiler-backend-layout-analyze
+  [asm : String]
+  [n : i64]
+  [mode : i64]
+  [layout? : bool]) : CompilerBackendLayoutPlan
   (let
-    [data : (Ptr u8) index.data]
-    [pos : i64 0]
-    [run-start : i64 0]
-    [run-end : i64 0]
-    [active : bool false]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data asm))]
+    [classify? : bool
+      (and
+        layout?
+        (> n 0)
+        (= (compiler-backend-peephole-byte-at data (- n 1)) 10))]
+    [cap : i64 (compiler-backend-layout-line-capacity n)]
+    [list-cap : i64
+      (if classify?
+        cap
+        0)]
+    [counts : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [starts : (__tl_dyn-array i64) (array.make-array i64 (+ cap 1))]
+    [flags : (__tl_dyn-array i64) (array.make-array i64 list-cap)]
+    [labels : (__tl_dyn-array i64) (array.make-array i64 list-cap)]
+    [flow : (__tl_dyn-array i64) (array.make-array i64 list-cap)]
+    [lines : i64
+      (compiler-backend-layout-split-lines
+        data
+        n
+        cap
+        (unsafe
+          (array-data starts)))]
+    (begin
+      ;; The estimate is generous for emitted assembly; a text that beats it is
+      ;; served by doubling and splitting again. This second call site is also
+      ;; what keeps the split OUT of line: absorbed into this function it lost
+      ;; its SWAR constants to the register pressure of everything below.
+      (while (< lines 0)
+        (begin
+          (set! cap (* 2 cap))
+          (set!
+            list-cap
+            (if classify?
+              cap
+              0))
+          (set! starts (array.make-array i64 (+ cap 1)))
+          (set! flags (array.make-array i64 list-cap))
+          (set! labels (array.make-array i64 list-cap))
+          (set! flow (array.make-array i64 list-cap))
+          (set!
+            lines
+            (compiler-backend-layout-split-lines
+              data
+              n
+              cap
+              (unsafe
+                (array-data starts))))))
+      (when
+        classify?
+        (let
+          [flags-out : (MutPtr i64)
+            (unsafe
+              (array-data flags))]
+          (begin
+            (compiler-backend-layout-classify-lines!
+              data
+              lines
+              (unsafe
+                (array-data starts))
+              flags-out)
+            (compiler-backend-layout-list-lines!
+              lines
+              flags-out
+              (unsafe
+                (array-data labels))
+              (unsafe
+                (array-data flow))
+              counts))))
+      (let
+        [jumps : i64
+          (if classify?
+            (array-ref counts 2)
+            0)]
+        (if (= jumps 0)
+          (CompilerBackendLayoutPlan starts (array.make-array i64 0) lines 0)
+          (let
+            [label-count : i64 (array-ref counts 0)]
+            [flow-count : i64 (array-ref counts 1)]
+            [table-cap : i64
+              (compiler-backend-layout-table-capacity label-count)]
+            [table : (__tl_dyn-array i64)
+              (array.make-array i64 (* 2 table-cap))]
+            [target : (__tl_dyn-array i64) (array.make-array i64 lines)]
+            [pred : (__tl_dyn-array i64) (array.make-array i64 lines)]
+            [refs : (__tl_dyn-array i64)
+              (array.make-array i64 (* 4 (+ label-count 1)))]
+            ;; One allocation for the eight per-`jmp` site columns.
+            [sites : (__tl_dyn-array i64) (array.make-array i64 (* 8 jumps))]
+            [sites-raw : (MutPtr i64)
+              (unsafe
+                (array-data sites))]
+            [sink-p-raw : (MutPtr i64) sites-raw]
+            [sink-q-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw jumps))]
+            [cand-shape-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 2 jumps)))]
+            [sink-tail-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 3 jumps)))]
+            [sink-jump-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 4 jumps)))]
+            [dup-p-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 5 jumps)))]
+            [dup-from-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 6 jumps)))]
+            [dup-to-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 7 jumps)))]
+            [starts-raw : (MutPtr i64)
+              (unsafe
+                (array-data starts))]
+            [flags-raw : (MutPtr i64)
+              (unsafe
+                (array-data flags))]
+            [flow-raw : (MutPtr i64)
+              (unsafe
+                (array-data flow))]
+            [target-raw : (MutPtr i64)
+              (unsafe
+                (array-data target))]
+            [pred-raw : (MutPtr i64)
+              (unsafe
+                (array-data pred))]
+            [refs-raw : (MutPtr i64)
+              (unsafe
+                (array-data refs))]
+            [table-raw : (MutPtr i64)
+              (unsafe
+                (array-data table))]
+            [_table : unit
+              (compiler-backend-layout-build-table!
+                data
+                starts-raw
+                (unsafe
+                  (array-data labels))
+                label-count
+                table-raw
+                table-cap)]
+            [_resolve : unit
+              (compiler-backend-layout-resolve-targets!
+                data
+                starts-raw
+                flags-raw
+                flow-raw
+                flow-count
+                compiler-backend-layout-flag-jmp
+                target-raw
+                table-raw
+                table-cap)]
+            [candidates : i64
+              (if (compiler-backend-layout-flag?
+                mode
+                compiler-backend-layout-mode-sink)
+                (compiler-backend-layout-collect-sink-shapes!
+                  data
+                  starts-raw
+                  flags-raw
+                  target-raw
+                  flow-raw
+                  flow-count
+                  sink-p-raw
+                  sink-q-raw
+                  cand-shape-raw)
+                0)]
+            ;; The prediction and the conditional branches' targets feed
+            ;; nothing but the coldness test, so a function whose shapes all
+            ;; failed never runs either.
+            [_resolve-jcc : unit
+              (if (> candidates 0)
+                (compiler-backend-layout-resolve-targets!
+                  data
+                  starts-raw
+                  flags-raw
+                  flow-raw
+                  flow-count
+                  compiler-backend-layout-flag-jcc
+                  target-raw
+                  table-raw
+                  table-cap)
+                unit)]
+            [_predict : unit
+              (if (> candidates 0)
+                (compiler-backend-layout-predict-and-tally!
+                  data
+                  starts-raw
+                  flags-raw
+                  target-raw
+                  pred-raw
+                  refs-raw
+                  flow-raw
+                  flow-count)
+                unit)]
+            [sinks : i64
+              (if (> candidates 0)
+                (compiler-backend-layout-select-sinks!
+                  flags-raw
+                  target-raw
+                  pred-raw
+                  refs-raw
+                  flow-raw
+                  flow-count
+                  lines
+                  candidates
+                  sink-p-raw
+                  sink-q-raw
+                  cand-shape-raw
+                  sink-tail-raw
+                  sink-jump-raw)
+                0)]
+            [dups : i64
+              (if (compiler-backend-layout-flag?
+                mode
+                compiler-backend-layout-mode-dup)
+                (compiler-backend-layout-select-dups!
+                  data
+                  starts-raw
+                  flags-raw
+                  target-raw
+                  flow-raw
+                  flow-count
+                  lines
+                  sink-p-raw
+                  sink-q-raw
+                  sinks
+                  dup-p-raw
+                  dup-from-raw
+                  dup-to-raw)
+                0)]
+            (if (and (= sinks 0) (= dups 0))
+              (CompilerBackendLayoutPlan
+                starts
+                (array.make-array i64 0)
+                lines
+                0)
+              (let
+                [plan : (__tl_dyn-array i64)
+                  (array.make-array
+                    i64
+                    (+
+                      lines
+                      (+
+                        (* dups compiler-backend-layout-dup-run-cap)
+                        (+ sinks 4))))]
+                [len : i64
+                  (compiler-backend-layout-build-plan
+                    flags-raw
+                    lines
+                    sink-p-raw
+                    sink-q-raw
+                    sink-tail-raw
+                    sink-jump-raw
+                    sinks
+                    dup-p-raw
+                    dup-from-raw
+                    dup-to-raw
+                    dups
+                    (unsafe
+                      (array-data plan)))]
+                (CompilerBackendLayoutPlan starts plan lines len)))))))))
+
+;; Render a non-identity plan. Consecutive entries that are also consecutive
+;; source lines copy as one range, so the untouched stretches of a function cost
+;; one memcpy each. Only the standalone entry renders: the streaming pipeline
+;; feeds the plan straight into the peephole's line walk and never materializes
+;; this text at all.
+(define (compiler-backend-layout-render
+  [asm : String]
+  [starts : (__tl_dyn-array i64)]
+  [plan : (__tl_dyn-array i64)]
+  [len : i64]) : String
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data asm))]
+    [total : i64 0]
     [k : i64 0]
     (begin
       (while (< k len)
         (let
           [line : i64 (array-ref plan k)]
-          [s : i64 (array-ref index.starts line)]
-          [e : i64 (+ (array-ref index.ends line) 1)]
           (begin
-            (if (and active (= s run-end))
-              (set! run-end e)
-              (begin
-                (when
-                  active
-                  (begin
-                    (text_buf_borrowed.copy-byte-range-into
-                      data
-                      run-start
-                      (- run-end run-start)
-                      dst
-                      pos)
-                    (set! pos (+ pos (- run-end run-start)))))
-                (set! active true)
-                (set! run-start s)
-                (set! run-end e)))
+            (set!
+              total
+              (+
+                total
+                (- (array-ref starts (+ line 1)) (array-ref starts line))))
             (set! k (+ k 1)))))
-      (when
-        active
-        (begin
-          (text_buf_borrowed.copy-byte-range-into
-            data
-            run-start
-            (- run-end run-start)
-            dst
-            pos)
-          (set! pos (+ pos (- run-end run-start)))))
-      unit)))
+      (if (= total 0)
+        ""
+        (let
+          [out : (__tl_dyn-array u8) (array.make-array u8 total)]
+          [dst : (MutPtr u8)
+            (unsafe
+              (array-data out))]
+          [pos : i64 0]
+          [run-start : i64 0]
+          [run-end : i64 0]
+          [active : bool false]
+          [j : i64 0]
+          (begin
+            (while (< j len)
+              (let
+                [line : i64 (array-ref plan j)]
+                [s : i64 (array-ref starts line)]
+                [e : i64 (array-ref starts (+ line 1))]
+                (begin
+                  (if (and active (= s run-end))
+                    (set! run-end e)
+                    (begin
+                      (when
+                        active
+                        (begin
+                          (text_buf_borrowed.copy-byte-range-into
+                            data
+                            run-start
+                            (- run-end run-start)
+                            dst
+                            pos)
+                          (set! pos (+ pos (- run-end run-start)))))
+                      (set! active true)
+                      (set! run-start s)
+                      (set! run-end e)))
+                  (set! j (+ j 1)))))
+            (when
+              active
+              (begin
+                (text_buf_borrowed.copy-byte-range-into
+                  data
+                  run-start
+                  (- run-end run-start)
+                  dst
+                  pos)
+                (set! pos (+ pos (- run-end run-start)))))
+            (unsafe
+              (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))))
 
-(define (compiler-backend-layout-render
-  [index : CompilerBackendLayoutIndex]
-  [plan : (__tl_dyn-array i64)]
-  [len : i64]
-  [total : i64]) : String
-  (let
-    [_len : i64 len]
-    (if (= total 0)
-      ""
-      (let
-        [out : (__tl_dyn-array u8) (array.make-array u8 total)]
-        [dst : (MutPtr u8)
-          (unsafe
-            (array-data out))]
-        (begin
-          (compiler-backend-layout-blit! index plan len dst)
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
-
-;; The analysis proper, run inside a scratch region: every array here dies with
-;; it, and only the rewritten text is allocated in `home`. Text that neither
-;; mechanism touches is returned as the caller's own String, so an unchanged
-;; function costs one line walk and no allocation at all.
+;; #block-layout entry: rewrite one emitted assembly text under `mode`
+;; (bit 1 tail duplication, bit 2 cold-arm out-of-lining). The unit tests and
+;; the standalone profiling driver use this text-to-text spelling; production
+;; runs the same analysis inside the peephole's record walk and never builds
+;; the intermediate text.
 (define (compiler-backend-layout-run
   [asm : String]
   [mode : i64]
   [home : arena.Arena]) : String
   (let
     [n : i64 (string.string-length asm)]
-    (if (= n 0)
+    [laid-out : CompilerBackendLayoutPlan
+      (compiler-backend-layout-analyze asm n mode true)]
+    (if (= laid-out.len 0)
       asm
-      (let
-        [data : (Ptr u8)
-          (unsafe
-            (string-data asm))]
-        (if (not (= (compiler-backend-peephole-byte-at data (- n 1)) 10))
+      (in-arena
+        home
+        (compiler-backend-layout-render
           asm
-          (let
-            [lines : i64 (compiler-backend-layout-count-lines data n)]
-            [counts : (__tl_dyn-array i64) (array.make-array i64 1)]
-            [index : CompilerBackendLayoutIndex
-              (compiler-backend-layout-index-build asm n lines counts)]
-            [jumps : i64 (array-ref counts 0)]
-            (if (= jumps 0)
-              asm
-              (let
-                [sink-p : (__tl_dyn-array i64) (array.make-array i64 jumps)]
-                [sink-q : (__tl_dyn-array i64) (array.make-array i64 jumps)]
-                [sink-tail : (__tl_dyn-array i64) (array.make-array i64 jumps)]
-                [sink-jump : (__tl_dyn-array i64) (array.make-array i64 jumps)]
-                [dup-p : (__tl_dyn-array i64) (array.make-array i64 jumps)]
-                [dup-from : (__tl_dyn-array i64) (array.make-array i64 jumps)]
-                [dup-to : (__tl_dyn-array i64) (array.make-array i64 jumps)]
-                [tails : (__tl_dyn-array i64) (array.make-array i64 lines)]
-                [_tails : unit
-                  (compiler-backend-layout-build-tails! index tails)]
-                [_resolve : unit
-                  (compiler-backend-layout-resolve-targets! index)]
-                [_predict : unit (compiler-backend-layout-predict! index)]
-                [_tally : unit (compiler-backend-layout-tally-refs! index)]
-                [sinks : i64
-                  (if (compiler-backend-layout-flag?
-                    mode
-                    compiler-backend-layout-mode-sink)
-                    (compiler-backend-layout-select-sinks!
-                      index
-                      sink-p
-                      sink-q
-                      sink-tail
-                      sink-jump
-                      tails)
-                    0)]
-                [dups : i64
-                  (if (compiler-backend-layout-flag?
-                    mode
-                    compiler-backend-layout-mode-dup)
-                    (compiler-backend-layout-select-dups!
-                      index
-                      sink-p
-                      sink-q
-                      sinks
-                      dup-p
-                      dup-from
-                      dup-to)
-                    0)]
-                (if (and (= sinks 0) (= dups 0))
-                  asm
-                  (let
-                    [plan : (__tl_dyn-array i64)
-                      (array.make-array
-                        i64
-                        (+
-                          lines
-                          (+
-                            (* dups compiler-backend-layout-dup-run-cap)
-                            (+ sinks 4))))]
-                    [len : i64
-                      (compiler-backend-layout-build-plan
-                        index
-                        sink-p
-                        sink-q
-                        sink-tail
-                        sink-jump
-                        sinks
-                        dup-p
-                        dup-from
-                        dup-to
-                        dups
-                        plan
-                        counts)]
-                    (in-arena
-                      home
-                      (compiler-backend-layout-render
-                        index
-                        plan
-                        len
-                        (array-ref counts 0)))))))))))))
+          laid-out.starts
+          laid-out.plan
+          laid-out.len)))))
 
-;; #block-layout entry: rewrite one emitted assembly text under `mode`
-;; (bit 1 tail duplication, bit 2 cold-arm out-of-lining).
 (define (compiler-backend-layout-asm-with-mode [asm : String] [mode : i64]) : String
   (let
     [home : arena.Arena (arena.current)]
@@ -83317,17 +84106,46 @@
               backend-state.address
               stream.address
               asm-data)]
-          [i : i64 0]
+          ;; #block-layout: split and classify this chunk once. `starts` is the
+          ;; line split the walk below would have performed anyway, and `plan`
+          ;; -- when either rewrite fired -- is the order the walk visits those
+          ;; lines in, which is exactly the text the standalone entry would have
+          ;; rendered and re-parsed.
+          [laid-out : CompilerBackendLayoutPlan
+            (compiler-backend-layout-analyze
+              asm
+              n
+              compiler-backend-layout-mode
+              drop-fallthrough?)]
+          [lay-starts : (MutPtr i64)
+            (unsafe
+              (array-data laid-out.starts))]
+          [lay-plan : (MutPtr i64)
+            (unsafe
+              (array-data laid-out.plan))]
+          [lay-len : i64 laid-out.len]
+          [steps : i64
+            (if (= lay-len 0)
+              laid-out.lines
+              lay-len)]
+          [step : i64 0]
           (begin
-            (while (< i n)
+            (while (< step steps)
               (let
                 ;; The line ends at its newline, or at the chunk end.
+                [source-line : i64
+                  (if (= lay-len 0)
+                    step
+                    (unsafe
+                      (ptr-read (ptr-offset lay-plan step))))]
+                [i : i64
+                  (unsafe
+                    (ptr-read (ptr-offset lay-starts source-line)))]
                 [end : i64
-                  (compiler-backend-peephole-scan-byte-range asm-data i n 10)]
-                [next-start : i64
-                  (if (< end n)
-                    (+ end 1)
-                    end)]
+                  (-
+                    (unsafe
+                      (ptr-read (ptr-offset lay-starts (+ source-line 1))))
+                    1)]
                 [line-newline : bool (< end n)]
                 [line : CompilerBackendPeepholeLine
                   (if parse-slot-b?
@@ -83558,7 +84376,7 @@
                             held-target-stop
                             (compiler-backend-peephole-desc-end pending)))
                         unit)))
-                  (set! i next-start))))
+                  (set! step (+ step 1)))))
             (set! c (+ c 1)))))
       (if held-jmp?
         ;; Group end with a candidate still deferred: the old pass kept it,
@@ -83712,32 +84530,28 @@
   ;; GAP5 then sweeps never-read local frame stores recorded during emission --
   ;; over the same records, so the text is rendered exactly once.
   ;; #block-layout: the whole-text mirror of the streaming pipeline. The
-  ;; streamed path lays out each emitted text in
-  ;; `compiler-backend-assembly-stream-process-string!`; this entry sees the
-  ;; SAME texts concatenated, and the rewrites are function-local (they never
-  ;; cross a delimiting directive and only name `.L` labels), so laying out the
-  ;; concatenation is laying out each piece. Gated on `drop-fallthrough?`, the
-  ;; flag that already distinguishes the production shape from the bare peephole
-  ;; the unit tests exercise.
+  ;; streamed path lays out each emitted text as its own chunk of the walk; this
+  ;; entry hands the walk the SAME texts concatenated as one chunk, and the
+  ;; rewrites are function-local (they never cross a delimiting directive and
+  ;; only name `.L` labels), so laying out the concatenation is laying out each
+  ;; piece. Both are gated inside the walk on `drop-fallthrough?`, the flag that
+  ;; already distinguishes the production shape from the bare peephole the unit
+  ;; tests exercise.
   (let
-    [laid-out : String
-      (if drop-fallthrough?
-        (compiler-backend-layout-asm asm)
-        asm)]
     [records : CompilerBackendPeepholeLineVec
       (compiler-backend-peephole-asm-once-records
         backend-state
         stream
-        laid-out
+        asm
         drop-fallthrough?)]
     [_swept : i64
       (compiler-backend-deadstore-sweep-records! backend-state stream records 0)]
     [buf : text_buf.TextBuf
       (compiler-backend-borrowed-copy-to-owned
         (compiler-backend-peephole-records-buffer
-          (text_buf_borrowed.empty-like (& laid-out))
+          (text_buf_borrowed.empty-like (& asm))
           records
-          laid-out))]
+          asm))]
     (begin
       (compiler-backend-peephole-records-retire! stream)
       (compiler-backend-deadstore-sweep-report-and-reset! stream)

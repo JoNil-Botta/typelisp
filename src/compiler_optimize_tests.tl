@@ -26724,6 +26724,37 @@
         representations
         func))))
 
+(define (opt-ssa-over-budget-function) : compiler_ir_types.CompilerIrFunction
+  (let
+    [count : i64 (+ (compiler_optimize.opt-ssa-block-budget) 1)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
+      (array.make-array compiler_ir_types.CompilerIrBlock count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref slots index)
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label
+                (str_cat.str-cat "ssa_budget_" (string.int->string index)))
+              (compiler_ir_types.compiler-ir-instr-seq2
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  0
+                  (compiler_ir_types.CompilerIrValue.I64 index)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 0))))))
+          (set! index (+ index 1))))
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "ssa_over_budget")
+        (compiler_ir_types.CompilerIrParamList.Nil)
+        (compiler_ast_types.AstType.I64)
+        1
+        (compiler_ir_types.CompilerIrBlockList.Array
+          (compiler_ir_types.CompilerIrBlockSeq slots count))))))
+
 (define (compiler-optimize-ssa-fixed-handle-self-test) : i64
   (let
     [func-ty : compiler_ast_types.AstType
@@ -26765,6 +26796,12 @@
       (opt-ssa-fixed-handle-unsupported-dst-function nominal-ty)]
     [nominal-unsupported-index : compiler_ir_types.CompilerIrRepresentationIndex
       (opt-ssa-representation-index-for-function nominal-unsupported)]
+    [over-budget : compiler_ir_types.CompilerIrFunction
+      (opt-ssa-over-budget-function)]
+    [over-budget-out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ssa-construct-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        over-budget)]
     [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
     [address-taken : compiler_ir_types.CompilerIrFunction
       (opt-ssa-fixed-handle-address-taken-function box-ty)]
@@ -26850,6 +26887,12 @@
             nominal-unsupported
             nominal-unsupported-index))
         22]
+      [(not
+          (compiler_optimize.opt-function-eq
+            bases
+            over-budget
+            over-budget-out))
+        23]
       [else 42])))
 
 ;; The raw tail-recursion-to-loop shape targets the function ENTRY block and its

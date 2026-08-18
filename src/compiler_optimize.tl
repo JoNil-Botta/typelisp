@@ -13402,86 +13402,164 @@
         (opt-ssa-block-outs-prepend outs label env)
         next-var)]))
 
-(define (opt-ssa-rename-id
+(define (opt-ssa-rename-tree-work
   [context : OptCfgContext]
-  [blocks : ir.CompilerIrBlockList]
   [facts : OptSsaFacts]
   [sites : OptSsaPhiSites]
-  [id : i64]
+  [work-ids : (__tl_dyn-array i64)]
+  [work-exits : (__tl_dyn-array bool)]
+  [work-checkpoints : (__tl_dyn-array i64)]
+  [child-heads : (__tl_dyn-array i64)]
+  [child-next : (__tl_dyn-array i64)]
+  [work-count : i64]
+  [env : OptSsaRenameEnv]
+  [state : OptSsaRenameState]) : OptSsaRenameState
+  (if (<= work-count 0)
+    state
+    (let
+      [index : OptCfgIndex context.index]
+      [slot : i64 (- work-count 1)]
+      [id : i64 (array-ref work-ids slot)]
+      [checkpoint : i64 (array-ref work-checkpoints slot)]
+      (if (array-ref work-exits slot)
+        (opt-ssa-rename-tree-work
+          context
+          facts
+          sites
+          work-ids
+          work-exits
+          work-checkpoints
+          child-heads
+          child-next
+          slot
+          (opt-ssa-env-rollback env checkpoint)
+          state)
+        (match (opt-cfg-index-block index id)
+          [(OptMaybeBlock.No)
+            (opt-ssa-rename-tree-work
+              context facts sites work-ids work-exits work-checkpoints
+              child-heads child-next
+              slot env state)]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(ir.CompilerIrBlock.Block label instrs)
+                (let
+                  [block-checkpoint : i64 (opt-ssa-env-checkpoint env)]
+                  [entry-env : OptSsaRenameEnv
+                    (opt-ssa-env-bind-phis sites label env)]
+                  [next-var-in : i64
+                    (match state
+                      [(OptSsaRenameState.State _ _ next-var) next-var])]
+                  (match (opt-ssa-rename-instr-seq-from
+                    facts
+                    entry-env
+                    next-var-in
+                    instrs
+                    0)
+                    [(OptSsaBlockResult.Result renamed out-env next-var)
+                      (let
+                        [next-state : OptSsaRenameState
+                          (opt-ssa-rename-state-add-block
+                            state label renamed out-env next-var)]
+                        [next-work-count : i64 (+ slot 1)]
+                        [child-link : i64 (array-ref child-heads id)]
+                        (begin
+                          ;; This exit stays below every child. Child exits
+                          ;; restore this block's out environment before the
+                          ;; next sibling; this exit restores its parent.
+                          (set! (array-ref work-ids slot) id)
+                          (set! (array-ref work-exits slot) true)
+                          (set!
+                            (array-ref work-checkpoints slot)
+                            block-checkpoint)
+                          ;; Children are linked highest-id first, so pushing
+                          ;; them in list order retains the recursive walk's
+                          ;; ascending-id visitation order when popped.
+                          (while (> child-link 0)
+                            (begin
+                              (let
+                                [child-id : i64 (- child-link 1)]
+                                (begin
+                                  (set!
+                                    (array-ref work-ids next-work-count)
+                                    child-id)
+                                  (set!
+                                    (array-ref work-exits next-work-count)
+                                    false)
+                                  (set!
+                                    (array-ref work-checkpoints next-work-count)
+                                    0)
+                                  (set! next-work-count (+ next-work-count 1))
+                                  (set! child-link (array-ref child-next child-id))))))
+                          (opt-ssa-rename-tree-work
+                            context
+                            facts
+                            sites
+                            work-ids
+                            work-exits
+                            work-checkpoints
+                            child-heads
+                            child-next
+                            next-work-count
+                            out-env
+                            next-state)))]))])])))))
+
+(define (opt-ssa-rename-tree
+  [context : OptCfgContext]
+  [facts : OptSsaFacts]
+  [sites : OptSsaPhiSites]
+  [entry-id : i64]
   [env : OptSsaRenameEnv]
   [state : OptSsaRenameState]) : OptSsaRenameState
   (let
-    [index : OptCfgIndex context.index]
-    [label : i64 (array-ref index.labels id)]
-    [checkpoint : i64 (opt-ssa-env-checkpoint env)]
-    (match (opt-cfg-index-block index id)
-      [(OptMaybeBlock.No) state]
-      [(OptMaybeBlock.Some block)
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (let
-              [entry-env : OptSsaRenameEnv
-                (opt-ssa-env-bind-phis sites label env)]
-              (match (opt-ssa-rename-instr-seq-from
-                facts
-                entry-env
-                (match state
-                  [(OptSsaRenameState.State _ _ next-var) next-var])
-                instrs
-                0)
-                [(OptSsaBlockResult.Result renamed out-env next-var)
-                  (let
-                    [next-state : OptSsaRenameState
-                      (opt-ssa-rename-children
-                        context
-                        blocks
-                        facts
-                        sites
-                        id
-                        out-env
-                        (opt-ssa-rename-state-add-block
-                          state
-                          label
-                          renamed
-                          out-env
-                          next-var)
-                        0)]
-                    (begin
-                      (opt-ssa-env-rollback out-env checkpoint)
-                      next-state))]))])])))
-
-(define (opt-ssa-rename-children
-  [context : OptCfgContext]
-  [blocks : ir.CompilerIrBlockList]
-  [facts : OptSsaFacts]
-  [sites : OptSsaPhiSites]
-  [parent-id : i64]
-  [env : OptSsaRenameEnv]
-  [state : OptSsaRenameState]
-  [child-id : i64]) : OptSsaRenameState
-  (let
-    [index : OptCfgIndex context.index]
-    [count : i64 (opt-cfg-index-block-count index)]
-    (if (>= child-id count)
-      state
-      (let
-        [idom : (__tl_dyn-array i64) context.doms.idom]
-        [next-state : OptSsaRenameState
+    [count : i64 (opt-cfg-index-block-count context.index)]
+    [capacity : i64 (* count 2)]
+    ;; Each reachable dominator-tree node contributes one enter and one exit
+    ;; record. Dense work arrays plus a single tail-recursive driver keep a
+    ;; source-generated chain of short-circuit blocks off the native call stack
+    ;; during SSA rename (#6318).
+    [work-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [work-exits : (__tl_dyn-array bool) (array.make-array bool capacity)]
+    [work-checkpoints : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    ;; One-based links make zero the empty sentinel in freshly zeroed arrays.
+    ;; Iterating children upward and prepending builds each sibling list in
+    ;; descending order, which is the order the LIFO work stack needs.
+    [child-heads : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [child-next : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [child-id : i64 0]
+    [idom : (__tl_dyn-array i64) context.doms.idom]
+    (begin
+      (while (< child-id count)
+        (begin
           (if (and
-            (not (= child-id parent-id))
-            (array-ref index.reachable child-id)
-            (= (array-ref idom child-id) parent-id))
-            (opt-ssa-rename-id context blocks facts sites child-id env state)
-            state)]
-        (opt-ssa-rename-children
-          context
-          blocks
-          facts
-          sites
-          parent-id
-          env
-          next-state
-          (+ child-id 1))))))
+            (not (= (array-ref idom child-id) child-id))
+            (array-ref context.index.reachable child-id))
+            (let
+              [parent-id : i64 (array-ref idom child-id)]
+              (if (and (>= parent-id 0) (< parent-id count))
+                (begin
+                  (set!
+                    (array-ref child-next child-id)
+                    (array-ref child-heads parent-id))
+                  (set! (array-ref child-heads parent-id) (+ child-id 1)))
+                unit))
+            unit)
+          (set! child-id (+ child-id 1))))
+      (set! (array-ref work-ids 0) entry-id)
+      (set! (array-ref work-exits 0) false)
+      (set! (array-ref work-checkpoints 0) 0)
+      (opt-ssa-rename-tree-work
+        context
+        facts
+        sites
+        work-ids
+        work-exits
+        work-checkpoints
+        child-heads
+        child-next
+        1
+        env
+        state))))
 
 (define (opt-ssa-rename-missing-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -13559,9 +13637,8 @@
             facts
             sites
             initial-env
-            (opt-ssa-rename-id
+            (opt-ssa-rename-tree
               context
-              blocks
               facts
               sites
               entry-id
@@ -13956,6 +14033,20 @@
           (ir.compiler-ir-label
             (str_cat.str-cat (ir.compiler-ir-label-text entry) "__ssa_entry")))))))
 
+;; SSA retains one compact environment snapshot per predecessor block. That is
+;; a profitable trade for ordinary functions, but source-generated stress
+;; inputs can contain tens of thousands of short-circuit blocks and turn the
+;; snapshots plus later materialization lookups into a disproportionate cost.
+;; Refuse those pathological CFGs before construction; the pre-SSA IR remains
+;; valid and every later non-SSA optimization still gets its normal chance.
+(define (opt-ssa-block-budget) : i64
+  4096)
+
+(define (opt-ssa-context-within-budget? [context : OptCfgContext]) : bool
+  (<=
+    (opt-cfg-index-block-count context.index)
+    (opt-ssa-block-budget)))
+
 (define (opt-ssa-construct-function-with-representations
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
@@ -13980,7 +14071,9 @@
               func
               (let
                 [context : OptCfgContext (opt-cfg-context-build blocks)]
-                (if (opt-ssa-entry-has-preds? context)
+                (if (or
+                  (not (opt-ssa-context-within-budget? context))
+                  (opt-ssa-entry-has-preds? context))
                   func
                   (opt-ssa-construct-with-context
                     func
@@ -14094,6 +14187,8 @@
               [(opt-ssa-blocks-have-candidate-phi-dst? facts blocks)
                 (OptFunctionCtxResult.Result func context)]
               [(not (opt-ssa-any-candidate? facts))
+                (OptFunctionCtxResult.Result func context)]
+              [(not (opt-ssa-context-within-budget? context))
                 (OptFunctionCtxResult.Result func context)]
               [(opt-ssa-entry-has-preds? context)
                 (OptFunctionCtxResult.Result func context)]

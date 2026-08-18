@@ -4262,6 +4262,10 @@
       (compiler_optimize_tests.compiler-optimize-flag-exit-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-flag-exit-general-self-test"
+      (compiler_optimize_tests.compiler-optimize-flag-exit-general-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-dead-phi-self-test"
       (compiler_optimize_tests.compiler-optimize-dead-phi-self-test)
       42)

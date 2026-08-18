@@ -42047,6 +42047,12 @@
 ;;   4  an empty block sits between the gate and X, which is how a lowered
 ;;      `while` reaches this pass; the arm collapses through it onto X and the
 ;;      spacer goes with the branch that reached it
+;;   5  the same spacer, but carrying the lowered `and`'s dead answer ahead of
+;;      its jump -- which is what the arm actually holds in pipeline ROUND 1,
+;;      the DCE that retires it sitting a whole round below this pass -- so the
+;;      arm still collapses through it and the loop converts a round earlier
+;;   6  a spacer that does work: a store ahead of the jump, which the redirect
+;;      would skip, so C7 refuses and the loop is left alone
 (define (opt-flag-exit-gen-clear-pred [variant : i64]) : String
   (if (= variant 1)
     "body"
@@ -42106,15 +42112,55 @@
               (compiler_ir_types.compiler-ir-label "out"))
             (compiler_ir_types.CompilerIrInstrList.Nil)))))))
 
+;; Variants 4-6 put a block between the gate's exit arm and X.
+(define (opt-flag-exit-gen-spaced? [variant : i64]) : bool
+  (and (>= variant 4) (<= variant 6)))
+
+;; Variants 5 and 6 need a var and a frame slot the mint does not also want.
+(define (opt-flag-exit-gen-frame [variant : i64]) : i64
+  (if (>= variant 5)
+    33
+    32))
+
 (define (opt-flag-exit-gen-arm [variant : i64]) : String
-  (if (= variant 4)
+  (if (opt-flag-exit-gen-spaced? variant)
     "spacer"
     "out"))
 
 (define (opt-flag-exit-gen-out-pred [variant : i64]) : String
-  (if (= variant 4)
+  (if (opt-flag-exit-gen-spaced? variant)
     "spacer"
     "gate"))
+
+;; Variant 4's spacer is empty. Variant 5's carries the dead answer a lowered
+;; `(and c f)` materialises on the arm the `and` is false on: pure, and read by
+;; nothing, so deleting it with the block changes no value and no effect --
+;; which is what lets the collapse look through it in the round the pipeline
+;; DCE has not reached it yet. Variant 6's carries a store instead: real work on
+;; the edge the redirect jumps past.
+(define (opt-flag-exit-gen-spacer-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [jump : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "out"))
+        (compiler_ir_types.CompilerIrInstrList.Nil))]
+    (cond
+      [(= variant 5)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            32
+            (compiler_ir_types.CompilerIrValue.Bool false)
+            (compiler_ast_types.AstType.Bool))
+          jump)]
+      [(= variant 6)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.I64))
+          jump)]
+      [else jump])))
 
 (define (opt-flag-exit-gen-gate-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
@@ -42279,9 +42325,11 @@
       (compiler_ir_types.compiler-ir-block
         (compiler_ir_types.compiler-ir-label "out")
         (opt-flag-exit-gen-out-instrs variant))
-      (if (= variant 4)
+      (if (opt-flag-exit-gen-spaced? variant)
         (compiler_ir_types.compiler-ir-block-cons
-          (opt-flag-exit-test-jump-block "spacer" "out")
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "spacer")
+            (opt-flag-exit-gen-spacer-instrs variant))
           (compiler_ir_types.CompilerIrBlockList.Nil))
         (compiler_ir_types.CompilerIrBlockList.Nil)))))
 
@@ -42315,7 +42363,7 @@
     (opt-test-symbol "flag_exit_general")
     (opt-flag-exit-test-params)
     (compiler_ast_types.AstType.Bool)
-    32
+    (opt-flag-exit-gen-frame variant)
     (opt-flag-exit-gen-blocks variant)))
 
 (define (opt-flag-exit-gen-run [variant : i64]) : compiler_ir_types.CompilerIrFunction
@@ -42413,6 +42461,10 @@
     [spaced : compiler_ir_types.CompilerIrFunction (opt-flag-exit-gen-run 4)]
     [spaced-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks spaced)]
+    [dead-spaced : compiler_ir_types.CompilerIrFunction
+      (opt-flag-exit-gen-run 5)]
+    [dead-spaced-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks dead-spaced)]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -42482,6 +42534,37 @@
           (= (opt-flag-exit-test-phi-var spaced-blocks "out" 32 "mismatch") 16))
         29]
       [(not (= (opt-flag-exit-test-binop-lhs spaced-blocks "out" 24) 32)) 30]
+      ;; the ROUND 1 shape: the arm holds the lowered `and`'s dead answer ahead
+      ;; of its jump, and the collapse looks through it -- the conversion
+      ;; happens in the round `licm`, `gvn` and `bce_version` can still use it,
+      ;; rather than waiting for the round's tail DCE to make the arm bare
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function dead-spaced)))
+        33]
+      [(not (opt-flag-exit-test-jumps-to? dead-spaced-blocks "gate" "body")) 34]
+      [(not (opt-flag-exit-test-jumps-to? dead-spaced-blocks "mismatch" "out"))
+        35]
+      [(not
+          (=
+            (opt-flag-exit-test-instr-count dead-spaced-blocks "spacer")
+            (- 0 1)))
+        36]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-bool dead-spaced-blocks "out" 20 "mismatch")
+            0))
+        37]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-var dead-spaced-blocks "out" 33 "mismatch")
+            16))
+        38]
+      [(not (= (opt-flag-exit-test-binop-lhs dead-spaced-blocks "out" 24) 33))
+        39]
+      ;; C7: a spacer that does WORK is not one -- a store on the arm is an
+      ;; effect the redirect would jump past, so the loop is left alone
+      [(not (opt-flag-exit-gen-rejects? 6)) 40]
       ;; C8: the counter's value at the gate is an `add` the redirect skips
       [(not (opt-flag-exit-gen-rejects? 2)) 31]
       ;; C7: X's phi names a loop value whose next value is an `add`, not a phi
@@ -42493,7 +42576,7 @@
   (test.assert-i64-eq
     (compiler-optimize-flag-exit-general-self-test)
     42
-    "a gate whose exit arm carries phis and a second predecessor converts, the redirected edge carries the value the skipped run would have delivered, a Branch clear edge moves only its own arm, and a value the run cannot name still refuses"))
+    "a gate whose exit arm carries phis and a second predecessor converts, the redirected edge carries the value the skipped run would have delivered, a Branch clear edge moves only its own arm, a spacer holding only dead pure code still collapses, and a value the run cannot name still refuses"))
 
 ;; --- dead phi elimination self-tests ------------------------------------------
 ;; The fixture is the shape SSA construction produces for a mutable local whose

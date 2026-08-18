@@ -25922,6 +25922,14 @@
 ;; which is the value the loop was computing, so the phi replaces a stack slot
 ;; the flag was keeping alive rather than adding to one.
 ;;
+;; Round 1, not round 2. Everything that could use a converted loop -- `dead_phi`
+;; and `licm` collapsing the phis the redirect trivialises, `bce_version`
+;; deriving a probe loop's invariant mask off the hoisted `cap - 1` -- sits ABOVE
+;; this pass in the round, so a conversion that waits for round 2 is a conversion
+;; nobody sees: the pipeline runs at most two rounds. That is why C7's spacer
+;; walk looks through the dead `mov` a lowered `and` leaves on the gate's exit
+;; arm rather than waiting for the round's tail DCE to retire it.
+;;
 ;; Placed between `induction` and `bce_version`. Conversion only shrinks what
 ;; the versioner has to fit: the clearing arm leaves the loop, so a converted
 ;; body loses a block and everything in it (seven labels to six on
@@ -25929,10 +25937,11 @@
 ;; versioner's `opt-bce-mb-instr-max` growth budget), and the top-tested
 ;; shape the versioner
 ;; matches survives untouched -- the header still ends `Branch c, body, exit`
-;; with the body target inside the loop. In practice a lowered `while` spends
-;; pipeline iteration 1 with its flag still live at a non-phi reader (C4), so
-;; versioning usually happens first and this pass converts both clones on
-;; iteration 2; the ordering is what keeps the two cases from fighting.
+;; with the body target inside the loop. Converting first is also what lets the
+;; versioner see a probe loop's real index expression: the redirect trivialises
+;; the loop's carried phis, and only once the next round's `gvn`/`dead_phi` have
+;; folded them does a capacity read like `cap - 1` become loop-invariant enough
+;; for the masked-index derivation to name it.
 ;;
 ;; Conditions, all required:
 ;;   C1 monotone seed: a header phi `f = phi [K, preheader], [v, latch]` with
@@ -25962,13 +25971,16 @@
 ;;      carries only pure instructions, and G itself holds nothing but phis, the
 ;;      gate's helper and its branch. Those are what the redirect skips.
 ;;   C7 exit shape: X is the gate's arm, or -- when adopting the arm itself was
-;;      refused -- the block that arm reaches through jump-only spacers it is
-;;      the sole predecessor of. That collapse is what a lowered `while` needs:
-;;      its gate arm is an empty block and the join carrying the loop's exit
-;;      phis and the reads after the loop is a hop further on, and the CFG pass
-;;      that would merge the pair runs before this one, not after. The spacers
-;;      go with the branch that reached them. X may have phis and predecessors
-;;      besides G. Adopting X costs
+;;      refused -- the block that arm reaches through spacers it is the sole
+;;      predecessor of. A spacer ends in a Jump and holds nothing else but pure
+;;      instructions whose destinations the function never reads, so deleting it
+;;      with the collapse changes no value and no effect. That collapse is what a
+;;      lowered `while` needs: its gate arm holds the `and`'s dead answer and
+;;      then jumps, the join carrying the loop's exit phis and the reads after
+;;      the loop is a hop further on, and the CFG and DCE passes that would tidy
+;;      the pair up run a full pipeline round below this one, not above. The
+;;      spacers go with the branch that reached them. X may have phis and
+;;      predecessors besides G. Adopting X costs
 ;;      each of its phis one input per redirected predecessor, and the value on
 ;;      that input is what the skipped run would have delivered -- see the
 ;;      "what the redirected edge has to deliver" section below. X keeps other
@@ -26911,6 +26923,70 @@
                 (OptFlagExitMaybeLabel.Some target)]
               [_ (OptFlagExitMaybeLabel.No)]))])]))
 
+;; One instruction a spacer may hold ahead of its jump: side-effect free, and
+;; with a destination NOTHING in the function reads.
+;;
+;; `raw-uses` is the plain use count, deliberately not the effective one C4 and
+;; C8 use. Effective counting discounts readers that are themselves dead, and
+;; those readers are still present in the IR the collapse hands to the verifier:
+;; deleting a definition they name would strand them. Zero RAW uses is what makes
+;; deleting the instruction with its block a no-op on every value in the
+;; function, and purity is what makes it a no-op on every effect.
+(define (opt-flag-exit-spacer-dead-instr?
+  [instr : ir.CompilerIrInstr]
+  [raw-uses : (__tl_dyn-array i64)]) : bool
+  (and
+    (opt-flag-exit-pure-instr? instr)
+    (match (opt-instr-def-var instr)
+      [(option_i64.Some dst)
+        (and
+          (>= dst 0)
+          (< dst (array-length raw-uses))
+          (= (array-ref raw-uses dst) 0))]
+      [(option_i64.None) false])))
+
+(define (opt-flag-exit-spacer-target-scan
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [raw-uses : (__tl_dyn-array i64)]) : OptFlagExitMaybeLabel
+  (let
+    [last : i64 (- (ir.compiler-ir-instr-seq-count instrs) 1)]
+    (if (>= index last)
+      (match (ir.compiler-ir-instr-seq-ref instrs last)
+        [(ir.CompilerIrInstr.Jump target) (OptFlagExitMaybeLabel.Some target)]
+        [_ (OptFlagExitMaybeLabel.No)])
+      (if (opt-flag-exit-spacer-dead-instr?
+        (ir.compiler-ir-instr-seq-ref instrs index)
+        raw-uses)
+        (opt-flag-exit-spacer-target-scan instrs (+ index 1) raw-uses)
+        (OptFlagExitMaybeLabel.No)))))
+
+;; A block the collapse below may walk THROUGH: it ends in a Jump and everything
+;; ahead of that jump is dead and pure.
+;;
+;; Why the leniency is needed at all: a lowered `while (and c f)` reaches this
+;; pass with the `and`'s answer still materialised on each arm, so the gate's
+;; exit arm is `%k = mov <literal>` + `jump join` rather than the bare `jump`
+;; the strict reading wants. That `mov` is dead the moment the branch on the
+;; `and` is threaded, but the DCE that retires it sits at the tail of the
+;; pipeline round, a full round below this pass -- so under the strict reading
+;; every such loop spends round 1 refused and converts only on round 2, after
+;; the round that could have used the result (`licm`, `gvn`, `dead_phi` and
+;; `bce_version` all run above this pass, so a round-2 conversion is seen by
+;; nobody). Accepting a dead pure prefix converts on round 1 instead.
+(define (opt-flag-exit-spacer-target
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]
+  [raw-uses : (__tl_dyn-array i64)]) : OptFlagExitMaybeLabel
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (OptFlagExitMaybeLabel.No)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (< (ir.compiler-ir-instr-seq-count instrs) 1)
+            (OptFlagExitMaybeLabel.No)
+            (opt-flag-exit-spacer-target-scan instrs 0 raw-uses))])]))
+
 ;; A gate arm that is a jump-only block reached only from the gate is part of
 ;; the same edge, so the redirect may adopt what it jumps to instead. Following
 ;; that chain is what puts the loop's real exit block -- the one with the phis,
@@ -26935,13 +27011,14 @@
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [pred-map : OptPredMap]
+  [raw-uses : (__tl_dyn-array i64)]
   [prev : i64]
   [label : i64]
   [dropped : OptLabelSet]
   [fuel : i64]) : OptFlagExitArm
   (if (<= fuel 0)
     (OptFlagExitArm.Arm label prev dropped)
-    (match (opt-flag-exit-jump-only-target blocks label)
+    (match (opt-flag-exit-spacer-target blocks label raw-uses)
       [(OptFlagExitMaybeLabel.No) (OptFlagExitArm.Arm label prev dropped)]
       [(OptFlagExitMaybeLabel.Some target)
         (if (or
@@ -26955,6 +27032,7 @@
             body
             index
             pred-map
+            raw-uses
             label
             target
             (opt-label-add dropped label)
@@ -29272,6 +29350,7 @@
   [context : OptCfgContext]
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
+  [raw-uses : (__tl_dyn-array i64)]
   [def-label : (__tl_dyn-array i64)]
   [loop : OptNaturalLoop]
   [flag : i64]
@@ -29312,6 +29391,7 @@
               context
               frame
               uses
+              raw-uses
               def-label
               body
               (opt-natural-loop-latch loop)
@@ -29332,6 +29412,7 @@
   [context : OptCfgContext]
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
+  [raw-uses : (__tl_dyn-array i64)]
   [def-label : (__tl_dyn-array i64)]
   [body : OptLoopBody]
   [latch : i64]
@@ -29366,6 +29447,7 @@
         body
         context.index
         context.pred-map
+        raw-uses
         gate
         arm
         (OptLabelSet.Nil)
@@ -29446,6 +29528,7 @@
   [context : OptCfgContext]
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
+  [raw-uses : (__tl_dyn-array i64)]
   [def-label : (__tl_dyn-array i64)]
   [loop : OptNaturalLoop]
   [instrs : ir.CompilerIrInstrSeq]
@@ -29471,6 +29554,7 @@
                   context
                   frame
                   uses
+                  raw-uses
                   def-label
                   loop
                   dst
@@ -29485,6 +29569,7 @@
             context
             frame
             uses
+            raw-uses
             def-label
             loop
             instrs
@@ -29495,6 +29580,7 @@
   [context : OptCfgContext]
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
+  [raw-uses : (__tl_dyn-array i64)]
   [def-label : (__tl_dyn-array i64)]
   [loop : OptNaturalLoop]) : OptFlagExitMaybePlan
   (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
@@ -29507,6 +29593,7 @@
             context
             frame
             uses
+            raw-uses
             def-label
             loop
             instrs
@@ -29520,12 +29607,20 @@
   [context : OptCfgContext]
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
+  [raw-uses : (__tl_dyn-array i64)]
   [def-label : (__tl_dyn-array i64)]
   [loops : OptNaturalLoopList]) : OptFlagExitPassResult
   (match loops
     [(OptNaturalLoopList.Nil) (OptFlagExitPassResult.Result blocks frame false)]
     [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-flag-exit-plan-loop blocks context frame uses def-label loop)
+      (match (opt-flag-exit-plan-loop
+        blocks
+        context
+        frame
+        uses
+        raw-uses
+        def-label
+        loop)
         [(OptFlagExitMaybePlan.Some plan)
           (OptFlagExitPassResult.Result
             (opt-flag-exit-rewrite-blocks
@@ -29541,6 +29636,7 @@
             context
             frame
             uses
+            raw-uses
             def-label
             (__tl-box-place rest))])]))
 
@@ -29561,6 +29657,8 @@
           (let
             [uses : (__tl_dyn-array i64)
               (opt-gep-offset-effective-uses blocks frame)]
+            [raw-uses : (__tl_dyn-array i64)
+              (opt-collect-blocks-uses-array frame blocks)]
             [def-label : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [_fill : unit (opt-cfg-fill-i64! def-label frame (- 0 1))]
             [_defs : unit (opt-flag-exit-def-labels! blocks def-label)]
@@ -29569,6 +29667,7 @@
               context
               frame
               uses
+              raw-uses
               def-label
               loops))]))))
 

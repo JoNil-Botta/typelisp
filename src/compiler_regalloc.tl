@@ -10393,13 +10393,33 @@
 ;; in the #6248 campaign and rejected: at 8^depth a depth-(d+1) web outranks
 ;; a depth-d web with many more refs even when the outer loop is the
 ;; genuinely hotter one (the lex_source regression seen there).
+;;
+;; The BASE stays 2 for exactly that reason; what changed is that the ladder no
+;; longer FLATTENS at depth 4. `else 16` made every reference at depth 4 or
+;; deeper worth the same, which is not a conservative reading of the frequency
+;; -- it is the statement that an inner loop's own operands are worth no more
+;; than values the inner loop never touches, and it decides the tie against the
+;; inner loop (the comparator's second key is the var id). A merged kernel is
+;; where that bites: inlining intern_table's probe into its driver puts the byte
+;; compare at depth 5 inside a depth-4 probe loop, and the compare's base
+;; pointer -- one reference, 15.2M executions -- ranked exactly level with the
+;; five hoisted Vec headers whose single depth-4 references run 2.5M times, lost
+;; the tie, and spent the whole loop being reloaded through an emergency
+;; scavenge. Block depths are already saturated at `compiler-reg-loop-depth-max`
+;; = 8 by `compiler-reg-loop-nest-depths!`, so continuing the doubling to that
+;; cap is bounded at 256 and leaves every function whose loops are at depth 4 or
+;; less scoring exactly as before.
 (define (compiler-reg-loop-depth-weight [depth : i64]) : i64
   (cond
     [(<= depth 0) 1]
     [(= depth 1) 2]
     [(= depth 2) 4]
     [(= depth 3) 8]
-    [else 16]))
+    [(= depth 4) 16]
+    [(= depth 5) 32]
+    [(= depth 6) 64]
+    [(= depth 7) 128]
+    [else 256]))
 
 (define (compiler-reg-loop-depth-block-ids
   [blocks : ir.CompilerIrBlockList]
@@ -20813,6 +20833,58 @@
 (define (compiler-reg-loop-park-max-rounds) : i64
   3)
 
+;; The frequency ladder this round -- and only this round -- prices its trade
+;; on: 4 * 8^depth, EXACT over the whole depth range instead of saturating.
+;;
+;; P3's `compiler-reg-call-hole-block-weight` is the same ladder clamped from
+;; depth 4 on, and that clamp is what silently disabled this round on exactly
+;; the merged kernels it exists for. Every claim the round makes is a claim
+;; about the RATIO between a block inside L and a block on L's boundary:
+;; parking V costs W(preheader) plus one W(exit) per live exit, against
+;; W(body) per reference an L-resident makes, and the header's "the preheader
+;; sits one level outside L, so that is 1/8 of ONE reference by an L-resident"
+;; IS that ratio. Once both sides of it land on the clamp the ratio becomes 1,
+;; the boundary costs at least twice what a single resident reference is worth,
+;; and `compiler-reg-loop-park-pair!` can never accept -- no matter how hot the
+;; loop actually is. The intern_table merged kernel is the shape: the byte
+;; compare loop sits at depth 5 with its preheader and both exits at depth 4,
+;; so on the clamped ladder its base pointer was priced at 16384 in-loop
+;; against a 49152 boundary and the round declined, while the SAME loop written
+;; as a separate function (depth 1, boundary at depth 0) parks and wins.
+;;
+;; Nothing outside this round changes: P3 and P7 keep their own ladder, and the
+;; two agree exactly on depths 0..4, so a function whose loops are all at depth
+;; 4 or less makes literally the same decisions as before. Block depths are
+;; themselves capped at `compiler-reg-loop-depth-max` = 8, so `else` here is
+;; depth 8 and the ladder is bounded at 4 * 8^8; a plan cost is a sum of these
+;; over the references of one function and stays far inside i64.
+(define (compiler-reg-loop-park-block-weight [depth : i64]) : i64
+  (cond
+    [(<= depth 0) 4]
+    [(= depth 1) 32]
+    [(= depth 2) 256]
+    [(= depth 3) 2048]
+    [(= depth 4) 16384]
+    [(= depth 5) 131072]
+    [(= depth 6) 1048576]
+    [(= depth 7) 8388608]
+    [else 67108864]))
+
+(define (compiler-reg-loop-park-block-weights [depths : (__tl_dyn-array i64)]) : (__tl_dyn-array
+    i64)
+  (let
+    [count : i64 (array-length depths)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref out index)
+            (compiler-reg-loop-park-block-weight (array-ref depths index)))
+          (set! index (+ index 1))))
+      out)))
+
 ;; Reload site kinds.
 (define (compiler-reg-loop-park-site-direct) : i64
   0)
@@ -22642,7 +22714,7 @@
                     (compiler-reg-function-params rd.func)
                     rd.type-info.representations
                     (live.compiler-live-ir-block-list-to-seq park-blocks)
-                    (compiler-reg-call-hole-block-weights
+                    (compiler-reg-loop-park-block-weights
                       (compiler-reg-function-loop-depths park-blocks))
                     park-vars
                     park-plan)]
@@ -22721,7 +22793,7 @@
                 [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
                 [_depths : unit (compiler-reg-loop-nest-depths! nest depths)]
                 [weights : (__tl_dyn-array i64)
-                  (compiler-reg-call-hole-block-weights depths)]
+                  (compiler-reg-loop-park-block-weights depths)]
                 [order : (__tl_dyn-array i64)
                   (array.make-array i64 (compiler-reg-loop-park-max-headers))]
                 [used : (__tl_dyn-array bool)

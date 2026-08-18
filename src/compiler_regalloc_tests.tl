@@ -2869,6 +2869,616 @@
             (= (reg.compiler-reg-call-hole-split-vars split) vars)
             (= (reg.compiler-reg-call-hole-split-temp-start split) (- 0 1)))]))))
 
+;; --- P12: the merged-kernel shape, and the two ladders that decide it --------
+;; A hand-inlined kernel puts its hottest loop DEEP. `it-intern-slice` inlined
+;; into its driver leaves the byte compare at loop depth 5, inside a depth-4
+;; probe loop, inside the per-symbol / per-pass / per-round loops. Two frequency
+;; ladders used to flatten at depth 4, and both of them then decided that loop
+;; against itself:
+;;
+;;   * P3c's parking cost model (`compiler-reg-loop-park-block-weight`). The
+;;     round prices "park a value the loop never touches" as W(preheader) plus
+;;     one W(exit) per live exit, against W(body) per reference an L-resident
+;;     makes. On a ladder that flattens, a depth-5 body and a depth-4 boundary
+;;     weigh the SAME, so the boundary costs at least twice one resident
+;;     reference and `compiler-reg-loop-park-pair!` can never accept -- however
+;;     hot the loop actually is.
+;;
+;;   * the greedy's spill weight (`compiler-reg-loop-depth-weight`). A reference
+;;     at depth 5 scored exactly as much as one at depth 4, so the byte loop's
+;;     own base pointer ranked level with the hoisted Vec headers the loop never
+;;     touches, and lost the tie on var id.
+;;
+;; `loop_park_deep_nest` is that shape reduced to its skeleton: four plain outer
+;; loops around a ROTATED inner loop in the versioner's `__bce_fast` form -- a
+;; landing block that is the dedicated preheader, a header that opens with the
+;; induction phi, the trip test at the bottom -- whose body reads TWO base
+;; pointers defined one level out, with three values live across the whole nest
+;; that the inner loop never mentions.
+(cfg
+  test
+  (define (compiler-reg-park-nest-levels) : i64
+    4))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-label [prefix : String] [level : i64]) : i64
+    (ir.compiler-ir-label (str_cat.str-cat prefix (string.int->string level)))))
+
+;; Per-level var ids: counter, trip condition, increment.
+(cfg
+  test
+  (define (compiler-reg-park-nest-ctr [level : i64]) : i64
+    (+ 20 (* 3 level))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-cond [level : i64]) : i64
+    (+ 21 (* 3 level))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-next [level : i64]) : i64
+    (+ 22 (* 3 level))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-binop
+    [dst : i64]
+    [op : ir.CompilerIrBinOp]
+    [lhs : ir.CompilerIrValue]
+    [rhs : ir.CompilerIrValue]) : ir.CompilerIrInstr
+    (ir.CompilerIrInstr.BinOp dst op lhs rhs (compiler-reg-i64-ty))))
+
+;; entry: mint the three through values, then descend into the nest.
+(cfg
+  test
+  (define (compiler-reg-park-nest-entry-block) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "entry")
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Mov
+          10
+          (ir.CompilerIrValue.I64 11)
+          (compiler-reg-i64-ty))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            11
+            (ir.CompilerIrValue.I64 12)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              12
+              (ir.CompilerIrValue.I64 13)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Jump (compiler-reg-park-nest-label "pre." 0))
+              ir.CompilerIrInstrList.Nil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-pre-block [level : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (compiler-reg-park-nest-label "pre." level)
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Jump (compiler-reg-park-nest-label "hdr." level))
+        ir.CompilerIrInstrList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-hdr-block [level : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (compiler-reg-park-nest-label "hdr." level)
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Phi
+          (compiler-reg-park-nest-ctr level)
+          (ir.compiler-ir-phi-input-cons
+            (ir.CompilerIrValue.I64 0)
+            (compiler-reg-park-nest-label "pre." level)
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.Var (compiler-reg-park-nest-next level))
+              (compiler-reg-park-nest-label "lat." level)
+              ir.CompilerIrPhiInputList.Nil))
+          (compiler-reg-i64-ty))
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            (compiler-reg-park-nest-cond level)
+            (ir.CompilerIrBinOp.Lt)
+            (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level))
+            (ir.CompilerIrValue.Var 0))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var (compiler-reg-park-nest-cond level))
+              (compiler-reg-park-nest-label "body." level)
+              (compiler-reg-park-nest-label "exit." level))
+            ir.CompilerIrInstrList.Nil))))))
+
+;; The innermost level's body is where the two base pointers are computed: once
+;; per entry into the inner loop, one level OUT from the references that read
+;; them, which is the merged kernel's own shape.
+(cfg
+  test
+  (define (compiler-reg-park-nest-body-block [level : i64] [levels : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (compiler-reg-park-nest-label "body." level)
+      (if (< level (- levels 1))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump
+            (compiler-reg-park-nest-label "pre." (+ level 1)))
+          ir.CompilerIrInstrList.Nil)
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            1
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level)))
+          (ir.compiler-ir-instr-cons
+            (compiler-reg-park-nest-binop
+              2
+              (ir.CompilerIrBinOp.Add)
+              (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level))
+              (ir.CompilerIrValue.Var 0))
+            (ir.compiler-ir-instr-cons
+              (compiler-reg-park-nest-binop
+                67
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 10)
+                (ir.CompilerIrValue.Var 11))
+              (ir.compiler-ir-instr-cons
+                (compiler-reg-park-nest-binop
+                  68
+                  (ir.CompilerIrBinOp.Add)
+                  (ir.CompilerIrValue.Var 67)
+                  (ir.CompilerIrValue.Var 12))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "land"))
+                  ir.CompilerIrInstrList.Nil)))))))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-lat-block [level : i64] [levels : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (compiler-reg-park-nest-label "lat." level)
+      (if (= level (- levels 1))
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            69
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 66)
+            (ir.CompilerIrValue.Var 68))
+          (ir.compiler-ir-instr-cons
+            (compiler-reg-park-nest-binop
+              (compiler-reg-park-nest-next level)
+              (ir.CompilerIrBinOp.Add)
+              (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level))
+              (ir.CompilerIrValue.Var 69))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Jump
+                (compiler-reg-park-nest-label "hdr." level))
+              ir.CompilerIrInstrList.Nil)))
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            (compiler-reg-park-nest-next level)
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level))
+            (ir.CompilerIrValue.I64 1))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Jump
+              (compiler-reg-park-nest-label "hdr." level))
+            ir.CompilerIrInstrList.Nil))))))
+
+;; The outermost exit is the only place the three through values are read, so
+;; each of them is live across every loop of the nest and mentioned in none.
+(cfg
+  test
+  (define (compiler-reg-park-nest-exit-block [level : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (compiler-reg-park-nest-label "exit." level)
+      (if (> level 0)
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump
+            (compiler-reg-park-nest-label "lat." (- level 1)))
+          ir.CompilerIrInstrList.Nil)
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            70
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 10)
+            (ir.CompilerIrValue.Var 11))
+          (ir.compiler-ir-instr-cons
+            (compiler-reg-park-nest-binop
+              71
+              (ir.CompilerIrBinOp.Add)
+              (ir.CompilerIrValue.Var 70)
+              (ir.CompilerIrValue.Var 12))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 71)))
+              ir.CompilerIrInstrList.Nil)))))))
+
+;; The rotated inner loop, in the versioner's `__bce_fast` form: `land` is the
+;; rotate landing block and the loop's dedicated preheader, `ihdr` opens with
+;; the induction phi, and the trip test lives at the bottom in `imerge`. Both
+;; exits leave for a block that opens with a phi, so both are SPLICED sites.
+(cfg
+  test
+  (define (compiler-reg-park-nest-land-block) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "land")
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "ihdr"))
+        ir.CompilerIrInstrList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-ihdr-block) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "ihdr")
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Phi
+          60
+          (ir.compiler-ir-phi-input-cons
+            (ir.CompilerIrValue.I64 0)
+            (ir.compiler-ir-label "land")
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.Var 64)
+              (ir.compiler-ir-label "imerge")
+              ir.CompilerIrPhiInputList.Nil))
+          (compiler-reg-i64-ty))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "ibody"))
+          ir.CompilerIrInstrList.Nil)))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-ibody-block) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "ibody")
+      (ir.compiler-ir-instr-cons
+        (compiler-reg-park-nest-binop
+          61
+          (ir.CompilerIrBinOp.Add)
+          (ir.CompilerIrValue.Var 1)
+          (ir.CompilerIrValue.Var 60))
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            62
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 2)
+            (ir.CompilerIrValue.Var 60))
+          (ir.compiler-ir-instr-cons
+            (compiler-reg-park-nest-binop
+              63
+              (ir.CompilerIrBinOp.Lt)
+              (ir.CompilerIrValue.Var 61)
+              (ir.CompilerIrValue.Var 62))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var 63)
+                (ir.compiler-ir-label "imerge")
+                (ir.compiler-ir-label "iexit"))
+              ir.CompilerIrInstrList.Nil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-imerge-block) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "imerge")
+      (ir.compiler-ir-instr-cons
+        (compiler-reg-park-nest-binop
+          64
+          (ir.CompilerIrBinOp.Add)
+          (ir.CompilerIrValue.Var 60)
+          (ir.CompilerIrValue.I64 1))
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            65
+            (ir.CompilerIrBinOp.Lt)
+            (ir.CompilerIrValue.Var 64)
+            (ir.CompilerIrValue.Var 0))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var 65)
+              (ir.compiler-ir-label "ihdr")
+              (ir.compiler-ir-label "iexit"))
+            ir.CompilerIrInstrList.Nil))))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-iexit-block [levels : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "iexit")
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Phi
+          66
+          (ir.compiler-ir-phi-input-cons
+            (ir.CompilerIrValue.I64 0)
+            (ir.compiler-ir-label "ibody")
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.I64 1)
+              (ir.compiler-ir-label "imerge")
+              ir.CompilerIrPhiInputList.Nil))
+          (compiler-reg-i64-ty))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump
+            (compiler-reg-park-nest-label "lat." (- levels 1)))
+          ir.CompilerIrInstrList.Nil)))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-nest-function) : ir.CompilerIrFunction
+    (let
+      [levels : i64 (compiler-reg-park-nest-levels)]
+      [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+        (array.make-array ir.CompilerIrBlock (+ 6 (* 5 levels)))]
+      [write : i64 0]
+      [level : i64 0]
+      (begin
+        (set! (array-ref blocks write) (compiler-reg-park-nest-entry-block))
+        (set! write (+ write 1))
+        (while (< level levels)
+          (begin
+            (set!
+              (array-ref blocks write)
+              (compiler-reg-park-nest-pre-block level))
+            (set!
+              (array-ref blocks (+ write 1))
+              (compiler-reg-park-nest-hdr-block level))
+            (set!
+              (array-ref blocks (+ write 2))
+              (compiler-reg-park-nest-body-block level levels))
+            (set! write (+ write 3))
+            (set! level (+ level 1))))
+        (set! (array-ref blocks write) (compiler-reg-park-nest-land-block))
+        (set!
+          (array-ref blocks (+ write 1))
+          (compiler-reg-park-nest-ihdr-block))
+        (set!
+          (array-ref blocks (+ write 2))
+          (compiler-reg-park-nest-ibody-block))
+        (set!
+          (array-ref blocks (+ write 3))
+          (compiler-reg-park-nest-imerge-block))
+        (set!
+          (array-ref blocks (+ write 4))
+          (compiler-reg-park-nest-iexit-block levels))
+        (set! write (+ write 5))
+        (set! level (- levels 1))
+        (while (>= level 0)
+          (begin
+            (set!
+              (array-ref blocks write)
+              (compiler-reg-park-nest-lat-block level levels))
+            (set!
+              (array-ref blocks (+ write 1))
+              (compiler-reg-park-nest-exit-block level))
+            (set! write (+ write 2))
+            (set! level (- level 1))))
+        (ir.CompilerIrFunction.Function
+          (ir.compiler-ir-test-symbol "loop_park_deep_nest")
+          (ir.compiler-ir-param-cons
+            (ir.CompilerIrParam.Param "bound" (compiler-reg-i64-ty) 0)
+            ir.CompilerIrParamList.Nil)
+          (ast.AstType.I64)
+          80
+          (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq blocks write)))))))
+
+;; Two small builders for a hand-written plan, so the fixture can say exactly
+;; which values the greedy is imagined to have homed.
+(cfg
+  test
+  (define (compiler-reg-park-nest-reg
+    [var : i64]
+    [id : i64]
+    [rest : reg.CompilerRegAssignmentTable]) : reg.CompilerRegAssignmentTable
+    (reg.compiler-reg-assignments-prepend
+      (reg.CompilerRegAssignment var (reg.CompilerRegLocation.Register id))
+      rest)))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-spill
+    [var : i64]
+    [slot : i64]
+    [rest : reg.CompilerRegAssignmentTable]) : reg.CompilerRegAssignmentTable
+    (reg.compiler-reg-assignments-prepend
+      (reg.CompilerRegAssignment
+        var
+        (reg.CompilerRegLocation.Spill
+          (reg.compiler-reg-stack-slot-offset slot)))
+      rest)))
+
+;; The plan the round is handed. Every OTHER resident of the inner loop already
+;; holds a register, so the two base pointers are its only spilled residents and
+;; the pairing it has to make is exactly base <-> through value -- one register
+;; freed over the loop per base that needs one.
+;;
+;; With `bases-homed` true the two bases hold registers and a through value is
+;; in memory instead: the function still HAS a spill, the loop still has values
+;; live across it, and there is still nothing a parked register could rescue.
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-nest-plan [bases-homed : bool]) : reg.CompilerRegPlan
+    (reg.CompilerRegPlan.Plan
+      (compiler-reg-park-nest-reg
+        0
+        cabi.compiler-reg-id-rax
+        (compiler-reg-park-nest-reg
+          60
+          cabi.compiler-reg-id-rcx
+          (compiler-reg-park-nest-reg
+            61
+            cabi.compiler-reg-id-rdx
+            (compiler-reg-park-nest-reg
+              62
+              cabi.compiler-reg-id-rsi
+              (compiler-reg-park-nest-reg
+                63
+                cabi.compiler-reg-id-rdi
+                (compiler-reg-park-nest-reg
+                  64
+                  cabi.compiler-reg-id-r8
+                  (compiler-reg-park-nest-reg
+                    65
+                    cabi.compiler-reg-id-r9
+                    (compiler-reg-park-nest-reg
+                      10
+                      cabi.compiler-reg-id-r12
+                      (compiler-reg-park-nest-reg
+                        11
+                        cabi.compiler-reg-id-r13
+                        (if bases-homed
+                          (compiler-reg-park-nest-spill
+                            12
+                            3
+                            (compiler-reg-park-nest-reg
+                              1
+                              cabi.compiler-reg-id-rbx
+                              (compiler-reg-park-nest-reg
+                                2
+                                cabi.compiler-reg-id-r15
+                                (reg.compiler-reg-assignment-table-empty))))
+                          (compiler-reg-park-nest-reg
+                            12
+                            cabi.compiler-reg-id-r14
+                            (compiler-reg-park-nest-spill
+                              1
+                              1
+                              (compiler-reg-park-nest-spill
+                                2
+                                2
+                                (reg.compiler-reg-assignment-table-empty))))))))))))))
+      (live.compiler-live-set-empty)
+      (reg.compiler-reg-interval-seq-empty)
+      (reg.compiler-reg-var-types-empty)
+      (reg.compiler-reg-call-split-empty)
+      (reg.compiler-reg-split-plan-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-nest-split [bases-homed : bool]) : reg.CompilerRegCallHoleSplit
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-loop-park-deep-nest-function)]
+      (reg.compiler-reg-loop-park-rewrite-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        cabi.CompilerRegTargetAbi.Linux
+        func
+        (reg.compiler-reg-function-var-types func)
+        (compiler-reg-loop-park-deep-nest-plan bases-homed)
+        (- 0 1)
+        false))))
+
+;; (1) The rotated inner-loop shape PARKS. Two base pointers are in memory and
+;; the loop has three values live across it that it never mentions, so the round
+;; parks one per base -- the trade the flattened cost ladder made arithmetically
+;; impossible at this depth, whatever the trip count.
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-parks-ok?) : bool
+    (let
+      [split : reg.CompilerRegCallHoleSplit
+        (compiler-reg-loop-park-deep-nest-split false)]
+      (match (compiler-reg-loop-park-deep-nest-function)
+        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+          (and
+            ;; one park per base: a parked value frees ONE register over the
+            ;; loop and the loop has two operands that each need one
+            (= (reg.compiler-reg-call-hole-split-vars split) (+ vars 2))
+            (= (reg.compiler-reg-call-hole-split-temp-start split) vars)
+            ;; every carrier is forced to the stack, so the boundary movs pay
+            ;; for themselves inside the round's own estimate
+            (reg.compiler-reg-cold-call-carriers-stack?
+              (reg.compiler-reg-call-hole-split-plan split)
+              vars
+              (+ vars 2)))]))))
+
+;; (2) BOTH bases of the two-base inner loop come out of the round in registers.
+;; One park frees one register over the loop and the loop has two operands that
+;; need one, so a round that rescues only the first leaves the byte compare
+;; reloading one base through the emergency scavenge on every iteration.
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-two-bases-homed-ok?) : bool
+    (let
+      [split : reg.CompilerRegCallHoleSplit
+        (compiler-reg-loop-park-deep-nest-split false)]
+      [assignments : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-plan-assignments
+          (reg.compiler-reg-call-hole-split-plan split))]
+      (and
+        (reg.compiler-reg-call-hole-register-homed? assignments 1)
+        (reg.compiler-reg-call-hole-register-homed? assignments 2)))))
+
+;; (3) The negative. With both bases already in registers the inner loop has no
+;; spilled resident, so no parked register could rescue anything and the round
+;; hands back its input untouched -- same watermark, same threshold -- even
+;; though the function still has a spilled value elsewhere and the loop still
+;; has through values it could otherwise have parked.
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-declines-ok?) : bool
+    (let
+      [split : reg.CompilerRegCallHoleSplit
+        (compiler-reg-loop-park-deep-nest-split true)]
+      (match (compiler-reg-loop-park-deep-nest-function)
+        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+          (and
+            (= (reg.compiler-reg-call-hole-split-vars split) vars)
+            (= (reg.compiler-reg-call-hole-split-temp-start split) (- 0 1)))]))))
+
+;; And the ranking side of the same fixture, read straight off the greedy's own
+;; spill weights. Base pointer %1 has one reference INSIDE the inner loop plus
+;; its definition one level out; %67 is a value the inner loop never touches
+;; with two references at that outer level. Flattened at depth 4 the two score
+;; identically, and an exact tie is broken by var id rather than by frequency --
+;; which is how a 15.2M-execution reference lost its register to a 2.5M one.
+;; Continued to the nest cap, the loop's own operand wins on frequency.
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-ranking-ok?) : bool
+    (let
+      [weights : (__tl_dyn-array i64)
+        (reg.compiler-reg-function-spill-weights
+          (compiler-reg-loop-park-deep-nest-function))]
+      (and
+        (> (array-ref weights 1) (array-ref weights 67))
+        (> (array-ref weights 2) (array-ref weights 67))))))
+
+;; The invariant both ladders now keep, stated as arithmetic. P3c's cost model
+;; is only meaningful while one loop level is a FIXED factor: the preheader
+;; store and each exit reload have to stay 1/8 of one in-loop reference, and one
+;; loop level deeper has to stay worth 2 in the greedy's ranking. A ladder that
+;; saturates breaks both claims at the saturation point, and does it silently.
+;; Block depths themselves saturate at `compiler-reg-loop-depth-max`, so that is
+;; where the ladders may -- and do -- stop.
+(cfg
+  test
+  (define (compiler-reg-park-ladder-step-ok? [depth : i64]) : bool
+    (if (>= depth (reg.compiler-reg-loop-depth-max))
+      true
+      (and
+        (=
+          (reg.compiler-reg-loop-park-block-weight (+ depth 1))
+          (* 8 (reg.compiler-reg-loop-park-block-weight depth)))
+        (=
+          (reg.compiler-reg-loop-depth-weight (+ depth 1))
+          (* 2 (reg.compiler-reg-loop-depth-weight depth)))
+        (compiler-reg-park-ladder-step-ok? (+ depth 1))))))
+
+(cfg
+  test
+  (define (compiler-reg-park-ladder-ok?) : bool
+    (and
+      (compiler-reg-park-ladder-step-ok? 0)
+      ;; and the parking ladder still agrees with P3's on every depth P3 itself
+      ;; resolves, so the two rounds price a shallow function identically
+      (=
+        (reg.compiler-reg-loop-park-block-weight 0)
+        (reg.compiler-reg-call-hole-block-weight 0))
+      (=
+        (reg.compiler-reg-loop-park-block-weight 4)
+        (reg.compiler-reg-call-hole-block-weight 4)))))
+
 ;; --- P3d scavenge occupancy: segmented liveness, not the coarse hull ---------
 ;; The backend's scratch picker asks "which registers carry a live value at this
 ;; instruction" through an occupancy table built from these intervals. Built from
@@ -17052,6 +17662,21 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-park-declines-ok?"
       (cfg test (compiler-reg-loop-park-declines-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-deep-parks-ok?"
+      (cfg test (compiler-reg-loop-park-deep-parks-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-deep-two-bases-homed-ok?"
+      (cfg test (compiler-reg-loop-park-deep-two-bases-homed-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-deep-declines-ok?"
+      (cfg test (compiler-reg-loop-park-deep-declines-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-deep-ranking-ok?"
+      (cfg test (compiler-reg-loop-park-deep-ranking-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-park-ladder-ok?"
+      (cfg test (compiler-reg-park-ladder-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-scavenge-segment-hulls-ok?"
       (cfg test (compiler-reg-scavenge-segment-hulls-ok?) true))

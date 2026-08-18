@@ -56,15 +56,15 @@ fail() {
     exit 1
 }
 
-run_consumer_56() {
+run_consumer_90() {
     label=$1
     set +e
     "$CONSUMER_BIN" > "$WORKDIR/$label.program.out" \
         2> "$WORKDIR/$label.program.err"
     status=$?
     set -e
-    [ "$status" -eq 56 ] ||
-        fail "$label consumer exited $status, expected 56"
+    [ "$status" -eq 90 ] ||
+        fail "$label consumer exited $status, expected 90"
     [ ! -s "$WORKDIR/$label.program.out" ] ||
         fail "$label consumer wrote stdout"
     [ ! -s "$WORKDIR/$label.program.err" ] ||
@@ -219,6 +219,8 @@ cat > "$CONSUMER/src/main.tl" <<'EOF'
         (+
           (left.left-value (left.adjust 1))
           (right.right-value (right.adjust 1))
+          (left.same 1)
+          (right.same 1)
           (left-generated.value)
           (right-generated-value))
         1))))
@@ -244,7 +246,11 @@ fi
 assert_surface_route trusted "$WORKDIR/native.err" 1 2 0 \
     "$TRUSTED_PREFIX_SKIPPED" "$TRUSTED_PREFIX_SKIPPED"
 cp "$CONSUMER_ASM" "$NATIVE_ASM"
-run_consumer_56 trusted
+grep -F "call _tl_surface_left_src_lib_left_src_lib_same" "$CONSUMER_ASM" \
+    >/dev/null || fail "trusted consumer omitted left.same canonical call"
+grep -F "call _tl_surface_right_src_lib_right_src_lib_same" "$CONSUMER_ASM" \
+    >/dev/null || fail "trusted consumer omitted right.same canonical call"
+run_consumer_90 trusted
 
 case "$CONSUMER/target" in
     "$WORKDIR"/consumer/target) ;;
@@ -268,7 +274,7 @@ assert_surface_route forced-source "$WORKDIR/source.err" 0 0 \
     "$FORCED_SOURCE_FALLBACKS" 0 0
 cmp "$NATIVE_ASM" "$CONSUMER_ASM" >/dev/null ||
     fail "trusted and forced-source diamond assembly differ"
-run_consumer_56 forced-source
+run_consumer_90 forced-source
 
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 rm -rf "$CONSUMER/target"
@@ -288,7 +294,7 @@ fi
 assert_surface_route malformed "$WORKDIR/malformed.err" 0 0 1 0 0
 cmp "$NATIVE_ASM" "$CONSUMER_ASM" >/dev/null ||
     fail "malformed fallback and trusted diamond assembly differ"
-run_consumer_56 malformed
+run_consumer_90 malformed
 unset TYPELISP_DEPENDENCY_TLCI_VERIFY_SURFACE_REJECT_LAST || true
 
 echo "[package-surface-tlci] diamond hydration, parity, and rollback passed"

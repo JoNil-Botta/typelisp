@@ -6179,6 +6179,121 @@
             (= (lower-test-functions-call-count functions "d/get") 0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-package-alias-collision-source) : String
+  "(module left.src.lib)
+(define (same [value : i64]) : i64 (+ value 11))
+(module right.src.lib)
+(define (same [value : i64]) : i64 (+ value 21))
+(module consumer.src.main)
+(import left.src.lib as left)
+(import right.src.lib as right)
+(define (main) : i64 (+ (left.same 1) (right.same 1)))")
+
+(define (compiler-lower-package-alias-collision-paths) : compiler_ast_types.AstDeclPathList
+  (compiler_ast_types.ast-decl-root-path-cons
+    "surface_left/src/lib.tl"
+    (compiler_ast_types.ast-decl-root-path-cons
+      "surface_left/src/lib.tl"
+      (compiler_ast_types.ast-decl-root-path-cons
+        "surface_right/src/lib.tl"
+        (compiler_ast_types.ast-decl-root-path-cons
+          "surface_right/src/lib.tl"
+          (compiler_ast_types.ast-decl-root-path-cons
+            "consumer/src/main.tl"
+            (compiler_ast_types.ast-decl-root-path-cons
+              "consumer/src/main.tl"
+              (compiler_ast_types.ast-decl-root-path-cons
+                "consumer/src/main.tl"
+                (compiler_ast_types.ast-decl-root-path-cons
+                  "consumer/src/main.tl"
+                  (compiler_ast_types.ast-decl-path-list-new))))))))))
+
+(define (compiler-lower-package-alias-collision-ok?) : bool
+  (match (compiler_parse_core.parse-ast-source
+    (compiler-lower-package-alias-collision-source))
+    [(compiler_parse_core.ResultAstProgram.Ok program)
+      (match (lower-compiler-program-with-decl-paths
+        "consumer/src/main.tl"
+        program
+        (compiler-lower-package-alias-collision-paths))
+        [(compiler_lower.ResultCompilerLower.Ok lowered _)
+          (match lowered
+            [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+              (and
+                (=
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "surface_left/src/lib.tl::left.src.lib/same")
+                  1)
+                (=
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "surface_right/src/lib.tl::right.src.lib/same")
+                  1))])]
+        [(compiler_lower.ResultCompilerLower.Err _) false])]
+    [(compiler_parse_core.ResultAstProgram.Err _) false]))
+
+(define (compiler-lower-package-extern-alias-symbols-ok?) : bool
+  (let
+    [name : i64 (ci.intern "same")]
+    [left-module : i64 (ci.intern "left.src.lib")]
+    [right-module : i64 (ci.intern "right.src.lib")]
+    [left : compiler_ast_types.AstDecl
+      (compiler_load.compiler-load-package-def-fn-extern
+        "surface_left"
+        "C:/surface_left/"
+        (svec.new)
+        "C:/surface_left/src/lib.tl"
+        "left.src.lib"
+        name
+        (compiler_ast_types.ast-param-list-new)
+        (compiler_ast_types.AstType.I64)
+        compiler_load.CompilerLoadPackageSpmdInterface.Unavailable)]
+    [right : compiler_ast_types.AstDecl
+      (compiler_load.compiler-load-package-def-fn-extern
+        "surface_right"
+        "C:/surface_right/"
+        (svec.new)
+        "C:/surface_right/src/lib.tl"
+        "right.src.lib"
+        name
+        (compiler_ast_types.ast-param-list-new)
+        (compiler_ast_types.AstType.I64)
+        compiler_load.CompilerLoadPackageSpmdInterface.Unavailable)]
+    (match left
+      [(compiler_ast_types.AstDecl.Extern _ _ _ left-meta _)
+        (match right
+          [(compiler_ast_types.AstDecl.Extern _ _ _ right-meta _)
+            (let
+              [left-symbol : i64
+                (compiler_lower.lower-extern-logical-symbol-id
+                  (compiler_symbols.compiler-symbol-module-key-id-by-id
+                    left-module
+                    name)
+                  "same"
+                  name
+                  (__tl-box-place left-meta))]
+              [right-symbol : i64
+                (compiler_lower.lower-extern-logical-symbol-id
+                  (compiler_symbols.compiler-symbol-module-key-id-by-id
+                    right-module
+                    name)
+                  "same"
+                  name
+                  (__tl-box-place right-meta))]
+              (and
+                (not (= left-symbol right-symbol))
+                (string.eq
+                  (compiler_ir_types.compiler-ir-symbol-text left-symbol)
+                  "left.src.lib/same")
+                (string.eq
+                  (compiler_ir_types.compiler-ir-symbol-text right-symbol)
+                  "right.src.lib/same")))]
+          [_ false])]
+      [_ false])))
+
 (define (compiler-lower-selected-import-alias-name-env-ok?) : bool
   (let
     [target-module : i64 (ci.intern "selected.source")]
@@ -15040,6 +15155,18 @@
   (test.assert-true
     (compiler-lower-selected-import-alias-name-env-ok?)
     "selected import aliases preserve source logical and linker identities"))
+
+(test
+  compiler-lower-package-alias-collision
+  (test.assert-true
+    (compiler-lower-package-alias-collision-ok?)
+    "package aliases preserve same-named value targets"))
+
+(test
+  compiler-lower-package-extern-alias-symbols
+  (test.assert-true
+    (compiler-lower-package-extern-alias-symbols-ok?)
+    "package extern aliases preserve canonical call symbols"))
 
 (test
   compiler-lower-defdispatch-structural-shape

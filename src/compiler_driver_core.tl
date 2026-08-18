@@ -129,6 +129,8 @@
       (array.make-array cbi.CompilerBuiltinIdsState 1)]
     [lower-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
     [pool-arena-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [profile-state : profile_state.CompilerProfileState
+      (profile_state.compiler-profile-state-new)]
     ;; Intern capability identity is shared by parser, lowering, and backend.
     ;; Create it before switching arenas; the backend's own state data is
     ;; allocated below while the driver's surface arena is current.
@@ -143,8 +145,9 @@
         (CompilerDriverSurfaceState.State
           (compiler_typecheck_core.tc-job-state-new)
           (__tl-project-field
-            (compiler_lower.compiler-lower-state-new-with-intern-state
-              intern-state)
+            (compiler_lower.compiler-lower-state-new-with-intern-state-and-profile-state
+              intern-state
+              profile-state)
             address)
           (compiler_backend.compiler-backend-state-new intern-state)))]
     (match surface-state
@@ -173,7 +176,7 @@
             (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
             pool-arena-cell
             surface-arena
-            (profile_state.compiler-profile-state-new)))])))
+            profile-state))])))
 
 ;; State-owned pools allocate fixed-size segments on demand. One expression
 ;; segment covers tiny programs while self-host-sized compiles append segments

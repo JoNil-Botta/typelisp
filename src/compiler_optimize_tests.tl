@@ -10636,6 +10636,165 @@
         4]
       [else 42])))
 
+;; Native Slice lowering re-extracts the two-word parameter group at every
+;; access. The first successful `(index, length)` check must therefore dominate
+;; later checks even when their length Words have distinct SSA destinations and
+;; an element store lies between them. A different Slice is a different fact;
+;; taking the original parameter's storage address disables the specialization.
+(define (opt-bounds-dom-slice-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "left"
+      (compiler_ast_types.ast-ty-ref
+        0
+        (compiler_ast_types.ast-ty-slice (compiler_ast_types.AstType.I64)))
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "right"
+        (compiler_ast_types.ast-ty-mut-ref
+          0
+          (compiler_ast_types.ast-ty-slice (compiler_ast_types.AstType.I64)))
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "index"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+(define (opt-bounds-dom-slice-entry-instrs [address-taken? : bool]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [tail : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Word
+          4
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          1
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.compiler-ir-label "slice_entry_ok"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "mid"))
+            (compiler_ir_types.CompilerIrInstrList.Nil))))]
+    (if address-taken?
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.AddrOf 10 0)
+        tail)
+      tail)))
+
+(define (opt-bounds-dom-slice-mid-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Word
+      5
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      0
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        6
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 6)
+          (compiler_ir_types.CompilerIrValue.I64 9)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Word
+            7
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            1
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ir_types.compiler-ir-label "slice_same_ok"))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Word
+                8
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                1
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.CompilerIrValue.Var 8)
+                  (compiler_ir_types.compiler-ir-label "slice_other_ok"))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "exit"))
+                  (compiler_ir_types.CompilerIrInstrList.Nil))))))))))
+
+(define (opt-bounds-dom-slice-blocks [address-taken? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-bounds-dom-slice-entry-instrs address-taken?))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "mid")
+        (opt-bounds-dom-slice-mid-instrs))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "exit")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Word
+              9
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              1
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ir_types.compiler-ir-label "slice_exit_ok"))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 2)))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-bounds-dom-slice-run
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-bounds-dom-blocks-with-context
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-cfg-context-build blocks)
+    (opt-bounds-dom-slice-params)
+    11
+    blocks))
+
+(define (compiler-optimize-bounds-dom-slice-word-self-test) : i64
+  (let
+    [input : compiler_ir_types.CompilerIrBlockList
+      (opt-bounds-dom-slice-blocks false)]
+    [after : compiler_ir_types.CompilerIrBlockList
+      (opt-bounds-dom-slice-run input)]
+    [again : compiler_ir_types.CompilerIrBlockList
+      (opt-bounds-dom-slice-run after)]
+    [escaped-input : compiler_ir_types.CompilerIrBlockList
+      (opt-bounds-dom-slice-blocks true)]
+    [escaped-after : compiler_ir_types.CompilerIrBlockList
+      (opt-bounds-dom-slice-run escaped-input)]
+    (cond
+      [(not (= (compiler_optimize.opt-count-bounds-blocks input) 4)) 1]
+      ;; Kept: the first check for `left`, and the independent `right` check.
+      ;; Dropped: both dominated re-extractions of `left`'s stable length.
+      [(not (= (compiler_optimize.opt-count-bounds-blocks after) 2)) 2]
+      [(not (= (compiler_optimize.opt-count-bounds-blocks again) 2)) 3]
+      ;; AddrOf makes `left`'s register-group storage mutable, so all four
+      ;; differently-named lengths remain conservative.
+      [(not (= (compiler_optimize.opt-count-bounds-blocks escaped-after) 4)) 4]
+      [(not (compiler_optimize.opt-cfg-successor-targets-known? after)) 5]
+      [else 42])))
+
 ;; --- rule (a): a dominating fact decides a dominated compare -----------------
 ;;
 ;; The probes below drive `opt-dom-cmp-lookup` with a single fact in scope and

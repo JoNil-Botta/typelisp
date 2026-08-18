@@ -1184,6 +1184,34 @@ verify_native_slice_shape() {
     fi
 }
 
+verify_native_slice_scalar_masked_bounds_shape() {
+    compile_spmd_mode tests/spmd/native_slice_surface_i64.tl scalar 2
+    _tag=tests_spmd_native_slice_surface_i64_tl
+    _asm="$WORKDIR/$_tag.scalar.compile.s"
+    _func="$WORKDIR/$_tag.scalar.masked-slice.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] native Slice scalar masked shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl scalar (masked shape compile)" >> "$FAILURES"
+        return
+    fi
+    sed -n \
+        '/^_tl_native_slice_surface_i64_masked_slice_foreach:/,/^$/p' \
+        "$_asm" > "$_func"
+    if [ ! -s "$_func" ]; then
+        echo "[spmd-simd] native Slice scalar masked helper is missing" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl scalar (missing masked helper)" >> "$FAILURES"
+        return
+    fi
+    _bounds_calls=$(grep -F -c -- "call tl_oob_abort_at" "$_func" || true)
+    if [ "$_bounds_calls" != 4 ]; then
+        echo "[spmd-simd] native Slice scalar masked helper has $_bounds_calls bounds calls, expected one for each of four Slices" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl scalar (masked bounds calls=$_bounds_calls)" >> "$FAILURES"
+    else
+        echo "[spmd-simd] native Slice scalar masked helper -> four consolidated bounds calls"
+    fi
+}
+
 verify_native_slice_multi_output_shape() {
     _mode=$1
     compile_spmd_mode tests/spmd/native_slice_multi_output_i64.tl "$_mode" 2
@@ -1367,6 +1395,7 @@ verify_avx2_private_helper_call_shape
 verify_avx2_varying_while_shape
 verify_avx2_varying_enum_match_shape
 verify_avx512_varying_enum_match_shape
+verify_native_slice_scalar_masked_bounds_shape
 verify_masked_bitwise_shape avx2
 verify_masked_bitwise_shape avx512
 verify_masked_shift_shape avx2

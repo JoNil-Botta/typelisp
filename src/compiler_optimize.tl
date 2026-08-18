@@ -36730,6 +36730,138 @@
             (ir.CompilerIrValue.Var cur))))]
     [_ value]))
 
+;; A native Slice parameter is a stable two-word register group unless its
+;; local parameter storage is address-taken. Lowering nevertheless emits a
+;; fresh `Word slice, 1` for every access, so two checks of the same
+;; `(index, Slice length)` arrive here with different SSA length vars. GVN must
+;; not replace those Word operations with the Slice handle -- they have
+;; different runtime types -- but the bounds fact table only needs an identity
+;; key. Map every stable length extraction to its owning Slice parameter and
+;; use that synthetic key ONLY for exact OptBoundsFacts matching below.
+;;
+;; `OptLoadHeaderSet` supplies the whole-function address-taken exclusion used
+;; by load CSE as well: code 3 means a by-value native Slice parameter whose
+;; own two-word storage cannot be mutated through an escaped address. The key
+;; is never passed to comparison/range reasoning and is never written into IR.
+(define (opt-bounds-dom-slice-length-add-instr!
+  [headers : OptLoadHeaderSet]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [lengths : (&mut lengths opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.Word dst (ir.CompilerIrValue.Var raw-source) 1 ty)
+      (let
+        [source : ir.CompilerIrValue
+          (opt-bounds-dom-resolve copies (ir.CompilerIrValue.Var raw-source))]
+        (match source
+          [(ir.CompilerIrValue.Var source-var)
+            (if (and
+              (opt-integer-type? ty)
+              (= (opt-int-width ty) 64)
+              (opt-gvn-stable-var? sources dst)
+              (opt-gvn-stable-var? sources source-var)
+              (opt-load-slice-var? headers source-var))
+              (opt_i64_i64_map.insert-ref! lengths dst source-var)
+              unit)]
+          [_ unit]))]
+    [_ unit]))
+
+(define (opt-bounds-dom-slice-lengths-add-blocks
+  [headers : OptLoadHeaderSet]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [lengths : opt_i64_i64_map.Map (:consume)]
+  [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) lengths]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [index : i64 0]
+            [out : opt_i64_i64_map.Map lengths]
+            (begin
+              (while (< index count)
+                (begin
+                  (opt-bounds-dom-slice-length-add-instr!
+                    headers
+                    sources
+                    copies
+                    (&mut out)
+                    (ir.compiler-ir-instr-seq-ref instrs index))
+                  (set! index (+ index 1))))
+              (opt-bounds-dom-slice-lengths-add-blocks
+                headers
+                sources
+                copies
+                out
+                (__tl-box-place rest))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bounds-dom-slice-lengths-add-blocks
+        headers
+        sources
+        copies
+        lengths
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bounds-dom-slice-length-key
+  [lengths : opt_i64_i64_map.Map]
+  [length : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match length
+    [(ir.CompilerIrValue.Var length-var)
+      (match (opt_i64_i64_map.get (& lengths) length-var)
+        [(opt_i64_i64_map.LookupFound slice-var)
+          (ir.CompilerIrValue.Var slice-var)]
+        [(opt_i64_i64_map.LookupMissing) length])]
+    [_ length]))
+
+(define (opt-bounds-dom-params-have-slice?
+  [type-segment-bases : i64]
+  [params : ir.CompilerIrParamList]) : bool
+  (match params
+    [(ir.CompilerIrParamList.Nil) false]
+    [(ir.CompilerIrParamList.Cons param rest)
+      (match param
+        [(ir.CompilerIrParam.Param _ ty _)
+          (or
+            (opt-load-slice-param-type? type-segment-bases ty)
+            (opt-bounds-dom-params-have-slice?
+              type-segment-bases
+              (__tl-box-place rest)))])]
+    [(ir.CompilerIrParamList.Array seq)
+      (let
+        [index : i64 0]
+        [found : bool false]
+        (begin
+          (while (and
+            (not found)
+            (< index (ir.compiler-ir-param-seq-count seq)))
+            (begin
+              (match (ir.compiler-ir-param-seq-ref seq index)
+                [(ir.CompilerIrParam.Param _ ty _)
+                  (if (opt-load-slice-param-type? type-segment-bases ty)
+                    (set! found true)
+                    unit)])
+              (set! index (+ index 1))))
+          found))]))
+
+(define (opt-bounds-dom-slice-lengths
+  [type-segment-bases : i64]
+  [params : ir.CompilerIrParamList]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
+  (if (opt-bounds-dom-params-have-slice? type-segment-bases params)
+    (opt-bounds-dom-slice-lengths-add-blocks
+      (opt-load-header-set-from-function type-segment-bases params blocks)
+      sources
+      copies
+      (opt_i64_i64_map.with-capacity 16)
+      blocks)
+    (opt_i64_i64_map.with-capacity 1)))
+
 ;; --- dominating comparison facts --------------------------------------------
 ;;
 ;; A conditional branch decides its condition for the whole subtree dominated by
@@ -38134,6 +38266,7 @@
   [facts : OptBoundsFacts]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
+  [slice-lengths : opt_i64_i64_map.Map]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : OptBoundsDomWalk
   ;; Retain-only walk (drops bounds checks a dominating check/comparison already
@@ -38169,6 +38302,10 @@
                     (opt-bounds-dom-resolve copies idx)]
                   [clen : ir.CompilerIrValue
                     (opt-bounds-dom-resolve copies len)]
+                  ;; Canonical fact identity for stable native Slice length
+                  ;; Words. Arithmetic and comparison queries keep `clen`.
+                  [fact-len : ir.CompilerIrValue
+                    (opt-bounds-dom-slice-length-key slice-lengths clen)]
                   ;; Both range predicates below reason about the pre-cast i64
                   ;; spelling the guard comparisons use, so strip once here.
                   [sidx : ir.CompilerIrValue
@@ -38184,7 +38321,7 @@
                       copies
                       clen)]
                   (if (or
-                    (opt-bounds-contains cur-facts cidx clen)
+                    (opt-bounds-contains cur-facts cidx fact-len)
                     (opt-bounds-dom-mask-in-range?
                       type-segment-bases
                       defs
@@ -38259,7 +38396,7 @@
                                     (box cur-cmp-facts)))))
                             (set!
                               cur-facts
-                              (opt-bounds-add cur-facts cidx clen)))
+                              (opt-bounds-add cur-facts cidx fact-len)))
                           unit)))))]
               [_
                 (ir.compiler-ir-instr-builder-push!
@@ -38735,6 +38872,7 @@
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
+  [slice-lengths : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [blocks : ir.CompilerIrBlockList]
@@ -38764,6 +38902,7 @@
                   facts
                   sources
                   copies
+                  slice-lengths
                   instrs
                   0)
                   [(OptBoundsDomWalk.Walk rewritten out-facts out-cmp-facts)
@@ -38781,6 +38920,7 @@
                         terms
                         sources
                         copies
+                        slice-lengths
                         out-cmp-facts
                         out-facts
                         blocks
@@ -38882,6 +39022,7 @@
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
+  [slice-lengths : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [blocks : ir.CompilerIrBlockList]
@@ -38908,6 +39049,7 @@
               terms
               sources
               copies
+              slice-lengths
               (opt-bounds-dom-child-cmp-facts
                 context.doms
                 index
@@ -38941,6 +39083,13 @@
         sources
         (opt_i64_i64_map.with-capacity 64)
         blocks)]
+    [slice-lengths : opt_i64_i64_map.Map
+      (opt-bounds-dom-slice-lengths
+        type-segment-bases
+        params
+        sources
+        copies
+        blocks)]
     [doms : OptDomInfo context.doms]
     [index : OptCfgIndex context.index]
     [count : i64 (opt-cfg-index-block-count index)]
@@ -38967,6 +39116,7 @@
               terms
               sources
               copies
+              slice-lengths
               (OptDomCmpFacts.Nil)
               (OptBoundsFacts.Nil)
               blocks

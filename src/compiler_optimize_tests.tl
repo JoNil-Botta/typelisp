@@ -128,7 +128,7 @@
   switch-copy-env-indexed-semantics
   (let
     [env : compiler_optimize.OptSwitchCopyEnv
-      (compiler_optimize.opt-switch-copy-env-new)]
+      (compiler_optimize.OptSwitchCopyEnv.Empty)]
     (begin
       (test.assert-i64-eq
         (compiler_optimize.opt-switch-copy-env-resolve env 12)

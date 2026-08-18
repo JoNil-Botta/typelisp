@@ -77,6 +77,6 @@
     [x : i64 (+ (sink-probe 3) (sink-probe 400))]
     [y : i64 (dup-probe 64 30)]
     [z : i64 (keep-probe 3 9)]
-    (if (and (> x 0) (and (not (= y 0)) (not (= z 0))))
+    (if (and (> x 0) (not (= y 0)) (not (= z 0)))
       42
       1)))

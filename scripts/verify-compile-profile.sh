@@ -1620,9 +1620,19 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 73,400,320 physical payload bytes, leaving 55,462 nodes of headroom.
     # #5754's context-projected expression reads cross the boundary to 36
     # segments: the authoritative Windows probe measured 2,298,673 used nodes,
-    # 2,359,296 capacity, and 75,497,472 physical payload bytes.
+    # 2,359,296 capacity, and 75,497,472 physical payload bytes. The
+    # instruction-gap bank's second series (bounds_dom run widening, LICM
+    # frame-object and global-box provenance, per-cell call mod-ref, block
+    # layout, cold-arm carriers, loop ladders; ~16,000 optimizer/regalloc/
+    # backend lines with their self-tests) adds ~22,800 checked nodes on top of
+    # the #6731 tree and crosses to 37 segments: the Linux-host selfhost probe
+    # measured 2,365,142 used nodes against the 2,359,296 line (main measured
+    # 2,342,380 on the same host, which over-reads the Windows probe by
+    # ~3,000 nodes), so the authoritative Windows probe lands a few thousand
+    # nodes past the boundary: 2,424,832 capacity and 77,594,624 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 36 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 37 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

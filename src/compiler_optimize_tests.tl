@@ -26888,10 +26888,7 @@
             nominal-unsupported-index))
         22]
       [(not
-          (compiler_optimize.opt-function-eq
-            bases
-            over-budget
-            over-budget-out))
+          (compiler_optimize.opt-function-eq bases over-budget over-budget-out))
         23]
       [else 42])))
 

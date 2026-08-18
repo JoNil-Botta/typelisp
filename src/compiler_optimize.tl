@@ -13437,9 +13437,17 @@
         (match (opt-cfg-index-block index id)
           [(OptMaybeBlock.No)
             (opt-ssa-rename-tree-work
-              context facts sites work-ids work-exits work-checkpoints
-              child-heads child-next
-              slot env state)]
+              context
+              facts
+              sites
+              work-ids
+              work-exits
+              work-checkpoints
+              child-heads
+              child-next
+              slot
+              env
+              state)]
           [(OptMaybeBlock.Some block)
             (match block
               [(ir.CompilerIrBlock.Block label instrs)
@@ -13460,7 +13468,11 @@
                       (let
                         [next-state : OptSsaRenameState
                           (opt-ssa-rename-state-add-block
-                            state label renamed out-env next-var)]
+                            state
+                            label
+                            renamed
+                            out-env
+                            next-var)]
                         [next-work-count : i64 (+ slot 1)]
                         [child-link : i64 (array-ref child-heads id)]
                         (begin
@@ -13490,7 +13502,9 @@
                                     (array-ref work-checkpoints next-work-count)
                                     0)
                                   (set! next-work-count (+ next-work-count 1))
-                                  (set! child-link (array-ref child-next child-id))))))
+                                  (set!
+                                    child-link
+                                    (array-ref child-next child-id))))))
                           (opt-ssa-rename-tree-work
                             context
                             facts
@@ -14043,9 +14057,7 @@
   4096)
 
 (define (opt-ssa-context-within-budget? [context : OptCfgContext]) : bool
-  (<=
-    (opt-cfg-index-block-count context.index)
-    (opt-ssa-block-budget)))
+  (<= (opt-cfg-index-block-count context.index) (opt-ssa-block-budget)))
 
 (define (opt-ssa-construct-function-with-representations
   [type-segment-bases : i64]

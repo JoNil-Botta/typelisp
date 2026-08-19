@@ -204,8 +204,8 @@
   [case-id : i64]
   [points-x : (&mut points-x f32v.Vec)]
   [points-y : (&mut points-y f32v.Vec)]
-  [got-x : (&mut got-x f32v.Vec)]
-  [got-y : (&mut got-y f32v.Vec)]
+  [result-x : (&mut result-x f32v.Vec)]
+  [result-y : (&mut result-y f32v.Vec)]
   [want-x : (&mut want-x f32v.Vec)]
   [want-y : (&mut want-y f32v.Vec)]) : bool
   (let
@@ -232,8 +232,8 @@
       (let
         [points-x-fill : (&mut points-x (Slice f32)) (f32v.view-mut points-x)]
         [points-y-fill : (&mut points-y (Slice f32)) (f32v.view-mut points-y)]
-        [got-x-fill : (&mut got-x (Slice f32)) (f32v.view-mut got-x)]
-        [got-y-fill : (&mut got-y (Slice f32)) (f32v.view-mut got-y)]
+        [result-x-fill : (&mut result-x (Slice f32)) (f32v.view-mut result-x)]
+        [result-y-fill : (&mut result-y (Slice f32)) (f32v.view-mut result-y)]
         [want-x-fill : (&mut want-x (Slice f32)) (f32v.view-mut want-x)]
         [want-y-fill : (&mut want-y (Slice f32)) (f32v.view-mut want-y)]
         (begin
@@ -242,8 +242,8 @@
             points-y-fill
             case-id
             count)
-          (point-transform-fill got-x-fill (+ count 1) sentinel)
-          (point-transform-fill got-y-fill (+ count 1) sentinel)
+          (point-transform-fill result-x-fill (+ count 1) sentinel)
+          (point-transform-fill result-y-fill (+ count 1) sentinel)
           (point-transform-fill want-x-fill (+ count 1) sentinel)
           (point-transform-fill want-y-fill (+ count 1) sentinel)))
       ;; These six views are created once per case, outside the 100-repetition
@@ -251,8 +251,8 @@
       (let
         [points-x-view : (& points-x (Slice f32)) (f32v.view points-x)]
         [points-y-view : (& points-y (Slice f32)) (f32v.view points-y)]
-        [got-x-view : (&mut got-x (Slice f32)) (f32v.view-mut got-x)]
-        [got-y-view : (&mut got-y (Slice f32)) (f32v.view-mut got-y)]
+        [result-x-view : (&mut result-x (Slice f32)) (f32v.view-mut result-x)]
+        [result-y-view : (&mut result-y (Slice f32)) (f32v.view-mut result-y)]
         [want-x-view : (&mut want-x (Slice f32)) (f32v.view-mut want-x)]
         [want-y-view : (&mut want-y (Slice f32)) (f32v.view-mut want-y)]
         (begin
@@ -269,48 +269,68 @@
             cos-theta
             strength
             count)
+          ;; Call the measured kernel through a function value, as the
+          ;; Mandelbrot harness does: the standalone `transform-points` symbol
+          ;; is the unit the static contract extracts, so single-site
+          ;; absorption must not fold it into this harness loop.
           (while (< repetition 100)
             (begin
-              (transform-points
-                points-x-view
-                points-y-view
-                got-x-view
-                got-y-view
-                scale-x
-                scale-y
-                translate-x
-                translate-y
-                sin-theta
-                cos-theta
-                strength
-                count)
+              (let
+                [kernel : (->
+                  (& points-x (Slice f32))
+                  (& points-y (Slice f32))
+                  (&mut result-x (Slice f32))
+                  (&mut result-y (Slice f32))
+                  f32
+                  f32
+                  f32
+                  f32
+                  f32
+                  f32
+                  f32
+                  i64
+                  unit)
+                  transform-points]
+                (kernel
+                  points-x-view
+                  points-y-view
+                  result-x-view
+                  result-y-view
+                  scale-x
+                  scale-y
+                  translate-x
+                  translate-y
+                  sin-theta
+                  cos-theta
+                  strength
+                  count))
               (set! repetition (+ repetition 1))))
           (while (and ok (< i count))
             (begin
               (if (and
                 (point-transform-close?
-                  (array-ref got-x-view i)
+                  (array-ref result-x-view i)
                   (array-ref want-x-view i)
                   max-ulp)
                 (point-transform-close?
-                  (array-ref got-y-view i)
+                  (array-ref result-y-view i)
                   (array-ref want-y-view i)
                   max-ulp)
                 (point-transform-fixed-exact?
                   case-id
                   i
-                  (array-ref got-x-view i)
-                  (array-ref got-y-view i)))
+                  (array-ref result-x-view i)
+                  (array-ref result-y-view i)))
                 unit
                 (set! ok false))
               (set! i (+ i 1))))
           (and
             ok
             (=
-              (io.float-f32-bits (array-ref got-x-view count))
+              (io.float-f32-bits (array-ref result-x-view count))
               (io.float-f32-bits sentinel))
             (=
-              (io.float-f32-bits (array-ref got-y-view count))
+              (io.float-f32-bits (array-ref result-y-view count))
               (io.float-f32-bits sentinel))))))))
 
 (define (point-transform-buffer [capacity : i64]) : f32v.Vec
@@ -329,8 +349,8 @@
     [capacity : i64 20]
     [points-x : f32v.Vec (point-transform-buffer capacity)]
     [points-y : f32v.Vec (point-transform-buffer capacity)]
-    [got-x : f32v.Vec (point-transform-buffer capacity)]
-    [got-y : f32v.Vec (point-transform-buffer capacity)]
+    [result-x : f32v.Vec (point-transform-buffer capacity)]
+    [result-y : f32v.Vec (point-transform-buffer capacity)]
     [want-x : f32v.Vec (point-transform-buffer capacity)]
     [want-y : f32v.Vec (point-transform-buffer capacity)]
     [case-id : i64 0]
@@ -342,8 +362,8 @@
             case-id
             (&mut points-x)
             (&mut points-y)
-            (&mut got-x)
-            (&mut got-y)
+            (&mut result-x)
+            (&mut result-y)
             (&mut want-x)
             (&mut want-y))
             unit

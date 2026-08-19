@@ -404,7 +404,7 @@
     (unsafe
       (ptr->int
         (ptr-cast
-          (array-data
+          (__tl_array-data
             (__tl-compiler-owned-shared-view-dyn-ref-as
               items
               (__tl_dyn-array i64)))
@@ -415,7 +415,7 @@
   (cast
     (unsafe
       (ptr->int
-        (array-data
+        (__tl_array-data
           (__tl-compiler-owned-shared-view-dyn-ref-as items (__tl_dyn-array u8)))))
     : i64))
 
@@ -1622,7 +1622,7 @@
       unit)))
 
 (define (tlci-loader-test-macro-loaded
-  [storage : (__tl_dyn-array u8)]
+  [storage : (& storage (__tl_dyn-array u8))]
   [table : i64]
   [count : i64]) : TlciLoadedImage
   (let
@@ -1698,10 +1698,7 @@
       (tlci-loader-test-write-macro-entry! (&mut storage) 32 72 3 96 0)
       (let
         [duplicate-loaded : TlciLoadedImage
-          (tlci-loader-test-macro-loaded
-            (tlci-loader-global-shared-view storage)
-            base
-            2)]
+          (tlci-loader-test-macro-loaded (& storage) base 2)]
         [duplicate : bool
           (tlci-loader-test-validation-error?
             (tlci-loader-validate-macro-entries duplicate-loaded)
@@ -1709,10 +1706,7 @@
         [_distinct-name : unit
           (tlci-loader-test-put-string! (&mut storage) 72 "two")]
         [valid-loaded : TlciLoadedImage
-          (tlci-loader-test-macro-loaded
-            (tlci-loader-global-shared-view storage)
-            base
-            2)]
+          (tlci-loader-test-macro-loaded (& storage) base 2)]
         [valid : bool
           (match (tlci-loader-validate-macro-entries valid-loaded)
             [(ResultTlciLoaderUnit.Ok) true]
@@ -1722,10 +1716,7 @@
             (+ base tlci.tlci-macro-entry-reserved0-offset)
             1)]
         [reserved-loaded : TlciLoadedImage
-          (tlci-loader-test-macro-loaded
-            (tlci-loader-global-shared-view storage)
-            base
-            1)]
+          (tlci-loader-test-macro-loaded (& storage) base 1)]
         [reserved : bool
           (tlci-loader-test-validation-error?
             (tlci-loader-validate-macro-entries reserved-loaded)
@@ -1733,10 +1724,7 @@
         [_bad-name : unit
           (tlci-loader-test-write-macro-entry! (&mut storage) 0 127 2 96 0)]
         [bad-name-loaded : TlciLoadedImage
-          (tlci-loader-test-macro-loaded
-            (tlci-loader-global-shared-view storage)
-            base
-            1)]
+          (tlci-loader-test-macro-loaded (& storage) base 1)]
         [bad-name : bool
           (tlci-loader-test-validation-error?
             (tlci-loader-validate-macro-entries bad-name-loaded)
@@ -1744,28 +1732,19 @@
         [_bad-function : unit
           (tlci-loader-test-write-macro-entry! (&mut storage) 0 64 3 128 0)]
         [bad-function-loaded : TlciLoadedImage
-          (tlci-loader-test-macro-loaded
-            (tlci-loader-global-shared-view storage)
-            base
-            1)]
+          (tlci-loader-test-macro-loaded (& storage) base 1)]
         [bad-function : bool
           (tlci-loader-test-validation-error?
             (tlci-loader-validate-macro-entries bad-function-loaded)
             "tlci loader: macro entry function outside code section")]
         [unaligned-loaded : TlciLoadedImage
-          (tlci-loader-test-macro-loaded
-            (tlci-loader-global-shared-view storage)
-            (+ base 1)
-            1)]
+          (tlci-loader-test-macro-loaded (& storage) (+ base 1) 1)]
         [unaligned : bool
           (tlci-loader-test-validation-error?
             (tlci-loader-validate-macro-entries unaligned-loaded)
             "tlci loader: macro entry table must be 8-byte aligned")]
         [outside-loaded : TlciLoadedImage
-          (tlci-loader-test-macro-loaded
-            (tlci-loader-global-shared-view storage)
-            (+ base 112)
-            1)]
+          (tlci-loader-test-macro-loaded (& storage) (+ base 112) 1)]
         [outside : bool
           (tlci-loader-test-validation-error?
             (tlci-loader-validate-macro-entries outside-loaded)
@@ -1810,10 +1789,7 @@
       (tlci-loader-test-write-macro-entry! (&mut storage) 0 64 3 96 0)
       (tlci-loader-test-write-macro-entry! (&mut storage) 32 72 3 104 0)
       (match (tlci-loader-index-macro-entries
-        (tlci-loader-test-macro-loaded
-          (tlci-loader-global-shared-view storage)
-          base
-          2))
+        (tlci-loader-test-macro-loaded (& storage) base 2))
         [(ResultTlciLoadedImage.Err _) false]
         [(ResultTlciLoadedImage.Ok indexed)
           (match (tlci-loader-resolve-macro-entry (& indexed) "one")
@@ -1869,10 +1845,7 @@
                         (and
                           shell-ok
                           (match (tlci-loader-index-macro-entries
-                            (tlci-loader-test-macro-loaded
-                              (tlci-loader-global-shared-view storage)
-                              base
-                              2))
+                            (tlci-loader-test-macro-loaded (& storage) base 2))
                             [(ResultTlciLoadedImage.Err _) false]
                             [(ResultTlciLoadedImage.Ok remapped)
                               (match (tlci-loader-resolve-macro-entry

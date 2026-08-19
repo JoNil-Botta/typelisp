@@ -2,6 +2,18 @@
   "exit": 0,
   "stderr_exact": "",
   "message_checks": [
-    {"jsonpath_id": 2, "raw_contains": "error", "raw_contains": "-32600", "raw_contains": "Not yet implemented"}
+    {"jsonpath_id": 1, "raw_contains": "\"signatureHelpProvider\":{\"triggerCharacters\":[\" \"],\"retriggerCharacters\":[\")\"]}"},
+    {"jsonpath_id": 2, "json_contains": "\"result\":{\"signatures\":[{\"label\":\"(add [left : i64] [right : (Tuple i64 bool)]) : i64\",\"documentation\":\"Adds values.\",\"parameters\":[{\"label\":[5,17]},{\"label\":[18,44]}]}],\"activeSignature\":0,\"activeParameter\":1}"},
+    {"jsonpath_id": 3, "json_contains": "\"result\":{\"signatures\":[{\"label\":\"(add [left : i64] [right : (Tuple i64 bool)]) : i64\"", "raw_contains": "\"activeParameter\":1"},
+    {"jsonpath_id": 4, "json_contains": "\"result\":{\"signatures\":[{\"label\":\"(zero) : i64\",\"parameters\":[]}],\"activeSignature\":0}", "raw_not_contains": "activeParameter"},
+    {"jsonpath_id": 5, "raw_contains": "\"label\":\"(foreign i64) : i64\"", "raw_contains": "\"activeParameter\":0"},
+    {"jsonpath_id": 6, "raw_contains": "\"label\":\"(callback i64) : i64\"", "raw_contains": "\"activeParameter\":0"},
+    {"jsonpath_id": 7, "raw_contains": "\"label\":\"(wrap [value : Expr]) : Expr\"", "raw_contains": "\"label\":[6,20]"},
+    {"jsonpath_id": 8, "raw_contains": "\"label\":\"(add bool) : bool\"", "raw_contains": "\"activeParameter\":0", "raw_not_contains": "left"},
+    {"jsonpath_id": 9, "raw_contains": "\"label\":\"(sig.combine [left : i64] [right : i64]) : i64\"", "raw_contains": "Imported combine documentation.", "raw_contains": "\"activeParameter\":1"},
+    {"jsonpath_id": 10, "json_contains": "\"result\":null", "jsonpath_result": null},
+    {"jsonpath_id": 11, "json_contains": "\"result\":null", "jsonpath_result": null},
+    {"jsonpath_id": 12, "raw_contains": "\"label\":\"(add [left : i64] [right : (Tuple i64 bool)]) : i64\"", "raw_contains": "\"activeParameter\":0"},
+    {"jsonpath_id": 13, "json_contains": "\"result\":null", "jsonpath_result": null}
   ]
 }

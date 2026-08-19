@@ -8,6 +8,10 @@
 (define (byte-copy-u8 [value : i64]) : u8
   (cast value : u8))
 
+(defmacro (byte-copy-base [items : Expr]) : (MutPtr u8)
+  `(unsafe
+    (__tl_array-data ,items)))
+
 (define (byte-copy-source-at [base : (MutPtr u8)] [offset : i64]) : (Ptr u8)
   (unsafe
     (ptr-cast (ptr-offset base offset) : (Ptr u8))))
@@ -74,8 +78,12 @@
   (let
     [src : (__tl_dyn-array u8) (array.make-array u8 4)]
     [dst : (__tl_dyn-array u8) (array.make-array u8 4)]
-    [src-base : (MutPtr u8) (unsafe (array-data src))]
-    [dst-base : (MutPtr u8) (unsafe (array-data dst))]
+    [src-base : (MutPtr u8)
+      (unsafe
+        (array-data src))]
+    [dst-base : (MutPtr u8)
+      (unsafe
+        (array-data dst))]
     (begin
       (byte-copy-fill! (&mut src) 4 10)
       (byte-copy-fill-constant! (&mut dst) 4 77)
@@ -91,8 +99,12 @@
   (let
     [src : (__tl_dyn-array u8) (array.make-array u8 20)]
     [dst : (__tl_dyn-array u8) (array.make-array u8 20)]
-    [src-base : (MutPtr u8) (unsafe (array-data src))]
-    [dst-base : (MutPtr u8) (unsafe (array-data dst))]
+    [src-base : (MutPtr u8)
+      (unsafe
+        (array-data src))]
+    [dst-base : (MutPtr u8)
+      (unsafe
+        (array-data dst))]
     [n : i64 11]
     (begin
       (byte-copy-fill! (&mut src) 20 20)
@@ -106,8 +118,12 @@
   (let
     [src : (__tl_dyn-array u8) (array.make-array u8 12)]
     [dst : (__tl_dyn-array u8) (array.make-array u8 12)]
-    [src-base : (MutPtr u8) (unsafe (array-data src))]
-    [dst-base : (MutPtr u8) (unsafe (array-data dst))]
+    [src-base : (MutPtr u8)
+      (unsafe
+        (array-data src))]
+    [dst-base : (MutPtr u8)
+      (unsafe
+        (array-data dst))]
     (begin
       (byte-copy-fill! (&mut src) 12 40)
       (byte-copy-fill-constant! (&mut dst) 12 88)
@@ -128,8 +144,12 @@
   (let
     [src : (__tl_dyn-array u8) (array.make-array u8 96)]
     [dst : (__tl_dyn-array u8) (array.make-array u8 96)]
-    [src-base : (MutPtr u8) (unsafe (array-data src))]
-    [dst-base : (MutPtr u8) (unsafe (array-data dst))]
+    [src-base : (MutPtr u8)
+      (unsafe
+        (array-data src))]
+    [dst-base : (MutPtr u8)
+      (unsafe
+        (array-data dst))]
     [n : i64 (+ 64 9)]
     (begin
       (byte-copy-fill! (&mut src) 96 3)
@@ -142,7 +162,9 @@
 (define (byte-copy-overlap-dst-after-src-case) : unit
   (let
     [buf : (__tl_dyn-array u8) (array.make-array u8 20)]
-    [base : (MutPtr u8) (unsafe (array-data buf))]
+    [base : (MutPtr u8)
+      (unsafe
+        (array-data buf))]
     (begin
       (byte-copy-fill! (&mut buf) 20 0)
       (string.str-copy-bytes-into (byte-copy-source-at base 0) base 3 10)
@@ -153,7 +175,9 @@
 (define (byte-copy-medium-overlap-dst-after-src-case) : unit
   (let
     [buf : (__tl_dyn-array u8) (array.make-array u8 160)]
-    [base : (MutPtr u8) (unsafe (array-data buf))]
+    [base : (MutPtr u8)
+      (unsafe
+        (array-data buf))]
     (begin
       (byte-copy-fill! (&mut buf) 160 0)
       (string.str-copy-bytes-into (byte-copy-source-at base 0) base 17 120)
@@ -164,7 +188,9 @@
 (define (byte-copy-medium-overlap-dst-before-src-case) : unit
   (let
     [buf : (__tl_dyn-array u8) (array.make-array u8 160)]
-    [base : (MutPtr u8) (unsafe (array-data buf))]
+    [base : (MutPtr u8)
+      (unsafe
+        (array-data buf))]
     (begin
       (byte-copy-fill! (&mut buf) 160 0)
       (string.str-copy-bytes-into (byte-copy-source-at base 17) base 0 120)

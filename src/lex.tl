@@ -1399,6 +1399,9 @@
     [witness : token.SpannedToken
       (token.spanned-token-new token.Token.LBracket 7 11)]
     (begin
+      ;; Earlier checks may intentionally release the shared storage. Keep
+      ;; this ownership check independent of test order before parking slot 0.
+      (spanned-token-buffer-ensure! 1 0)
       (in-arena
         scratch
         (begin
@@ -1433,7 +1436,7 @@
       (token.tag
         (token.spanned-token-tok
           (unsafe
-            (ptr-read (array-data lex-spanned-token-buffer)))))
+            (ptr-read (__tl_array-data lex-spanned-token-buffer)))))
       (token.tag-lbracket))
     (= (token.spanned-token-line (array-ref lex-spanned-token-buffer 0)) 7)
     (= (token.spanned-token-col (array-ref lex-spanned-token-buffer 0)) 11)))
@@ -1500,25 +1503,21 @@
     [(ResultTokens.Err _) false]))
 
 (define (token-int-eq?
-  [toks : (__tl_dyn-array token.Token)]
+  [toks : (& toks (__tl_dyn-array token.Token))]
   [idx : i64]
   [value : i64]) : bool
   (let
-    [tok : token.Token
-      (unsafe
-        (ptr-read (ptr-offset (array-data toks) idx)))]
+    [tok : token.Token (token.token-copy (& (array-ref toks idx)))]
     (and
       (= (token.tag (global-shared-view tok)) (token.tag-int))
       (= (token.int tok) value))))
 
 (define (token-sym-eq?
-  [toks : (__tl_dyn-array token.Token)]
+  [toks : (& toks (__tl_dyn-array token.Token))]
   [idx : i64]
   [value : String]) : bool
   (let
-    [tok : token.Token
-      (unsafe
-        (ptr-read (ptr-offset (array-data toks) idx)))]
+    [tok : token.Token (token.token-copy (& (array-ref toks idx)))]
     (and
       (= (token.tag (global-shared-view tok)) (token.tag-sym))
       (string.eq (token.sym tok) value))))
@@ -1527,11 +1526,11 @@
   (match (result "(0x2a 0x2A -0x2a 0b101010 -0b101010)")
     [(ResultTokens.Ok toks)
       (and
-        (token-int-eq? (global-shared-view toks) 1 42)
-        (token-int-eq? (global-shared-view toks) 2 42)
-        (token-int-eq? (global-shared-view toks) 3 -42)
-        (token-int-eq? (global-shared-view toks) 4 42)
-        (token-int-eq? (global-shared-view toks) 5 -42)
+        (token-int-eq? (& toks) 1 42)
+        (token-int-eq? (& toks) 2 42)
+        (token-int-eq? (& toks) 3 -42)
+        (token-int-eq? (& toks) 4 42)
+        (token-int-eq? (& toks) 5 -42)
         (= (token.tag (array-shared-view toks 7)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
@@ -1599,28 +1598,25 @@
     "[x:i64] [y :i32] (:link \"m\") ( :unknown 1) (import pkg:math.core :as math)")
     [(ResultTokens.Ok toks)
       (and
-        (token-sym-eq? (global-shared-view toks) 1 "x")
-        (token-sym-eq? (global-shared-view toks) 2 ":")
-        (token-sym-eq? (global-shared-view toks) 3 "i64")
-        (token-sym-eq? (global-shared-view toks) 6 "y")
-        (token-sym-eq? (global-shared-view toks) 7 ":")
-        (token-sym-eq? (global-shared-view toks) 8 "i32")
-        (token-sym-eq? (global-shared-view toks) 11 ":link")
-        (token-sym-eq? (global-shared-view toks) 15 ":unknown")
-        (token-sym-eq? (global-shared-view toks) 20 "pkg:math.core")
-        (token-sym-eq? (global-shared-view toks) 21 ":as")
+        (token-sym-eq? (& toks) 1 "x")
+        (token-sym-eq? (& toks) 2 ":")
+        (token-sym-eq? (& toks) 3 "i64")
+        (token-sym-eq? (& toks) 6 "y")
+        (token-sym-eq? (& toks) 7 ":")
+        (token-sym-eq? (& toks) 8 "i32")
+        (token-sym-eq? (& toks) 11 ":link")
+        (token-sym-eq? (& toks) 15 ":unknown")
+        (token-sym-eq? (& toks) 20 "pkg:math.core")
+        (token-sym-eq? (& toks) 21 ":as")
         (= (token.tag (array-shared-view toks 24)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
 (define (spanned-token-sym-eq?
-  [toks : (__tl_dyn-array token.SpannedToken)]
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
   [idx : i64]
   [value : String]) : bool
   (let
-    [spanned : token.SpannedToken
-      (unsafe
-        (ptr-read (ptr-offset (array-data toks) idx)))]
-    [tok : token.Token (token.spanned-token-tok spanned)]
+    [tok : token.Token (token.spanned-token-token-ref (& (array-ref toks idx)))]
     (and
       (= (token.tag (global-shared-view tok)) (token.tag-sym))
       (string.eq (token.sym tok) value))))
@@ -1629,10 +1625,10 @@
   (match (spanned-result "[x:i64] (:link \"m\")")
     [(ResultSpannedTokens.Ok toks)
       (and
-        (spanned-token-sym-eq? (global-shared-view toks) 1 "x")
-        (spanned-token-sym-eq? (global-shared-view toks) 2 ":")
-        (spanned-token-sym-eq? (global-shared-view toks) 3 "i64")
-        (spanned-token-sym-eq? (global-shared-view toks) 6 ":link")
+        (spanned-token-sym-eq? (& toks) 1 "x")
+        (spanned-token-sym-eq? (& toks) 2 ":")
+        (spanned-token-sym-eq? (& toks) 3 "i64")
+        (spanned-token-sym-eq? (& toks) 6 ":link")
         (=
           (token.tag (token.spanned-token-tok (array-shared-view toks 9)))
           (token.tag-end)))]
@@ -1834,7 +1830,7 @@
         (= (token.tag (array-shared-view toks 8)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
-(define (span-positions-ok? [s : (__tl_dyn-array token.SpannedToken)]) : bool
+(define (span-positions-ok? [s : (& s (__tl_dyn-array token.SpannedToken))]) : bool
   (let
     [ok : bool true]
     (begin
@@ -1866,7 +1862,7 @@
         unit
         (set! ok false))
       (if (=
-        (token.tag (token.spanned-token-tok (array-shared-view s 7)))
+        (token.tag (token.spanned-token-token-ref (& (array-ref s 7))))
         (token.tag-end))
         unit
         (set! ok false))
@@ -1995,76 +1991,78 @@
         (= (ci.intern-pool-len) active-len-before)
         (string.eq (ci.intern-str active-decoy-id) "lexer-active-decoy")))))
 
-(define (span-self-test) : i64
+(define (span-positions-self-ok?) : bool
   (match (spanned-result "(a\n  (b c))")
-    [(ResultSpannedTokens.Ok s)
-      (let
-        [ok : bool true]
-        (begin
-          (if (span-positions-ok? (global-shared-view s))
-            unit
-            (set! ok false))
-          (if (string-escapes-ok?)
-            unit
-            (set! ok false))
-          (if (string-token-retains-id?)
-            unit
-            (set! ok false))
-          (if (basic-token-sequence-ok?)
-            unit
-            (set! ok false))
-          (if (colon-annotation-tokens-ok?)
-            unit
-            (set! ok false))
-          (if (spanned-colon-annotation-tokens-ok?)
-            unit
-            (set! ok false))
-          (if (char-literals-ok?)
-            unit
-            (set! ok false))
-          (if (quote-vs-apostrophe-char-ok?)
-            unit
-            (set! ok false))
-          (if (error-spans-ok?)
-            unit
-            (set! ok false))
-          (if (percent-symbol-ok?)
-            unit
-            (set! ok false))
-          (if (ampersand-symbol-ok?)
-            unit
-            (set! ok false))
-          (if (float-token-ok?)
-            unit
-            (set! ok false))
-          (if (negative-int-token-ok?)
-            unit
-            (set! ok false))
-          (if (prefixed-int-token-ok?)
-            unit
-            (set! ok false))
-          (if (prefixed-int-errors-ok?)
-            unit
-            (set! ok false))
-          (if (check-prefixed-int-ok?)
-            unit
-            (set! ok false))
-          (if (check-prefixed-int-error-ok?)
-            unit
-            (set! ok false))
-          (if (quote-prefix-tokens-ok?)
-            unit
-            (set! ok false))
-          (if (lexer-intern-owner-isolation-ok?)
-            unit
-            (set! ok false))
-          (if (spanned-token-buffer-arena-ownership-ok?)
-            unit
-            (set! ok false))
-          (if (spanned-token-buffer-release-regrow-ok?)
-            unit
-            (set! ok false))
-          (if ok
-            42
-            1)))]
-    [(ResultSpannedTokens.Err _) 2]))
+    [(ResultSpannedTokens.Ok s) (span-positions-ok? (& s))]
+    [(ResultSpannedTokens.Err _) false]))
+
+(define (span-self-test) : i64
+  (let
+    [ok : bool true]
+    (begin
+      (if (span-positions-self-ok?)
+        unit
+        (set! ok false))
+      (if (string-escapes-ok?)
+        unit
+        (set! ok false))
+      (if (string-token-retains-id?)
+        unit
+        (set! ok false))
+      (if (basic-token-sequence-ok?)
+        unit
+        (set! ok false))
+      (if (colon-annotation-tokens-ok?)
+        unit
+        (set! ok false))
+      (if (spanned-colon-annotation-tokens-ok?)
+        unit
+        (set! ok false))
+      (if (char-literals-ok?)
+        unit
+        (set! ok false))
+      (if (quote-vs-apostrophe-char-ok?)
+        unit
+        (set! ok false))
+      (if (error-spans-ok?)
+        unit
+        (set! ok false))
+      (if (percent-symbol-ok?)
+        unit
+        (set! ok false))
+      (if (ampersand-symbol-ok?)
+        unit
+        (set! ok false))
+      (if (float-token-ok?)
+        unit
+        (set! ok false))
+      (if (negative-int-token-ok?)
+        unit
+        (set! ok false))
+      (if (prefixed-int-token-ok?)
+        unit
+        (set! ok false))
+      (if (prefixed-int-errors-ok?)
+        unit
+        (set! ok false))
+      (if (check-prefixed-int-ok?)
+        unit
+        (set! ok false))
+      (if (check-prefixed-int-error-ok?)
+        unit
+        (set! ok false))
+      (if (quote-prefix-tokens-ok?)
+        unit
+        (set! ok false))
+      (if (lexer-intern-owner-isolation-ok?)
+        unit
+        (set! ok false))
+      (if (spanned-token-buffer-arena-ownership-ok?)
+        unit
+        (set! ok false))
+      (if (spanned-token-buffer-release-regrow-ok?)
+        unit
+        (set! ok false))
+      (if ok
+        42
+        1))))

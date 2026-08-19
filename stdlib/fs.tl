@@ -549,11 +549,9 @@
 ;: Return a pointer to `WIN32_FIND_DATAA.cFileName`.
 (cfg
   windows
-  (define (fs-windows-find-data-name [data : (__tl_dyn-array u8)]) : (Ptr u8)
+  (define (fs-windows-find-data-name [data : (MutPtr u8)]) : (Ptr u8)
     (unsafe
-      (ptr-cast
-        (ptr-offset (io.array-ptr data) fs-windows-find-data-name-offset)
-        : (Ptr u8)))))
+      (ptr-cast (ptr-offset data fs-windows-find-data-name-offset) : (Ptr u8)))))
 
 ;: Return the Windows host status code for opening and closing a directory scan.
 (cfg
@@ -598,7 +596,7 @@
               (begin
                 (read-dir-append-entry!
                   (&mut out)
-                  (fs-windows-find-data-name data))
+                  (fs-windows-find-data-name (io.array-ptr data)))
                 (if (=
                   (fs-win-find-next-file handle (io.array-ptr data))
                   (cast 0 : i32))

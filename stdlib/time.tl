@@ -161,7 +161,7 @@
       [_ok : unit
         (stdlib.time.windows-get-system-time-as-file-time
           (unsafe
-            (array-data file-time)))]
+            (__tl_array-data file-time)))]
       [unix-ms : i64
         (-
           (/ (array-ref file-time 0) 10000)
@@ -180,11 +180,11 @@
       [counter-ok : i32
         (stdlib.time.windows-query-performance-counter
           (unsafe
-            (array-data counter)))]
+            (__tl_array-data counter)))]
       [freq-ok : i32
         (stdlib.time.windows-query-performance-frequency
           (unsafe
-            (array-data freq)))]
+            (__tl_array-data freq)))]
       [freq-value : i64 (array-ref freq 0)]
       (if (or (= counter-ok (cast 0 : i32)) (= freq-ok (cast 0 : i32)))
         (stdlib.time.unavailable "time: performance counter unavailable")
@@ -249,11 +249,11 @@
       [counter-ok : i32
         (stdlib.time.windows-query-performance-counter
           (unsafe
-            (array-data counter)))]
+            (__tl_array-data counter)))]
       [frequency-ok : i32
         (stdlib.time.windows-query-performance-frequency
           (unsafe
-            (array-data frequency-buffer)))]
+            (__tl_array-data frequency-buffer)))]
       [frequency : i64 (array-ref frequency-buffer 0)]
       [start : i64 (array-ref counter 0)]
       [remaining : i64 milliseconds]
@@ -278,7 +278,7 @@
                 [status : i32
                   (stdlib.time.windows-query-performance-counter
                     (unsafe
-                      (array-data counter)))]
+                      (__tl_array-data counter)))]
                 [elapsed : i64 (- (array-ref counter 0) start)]
                 (if (or (= status (cast 0 : i32)) (< elapsed 0))
                   (set! done true)

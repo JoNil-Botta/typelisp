@@ -93,7 +93,7 @@
                 (ptr-read (ptr-offset ptr i))))
             (set! i (+ i 1))))
         (unsafe
-          (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) n))))))
+          (string-from-bytes (ptr-cast (__tl_array-data buf) : (Ptr u8)) n))))))
 
 ;: Lowercase an ASCII byte (A-Z -> a-z); other bytes pass through. Used for the
 ;: case-insensitive environment-name match on Windows.
@@ -293,13 +293,13 @@
 (unsafe
   (define (array-u8-ptr [bytes : (__tl_dyn-array u8)]) : (Ptr u8)
     (unsafe
-      (ptr-cast (array-data bytes) : (Ptr u8)))))
+      (ptr-cast (__tl_array-data bytes) : (Ptr u8)))))
 
 ;: Return the integer address of an array's backing storage.
 (unsafe
   (define (array-u64-addr [slots : (__tl_dyn-array u64)]) : i64
     (unsafe
-      (cast (ptr->int (ptr-cast (array-data slots) : (Ptr u8))) : i64))))
+      (cast (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8))) : i64))))
 
 ;: Count current Linux environment entries whose names do not match `name`.
 (define (linux-nonmatching-count

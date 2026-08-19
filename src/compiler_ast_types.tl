@@ -1159,7 +1159,7 @@
   (-
     (cast
       (unsafe
-        (ptr->int (ptr-cast (array-data segment) : (Ptr u8))))
+        (ptr->int (ptr-cast (__tl_array-data segment) : (Ptr u8))))
       : i64)
     (* segment-index ast-expr-node-pool-segment-bytes)))
 
@@ -1176,7 +1176,7 @@
           0))
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data bases) : (Ptr u8))))
+          (ptr->int (ptr-cast (__tl_array-data bases) : (Ptr u8))))
         : i64))))
 (define ast-node-pool-segment-count : i64
   1)
@@ -1399,7 +1399,7 @@
       (AstExprNodePoolState
         (cast
           (unsafe
-            (ptr->int (ptr-cast (array-data segment-bases) : (Ptr u8))))
+            (ptr->int (ptr-cast (__tl_array-data segment-bases) : (Ptr u8))))
           : i64)
         0
         base-arena
@@ -1551,7 +1551,7 @@
   (-
     (cast
       (unsafe
-        (ptr->int (ptr-cast (array-data segment) : (Ptr u8))))
+        (ptr->int (ptr-cast (__tl_array-data segment) : (Ptr u8))))
       : i64)
     (* segment-index ast-type-node-pool-segment-bytes)))
 
@@ -1568,7 +1568,7 @@
           0))
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data bases) : (Ptr u8))))
+          (ptr->int (ptr-cast (__tl_array-data bases) : (Ptr u8))))
         : i64))))
 (define ty-node-pool-segment-count : i64
   1)
@@ -1757,7 +1757,7 @@
       (AstTypeNodePoolState
         (cast
           (unsafe
-            (ptr->int (ptr-cast (array-data segment-bases) : (Ptr u8))))
+            (ptr->int (ptr-cast (__tl_array-data segment-bases) : (Ptr u8))))
           : i64)
         0
         base-arena
@@ -2895,14 +2895,14 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data ast-node-pool-compat-context-cell)
+        (__tl_array-data ast-node-pool-compat-context-cell)
         : (Ptr AstNodePoolContext)))))
 
 (define (ast-node-pool-compat-saved-context-shared-view) : AstNodePoolContext
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data ast-node-pool-compat-saved-context-cell)
+        (__tl_array-data ast-node-pool-compat-saved-context-cell)
         : (Ptr AstNodePoolContext)))))
 
 (define (ast-node-pool-context-capture-active) : AstNodePoolContext
@@ -3299,7 +3299,7 @@
 (define (ast-node-pool-context-expr-cell-address [pools : AstNodePoolContext]) : i64
   (cast
     (unsafe
-      (ptr->int (ptr-cast (array-data pools.expr-pool) : (Ptr u8))))
+      (ptr->int (ptr-cast (__tl_array-data pools.expr-pool) : (Ptr u8))))
     : i64))
 
 (define (ast-node-pool-context-expr-installed? [pools : AstNodePoolContext]) : bool
@@ -3415,7 +3415,7 @@
   [pools : (& pools AstNodePoolContext)]) : i64
   (__tl-project-field
     (unsafe
-      (ptr-read (array-data pools.expr-pool)))
+      (ptr-read (__tl_array-data pools.expr-pool)))
     segment-bases))
 
 ;; Segment-bases pointer of the process-global (installed) expression pool, the
@@ -3491,49 +3491,6 @@
           (ast-node-pool-compat-context-sync-installed!)
           id)])))
 
-(define (ast-node-pool-context-type-cell-address [pools : AstNodePoolContext]) : i64
-  (cast
-    (unsafe
-      (ptr->int (ptr-cast (array-data pools.type-pool) : (Ptr u8))))
-    : i64))
-
-;; Cell identity, rather than a segment-bases comparison, distinguishes the
-;; live installed owner from a snapshot that shares immutable prefix segments
-;; but has an independent logical length.
-(define (ast-node-pool-context-type-installed? [pools : AstNodePoolContext]) : bool
-  (if (ast-node-pool-compat-context-active?)
-    (=
-      (ast-node-pool-context-type-cell-address (ast-global-shared-view pools))
-      (ast-node-pool-context-type-cell-address
-        (ast-node-pool-compat-context-current)))
-    (and
-      (ast-node-pool-has-active-context?)
-      (=
-        (ast-node-pool-context-type-cell-address (ast-global-shared-view pools))
-        (ast-node-pool-context-type-cell-address
-          (ast-node-pool-context-active-live))))))
-
-;; An explicit push through the cells of the ordinary installed context must
-;; publish its new count/dedup state to the transitional global pushers.
-(define (ast-node-pool-context-type-sync-installed!
-  [pools : AstNodePoolContext]) : unit
-  (if (not
-    (ast-node-pool-context-type-installed? (ast-global-shared-view pools)))
-    unit
-    (let
-      [state : AstTypeNodePoolState (ast-array-shared-view pools.type-pool 0)]
-      (begin
-        (set! ty-node-pool-segment-bases state.segment-bases)
-        (set! ty-node-pool-count state.count)
-        (set! ty-node-pool-storage-arena state.storage-arena)
-        (set! ty-node-pool-segment-count state.segment-count)
-        (set! ty-node-pool-exhausted state.exhausted)
-        (set! ty-node-dedup-capacity (array-length state.dedup-slots))
-        (set! ty-node-dedup-slots (ast-global-shared-view state.dedup-slots))
-        (set! ty-node-dedup-count state.dedup-count)
-        (set! node-pool-base-arena state.base-arena)
-        (set! node-pool-owner-arena pools.owner-arena)))))
-
 ;; Raw type-node read keyed by the pool's segment-bases pointer rather than a
 ;; pool value. Identical addressing to `ty-node-get`, so hot readers can hoist
 ;; the context lookup out of recursive walks and pay the same per-node cost as
@@ -3571,6 +3528,55 @@
 (define (ast-node-pool-context-type-segment-bases
   [pools : (& pools AstNodePoolContext)]) : i64
   (__tl-project-field (array-ref pools.type-pool 0) segment-bases))
+
+(define (ast-node-pool-context-type-cell-address
+  [pools : (& pools AstNodePoolContext)]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (__tl_array-data pools.type-pool) : (Ptr u8))))
+    : i64))
+
+;; Cell identity, rather than a segment-bases comparison, distinguishes the
+;; live installed owner from a snapshot that shares immutable prefix segments
+;; but has an independent logical length.
+(define (ast-node-pool-context-type-installed?
+  [pools : (& pools AstNodePoolContext)]) : bool
+  (if (ast-node-pool-compat-context-active?)
+    (let
+      [current : AstNodePoolContext (ast-node-pool-compat-context-current)]
+      (=
+        (ast-node-pool-context-type-cell-address pools)
+        (ast-node-pool-context-type-cell-address (& current))))
+    (and
+      (ast-node-pool-has-active-context?)
+      (let
+        [current : AstNodePoolContext (ast-node-pool-context-active-live)]
+        (=
+          (ast-node-pool-context-type-cell-address pools)
+          (ast-node-pool-context-type-cell-address (& current)))))))
+
+;; An explicit push through the cells of the ordinary installed context must
+;; publish its new count/dedup state to the transitional global pushers. This
+;; is an append, so existing ids remain valid and the pool generation must not
+;; change. This type-only publication also avoids treating every explicit
+;; compatibility append as a pool swap and needlessly invalidating id memos.
+(define (ast-node-pool-context-type-sync-installed!
+  [pools : (& pools AstNodePoolContext)]) : unit
+  (if (not (ast-node-pool-context-type-installed? pools))
+    unit
+    (let
+      [state : AstTypeNodePoolState (ast-array-shared-view pools.type-pool 0)]
+      (begin
+        (set! ty-node-pool-segment-bases state.segment-bases)
+        (set! ty-node-pool-count state.count)
+        (set! ty-node-pool-storage-arena state.storage-arena)
+        (set! ty-node-pool-segment-count state.segment-count)
+        (set! ty-node-pool-exhausted state.exhausted)
+        (set! ty-node-dedup-capacity (array-length state.dedup-slots))
+        (set! ty-node-dedup-slots (ast-global-shared-view state.dedup-slots))
+        (set! ty-node-dedup-count state.dedup-count)
+        (set! node-pool-base-arena state.base-arena)
+        (set! node-pool-owner-arena pools.owner-arena)))))
 
 (define (ast-node-pool-context-type-get
   [pools : (& pools AstNodePoolContext)]
@@ -10617,7 +10623,7 @@
     [base : i64
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data slots) : (Ptr u8))))
+          (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8))))
         : i64)]
     (and
       (match (unsafe
@@ -10639,7 +10645,7 @@
     [base : i64
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data slots) : (Ptr u8))))
+          (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8))))
         : i64)]
     (and
       (match (unsafe

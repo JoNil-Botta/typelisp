@@ -125,7 +125,7 @@
   (let
     [cell : (Array u64 1) (array word)]
     (unsafe
-      (ptr-read (ptr-cast (array-data cell) : (Ptr (& text str)))))))
+      (ptr-read (ptr-cast (__tl_array-data cell) : (Ptr (& text str)))))))
 
 ;: Return an empty borrowed argument list tied to `text` without storing it.
 (define (args-empty-like [_text : (& text str)]) : (ProcessBorrowedStringList

@@ -1,7 +1,18 @@
 [
   {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
-  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl","languageId":"typelisp","version":1,"text":"(define (foo) : i64 1)\n(define (bar [x : i64]) : i64 x)\n"}}},
-  {"jsonrpc":"2.0","id":2,"method":"tl/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl"},"position":{"line":1,"character":5}}},
-  {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl","languageId":"typelisp","version":1,"text":"(import feature.sig as sig)\n;: Adds values.\n(define (add [left : i64] [right : (Tuple i64 bool)]) : i64 left)\n(define (zero) : i64 0)\n(define callback : (-> i64 i64) (lambda ([value : i64]) value))\n(extern (foreign [value : i64]) : i64 (:symbol \"foreign\"))\n(defmacro (wrap [value : Expr]) : Expr value)\n(define macro-value : i64 (wrap 3))\n(define (shadow) : i64\n  (let [add : (-> bool bool) (lambda ([flag : bool]) flag)]\n    (if (add true) 1 0)))\n(define main : i64 (add 1 (tuple 2 true)))\n(define zero-value : i64 (zero))\n(define foreign-value : i64 (foreign 1))\n(define callback-value : i64 (callback 2))\n(define imported-value : i64 (sig.combine 3 4))"}}},
+  {"jsonrpc":"2.0","id":2,"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":11,"character":26},"context":{"triggerKind":2,"triggerCharacter":" ","isRetrigger":false}}},
+  {"jsonrpc":"2.0","id":3,"method":"tl/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":11,"character":26}}},
+  {"jsonrpc":"2.0","id":4,"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":12,"character":30}}},
+  {"jsonrpc":"2.0","id":5,"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":13,"character":37}}},
+  {"jsonrpc":"2.0","id":6,"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":14,"character":39}}},
+  {"jsonrpc":"2.0","id":7,"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":7,"character":32}}},
+  {"jsonrpc":"2.0","id":8,"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":10,"character":13}}},
+  {"jsonrpc":"2.0","id":9,"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":15,"character":44}}},
+  {"jsonrpc":"2.0","id":10,"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":2,"character":10}}},
+  {"jsonrpc":"2.0","id":11,"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":99,"character":0}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl","version":2},"contentChanges":[{"text":"(import feature.sig as sig)\n;: Adds values.\n(define (add [left : i64] [right : (Tuple i64 bool)]) : i64 left)\n(define (zero) : i64 0)\n(define callback : (-> i64 i64) (lambda ([value : i64]) value))\n(extern (foreign [value : i64]) : i64 (:symbol \"foreign\"))\n(defmacro (wrap [value : Expr]) : Expr value)\n(define macro-value : i64 (wrap 3))\n(define (shadow) : i64\n  (let [add : (-> bool bool) (lambda ([flag : bool]) flag)]\n    (if (add true) 1 0)))\n(define main : i64 (add 1 (tuple 2 true)))\n(define zero-value : i64 (zero))\n(define foreign-value : i64 (foreign 1))\n(define callback-value : i64 (callback 2))\n(define imported-value : i64 (sig.combine 3 4))\n(define partial : i64 (add 5 (tuple 6 true)))\n(define unfinished : i64 (+ 1"}]}},
+  {"jsonrpc":"2.0","id":12,"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"${{TMP_URI}}/signature.tl"},"position":{"line":16,"character":28}}},
+  {"jsonrpc":"2.0","id":13,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}
 ]

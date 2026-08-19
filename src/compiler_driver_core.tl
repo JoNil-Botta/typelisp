@@ -130,6 +130,8 @@
       (array.make-array cbi.CompilerBuiltinIdsState 1)]
     [lower-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
     [pool-arena-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [profile-state : profile_state.CompilerProfileState
+      (profile_state.compiler-profile-state-new)]
     ;; Intern capability identity is shared by parser, lowering, and backend.
     ;; Create it before switching arenas; the backend's own state data is
     ;; allocated below while the driver's surface arena is current.
@@ -138,43 +140,47 @@
     ;; The typecheck caches share the driver's lifetime with hydrated surface
     ;; data. Allocate them in that already-reserved arena instead of extending
     ;; the process entry arena by a full segment near its capacity boundary.
-    [previous-arena : i64 (arena.tl_arena_current)]
-    [_set-surface-arena : unit
-      (unsafe
-        (arena.tl_arena_set surface-arena))]
-    [typecheck-state : compiler_typecheck_core.TcJobState
-      (compiler_typecheck_core.tc-job-state-new)]
-    [_lower-state-init : unit
-      (set!
-        (array-ref lower-cell 0)
-        (__tl-project-field (compiler_lower.compiler-lower-state-new) address))]
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (owned_view.compiler-owned-shared-view intern-state))]
-    [_restore-previous-arena : unit
-      (unsafe
-        (arena.tl_arena_set previous-arena))]
-    (begin
-      (set! (array-ref expr-cell 0) expr-pool)
-      (set! (array-ref type-cell 0) type-pool)
-      (set! (array-ref intern-cell 0) intern-state)
-      (set! (array-ref builtin-cell 0) (cbi.state-new))
-      (set! (array-ref pool-arena-cell 0) pool-arena)
-      (CompilerDriverState
-        expr-cell
-        type-cell
-        (owned_view.compiler-owned-shared-view intern-cell)
-        (compiler_parse_core.compiler-parse-state-new-with-intern-state
-          (owned_view.compiler-owned-array-element-shared-view intern-cell 0))
-        builtin-cell
-        lower-cell
-        (compiler_load.compiler-load-session-state-new)
-        typecheck-state
-        backend-state
-        (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
-        pool-arena-cell
-        surface-arena
-        (profile_state.compiler-profile-state-new)))))
+    [surface-state : CompilerDriverSurfaceState
+      (in-arena
+        (arena.Arena surface-arena)
+        (CompilerDriverSurfaceState.State
+          (compiler_typecheck_core.tc-job-state-new)
+          (__tl-project-field
+            (compiler_lower.compiler-lower-state-new-with-intern-state-and-profile-state
+              (owned_view.compiler-owned-shared-view intern-state)
+              (owned_view.compiler-owned-shared-view profile-state))
+            address)
+          (compiler_backend.compiler-backend-state-new
+            (owned_view.compiler-owned-shared-view intern-state))))]
+    (match surface-state
+      [(CompilerDriverSurfaceState.State
+          typecheck-state
+          lower-state-address
+          backend-state)
+        (begin
+          (set! (array-ref expr-cell 0) expr-pool)
+          (set! (array-ref type-cell 0) type-pool)
+          (set! (array-ref intern-cell 0) intern-state)
+          (set! (array-ref builtin-cell 0) (cbi.state-new))
+          (set! (array-ref lower-cell 0) lower-state-address)
+          (set! (array-ref pool-arena-cell 0) pool-arena)
+          (CompilerDriverState
+            expr-cell
+            type-cell
+            (owned_view.compiler-owned-shared-view intern-cell)
+            (compiler_parse_core.compiler-parse-state-new-with-intern-state
+              (owned_view.compiler-owned-array-element-shared-view
+                intern-cell
+                0))
+            builtin-cell
+            lower-cell
+            (compiler_load.compiler-load-session-state-new)
+            typecheck-state
+            backend-state
+            (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
+            pool-arena-cell
+            surface-arena
+            profile-state))])))
 
 ;; State-owned pools allocate fixed-size segments on demand. One expression
 ;; segment covers tiny programs while self-host-sized compiles append segments
@@ -210,7 +216,7 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data compiler-driver-detached-compat-pools)
+        (__tl_array-data compiler-driver-detached-compat-pools)
         : (Ptr compiler_ast_types.AstNodePoolContext)))))
 
 (define (compiler-driver-state-detach-active-pools-if-owned!
@@ -982,6 +988,8 @@
         (compiler_load.compiler-load-session-state-reset-interns-with-state!
           (owned_view.compiler-owned-shared-view state.load-session)
           (&mut (array-ref state.intern-state 0)))
+        (compiler-driver-state-bind-owned-source-names!
+          (owned_view.compiler-owned-shared-view state))
         (compiler-driver-state-reset-typecheck!
           (owned_view.compiler-owned-shared-view state))
         (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)

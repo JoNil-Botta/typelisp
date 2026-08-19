@@ -192,7 +192,9 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr CompilerCtfeMacroStateData))))
+              (ptr-cast
+                (__tl_array-data cell)
+                : (Ptr CompilerCtfeMacroStateData))))
           : i64)))))
 
 (define (compiler-ctfe-macro-state-data [state : CompilerCtfeMacroState]) : CompilerCtfeMacroStateData
@@ -1427,7 +1429,7 @@
     [segment : (__tl_dyn-array CtfeEnvBinding)
       (ast.ast-array-shared-view store.segments segment-index)]
     (unsafe
-      (ptr-read (ptr-offset (array-data segment) offset)))))
+      (ptr-read (ptr-offset (__tl_array-data segment) offset)))))
 
 (define (ctfe-env-arena-box-shared-view [value : (Box CtfeEnvArena)]) : CtfeEnvArena
   (let
@@ -6470,10 +6472,10 @@
     ;; owners drop at the end of this let.
     [head-slots : (MutPtr i64)
       (unsafe
-        (array-data head))]
+        (__tl_array-data head))]
     [previous-slots : (MutPtr i64)
       (unsafe
-        (array-data previous))]
+        (__tl_array-data previous))]
     [head-view : (Ptr i64)
       (unsafe
         (ptr-cast head-slots : (Ptr i64)))]

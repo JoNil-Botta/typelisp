@@ -261,7 +261,7 @@
         [out : (__tl_dyn-array u8) (array.make-array u8 n)]
         [dst : (MutPtr u8)
           (unsafe
-            (array-data out))]
+            (__tl_array-data out))]
         (begin
           (string.str-copy-bytes-into
             (unsafe
@@ -276,14 +276,14 @@
 (define (as-bytes [buf : (& source ByteBuf)]) : (& source bytes)
   (unsafe
     (tl_bytes_view_from_buf_parts
-      (ptr-cast (array-data buf.slots) : (Ptr u8))
+      (ptr-cast (__tl_array-data buf.slots) : (Ptr u8))
       buf.len
       buf)))
 
 ;: Borrow the live range of a `ByteBuf` as mutable fixed-length bytes.
 (define (as-mut-bytes [buf : (&mut source ByteBuf)]) : (&mut source bytes)
   (unsafe
-    (tl_bytes_mut_view_from_buf_parts (array-data buf.slots) buf.len buf)))
+    (tl_bytes_mut_view_from_buf_parts (__tl_array-data buf.slots) buf.len buf)))
 
 ;: Read live byte `index`, returning `fallback` when `index` is outside
 ;: `[0, len)`.
@@ -435,7 +435,7 @@
       [old-len : i64 (len ready)]
       [dst : (MutPtr u8)
         (unsafe
-          (array-data ready.slots))]
+          (__tl_array-data ready.slots))]
       (begin
         (string.str-copy-bytes-into
           (unsafe
@@ -486,4 +486,4 @@
       (let
         [out : (__tl_dyn-array u8) (to-array buf)]
         (unsafe
-          (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) n))))))
+          (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) n))))))

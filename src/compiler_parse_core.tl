@@ -49,7 +49,7 @@
 (define (compiler-parse-decl-list-storage-key
   [decls : (& decls ast.AstDeclList)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data decls.slots) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data decls.slots) : (Ptr u8))) : i64)))
 
 ;; Declaration origins are cold records in the transient spanned-node pool.
 ;; A run is marker(key), marker(start slot), then one Nil(span) per slot.
@@ -428,7 +428,9 @@
   [fallback : ast.AstSourceSpan]) : ast.AstSourceSpan
   (compiler-parse-member-origin-span
     (unsafe
-      (cast (ptr->int (ptr-cast (array-data fields.slots) : (Ptr u8))) : i64))
+      (cast
+        (ptr->int (ptr-cast (__tl_array-data fields.slots) : (Ptr u8)))
+        : i64))
     index
     fallback))
 
@@ -438,7 +440,9 @@
   [fallback : ast.AstSourceSpan]) : ast.AstSourceSpan
   (compiler-parse-member-origin-span
     (unsafe
-      (cast (ptr->int (ptr-cast (array-data variants.slots) : (Ptr u8))) : i64))
+      (cast
+        (ptr->int (ptr-cast (__tl_array-data variants.slots) : (Ptr u8)))
+        : i64))
     index
     fallback))
 
@@ -826,7 +830,23 @@
 (defmacro (compiler-parse-array-data-addr [items : Expr]) : Expr
   `(cast
     (unsafe
-      (ptr->int (ptr-cast (array-data ,items) : (Ptr u8))))
+      (ptr->int (ptr-cast (__tl_array-data ,items) : (Ptr u8))))
+    : i64))
+
+(define (compiler-parse-intern-owner-data-addr
+  [items : (__tl_dyn-array ci.InternCompatState)]) : i64
+  (if (= (array-length items) 0)
+    0
+    (cast
+      (unsafe
+        (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))))
+      : i64)))
+
+(define (compiler-parse-dispatch-cache-handle-data-addr
+  [items : (__tl_dyn-array (__tl_dyn-array sym_i64_env.SymI64Env))]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))))
     : i64))
 
 (define (compiler-parse-state-new-from-owner
@@ -958,7 +978,7 @@
   (unsafe
     (ptr-read
       (ptr-cast
-        (array-data compiler-parse-default-state)
+        (__tl_array-data compiler-parse-default-state)
         : (Ptr CompilerParseState)))))
 
 (define (sexpr-colon? [s : reader.Sexpr]) : bool
@@ -2496,6 +2516,12 @@
         out
         (compiler-parse-dispatch-bind
           out
+          "__tl_array-data"
+          (compiler-parse-tag-expr-array-data)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
           "program-argc"
           (compiler-parse-tag-expr-program-argc)))
       (set!
@@ -2778,10 +2804,10 @@
       (compiler-parse-env-marker-value
         (compiler-parse-place-shared-view owned-cfgs)
         compiler-parse-state-marker-id)]
-    (compiler-parse-dispatch-index-mark
-      (compiler-cfg-merge
-        (compiler-parse-dispatch-env-for-control control)
-        owned-cfgs))))
+    [base : sym_i64_env.SymI64Env
+      (compiler-parse-dispatch-env-for-control control)]
+    [merged : sym_i64_env.SymI64Env (compiler-cfg-merge base owned-cfgs)]
+    (compiler-parse-dispatch-index-mark merged)))
 
 (define (compiler-parse-dispatch-env) : sym_i64_env.SymI64Env
   (compiler-parse-dispatch-env-from-cfg (compiler-cfg-empty)))
@@ -9582,7 +9608,7 @@
                         (cast
                           (ptr->int
                             (ptr-cast
-                              (array-data parsed-variants.slots)
+                              (__tl_array-data parsed-variants.slots)
                               : (Ptr u8)))
                           : i64))
                       "__tl_member_origin"
@@ -9645,7 +9671,7 @@
                         (cast
                           (ptr->int
                             (ptr-cast
-                              (array-data parsed-fields.slots)
+                              (__tl_array-data parsed-fields.slots)
                               : (Ptr u8)))
                           : i64))
                       "__tl_member_origin"
@@ -10606,49 +10632,66 @@
   [toks : (__tl_dyn-array token.SpannedToken)]
   [cur : (__tl_dyn-array i64)]
   [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVec
-  (if (= (reader.peek-spanned-tag (& toks) (& cur)) (token.tag-end))
-    (ResultParseAstDeclVec.Ok)
-    (let
-      ;; The spanned tree for one top-level form is dead once its AstDecl is
-      ;; built (the decl carries AST-pool ids + spans by value, no sp ids), so
-      ;; truncate the spanned pool back to here before reading the next form.
-      ;; Bounds the spanned pool to a single form so it never has to grow.
-      [mark : i64 (reader.sp-node-pool-len)]
-      (match (reader.form-spanned-result (& toks) (&mut cur))
-        [(reader.ResultSpannedSexpr.Ok form)
-          (let
-            [records-start : i64 (reader.sp-node-pool-len)]
-            (match (parse-ast-decl-maybe-with-pools
-              (compiler-parse-place-shared-view dispatch)
-              (compiler-parse-place-shared-view pools)
-              (compiler-parse-place-shared-view form))
-              [(ResultAstMaybeDecl.SomeDecl decl)
-                (begin
-                  (parse-ast-decl-vec-push-with-span
-                    out
-                    decl
-                    (compiler-parse-decl-origin-syntax-span
-                      (compiler-parse-place-shared-view dispatch)
-                      form))
-                  (compiler-parse-member-records-compact! mark records-start)
-                  (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-              [(ResultAstMaybeDecl.Decls decls)
-                (begin
-                  (compiler-parse-member-records-compact! mark records-start)
-                  (parse-ast-decl-vec-push-list! out decls)
-                  (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-              [(ResultAstMaybeDecl.NoDecl)
-                (begin
-                  (compiler-parse-member-records-compact! mark records-start)
-                  (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-              [(ResultAstMaybeDecl.Err message)
-                (begin
-                  (reader.sp-node-pool-truncate! mark)
-                  (ResultParseAstDeclVec.Err message))]))]
-        [(reader.ResultSpannedSexpr.Err err)
-          (begin
-            (reader.sp-node-pool-truncate! mark)
-            (ResultParseAstDeclVec.Err (token.source-error-message err)))]))))
+  (let
+    [peek-tag : i64 (reader.peek-spanned-tag (& toks) (& cur))]
+    (if (= peek-tag (token.tag-end))
+      (ResultParseAstDeclVec.Ok)
+      (let
+        ;; The spanned tree for one top-level form is dead once its AstDecl is
+        ;; built (the decl carries AST-pool ids + spans by value, no sp ids), so
+        ;; truncate the spanned pool back to here before reading the next form.
+        ;; Bounds the spanned pool to a single form so it never has to grow.
+        [mark : i64 (reader.sp-node-pool-len)]
+        (match (reader.form-spanned-result (& toks) (&mut cur))
+          [(reader.ResultSpannedSexpr.Ok form)
+            (let
+              [records-start : i64 (reader.sp-node-pool-len)]
+              (match (parse-ast-decl-maybe-with-pools
+                (compiler-parse-place-shared-view dispatch)
+                (compiler-parse-place-shared-view pools)
+                (compiler-parse-place-shared-view form))
+                [(ResultAstMaybeDecl.SomeDecl decl)
+                  (begin
+                    (parse-ast-decl-vec-push-with-span
+                      out
+                      decl
+                      (compiler-parse-decl-origin-syntax-span
+                        (compiler-parse-place-shared-view dispatch)
+                        form))
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-program-forms-into-vec
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out))]
+                [(ResultAstMaybeDecl.Decls decls)
+                  (begin
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-decl-vec-push-list! out decls)
+                    (parse-ast-program-forms-into-vec
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out))]
+                [(ResultAstMaybeDecl.NoDecl)
+                  (begin
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-program-forms-into-vec
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out))]
+                [(ResultAstMaybeDecl.Err message)
+                  (begin
+                    (reader.sp-node-pool-truncate! mark)
+                    (ResultParseAstDeclVec.Err message))]))]
+          [(reader.ResultSpannedSexpr.Err err)
+            (begin
+              (reader.sp-node-pool-truncate! mark)
+              (ResultParseAstDeclVec.Err (token.source-error-message err)))])))))
 
 (define (parse-ast-program-forms
   [dispatch : sym_i64_env.SymI64Env]
@@ -12624,6 +12667,16 @@
     (compiler-parse-ok? "(define (main [b : (Box i64)]) : i64 (deref b))")
     (compiler-parse-ok?
       "(define (main) : i64 (with-arena r (let [b : (in r (Box i64)) (box 7)] (deref b))))")))
+
+(define (compiler-parse-array-data-ok?) : bool
+  (and
+    (compiler-parse-ok?
+      "(define (data [items : (Array i64)]) : (MutPtr i64) (unsafe (array-data items)))")
+    (compiler-parse-ok?
+      "(define (data [items : (Array i64)]) : (MutPtr i64) (unsafe (__tl_array-data items)))")
+    (compiler-parse-error-ok?
+      "(define (data [items : (Array i64)]) : (MutPtr i64) (unsafe (__tl_array-data items items)))"
+      "parse: array-data expects exactly one expression")))
 
 (define (compiler-parse-array-take-ok?) : bool
   (and
@@ -14747,6 +14800,7 @@
         (reader.symbol-id-preservation-ok?)
         (compiler-parse-source-symbol-ids-preserved-ok?)
         (compiler-parse-box-ok?)
+        (compiler-parse-array-data-ok?)
         (compiler-parse-array-take-ok?)
         (compiler-parse-replace-ok?)
         (compiler-parse-reference-ok?)

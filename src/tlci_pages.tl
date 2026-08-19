@@ -90,7 +90,7 @@
     u8)
   (unsafe
     (ptr-cast
-      (array-data
+      (__tl_array-data
         (__tl-compiler-owned-shared-view-dyn-ref-as bytes (__tl_dyn-array u8)))
       : (Ptr u8))))
 
@@ -158,7 +158,7 @@
           region.size
           protect
           (unsafe
-            (ptr-cast (array-data old) : (MutPtr i32))))]
+            (ptr-cast (__tl_array-data old) : (MutPtr i32))))]
       (not (= ok (cast 0 : i32))))))
 
 (cfg

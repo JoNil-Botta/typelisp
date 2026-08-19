@@ -5,6 +5,7 @@
 (import compiler_ir_types as ir)
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 (import stdlib.string)
 
 (define (compiler-reg-smoke-spmd-call-function) : ir.CompilerIrFunction
@@ -163,13 +164,15 @@
 (define (compiler-reg-smoke-descriptor-pair-group-ok?) : bool
   (let
     [func : ir.CompilerIrFunction (compiler-reg-smoke-descriptor-pair-function)]
-    [types : reg.CompilerRegVarTypes (reg.compiler-reg-function-var-types func)]
+    [types : reg.CompilerRegVarTypes
+      (reg.compiler-reg-function-var-types
+        (reg.compiler-reg-global-shared-view func))]
     [representations : ir.CompilerIrRepresentationIndex
       (ir.compiler-ir-representation-index-empty)]
     [groups : live.CompilerLiveI64Set
       (reg.compiler-reg-function-group-vars
         (ast.ast-node-pool-reader-type-segment-bases)
-        func
+        (reg.compiler-reg-global-shared-view func)
         types)]
     (and
       ;; Source handles remain scalar even though structurally-created pair
@@ -177,16 +180,15 @@
       (not
         (reg.compiler-reg-type-register-group?
           (ast.ast-node-pool-reader-type-segment-bases)
-          representations
+          (reg.compiler-reg-global-shared-view representations)
           (ast.AstType.String)))
       (not
         (reg.compiler-reg-type-register-group?
           (ast.ast-node-pool-reader-type-segment-bases)
-          representations
+          (reg.compiler-reg-global-shared-view representations)
           (ast.AstType.DynArray 1)))
       (=
-        (live.compiler-live-set-count
-          (live.compiler-live-shared-view groups))
+        (live.compiler-live-set-count (live.compiler-live-shared-view groups))
         2)
       (not
         (live.compiler-live-set-contains?

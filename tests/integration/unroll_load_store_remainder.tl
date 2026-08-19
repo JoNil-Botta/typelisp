@@ -17,8 +17,8 @@
 ;; a remainder that dropped, repeated or reordered a trip diverges from it
 ;; rather than only running at a different speed.
 (define (merge!
-  [dst : (__tl_dyn-array i64)]
-  [src : (__tl_dyn-array i64)]
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [src : (& src (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -27,7 +27,7 @@
         (set! (array-ref dst i) (bit-or (array-ref dst i) (array-ref src i)))
         (set! i (+ i 1))))))
 
-(define (checksum [items : (__tl_dyn-array i64)] [n : i64]) : i64
+(define (checksum [items : (& items (__tl_dyn-array i64))] [n : i64]) : i64
   (let
     [acc : i64 0]
     [i : i64 0]
@@ -67,8 +67,8 @@
           (set! (array-ref dst i) (* i 3))
           (set! (array-ref src i) (* i 5))
           (set! i (+ i 1))))
-      (merge! dst src n)
-      (= (checksum dst total) (merge-reference n total)))))
+      (merge! (&mut dst) (& src) n)
+      (= (checksum (& dst) total) (merge-reference n total)))))
 
 (define (main) : i64
   (let

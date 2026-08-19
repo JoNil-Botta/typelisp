@@ -4,6 +4,7 @@
 (import compiler_ast_types)
 (import compiler_diagnostic)
 (import stdlib.string)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-lower-spmd-package-callable-source) : String
   "(module spmd_fixture)
@@ -38,15 +39,15 @@
                 (compiler_ir_types.compiler-ir-symbol-text name)]
               (if (or
                 (compiler_lower.lower-string-prefix-at?
-                  name-text
+                  (owned_view.compiler-owned-shared-view name-text)
                   "__tl_spmd_pkg_"
                   0)
                 (compiler_lower.lower-string-prefix-at?
-                  name-text
+                  (owned_view.compiler-owned-shared-view name-text)
                   "__tl_spmd_ret_uniform___tl_spmd_pkg_"
                   0)
                 (compiler_lower.lower-string-prefix-at?
-                  name-text
+                  (owned_view.compiler-owned-shared-view name-text)
                   "__tl_spmd_ret_varying___tl_spmd_pkg_"
                   0)
                 (compiler_lower.lower-string-prefix-at?
@@ -55,7 +56,8 @@
                   0))
                 1
                 0))])
-        (compiler-lower-spmd-package-helper-count (__tl-box-place rest)))]))
+        (compiler-lower-spmd-package-helper-count
+          (compiler_ir_types.compiler-ir-function-list-box-shared-view rest)))]))
 
 (define (compiler-lower-spmd-package-helper-count-ok?
   [source : String]
@@ -107,7 +109,7 @@
       (compiler-lower-spmd-package-uniform-helper-render
         (compiler_ir_types.compiler-ir-function-seq-to-list seq))]
     [(compiler_ir_types.CompilerIrFunctionList.Cons function rest)
-      (match function
+      (match (compiler_ir_types.compiler-ir-global-shared-view function)
         [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
           (if (compiler_lower.lower-string-prefix-at?
             (compiler_ir_types.compiler-ir-symbol-text name)
@@ -117,7 +119,7 @@
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
               function)
             (compiler-lower-spmd-package-uniform-helper-render
-              (__tl-box-place rest)))])]))
+              (compiler_ir_types.compiler-ir-function-list-box-shared-view rest)))])]))
 
 (define (compiler-lower-spmd-package-return-context-source-ok?
   [source : String]) : bool

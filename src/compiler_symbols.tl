@@ -377,10 +377,10 @@
         ;; data like the put path instead of paying a bounds check per probe.
         [key-data : (Ptr i64)
           (unsafe
-            (ptr-cast (array-data keys) : (Ptr i64)))]
+            (ptr-cast (__tl_array-data keys) : (Ptr i64)))]
         [value-data : (Ptr i64)
           (unsafe
-            (ptr-cast (array-data values) : (Ptr i64)))]
+            (ptr-cast (__tl_array-data values) : (Ptr i64)))]
         [encoded : i64 (+ key 1)]
         [slot : i64 (compiler-symbol-map-first-slot key capacity)]
         [mask : i64 (- capacity 1)]
@@ -411,10 +411,10 @@
     [values : (__tl_dyn-array i64) map.values]
     [key-data : (MutPtr i64)
       (unsafe
-        (ptr-cast (array-data keys) : (MutPtr i64)))]
+        (ptr-cast (__tl_array-data keys) : (MutPtr i64)))]
     [value-data : (MutPtr i64)
       (unsafe
-        (ptr-cast (array-data values) : (MutPtr i64)))]
+        (ptr-cast (__tl_array-data values) : (MutPtr i64)))]
     [capacity : i64 (array-length keys)]
     [mask : i64 (- capacity 1)]
     [encoded : i64 (+ key 1)]
@@ -2803,7 +2803,8 @@
   [symbols : CompilerSymbols]
   [decl : ast.AstDecl]
   [index : i64]
-  [module-id : i64]) : CompilerSymbols
+  [module-id : i64]
+  [provenance-id : i64]) : CompilerSymbols
   (match (compiler-symbols-shared-view symbols)
     [(CompilerSymbols values types macros decls owner-module-ids decl-count)
       (let
@@ -2811,6 +2812,9 @@
         (begin
           (set! (array-ref decls index) indexed)
           (set! (array-ref owner-module-ids index) module-id)
+          (set!
+            (array-ref owner-module-ids (+ (array-length decls) index))
+            provenance-id)
           (CompilerSymbols
             values
             types
@@ -2973,7 +2977,8 @@
                   symbols
                   decl-for-index
                   index
-                  module-id))
+                  module-id
+                  cbi.compiler-builtin-id-fix-empty))
               (match (compiler-symbols-add-decl-in-module
                 symbols
                 module-id
@@ -3179,7 +3184,8 @@
                                         resolved-owner))
                                     resolved-owner)
                                   cur-module-id))
-                              cur-module-id)))
+                              cur-module-id)
+                            path-provenance-id))
                         (match (compiler-symbols-add-decl-in-module
                           cur-symbols
                           cur-module-id

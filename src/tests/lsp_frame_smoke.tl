@@ -287,9 +287,7 @@
     [found : i64 -1]
     (begin
       (while (and (< i n) (< found 0))
-        (if (and
-          (<= (+ i m) n)
-          (string.is-string-prefix-at haystack needle i))
+        (if (and (<= (+ i m) n) (string.is-string-prefix-at haystack needle i))
           (set! found i)
           (set! i (+ i 1))))
       found)))
@@ -418,6 +416,81 @@
     "},\"contentChanges\":[{\"text\":\""
     text
     "\"}]}}"))
+
+(define (lsp-transcript-signature-help
+  [uri : String]
+  [id : i64]
+  [line : i64]
+  [character : i64]) : String
+  (lsp_frame_core.lsp-str7
+    "{\"jsonrpc\":\"2.0\",\"id\":"
+    (string.int->string id)
+    ",\"method\":\"textDocument/signatureHelp\",\"params\":{\"textDocument\":{\"uri\":\""
+    uri
+    "\"},\"position\":{\"line\":"
+    (string.int->string line)
+    (lsp_frame_core.lsp-str3
+      ",\"character\":"
+      (string.int->string character)
+      "}}}")))
+
+(define (lsp-signature-help-lifecycle-smoke-ok?) : bool
+  (let
+    [path : String "target/lsp_signature_lifecycle.tl"]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
+    [valid-source : String
+      "(define (add [left : i64] [right : i64]) : i64 (+ left right))\\n(define main : i64\\n  (add 1 2))"]
+    [partial-source : String
+      "(define (add [left : i64] [right : i64]) : i64 (+ left right))\\n(define main : i64\\n  (add 1 2))\\n(define unfinished : i64 (+ 1"]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [input : String
+      (str_cat.str-cat
+        (lsp-transcript-frame
+          (lsp-transcript-did-open
+            (owned_view.compiler-owned-shared-view uri)
+            valid-source))
+        (lsp-transcript-frame
+          (lsp-transcript-signature-help
+            (owned_view.compiler-owned-shared-view uri)
+            101
+            2
+            9))
+        (lsp-transcript-frame
+          (lsp-transcript-signature-help
+            (owned_view.compiler-owned-shared-view uri)
+            102
+            2
+            9))
+        (lsp-transcript-frame
+          (lsp-transcript-did-change
+            (owned_view.compiler-owned-shared-view uri)
+            partial-source
+            2))
+        (lsp-transcript-frame
+          (lsp-transcript-signature-help
+            (owned_view.compiler-owned-shared-view uri)
+            103
+            2
+            9))
+        (lsp-transcript-frame
+          (lsp-transcript-signature-help
+            (owned_view.compiler-owned-shared-view uri)
+            104
+            99
+            0))
+        (lsp-transcript-frame exit))]
+    [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
+    [signature : String "\"label\":\"(add [left : i64] [right : i64]) : i64\""]
+    [active : String "\"activeParameter\":1"]
+    [missing : String "\"id\":104,\"result\":null"]
+    [stub : String "Not yet implemented"]
+    (and
+      (= result.status 0)
+      (string.eq result.stderr "")
+      (= (lsp-smoke-count-substring result.stdout signature) 3)
+      (= (lsp-smoke-count-substring result.stdout active) 3)
+      (lsp-transcript-result-contains? result missing)
+      (not (lsp-transcript-result-contains? result stub)))))
 
 (define (lsp-transcript-check [uri : String] [id : i64]) : String
   (lsp_frame_core.lsp-str5
@@ -2031,16 +2104,16 @@
           (begin
             (io.print-error "workspace index smoke: cannot create cycle link\n")
             (set! ok false)))
-        (lsp_svec.push
+        (lsp_svec.push-ref!
           (&mut roots)
           (owned_view.compiler-owned-shared-view root-a-uri))
-        (lsp_svec.push
+        (lsp_svec.push-ref!
           (&mut roots)
           (owned_view.compiler-owned-shared-view root-a-uri))
-        (lsp_svec.push
+        (lsp_svec.push-ref!
           (&mut roots)
           (owned_view.compiler-owned-shared-view root-a-src-uri))
-        (lsp_svec.push
+        (lsp_svec.push-ref!
           (&mut roots)
           (owned_view.compiler-owned-shared-view root-b-uri))
         (lsp_svec.push-ref! (&mut roots) "https://example.invalid/workspace"))]
@@ -2178,8 +2251,7 @@
         (begin
           (io.print-error "workspace index smoke: watcher below overlay\n")
           (set! ok false)))
-      (lsp-smoke-remove-file
-        (owned_view.compiler-owned-shared-view disk-path))
+      (lsp-smoke-remove-file (owned_view.compiler-owned-shared-view disk-path))
       (set!
         state
         (lsp-smoke-state-watch
@@ -2321,7 +2393,7 @@
         [added : lsp_svec.Vec (lsp_svec.new)]
         [removed : lsp_svec.Vec (lsp_svec.new)]
         (begin
-          (lsp_svec.push
+          (lsp_svec.push-ref!
             (&mut removed)
             (owned_view.compiler-owned-shared-view root-a-uri))
           (set! state (lsp-smoke-state-workspace-event state added removed))))
@@ -2343,7 +2415,7 @@
         [added : lsp_svec.Vec (lsp_svec.new)]
         [removed : lsp_svec.Vec (lsp_svec.new)]
         (begin
-          (lsp_svec.push
+          (lsp_svec.push-ref!
             (&mut removed)
             (owned_view.compiler-owned-shared-view root-b-uri))
           (set! state (lsp-smoke-state-workspace-event state added removed))))
@@ -2360,7 +2432,7 @@
         [added : lsp_svec.Vec (lsp_svec.new)]
         [removed : lsp_svec.Vec (lsp_svec.new)]
         (begin
-          (lsp_svec.push
+          (lsp_svec.push-ref!
             (&mut added)
             (owned_view.compiler-owned-shared-view root-b-uri))
           (set! state (lsp-smoke-state-workspace-event state added removed))))
@@ -2433,6 +2505,7 @@
         (unless (lsp-workspace-index-smoke-ok?) (return 39))
         (unless (lsp-transcript-framing-smoke-ok?) (return 18))
         (unless (lsp-transcript-order-and-id-smoke-ok?) (return 19))
+        (unless (lsp-signature-help-lifecycle-smoke-ok?) (return 45))
         (unless (lsp-transcript-reset-leakage-smoke-ok?) (return 20))
         (unless (lsp-multiple-diagnostics-smoke-ok?) (return 36))
         (unless (lsp-parser-recovery-diagnostics-smoke-ok?) (return 43))

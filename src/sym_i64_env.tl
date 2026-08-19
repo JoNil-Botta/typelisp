@@ -97,7 +97,7 @@
 (define (sym-i64-store-bindings [store : (& store SymI64Store)]) : (Ptr
     SymI64Binding)
   (unsafe
-    (ptr-cast (array-data store.slots) : (Ptr SymI64Binding))))
+    (ptr-cast (__tl_array-data store.slots) : (Ptr SymI64Binding))))
 
 (define (sym-i64-store-allocate) : u64
   (let

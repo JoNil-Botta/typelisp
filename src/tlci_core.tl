@@ -1596,7 +1596,7 @@
           (set! (array-ref out i) (array-ref bytes (+ offset i)))
           (set! i (+ i 1))))
       (unsafe
-        (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) len)))))
+        (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) len)))))
 
 (define (tlci-slice-bytes
   [bytes : (& bytes (__tl_dyn-array u8))]

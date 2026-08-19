@@ -20,6 +20,7 @@
 (import compiler_ctfe as ctfe)
 (import compiler_float as cfloat)
 (import compiler_intern as ci)
+(import compiler_profile_state as profile_state)
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import compiler_package_surface_producer as package_surface))
@@ -159,7 +160,7 @@
     [segment : (__tl_dyn-array LowerNameBinding)
       (lower-global-array-element-shared-view store.segments segment-index)]
     (unsafe
-      (ptr-read (ptr-offset (array-data segment) offset)))))
+      (ptr-read (ptr-offset (__tl_array-data segment) offset)))))
 
 (define (lower-name-store-push!
   [store : (&mut store LowerNameStore)]
@@ -290,7 +291,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 (defmacro (lower-box-shared-view [value : Expr]) : Expr
   `(owned_view.compiler-owned-box-shared-view ,value))
@@ -561,6 +562,8 @@
   34)
 (define function-memo-storage : i64
   35)
+(define profile-owner : i64
+  36)
 
 ;; Package identity is job-owned. Function-local lowering keeps its four SPMD
 ;; traversal values and two memo generations in a separate one-word capability;
@@ -698,7 +701,7 @@
       (set! (array-ref cell 0) ,value)
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data cell) : (Ptr ,T))))
+          (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,T))))
         : i64))))
 
 (define (compiler-lower-state-from-address [address : i64]) : CompilerLowerState
@@ -707,14 +710,16 @@
 (define (compiler-lower-state-from-name-cache [cache : LowerNameCache]) : CompilerLowerState
   (compiler-lower-state-from-address cache.owner-address))
 
-(define (compiler-lower-state-new-with-intern-state
-  [intern-state : ci.InternCompatState]) : CompilerLowerState
+(define (compiler-lower-state-new-with-intern-state-and-profile-state
+  [intern-state : ci.InternCompatState]
+  [_profile-state : profile_state.CompilerProfileState]) : CompilerLowerState
   (let
-    [cells : (__tl_dyn-array i64) (array.make-array i64 36)]
+    [cells : (__tl_dyn-array i64)
+      (array.make-array i64 (cfg (any compile-profile test) 37 36))]
     [address : i64
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data cells) : (Ptr i64))))
+          (ptr->int (ptr-cast (__tl_array-data cells) : (Ptr i64))))
         : i64)]
     [state : CompilerLowerState (CompilerLowerState address)]
     (begin
@@ -854,7 +859,21 @@
         (compiler-lower-state-cell
           CompilerLowerFunctionMemoStorage
           (compiler-lower-function-memo-storage-empty)))
+      (cfg
+        (any compile-profile test)
+        (set!
+          (array-ref cells profile-owner)
+          (compiler-lower-state-cell
+            profile_state.CompilerProfileState
+            _profile-state))
+        unit)
       state)))
+
+(define (compiler-lower-state-new-with-intern-state
+  [intern-state : ci.InternCompatState]) : CompilerLowerState
+  (compiler-lower-state-new-with-intern-state-and-profile-state
+    intern-state
+    (profile_state.compiler-profile-state-new)))
 
 ;; Serial/test compatibility adapter. Driver-owned jobs construct the lower
 ;; carrier with their explicit intern capability instead.
@@ -867,6 +886,14 @@
 
 (define (compiler-lower-state-interns [state : CompilerLowerState]) : ci.InternCompatState
   (compiler-lower-state-read state ci.InternCompatState intern-owner))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-lower-state-profile [state : CompilerLowerState]) : profile_state.CompilerProfileState
+    (compiler-lower-state-read
+      state
+      profile_state.CompilerProfileState
+      profile-owner)))
 
 (define (compiler-lower-state-checked-pools [state : CompilerLowerState]) : CompilerLowerCheckedPoolsState
   (compiler-lower-state-read state CompilerLowerCheckedPoolsState checked-pools))
@@ -2647,26 +2674,27 @@
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-specialization-counters) : unit
+  (define (compiler-lower-profile-specialization-counters
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
       (compiler-lower-profile-counter
         "specialization.structural_keys.created"
-        (spec.spec-profile-structural-key-created-value))
+        (spec.spec-profile-structural-key-created-value state))
       (compiler-lower-profile-counter
         "specialization.structural_keys.reused"
-        (spec.spec-profile-structural-key-reused-value))
+        (spec.spec-profile-structural-key-reused-value state))
       (compiler-lower-profile-counter
         "specialization.generated_text.materialized"
-        (spec.spec-profile-generated-text-materialized-value))
+        (spec.spec-profile-generated-text-materialized-value state))
       (compiler-lower-profile-counter
         "specialization.render.calls"
-        (spec.spec-profile-name-render-calls-value))
+        (spec.spec-profile-name-render-calls-value state))
       (compiler-lower-profile-counter
         "specialization.render.cache_hits"
-        (spec.spec-profile-name-render-cache-hits-value))
+        (spec.spec-profile-name-render-cache-hits-value state))
       (compiler-lower-profile-counter
         "specialization.render.cache_misses"
-        (spec.spec-profile-name-render-cache-misses-value)))))
+        (spec.spec-profile-name-render-cache-misses-value state)))))
 
 (cfg
   compile-profile
@@ -8254,7 +8282,7 @@
           (unsafe
             (ptr->int
               (ptr-cast
-                (array-data cell)
+                (__tl_array-data cell)
                 : (Ptr CompilerLowerFunctionStateData))))
           : i64)]
       (begin
@@ -22141,17 +22169,26 @@
                               (ResultLowerEnv.Err
                                 (box (lower-diagnostic message)))]
                             [(parser.ResultAstTypeList.Ok nested-fields)
-                              (match (lower-load-at-offset
+                              (match (lower-load-inline-value-at-offset
+                                (lower-global-shared-view ctx)
                                 state
                                 (lower-global-shared-view base)
                                 offset
-                                (lower-global-shared-view resolved))
+                                (lower-global-shared-view resolved)
+                                mode)
                                 [(LowerExpr.Expr field-state field-value _)
-                                  (match (lower-load-at-offset
-                                    field-state
-                                    (lower-global-shared-view field-value)
-                                    0
-                                    (ast.AstType.I64))
+                                  (match (if (lower-type-register-resident?
+                                    (lower-global-shared-view ctx)
+                                    (lower-global-shared-view resolved))
+                                    (LowerExpr.Expr
+                                      field-state
+                                      (lower-global-shared-view field-value)
+                                      (ast.AstType.I64))
+                                    (lower-load-at-offset
+                                      field-state
+                                      (lower-global-shared-view field-value)
+                                      0
+                                      (ast.AstType.I64)))
                                     [(LowerExpr.Expr tag-state tag-value _)
                                       (match (lower-state-alloc-var tag-state)
                                         [(LowerAlloc.Alloc eq-alloc eq-var)
@@ -31872,6 +31909,23 @@
           arr
           index
           expr-ty))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr
+          (lower-context-expr-get (lower-global-shared-view ctx) place-box)]
+        [replacement : ast.AstExpr
+          (lower-context-expr-get
+            (lower-global-shared-view ctx)
+            replacement-box)]
+        (lower-replace
+          (lower-global-shared-view ctx)
+          state
+          (lower-global-shared-view env)
+          type-env
+          place
+          replacement
+          expr-ty
+          origin))]
     [(ast.AstExpr.ArrayPush arr-box value-box)
       (let
         [arr : ast.AstExpr
@@ -53384,6 +53438,8 @@
   (match (tc_core.tc-type-without-regions ty)
     [(ast.AstType.I8) true]
     [(ast.AstType.U8) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.U16) true]
     [(ast.AstType.I32) true]
     [(ast.AstType.U32) true]
     [(ast.AstType.I64) true]
@@ -53394,6 +53450,8 @@
   (match (tc_core.tc-type-without-regions ty)
     [(ast.AstType.I8) 8]
     [(ast.AstType.U8) 8]
+    [(ast.AstType.I16) 16]
+    [(ast.AstType.U16) 16]
     [(ast.AstType.I32) 32]
     [(ast.AstType.U32) 32]
     [(ast.AstType.I64) 64]
@@ -53422,7 +53480,7 @@
     (if (lower-mode-avx2? mode)
       "AVX2"
       "AVX-512")
-    " backend mode; supported lane types are i8, u8, i32, u32, i64, and u64"))
+    " backend mode; supported lane types are i8, u8, i16, u16, i32, u32, i64, and u64"))
 
 (define (lower-spmd-expr-has-shift?
   [ctx : tc_core.TcContext]
@@ -60563,7 +60621,7 @@
       (tc_core.tc-type-render lane-ty)
       " in "
       (lower-masked-shift-mode-name (lower-state-mode state))
-      " backend mode; supported lane types are i8, u8, i32, u32, i64, and u64")))
+      " backend mode; supported lane types are i8, u8, i16, u16, i32, u32, i64, and u64")))
 
 (define (lower-avx512-masked-shift-guard-and-emit
   [state : LowerState]
@@ -75478,7 +75536,10 @@
           (lower-global-shared-view pools))
         unit)
       (cfg compile-profile (compiler-lower-profile-name-reset))
-      (spec.spec-profile-reset!)
+      (cfg
+        (any compile-profile test)
+        (spec.spec-profile-reset! (compiler-lower-state-profile lower-state))
+        unit)
       (cfg compile-profile (compiler-lower-profile-start))
       (let
         [needs-specialization : bool
@@ -75502,12 +75563,21 @@
             ;; scalar interner changes before explicit specialization begins.
             (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
             (if needs-specialization
-              (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
-                program
-                paths
-                (lower-global-shared-view entry-path)
-                (lower-global-shared-view pools)
-                (lower-global-shared-view intern-state))
+              (cfg
+                (any compile-profile test)
+                (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
+                  program
+                  paths
+                  (lower-global-shared-view entry-path)
+                  (lower-global-shared-view pools)
+                  (lower-global-shared-view intern-state)
+                  (compiler-lower-state-profile lower-state))
+                (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
+                  program
+                  paths
+                  (lower-global-shared-view entry-path)
+                  (lower-global-shared-view pools)
+                  (lower-global-shared-view intern-state)))
               (spec.ResultSpecProgramWithPaths.Ok program paths)))]
         (begin
           ;; Explicit specialization mutates owner pool/interner cells; publish
@@ -75523,7 +75593,8 @@
                   (compiler-lower-profile-finish "specialize"))
                 (cfg
                   compile-profile
-                  (compiler-lower-profile-specialization-counters))
+                  (compiler-lower-profile-specialization-counters
+                    (compiler-lower-state-profile lower-state)))
                 (cfg compile-profile (compiler-lower-profile-start))
                 (let
                   [prune-names : LowerNameEnv
@@ -75657,7 +75728,8 @@
                   (compiler-lower-profile-finish "specialize"))
                 (cfg
                   compile-profile
-                  (compiler-lower-profile-specialization-counters))
+                  (compiler-lower-profile-specialization-counters
+                    (compiler-lower-state-profile lower-state)))
                 (ResultCompilerLower.Err
                   (box
                     (lower-diagnostic-with-fallback-path
@@ -75783,9 +75855,15 @@
       ;; typecheck-compiler-program-with-paths for why).
       (let
         [generation-owner : spec.SpecOwnerContext
-          (spec.spec-owner-context-new
-            (ast.ast-place-shared-view pools)
-            (ci.intern-global-shared-view intern-state))]
+          (cfg
+            (any compile-profile test)
+            (spec.spec-owner-context-new-with-profile-state
+              (ast.ast-place-shared-view pools)
+              (ci.intern-global-shared-view intern-state)
+              (compiler-lower-state-profile lower-state))
+            (spec.spec-owner-context-new
+              (ast.ast-place-shared-view pools)
+              (ci.intern-global-shared-view intern-state)))]
         [generated-result : spec.ResultGenProgramWithPaths
           (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
             (ast.ast-place-shared-view program)

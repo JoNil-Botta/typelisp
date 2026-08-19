@@ -13,17 +13,29 @@
 ;# keeps each pass distinct (no hoisting) and the `base-reps + (io.arg-count)`
 ;# trip count (io.arg-count is 1 with no extra arguments, matching C `argc`) keeps
 ;# the result deterministic while preventing whole-loop constant folding.
-; Compatibility exception for #3772: SPMD value operands still use bare
-; array-ref so the checker sees the compiler array-read AST.
-(import stdlib.array)
+; SPMD value operands use direct array-ref over a generated Vec's borrowed
+; native Slice so the checker sees the compiler array-read AST.
 (import stdlib.io)
+(import stdlib.vector)
+(import (vector.vector i64) as i64v)
 
 (define array-len : i64
   4096)
 (define base-reps : i64
   300000)
 
-(define (init [a : (Array i64)] [n : i64]) : unit
+(define (make-buffer [capacity : i64]) : i64v.Vec
+  (let
+    [out : i64v.Vec (i64v.with-capacity capacity)]
+    [i : i64 0]
+    (begin
+      (while (< i capacity)
+        (begin
+          (i64v.push-ref! (&mut out) 0)
+          (set! i (+ i 1))))
+      out)))
+
+(define (init [a : (&mut a (Slice i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -31,20 +43,28 @@
         (set! (array-ref a i) (+ i 1))
         (set! i (+ i 1))))))
 
+(define (reduce-kernel [a : (& a (Slice i64))] [r : i64]) : i64
+  (spmd-reduce sum ([i : i64 0 array-len]) 0 (+ (array-ref a i) r)))
+
 (define (main) : i64
   (let
-    [a : (Array i64) (array.make-array i64 array-len)]
+    [a : i64v.Vec (make-buffer array-len)]
     [reps : i64 (+ base-reps (io.arg-count))]
     [acc : i64 0]
     [r : i64 0]
     (begin
-      (init a array-len)
-      (while (< r reps)
+      (let
+        [init-view : (&mut a (Slice i64)) (i64v.view-mut (&mut a))]
+        (init init-view array-len))
+      (let
+        [a-view : (& a (Slice i64)) (i64v.view (& a))]
+        ;; Keep the microkernel as a separately measured call. The binding
+        ;; prevents whole-program inlining from folding it into the outer
+        ;; repetition loop while retaining the native Slice ABI.
+        [kernel : (-> (& a (Slice i64)) i64 i64) reduce-kernel]
         (begin
-          (set!
-            acc
-            (+
-              acc
-              (spmd-reduce sum ([i : i64 0 array-len]) 0 (+ (array-ref a i) r))))
-          (set! r (+ r 1))))
-      (bit-and acc 255))))
+          (while (< r reps)
+            (begin
+              (set! acc (+ acc (kernel a-view r)))
+              (set! r (+ r 1))))
+          (bit-and acc 255))))))

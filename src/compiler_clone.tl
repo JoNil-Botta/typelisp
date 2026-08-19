@@ -419,7 +419,7 @@
   [store : (& store CloneRootEntryStore)]
   [index : i64]) : CloneRootEntry
   (unsafe
-    (ptr-read (ptr-offset (array-data store.entries) index))))
+    (ptr-read (ptr-offset (__tl_array-data store.entries) index))))
 
 (define (clone-root-entries-entry-at-or
   [roots : CloneRootEntries]

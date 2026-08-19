@@ -312,7 +312,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 (defmacro (compiler-backend-box-field-shared-view [value : Expr] [field : Expr]) : Expr
   `(let
@@ -1053,7 +1053,7 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr CompilerBackendStateData))))
+              (ptr-cast (__tl_array-data cell) : (Ptr CompilerBackendStateData))))
           : i64)))))
 
 (define (compiler-backend-state-set-representations!
@@ -1229,7 +1229,7 @@
           (unsafe
             (ptr->int
               (ptr-cast
-                (array-data cell)
+                (__tl_array-data cell)
                 : (Ptr CompilerBackendStreamStateData))))
           : i64)))))
 
@@ -2890,7 +2890,7 @@
           (unsafe
             (ptr->int
               (ptr-cast
-                (array-data cell)
+                (__tl_array-data cell)
                 : (Ptr CompilerBackendFunctionStateData))))
           : i64)))))
 
@@ -3537,7 +3537,7 @@
                         [hash : i64
                           (ci.intern-hash-words
                             (unsafe
-                              (ptr-cast (array-data bytes) : (Ptr u8)))
+                              (ptr-cast (__tl_array-data bytes) : (Ptr u8)))
                             off
                             len)]
                         [slot : i64 (bit-and hash (- new-cap 1))]
@@ -3875,6 +3875,7 @@
 
 (defstruct CompilerBackendProgramCollections
   (functions BackendSymbolSet)
+  (references BackendSymbolSet)
   (strings BackendStringSet)
   (floats BackendFloatSet)
   (bytes BackendStringSet)
@@ -3982,6 +3983,7 @@
 (define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-new 256)
+    (compiler-backend-symbol-set-new 256)
     (compiler-backend-string-set-new 256)
     (compiler-backend-float-set-new 256)
     (compiler-backend-string-set-new 64)
@@ -3994,6 +3996,20 @@
   [name : i64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-add collections.functions name)
+    (compiler-backend-symbol-set-add collections.references name)
+    collections.strings
+    collections.floats
+    collections.bytes
+    collections.uses-avx2-i64-lane-id
+    collections.uses-avx512-i64-lane-id
+    collections.uses-f64-neg))
+
+(define (compiler-backend-program-collections-add-reference
+  [collections : CompilerBackendProgramCollections]
+  [name : i64]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    collections.functions
+    (compiler-backend-symbol-set-add collections.references name)
     collections.strings
     collections.floats
     collections.bytes
@@ -4006,6 +4022,7 @@
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     (compiler-backend-string-set-add collections.strings text)
     collections.floats
     collections.bytes
@@ -4019,6 +4036,7 @@
   [bits : u64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     (compiler-backend-float-set-add collections.floats ty bits)
     collections.bytes
@@ -4031,6 +4049,7 @@
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     (compiler-backend-string-set-add collections.bytes text)
@@ -4042,6 +4061,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -4053,6 +4073,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -4064,6 +4085,7 @@
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     collections.functions
+    collections.references
     collections.strings
     collections.floats
     collections.bytes
@@ -5039,6 +5061,235 @@
       [(compiler_ir_types.CompilerIrBinOp.Shl _) true]
       [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
       [_ false])))
+
+(define (compiler-backend-word-vector-shift?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]) : bool
+  (and
+    (match elem-ty
+      [(compiler_ast_types.AstType.I16) true]
+      [(compiler_ast_types.AstType.U16) true]
+      [_ false])
+    (match op
+      [(compiler_ir_types.CompilerIrBinOp.Shl _) true]
+      [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
+      [_ false])))
+
+(define (compiler-backend-word-vector-shift-mnemonic
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]) : String
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Shl _) "vpsllvd"]
+    [(compiler_ir_types.CompilerIrBinOp.Shr _)
+      (match elem-ty
+        [(compiler_ast_types.AstType.I16) "vpsravd"]
+        [(compiler_ast_types.AstType.U16) "vpsrlvd"]
+        [_ ""])]
+    [_ ""]))
+
+(define (compiler-backend-word-vector-widen-mnemonic
+  [elem-ty : compiler_ast_types.AstType]) : String
+  (match elem-ty
+    [(compiler_ast_types.AstType.I16) "vpmovsxwd"]
+    [(compiler_ast_types.AstType.U16) "vpmovzxwd"]
+    [_ ""]))
+
+;; AVX2 has no per-word variable shift. Widen the low and high 128-bit word
+;; groups to dwords, use the native dword shift, mask each result to its exact
+;; low 16 bits, then pack. `vpackusdw` interleaves its two inputs inside each
+;; 128-bit sublane, so the final qword permutation restores source lane order.
+(define (compiler-backend-emit-avx2-word-vector-shift
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [vector-bytes : i64 32]
+    [group-bytes : i64 16]
+    [result-base : i64 64]
+    [move : String
+      (compiler-backend-vector-move-for-width
+        "ymm"
+        (compiler-backend-global-shared-view elem-ty))]
+    [dword-move : String
+      (compiler-backend-vector-move-for-width
+        "ymm"
+        (compiler_ast_types.AstType.I32))]
+    [widen : String
+      (compiler-backend-word-vector-widen-mnemonic
+        (compiler-backend-global-shared-view elem-ty))]
+    [shift : String
+      (compiler-backend-word-vector-shift-mnemonic
+        (compiler-backend-global-shared-view op)
+        (compiler-backend-global-shared-view elem-ty))]
+    [tmp0 : String "%ymm0"]
+    [tmp1 : String "%ymm1"]
+    (match (compiler-backend-vector-register-use
+      (compiler-backend-global-shared-view assignments)
+      lhs
+      "word shift lhs"
+      "ymm"
+      (compiler-backend-global-shared-view elem-ty)
+      (compiler-backend-vector-spill-scratch "ymm" 0)
+      (compiler-backend-global-shared-view backend-state))
+      [(ResultBackendVectorUse.Ok lhs-use)
+        (match lhs-use
+          [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+            (match (compiler-backend-vector-register-use
+              (compiler-backend-global-shared-view assignments)
+              rhs
+              "word shift rhs"
+              "ymm"
+              (compiler-backend-global-shared-view elem-ty)
+              (compiler-backend-vector-spill-scratch "ymm" 1)
+              (compiler-backend-global-shared-view backend-state))
+              [(ResultBackendVectorUse.Ok rhs-use)
+                (match rhs-use
+                  [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
+                    (match (compiler-backend-vector-dst-reg
+                      (compiler-backend-global-shared-view assignments)
+                      dst
+                      "word shift dst"
+                      "ymm"
+                      (compiler-backend-vector-spill-scratch "ymm" 0)
+                      (compiler-backend-global-shared-view backend-state))
+                      [(ResultBackendReg.Ok dst-reg)
+                        (let
+                          [groups : String ""]
+                          [group : i64 0]
+                          (begin
+                            (while (< group 2)
+                              (let
+                                [word-offset : i64 (* group group-bytes)]
+                                [result-offset : i64
+                                  (+ result-base (* group vector-bytes))]
+                                (begin
+                                  (set!
+                                    groups
+                                    (str_cat.str-cat
+                                      groups
+                                      "    "
+                                      (compiler-backend-global-shared-view
+                                        widen)
+                                      " "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        word-offset)
+                                      ", "
+                                      (compiler-backend-global-shared-view tmp0)
+                                      "\n    "
+                                      (compiler-backend-global-shared-view
+                                        widen)
+                                      " "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        (+ vector-bytes word-offset))
+                                      ", "
+                                      (compiler-backend-global-shared-view tmp1)
+                                      "\n    "
+                                      (compiler-backend-global-shared-view
+                                        shift)
+                                      " "
+                                      (compiler-backend-global-shared-view tmp1)
+                                      ", "
+                                      (compiler-backend-global-shared-view tmp0)
+                                      ", "
+                                      (compiler-backend-global-shared-view tmp0)
+                                      "\n    "
+                                      (compiler-backend-global-shared-view
+                                        dword-move)
+                                      " "
+                                      (compiler-backend-global-shared-view tmp0)
+                                      ", "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        result-offset)
+                                      "\n"))
+                                  (set! group (+ group 1)))))
+                            (ResultCompilerBackend.Ok
+                              (str_cat.str-cat
+                                lhs-asm
+                                rhs-asm
+                                "    subq $128, %rsp\n    "
+                                (compiler-backend-global-shared-view move)
+                                " "
+                                lhs-reg
+                                ", (%rsp)\n    "
+                                (compiler-backend-global-shared-view move)
+                                " "
+                                rhs-reg
+                                ", 32(%rsp)\n"
+                                groups
+                                "    vpcmpeqd "
+                                (compiler-backend-global-shared-view tmp0)
+                                ", "
+                                (compiler-backend-global-shared-view tmp0)
+                                ", "
+                                (compiler-backend-global-shared-view tmp0)
+                                "\n    vpsrld $16, "
+                                (compiler-backend-global-shared-view tmp0)
+                                ", "
+                                (compiler-backend-global-shared-view tmp0)
+                                "\n    "
+                                (compiler-backend-global-shared-view dword-move)
+                                " 64(%rsp), "
+                                (compiler-backend-global-shared-view tmp1)
+                                "\n    vpand "
+                                (compiler-backend-global-shared-view tmp0)
+                                ", "
+                                (compiler-backend-global-shared-view tmp1)
+                                ", "
+                                (compiler-backend-global-shared-view tmp1)
+                                "\n    "
+                                (compiler-backend-global-shared-view dword-move)
+                                " 96(%rsp), "
+                                (compiler-backend-global-shared-view dst-reg)
+                                "\n    vpand "
+                                (compiler-backend-global-shared-view tmp0)
+                                ", "
+                                (compiler-backend-global-shared-view dst-reg)
+                                ", "
+                                (compiler-backend-global-shared-view dst-reg)
+                                "\n    vpackusdw "
+                                (compiler-backend-global-shared-view dst-reg)
+                                ", "
+                                (compiler-backend-global-shared-view tmp1)
+                                ", "
+                                (compiler-backend-global-shared-view tmp1)
+                                "\n    vpermq $216, "
+                                (compiler-backend-global-shared-view tmp1)
+                                ", "
+                                (compiler-backend-global-shared-view dst-reg)
+                                "\n    addq $128, %rsp\n"
+                                (compiler-backend-vector-store-dst
+                                  assignments
+                                  dst
+                                  "ymm"
+                                  elem-ty
+                                  dst-reg
+                                  backend-state)))))]
+                      [(ResultBackendReg.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler_diagnostic.compiler-diagnostic-with-message
+                              instr-diag
+                              message)))])])]
+              [(ResultBackendVectorUse.Err message)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-with-message
+                      instr-diag
+                      message)))])])]
+      [(ResultBackendVectorUse.Err message)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-with-message
+              instr-diag
+              message)))])))
 
 (define (compiler-backend-byte-vector-shift-mnemonic
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -6242,6 +6493,18 @@
           (compiler-backend-global-shared-view op)
           (compiler-backend-global-shared-view elem-ty))]
       (cond
+        [(compiler-backend-word-vector-shift?
+            (compiler-backend-global-shared-view op)
+            (compiler-backend-global-shared-view elem-ty))
+          (compiler-backend-emit-avx2-word-vector-shift
+            assignments
+            dst
+            op
+            lhs
+            rhs
+            elem-ty
+            instr-diag
+            backend-state)]
         [(compiler-backend-byte-vector-shift?
             (compiler-backend-global-shared-view op)
             (compiler-backend-global-shared-view elem-ty))
@@ -6806,6 +7069,8 @@
         [(compiler_ast_types.AstType.U64) "vpsllvq"]
         [(compiler_ast_types.AstType.I32) "vpsllvd"]
         [(compiler_ast_types.AstType.U32) "vpsllvd"]
+        [(compiler_ast_types.AstType.I16) "vpsllvw"]
+        [(compiler_ast_types.AstType.U16) "vpsllvw"]
         [_ ""])]
     [(compiler_ir_types.CompilerIrBinOp.Shr _)
       (match elem-ty
@@ -6813,6 +7078,8 @@
         [(compiler_ast_types.AstType.U64) "vpsrlvq"]
         [(compiler_ast_types.AstType.I32) "vpsravd"]
         [(compiler_ast_types.AstType.U32) "vpsrlvd"]
+        [(compiler_ast_types.AstType.I16) "vpsravw"]
+        [(compiler_ast_types.AstType.U16) "vpsrlvw"]
         [_ ""])]
     [(compiler_ir_types.CompilerIrBinOp.BitAnd)
       (match elem-ty
@@ -27986,6 +28253,13 @@
 ;; with the displacement negated, which replaces a `mov` + arithmetic pair. Only
 ;; a displacement that still encodes as imm32 qualifies (i64 MIN has no
 ;; negation, so it falls out here).
+;;
+;; #6288: centralize the FPO `%rbp` value-home invariant here rather than in
+;; selected callers. `K(%rbp)` is textually indistinguishable from a frame
+;; address to the final rsp rebase. The no-base SIB form `K(,%rbp,1)` computes
+;; the same value but cannot be classified as a frame reference. Any current or
+;; retried register plan that reaches this formatter is therefore safe by
+;; construction.
 (define (compiler-backend-binop-immediate-lea-asm
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs-reg : String]
@@ -27999,7 +28273,9 @@
           "    leaq "
           (compiler-backend-immediate-displacement imm)
           "("
-          lhs-reg
+          (if (string.eq lhs-reg "%rbp")
+            ",%rbp,1"
+            lhs-reg)
           "), "
           dst-home
           "\n"))]
@@ -28012,7 +28288,9 @@
                 "    leaq "
                 (string.int->string (- 0 value))
                 "("
-                lhs-reg
+                (if (string.eq lhs-reg "%rbp")
+                  ",%rbp,1"
+                  lhs-reg)
                 "), "
                 dst-home
                 "\n"))
@@ -28054,16 +28332,12 @@
           (compiler-backend-global-shared-view imm)
           (compiler-backend-global-shared-view rhs)))
       (match (if (and
-        (not (string.eq (compiler-backend-global-shared-view lhs-reg) ""))
-        ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
-        ;; reference and silently rebased by the FPO rsp-rebase pass
-        ;; (miscompile) -- an rbp-homed lhs takes the mov+add path below.
-        (not (string.eq (compiler-backend-global-shared-view lhs-reg) "%rbp"))
+        (not (string.eq lhs-reg ""))
         (not
           (string.eq
             (compiler-backend-global-shared-view lhs-reg)
             (compiler-backend-global-shared-view dst-home)))
-        (not (string.eq (compiler-backend-global-shared-view imm) "$0"))
+        (not (string.eq imm "$0"))
         (=
           (compiler-backend-type-size
             type-segment-bases
@@ -28173,11 +28447,7 @@
           [_ false]))]
     (match (if (and
       (not zero-addsub?)
-      (not (string.eq (compiler-backend-global-shared-view lhs-reg) ""))
-      ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
-      ;; reference and silently rebased by the FPO rsp-rebase pass
-      ;; (miscompile) -- an rbp-homed lhs takes the mov+add path below.
-      (not (string.eq (compiler-backend-global-shared-view lhs-reg) "%rbp"))
+      (not (string.eq lhs-reg ""))
       (=
         (compiler-backend-type-size
           type-segment-bases
@@ -68672,9 +68942,10 @@
 ;; %rbp in the pool and re-emits).
 ;;
 ;; #rbp-base invariant: in fpo mode every "(%rbp" occurrence is a frame
-;; reference -- %rbp pool VALUES never appear as memory-operand bases (the
-;; emitters stage them through a scratch; see address-base-filter) and bare
-;; `%rbp` register operands contain no "(%rbp".
+;; reference. Emitters structurally distinguish %rbp pool VALUES with a
+;; no-base SIB spelling `(,%rbp,1)` where possible and otherwise stage through
+;; a scratch (see address-base-filter); bare `%rbp` register operands also
+;; contain no "(%rbp".
 ;; GAP1: 3-arg spelling for the stage-1 / adapter / fallback call sites --
 ;; byte-identical to the pre-GAP1 pass (no push mode).
 (define (compiler-backend-rsp-rebase
@@ -71836,6 +72107,109 @@
                 (compiler-backend-global-shared-view walk-func)
                 (compiler-backend-global-shared-view
                   program-index.representations))))]
+        ;; Did cycle 20's cold-call rewrite fire? That is the claim that this
+        ;; function's ONLY kind-0 clobber was carried away, which is what lets a
+        ;; replan below tell the param ABI-pin gate to ignore the clobber set.
+        ;; The call-hole round below also mints forced-to-memory carriers, but it
+        ;; leaves every call in place, so the two must not be conflated.
+        [cold-call-split? : bool (>= cold-call-temp-start 0)]
+        ;; P3: a GP value whose interval spans a call is callee-saved-only in the
+        ;; greedy and, once those six are taken, is spilled for its WHOLE
+        ;; interval -- every use, including the ones in the hot loop, becomes
+        ;; frame traffic. Split such a value's range AROUND each call it is live
+        ;; through (store to a stack-only carrier before, reload after) and
+        ;; REPLAN, so the pieces are ordinary caller-saved candidates. The round
+        ;; declines unless the replan actually registerises the selections and
+        ;; the replanned function's estimated cost is strictly lower, so it can
+        ;; only ever remove frame traffic.
+        [call-hole-split : compiler_regalloc.CompilerRegCallHoleSplit
+          (if scalar-plan?
+            (compiler_regalloc.compiler-reg-call-hole-split-rewrite-function
+              type-segment-bases
+              fn-abi
+              (compiler-backend-global-shared-view walk-func)
+              (compiler-backend-global-shared-view walk-types)
+              (compiler-backend-global-shared-view reg-plan)
+              cold-call-temp-start)
+            (compiler_regalloc.compiler-reg-call-hole-split-none
+              (compiler-backend-global-shared-view walk-func)
+              walk-vars
+              (compiler-backend-global-shared-view reg-plan)
+              (compiler-backend-global-shared-view walk-types)
+              cold-call-temp-start))]
+        ;; The P3 view. P3c below consumes it and produces the FURTHER split
+        ;; view everything downstream reads; when P3c declines, the two are the
+        ;; same values.
+        [hole-func : compiler_ir_types.CompilerIrFunction
+          (compiler_regalloc.compiler-reg-call-hole-split-function
+            (compiler-backend-global-shared-view call-hole-split))]
+        [hole-vars : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-vars
+            (compiler-backend-global-shared-view call-hole-split))]
+        [hole-types : compiler_regalloc.CompilerRegVarTypes
+          (compiler_regalloc.compiler-reg-call-hole-split-types
+            (compiler-backend-global-shared-view call-hole-split))]
+        [hole-reg-plan : compiler_regalloc.CompilerRegPlan
+          (compiler_regalloc.compiler-reg-call-hole-split-plan
+            (compiler-backend-global-shared-view call-hole-split))]
+        ;; One forced-spill threshold over EVERY carrier family: the cold-call
+        ;; carriers occupy [cold-call-temp-start, walk-vars), the call-hole
+        ;; carriers [walk-vars, hole-vars) and the loop-parking carriers
+        ;; [hole-vars, split-vars), contiguously.
+        [hole-temp-start : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-temp-start
+            (compiler-backend-global-shared-view call-hole-split))]
+        ;; P3c: the greedy homes a value for its WHOLE interval, so a value that
+        ;; is live ACROSS a hot inner loop but never referenced in it keeps its
+        ;; register through that loop while the loop's own residents spill or
+        ;; scavenge. Park such a value at the loop boundary -- store to a
+        ;; stack-only carrier in the preheader, reload on the exits -- so its
+        ;; range has a hole over the loop, and REPLAN. Like P3 the round keeps
+        ;; the rewrite only when the replanned function's estimated cost is
+        ;; strictly lower, so it can only ever remove frame traffic.
+        ;;
+        ;; `cold-call-split?` is passed through rather than pinned false: the
+        ;; rewrite adds and removes no call, so the claim the plan it improves on
+        ;; was already made with still holds, and the replan stays consistent
+        ;; with the plan it is compared against.
+        [loop-park-split : compiler_regalloc.CompilerRegCallHoleSplit
+          (if scalar-plan?
+            (compiler_regalloc.compiler-reg-loop-park-rewrite-function
+              type-segment-bases
+              fn-abi
+              (compiler-backend-global-shared-view hole-func)
+              (compiler-backend-global-shared-view hole-types)
+              (compiler-backend-global-shared-view hole-reg-plan)
+              hole-temp-start
+              cold-call-split?)
+            (compiler_regalloc.compiler-reg-call-hole-split-none
+              (compiler-backend-global-shared-view hole-func)
+              hole-vars
+              (compiler-backend-global-shared-view hole-reg-plan)
+              (compiler-backend-global-shared-view hole-types)
+              hole-temp-start))]
+        ;; Everything downstream of the initial plan consumes the SPLIT view:
+        ;; the leaf-CSR round, its replan, the carrier self-check, the
+        ;; caller-save/loop-split/remat rewrites, storage coloring and emission.
+        ;; When both rounds decline, these are the pre-split values unchanged.
+        [split-func : compiler_ir_types.CompilerIrFunction
+          (compiler_regalloc.compiler-reg-call-hole-split-function
+            (compiler-backend-global-shared-view loop-park-split))]
+        [split-blocks : compiler_ir_types.CompilerIrBlockList
+          (compiler_regalloc.compiler-reg-call-hole-split-blocks
+            (compiler-backend-global-shared-view loop-park-split))]
+        [split-vars : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-vars
+            (compiler-backend-global-shared-view loop-park-split))]
+        [split-types : compiler_regalloc.CompilerRegVarTypes
+          (compiler_regalloc.compiler-reg-call-hole-split-types
+            (compiler-backend-global-shared-view loop-park-split))]
+        [split-reg-plan : compiler_regalloc.CompilerRegPlan
+          (compiler_regalloc.compiler-reg-call-hole-split-plan
+            (compiler-backend-global-shared-view loop-park-split))]
+        [split-temp-start : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-temp-start
+            (compiler-backend-global-shared-view loop-park-split))]
         ;; A call-free natural loop can leave one volatile register dead before
         ;; the loop and another dead inside it while the whole-range greedy pays
         ;; for a callee-saved home. Detect that shape against the initial plan,
@@ -71848,15 +72222,15 @@
             (compiler_regalloc.compiler-reg-leaf-csr-split-rewrite-one
               type-segment-bases
               fn-abi
-              (compiler-backend-global-shared-view walk-func)
-              (compiler-backend-global-shared-view blocks)
-              walk-vars
-              (compiler-backend-global-shared-view walk-types)
-              (compiler-backend-global-shared-view reg-plan))
+              (compiler-backend-global-shared-view split-func)
+              (compiler-backend-global-shared-view split-blocks)
+              split-vars
+              (compiler-backend-global-shared-view split-types)
+              (compiler-backend-global-shared-view split-reg-plan))
             (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-              (compiler-backend-global-shared-view blocks)
-              walk-vars
-              walk-vars
+              (compiler-backend-global-shared-view split-blocks)
+              split-vars
+              split-vars
               (compiler_regalloc.compiler-reg-assignment-table-empty)
               (compiler_regalloc.compiler-reg-var-types-empty)))]
         [alloc-blocks : compiler_ir_types.CompilerIrBlockList
@@ -71885,8 +72259,8 @@
             alloc-vars
             (compiler-backend-global-shared-view alloc-blocks))]
         [alloc-types : compiler_regalloc.CompilerRegVarTypes
-          (if (= alloc-vars walk-vars)
-            (compiler-backend-global-shared-view walk-types)
+          (if (= alloc-vars split-vars)
+            split-types
             (compiler_regalloc.compiler-reg-function-var-types
               (compiler-backend-global-shared-view alloc-func)))]
         [alloc-preassignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -71899,31 +72273,41 @@
                 _)
               assignments])]
         [raw-alloc-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (= alloc-vars walk-vars)
-            (compiler-backend-global-shared-view reg-plan)
-            (compiler_regalloc.compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-preassignments
+          (if (= alloc-vars split-vars)
+            split-reg-plan
+            ;; The leaf-CSR round only admits functions with NO kind-0 clobber
+            ;; and the call-hole round only fires on functions that have one, so
+            ;; this replan never sees call-hole carriers -- but it still forces
+            ;; whatever carrier range exists to memory, and it passes the
+            ;; cold-call CLAIM separately from that threshold.
+            (compiler_regalloc.compiler-reg-plan-function-scalar-forced-spill-with-types
               type-segment-bases
               fn-abi
               (compiler-backend-global-shared-view alloc-func)
-              cold-call-temp-start
+              split-temp-start
+              cold-call-split?
               (compiler-backend-global-shared-view alloc-types)
               (compiler-backend-global-shared-view alloc-preassignments)))]
         [alloc-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (= alloc-vars walk-vars)
+          (if (= alloc-vars split-vars)
             raw-alloc-reg-plan
             (compiler_regalloc.compiler-reg-plan-hide-leaf-csr-phantoms
               raw-alloc-reg-plan
-              (compiler-backend-global-shared-view alloc-preassignments)
-              walk-vars))]
+              alloc-preassignments
+              split-vars))]
         [_cold-call-self-check : unit
           (cfg
             scavenge-self-check
+            ;; Covers BOTH carrier families: `split-temp-start` is the low
+            ;; watermark of the cold-call carriers when that rewrite fired and of
+            ;; the call-hole carriers otherwise, and the two ranges are
+            ;; contiguous, so one scan to `alloc-vars` checks every carrier.
             (if (compiler_regalloc.compiler-reg-cold-call-carriers-stack?
               (compiler-backend-global-shared-view alloc-reg-plan)
-              cold-call-temp-start
+              split-temp-start
               alloc-vars)
               unit
-              (io.panic "regalloc: cold-call carrier escaped its stack home"))
+              (io.panic "regalloc: split carrier escaped its stack home"))
             unit)]
         [call-save-enabled : bool
           (if (compiler-backend-mode-scalar? mode)
@@ -74546,6 +74930,10 @@
   [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
   (compiler-backend-symbol-set-list collections.functions))
 
+(define (compiler-backend-program-collections-references
+  [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
+  (compiler-backend-symbol-set-list collections.references))
+
 (define (compiler-backend-program-collections-strings
   [collections : CompilerBackendProgramCollections]) : BackendStringSeq
   (compiler-backend-string-set-list collections.strings))
@@ -74624,6 +75012,10 @@
   (match value
     [(compiler_ir_types.CompilerIrValue.Function name)
       (compiler-backend-program-collections-add-function collections name)]
+    [(compiler_ir_types.CompilerIrValue.Global name)
+      (compiler-backend-program-collections-add-reference collections name)]
+    [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
+      (compiler-backend-program-collections-add-reference collections name)]
     [(compiler_ir_types.CompilerIrValue.String text)
       (compiler-backend-program-collections-add-string collections text)]
     [(compiler_ir_types.CompilerIrValue.F64 bits)
@@ -76342,25 +76734,28 @@
   [runtime-index : CompilerBackendRuntimeIndex]
   [referenced-functions : BackendSymbolSeq]
   [extern-name-id : i64]
+  [source-name-id : i64]
   [link-symbol-id : i64]) : bool
-  (let
-    [foreign-link-symbol : bool
-      (and
-        (not (= extern-name-id link-symbol-id))
-        (not (compiler-backend-runtime-helper-known-id? extern-name-id))
-        (not (compiler-backend-runtime-helper-known-id? link-symbol-id)))]
-    (or
-      foreign-link-symbol
-      (backend-or4
-        (compiler-backend-runtime-index-calls?
-          (compiler-backend-global-shared-view runtime-index)
-          extern-name-id)
-        (compiler-backend-runtime-index-calls? runtime-index link-symbol-id)
-        (compiler-backend-symbol-list-contains-id?
-          referenced-functions
-          extern-name-id)
-        false)
-      false)))
+  (or
+    (backend-or4
+      (compiler-backend-runtime-index-calls?
+        (compiler-backend-global-shared-view runtime-index)
+        extern-name-id)
+      (compiler-backend-runtime-index-calls?
+        (compiler-backend-global-shared-view runtime-index)
+        source-name-id)
+      (compiler-backend-runtime-index-calls?
+        (compiler-backend-global-shared-view runtime-index)
+        link-symbol-id)
+      (compiler-backend-symbol-list-contains-id?
+        (compiler-backend-global-shared-view referenced-functions)
+        extern-name-id))
+    (compiler-backend-symbol-list-contains-id?
+      (compiler-backend-global-shared-view referenced-functions)
+      source-name-id)
+    (compiler-backend-symbol-list-contains-id?
+      referenced-functions
+      link-symbol-id)))
 
 (define (compiler-backend-emit-externs-into
   [backend-state : CompilerBackendState]
@@ -76375,7 +76770,7 @@
       (match item
         [(compiler_ir_types.CompilerIrExtern.Extern
             name-id
-            _
+            source-name-id
             name
             _
             _
@@ -76393,6 +76788,7 @@
               (compiler-backend-global-shared-view runtime-index)
               (compiler-backend-global-shared-view referenced-functions)
               name-id
+              source-name-id
               link-symbol-id))
             (compiler-backend-emit-externs-into
               backend-state
@@ -76819,6 +77215,7 @@
   [program-index : CompilerBackendProgramIndex]
   [runtime-index : CompilerBackendRuntimeIndex]
   [closure-names : BackendSymbolSeq]
+  [referenced-symbols : BackendSymbolSeq]
   [strings : BackendStringSeq]
   [bytes : BackendStringSeq]
   [floats : BackendFloatSeq]
@@ -76921,7 +77318,7 @@
                             (compiler-backend-global-shared-view externs)
                             plan
                             runtime-index
-                            (compiler-backend-global-shared-view closure-names)
+                            referenced-symbols
                             runtime-data-buf)]
                         (begin
                           (cfg
@@ -76986,12 +77383,15 @@
   (let
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-source-path-strings
-        program-index.backend-state
+        (compiler-backend-global-shared-view program-index.backend-state)
         (compiler-backend-collect-program-collections
           (compiler-backend-global-shared-view program))
         (compiler-backend-global-shared-view spans))]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions
+        (compiler-backend-global-shared-view collections))]
+    [referenced-symbols : BackendSymbolSeq
+      (compiler-backend-program-collections-references
         (compiler-backend-global-shared-view collections))]
     [strings : BackendStringSeq
       (compiler-backend-program-collections-strings
@@ -77045,15 +77445,16 @@
             (compiler-backend-global-shared-view plan)
             (& runtime-features)
             (compiler-backend-global-shared-view program-index)
-            runtime-index
+            (compiler-backend-global-shared-view runtime-index)
             (compiler-backend-global-shared-view closure-names)
-            strings
-            bytes
-            floats
+            (compiler-backend-global-shared-view referenced-symbols)
+            (compiler-backend-global-shared-view strings)
+            (compiler-backend-global-shared-view bytes)
+            (compiler-backend-global-shared-view floats)
             uses-avx2-i64-lane-id
             uses-avx512-i64-lane-id
             uses-f64-neg
-            globals-buf
+            (compiler-backend-global-shared-view globals-buf)
             emit-entry
             crt-entry)]
         [prefix-buf : text_buf.TextBuf
@@ -80776,11 +81177,10 @@
                   link-symbol-id
                   provided
                   (compiler-backend-global-shared-view plan))
-                (compiler-backend-extern-symbol-referenced?
-                  (compiler-backend-global-shared-view runtime-index)
-                  (compiler-backend-global-shared-view referenced-functions)
-                  name-id
-                  link-symbol-id)
+                ;; Object relocations are the exact reference inventory. In
+                ;; particular, generated indirect C calls can relocate through
+                ;; a resolved identity that is not one of the extern record's
+                ;; parser, logical, or link ids.
                 has-relocation)
                 (object_target.compiler-backend-object-symbol-extern
                   (compiler-backend-global-shared-view parts)
@@ -81899,7 +82299,7 @@
                         [hash : i64
                           (ci.intern-hash-words
                             (unsafe
-                              (ptr-cast (array-data bytes) : (Ptr u8)))
+                              (ptr-cast (__tl_array-data bytes) : (Ptr u8)))
                             off
                             len)]
                         [slot : i64 (bit-and hash (- new-cap 1))]
@@ -85889,7 +86289,7 @@
         [out : (__tl_dyn-array u8) (array.make-array u8 total)]
         [dst : (MutPtr u8)
           (unsafe
-            (array-data out))]
+            (__tl_array-data out))]
         (begin
           (compiler-backend-peephole-records-blit! v dst)
           (unsafe
@@ -88398,6 +88798,103 @@
           (compiler-backend-string-contains?
             (compiler-backend-global-shared-view asm)
             ".extern tl_str_view\n")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-unused-foreign-link-extern-program) : compiler_ir_types.CompilerIrProgram
+  (let
+    [name-id : i64 (compiler-backend-test-symbol "fixture.tl::unused-foreign")]
+    [link-symbol-id : i64
+      (compiler-backend-test-symbol "unused_foreign_symbol")]
+    (compiler_ir_types.CompilerIrProgram.Program
+      (compiler_ir_types.compiler-ir-global-seq-empty)
+      (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.CompilerIrFunction.Function
+          cbi.compiler-builtin-id-fix-main
+          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ast_types.AstType.I64)
+          0
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-instr-seq1
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 42)))))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-extern-cons
+        (compiler_ir_types.CompilerIrExtern.Extern
+          name-id
+          name-id
+          "fixture.tl::unused-foreign"
+          (compiler_ast_types.AstType.I64)
+          (compiler_ast_types.AstExternAbi.C)
+          link-symbol-id
+          (compiler_ast_types.ast-extern-link-input-list-new)
+          false)
+        compiler_ir_types.CompilerIrExternList.Nil))))
+
+(define (compiler-backend-unused-foreign-link-extern-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-unused-foreign-link-extern-program))
+    [(ResultCompilerBackend.Ok asm)
+      (not
+        (compiler-backend-string-contains?
+          asm
+          ".extern unused_foreign_symbol\n"))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-source-referenced-foreign-link-extern-program) : compiler_ir_types.CompilerIrProgram
+  (let
+    [name-id : i64 (compiler-backend-test-symbol "fixture.tl::foreign")]
+    [source-name-id : i64 (compiler-backend-test-symbol "foreign")]
+    [link-symbol-id : i64
+      (compiler-backend-test-symbol "required_foreign_symbol")]
+    [globals : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
+    (begin
+      (compiler_ir_types.compiler-ir-global-builder-push!
+        (&mut globals)
+        (compiler_ir_types.CompilerIrGlobal.Global
+          (compiler-backend-test-symbol "fixture.tl::foreign-value")
+          (compiler_ast_types.AstType.I64)
+          (compiler_ir_types.CompilerIrValue.Function source-name-id)))
+      (compiler_ir_types.CompilerIrProgram.Program
+        (compiler_ir_types.compiler-ir-global-builder-to-seq globals)
+        (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.CompilerIrFunction.Function
+            cbi.compiler-builtin-id-fix-main
+            compiler_ir_types.CompilerIrParamList.Nil
+            (compiler_ast_types.AstType.I64)
+            0
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-instr-seq1
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 42)))))
+              compiler_ir_types.CompilerIrBlockList.Nil))
+          compiler_ir_types.CompilerIrFunctionList.Nil)
+        (compiler_ir_types.compiler-ir-extern-cons
+          (compiler_ir_types.CompilerIrExtern.Extern
+            name-id
+            source-name-id
+            "fixture.tl::foreign"
+            (compiler_ast_types.AstType.I64)
+            (compiler_ast_types.AstExternAbi.C)
+            link-symbol-id
+            (compiler_ast_types.ast-extern-link-input-list-new)
+            false)
+          compiler_ir_types.CompilerIrExternList.Nil)))))
+
+(define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-source-referenced-foreign-link-extern-program))
+    [(ResultCompilerBackend.Ok asm)
+      (compiler-backend-string-contains?
+        asm
+        ".extern required_foreign_symbol\n")]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool

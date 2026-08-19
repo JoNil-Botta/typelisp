@@ -893,10 +893,12 @@
     "</main>\n"
     (doc-html-page-close)))
 
-(define (doc-html-require-contains
-  [rendered : String]
-  [needle : String]
-  [message : String]) : bool
-  (if (doc_extract.doc-string-contains? rendered needle)
+(defmacro (doc-html-require-contains
+  [rendered : Expr]
+  [needle : Expr]
+  [message : Expr]) : Expr
+  `(if (doc_extract.doc-string-contains?
+    (owned_view.compiler-owned-shared-view ,rendered)
+    ,needle)
     true
-    (io.panic message)))
+    (io.panic ,message)))

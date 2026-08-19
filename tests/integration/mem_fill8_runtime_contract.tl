@@ -47,7 +47,10 @@
           (set! i (+ i 1))))
       seen)))
 
-(define (count-dirty [items : (& items (__tl_dyn-array i64))] [lo : i64] [hi : i64]) : i64
+(define (count-dirty
+  [items : (& items (__tl_dyn-array i64))]
+  [lo : i64]
+  [hi : i64]) : i64
   (let
     [i : i64 lo]
     [seen : i64 0]
@@ -79,7 +82,7 @@
     [items : (__tl_dyn-array i64) (array.make-array i64 n)]
     [slots : (MutPtr u64)
       (unsafe
-        (ptr-cast (array-data items) : (MutPtr u64)))]
+        (ptr-cast (__tl_array-data items) : (MutPtr u64)))]
     [bad : i64 0]
     (begin
       ;; (1) exactness: fill [1, n-1), leave the two edge slots alone.

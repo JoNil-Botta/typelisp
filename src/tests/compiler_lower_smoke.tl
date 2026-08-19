@@ -14,6 +14,7 @@
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
 (import compiler_ir_types as ir)
+(import compiler_owned_view as owned_view)
 (import compiler_load as load)
 (import sym_i64_env)
 

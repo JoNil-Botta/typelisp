@@ -8,6 +8,7 @@
 (import compiler_liveness as live)
 (import compiler_ir_types as ir)
 (import compiler_ast_types as ast)
+(import compiler_owned_view as owned_view)
 (import stdlib.io)
 
 (define (compiler-live-set5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : live.CompilerLiveI64Set

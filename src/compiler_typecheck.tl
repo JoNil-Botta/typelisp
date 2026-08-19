@@ -11475,9 +11475,10 @@
             (unsafe
               (=
                 (ptr->int
-                  (array-data (__tl-project-field (__tl-box-place store) nodes)))
+                  (__tl_array-data
+                    (__tl-project-field (__tl-box-place store) nodes)))
                 (ptr->int
-                  (array-data
+                  (__tl_array-data
                     (__tl-project-field (__tl-box-place other-store) nodes)))))
             (= tail other-tail)
             (= len other-len))]
@@ -11494,9 +11495,10 @@
           (unsafe
             (=
               (ptr->int
-                (array-data (__tl-project-field (__tl-box-place store) nodes)))
+                (__tl_array-data
+                  (__tl-project-field (__tl-box-place store) nodes)))
               (ptr->int
-                (array-data
+                (__tl_array-data
                   (__tl-project-field (__tl-box-place other-store) nodes)))))]
         [_ false])]
     [_ false]))

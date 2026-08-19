@@ -243,13 +243,13 @@
   (match e
     [(Expr.Num n) (deref n)]
     [(Expr.Add a b)
-      (+ (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+      (+ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
     [(Expr.Sub a b)
-      (- (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+      (- (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
     [(Expr.Mul a b)
-      (* (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+      (* (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
     [(Expr.Div a b)
-      (/ (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]))
+      (/ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]))
 
 ;; ---- Build the token stream for the sample "2 + 3 * 4" by hand. ----
 ;; (A lexer would produce this; here we construct the parallel vectors directly

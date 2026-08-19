@@ -75,6 +75,22 @@
             (string.int->string observed.entry-bytes)
             "|import-bytes="
             (string.int->string observed.import-bytes)
+            "|surface-enabled="
+            (if observed.surface-enabled
+              "1"
+              "0")
+            "|surface-fragments="
+            (string.int->string observed.surface-fragments)
+            "|surface-hits="
+            (string.int->string observed.surface-hits)
+            "|surface-fallbacks="
+            (string.int->string observed.surface-fallbacks)
+            "|surface-decls="
+            (string.int->string observed.surface-decls)
+            "|surface-macro-skipped="
+            (string.int->string observed.surface-macro-skipped)
+            "|surface-typecheck-skipped="
+            (string.int->string observed.surface-typecheck-skipped)
             "\n"))))))
 
 (define (compiler-dependency-tlci-verification-finish!
@@ -114,6 +130,7 @@
     (load.CompilerLoadDependencyCatalogEntry
       key
       load.CompilerLoadDependencyCatalogImage.None
+      (tlci.tlci-spmd-callables-empty)
       (load.CompilerLoadDependencyCatalogStatus.Unavailable failure))))
 
 (define (compiler-dependency-tlci-record-image!
@@ -125,7 +142,10 @@
     state
     (load.CompilerLoadDependencyCatalogEntry
       key
-      (load.CompilerLoadDependencyCatalogImage.Some image)
+      (load.CompilerLoadDependencyCatalogImage.Some
+        (owned_view.compiler-owned-shared-view image))
+      (load.compiler-load-dependency-surface-copy-spmd-callables
+        (owned_view.compiler-owned-shared-view image.metadata.spmd-callables))
       status)))
 
 (define (compiler-dependency-tlci-base-key
@@ -396,7 +416,9 @@
   (let
     [root : String
       (load.compiler-load-normalize-path
-        (load.compiler-load-join-root-path manifest-dir dep.path))]
+        (if (load.compiler-load-absolute-path? dep.path)
+          dep.path
+          (load.compiler-load-join-root-path manifest-dir dep.path)))]
     [manifest-path : String
       (load.compiler-load-join-root-path
         (owned_view.compiler-owned-shared-view root)

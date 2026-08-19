@@ -277,13 +277,13 @@
   (match e
     [(Expr.Num n) (deref n)]
     [(Expr.Add a b)
-      (+ (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+      (+ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
     [(Expr.Sub a b)
-      (- (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+      (- (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
     [(Expr.Mul a b)
-      (* (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]
+      (* (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
     [(Expr.Div a b)
-      (/ (eval (& (__tl-box-place a))) (eval (& (__tl-box-place b))))]))
+      (/ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]))
 
 ;; ============================ End to end ==================================
 ;; Run the full front-end on "2 + 3 * 4":

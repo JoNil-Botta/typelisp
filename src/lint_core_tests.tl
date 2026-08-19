@@ -363,19 +363,21 @@
         (ast.ast-let-binding-list-new))]
     [nested-let : i64
       (ast.ast-expr-let
-        outer-let-bindings
-        (ast.ast-expr-let inner-let-bindings vx))]
+        (ast.ast-global-shared-view outer-let-bindings)
+        (ast.ast-expr-let (ast.ast-global-shared-view inner-let-bindings) vx))]
     [shadowing-nested-let : i64
       (ast.ast-expr-let
-        outer-let-bindings
+        (ast.ast-global-shared-view outer-let-bindings)
         (ast.ast-expr-let shadowing-let-bindings vx))]
     [begin-inner-let : i64
       (ast.ast-expr-let
-        outer-let-bindings
+        (ast.ast-global-shared-view outer-let-bindings)
         (ast.ast-node-push
           (ast.AstExpr.Begin
             (ast.ast-expr-cons
-              (ast.ast-expr-let inner-let-bindings vx)
+              (ast.ast-expr-let
+                (ast.ast-global-shared-view inner-let-bindings)
+                vx)
               (ast.ast-expr-cons vx (ast.ast-expr-list-new))))))]
     [spanned : i64 (ast.ast-expr-spanned ladder3 (ast.ast-source-span 7 3 9 4))]
     [spanned-nested-let : i64

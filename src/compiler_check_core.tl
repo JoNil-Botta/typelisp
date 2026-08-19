@@ -625,11 +625,13 @@
   "(import stdlib.io)
 (import stdlib.byte_buf)
 (define (main [path : String]) : i64
-  (begin
-    (io.print-format \"{}\" \"\")
-    (io.flush-stdout)
-    (+ (byte_buf.len data)
-       (io.file-open-status path 0)))))")
+  (let
+    [data : byte_buf.ByteBuf (io.read-file (clone path))]
+    (begin
+      (io.print-format \"{}\" \"\")
+      (io.flush-stdout)
+      (+ (byte_buf.len (& data))
+         (io.file-open-status path 0)))))")
 
 (define (compiler-check-runtime-stdlib-boundary-env-source) : String
   "(import stdlib.env)

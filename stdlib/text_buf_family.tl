@@ -49,7 +49,8 @@
     (ptr-write!
       (ptr-offset
         (ptr-cast
-          (array-data ,(comptime.expr-struct-get `(box-get ,store) "slots"))
+          (__tl_array-data
+            ,(comptime.expr-struct-get `(box-get ,store) "slots"))
           : (MutPtr String))
         ,index)
       ,entry)))
@@ -138,7 +139,7 @@
         (ptr-read
           (ptr-cast
             (ptr-offset
-              (ptr-cast (array-data store.slots) : (Ptr String))
+              (ptr-cast (__tl_array-data store.slots) : (Ptr String))
               index)
             : (Ptr String)))))
     ;: Allocation, growth, and prefix memcpy are cold.  The same-head commit
@@ -176,11 +177,11 @@
           (unsafe
             (stdlib.text_buf_family.text-buf-family-copy-bytes!
               (ptr-cast
-                (array-data
+                (__tl_array-data
                   ,(comptime.expr-struct-get `(box-get new-store) "slots"))
                 : (MutPtr u8))
               (ptr-cast
-                (array-data
+                (__tl_array-data
                   ,(comptime.expr-struct-get `(box-get store) "slots"))
                 : (Ptr u8))
               (* visible-count (stdlib.text_buf.text-buf-store-string-stride))))
@@ -408,7 +409,7 @@
                 [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
                 [dst : (MutPtr u8)
                   (unsafe
-                    (array-data out))]
+                    (__tl_array-data out))]
                 [cursor : i64 lo]
                 [pos : i64 0]
                 (begin
@@ -495,7 +496,7 @@
           [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
           [dst : (MutPtr u8)
             (unsafe
-              (array-data out))]
+              (__tl_array-data out))]
           (begin
             (stdlib.text_buf.fill-rev-into chunks dst total)
             (unsafe

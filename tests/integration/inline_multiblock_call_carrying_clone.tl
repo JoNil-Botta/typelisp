@@ -45,7 +45,7 @@
       (+ (ccc-mix acc (- v 100)) 2)
       (+ acc v))))
 
-(define (ccc-scan [a : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64
+(define (ccc-scan [a : (& a (__tl_dyn-array i64))] [n : i64] [seed : i64]) : i64
   (let
     [acc : i64 seed]
     [i : i64 0]
@@ -57,7 +57,7 @@
       acc)))
 
 ;; The same arithmetic with no call in it, so nothing is cloned into it.
-(define (ccc-scan-fused [a : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64
+(define (ccc-scan-fused [a : (& a (__tl_dyn-array i64))] [n : i64] [seed : i64]) : i64
   (let
     [acc : i64 seed]
     [i : i64 0]
@@ -81,7 +81,7 @@
 
 ;; A runtime-filled list: the optimizer does not constant-fold loads out of a
 ;; dynamically allocated array, so both scanners really run.
-(define (ccc-fill [a : (__tl_dyn-array i64)] [n : i64] [step : i64]) : unit
+(define (ccc-fill [a : (&mut a (__tl_dyn-array i64))] [n : i64] [step : i64]) : unit
   (let
     [i : i64 0]
     [x : i64 step]
@@ -101,15 +101,15 @@
     [inlined : i64 1]
     [fused : i64 1]
     (begin
-      (ccc-fill uses n 3)
-      (ccc-fill nophi n 11)
-      (ccc-fill defs n 29)
-      (set! inlined (ccc-scan uses n inlined))
-      (set! inlined (ccc-scan nophi n inlined))
-      (set! inlined (ccc-scan defs n inlined))
-      (set! fused (ccc-scan-fused uses n fused))
-      (set! fused (ccc-scan-fused nophi n fused))
-      (set! fused (ccc-scan-fused defs n fused))
+      (ccc-fill (&mut uses) n 3)
+      (ccc-fill (&mut nophi) n 11)
+      (ccc-fill (&mut defs) n 29)
+      (set! inlined (ccc-scan (& uses) n inlined))
+      (set! inlined (ccc-scan (& nophi) n inlined))
+      (set! inlined (ccc-scan (& defs) n inlined))
+      (set! fused (ccc-scan-fused (& uses) n fused))
+      (set! fused (ccc-scan-fused (& nophi) n fused))
+      (set! fused (ccc-scan-fused (& defs) n fused))
       (if (= inlined fused)
         42
         1))))

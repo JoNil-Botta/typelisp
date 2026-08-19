@@ -34,11 +34,7 @@
 ;; Copy `n` bytes of `src` into `dst` at byte offset `off`, INLINE: one word
 ;; loop plus a byte tail loop, both bounded by `n` and both addressing through
 ;; the loop-invariant `off`.
-(defmacro (copy-part!
-  [dst : (MutPtr u8)]
-  [off : i64]
-  [src : Expr]
-  [n : i64]) : unit
+(defmacro (copy-part! [dst : (MutPtr u8)] [off : i64] [src : Expr] [n : i64]) : unit
   `(let
     [cp-src : (Ptr u8)
       (unsafe
@@ -144,12 +140,12 @@
     [buf : Buf
       (Buf
         (unsafe
-          (array-data items))
+          (__tl_array-data items))
         512
         0)]
     [p : (MutPtr u8)
       (unsafe
-        (array-data items))]
+        (__tl_array-data items))]
     ;; Every part has a non-empty byte TAIL (length % 8 >= 2), so the tail loop
     ;; must run more than one iteration.
     [a : String

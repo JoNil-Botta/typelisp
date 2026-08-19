@@ -13,6 +13,8 @@
 (import compiler_intern as spec_ci)
 (import compiler_builtin_ids as cbi)
 (import compiler_owned_view as owned_view)
+(import compiler_profile_state as profile_state)
+(cfg test (import stdlib.test))
 
 ;; Specialization contexts are immutable handles over arena-backed compiler
 ;; storage. Recursive helpers borrow the handle and make shallow views only when
@@ -23,13 +25,13 @@
 
 (defmacro (spec-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defmacro (spec-array-address [items : Expr]) : Expr
   `(let
     [shared-ref (& ,items)]
     (unsafe
-      (ptr-read (ptr-cast (array-data (array shared-ref)) : (Ptr u64))))))
+      (ptr-read (ptr-cast (__tl_array-data (array shared-ref)) : (Ptr u64))))))
 
 (defstruct GenRegistry
   (index spec_id_i64_map.Map)
@@ -122,15 +124,27 @@
 ;; Expression reads use the stable segment-bases snapshot; pushes and type
 ;; reads/construction continue through the explicit pool context because the
 ;; type segment table may be replaced by hash-consing growth.
-(defstruct SpecOwnerContext
-  (pools (__tl_dyn-array ast.AstNodePoolContext))
-  (expr-segment-bases i64)
-  (intern-state (__tl_dyn-array spec_ci.InternCompatState))
-  (generated-symbol-records (__tl_dyn-array SpecGeneratedSymbolRecords)))
+(cfg
+  (any compile-profile test)
+  (defstruct SpecOwnerContext
+    (pools (__tl_dyn-array ast.AstNodePoolContext))
+    (expr-segment-bases i64)
+    (intern-state (__tl_dyn-array spec_ci.InternCompatState))
+    (generated-symbol-records (__tl_dyn-array SpecGeneratedSymbolRecords))
+    (profile-metrics profile_state.CompilerProfileMetrics)))
 
-(define (spec-owner-context-new
+(cfg
+  (not (any compile-profile test))
+  (defstruct SpecOwnerContext
+    (pools (__tl_dyn-array ast.AstNodePoolContext))
+    (expr-segment-bases i64)
+    (intern-state (__tl_dyn-array spec_ci.InternCompatState))
+    (generated-symbol-records (__tl_dyn-array SpecGeneratedSymbolRecords))))
+
+(define (spec-owner-context-new-with-profile-state
   [pools : ast.AstNodePoolContext]
-  [intern-state : spec_ci.InternCompatState]) : SpecOwnerContext
+  [intern-state : spec_ci.InternCompatState]
+  [_state : profile_state.CompilerProfileState]) : SpecOwnerContext
   (let
     [expr-segment-bases : i64
       (ast.ast-node-pool-context-expr-segment-bases pools)]
@@ -142,11 +156,46 @@
         (SpecGeneratedSymbolRecords
           (array.make-array SpecGeneratedSymbolRecord 0)
           0))
-      (SpecOwnerContext
-        (make-array pools)
-        expr-segment-bases
-        (make-array intern-state)
-        records))))
+      (cfg
+        (any compile-profile test)
+        (SpecOwnerContext
+          (make-array pools)
+          expr-segment-bases
+          (make-array intern-state)
+          records
+          (profile_state.compiler-profile-state-metrics
+            (owned_view.compiler-owned-shared-view _state)))
+        (SpecOwnerContext
+          (make-array pools)
+          expr-segment-bases
+          (make-array intern-state)
+          records)))))
+
+(define (spec-owner-context-new
+  [pools : ast.AstNodePoolContext]
+  [intern-state : spec_ci.InternCompatState]) : SpecOwnerContext
+  (cfg
+    (any compile-profile test)
+    (spec-owner-context-new-with-profile-state
+      pools
+      intern-state
+      (profile_state.compiler-profile-state-new))
+    (let
+      [expr-segment-bases : i64
+        (ast.ast-node-pool-context-expr-segment-bases (& pools))]
+      [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
+        (array.make-array SpecGeneratedSymbolRecords 1)]
+      (begin
+        (set!
+          (array-ref records 0)
+          (SpecGeneratedSymbolRecords
+            (array.make-array SpecGeneratedSymbolRecord 0)
+            0))
+        (SpecOwnerContext
+          (make-array pools)
+          expr-segment-bases
+          (make-array intern-state)
+          records)))))
 
 (define (spec-generated-symbol-records-copy-range
   [dst : (&mut dst (__tl_dyn-array SpecGeneratedSymbolRecord))]
@@ -196,6 +245,11 @@
 (define (spec-owner-intern-state [owner : (& owner SpecOwnerContext)]) : spec_ci.InternCompatState
   (owned_view.compiler-owned-array-element-shared-view owner.intern-state 0))
 
+(cfg
+  (any compile-profile test)
+  (define (spec-owner-profile-metrics [owner : (& owner SpecOwnerContext)]) : profile_state.CompilerProfileMetrics
+    (owned_view.compiler-owned-shared-view owner.profile-metrics)))
+
 (define (spec-owner-expr-get [owner : (& owner SpecOwnerContext)] [id : i64]) : ast.AstExpr
   (ast.ast-expr-segment-bases-get owner.expr-segment-bases id))
 
@@ -241,105 +295,214 @@
   `(__tl-project-field-name ,key "value"))
 
 (cfg
-  compile-profile
-  (define spec-profile-structural-key-created : i64
-    0))
+  (any compile-profile test)
+  (define spec-profile-structural-key-created-metric : i64
+    39))
 (cfg
-  compile-profile
-  (define spec-profile-structural-key-reused : i64
-    0))
+  (any compile-profile test)
+  (define spec-profile-structural-key-reused-metric : i64
+    40))
 (cfg
-  compile-profile
-  (define spec-profile-name-render-calls : i64
-    0))
+  (any compile-profile test)
+  (define spec-profile-name-render-calls-metric : i64
+    41))
 (cfg
-  compile-profile
-  (define spec-profile-name-render-cache-hits : i64
-    0))
+  (any compile-profile test)
+  (define spec-profile-name-render-cache-hits-metric : i64
+    42))
 (cfg
-  compile-profile
-  (define spec-profile-name-render-cache-misses : i64
-    0))
+  (any compile-profile test)
+  (define spec-profile-name-render-cache-misses-metric : i64
+    43))
 (cfg
-  compile-profile
-  (define spec-profile-generated-text-materialized : i64
-    0))
+  (any compile-profile test)
+  (define spec-profile-generated-text-materialized-metric : i64
+    44))
+(cfg
+  (any compile-profile test)
+  (define spec-profile-metric-end : i64
+    45))
 
-(define (spec-profile-reset!) : unit
+(define (spec-profile-reset! [_state : profile_state.CompilerProfileState]) : unit
   (cfg
-    compile-profile
-    (begin
-      (set! spec-profile-structural-key-created 0)
-      (set! spec-profile-structural-key-reused 0)
-      (set! spec-profile-name-render-calls 0)
-      (set! spec-profile-name-render-cache-hits 0)
-      (set! spec-profile-name-render-cache-misses 0)
-      (set! spec-profile-generated-text-materialized 0))
+    (any compile-profile test)
+    (profile_state.compiler-profile-state-metric-reset-range!
+      _state
+      spec-profile-structural-key-created-metric
+      spec-profile-metric-end)
     unit))
 
-(define (spec-profile-note-generated-text-materialized) : unit
+(define (spec-profile-note-generated-text-materialized
+  [_metrics : profile_state.CompilerProfileMetrics]) : unit
   (cfg
-    compile-profile
-    (set!
-      spec-profile-generated-text-materialized
-      (+ spec-profile-generated-text-materialized 1))
+    (any compile-profile test)
+    (profile_state.compiler-profile-metrics-add!
+      _metrics
+      spec-profile-generated-text-materialized-metric
+      1)
     unit))
 
-(define (spec-profile-note-structural-key [_created? : bool]) : unit
+(define (spec-profile-note-structural-key
+  [_metrics : profile_state.CompilerProfileMetrics]
+  [_created? : bool]) : unit
   (cfg
-    compile-profile
+    (any compile-profile test)
     (if _created?
-      (set!
-        spec-profile-structural-key-created
-        (+ spec-profile-structural-key-created 1))
-      (set!
-        spec-profile-structural-key-reused
-        (+ spec-profile-structural-key-reused 1)))
+      (profile_state.compiler-profile-metrics-add!
+        (owned_view.compiler-owned-shared-view _metrics)
+        spec-profile-structural-key-created-metric
+        1)
+      (profile_state.compiler-profile-metrics-add!
+        _metrics
+        spec-profile-structural-key-reused-metric
+        1))
     unit))
 
-(define (spec-profile-note-name-render [_cache-hit? : bool]) : unit
+(define (spec-profile-note-name-render
+  [_metrics : profile_state.CompilerProfileMetrics]
+  [_cache-hit? : bool]) : unit
   (cfg
-    compile-profile
+    (any compile-profile test)
     (begin
-      (set! spec-profile-name-render-calls (+ spec-profile-name-render-calls 1))
+      (profile_state.compiler-profile-metrics-add!
+        (owned_view.compiler-owned-shared-view _metrics)
+        spec-profile-name-render-calls-metric
+        1)
       (if _cache-hit?
-        (set!
-          spec-profile-name-render-cache-hits
-          (+ spec-profile-name-render-cache-hits 1))
-        (set!
-          spec-profile-name-render-cache-misses
-          (+ spec-profile-name-render-cache-misses 1))))
+        (profile_state.compiler-profile-metrics-add!
+          _metrics
+          spec-profile-name-render-cache-hits-metric
+          1)
+        (profile_state.compiler-profile-metrics-add!
+          _metrics
+          spec-profile-name-render-cache-misses-metric
+          1)))
     unit))
 
 (cfg
-  compile-profile
-  (define (spec-profile-structural-key-created-value) : i64
-    spec-profile-structural-key-created))
+  (any compile-profile test)
+  (define (spec-profile-structural-key-created-value
+    [state : profile_state.CompilerProfileState]) : i64
+    (profile_state.compiler-profile-state-metric-value
+      state
+      spec-profile-structural-key-created-metric)))
 
 (cfg
-  compile-profile
-  (define (spec-profile-structural-key-reused-value) : i64
-    spec-profile-structural-key-reused))
+  (any compile-profile test)
+  (define (spec-profile-structural-key-reused-value
+    [state : profile_state.CompilerProfileState]) : i64
+    (profile_state.compiler-profile-state-metric-value
+      state
+      spec-profile-structural-key-reused-metric)))
 
 (cfg
-  compile-profile
-  (define (spec-profile-name-render-calls-value) : i64
-    spec-profile-name-render-calls))
+  (any compile-profile test)
+  (define (spec-profile-name-render-calls-value
+    [state : profile_state.CompilerProfileState]) : i64
+    (profile_state.compiler-profile-state-metric-value
+      state
+      spec-profile-name-render-calls-metric)))
 
 (cfg
-  compile-profile
-  (define (spec-profile-name-render-cache-hits-value) : i64
-    spec-profile-name-render-cache-hits))
+  (any compile-profile test)
+  (define (spec-profile-name-render-cache-hits-value
+    [state : profile_state.CompilerProfileState]) : i64
+    (profile_state.compiler-profile-state-metric-value
+      state
+      spec-profile-name-render-cache-hits-metric)))
 
 (cfg
-  compile-profile
-  (define (spec-profile-name-render-cache-misses-value) : i64
-    spec-profile-name-render-cache-misses))
+  (any compile-profile test)
+  (define (spec-profile-name-render-cache-misses-value
+    [state : profile_state.CompilerProfileState]) : i64
+    (profile_state.compiler-profile-state-metric-value
+      state
+      spec-profile-name-render-cache-misses-metric)))
 
 (cfg
-  compile-profile
-  (define (spec-profile-generated-text-materialized-value) : i64
-    spec-profile-generated-text-materialized))
+  (any compile-profile test)
+  (define (spec-profile-generated-text-materialized-value
+    [state : profile_state.CompilerProfileState]) : i64
+    (profile_state.compiler-profile-state-metric-value
+      state
+      spec-profile-generated-text-materialized-metric)))
+
+(cfg
+  test
+  (test
+    spec-profile-job-isolation
+    (let
+      [left : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [right : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [left-metrics : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-shared-view left))]
+      [right-metrics : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-shared-view right))]
+      (begin
+        (spec-profile-reset!
+          (profile_state.compiler-profile-state-shared-view left))
+        (spec-profile-reset!
+          (profile_state.compiler-profile-state-shared-view right))
+        (spec-profile-note-structural-key
+          (profile_state.compiler-profile-state-shared-view left-metrics)
+          true)
+        (spec-profile-note-structural-key
+          (profile_state.compiler-profile-state-shared-view right-metrics)
+          false)
+        (spec-profile-note-name-render
+          (profile_state.compiler-profile-state-shared-view left-metrics)
+          true)
+        (spec-profile-note-name-render
+          (profile_state.compiler-profile-state-shared-view right-metrics)
+          false)
+        (spec-profile-note-generated-text-materialized
+          (profile_state.compiler-profile-state-shared-view left-metrics))
+        (spec-profile-reset!
+          (profile_state.compiler-profile-state-shared-view right))
+        (test.assert-i64-eq
+          (spec-profile-structural-key-created-value
+            (profile_state.compiler-profile-state-shared-view left))
+          1
+          "left job retains structural-key creation")
+        (test.assert-i64-eq
+          (spec-profile-structural-key-reused-value
+            (profile_state.compiler-profile-state-shared-view left))
+          0
+          "left job does not inherit right structural-key reuse")
+        (test.assert-i64-eq
+          (spec-profile-name-render-calls-value
+            (profile_state.compiler-profile-state-shared-view left))
+          1
+          "left job retains render calls")
+        (test.assert-i64-eq
+          (spec-profile-name-render-cache-hits-value
+            (profile_state.compiler-profile-state-shared-view left))
+          1
+          "left job retains render cache hits")
+        (test.assert-i64-eq
+          (spec-profile-name-render-cache-misses-value
+            (profile_state.compiler-profile-state-shared-view left))
+          0
+          "left job does not inherit right render cache misses")
+        (test.assert-i64-eq
+          (spec-profile-generated-text-materialized-value
+            (profile_state.compiler-profile-state-shared-view left))
+          1
+          "left job retains generated text materialization")
+        (test.assert-i64-eq
+          (spec-profile-structural-key-created-value
+            (profile_state.compiler-profile-state-shared-view right))
+          0
+          "right reset is isolated from left")
+        (test.assert-i64-eq
+          (spec-profile-name-render-calls-value
+            (profile_state.compiler-profile-state-shared-view right))
+          0
+          "right render counters reset independently")))))
 
 (defenum SpecValueBinding
   (Bind i64 ctfe.CompilerCtfeValue))
@@ -815,7 +978,9 @@
         (cast
           (unsafe
             (ptr->int
-              (ptr-cast (array-data cell) : (Ptr SpecTemplateShadowStateData))))
+              (ptr-cast
+                (__tl_array-data cell)
+                : (Ptr SpecTemplateShadowStateData))))
           : i64)))))
 
 (define (spec-template-shadow-state-grow-records
@@ -1712,7 +1877,7 @@
   [right : i64]) : SpecStructuralKey
   (let
     [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
-    [before : i64 (spec_ci.intern-compat-state-structural-count intern-state)]
+    [_before : i64 (spec_ci.intern-compat-state-structural-count intern-state)]
     [raw : i64
       (spec_ci.intern-compat-state-composite-triple-id
         (&mut intern-state)
@@ -1720,8 +1885,14 @@
         left
         right)]
     (begin
-      (spec-profile-note-structural-key
-        (> (spec_ci.intern-compat-state-structural-count intern-state) before))
+      (cfg
+        (any compile-profile test)
+        (spec-profile-note-structural-key
+          (spec-owner-profile-metrics owner)
+          (>
+            (spec_ci.intern-compat-state-structural-count intern-state)
+            _before))
+        unit)
       (SpecStructuralKey raw))))
 
 (define (spec-structural-content-atom-with-owner
@@ -1743,7 +1914,11 @@
       (match (spec_ci.intern-compat-state-lookup intern-state text)
         [(spec_ci.InternLookupFound _) unit]
         [(spec_ci.InternLookupMissing)
-          (spec-profile-note-generated-text-materialized)])
+          (cfg
+            (any compile-profile test)
+            (spec-profile-note-generated-text-materialized
+              (spec-owner-profile-metrics owner))
+            unit)])
       (spec_ci.intern-compat-state-intern (&mut intern-state) text))))
 
 (define (spec-type-list-structural-key-at-with-owner
@@ -2213,13 +2388,23 @@
       (spec_ci.intern-compat-state-composite-rendered-name intern-state raw)]
     (if (> (string.string-length cached) 0)
       (begin
-        (spec-profile-note-name-render true)
+        (cfg
+          (any compile-profile test)
+          (spec-profile-note-name-render
+            (spec-owner-profile-metrics owner)
+            true)
+          unit)
         cached)
       (let
         [rendered : String
           (spec-specialized-name-with-owner owner template-name values)]
         (begin
-          (spec-profile-note-name-render false)
+          (cfg
+            (any compile-profile test)
+            (spec-profile-note-name-render
+              (spec-owner-profile-metrics owner)
+              false)
+            unit)
           (spec_ci.intern-compat-state-composite-rendered-name-record!
             (&mut intern-state)
             raw
@@ -9575,17 +9760,19 @@
                   [(ResultSpecDecls.Err diag) (ResultSpecProgram.Err diag)])))])]
       [(ResultGenProgram.Err diag) (ResultSpecProgram.Err diag)])))
 
-(define (compiler-specialize-program-with-paths-and-pools-and-intern-state
+(define (compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [fallback-path : String]
   [pools : ast.AstNodePoolContext]
-  [intern-state : spec_ci.InternCompatState]) : ResultSpecProgramWithPaths
+  [intern-state : spec_ci.InternCompatState]
+  [profile-state : profile_state.CompilerProfileState]) : ResultSpecProgramWithPaths
   (let
     [owner : SpecOwnerContext
-      (spec-owner-context-new
+      (spec-owner-context-new-with-profile-state
         (ast.ast-place-shared-view pools)
-        (spec_ci.intern-global-shared-view intern-state))]
+        (spec_ci.intern-global-shared-view intern-state)
+        (owned_view.compiler-owned-shared-view profile-state))]
     (match (gen-normalize-program-with-paths-and-pools-and-intern-state
       program
       paths
@@ -9638,6 +9825,20 @@
                     (ResultSpecProgramWithPaths.Err diag)])))])]
       [(ResultGenProgramWithPaths.Err diag)
         (ResultSpecProgramWithPaths.Err diag)])))
+
+(define (compiler-specialize-program-with-paths-and-pools-and-intern-state
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [fallback-path : String]
+  [pools : ast.AstNodePoolContext]
+  [intern-state : spec_ci.InternCompatState]) : ResultSpecProgramWithPaths
+  (compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
+    program
+    paths
+    fallback-path
+    pools
+    intern-state
+    (profile_state.compiler-profile-state-new)))
 
 ;; Compatibility adapters for the serial compiler surface. The worker graph
 ;; above remains owner-routed; these adapters bridge the active pool and intern

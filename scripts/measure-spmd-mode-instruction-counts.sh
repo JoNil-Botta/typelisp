@@ -12,6 +12,7 @@ DEFAULT_CASES=spmd_map,spmd_zip,spmd_reduce,spmd_scan,spmd_shuffle,spmd_short_ta
 DEFAULT_MODES=scalar,avx2
 DEFAULT_SUPPORT="$ROOT/perf/spmd-mode-support.tsv"
 DEFAULT_BASELINE="$ROOT/perf/spmd-mode-insn-baseline.tsv"
+STABLE_EXEC_DIR="$ROOT/target/spmd-mode-instruction-count-exec"
 
 RUNS=${TYPELISP_SPMD_IR_RUNS:-3}
 CASES=${TYPELISP_SPMD_IR_CASES:-$DEFAULT_CASES}
@@ -264,6 +265,20 @@ safe_name() {
     printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_'
 }
 
+run_with_stable_argv0() {
+    _stable_source=$1
+    shift
+    _stable_binary_name=$(basename -- "$_stable_source")
+    _stable_binary="$STABLE_EXEC_DIR/$_stable_binary_name"
+    mkdir -p "$STABLE_EXEC_DIR"
+    cp "$_stable_source" "$_stable_binary"
+    chmod +x "$_stable_binary"
+    (
+        cd "$STABLE_EXEC_DIR"
+        "$@" "./$_stable_binary_name"
+    )
+}
+
 show_logs() {
     _stdout=$1
     _stderr=$2
@@ -308,9 +323,10 @@ run_cachegrind() {
     _stderr="$WORKDIR/logs/$_safe.stderr"
 
     set +e
-    env -i PATH="$PATH" LC_ALL=C "$VALGRIND" \
+    run_with_stable_argv0 "$_binary" \
+        env -i PATH="$PATH" LC_ALL=C "$VALGRIND" \
         --quiet --tool=cachegrind --cachegrind-out-file="$_cgout" \
-        "$_binary" >"$_stdout" 2>"$_stderr"
+        >"$_stdout" 2>"$_stderr"
     _status=$?
     set -e
 
@@ -661,6 +677,18 @@ run_self_test() {
     _dir="$ROOT/target/spmd-mode-instruction-count-self-test"
     rm -rf "$_dir"
     mkdir -p "$_dir"
+
+    for _probe_root in short a-substantially-longer-output-root; do
+        _probe_dir="$_dir/$_probe_root/bin"
+        _probe="$_probe_dir/argv0-probe"
+        mkdir -p "$_probe_dir"
+        printf '%s\n' '#!/usr/bin/env sh' 'printf "%s|%s\n" "$PWD" "$0"' > "$_probe"
+        chmod +x "$_probe"
+        _observed=$(run_with_stable_argv0 "$_probe" env -i PATH="$PATH")
+        [ "$_observed" = "$STABLE_EXEC_DIR|./argv0-probe" ] || \
+            fail "self-test output root affected argv[0]: $_observed"
+    done
+
     _expected="$_dir/expected.tsv"
     _runs="$_dir/runs.tsv"
     _summary="$_dir/summary.tsv"
@@ -764,6 +792,11 @@ if [ "$UPDATE_BASELINE" -eq 1 ] && \
    { [ "$CASES" != "$DEFAULT_CASES" ] || [ "$MODES" != "$DEFAULT_MODES" ]; }; then
     fail "--update-baseline requires the full default case and mode matrix"
 fi
+
+case "$WORKDIR" in
+    /*) ;;
+    *) WORKDIR="$ROOT/$WORKDIR" ;;
+esac
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR/bin" "$WORKDIR/logs"

@@ -323,26 +323,28 @@
   (unsafe
     (ptr-read
       (ptr-offset
-        (ptr-cast (array-data sp-node-pool-slots) : (Ptr SpannedSexpr))
+        (ptr-cast (__tl_array-data sp-node-pool-slots) : (Ptr SpannedSexpr))
         id))))
 
 (define (sexpr-node-pool-shared-view [id : i64]) : Sexpr
   (unsafe
     (ptr-read
       (ptr-offset
-        (ptr-cast (array-data sexpr-node-pool-slots) : (Ptr Sexpr))
+        (ptr-cast (__tl_array-data sexpr-node-pool-slots) : (Ptr Sexpr))
         id))))
 
 (define (sexpr-builder-shared-view [id : i64]) : Sexpr
   (unsafe
     (ptr-read
-      (ptr-offset (ptr-cast (array-data sexpr-builder-slots) : (Ptr Sexpr)) id))))
+      (ptr-offset
+        (ptr-cast (__tl_array-data sexpr-builder-slots) : (Ptr Sexpr))
+        id))))
 
 (define (sp-builder-shared-view [id : i64]) : SpannedSexpr
   (unsafe
     (ptr-read
       (ptr-offset
-        (ptr-cast (array-data sp-builder-slots) : (Ptr SpannedSexpr))
+        (ptr-cast (__tl_array-data sp-builder-slots) : (Ptr SpannedSexpr))
         id))))
 
 (define (sp-node-get [id : i64]) : SpannedSexpr
@@ -889,22 +891,13 @@
   [cur : (&mut cur (__tl_dyn-array i64))]) : ResultSpannedSexpr
   (let
     [st : token.SpannedToken (peek-spanned-token toks cur)]
-    [tok : token.Token
-      (token.spanned-token-token
-        (unsafe
-          (ptr-read (ptr-addr-of st))))]
-    [span : token.SourceSpan (token.spanned-token-span st)]
-    [t : i64
-      (token.tag
-        (unsafe
-          (ptr-read (ptr-addr-of tok))))]
+    [tok : token.Token (token.spanned-token-token-ref (& st))]
+    [span : token.SourceSpan (token.spanned-token-span (& st))]
+    [t : i64 (token.tag (token.token-copy (& tok)))]
     (cond
       [(= t (token.tag-int))
         (let
-          [v : i64
-            (token.int
-              (unsafe
-                (ptr-read (ptr-addr-of tok))))]
+          [v : i64 (token.int (token.token-copy (& tok)))]
           [text : String (token.int-text tok)]
           (begin
             (advance cur)
@@ -1092,8 +1085,8 @@
   [builder : SpannedSexprBuilder]) : ResultSpannedSexpr
   (let
     [st : token.SpannedToken (peek-spanned-token toks cur)]
-    [span : token.SourceSpan (token.spanned-token-span st)]
-    [t : i64 (token.tag (token.spanned-token-token st))]
+    [span : token.SourceSpan (token.spanned-token-span (& st))]
+    [t : i64 (token.tag (token.spanned-token-token-ref (& st)))]
     (cond
       [(= t close-tag)
         (begin

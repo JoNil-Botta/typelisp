@@ -978,43 +978,56 @@
                     "completionProvider"
                     (lsp-json-object1 "resolveProvider" (json.JsonBool false))
                     (lsp-json-member
-                      "codeActionProvider"
-                      (lsp-json-object1
-                        "codeActionKinds"
+                      "signatureHelpProvider"
+                      (lsp-json-object2
+                        "triggerCharacters"
                         (lsp-json-array
                           (lsp-json-list-cons
-                            (json.JsonString "quickfix")
+                            (json.JsonString " ")
+                            (json.list-empty)))
+                        "retriggerCharacters"
+                        (lsp-json-array
+                          (lsp-json-list-cons
+                            (json.JsonString ")")
                             (json.list-empty))))
                       (lsp-json-member
-                        "inlayHintProvider"
-                        (json.JsonBool true)
+                        "codeActionProvider"
+                        (lsp-json-object1
+                          "codeActionKinds"
+                          (lsp-json-array
+                            (lsp-json-list-cons
+                              (json.JsonString "quickfix")
+                              (json.list-empty))))
                         (lsp-json-member
-                          "documentFormattingProvider"
+                          "inlayHintProvider"
                           (json.JsonBool true)
                           (lsp-json-member
-                            "hoverProvider"
+                            "documentFormattingProvider"
                             (json.JsonBool true)
                             (lsp-json-member
-                              "documentLinkProvider"
-                              (lsp-json-object1
-                                "resolveProvider"
-                                (json.JsonBool false))
+                              "hoverProvider"
+                              (json.JsonBool true)
                               (lsp-json-member
-                                "foldingRangeProvider"
-                                (json.JsonBool true)
+                                "documentLinkProvider"
+                                (lsp-json-object1
+                                  "resolveProvider"
+                                  (json.JsonBool false))
                                 (lsp-json-member
-                                  "workspaceSymbolProvider"
+                                  "foldingRangeProvider"
                                   (json.JsonBool true)
                                   (lsp-json-member
-                                    "workspace"
-                                    (lsp-json-object1
-                                      "workspaceFolders"
-                                      (lsp-json-object2
-                                        "supported"
-                                        (json.JsonBool true)
-                                        "changeNotifications"
-                                        (json.JsonBool true)))
-                                    (json.member-list-empty)))))))))))))))))
+                                    "workspaceSymbolProvider"
+                                    (json.JsonBool true)
+                                    (lsp-json-member
+                                      "workspace"
+                                      (lsp-json-object1
+                                        "workspaceFolders"
+                                        (lsp-json-object2
+                                          "supported"
+                                          (json.JsonBool true)
+                                          "changeNotifications"
+                                          (json.JsonBool true)))
+                                      (json.member-list-empty))))))))))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -6535,6 +6548,497 @@
     (lsp-symbol-in-quoted-data? "`if" 1)))
 
 ;; --------------------------------------------------------------------------
+;; Signature help (textDocument/signatureHelp).
+;;
+;; The lexical scanner identifies the innermost call and its direct argument.
+;; Resolution remains identity-first: the exact call-head span must be a use in
+;; the current document-owned semantic snapshot, and its definition must carry
+;; a callable rendered type. No spelling-based fallback is permitted.
+;; --------------------------------------------------------------------------
+(define (lsp-signature-space? [c : char]) : bool
+  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
+
+;; Split `(-> parameter ... result)` at balanced top-level boundaries. A valid
+;; zero-parameter signature has one component (the result); an empty vector is
+;; therefore an unambiguous malformed/non-callable result.
+(define (lsp-signature-type-components [type-text : String]) : lsp_svec.Vec
+  (let
+    [parts : lsp_svec.Vec (lsp_svec.new)]
+    [n : i64 (string.string-length type-text)]
+    [limit : i64 (- n 1)]
+    [i : i64 3]
+    [valid : bool
+      (and
+        (>= n 6)
+        (= (string.string-ref type-text 0) '(')
+        (= (string.string-ref type-text 1) '-')
+        (= (string.string-ref type-text 2) '>')
+        (lsp-signature-space? (string.string-ref type-text 3))
+        (= (string.string-ref type-text limit) ')'))]
+    (begin
+      (while (and valid (< i limit))
+        (begin
+          (while (and
+            (< i limit)
+            (lsp-signature-space? (string.string-ref type-text i)))
+            (set! i (+ i 1)))
+          (if (< i limit)
+            (let
+              [start : i64 i]
+              [depth : i64 0]
+              [done : bool false]
+              (begin
+                (while (and valid (< i limit) (not done))
+                  (let
+                    [c : char (string.string-ref type-text i)]
+                    (cond
+                      [(= c '(')
+                        (begin
+                          (set! depth (+ depth 1))
+                          (set! i (+ i 1)))]
+                      [(= c ')')
+                        (if (= depth 0)
+                          (set! valid false)
+                          (begin
+                            (set! depth (- depth 1))
+                            (set! i (+ i 1))))]
+                      [(and (= depth 0) (lsp-signature-space? c))
+                        (set! done true)]
+                      [else (set! i (+ i 1))])))
+                (if (or (not valid) (not (= depth 0)) (= i start))
+                  (set! valid false)
+                  (lsp_svec.push-ref!
+                    (&mut parts)
+                    (string.substring type-text start (- i start))))))
+            unit)))
+      (if (and valid (> (lsp_svec.len (& parts)) 0))
+        parts
+        (lsp_svec.new)))))
+
+(define (lsp-signature-record-use?
+  [record : compiler_semantic_index.CompilerSemanticRecord]) : bool
+  (match record.role
+    [(compiler_semantic_index.CompilerSemanticRecordRole.Use) true]
+    [_ false]))
+
+(define (lsp-signature-callable-kind?
+  [kind : compiler_semantic_index.CompilerSemanticSymbolKind]) : bool
+  (match kind
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Value) true]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Function) true]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Macro) true]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternValue) true]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternFunction) true]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Parameter) true]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Local) true]
+    [_ false]))
+
+(define (lsp-signature-named-parameter-owner?
+  [record : compiler_semantic_index.CompilerSemanticRecord]) : bool
+  (and
+    (= record.symbol.local-ordinal -1)
+    (match record.kind
+      [(compiler_semantic_index.CompilerSemanticSymbolKind.Function) true]
+      [(compiler_semantic_index.CompilerSemanticSymbolKind.Macro) true]
+      [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternFunction) true]
+      [_ false])))
+
+;; Return names only when the semantic index proves a complete ordered
+;; association: same owning declaration identity/path, dense parameter ordinal,
+;; and the same rendered type as the callable signature. Otherwise the caller
+;; uses type-only labels for every parameter rather than mixing confidence.
+(define (lsp-signature-parameter-names
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [definition : compiler_semantic_index.CompilerSemanticRecord]
+  [components : (& components lsp_svec.Vec)]) : lsp_svec.Vec
+  (let
+    [names : lsp_svec.Vec (lsp_svec.new)]
+    [parameter-count : i64 (- (lsp_svec.len components) 1)]
+    [record-index : i64 0]
+    [found : i64 0]
+    [valid : bool
+      (lsp-signature-named-parameter-owner? (lsp-global-shared-view definition))]
+    [owner : compiler_semantic_index.CompilerSemanticSymbolId definition.symbol]
+    [definition-span : compiler_semantic_index.CompilerSemanticSpan
+      definition.span]
+    (begin
+      (while (and
+        valid
+        (< found parameter-count)
+        (<
+          record-index
+          (compiler_semantic_index.compiler-semantic-source-index-len index)))
+        (let
+          [record : compiler_semantic_index.CompilerSemanticRecord
+            (compiler_semantic_index.compiler-semantic-source-index-get
+              index
+              record-index)]
+          [symbol : compiler_semantic_index.CompilerSemanticSymbolId
+            record.symbol]
+          [span : compiler_semantic_index.CompilerSemanticSpan record.span]
+          (begin
+            (if (and
+              (match record.role
+                [(compiler_semantic_index.CompilerSemanticRecordRole.Definition)
+                  true]
+                [_ false])
+              (match record.kind
+                [(compiler_semantic_index.CompilerSemanticSymbolKind.Parameter)
+                  true]
+                [_ false])
+              record.editable
+              (= symbol.module-id owner.module-id)
+              (= symbol.declaration-ordinal owner.declaration-ordinal)
+              (= symbol.local-ordinal found)
+              (string.eq span.path definition-span.path)
+              (> span.start-byte definition-span.end-byte))
+              (if (string.eq
+                record.resolved-type
+                (lsp_svec.get components found ""))
+                (begin
+                  (lsp_svec.push-ref! (&mut names) record.display-name)
+                  (set! found (+ found 1)))
+                (set! valid false))
+              unit)
+            (set! record-index (+ record-index 1)))))
+      (if (and valid (= found parameter-count))
+        names
+        (lsp_svec.new)))))
+
+(define (lsp-signature-parameter-labels
+  [components : (& components lsp_svec.Vec)]
+  [names : (& names lsp_svec.Vec)]) : lsp_svec.Vec
+  (let
+    [labels : lsp_svec.Vec (lsp_svec.new)]
+    [parameter-count : i64 (- (lsp_svec.len components) 1)]
+    [named : bool (= (lsp_svec.len names) parameter-count)]
+    [index : i64 0]
+    (begin
+      (while (< index parameter-count)
+        (let
+          [type-label : String (lsp_svec.get components index "")]
+          (begin
+            (lsp_svec.push-ref!
+              (&mut labels)
+              (if named
+                (lsp-str5
+                  "["
+                  (lsp_svec.get names index "")
+                  " : "
+                  type-label
+                  "]")
+                type-label))
+            (set! index (+ index 1)))))
+      labels)))
+
+(define (lsp-signature-label
+  [call-name : String]
+  [parameter-labels : (& parameter-labels lsp_svec.Vec)]
+  [result-label : String]) : String
+  (let
+    [label : String (lsp-str2 "(" call-name)]
+    [index : i64 0]
+    (begin
+      (while (< index (lsp_svec.len parameter-labels))
+        (begin
+          (set!
+            label
+            (lsp-str3 label " " (lsp_svec.get parameter-labels index "")))
+          (set! index (+ index 1))))
+      (lsp-str3 label ") : " result-label))))
+
+;; Parameter label offsets are always UTF-16 code units by the LSP 3.17
+;; SignatureInformation contract, regardless of negotiated document positions.
+(define (lsp-signature-utf16-length [text : String]) : i64
+  (-
+    (compiler_semantic_index.compiler-semantic-source-utf16-col-at-offset
+      (lsp-global-shared-view text)
+      (string.string-length text))
+    1))
+
+(define (lsp-signature-parameter-information-list
+  [labels : (& labels lsp_svec.Vec)]
+  [index : i64]
+  [prior-end : i64]) : json.JsonSeq
+  (if (>= index (lsp_svec.len labels))
+    (json.list-empty)
+    (let
+      [label : String (lsp_svec.get labels index "")]
+      [start : i64 (+ prior-end 1)]
+      [end : i64 (+ start (lsp-signature-utf16-length label))]
+      (lsp-json-list-cons
+        (lsp-json-object1
+          "label"
+          (lsp-json-array
+            (lsp-json-list-cons
+              (lsp-json-number start)
+              (lsp-json-list-cons (lsp-json-number end) (json.list-empty)))))
+        (lsp-signature-parameter-information-list labels (+ index 1) end)))))
+
+(define (lsp-signature-information
+  [call-name : String]
+  [definition : compiler_semantic_index.CompilerSemanticRecord]
+  [parameter-labels : (& parameter-labels lsp_svec.Vec)]
+  [result-label : String]) : json.Json
+  (let
+    [label : String
+      (lsp-signature-label
+        (lsp-global-shared-view call-name)
+        parameter-labels
+        result-label)]
+    [parameters : json.Json
+      (lsp-json-array
+        (lsp-signature-parameter-information-list
+          parameter-labels
+          0
+          (lsp-signature-utf16-length (lsp-str2 "(" call-name))))]
+    (lsp-json-object
+      (lsp-json-member
+        "label"
+        (json.JsonString label)
+        (if (string.eq (lsp-global-shared-view definition.documentation) "")
+          (lsp-json-member "parameters" parameters (json.member-list-empty))
+          (lsp-json-member
+            "documentation"
+            (json.JsonString definition.documentation)
+            (lsp-json-member "parameters" parameters (json.member-list-empty))))))))
+
+(define (lsp-signature-help-result
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [text : String]
+  [context : LspCallContext]
+  [definition : compiler_semantic_index.CompilerSemanticRecord]
+  [components : (& components lsp_svec.Vec)]) : json.Json
+  (let
+    [parameter-count : i64 (- (lsp_svec.len components) 1)]
+    [call-name : String
+      (string.substring
+        text
+        context.head-start
+        (- context.head-end context.head-start))]
+    [names : lsp_svec.Vec
+      (lsp-signature-parameter-names
+        index
+        (lsp-global-shared-view definition)
+        components)]
+    [labels : lsp_svec.Vec
+      (lsp-signature-parameter-labels components (& names))]
+    [result-label : String (lsp_svec.get components parameter-count "")]
+    [signature : json.Json
+      (lsp-signature-information call-name definition (& labels) result-label)]
+    [active-valid : bool
+      (and
+        (> parameter-count 0)
+        (>= context.active-argument 0)
+        (< context.active-argument parameter-count))]
+    (lsp-json-object
+      (lsp-json-member
+        "signatures"
+        (lsp-json-array (lsp-json-list-cons signature (json.list-empty)))
+        (lsp-json-member
+          "activeSignature"
+          (lsp-json-number 0)
+          (if active-valid
+            (lsp-json-member
+              "activeParameter"
+              (lsp-json-number context.active-argument)
+              (json.member-list-empty))
+            (json.member-list-empty)))))))
+
+(define (lsp-signature-help-at
+  [doc : lsp_vector_families.LspDocument]
+  [line0 : i64]
+  [char0 : i64]) : json.Json
+  (match (lsp-offset-at-position-checked
+    (lsp-global-shared-view doc.text)
+    line0
+    char0)
+    [(LspOffsetLookup.Missing) json.JsonNull]
+    [(LspOffsetLookup.Found offset)
+      (match (lsp-call-context-at-offset
+        (lsp-global-shared-view doc.text)
+        offset)
+        [(LspCallContextLookup.Missing) json.JsonNull]
+        [(LspCallContextLookup.Found context)
+          (match (lsp-document-semantic-symbol-query (& doc) context.head-start)
+            [(LspSemanticSymbolQuery.Missing) json.JsonNull]
+            [(LspSemanticSymbolQuery.Found cursor definition)
+              (let
+                [cursor-span : compiler_semantic_index.CompilerSemanticSpan
+                  (lsp-global-shared-view cursor.span)]
+                [components : lsp_svec.Vec
+                  (lsp-signature-type-components
+                    (lsp-global-shared-view definition.resolved-type))]
+                (if (and
+                  (lsp-signature-record-use? cursor)
+                  (lsp-signature-callable-kind? definition.kind)
+                  (= cursor-span.start-byte context.head-start)
+                  (= cursor-span.end-byte context.head-end)
+                  (> (lsp_svec.len (& components)) 0))
+                  (lsp-signature-help-result
+                    (& doc.semantic.index)
+                    (lsp-global-shared-view doc.text)
+                    context
+                    (lsp-global-shared-view definition)
+                    (& components))
+                  json.JsonNull))])])]))
+
+(define (lsp-signature-help-uri-result
+  [params : json.Json]
+  [docs : lsp_document_vec.Vec]
+  [uri : String]) : json.Json
+  (let
+    [doc-index : i64 (lsp-documents-find-index docs uri)]
+    [position-key : String "position"]
+    (if (< doc-index 0)
+      json.JsonNull
+      (match (json.object-get params (& position-key))
+        [(json.JsonMissing) json.JsonNull]
+        [(json.JsonFound position)
+          (let
+            [doc : lsp_vector_families.LspDocument
+              (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+            [line0 : i64
+              (lsp-json-int-field-default
+                (lsp-global-shared-view position)
+                "line"
+                -1)]
+            [char0 : i64 (lsp-json-int-field-default position "character" -1)]
+            (lsp-signature-help-at doc line0 char0))]))))
+
+(define (lsp-signature-help-document-result
+  [params : json.Json]
+  [docs : lsp_document_vec.Vec]) : json.Json
+  (let
+    [text-document-key : String "textDocument"]
+    (match (json.object-get
+      (lsp-global-shared-view params)
+      (& text-document-key))
+      [(json.JsonMissing) json.JsonNull]
+      [(json.JsonFound text-document)
+        (match (lsp-json-string-field text-document "uri")
+          [(LspJsonText.Missing) json.JsonNull]
+          [(LspJsonText.Ok uri) (lsp-signature-help-uri-result params docs uri)])])))
+
+(define (lsp-signature-help-respond
+  [id : json.Json]
+  [params : json.Json]
+  [docs : lsp_document_vec.Vec]) : unit
+  (lsp-write-response id (lsp-signature-help-document-result params docs)))
+
+(define (lsp-signature-type-components-smoke-ok?) : bool
+  (let
+    [parts : lsp_svec.Vec
+      (lsp-signature-type-components
+        "(-> i64 (Tuple i64 bool) (-> bool bool) unit)")]
+    [zero : lsp_svec.Vec (lsp-signature-type-components "(-> i64)")]
+    [plain : lsp_svec.Vec (lsp-signature-type-components "i64")]
+    [unbalanced : lsp_svec.Vec
+      (lsp-signature-type-components "(-> (Tuple i64 bool i64)")]
+    (and
+      (= (lsp_svec.len (& parts)) 4)
+      (string.eq (lsp_svec.get (& parts) 0 "") "i64")
+      (string.eq (lsp_svec.get (& parts) 1 "") "(Tuple i64 bool)")
+      (string.eq (lsp_svec.get (& parts) 2 "") "(-> bool bool)")
+      (string.eq (lsp_svec.get (& parts) 3 "") "unit")
+      (= (lsp_svec.len (& zero)) 1)
+      (string.eq (lsp_svec.get (& zero) 0 "") "i64")
+      (= (lsp_svec.len (& plain)) 0)
+      (= (lsp_svec.len (& unbalanced)) 0))))
+
+(define (lsp-signature-label-offsets-smoke-ok?) : bool
+  (let
+    [labels : lsp_svec.Vec (lsp_svec.new)]
+    (begin
+      (lsp_svec.push-ref! (&mut labels) "[λ : i64]")
+      (lsp_svec.push-ref! (&mut labels) "(Tuple i64 bool)")
+      (let
+        [rendered : String
+          (json.stringify
+            (lsp-json-array
+              (lsp-signature-parameter-information-list
+                (& labels)
+                0
+                (lsp-signature-utf16-length "(λ-call"))))]
+        (string.eq rendered "[{\"label\":[8,17]},{\"label\":[18,34]}]")))))
+
+(define (lsp-signature-active-parameter-smoke-ok?) : bool
+  (let
+    [index : compiler_semantic_index.CompilerSemanticSourceIndex
+      (compiler_semantic_index.compiler-semantic-source-index-empty)]
+    [definition : compiler_semantic_index.CompilerSemanticRecord
+      (compiler_semantic_index.compiler-semantic-record-fallback)]
+    [two : lsp_svec.Vec (lsp_svec.new)]
+    [zero : lsp_svec.Vec (lsp_svec.new)]
+    (begin
+      (lsp_svec.push-ref! (&mut two) "i64")
+      (lsp_svec.push-ref! (&mut two) "bool")
+      (lsp_svec.push-ref! (&mut two) "unit")
+      (lsp_svec.push-ref! (&mut zero) "i64")
+      (let
+        [active : String
+          (json.stringify
+            (lsp-signature-help-result
+              (& index)
+              "(call"
+              (LspCallContext 0 1 5 1)
+              (lsp-global-shared-view definition)
+              (& two)))]
+        [excess : String
+          (json.stringify
+            (lsp-signature-help-result
+              (& index)
+              "(call"
+              (LspCallContext 0 1 5 2)
+              (lsp-global-shared-view definition)
+              (& two)))]
+        [empty : String
+          (json.stringify
+            (lsp-signature-help-result
+              (& index)
+              "(zero"
+              (LspCallContext 0 1 5 0)
+              definition
+              (& zero)))]
+        [active-needle : String "\"activeParameter\":1"]
+        [field-needle : String "activeParameter"]
+        (and
+          (string.contains (& active) (& active-needle))
+          (not (string.contains (& excess) (& field-needle)))
+          (not (string.contains (& empty) (& field-needle))))))))
+
+(define (lsp-signature-capability-smoke-ok?) : bool
+  (let
+    [rendered : String (json.stringify (lsp-initialize-result))]
+    [expected : String
+      "\"signatureHelpProvider\":{\"triggerCharacters\":[\" \"],\"retriggerCharacters\":[\")\"]}"]
+    (string.contains (& rendered) (& expected))))
+
+(test
+  lsp-signature-type-components
+  (unless
+    (lsp-signature-type-components-smoke-ok?)
+    (io.panic "lsp-signature-type-components failed")))
+
+(test
+  lsp-signature-label-offsets
+  (unless
+    (lsp-signature-label-offsets-smoke-ok?)
+    (io.panic "lsp-signature-label-offsets failed")))
+
+(test
+  lsp-signature-active-parameter
+  (unless
+    (lsp-signature-active-parameter-smoke-ok?)
+    (io.panic "lsp-signature-active-parameter failed")))
+
+(test
+  lsp-signature-capability
+  (unless
+    (lsp-signature-capability-smoke-ok?)
+    (io.panic "lsp-signature-capability failed")))
+
+;; --------------------------------------------------------------------------
 ;; Completion (textDocument/completion).
 ;;
 ;; Offers the language's special forms, builtins, and primitive types, plus the
@@ -8241,7 +8745,7 @@
           (begin
             (unsafe
               (ptr-write!
-                (ptr-offset (array-data cache.slots) cursor)
+                (ptr-offset (__tl_array-data cache.slots) cursor)
                 (array-ref cache.slots (+ cursor 1))))
             (set! cursor (+ cursor 1))))
         (set! cache.len last)))))
@@ -8288,7 +8792,7 @@
             ;; stale cache rows.
             (unsafe
               (ptr-write!
-                (ptr-offset (array-data copy.slots) index)
+                (ptr-offset (__tl_array-data copy.slots) index)
                 (lsp_vector_families.LspWorkspaceSemanticCacheEntry
                   (string.copy (& entry.uri))
                   (string.copy (& entry.path))
@@ -8733,7 +9237,7 @@
   (begin
     (unsafe
       (ptr-write!
-        (ptr-offset (array-data cache.slots) cache.len)
+        (ptr-offset (__tl_array-data cache.slots) cache.len)
         (lsp_vector_families.LspWorkspaceSemanticCacheEntry
           (string.copy (& source.uri))
           (string.copy (& source.path))
@@ -8897,7 +9401,7 @@
               (begin
                 (unsafe
                   (ptr-write!
-                    (ptr-offset (array-data bigger) copy-index)
+                    (ptr-offset (__tl_array-data bigger) copy-index)
                     (owned_view.compiler-owned-array-element-shared-view
                       cache.slots
                       copy-index)))
@@ -9056,7 +9560,7 @@
               (begin
                 (unsafe
                   (ptr-write!
-                    (ptr-offset (array-data bigger) copy-index)
+                    (ptr-offset (__tl_array-data bigger) copy-index)
                     (array-ref facts.slots copy-index)))
                 (set! copy-index (+ copy-index 1))))
             (set! facts.slots bigger)))
@@ -12669,29 +13173,14 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document params (owned_view.compiler-owned-shared-view docs))
-    [(LspDocumentLookup.Found path text _)
-      (let
-        [result : LspEditResult (LspEditResult.Err "Not yet implemented")]
-        (match result
-          [(LspEditResult.Ok new-text)
-            (begin
-              (lsp-write-response
-                id
-                (lsp-json-object2
-                  "success"
-                  (json.JsonBool true)
-                  "text"
-                  (json.JsonString new-text)))
-              (LspDocumentHandleResult.Continue docs))]
-          [(LspEditResult.Err message)
-            (begin
-              (lsp-write-error id -32600 message)
-              (LspDocumentHandleResult.Continue docs))]))]
-    [(LspDocumentLookup.Missing)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspDocumentHandleResult.Continue docs))]))
+  (begin
+    ;; Compatibility alias: custom clients receive the standard response shape
+    ;; and share every current-text/semantic-identity decision with LSP 3.17.
+    (lsp-signature-help-respond
+      (owned_view.compiler-owned-shared-view id)
+      (owned_view.compiler-owned-shared-view params)
+      (owned_view.compiler-owned-shared-view docs))
+    (LspDocumentHandleResult.Continue docs)))
 
 ;; tl/appendFunction - Append a form at the end of the file
 (define (lsp-handle-tl-append-function
@@ -13018,6 +13507,37 @@
                     (lsp-completion-respond
                       id
                       (owned_view.compiler-owned-shared-view docs))]
+                  [(json.JsonMissing) unit]))
+              (set!
+                result
+                (LspDocumentHandleResult.Continue
+                  (owned_view.compiler-owned-shared-view docs))))
+            unit)
+          (if (and
+            (not handled)
+            (string.eq
+              (owned_view.compiler-owned-shared-view method)
+              "textDocument/signatureHelp"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json.object-get
+                  (owned_view.compiler-owned-shared-view message)
+                  (& id-key))
+                  [(json.JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json.object-get
+                        (owned_view.compiler-owned-shared-view message)
+                        (& params-key))
+                        [(json.JsonFound params)
+                          (lsp-signature-help-respond
+                            id
+                            params
+                            (owned_view.compiler-owned-shared-view docs))]
+                        [(json.JsonMissing)
+                          (lsp-write-response id json.JsonNull)]))]
                   [(json.JsonMissing) unit]))
               (set!
                 result

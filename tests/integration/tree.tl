@@ -16,7 +16,7 @@
   (match e
     [(ENum n) (deref n)]
     [(EAdd l r)
-      (+ (eval (& (__tl-box-place l))) (eval (& (__tl-box-place r))))]))
+      (+ (eval (& (deref (deref l)))) (eval (& (deref (deref r)))))]))
 
 (define (main) : i64
   (let

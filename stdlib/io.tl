@@ -135,7 +135,7 @@
           buf
           count
           (unsafe
-            (ptr-cast (array-data written) : (MutPtr i32)))
+            (ptr-cast (__tl_array-data written) : (MutPtr i32)))
           0)]
       (if (= ok (cast 0 : i32))
         (cast -1 : i32)
@@ -154,7 +154,7 @@
           buf
           count
           (unsafe
-            (ptr-cast (array-data nread) : (MutPtr i32)))
+            (ptr-cast (__tl_array-data nread) : (MutPtr i32)))
           0)]
       (if (= ok (cast 0 : i32))
         (if (= (io-win-get-last-error) (cast 109 : i32))
@@ -185,7 +185,7 @@
           handle
           offset
           (unsafe
-            (ptr-cast (array-data newpos) : (MutPtr i64)))
+            (ptr-cast (__tl_array-data newpos) : (MutPtr i64)))
           whence)]
       (if (= ok (cast 0 : i32))
         -1
@@ -270,12 +270,12 @@
 ;: place without transferring ownership of the array header.
 (defmacro (array-ptr [buf : comptime.Expr]) : (MutPtr u8)
   `(unsafe
-    (array-data ,buf)))
+    (__tl_array-data ,buf)))
 
 ;: Return a const pointer to a dynamic array's private byte storage.
 (defmacro (array-const-ptr [buf : comptime.Expr]) : (Ptr u8)
   `(unsafe
-    (ptr-cast (array-data ,buf) : (Ptr u8))))
+    (ptr-cast (__tl_array-data ,buf) : (Ptr u8))))
 
 ;: Return a const pointer to a String's byte storage.
 (define (string-const-ptr [text : (& text str)]) : (Ptr u8)

@@ -19,7 +19,7 @@
           (unsafe
             (ptr-read
               (ptr-offset
-                (ptr-cast (array-data items) : (Ptr PtrOffsetTriple))
+                (ptr-cast (__tl_array-data items) : (Ptr PtrOffsetTriple))
                 1)))]
         [value : i64 second.b]
         (if (= value 17)

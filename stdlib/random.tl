@@ -315,7 +315,7 @@
       [read-count : i64
         (linux-syscall-getrandom
           (unsafe
-            (ptr-cast (array-data seed) : (MutPtr u8)))
+            (ptr-cast (__tl_array-data seed) : (MutPtr u8)))
           8
           0)]
       (if (= read-count 8)
@@ -350,11 +350,11 @@
       [_counter-ok : i32
         (windows-query-performance-counter
           (unsafe
-            (array-data counter)))]
+            (__tl_array-data counter)))]
       [_file-time-ok : unit
         (windows-get-system-time-as-file-time
           (unsafe
-            (array-data file-time)))]
+            (__tl_array-data file-time)))]
       [counter-seed : u64 (cast (array-ref counter 0) : u64)]
       [time-seed : u64 (rotl64-17 (cast (array-ref file-time 0) : u64))]
       [pid-seed : u64 (shl (cast (windows-get-current-process-id) : u64) 32)]

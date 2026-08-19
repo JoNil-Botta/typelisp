@@ -549,7 +549,7 @@
 ;: A string of n zero characters.
 (define (format-array-const-ptr [buf : (__tl_dyn-array u8)]) : (Ptr u8)
   (unsafe
-    (ptr-cast (array-data buf) : (Ptr u8))))
+    (ptr-cast (__tl_array-data buf) : (Ptr u8))))
 
 ;: A string of n zero characters.
 (define (ftoa-zeros [n : i64]) : String
@@ -609,7 +609,7 @@
       (let
         [bits : u64
           (unsafe
-            (ptr-read (ptr-cast (array-data buf) : (Ptr u64))))]
+            (ptr-read (ptr-cast (__tl_array-data buf) : (Ptr u64))))]
         [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
         [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
         [frac : u64 (bit-and bits 0xfffffffffffff)]

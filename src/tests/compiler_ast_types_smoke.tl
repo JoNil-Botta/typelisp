@@ -159,8 +159,7 @@
       (= bid1 0)
       (= (ast.ast-type-node-pool-state-len a2) 2)
       (= (ast.ast-type-node-pool-state-len b3) 1)
-      (not
-        (ast.ast-type-node-pool-state-exhausted? a2))
+      (not (ast.ast-type-node-pool-state-exhausted? a2))
       (compiler-ast-state-type-i64?
         (owned_view.compiler-owned-shared-view a2)
         aid0)
@@ -272,10 +271,8 @@
 (define (compiler-ast-context-base-arenas-match?
   [pools : (& pools ast.AstNodePoolContext)]) : bool
   (let
-    [expr-pool : ast.AstExprNodePoolState
-      (clone (array-ref pools.expr-pool 0))]
-    [type-pool : ast.AstTypeNodePoolState
-      (clone (array-ref pools.type-pool 0))]
+    [expr-pool : ast.AstExprNodePoolState (clone (array-ref pools.expr-pool 0))]
+    [type-pool : ast.AstTypeNodePoolState (clone (array-ref pools.type-pool 0))]
     (= expr-pool.base-arena type-pool.base-arena)))
 
 (define (compiler-ast-context-clone-types-only-smoke?) : bool
@@ -386,14 +383,21 @@
     (begin
       ;; Context snapshots keep the pool's stable root identity. Physical arena
       ;; growth does not require publishing a replacement head into either cell.
-      (ast.ast-node-pool-context-install! copied)
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-shared-view (& copied)))
       (let
         [ok : bool
           (and
             (= owner base)
-            (= (ast.ast-node-pool-context-owner-arena copied) owner)
+            (=
+              (ast.ast-node-pool-context-owner-arena
+                (ast.ast-node-pool-context-shared-view (& copied)))
+              owner)
             (= (ast.ast-node-pool-owner-arena-handle) owner)
-            (= (ast.ast-node-pool-context-base-arena copied) base)
+            (=
+              (ast.ast-node-pool-context-base-arena
+                (ast.ast-node-pool-context-shared-view (& copied)))
+              base)
             (= (ast.ast-node-pool-base-arena-handle) base))]
         (begin
           (ast.ast-node-pool-context-install! active-before)
@@ -453,7 +457,8 @@
   [source-make : i64]) : bool
   (match program
     [(ast.AstProgram.Program decls-box)
-      (match (ast.ast-decl-list-step (ast.ast-decl-list-box-shared-view decls-box))
+      (match (ast.ast-decl-list-step
+        (ast.ast-decl-list-box-shared-view decls-box))
         [(ast.AstDeclListStep.Cons first rest-box)
           (match first
             [(ast.AstDecl.Def _ _ maybe-ty first-body)
@@ -614,9 +619,8 @@
           [installed-ok : bool
             (match out-program
               [(ast.AstProgram.Program decls-box)
-                (match
-                  (ast.ast-decl-list-step
-                    (ast.ast-decl-list-box-shared-view decls-box))
+                (match (ast.ast-decl-list-step
+                  (ast.ast-decl-list-box-shared-view decls-box))
                   [(ast.AstDeclListStep.Cons first _)
                     (match first
                       [(ast.AstDecl.Def _ _ maybe-ty body)
@@ -704,9 +708,8 @@
           (compiler-ast-context-expr-int-lit? out-pools 0 111)
           (match out-program
             [(ast.AstProgram.Program decls-box)
-              (match
-                (ast.ast-decl-list-step
-                  (ast.ast-decl-list-box-shared-view decls-box))
+              (match (ast.ast-decl-list-step
+                (ast.ast-decl-list-box-shared-view decls-box))
                 [(ast.AstDeclListStep.Cons decl rest)
                   (match decl
                     [(ast.AstDecl.Def _ _ maybe-type body)
@@ -755,9 +758,8 @@
       [(ast.AstProgramCompaction out-program out-pools)
         (match out-program
           [(ast.AstProgram.Program decls-box)
-            (match
-              (ast.ast-decl-list-step
-                (ast.ast-decl-list-box-shared-view decls-box))
+            (match (ast.ast-decl-list-step
+              (ast.ast-decl-list-box-shared-view decls-box))
               [(ast.AstDeclListStep.Cons decl _)
                 (match decl
                   [(ast.AstDecl.Def _ _ _ body)
@@ -1108,9 +1110,7 @@
         (let
           [suffix : String (string.int->string i)]
           [module : String
-            (str_cat.str-cat
-              "m"
-              (owned_view.compiler-owned-shared-view suffix))]
+            (str_cat.str-cat "m" (owned_view.compiler-owned-shared-view suffix))]
           [module-id : i64 (ci.intern-generated-name module)]
           [path : String (str_cat.str-cat "p" suffix)]
           (begin
@@ -1124,8 +1124,7 @@
             (set! i (- i 1)))))
       (let
         [tail : ast.AstDeclList
-          (ast.ast-decl-list-tail
-            (owned_view.compiler-owned-shared-view decls))]
+          (ast.ast-decl-list-tail (owned_view.compiler-owned-shared-view decls))]
         (and
           (= (ast.ast-decl-list-len (& decls)) 16)
           (= (ast.ast-decl-path-list-len (& paths)) 16)

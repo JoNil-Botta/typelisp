@@ -166,11 +166,11 @@ tests/spmd/masked_if_bitand_value_i64.tl
 tests/spmd/masked_if_bitwise_value_types.tl
 tests/spmd/masked_if_shift_value_types.tl
 tests/spmd/masked_if_shift_inactive.tl
-tests/spmd/masked_if_shift_i16_reject.tl
 tests/spmd/map_shift_value_types.tl
-tests/spmd/map_shift_i16_reject.tl
 tests/spmd/byte_shift_value_types.tl
 tests/spmd/byte_shift_inactive_invalid.tl
+tests/spmd/word_shift_value_types.tl
+tests/spmd/word_shift_inactive_invalid.tl
 tests/spmd/masked_if_value_types.tl
 tests/spmd/masked_move_fault_suppression.tl
 tests/spmd/masked_load_cache_fault_suppression.tl
@@ -212,18 +212,6 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/i8_mul_reject.tl:avx2 | tests/spmd/i8_mul_reject.tl:avx512)
             printf '%s\n' "lower: SPMD foreach SIMD lowering does not support 8-bit lane multiplication; use scalar or widen before multiplying"
-            ;;
-        tests/spmd/masked_if_shift_i16_reject.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if does not support masked shift 'shr' for lane type i16 in AVX2 backend mode; supported lane types are i8, u8, i32, u32, i64, and u64"
-            ;;
-        tests/spmd/masked_if_shift_i16_reject.tl:avx512)
-            printf '%s\n' "lower: SPMD masked if does not support masked shift 'shr' for lane type i16 in AVX-512 backend mode; supported lane types are i8, u8, i32, u32, i64, and u64"
-            ;;
-        tests/spmd/map_shift_i16_reject.tl:avx2)
-            printf '%s\n' "lower: SPMD foreach SIMD lowering does not support shift 'shl' for lane type i16 in AVX2 backend mode; supported lane types are i8, u8, i32, u32, i64, and u64"
-            ;;
-        tests/spmd/map_shift_i16_reject.tl:avx512)
-            printf '%s\n' "lower: SPMD foreach SIMD lowering does not support shift 'shl' for lane type i16 in AVX-512 backend mode; supported lane types are i8, u8, i32, u32, i64, and u64"
             ;;
         tests/spmd/varying_match_enum_helper_reject.tl:avx2 | tests/spmd/varying_match_enum_helper_reject.tl:avx512)
             printf '%s\n' "lower: SPMD masked if does not support a SIMD varying enum match source outside a contiguous array lane"
@@ -1071,6 +1059,71 @@ verify_byte_shift_shape() {
     done
 }
 
+verify_word_shift_shape() {
+    _mode=$1
+    compile_spmd_mode tests/spmd/word_shift_value_types.tl "$_mode"
+    _tag=tests_spmd_word_shift_value_types_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] word-shift $_mode shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/word_shift_value_types.tl $_mode (shape compile)" >> "$FAILURES"
+        return
+    fi
+    for lane in i16 u16; do
+        _func="$WORKDIR/$_tag.$_mode.$lane.s"
+        _gang="$WORKDIR/$_tag.$_mode.$lane.gang.s"
+        sed -n \
+            "/^_tl_word_shift_value_types_run_direct_${lane}:/,/^_tl_.*:/p" \
+            "$_asm" > "$_func"
+        sed -n '/foreach_avx2_body/,/foreach_tail_header/p' \
+            "$_func" > "$_gang"
+        if [ ! -s "$_gang" ]; then
+            echo "[spmd-simd] word-shift $_mode missing direct-$lane SIMD gang" >&2
+            echo "tests/spmd/word_shift_value_types.tl $_mode direct-$lane (missing gang)" >> "$FAILURES"
+            continue
+        fi
+        if [ "$lane" = i16 ]; then
+            _widen=vpmovsxwd
+            _right=vpsravd
+            _native_right=vpsravw
+        else
+            _widen=vpmovzxwd
+            _right=vpsrlvd
+            _native_right=vpsrlvw
+        fi
+        if [ "$_mode" = avx2 ]; then
+            for opcode in "$_widen" vpsllvd "$_right" vpackusdw vpermq; do
+                if ! grep -F -- "$opcode" "$_gang" > /dev/null; then
+                    echo "[spmd-simd] word-shift $_mode direct-$lane missing $opcode" >&2
+                    echo "tests/spmd/word_shift_value_types.tl $_mode direct-$lane (missing $opcode)" >> "$FAILURES"
+                fi
+            done
+        else
+            for opcode in vpsllvw "$_native_right"; do
+                if ! grep -F -- "$opcode" "$_gang" > /dev/null; then
+                    echo "[spmd-simd] word-shift $_mode direct-$lane missing $opcode" >&2
+                    echo "tests/spmd/word_shift_value_types.tl $_mode direct-$lane (missing $opcode)" >> "$FAILURES"
+                fi
+            done
+            if grep -E -- 'vpmov(sx|zx)wd|vpackusdw' "$_gang" > /dev/null; then
+                echo "[spmd-simd] word-shift $_mode direct-$lane missed native word shifts" >&2
+                echo "tests/spmd/word_shift_value_types.tl $_mode direct-$lane (widened fallback)" >> "$FAILURES"
+            fi
+        fi
+        if ! grep -F -- "call tl_shift_abort" "$_gang" > /dev/null; then
+            echo "[spmd-simd] word-shift $_mode direct-$lane lacks an active-lane trap guard" >&2
+            echo "tests/spmd/word_shift_value_types.tl $_mode direct-$lane (missing trap guard)" >> "$FAILURES"
+        fi
+        if grep -E -- '^[[:space:]]+(salw|sarw|shrw)[[:space:]]' "$_gang" > /dev/null; then
+            echo "[spmd-simd] word-shift $_mode direct-$lane scalarized inside the SIMD gang" >&2
+            echo "tests/spmd/word_shift_value_types.tl $_mode direct-$lane (scalar shift)" >> "$FAILURES"
+        fi
+        _instructions=$(grep -E -c '^[[:space:]]+[a-zA-Z]' "$_gang" || true)
+        echo "[spmd-simd] word-shift $_mode direct-$lane SIMD gang -> $_instructions instructions"
+    done
+}
+
 verify_native_slice_shape() {
     _mode=$1
     compile_spmd_mode tests/spmd/native_slice_surface_i64.tl "$_mode" 2
@@ -1128,6 +1181,34 @@ verify_native_slice_shape() {
             echo "[spmd-simd] native Slice AVX-512 helper used AVX2 mask moves" >&2
             echo "tests/spmd/native_slice_surface_i64.tl avx512 (AVX2 mask move)" >> "$FAILURES"
         fi
+    fi
+}
+
+verify_native_slice_scalar_masked_bounds_shape() {
+    compile_spmd_mode tests/spmd/native_slice_surface_i64.tl scalar 2
+    _tag=tests_spmd_native_slice_surface_i64_tl
+    _asm="$WORKDIR/$_tag.scalar.compile.s"
+    _func="$WORKDIR/$_tag.scalar.masked-slice.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] native Slice scalar masked shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl scalar (masked shape compile)" >> "$FAILURES"
+        return
+    fi
+    sed -n \
+        '/^_tl_native_slice_surface_i64_masked_slice_foreach:/,/^$/p' \
+        "$_asm" > "$_func"
+    if [ ! -s "$_func" ]; then
+        echo "[spmd-simd] native Slice scalar masked helper is missing" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl scalar (missing masked helper)" >> "$FAILURES"
+        return
+    fi
+    _bounds_calls=$(grep -F -c -- "call tl_oob_abort_at" "$_func" || true)
+    if [ "$_bounds_calls" != 4 ]; then
+        echo "[spmd-simd] native Slice scalar masked helper has $_bounds_calls bounds calls, expected one for each of four Slices" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl scalar (masked bounds calls=$_bounds_calls)" >> "$FAILURES"
+    else
+        echo "[spmd-simd] native Slice scalar masked helper -> four consolidated bounds calls"
     fi
 }
 
@@ -1305,6 +1386,7 @@ for mode in avx2 avx512; do
     verify_map_compare_shape "$mode"
     verify_map_shift_shape "$mode"
     verify_byte_shift_shape "$mode"
+    verify_word_shift_shape "$mode"
     verify_native_slice_shape "$mode"
     verify_native_slice_multi_output_shape "$mode"
 done
@@ -1313,6 +1395,7 @@ verify_avx2_private_helper_call_shape
 verify_avx2_varying_while_shape
 verify_avx2_varying_enum_match_shape
 verify_avx512_varying_enum_match_shape
+verify_native_slice_scalar_masked_bounds_shape
 verify_masked_bitwise_shape avx2
 verify_masked_bitwise_shape avx512
 verify_masked_shift_shape avx2
@@ -1346,14 +1429,16 @@ done
 
 # Active invalid counts retain scalar trap semantics in both masked control
 # flow and direct maps. The fixtures cover signed negative counts and unsigned
-# counts equal to the byte and dword widths.
+# counts equal to the byte, word, and dword widths.
 for shift_trap in \
     tests/spmd/masked_if_shift_negative_trap.tl \
     tests/spmd/masked_if_shift_large_trap.tl \
     tests/spmd/map_shift_negative_trap.tl \
     tests/spmd/map_shift_large_trap.tl \
     tests/spmd/byte_shift_negative_trap.tl \
-    tests/spmd/byte_shift_large_trap.tl
+    tests/spmd/byte_shift_large_trap.tl \
+    tests/spmd/word_shift_negative_trap.tl \
+    tests/spmd/word_shift_large_trap.tl
 do
     for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
         mode=${pair%% *}

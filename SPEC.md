@@ -4511,10 +4511,10 @@ runtime-sized buffers, reading through `array-ref` and writing through
 - Straight-line contiguous numeric maps vectorize `+` and `-` for every
   numeric lane type; `bit-and`, `bit-or`, and `bit-xor` for every integer lane
   type; and `*` for every numeric lane type except `i8`/`u8`. Direct `shl` and
-  `shr` maps vectorize `i8`, `u8`, `i32`, `u32`, `i64`, and `u64`, preserving
-  the section 5.4 invalid-count trap on active lanes only, including partial
-  tails. Direct `i16`/`u16` shifts and byte multiplication are rejected with
-  operator/type-specific diagnostics rather than silently scalarizing.
+  `shr` maps vectorize every integer lane type, preserving the section 5.4
+  invalid-count trap on active lanes only, including partial tails. Byte
+  multiplication is rejected with an operator/type-specific diagnostic rather
+  than silently scalarizing.
   Numeric `=`, `!=`, `<`, `<=`, `>`, and `>=` maps produce private masks that
   are stored through `bool` array lanes.
 
@@ -4711,13 +4711,11 @@ Masked varying control flow:
   every contiguous integer array lane type (`i8`/`u8` through `i64`/`u64`).
   Leading integer literals are contextually typed from the other operand.
   These operators do not accept `f32` or `f64` lanes.
-- Masked `shl` and `shr` value lanes support `i8`, `u8`, `i32`, `u32`, `i64`,
-  and `u64` in AVX2 and AVX-512 modes. Signed `shr` is arithmetic and unsigned
-  `shr` is logical. The section 5.4 shift-count rule remains normative: an
-  invalid count traps only when its lane is active after intersecting the
-  current branch and tail masks. Unsupported `i16` and `u16` masked shifts are
-  rejected with an operator-, lane-type-, and backend-specific diagnostic;
-  they do not silently use a scalar loop.
+- Masked `shl` and `shr` value lanes support every integer lane type in AVX2
+  and AVX-512 modes. Signed `shr` is arithmetic and unsigned `shr` is logical.
+  The section 5.4 shift-count rule remains normative: an invalid count traps
+  only when its lane is active after intersecting the current branch and tail
+  masks.
 - Side effects other than supported contiguous `array-set!` and explicit
   `stdlib/atomic.tl` integer element operations are rejected in masked
   branches. This includes `set!` to bindings declared outside the `foreach`,
@@ -6328,11 +6326,12 @@ contracts:
   initialized per the `init` eligibility rules in section 5.12.1; bulk
   zero/fill helpers are implementation details, and safe code observes
   initialized source values.
-- `array-data` returns a raw `(MutPtr T)` to element storage, requires an
-  enclosing `(unsafe ...)` expression, and exists only for runtime, FFI, and
-  internal compatibility code that must pass raw storage pointers. It operates
-  on array owner storage and does not accept a borrowed Slice receiver or
-  extract a Slice's pointer/length pair.
+- `array-data` and its compiler-private `__tl_array-data` spelling return a raw
+  `(MutPtr T)` to element storage, require an enclosing `(unsafe ...)`
+  expression, and exist only for runtime, FFI, and internal compatibility code
+  that must pass raw storage pointers. They share one AST, typecheck, and
+  lowering route, operate on array owner storage, and do not accept a borrowed
+  Slice receiver or extract a Slice's pointer/length pair.
 - `__tl_array-take!` is the private three-operand compatibility primitive used
   by generated vector internals: `(__tl_array-take! items live index)` returns
   `(Tuple bool T)` and updates the separate dynamic-array liveness bitmap. The
@@ -7370,7 +7369,7 @@ in documentation passes.
   i32/u32/i64/u64/f32/f64 maps and reduction values, including active-count
   preserving tails and ordered bounds traps; AVX2/AVX-512 masked varying `if` subsets including
   nested branch-mask composition, value-producing selects, and guarded native
-  `i8`/`u8`/`i32`/`u32`/`i64`/`u64` direct and masked shifts with
+  `i8`/`u8`/`i16`/`u16`/`i32`/`u32`/`i64`/`u64` direct and masked shifts with
   active-lane-only invalid-count traps;
   AVX2/AVX-512
   scalar-lane varying `match`; AVX2/AVX-512 enum tag/payload varying `match` with
@@ -7384,8 +7383,9 @@ in documentation passes.
   deterministic fuel, and per-package `tlci` comptime interface images.
 - Tooling: package builds with lockfiles and dependency DAGs, inline tests,
   doctests, `fmt`, `lint`, `doc` generation, the published docs site, a
-  stdio LSP server with diagnostics, definition, completion, inlay hints,
-  formatting, hover, document links, flat top-level document-symbol outlines,
+  stdio LSP server with diagnostics, definition, completion, semantic signature
+  help, inlay hints, formatting, hover, document links, flat top-level
+  document-symbol outlines,
   lexical document highlights, lexical folding ranges for multiline forms and
   comment blocks, a deterministic multi-root workspace source/declaration index
   with open-document overlays and incremental file/root updates, a bounded
@@ -7396,13 +7396,43 @@ in documentation passes.
   structured source locations for source-authored semantic diagnostics, plus
   a REPL that evaluates through the real compile/link/run pipeline.
 
-### 8.2 Not yet implemented, in migration, or deferred
+### 8.2 SPMD backend support
+
+Section 5.15 defines one SPMD semantic surface across scalar, AVX2, and AVX-512
+modes. A backend asymmetry called out below is an implementation bug tracked by
+an open issue, not a permanent language limitation. "Native" means that
+eligible full gangs use SIMD instructions while preserving protected tails.
+"Scalar reference" is also supported behavior where section 5.15 specifies
+ordered or non-canonical execution; it is not an unsupported fallback.
+
+| Surface | Scalar | AVX2 | AVX-512 | Coverage / open gap |
+|---------|--------|------|---------|---------------------|
+| Contiguous `foreach` map/zip and native `Slice` map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates; `i8`/`u8` multiplication is pending under [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684) |
+| Gather-only reads | Supported: reference semantics | Supported: native gather with active-lane checks | Supported: native gather with active-lane checks | Gather integration and benchmark gates |
+| Explicit atomic scatter | Supported: ordered reference | Supported: scalarized atomic lanes | Supported: scalarized atomic lanes | Atomic-scatter fixtures; this is the specified overlap-safe path |
+| Masked varying `if`, `while`, and scalar/enum `match` | Supported: reference semantics | Supported: native masked gangs | Supported: native masked gangs | Masked-control differential and shape gates; masked `i8`/`u8` multiplication is pending under [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684) |
+| `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates |
+| `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
+| `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `scripts/verify-spmd-broadcast.sh` |
+| `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
+| `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `scripts/verify-spmd-lane-identity.sh` |
+| Same-program private out-of-line varying helpers | Supported: scalar ABI | Supported: native AVX2 private ABI | Supported: native AVX-512 private ABI | Private-helper differential/shape gates; imported package helpers retain the separately specified scalar/AVX-512 `spmd-call-v1` catalog ABI |
+| `defdispatch` | Supported: scalar variant | Supported: cached runtime AVX2 selection | Supported: cached runtime AVX-512 selection | Runtime-dispatch gate |
+
+Deliberate language exclusions are separate from backend gaps. Public vector,
+mask, and `(varying T)` source value types remain deferred by design. Source
+`return`/`break`/`continue` from SPMD regions, ordinary potentially overlapping
+scatter, aggregate/string/function lane and call values, nested public SPMD
+forms, and indirect/extern/recursive varying helper calls remain rejected as
+specified in section 5.15. The matrix does not turn those forms into silently
+scalarized extensions.
+
+### 8.3 Not yet implemented, in migration, or deferred
 
 | Feature | Status |
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
-| 16-bit integer shifts | AVX2/AVX-512 direct-map and masked `i8`/`u8`/`i32`/`u32`/`i64`/`u64` shifts are implemented. `i16`/`u16` widening/packing expansions are deferred and rejected with stable operator/type/backend diagnostics. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Fact-erasing closure flows; mutation of captured names | Rejected by design: closure captures are by-value snapshots. All-Copy closures may copy while preserving reference provenance; non-Copy closures may move through checker-known local facts; mutable/consuming capabilities and required lifetime/ownership facts fail closed when erased. |
 | Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |

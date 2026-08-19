@@ -79,12 +79,12 @@
 ;: Return a pointer to one slot in the shared timestamp scratch buffer.
 (define (scratch-ptr [slot : i64]) : (MutPtr i64)
   (unsafe
-    (ptr-offset (ptr-cast (array-data now-scratch) : (MutPtr i64)) slot)))
+    (ptr-offset (ptr-cast (__tl_array-data now-scratch) : (MutPtr i64)) slot)))
 
 ;: Return the shared timestamp scratch data address for raw Linux syscalls.
 (define (scratch-addr) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data now-scratch) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data now-scratch) : (Ptr u8))) : i64)))
 
 ;: Linux `clock_gettime(CLOCK_MONOTONIC)` via raw syscall 228.
 (define (linux-now-ticks) : i64

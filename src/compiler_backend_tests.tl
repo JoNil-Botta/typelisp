@@ -5891,8 +5891,9 @@
 
 ;; A classifier chain inside a loop, spelled with nested `if`s because the raw
 ;; source path lowers without the prelude that defines `or`. Its constants span
-;; a window whose 64-bit mask -- bits {0,4,9,10,12,14,33} above base 33, i.e.
-;; 8589956625 -- lands outside imm32, so no instruction operand can encode it.
+;; a window whose 64-bit mask -- bits {0,4,9,10,12,14,33,37} above base 33,
+;; i.e. 146028910097 -- lands outside imm32, so no instruction operand can
+;; encode it.
 ;;
 ;; The bit_test rewrite converts the chain, the mask is loop-invariant, LICM
 ;; hoists its `Mov` into the preheader, and the wide-literal operand rule
@@ -5901,9 +5902,7 @@
 ;; preheader plus a bare `btq` per iteration, and NO `movabsq` of the mask
 ;; anywhere -- `movabsq` is the emitter's operand-materialization spelling
 ;; (compiler-backend-emit-load-i64-absolute), so its absence is a precise
-;; witness that the constant is not being rebuilt at the test. The eighth
-;; constant (70) stays outside the window as the chain's tail compare, leaving
-;; the seven that the profitability floor needs.
+;; witness that the constant is not being rebuilt at the test.
 (define compiler-backend-wide-bit-test-mask-source : String
   "(define (wbt-classify [c : i64]) : bool
   (if (= c 33)
@@ -5952,13 +5951,13 @@
         ;; `movq $imm` form -- it is materialized once where that Mov landed.
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    movq $8589956625")
+          "    movq $146028910097")
         ;; ...and never as an operand materialization at the test itself, which
         ;; is what folding the literal into the shift used to emit per entry.
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "movabsq $8589956625")))]
+            "movabsq $146028910097")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-tail-dispatch-no-csr-ok?) : bool
@@ -29118,6 +29117,48 @@
             (compiler-backend-todo-marker))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; M6-E must read scratch registers from the Branch's real plan slot when the
+;; narrow fold consumes a widening Cast. The merge value forces a phi-edge copy
+;; (`xorl %esi, %esi` on the false edge); without the +4 lookup M6-C declines
+;; and leaves a separate `movzbq` plus `cmpq`.
+(define compiler-backend-cmp-mem-narrow-phi-copy-source : String
+  "(define (probe [p : (Ptr u8)] [i : i64]) : i64
+  (let
+    [value : i64
+      (if
+        (=
+          (cast (unsafe (ptr-read (ptr-offset p i))) : i64)
+          10)
+        i
+        0)]
+    (+ value 1)))
+(define (main) : i64
+  (probe (ptr-null : (Ptr u8)) 0))")
+
+(define (compiler-backend-cmp-mem-narrow-phi-copy-fold-ok?) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (string.copy (& compiler-backend-cmp-mem-narrow-phi-copy-source))
+    (compiler_backend.CompilerBackendTarget.Linux))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_probe")]
+        (compiler_backend.backend-and4
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view body)
+            "    cmpb $10, (")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view body)
+            "    xorl %esi, %esi\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              "    movzbq "))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              "    cmpq "))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-cmp-mem-fold-shapes-ok?) : bool
   (and
     (compiler_backend.backend-and4
@@ -29136,6 +29177,7 @@
       (compiler-backend-cmp-mem-staged-both-refused-ok?)
       (compiler-backend-cmp-mem-staged-second-use-refused-ok?))
     (compiler-backend-cmp-mem-spilled-rhs-fold-ok?)
+    (compiler-backend-cmp-mem-narrow-phi-copy-fold-ok?)
     (compiler-backend-gep-load-alu-commuted-shapes-ok?)
     (compiler-backend-cmp-mem-store-between-refused-ok?)
     (compiler-backend-cmp-mem-flags-between-refused-ok?)))

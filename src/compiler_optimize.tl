@@ -80042,13 +80042,15 @@
 
 ;; --- single-predecessor successor sinking ----------------------------------
 ;;
-;; Move a pure definition out of a Branch/Switch block when all of its uses
-;; occur in one successor and that successor has no other predecessor. The
+;; Move a pure definition out of a terminator block when all of its uses occur
+;; in one successor and that successor has no other predecessor. The
 ;; single-predecessor rule guarantees that the move cannot increase execution
-;; count and makes dominance straightforward on verified SSA. Scanning the
-;; source block backward lets a moved consumer make its own producers eligible
-;; in the same pass (the Load -> Pack chain in enum dispatch is the motivating
-;; shape).
+;; count and makes dominance straightforward on verified SSA. Conditional
+;; edges narrow execution as before; an unconditional edge also shortens the
+;; definition-to-use interval and can make a gep/load/cast chain contiguous
+;; with the comparison the backend folds it into. Scanning the source block
+;; backward lets a moved consumer make its own producers eligible in the same
+;; pass (the Load -> Pack chain in enum dispatch is the motivating shape).
 (defenum OptSuccessorSinkMove
   ;; `removed` marks original source instructions that move with this bundle.
   ;; `origins[i]` is that source index for a moved instruction and -1 for a
@@ -80088,7 +80090,7 @@
   (terminator-index i64)
   (defs (__tl_dyn-array i64))
   (all-defs (__tl_dyn-array i64))
-  (source-loop-target bool)
+  (source-target-live bool)
   (total-uses (__tl_dyn-array i64))
   (base-allowed (__tl_dyn-array i64))
   (leaf-uses (__tl_dyn-array i64))
@@ -81370,7 +81372,7 @@
     ;; cannot extend that producer's live range, and avoids pointlessly
     ;; cloning `base + iv*scale` for a payload beside the tag load.
     (and
-      context.source-loop-target
+      context.source-target-live
       (> (array-ref context.terminator-live var) 0)
       (<= (array-ref context.loop-phi-leaves var) 0)))
     true
@@ -81394,13 +81396,14 @@
             ;; IV, retaining the phi as the moved instruction's leaf is safe.
             true)]
         [(<= def-tag 0)
-          ;; A value with no function definition is a parameter. An external value
-          ;; used by a loop header is already live around the natural loop, so it
-          ;; remains a safe leaf in a header successor. Target/terminator uses and
-          ;; Phi leaves returned above cover the other permitted live cases.
+          ;; A value with no local definition is a parameter or an incoming SSA
+          ;; value. It is already live across an unconditional edge; an external
+          ;; value used by a loop header is likewise live around the natural loop.
+          ;; Target/terminator uses and Phi leaves returned above cover the other
+          ;; permitted live cases.
           (or
             (<= (array-ref context.all-defs var) 0)
-            context.source-loop-target
+            context.source-target-live
             (> (array-ref context.terminator-live var) 0))]
         [(> (array-ref context.visiting var) 0) false]
         [else
@@ -81528,7 +81531,7 @@
   [blocks : ir.CompilerIrBlockList]
   [cfg : OptCfgIndex]
   [all-defs : (__tl_dyn-array i64)]
-  [source-loop-target : bool]
+  [source-target-live : bool]
   [total-uses : (__tl_dyn-array i64)]
   [loop-phi-leaves : (__tl_dyn-array i64)]
   [moves : OptSuccessorSinkMoves]
@@ -81590,7 +81593,7 @@
             terminator-index
             defs
             all-defs
-            source-loop-target
+            source-target-live
             total-uses
             base-allowed
             leaf-uses
@@ -81655,7 +81658,11 @@
             [terminator : ir.CompilerIrInstr
               (ir.compiler-ir-instr-seq-ref instrs terminator-index)]
             [successors : OptLabelSet
-              (match terminator
+              (match (compiler-opt-global-shared-view terminator)
+                [(ir.CompilerIrInstr.Jump _)
+                  (opt-cfg-index-successors
+                    (compiler-opt-global-shared-view cfg)
+                    label)]
                 [(ir.CompilerIrInstr.Branch _ _ _)
                   (opt-cfg-index-successors
                     (compiler-opt-global-shared-view cfg)
@@ -81711,11 +81718,16 @@
                                 (compiler-opt-global-shared-view blocks)
                                 (compiler-opt-global-shared-view cfg)
                                 (compiler-opt-global-shared-view all-defs)
-                                (opt-successor-sink-loop-target?
-                                  (compiler-opt-global-shared-view cfg)
-                                  (compiler-opt-global-shared-view loops)
-                                  label
-                                  target)
+                                (or
+                                  (match (compiler-opt-global-shared-view
+                                    terminator)
+                                    [(ir.CompilerIrInstr.Jump _) true]
+                                    [_ false])
+                                  (opt-successor-sink-loop-target?
+                                    (compiler-opt-global-shared-view cfg)
+                                    (compiler-opt-global-shared-view loops)
+                                    label
+                                    target))
                                 (compiler-opt-global-shared-view total-uses)
                                 (compiler-opt-global-shared-view
                                   loop-phi-leaves)

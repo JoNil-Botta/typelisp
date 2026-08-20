@@ -175,6 +175,93 @@
         (&mut result))
       result)))
 
+(test
+  switch-copy-env-indexed-semantics
+  (let
+    [env : compiler_optimize.OptSwitchCopyEnv
+      (compiler_optimize.OptSwitchCopyEnv.Empty)]
+    (begin
+      (test.assert-i64-eq
+        (compiler_optimize.opt-switch-copy-env-resolve env 12)
+        12
+        "a missing destination resolves to itself")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-switch-copy-env-resolve env (- 0 1))
+        (- 0 1)
+        "a negative sentinel stays out of the dense table")
+      (set!
+        env
+        (compiler_optimize.opt-switch-copy-env-note
+          env
+          (compiler_ir_types.CompilerIrInstr.Mov
+            64
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ast_types.AstType.I64))))
+      (test.assert-i64-eq
+        (compiler_optimize.opt-switch-copy-env-resolve env 64)
+        7
+        "a high destination grows the direct table")
+      (set!
+        env
+        (compiler_optimize.opt-switch-copy-env-note
+          env
+          (compiler_ir_types.CompilerIrInstr.Mov
+            64
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ast_types.AstType.I64))))
+      (test.assert-i64-eq
+        (compiler_optimize.opt-switch-copy-env-resolve env 64)
+        8
+        "the newest destination binding replaces the old source")
+      (set!
+        env
+        (compiler_optimize.opt-switch-copy-env-note
+          env
+          (compiler_ir_types.CompilerIrInstr.Mov
+            65
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ast_types.AstType.I64))))
+      (set!
+        env
+        (compiler_optimize.opt-switch-copy-env-note
+          env
+          (compiler_ir_types.CompilerIrInstr.Mov
+            70
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (compiler_ast_types.AstType.I64))))
+      (set!
+        env
+        (compiler_optimize.opt-switch-copy-env-note
+          env
+          (compiler_ir_types.CompilerIrInstr.Mov
+            8
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))))
+      (test.assert-i64-eq
+        (compiler_optimize.opt-switch-copy-env-resolve env 64)
+        64
+        "redefining a source drops the first dependent destination")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-switch-copy-env-resolve env 65)
+        65
+        "source invalidation drops every dependent destination")
+      (test.assert-i64-eq
+        (compiler_optimize.opt-switch-copy-env-resolve env 70)
+        9
+        "source invalidation preserves unrelated destinations")
+      (set!
+        env
+        (compiler_optimize.opt-switch-copy-env-note
+          env
+          (compiler_ir_types.CompilerIrInstr.Mov
+            70
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))))
+      (test.assert-i64-eq
+        (compiler_optimize.opt-switch-copy-env-resolve env 70)
+        70
+        "a non-copy destination redefinition drops its stale fact"))))
+
 ;; #6061: force every converted dense family past its initial capacity and
 ;; pin the logical newest-first/LIFO semantics that the former Cons chains had.
 (define (opt-dense-test-licm-roots

@@ -32867,7 +32867,9 @@
     [low-xmm-exclusions : (__tl_dyn-array CompilerRegIdSeq)
       (cfg
         scratch-vreg
-        (compiler-reg-low-xmm-exclusions eff-index low-xmm-clobber-points)
+        (compiler-reg-low-xmm-exclusions
+          (compiler-reg-global-shared-view eff-index)
+          (compiler-reg-global-shared-view low-xmm-clobber-points))
         (array.make-array CompilerRegIdSeq 0))]
     ;; `div-points` / `shift-points` (kinds 1 and 2) are the sets bound above;
     ;; the GAP3c pin demotion below and the greedy share that one computation.

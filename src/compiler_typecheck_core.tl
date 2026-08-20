@@ -91693,7 +91693,7 @@
     0
     0
     0
-    5
+    4
     0
     0
     0
@@ -93076,8 +93076,16 @@
 ;; the 2,860 rotations. A global batch four retained 73,602,040 / 405,151,072
 ;; (18.17%) but raised rotations to 3,574. Interleaved three-run Windows
 ;; profile-selfhost medians were 14.686 s unphased, 14.966 s phase-shifted, and
-;; 14.986 s at global batch four, so the one-time phase shift is the measured
-;; memory/work knee. Retention is bounded by 2 batches, not by the walk. Make
+;; 14.986 s at global batch four.
+;;
+;; #6737 demonstrated that the one-time phase shift was not an invariant: an
+;; unrelated optimizer-local source change moved phase-shifted batch five back
+;; to 112,556,344 / 405,175,936 (27.78%), while restoring the original local
+;; declaration count did not change that result. Use the already-measured
+;; global batch four cadence; the current-source Windows rerun retained
+;; 73,601,960 / 405,151,936 bytes (18.17%) with the same 3,574 rotations. This
+;; leaves ordinary source growth room instead of silently retuning the ring
+;; across the 25% gate. Retention is bounded by 2 batches, not by the walk. Make
 ;; `next` the live generation and destroy the one retired a batch ago.
 ;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
 ;; flag that disables the virgin-arena zero-fill elision permanently for
@@ -93117,26 +93125,14 @@
         (+ (tc-macro-walk-field state macro-decl-generation-batch-used) 1))
       (tc-macro-walk-field state macro-decl-generation-arena))
     (let
-      [initial? : bool
-        (and
-          (= (tc-macro-walk-field state macro-decl-generation-arena) 0)
-          (= (tc-macro-walk-field state macro-decl-generation-retired-arena) 0))]
       [next : i64 (arena.tl_arena_make)]
       (begin
         (macro-decl-generation-rotate! state next)
-        ;; Make only the first batch one declaration short. This phase-shifts
-        ;; every later five-declaration boundary without adding steady-state
-        ;; rotations; full release resets both handles and starts a new ring.
-        (tc-macro-walk-set!
-          state
-          macro-decl-generation-batch-used
-          (if initial?
-            2
-            1))
+        (tc-macro-walk-set! state macro-decl-generation-batch-used 1)
         next))))
 
 ;; R3-P2b: import-placeholder expansions get their OWN two-generation ring, not
-;; a slot in the 32-declaration batch ring above, and the difference is a
+;; a slot in the declaration-generation batch ring above. The difference is a
 ;; soundness argument rather than a tuning knob.
 ;;
 ;; Every splice arm resets the whole per-splice cache family before it hands the
@@ -93152,8 +93148,8 @@
 ;;
 ;; That is the cadence rule this packet is built on: A GENERATION'S DESTROY
 ;; CADENCE MUST BE THE RESET CADENCE OF THE CACHES THAT ALLOCATE INTO IT. The
-;; 32-declaration batch ring destroys on a counter with no relation to the
-;; splice cadence, and putting the placeholder arm on it SIGSEGVs the
+;; declaration-generation batch ring destroys on a counter with no relation to
+;; the splice cadence, and putting the placeholder arm on it SIGSEGVs the
 ;; linux-x86_64 self-compile between the 4th splice and the next.
 ;;
 ;; State that outlives the reset -- the two generated-module/decls memos, which
@@ -93287,6 +93283,31 @@
       (if (or (= retired 0) (= retired current))
         unit
         (macro-generation-destroy! retired)))))
+
+(cfg
+  test
+  (test
+    macro-decl-generation-global-batch-four
+    (let
+      [job : TcJobState (tc-job-state-new)]
+      [state : TcMacroState (tc-job-state-macro-state job)]
+      [first : i64 (macro-decl-generation-enter! state)]
+      [second : i64 (macro-decl-generation-enter! state)]
+      [third : i64 (macro-decl-generation-enter! state)]
+      [fourth : i64 (macro-decl-generation-enter! state)]
+      [fifth : i64 (macro-decl-generation-enter! state)]
+      (begin
+        (macro-decl-generations-release! state)
+        (test.assert-i64-eq
+          (tc-macro-walk-field state macro-decl-generation-batch-size)
+          4
+          "declaration generations use the global batch-four cadence")
+        (test.assert-i64-eq second first "second declaration stays in batch")
+        (test.assert-i64-eq third first "third declaration stays in batch")
+        (test.assert-i64-eq fourth first "fourth declaration stays in batch")
+        (test.assert-true
+          (!= fifth first)
+          "fifth declaration rotates without a source-specific first batch")))))
 
 ;; The checked-lowering pipeline compacts its parsed program before macro
 ;; expansion.  Keep an explicit proof of whether expansion changed the program

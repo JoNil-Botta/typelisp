@@ -6300,10 +6300,16 @@
                 type-segment-bases
                 (compiler-reg-global-shared-view func)
                 1)
-              (compiler-reg-clobber-kind-points type-segment-bases func 2)
+              (compiler-reg-clobber-kind-points
+                type-segment-bases
+                (compiler-reg-global-shared-view func)
+                2)
               (cfg
                 scratch-vreg
-                (compiler-reg-clobber-kind-points type-segment-bases func 5)
+                (compiler-reg-clobber-kind-points
+                  type-segment-bases
+                  (compiler-reg-global-shared-view func)
+                  5)
                 (live.compiler-live-set-empty))))]
         [(ir.CompilerIrParamList.Cons _ _)
           (let
@@ -6356,10 +6362,16 @@
                 type-segment-bases
                 (compiler-reg-global-shared-view func)
                 1)
-              (compiler-reg-clobber-kind-points type-segment-bases func 2)
+              (compiler-reg-clobber-kind-points
+                type-segment-bases
+                (compiler-reg-global-shared-view func)
+                2)
               (cfg
                 scratch-vreg
-                (compiler-reg-clobber-kind-points type-segment-bases func 5)
+                (compiler-reg-clobber-kind-points
+                  type-segment-bases
+                  (compiler-reg-global-shared-view func)
+                  5)
                 (live.compiler-live-set-empty))))])]))
 
 (define (compiler-reg-ineligible-instr

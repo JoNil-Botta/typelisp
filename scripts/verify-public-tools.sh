@@ -2261,6 +2261,20 @@ EOF
     assert_contains "$out" "lint: 0 finding(s)"
     assert_not_contains "$out" "nested-let"
 
+    cat > "$WORKDIR/lint_raw_arena.tl" <<'EOF'
+(define (switch-arena [handle : i64]) : unit
+  (arena.tl_arena_set handle))
+EOF
+    # cli-gate-case lint-raw-arena-op wrapper run_cmd
+    run_cmd lint-raw-arena-op "$COMPILER" lint "$WORKDIR/lint_raw_arena.tl" --check
+    assert_failure
+    assert_stderr_empty
+    assert_contains "$out" "warning[raw-arena-op]:"
+    assert_contains "$out" "lint_raw_arena.tl:2:3"
+    assert_contains "$out" "raw arena operation"
+    assert_contains "$out" "= help: use in-arena, with-scratch, with-arena, rewind-safe!, or destroy-safe!"
+    assert_contains "$out" "lint: 1 finding(s)"
+
     # cli-gate-case lint-format-invalid wrapper run_cmd
     run_cmd lint-format-invalid "$COMPILER" lint "$WORKDIR/lint_bad.tl" --format json
     assert_failure

@@ -197,7 +197,19 @@
       (test.assert-i64-eq
         (compiler_optimize.opt-switch-copy-env-resolve env 70)
         9
-        "source invalidation preserves unrelated destinations"))))
+        "source invalidation preserves unrelated destinations")
+      (set!
+        env
+        (compiler_optimize.opt-switch-copy-env-note
+          env
+          (compiler_ir_types.CompilerIrInstr.Mov
+            70
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))))
+      (test.assert-i64-eq
+        (compiler_optimize.opt-switch-copy-env-resolve env 70)
+        70
+        "a non-copy destination redefinition drops its stale fact"))))
 
 ;; #6061: force every converted dense family past its initial capacity and
 ;; pin the logical newest-first/LIFO semantics that the former Cons chains had.

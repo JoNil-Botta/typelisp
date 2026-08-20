@@ -35793,35 +35793,48 @@
 ;;
 ;; Function-local vreg ids are dense, so destination lookup is direct. `-1` is
 ;; explicit absence; valid vreg sources are non-negative. A compact active-dst
-;; sidecar bounds source invalidation by actual occupancy instead of the largest
-;; vreg id, while preserving the old all-matches removal without rebuilding a
-;; boxed chain. Both dense fields reuse the module's existing i64 vector instead
-;; of generating another collection family. Most prefixes contain no relevant
-;; move at all, so keep the dense storage lazy: `Empty` has no backing arrays and
-;; the first binding promotes it to `Dense`.
+;; sidecar bounds invalidation by actual occupancy instead of the largest vreg
+;; id, while preserving the old all-matches removal without rebuilding a boxed
+;; chain. Both dense fields reuse the module's existing i64 vector instead of
+;; generating another collection family. Most prefixes contain no relevant move
+;; at all, so keep the dense storage lazy: `Empty` has no backing arrays and the
+;; first binding promotes it to a one-word boxed `Dense` handle. Keeping the two
+;; vectors out of the carrier also avoids copying a wide environment through the
+;; recursive prefix walk.
+(defstruct OptSwitchCopyState
+  (sources opt_dense_i64_vec.Vec)
+  (active opt_dense_i64_vec.Vec))
+
 (defenum OptSwitchCopyEnv
   (Empty)
-  (Dense opt_dense_i64_vec.Vec opt_dense_i64_vec.Vec))
+  (Dense (Box OptSwitchCopyState)))
 
 (define (opt-switch-copy-env-resolve [env : OptSwitchCopyEnv] [var : i64]) : i64
   (match env
     [(OptSwitchCopyEnv.Empty) var]
-    [(OptSwitchCopyEnv.Dense sources _)
-      (if (or (< var 0) (>= var (opt_dense_i64_vec.len (& sources))))
-        var
-        (let
-          [src : i64 (array-ref (opt_dense_i64_vec.slots (& sources)) var)]
-          (if (>= src 0)
-            src
-            var)))]))
+    [(OptSwitchCopyEnv.Dense state)
+      (let
+        [sources : opt_dense_i64_vec.Vec
+          (__tl-project-field (__tl-box-place state) sources)]
+        (if (or (< var 0) (>= var (opt_dense_i64_vec.len (& sources))))
+          var
+          (let
+            [src : i64 (array-ref (opt_dense_i64_vec.slots (& sources)) var)]
+            (if (>= src 0)
+              src
+              var))))]))
 
-(define (opt-switch-copy-env-drop-src
+(define (opt-switch-copy-env-invalidate
   [env : OptSwitchCopyEnv (:consume)]
   [var : i64]) : OptSwitchCopyEnv
   (match env
     [(OptSwitchCopyEnv.Empty) (OptSwitchCopyEnv.Empty)]
-    [(OptSwitchCopyEnv.Dense sources active)
+    [(OptSwitchCopyEnv.Dense state)
       (let
+        [sources : opt_dense_i64_vec.Vec
+          (__tl-project-field (__tl-box-place state) sources)]
+        [active : opt_dense_i64_vec.Vec
+          (__tl-project-field (__tl-box-place state) active)]
         [count : i64 (opt_dense_i64_vec.len (& active))]
         [read : i64 0]
         [write : i64 0]
@@ -35831,7 +35844,7 @@
               [dst : i64 (array-ref (opt_dense_i64_vec.slots (& active)) read)]
               [src : i64 (array-ref (opt_dense_i64_vec.slots (& sources)) dst)]
               (begin
-                (if (= src var)
+                (if (or (= src var) (= dst var))
                   (opt_dense_i64_vec.set-ref! (&mut sources) dst (- 0 1))
                   (begin
                     (when
@@ -35840,11 +35853,13 @@
                     (set! write (+ write 1))))
                 (set! read (+ read 1)))))
           (set! active.len write)
-          (OptSwitchCopyEnv.Dense sources active)))]))
+          (__tl-project-set-field (__tl-box-place state) sources sources)
+          (__tl-project-set-field (__tl-box-place state) active active)
+          (OptSwitchCopyEnv.Dense state)))]))
 
 ;; Fold one prefix instruction into the copy facts: any definition of var D
-;; invalidates pairs whose src is D; a `Mov dst, src` then records dst as a
-;; fresh copy of src.
+;; invalidates pairs whose src or dst is D; a `Mov dst, src` then records dst as
+;; a fresh copy of src.
 (define (opt-switch-copy-env-note
   [env : OptSwitchCopyEnv]
   [instr : ir.CompilerIrInstr]) : OptSwitchCopyEnv
@@ -35852,7 +35867,7 @@
     [(option_i64.Some dst)
       (let
         [without-dependents : OptSwitchCopyEnv
-          (opt-switch-copy-env-drop-src env dst)]
+          (opt-switch-copy-env-invalidate env dst)]
         (match instr
           [(ir.CompilerIrInstr.Mov _ (ir.CompilerIrValue.Var src) _)
             (if (< dst 0)
@@ -35867,9 +35882,14 @@
                         (opt_dense_i64_vec.push-ref! (&mut sources) (- 0 1)))
                       (opt_dense_i64_vec.set-ref! (&mut sources) dst src)
                       (opt_dense_i64_vec.push-ref! (&mut active) dst)
-                      (OptSwitchCopyEnv.Dense sources active)))]
-                [(OptSwitchCopyEnv.Dense sources active)
+                      (OptSwitchCopyEnv.Dense
+                        (box (OptSwitchCopyState sources active)))))]
+                [(OptSwitchCopyEnv.Dense state)
                   (let
+                    [sources : opt_dense_i64_vec.Vec
+                      (__tl-project-field (__tl-box-place state) sources)]
+                    [active : opt_dense_i64_vec.Vec
+                      (__tl-project-field (__tl-box-place state) active)]
                     [old-count : i64 (opt_dense_i64_vec.len (& sources))]
                     [was-present? : bool
                       (and
@@ -35884,7 +35904,15 @@
                       (unless
                         was-present?
                         (opt_dense_i64_vec.push-ref! (&mut active) dst))
-                      (OptSwitchCopyEnv.Dense sources active)))]))]
+                      (__tl-project-set-field
+                        (__tl-box-place state)
+                        sources
+                        sources)
+                      (__tl-project-set-field
+                        (__tl-box-place state)
+                        active
+                        active)
+                      (OptSwitchCopyEnv.Dense state)))]))]
           [_ without-dependents]))]
     [(option_i64.None) env]))
 

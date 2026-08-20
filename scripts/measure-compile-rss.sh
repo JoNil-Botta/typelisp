@@ -431,7 +431,8 @@ run_manifest_chunk() {
         "$COMPILER" compile --batch "$chunk_file" \
             --target "$TARGET" \
             --cfg selfhost-compile-manifest \
-            --stdlib-root "$ROOT/stdlib"
+            --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/src"
 }
 
 verify_batch_single_parity() {
@@ -486,7 +487,8 @@ run_manifest_full() {
         "$COMPILER" compile --batch "$batch_input" \
             --target "$TARGET" \
             --cfg selfhost-compile-manifest \
-            --stdlib-root "$ROOT/stdlib"
+            --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/src"
     verify_batch_single_parity \
         "$batch_input" \
         "manifest/full" \

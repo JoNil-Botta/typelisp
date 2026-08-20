@@ -3205,6 +3205,10 @@
       (compiler_optimize_tests.compiler-optimize-licm-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-word-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-word-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-licm-unswitch-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-unswitch-self-test)
       42)
@@ -4226,6 +4230,14 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-partial-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-p5a-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-p5a-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-unroll-p5a-remainder-self-test"
+      (compiler_optimize_tests.compiler-optimize-unroll-p5a-remainder-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-paired-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-paired-self-test)
       42)
@@ -4473,10 +4485,34 @@
     "the same unbounded body stays out of line at an in-loop site"))
 
 (test
-  inline-single-site-narrow-refusal
+  inline-single-site-narrow-small-caller-refusal
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-refusal-ok?)
-    "the same body below the arity floor stays out of line: no marshalling to retire"))
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-small-caller-refusal-ok?)
+    "below the arity floor the body stays out of line even in a two-block caller"))
+
+(test
+  inline-single-site-narrow-large-caller-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-large-caller-refusal-ok?)
+    "below the arity floor and past the narrow caller band, the body stays out of line"))
+
+(test
+  inline-single-site-size-cap-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-size-cap-absorb-ok?)
+    "a single-site callee at the pathological backstop still absorbs: no growth to bound"))
+
+(test
+  inline-single-site-size-cap-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-size-cap-refusal-ok?)
+    "one block past the backstop the same body stays out of line"))
+
+(test
+  inline-single-site-absorb-keeps-block-fuel
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-absorb-keeps-block-fuel-ok?)
+    "a moved body does not spend the shared growth budget the cost model draws on"))
 
 (test
   inline-single-site-two-reference-refusal
@@ -4835,6 +4871,13 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-partial-self-test)
     42
     "multi-block versioning keeps underivable checks in the fast clone"))
+
+(test
+  bce-version-p5a-shifted-limits
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-p5a-self-test)
+    42
+    "shifted-limit compares, counter+K indices and the minimized guard version"))
 
 (test
   bce-version-multiblock-paired-checks

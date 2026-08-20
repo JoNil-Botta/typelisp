@@ -52905,10 +52905,10 @@
     [_ false]))
 
 ;; M6-B/M6-C: compare asm, true jcc, false jcc, true label, false label,
-;; resume index.
+;; branch scratch-plan lookahead, resume index.
 (defenum CompilerBackendGepLoadCmpBranchFold
   (No)
-  (Some String String String i64 i64 i64))
+  (Some String String String i64 i64 i64 i64))
 
 ;; --- M6-G: a narrow element load whose only reader is its widening cast ------
 ;;
@@ -53133,8 +53133,8 @@
   [value-var : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   ;; The instruction right behind the fused load, i.e. where the walk started.
-  ;; M6-E threads phi-edge copies only when the compare sits exactly there, so
-  ;; that the branch lands on the scratch-plan offset the copies read.
+  ;; Its distance from the compare determines where the branch's scratch-plan
+  ;; entry lives when M6-E threads phi-edge copies around the folded compare.
   [origin : i64]
   [index : i64]) : CompilerBackendGepLoadCmpBranchFold
   (let
@@ -53245,30 +53245,18 @@
                     (if (and
                       (not (string.eq cmp-asm ""))
                       (not (string.eq true-jcc ""))
-                      (compiler-backend-branch-uses-var? cond cmp-dst)
-                      ;; M6-E: phi-edge copies are threaded onto the successor
-                      ;; edges by compiler-backend-gep-load-cmp-branch-emit,
-                      ;; which reads the BRANCH's own cycle/stage scratch out of
-                      ;; the allocator plan at offset 3 (gep, load, compare,
-                      ;; branch). A fold that swallowed extra instructions -- a
-                      ;; widening cast, or one the walk stepped over -- puts the
-                      ;; branch at a different offset, so it keeps declining
-                      ;; rather than reading a slot planned for some other
-                      ;; instruction.
-                      (or
-                        (not
-                          (compiler-backend-branch-needs-phi-copies?
-                            (compiler-backend-state-function-state
-                              ctx.backend-state)
-                            true-label
-                            false-label))
-                        (= cmp-index origin)))
+                      (compiler-backend-branch-uses-var? cond cmp-dst))
                       (CompilerBackendGepLoadCmpBranchFold.Some
                         cmp-asm
                         true-jcc
                         false-jcc
                         true-label
                         false-label
+                        ;; The current instruction is Gep: Load is +1, the
+                        ;; first walked instruction is +2, and Branch follows
+                        ;; the compare. Wide shapes therefore use 3; a narrow
+                        ;; widening cast makes it 4.
+                        (+ (- cmp-index origin) 3)
                         (+ cmp-index 2))
                       (CompilerBackendGepLoadCmpBranchFold.No)))]
                 [_ (CompilerBackendGepLoadCmpBranchFold.No)])
@@ -53287,7 +53275,9 @@
 ;; block, the branch jumps to the edge labels instead of the real successors,
 ;; and the edge blocks are appended behind the branch. Reusing it costs nothing
 ;; -- those edge blocks are the very ones the unfolded path emitted -- and lets
-;; the fold keep shapes it used to hand back whole.
+;; the fold keep shapes it used to hand back whole. `branch-plan-ahead` names
+;; the branch's real offset in the uncontracted stream: 3 for Gep/Load/Cmp and
+;; 4 when M6-C also consumes a widening Cast.
 (define (compiler-backend-gep-load-cmp-branch-emit
   [ctx : CompilerBackendEmissionContext]
   [cmp-asm : String]
@@ -53295,6 +53285,7 @@
   [false-jcc : String]
   [true-label : i64]
   [false-label : i64]
+  [branch-plan-ahead : i64]
   [branch-fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
@@ -53316,13 +53307,13 @@
       [planned-cycle : String
         (compiler-backend-scratch-plan-register-ahead
           (compiler-backend-runtime-plan-scratch ctx.plan)
-          3
+          branch-plan-ahead
           1
           ctx.backend-state)]
       [planned-stage : String
         (compiler-backend-scratch-plan-register-ahead
           (compiler-backend-runtime-plan-scratch ctx.plan)
-          3
+          branch-plan-ahead
           2
           ctx.backend-state)]
       (match (compiler-backend-emit-phi-edge-copies
@@ -53404,6 +53395,7 @@
   [false-jcc : String]
   [true-label : i64]
   [false-label : i64]
+  [branch-plan-ahead : i64]
   [branch-fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (if (string.eq staged-base "")
     (compiler-backend-gep-load-cmp-branch-emit
@@ -53413,6 +53405,7 @@
       false-jcc
       true-label
       false-label
+      branch-plan-ahead
       branch-fallthrough)
     (match (compiler-backend-emit-load-value-with-plan
       ctx.assignments
@@ -53427,6 +53420,7 @@
           false-jcc
           true-label
           false-label
+          branch-plan-ahead
           branch-fallthrough)
           [(ResultCompilerBackend.Ok body-asm)
             (ResultCompilerBackend.Ok (str_cat.str-cat stage-asm body-asm))]
@@ -53533,6 +53527,7 @@
               false-jcc
               true-label
               false-label
+              branch-plan-ahead
               after-branch)
             (CompilerBackendMaybeGepLoadCmpEmission.Some
               (compiler-backend-emit-fused-result-rest
@@ -53555,6 +53550,7 @@
                   false-jcc
                   true-label
                   false-label
+                  branch-plan-ahead
                   (compiler-backend-fused-compare-fallthrough
                     instrs
                     after-branch
@@ -67598,6 +67594,103 @@
                 fn-abi
                 walk-func
                 program-index.representations)))]
+        ;; Did cycle 20's cold-call rewrite fire? That is the claim that this
+        ;; function's ONLY kind-0 clobber was carried away, which is what lets a
+        ;; replan below tell the param ABI-pin gate to ignore the clobber set.
+        ;; The call-hole round below also mints forced-to-memory carriers, but it
+        ;; leaves every call in place, so the two must not be conflated.
+        [cold-call-split? : bool (>= cold-call-temp-start 0)]
+        ;; P3: a GP value whose interval spans a call is callee-saved-only in the
+        ;; greedy and, once those six are taken, is spilled for its WHOLE
+        ;; interval -- every use, including the ones in the hot loop, becomes
+        ;; frame traffic. Split such a value's range AROUND each call it is live
+        ;; through (store to a stack-only carrier before, reload after) and
+        ;; REPLAN, so the pieces are ordinary caller-saved candidates. The round
+        ;; declines unless the replan actually registerises the selections and
+        ;; the replanned function's estimated cost is strictly lower, so it can
+        ;; only ever remove frame traffic.
+        [call-hole-split : compiler_regalloc.CompilerRegCallHoleSplit
+          (if scalar-plan?
+            (compiler_regalloc.compiler-reg-call-hole-split-rewrite-function
+              type-segment-bases
+              fn-abi
+              walk-func
+              walk-types
+              reg-plan
+              cold-call-temp-start)
+            (compiler_regalloc.compiler-reg-call-hole-split-none
+              walk-func
+              walk-vars
+              reg-plan
+              walk-types
+              cold-call-temp-start))]
+        ;; The P3 view. P3c below consumes it and produces the FURTHER split
+        ;; view everything downstream reads; when P3c declines, the two are the
+        ;; same values.
+        [hole-func : compiler_ir_types.CompilerIrFunction
+          (compiler_regalloc.compiler-reg-call-hole-split-function
+            call-hole-split)]
+        [hole-vars : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-vars call-hole-split)]
+        [hole-types : compiler_regalloc.CompilerRegVarTypes
+          (compiler_regalloc.compiler-reg-call-hole-split-types call-hole-split)]
+        [hole-reg-plan : compiler_regalloc.CompilerRegPlan
+          (compiler_regalloc.compiler-reg-call-hole-split-plan call-hole-split)]
+        ;; One forced-spill threshold over EVERY carrier family: the cold-call
+        ;; carriers occupy [cold-call-temp-start, walk-vars), the call-hole
+        ;; carriers [walk-vars, hole-vars) and the loop-parking carriers
+        ;; [hole-vars, split-vars), contiguously.
+        [hole-temp-start : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-temp-start
+            call-hole-split)]
+        ;; P3c: the greedy homes a value for its WHOLE interval, so a value that
+        ;; is live ACROSS a hot inner loop but never referenced in it keeps its
+        ;; register through that loop while the loop's own residents spill or
+        ;; scavenge. Park such a value at the loop boundary -- store to a
+        ;; stack-only carrier in the preheader, reload on the exits -- so its
+        ;; range has a hole over the loop, and REPLAN. Like P3 the round keeps
+        ;; the rewrite only when the replanned function's estimated cost is
+        ;; strictly lower, so it can only ever remove frame traffic.
+        ;;
+        ;; `cold-call-split?` is passed through rather than pinned false: the
+        ;; rewrite adds and removes no call, so the claim the plan it improves on
+        ;; was already made with still holds, and the replan stays consistent
+        ;; with the plan it is compared against.
+        [loop-park-split : compiler_regalloc.CompilerRegCallHoleSplit
+          (if scalar-plan?
+            (compiler_regalloc.compiler-reg-loop-park-rewrite-function
+              type-segment-bases
+              fn-abi
+              hole-func
+              hole-types
+              hole-reg-plan
+              hole-temp-start
+              cold-call-split?)
+            (compiler_regalloc.compiler-reg-call-hole-split-none
+              hole-func
+              hole-vars
+              hole-reg-plan
+              hole-types
+              hole-temp-start))]
+        ;; Everything downstream of the initial plan consumes the SPLIT view:
+        ;; the leaf-CSR round, its replan, the carrier self-check, the
+        ;; caller-save/loop-split/remat rewrites, storage coloring and emission.
+        ;; When both rounds decline, these are the pre-split values unchanged.
+        [split-func : compiler_ir_types.CompilerIrFunction
+          (compiler_regalloc.compiler-reg-call-hole-split-function
+            loop-park-split)]
+        [split-blocks : compiler_ir_types.CompilerIrBlockList
+          (compiler_regalloc.compiler-reg-call-hole-split-blocks
+            loop-park-split)]
+        [split-vars : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-vars loop-park-split)]
+        [split-types : compiler_regalloc.CompilerRegVarTypes
+          (compiler_regalloc.compiler-reg-call-hole-split-types loop-park-split)]
+        [split-reg-plan : compiler_regalloc.CompilerRegPlan
+          (compiler_regalloc.compiler-reg-call-hole-split-plan loop-park-split)]
+        [split-temp-start : i64
+          (compiler_regalloc.compiler-reg-call-hole-split-temp-start
+            loop-park-split)]
         ;; A call-free natural loop can leave one volatile register dead before
         ;; the loop and another dead inside it while the whole-range greedy pays
         ;; for a callee-saved home. Detect that shape against the initial plan,
@@ -67610,15 +67703,15 @@
             (compiler_regalloc.compiler-reg-leaf-csr-split-rewrite-one
               type-segment-bases
               fn-abi
-              walk-func
-              blocks
-              walk-vars
-              walk-types
-              reg-plan)
+              split-func
+              split-blocks
+              split-vars
+              split-types
+              split-reg-plan)
             (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-              blocks
-              walk-vars
-              walk-vars
+              split-blocks
+              split-vars
+              split-vars
               (compiler_regalloc.compiler-reg-assignment-table-empty)
               (compiler_regalloc.compiler-reg-var-types-empty)))]
         [alloc-blocks : compiler_ir_types.CompilerIrBlockList
@@ -67647,8 +67740,8 @@
             alloc-vars
             alloc-blocks)]
         [alloc-types : compiler_regalloc.CompilerRegVarTypes
-          (if (= alloc-vars walk-vars)
-            walk-types
+          (if (= alloc-vars split-vars)
+            split-types
             (compiler_regalloc.compiler-reg-function-var-types alloc-func))]
         [alloc-preassignments : compiler_regalloc.CompilerRegAssignmentTable
           (match leaf-csr-rewrite
@@ -67660,31 +67753,41 @@
                 _)
               assignments])]
         [raw-alloc-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (= alloc-vars walk-vars)
-            reg-plan
-            (compiler_regalloc.compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-preassignments
+          (if (= alloc-vars split-vars)
+            split-reg-plan
+            ;; The leaf-CSR round only admits functions with NO kind-0 clobber
+            ;; and the call-hole round only fires on functions that have one, so
+            ;; this replan never sees call-hole carriers -- but it still forces
+            ;; whatever carrier range exists to memory, and it passes the
+            ;; cold-call CLAIM separately from that threshold.
+            (compiler_regalloc.compiler-reg-plan-function-scalar-forced-spill-with-types
               type-segment-bases
               fn-abi
               alloc-func
-              cold-call-temp-start
+              split-temp-start
+              cold-call-split?
               alloc-types
               alloc-preassignments))]
         [alloc-reg-plan : compiler_regalloc.CompilerRegPlan
-          (if (= alloc-vars walk-vars)
+          (if (= alloc-vars split-vars)
             raw-alloc-reg-plan
             (compiler_regalloc.compiler-reg-plan-hide-leaf-csr-phantoms
               raw-alloc-reg-plan
               alloc-preassignments
-              walk-vars))]
+              split-vars))]
         [_cold-call-self-check : unit
           (cfg
             scavenge-self-check
+            ;; Covers BOTH carrier families: `split-temp-start` is the low
+            ;; watermark of the cold-call carriers when that rewrite fired and of
+            ;; the call-hole carriers otherwise, and the two ranges are
+            ;; contiguous, so one scan to `alloc-vars` checks every carrier.
             (if (compiler_regalloc.compiler-reg-cold-call-carriers-stack?
               alloc-reg-plan
-              cold-call-temp-start
+              split-temp-start
               alloc-vars)
               unit
-              (io.panic "regalloc: cold-call carrier escaped its stack home"))
+              (io.panic "regalloc: split carrier escaped its stack home"))
             unit)]
         [call-save-enabled : bool
           (if (compiler-backend-mode-scalar? mode)

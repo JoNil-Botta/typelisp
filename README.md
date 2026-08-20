@@ -179,9 +179,10 @@ surface, and `typelisp lint` reports several staged migrations.
 The [`tools/vs-code-extension`](tools/vs-code-extension) directory contains a
 VS Code extension with syntax highlighting and a stdio language server. It
 provides diagnostics, compiler and lint quick fixes, definition lookup,
-semantic references across the workspace, hover, completion, inlay hints, and
-formatting. The server indexes workspace sources, with unsaved open documents
-overriding disk snapshots, and lazily caches owned semantic snapshots for
+semantic references across the workspace, hover, completion, semantic signature
+help, inlay hints, and formatting. The server indexes workspace sources, with
+unsaved open documents overriding disk snapshots, and lazily caches owned
+semantic snapshots for
 unopened sources behind a completeness-reporting query boundary. See the extension
 [README](tools/vs-code-extension/README.md) for installation.
 

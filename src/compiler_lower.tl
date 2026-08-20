@@ -3529,12 +3529,23 @@
   [logical-name : String]
   [source-id : i64]
   [metadata : ast.AstExternMetadata]) : i64
-  (let
-    [direct : bool (lower-logical-symbol-id-direct? logical-id source-id)]
-    [link-id : i64 (ast.ast-extern-metadata-symbol-id metadata)]
-    (if (and (ast.ast-extern-metadata-symbol-matches-source? metadata) direct)
-      link-id
-      (lower-logical-symbol-id-select logical-name logical-id direct))))
+  ;; Dependency functions are represented as extern stubs in the consuming
+  ;; package. Their source names may collide across dependencies, while the
+  ;; imported SPMD metadata retains the canonical package-module identity.
+  ;; Use that identity for the IR call target; the extern record still carries
+  ;; the exact linker symbol independently, per SPEC 4.4.5.
+  (match (ast.ast-extern-metadata-imported-spmd metadata)
+    [(ast.AstImportedSpmdMetadata.Package canonical-name _)
+      (lower-derived-symbol-id (ci.intern-str canonical-name))]
+    [(ast.AstImportedSpmdMetadata.No)
+      (let
+        [direct : bool (lower-logical-symbol-id-direct? logical-id source-id)]
+        [link-id : i64 (ast.ast-extern-metadata-symbol-id metadata)]
+        (if (and
+          (ast.ast-extern-metadata-symbol-matches-source? metadata)
+          direct)
+          link-id
+          (lower-logical-symbol-id-select logical-name logical-id direct)))]))
 
 (define (lower-name-cache-owner-state [cache : (& cache LowerNameCache)]) : CompilerLowerState
   (compiler-lower-state-from-address cache.owner-address))

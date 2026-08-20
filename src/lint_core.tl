@@ -4,7 +4,8 @@
 ;# findings. The rules flag body-only nested `let` forms, single-expression
 ;# `begin` wrappers, nested success-path `if` return chains, unit-branch return
 ;# guards, no-effect expression statements, nested `str-cat` calls, and
-;# deprecated user-facing string concatenation primitives.
+;# deprecated user-facing string concatenation primitives. It also identifies
+;# raw arena-operation calls for the driver's audited-module boundary.
 ;#
 ;# The `typelisp lint` CLI driver consumes the rule id attached to each finding
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
@@ -242,6 +243,15 @@
 (define (lint-rule-unused-unsafe-suggestion) : String
   "remove the unsafe wrapper")
 
+(define (lint-rule-raw-arena-op-id) : String
+  "raw-arena-op")
+
+(define (lint-rule-raw-arena-op-message) : String
+  "raw arena operation: direct set/destroy/rewind is restricted to audited modules")
+
+(define (lint-rule-raw-arena-op-suggestion) : String
+  "use in-arena, with-scratch, with-arena, rewind-safe!, or destroy-safe!")
+
 (define (lint-rule-global-name-case-id) : String
   "global-name-case")
 
@@ -427,6 +437,12 @@
     (lint-rule-unused-unsafe-message)
     (lint-rule-unused-unsafe-suggestion)))
 
+(define (lint-rule-raw-arena-op) : LintRule
+  (LintRule
+    (lint-rule-raw-arena-op-id)
+    (lint-rule-raw-arena-op-message)
+    (lint-rule-raw-arena-op-suggestion)))
+
 (define (lint-rule-global-name-case) : LintRule
   (LintRule
     (lint-rule-global-name-case-id)
@@ -477,12 +493,13 @@
       (lint-rule-single-element-array-cell)
       (lint-rule-unused-variable)
       (lint-rule-unused-unsafe)
+      (lint-rule-raw-arena-op)
       (lint-rule-transitional-core-macro-qualifier)
       (lint-rule-global-name-case)
       (lint-rule-function-name-case)
       (lint-rule-local-name-case)
       (lint-rule-type-name-case))
-    26))
+    27))
 
 (define (lint-rule-find-at
   [rules : LintRuleList]
@@ -1006,6 +1023,13 @@
   (LintFinding
     (lint-rule-message (lint-rule-unused-unsafe-id))
     (lint-rule-unused-unsafe-id)
+    0
+    span))
+
+(define (lint-raw-arena-op-finding [span : ast.AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-rule-message (lint-rule-raw-arena-op-id))
+    (lint-rule-raw-arena-op-id)
     0
     span))
 
@@ -10741,6 +10765,42 @@
         (lint-walk-and-or-skip-expr op head-expr threshold acc)
         (+ index 1)))))
 
+(define (lint-raw-arena-op-name? [name : String]) : bool
+  (let
+    [n : i64 (string.string-length name)]
+    (if (= n 0)
+      false
+      (match (string.string-ref name 0)
+        ['t'
+          (or
+            (string.eq name "tl_arena_set")
+            (string.eq name "tl_arena_destroy")
+            (string.eq name "tl_region_reset"))]
+        ['a'
+          (or
+            (string.eq name "arena.tl_arena_set")
+            (string.eq name "arena.tl_arena_destroy")
+            (string.eq name "arena.tl_region_reset")
+            (string.eq name "arena.set!")
+            (string.eq name "arena.destroy")
+            (string.eq name "arena.rewind"))]
+        [_ false]))))
+
+(define (lint-raw-arena-op-callee? [func : ast.AstExpr]) : bool
+  (match func
+    [(ast.AstExpr.Spanned inner-box _)
+      (lint-raw-arena-op-callee? (ast.ast-node-get inner-box))]
+    [(ast.AstExpr.Var name) (lint-raw-arena-op-name? (ci.intern-str name))]
+    [_ false]))
+
+(define (lint-raw-arena-op-add
+  [func : ast.AstExpr]
+  [span : ast.AstSourceSpan]
+  [findings : LintFindings]) : LintFindings
+  (if (lint-raw-arena-op-callee? func)
+    (lint-findings-add (lint-raw-arena-op-finding span) findings)
+    findings))
+
 (define (lint-walk-call
   [func : ast.AstExpr]
   [args : ast.AstExprList]
@@ -10751,7 +10811,10 @@
     [op : String (lint-and-or-func-op func)]
     [walked-func : LintFindings (lint-walk-expr func threshold acc)]
     [callee-findings : LintFindings
-      (lint-transitional-core-macro-add func span walked-func)]
+      (lint-raw-arena-op-add
+        func
+        span
+        (lint-transitional-core-macro-add func span walked-func))]
     (if (and (not (string.eq op "")) (lint-and-or-args-have-kind? op args))
       (lint-walk-and-or-skip-args
         op

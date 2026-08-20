@@ -1,12 +1,12 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	504
-# count	total	all	annotations	504
+# count	total	all	rows	505
+# count	total	all	annotations	505
 # count	total	all	sources	3
-# count	total	all	source-sites	376
+# count	total	all	source-sites	377
 # count	total	all	expanded-cases	162
-# count	gate	public-tools	rows	320
-# count	gate	public-tools	source-sites	209
+# count	gate	public-tools	rows	321
+# count	gate	public-tools	source-sites	210
 # count	gate	public-tools	expanded-cases	127
 # count	gate	selfhost-cli	rows	80
 # count	gate	selfhost-cli	source-sites	79
@@ -14,15 +14,15 @@
 # count	gate	stage1-wrapper	rows	104
 # count	gate	stage1-wrapper	source-sites	88
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	379
+# count	host	all	rows	380
 # count	host	linux	rows	122
 # count	host	windows	rows	3
-# count	platform	linux	rows	501
-# count	platform	windows	rows	382
+# count	platform	linux	rows	502
+# count	platform	windows	rows	383
 # count	kind	delegated	rows	9
 # count	kind	direct	rows	53
-# count	kind	wrapper	rows	442
-# count	process	compiler	rows	331
+# count	kind	wrapper	rows	443
+# count	process	compiler	rows	332
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -341,6 +341,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	lint-nested-let-flat	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl --format flat	<workdir>/lint_bad.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint_bad.tl:2:3:nested-let;assert_contains stdout lint: 1 finding(s);assert_not_contains stdout warning-code,help	empty	none	lint-nested-let-flat	-
 1	lint-nested-let-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl --check	<workdir>/lint_bad.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	assert_contains stdout lint_bad.tl:;assert_contains stdout nested let;assert_contains stdout lint: 1 finding(s)	empty	none	lint-nested-let-check	-
 1	lint-displayed-rule-id-suppresses	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad_suppressed.tl --check	<workdir>/lint_bad_suppressed.tl-with-lint-allow:nested-let	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s);assert_not_contains stdout nested-let	empty	none	lint-displayed-rule-id-suppresses	-
+1	lint-raw-arena-op	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_raw_arena.tl --check	<workdir>/lint_raw_arena.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	assert_contains stdout warning[raw-arena-op],lint_raw_arena.tl:2:3,raw arena operation,raw-arena-safe-form-help,lint: 1 finding(s)	empty	none	lint-raw-arena-op	-
 1	lint-format-invalid	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl --format json	<workdir>/lint_bad.tl	inherited	repository	compiler	none	nonzero	empty	assert_contains stderr unsupported-format-json-expected-rich-or-flat	none	lint-format-invalid	-
 1	lint-format-missing	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl --format	<workdir>/lint_bad.tl	inherited	repository	compiler	none	nonzero	empty	assert_contains stderr format-requires-value	none	lint-format-missing	-
 1	lint-clean	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_clean.tl	<workdir>/lint_clean.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-clean	-

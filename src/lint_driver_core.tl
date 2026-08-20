@@ -752,10 +752,131 @@
     (string.eq finding.rule-id (lint_core.lint-rule-single-begin-id))
     (> (selfhost-lint-begin-source-form-count source finding.span) 1)))
 
+(define (selfhost-lint-path-suffix-at?
+  [path : String]
+  [suffix : String]
+  [base : i64]
+  [index : i64]) : bool
+  (if (>= index (string.string-length suffix))
+    true
+    (let
+      [left : char (string.string-ref path (+ base index))]
+      [right : char (string.string-ref suffix index)]
+      (if (or
+        (= left right)
+        (and (or (= left '/') (= left '\\')) (or (= right '/') (= right '\\'))))
+        (selfhost-lint-path-suffix-at? path suffix base (+ index 1))
+        false))))
+
+(define (selfhost-lint-path-suffix? [path : String] [suffix : String]) : bool
+  (let
+    [path-len : i64 (string.string-length path)]
+    [suffix-len : i64 (string.string-length suffix)]
+    [base : i64 (- path-len suffix-len)]
+    (and
+      (>= base 0)
+      (or
+        (= base 0)
+        (let
+          [separator : char (string.string-ref path (- base 1))]
+          (or (= separator '/') (= separator '\\'))))
+      (selfhost-lint-path-suffix-at? path suffix base 0))))
+
+;; Audited raw-arena module allowlist. It holds the line established by #6253;
+;; #6620 owns classification/migration of the residual entries and should only
+;; shrink this exact module set. Deliberate runtime-protocol fixtures stay
+;; explicit so a new test or source module cannot silently inherit permission.
+(define (selfhost-lint-raw-arena-op-allowlisted? [path : String]) : bool
+  (or
+    (selfhost-lint-path-suffix? path "src/compile_cli_core.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_ast_types.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_backend_tests.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_backend.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_driver_core.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_driver_smoke_tests.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_intern.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_ir_types.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_load.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_lower_tests.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_lower.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_optimize_tests.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_optimize.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_semantic_index.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_symbols.tl")
+    (selfhost-lint-path-suffix? path "src/compiler_typecheck_core.tl")
+    (selfhost-lint-path-suffix? path "src/lex.tl")
+    (selfhost-lint-path-suffix? path "src/lint_driver_core.tl")
+    (selfhost-lint-path-suffix? path "src/lsp_frame_core.tl")
+    (selfhost-lint-path-suffix? path "src/read.tl")
+    (selfhost-lint-path-suffix? path "src/test_cli_core.tl")
+    (selfhost-lint-path-suffix? path "src/tests/compiler_ast_types_smoke.tl")
+    (selfhost-lint-path-suffix? path "src/tests/compiler_ir_types_smoke.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "src/tests/compiler_typecheck_list_storage_unit.tl")
+    (selfhost-lint-path-suffix? path "src/tlci_loader.tl")
+    (selfhost-lint-path-suffix? path "stdlib/arena.tl")
+    (selfhost-lint-path-suffix? path "stdlib/tests/arena_atomic_api.tl")
+    (selfhost-lint-path-suffix? path "tests/integration/arena_escape_stress.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/arena_growth_stable_handle.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/arena_lazy_singleton_raw_addr_escape.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/arena_poison_clone_survives.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/arena_poison_stale_array_trap.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/arena_pool_context_escape.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/arena_rewind_make_array_zero.tl")
+    (selfhost-lint-path-suffix? path "tests/integration/atomic_thread_spawn.tl")
+    (selfhost-lint-path-suffix? path "tests/integration/clone_deep_copy.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/clone_dynarray_scalar_bulk.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/compiler_arena_debug.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/make_array_default_reads_zero.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/mem_fill8_runtime_contract.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/region_reset_discard.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/region_reset_invalid_trap.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/region_reset_overflow_retains.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/region_reset_preserve.tl")
+    (selfhost-lint-path-suffix? path "tests/integration/region_reset_zero.tl")
+    (selfhost-lint-path-suffix? path "tests/integration/sym_i64_env.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tests/integration/with_escape_clone_out.tl")
+    (selfhost-lint-path-suffix?
+      path
+      "tools/embedded-stdlib-tlci/prelude_surface_producer.tl")))
+
 (define (selfhost-lint-filter-derived-origins-from
+  [path : String]
   [source : String]
   [items : lint_core.LintFindings]
   [index : i64]
+  [raw-arena-allowlisted : bool]
   [out : lint_core.LintFindings]) : lint_core.LintFindings
   (if (>= index (lint_core.lint-findings-count items))
     out
@@ -766,21 +887,49 @@
         (if (or
           (selfhost-lint-derived-form-origin? source finding.span)
           (selfhost-lint-source-multiform-single-begin? source finding)
-          (selfhost-lint-suppressed? source finding))
+          (selfhost-lint-suppressed? source finding)
+          (and
+            (string.eq finding.rule-id (lint_core.lint-rule-raw-arena-op-id))
+            raw-arena-allowlisted))
           out
           (lint_core.lint-findings-add finding out))]
-      (selfhost-lint-filter-derived-origins-from source items (+ index 1) next))))
+      (selfhost-lint-filter-derived-origins-from
+        path
+        source
+        items
+        (+ index 1)
+        raw-arena-allowlisted
+        next))))
+
+(define (selfhost-lint-findings-have-rule-from?
+  [items : lint_core.LintFindings]
+  [rule-id : String]
+  [index : i64]) : bool
+  (if (>= index (lint_core.lint-findings-count items))
+    false
+    (if (string.eq (lint_core.lint-findings-ref items index).rule-id rule-id)
+      true
+      (selfhost-lint-findings-have-rule-from? items rule-id (+ index 1)))))
 
 (define (selfhost-lint-filter-derived-origins
+  [path : String]
   [source : String]
   [items : lint_core.LintFindings]) : lint_core.LintFindings
   (selfhost-lint-filter-derived-origins-from
+    path
     source
     items
     0
+    (and
+      (selfhost-lint-findings-have-rule-from?
+        items
+        (lint_core.lint-rule-raw-arena-op-id)
+        0)
+      (selfhost-lint-raw-arena-op-allowlisted? path))
     (lint_core.lint-findings-empty)))
 
 (define (selfhost-lint-program-findings-with-all-options
+  [path : String]
   [source : String]
   [program : ast.AstProgram]
   [deprecated-string-concat : bool]
@@ -808,7 +957,7 @@
         ;; Dotted field projection is now the only public spelling. Keep the
         ;; staged option as a no-op for command-line compatibility.
         [with-prefer : lint_core.LintFindings with-redundant]
-        (selfhost-lint-filter-derived-origins source with-prefer))]))
+        (selfhost-lint-filter-derived-origins path source with-prefer))]))
 
 (define (selfhost-lint-findings-append-from
   [src : lint_core.LintFindings]
@@ -1311,6 +1460,7 @@
           (let
             [findings : lint_core.LintFindings
               (selfhost-lint-filter-derived-origins
+                path
                 source
                 (selfhost-lint-unused-unsafe-findings-from
                   unused-unsafe
@@ -1381,6 +1531,7 @@
     (let
       [ordinary : lint_core.LintFindings
         (selfhost-lint-program-findings-with-all-options
+          path
           source
           program
           deprecated-string-concat
@@ -1446,6 +1597,7 @@
             (let
               [ordinary : lint_core.LintFindings
                 (selfhost-lint-program-findings-with-all-options
+                  path
                   source
                   program
                   deprecated-string-concat

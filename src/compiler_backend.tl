@@ -45346,8 +45346,8 @@
         scratch-vreg
         (compiler-backend-phi-planned-avoiding-value-home
           program-index.backend-state
-          assignments
-          moved-src
+          (compiler-backend-global-shared-view assignments)
+          (compiler-backend-global-shared-view moved-src)
           planned-cycle)
         planned-cycle))
     (compiler-backend-function-state-set-string!
@@ -45357,8 +45357,8 @@
         scratch-vreg
         (compiler-backend-phi-planned-avoiding-value-home
           program-index.backend-state
-          assignments
-          moved-src
+          (compiler-backend-global-shared-view assignments)
+          (compiler-backend-global-shared-view moved-src)
           planned-stage)
         planned-stage))
     ;; #phi-staged-copy: see emit-phi-edge-copies.
@@ -51389,14 +51389,15 @@
     [_scratch-plan : compiler_regalloc.CompilerRegScratchPlan
       (cfg
         scratch-vreg
-        (compiler-backend-runtime-plan-scratch ctx.plan)
+        (compiler-backend-runtime-plan-scratch
+          (compiler-backend-global-shared-view ctx.plan))
         (compiler-backend-global-shared-view
           compiler-backend-empty-scratch-plan))]
     [planned-scratch0 : String
       (cfg
         scratch-vreg
         (compiler-backend-scratch-plan-register-here
-          _scratch-plan
+          (compiler-backend-global-shared-view _scratch-plan)
           0
           ctx.backend-state)
         "")]
@@ -51404,7 +51405,7 @@
       (cfg
         scratch-vreg
         (compiler-backend-scratch-plan-register-here
-          _scratch-plan
+          (compiler-backend-global-shared-view _scratch-plan)
           1
           ctx.backend-state)
         "")]
@@ -51412,7 +51413,7 @@
       (cfg
         scratch-vreg
         (compiler-backend-scratch-plan-register-here
-          _scratch-plan
+          (compiler-backend-global-shared-view _scratch-plan)
           2
           ctx.backend-state)
         "")]
@@ -51420,7 +51421,7 @@
       (cfg
         scratch-vreg
         (compiler-backend-scratch-plan-register-here
-          _scratch-plan
+          (compiler-backend-global-shared-view _scratch-plan)
           3
           ctx.backend-state)
         "")]
@@ -51428,7 +51429,7 @@
       (cfg
         scratch-vreg
         (compiler-backend-scratch-plan-register-here
-          _scratch-plan
+          (compiler-backend-global-shared-view _scratch-plan)
           4
           ctx.backend-state)
         "")]
@@ -51437,23 +51438,26 @@
         ctx.function-state
         compiler-backend-function-string-current-c-memory-planned-xmm
         (match (compiler-backend-global-shared-view instr)
-          [(compiler_ir_types.CompilerIrInstr.Call _ _ _ _) planned-scratch1]
+          [(compiler_ir_types.CompilerIrInstr.Call _ _ _ _)
+            (compiler-backend-global-shared-view planned-scratch1)]
           [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ _ _)
-            planned-scratch2]
+            (compiler-backend-global-shared-view planned-scratch2)]
           [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult _)
-            planned-scratch2]
+            (compiler-backend-global-shared-view planned-scratch2)]
           [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult _)
-            planned-scratch2]
+            (compiler-backend-global-shared-view planned-scratch2)]
           [_ ""]))]
     [_phi-planned-xmm : unit
       (compiler-backend-function-state-set-string!
         ctx.function-state
         compiler-backend-function-string-current-phi-planned-xmm-cycle
         (match (compiler-backend-global-shared-view instr)
-          [(compiler_ir_types.CompilerIrInstr.Jump _) planned-scratch2]
-          [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) planned-scratch3]
+          [(compiler_ir_types.CompilerIrInstr.Jump _)
+            (compiler-backend-global-shared-view planned-scratch2)]
+          [(compiler_ir_types.CompilerIrInstr.Branch _ _ _)
+            (compiler-backend-global-shared-view planned-scratch3)]
           [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _)
-            planned-scratch3]
+            (compiler-backend-global-shared-view planned-scratch3)]
           [_ ""]))]
     ;; Sound-scavenger: reserve this instruction's operand + result homes so the
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).

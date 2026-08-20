@@ -39303,35 +39303,6 @@
         [(CompilerRegMaybeLocation.No) false])]
     [_ false]))
 
-;; Whether the scalar compare emitter can use `lhs` as the x86 compare
-;; destination without first staging it. This is deliberately narrower than
-;; `compiler-reg-scratch-value-direct?`: a RegisterPair is an aggregate and the
-;; scalar emitter stages its selected word, while a spill/no-assignment value is
-;; directly addressable memory. Integer literals are only direct on the left
-;; when the right side has a scalar register home and emission swaps the compare.
-;; Keep this predicate shared with the fused compare/branch consumer so both
-;; sides agree whether ordinal 0 belongs to the lhs or rhs stage.
-(define (compiler-reg-scratch-compare-lhs-direct?
-  [assignments : CompilerRegAssignmentTable]
-  [lhs : ir.CompilerIrValue]
-  [rhs : ir.CompilerIrValue]) : bool
-  (match lhs
-    [(ir.CompilerIrValue.Var var)
-      (match (compiler-reg-assignment-lookup assignments var)
-        [(CompilerRegMaybeLocation.Some location)
-          (match location
-            [(CompilerRegLocation.Register _) true]
-            [(CompilerRegLocation.Spill _) true]
-            [_ false])]
-        [(CompilerRegMaybeLocation.No) true])]
-    [(ir.CompilerIrValue.I64 _)
-      (compiler-reg-scratch-value-scalar-register-homed? assignments rhs)]
-    [(ir.CompilerIrValue.Bool _)
-      (compiler-reg-scratch-value-scalar-register-homed? assignments rhs)]
-    [(ir.CompilerIrValue.Char _)
-      (compiler-reg-scratch-value-scalar-register-homed? assignments rhs)]
-    [_ false]))
-
 (define (compiler-reg-scratch-value-same-home?
   [assignments : CompilerRegAssignmentTable]
   [dst : i64]
@@ -39953,31 +39924,14 @@
               2
               (if (ir.compiler-ir-binop-compare?
                 (compiler-reg-global-shared-view op))
-                ;; Fused comparisons keep two distinct operand homes live
-                ;; through the following Branch. A materialized spilled result
-                ;; still needs its setcc staging home even when either operand
-                ;; is directly addressable; the old zero here was the largest
-                ;; consumer/inventory mismatch under pressure.
-                (if (compiler-reg-scratch-var-register-homed?
-                  (compiler-reg-global-shared-view _assignments)
-                  (compiler-reg-global-shared-view dst))
-                  (if (or
-                    (compiler-reg-scratch-compare-lhs-direct?
-                      (compiler-reg-global-shared-view _assignments)
-                      (compiler-reg-global-shared-view lhs)
-                      (compiler-reg-global-shared-view rhs))
-                    (compiler-reg-scratch-value-scalar-source-direct?
-                      (compiler-reg-global-shared-view _assignments)
-                      (compiler-reg-global-shared-view rhs)))
-                    1
-                    2)
-                  (+
-                    1
-                    (if (compiler-reg-scratch-value-scalar-source-direct?
-                      (compiler-reg-global-shared-view _assignments)
-                      (compiler-reg-global-shared-view rhs))
-                      0
-                      1)))
+                ;; Keep the two scalar compare ordinals stable even when only
+                ;; one side needs staging. Compare/branch fusion consumes lhs
+                ;; from ordinal 0 and rhs from ordinal 1; two memory-homed
+                ;; operands therefore consume ordinal 1 while leaving ordinal
+                ;; 0 unused. Counting temporaries instead of the ordinal width
+                ;; made that valid shape look like a one-slot plan and forced
+                ;; the scratch-vreg backend into its forbidden fallback.
+                2
                 (match op
                   ;; Constant shifts accumulate directly in a register-homed
                   ;; destination; a spill needs one result staging home.
@@ -39996,38 +39950,26 @@
                   [_
                     (if _binop-return
                       ;; The return fusion can accumulate directly in %rax, but
-                      ;; it is deliberately allowed to decline. Keep the normal
-                      ;; spilled-result staging slot modeled for that fallback.
+                      ;; it is deliberately allowed to decline. Its special
+                      ;; lowering uses ordinal 0 for RHS staging as well as the
+                      ;; normal spilled-result fallback.
                       1
-                      (if (not
-                        (compiler-reg-scratch-var-register-homed?
+                      (if (compiler-reg-scratch-value-encodable-immediate?
+                        (compiler-reg-global-shared-view rhs))
+                        ;; A literal can operate directly on a register result;
+                        ;; a spilled result still needs ordinal 0.
+                        (if (compiler-reg-scratch-var-register-homed?
                           (compiler-reg-global-shared-view _assignments)
-                          (compiler-reg-global-shared-view dst)))
-                        ;; A spilled result always needs the primary staging
-                        ;; home. A non-immediate rhs can also need an independent
-                        ;; staging home when constant hoisting occupies the
-                        ;; selected result register.
-                        (if (compiler-reg-scratch-value-encodable-immediate?
-                          (compiler-reg-global-shared-view rhs))
-                          1
-                          2)
-                        (match (compiler-reg-global-shared-view rhs)
-                          [(ir.CompilerIrValue.Var _)
-                            (if (compiler-reg-scratch-value-same-home?
-                              (compiler-reg-global-shared-view _assignments)
-                              (compiler-reg-global-shared-view dst)
-                              (compiler-reg-global-shared-view rhs))
-                              ;; The backend may forward an apparent register
-                              ;; operand as an address, making it unavailable as
-                              ;; the commuted source. Preserve rhs before its
-                              ;; coalesced destination home is overwritten.
-                              1
-                              0)]
-                          [_
-                            (if (compiler-reg-scratch-value-encodable-immediate?
-                              (compiler-reg-global-shared-view rhs))
-                              0
-                              1)])))])))))]
+                          (compiler-reg-global-shared-view dst))
+                          0
+                          1)
+                        ;; Ordinary RAX forwarding eliminates the original
+                        ;; destination home and consumes RHS staging at ordinal
+                        ;; 1. Keep both ordinals exposed even when the ordinary
+                        ;; register-destination path would need only ordinal 0
+                        ;; (or no scratch): consumer selection happens later in
+                        ;; the backend and must not change the plan's width.
+                        2))])))))]
       [(ir.CompilerIrInstr.UnOp dst _ _ _)
         (if (compiler-reg-scratch-var-register-homed? _assignments dst)
           0
@@ -40113,19 +40055,42 @@
           from-ty
           to-ty)]
       [(ir.CompilerIrInstr.Mov dst src ty)
-        (if (and
-          (compiler-reg-float-type? (compiler-reg-global-shared-view ty))
-          (not
-            (compiler-reg-scratch-value-same-home?
-              (compiler-reg-global-shared-view _assignments)
-              (compiler-reg-global-shared-view dst)
-              src))
-          (not
-            (compiler-reg-scratch-var-register-homed?
-              (compiler-reg-global-shared-view _assignments)
-              (compiler-reg-global-shared-view dst))))
-          1
-          0)]
+        (if (or
+          (compiler-reg-scratch-mov-group?
+            _type-segment-bases
+            (compiler-reg-global-shared-view _types)
+            (compiler-reg-global-shared-view dst)
+            (compiler-reg-global-shared-view src)
+            (compiler-reg-global-shared-view ty))
+          (compiler-reg-scratch-mov-group-in-set?
+            (compiler-reg-global-shared-view _group-vars)
+            (compiler-reg-global-shared-view dst)
+            (compiler-reg-global-shared-view src)))
+          2
+          (if (and
+            (compiler-reg-float-type? (compiler-reg-global-shared-view ty))
+            (not
+              (compiler-reg-scratch-value-same-home?
+                (compiler-reg-global-shared-view _assignments)
+                (compiler-reg-global-shared-view dst)
+                (compiler-reg-global-shared-view src)))
+            (not
+              (compiler-reg-scratch-var-register-homed?
+                (compiler-reg-global-shared-view _assignments)
+                (compiler-reg-global-shared-view dst))))
+            1
+            (if (or
+              (compiler-reg-scratch-value-same-home?
+                (compiler-reg-global-shared-view _assignments)
+                (compiler-reg-global-shared-view dst)
+                (compiler-reg-global-shared-view src))
+              (compiler-reg-scratch-value-encodable-immediate?
+                (compiler-reg-global-shared-view src))
+              (compiler-reg-scratch-var-register-homed?
+                (compiler-reg-global-shared-view _assignments)
+                (compiler-reg-global-shared-view dst)))
+              0
+              1)))]
       ;; A non-memory splat stages integer lanes through GP+XMM and float lanes
       ;; through XMM. Keep the two fixed ordinals so emission lookup remains
       ;; stable regardless of the source home and selected element type.

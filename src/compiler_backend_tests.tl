@@ -47502,6 +47502,36 @@
             [_ false]))])
     true))
 
+;; Ordinary RAX forwarding consumes a staged non-immediate RHS from ordinal 1,
+;; even when the allocator originally gave the result a register home. Keep the
+;; full two-slot layout visible to that later emission choice.
+(define (compiler-backend-scratch-vreg-scalar-rax-width-ok?) : bool
+  (cfg
+    scratch-vreg
+    (=
+      (compiler_regalloc.compiler-reg-scratch-vreg-slots
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_abi.CompilerRegTargetAbi.Linux)
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            2
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r12))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))
+        (compiler_regalloc.compiler-reg-var-types-empty)
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          2
+          (compiler_ir_types.CompilerIrBinOp.BitAnd)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Global
+            (ci.intern "scratch_scalar_rax_global"))
+          (compiler_ast_types.AstType.U64))
+        (compiler_regalloc.compiler-reg-label-seq-empty)
+        (compiler_regalloc.compiler-reg-label-seq-empty)
+        false)
+      2)
+    true))
+
 (define (compiler-backend-scratch-vreg-scalar-control-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.compiler-ir-block
@@ -47553,40 +47583,22 @@
           [test : String
             (compiler-backend-scratch-test-plan-register-string plan 2 0)]
           (and
-            (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 2)
-            ;; The compare emitter addresses a spilled lhs directly, so its one
-            ;; modeled scalar slot belongs to rhs staging (ordinal 0). The old
-            ;; generic direct predicate classified this in the opposite way and
-            ;; requested missing ordinal 1 during fused compare/branch emission.
-            (compiler_regalloc.compiler-reg-scratch-compare-lhs-direct?
-              (compiler-backend-scratch-vreg-scalar-control-assignments)
-              (compiler_ir_types.CompilerIrValue.Var 0)
-              (compiler_ir_types.CompilerIrValue.Var 1))
-            ;; RegisterPair is an aggregate carrier, not a scalar compare
-            ;; operand; it must consume the lhs staging slot.
-            (not
-              (compiler_regalloc.compiler-reg-scratch-compare-lhs-direct?
-                (compiler_regalloc.compiler-reg-assignments-prepend
-                  (compiler_regalloc.CompilerRegAssignment
-                    0
-                    (compiler_regalloc.CompilerRegLocation.RegisterPair
-                      compiler_abi.compiler-reg-id-rdi
-                      compiler_abi.compiler-reg-id-rsi))
-                  (compiler_regalloc.compiler-reg-assignment-table-empty))
-                (compiler_ir_types.CompilerIrValue.Var 0)
-                (compiler_ir_types.CompilerIrValue.Var 1)))
+            (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 3)
+            ;; Compare/branch fusion has fixed operand ordinals: lhs is 0 and
+            ;; rhs is 1. Both remain modeled even when one operand can be
+            ;; addressed directly so a memory/memory shape can consume ordinal
+            ;; 1 without falling outside a one-slot plan.
             (not (string.eq primary ""))
-            ;; One of the two spilled compare operands stages while the other is
-            ;; addressed directly from memory, so no secondary slot is needed.
-            (string.eq rhs "")
+            (not (string.eq rhs ""))
+            (not (string.eq primary rhs))
             (not (string.eq test ""))
             (=
               (__tl-project-field
-                (__tl-project-field (array-ref plan.items 0) requirement)
+                (__tl-project-field (array-ref plan.items 1) requirement)
                 hi)
               3)
             (match (__tl-project-field
-              (__tl-project-field (array-ref plan.items 1) requirement)
+              (__tl-project-field (array-ref plan.items 2) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.BranchTest) true]
               [_ false])))])
@@ -49403,6 +49415,7 @@ b_keep:
         (compiler-backend-scratch-vreg-scalar-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-shift-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-return-plan-ok?)
+        (compiler-backend-scratch-vreg-scalar-rax-width-ok?)
         (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
         (compiler-backend-scratch-vreg-select-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)

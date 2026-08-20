@@ -18,9 +18,11 @@ cd "$ROOT"
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/verify-integration.sh [--self-test-batch-observability | --self-test-empty-compile-diagnostic | --self-test-signal-notice-capture | --self-test-path-normalization | --validate-manifest-only]
+usage: scripts/verify-integration.sh [--backend-cmp-mem-fold-parity-only | --self-test-batch-observability | --self-test-empty-compile-diagnostic | --self-test-signal-notice-capture | --self-test-path-normalization | --validate-manifest-only]
 
 Runs manifest-driven native integration tests.
+--backend-cmp-mem-fold-parity-only runs the opt0/opt2 backend memory-fold
+runtime-parity matrix without building the rest of the integration corpus.
 --self-test-batch-observability exercises the batch sentinel selection and
 per-chunk timing row without invoking a compiler or native toolchain.
 --self-test-empty-compile-diagnostic exercises the compile-failure diagnostic
@@ -39,8 +41,13 @@ SELF_TEST_SIGNAL_NOTICE_CAPTURE=0
 SELF_TEST_PATH_NORMALIZATION=0
 SELF_TEST_WITHOUT_COMPILER=0
 VALIDATE_MANIFEST_ONLY=0
+BACKEND_CMP_MEM_FOLD_PARITY_ONLY=0
 case "${1:-}" in
     "")
+        ;;
+    --backend-cmp-mem-fold-parity-only)
+        BACKEND_CMP_MEM_FOLD_PARITY_ONLY=1
+        shift
         ;;
     --self-test-batch-observability)
         SELF_TEST_BATCH_OBSERVABILITY=1
@@ -1635,11 +1642,51 @@ build_linux_fixture_driver() {
     fi
 }
 
+assert_program_fixture_result() {
+    _fixture_label=$1
+    _fixture_want=$2
+    _fixture_got=$3
+    _fixture_stdout=$4
+    _fixture_stderr=$5
+    _fixture_stdout_spec=$6
+    _fixture_dir=$7
+    _fixture_expected_stdout="$_fixture_dir/$_fixture_label.expected.stdout"
+    _fixture_expected_stdout_cmp="$_fixture_dir/$_fixture_label.expected.stdout.cmp"
+    _fixture_stdout_cmp="$_fixture_dir/$_fixture_label.stdout.cmp"
+
+    write_expected_stream "$_fixture_stdout_spec" "$_fixture_expected_stdout"
+    normalized_stream "$_fixture_expected_stdout" "$_fixture_expected_stdout_cmp"
+    normalized_stream "$_fixture_stdout" "$_fixture_stdout_cmp"
+
+    _fixture_failed=0
+    if [ "$_fixture_got" -ne "$_fixture_want" ]; then
+        echo "FAIL: $_fixture_label expected exit $_fixture_want, got $_fixture_got" >&2
+        _fixture_failed=1
+    fi
+    if ! cmp -s "$_fixture_expected_stdout_cmp" "$_fixture_stdout_cmp"; then
+        echo "FAIL: $_fixture_label stdout mismatch" >&2
+        if command -v diff >/dev/null 2>&1; then
+            diff -u "$_fixture_expected_stdout_cmp" "$_fixture_stdout_cmp" >&2 || true
+        fi
+        _fixture_failed=1
+    fi
+    if [ -s "$_fixture_stderr" ]; then
+        echo "FAIL: $_fixture_label expected empty stderr" >&2
+        _fixture_failed=1
+    fi
+    if [ "$_fixture_failed" -ne 0 ]; then
+        show_stream_if_nonempty stdout "$_fixture_stdout"
+        show_stream_if_nonempty stderr "$_fixture_stderr"
+        exit 1
+    fi
+}
+
 run_linux_program_fixture() {
     _label=$1
     _source=$2
     _want=$3
     _opt_level=$4
+    _stdout_spec=${5:--}
     _dir="$WORKDIR/$_label"
     mkdir -p "$_dir"
     _asm="$_dir/$_label.s"
@@ -1674,12 +1721,9 @@ run_linux_program_fixture() {
     "$_bin" > "$_stdout" 2> "$_stderr"
     _got=$?
     set -e
-    if [ "$_got" -ne "$_want" ] || [ -s "$_stdout" ] || [ -s "$_stderr" ]; then
-        echo "FAIL: $_label expected exit $_want with no output, got $_got" >&2
-        show_stream_if_nonempty stdout "$_stdout"
-        show_stream_if_nonempty stderr "$_stderr"
-        exit 1
-    fi
+    assert_program_fixture_result \
+        "$_label" "$_want" "$_got" "$_stdout" "$_stderr" \
+        "$_stdout_spec" "$_dir"
 }
 
 run_linux_backend_fixtures() {
@@ -1992,6 +2036,7 @@ run_windows_program_fixture() {
     _source=$2
     _want=$3
     _opt_level=$4
+    _stdout_spec=${5:--}
     _dir="$WORKDIR/$_label"
     mkdir -p "$_dir"
     _asm="$_dir/$_label.s"
@@ -2015,12 +2060,9 @@ run_windows_program_fixture() {
     fi
     assemble_link_windows "$_asm" "$_obj" "$_bin" "$_label"
     run_windows_program "$_bin" "$_stdout" "$_stderr" "$_code" "$_want"
-    if [ "$got" -ne "$_want" ] || [ -s "$_stdout" ] || [ -s "$_stderr" ]; then
-        echo "FAIL: $_label expected exit $_want with no output, got $got" >&2
-        show_stream_if_nonempty stdout "$_stdout"
-        show_stream_if_nonempty stderr "$_stderr"
-        exit 1
-    fi
+    assert_program_fixture_result \
+        "$_label" "$_want" "$got" "$_stdout" "$_stderr" \
+        "$_stdout_spec" "$_dir"
 }
 
 run_windows_backend_fixtures() {
@@ -2339,6 +2381,42 @@ EOF
     fi
 
     echo "Windows backend fixture checks passed."
+}
+
+run_backend_cmp_mem_fold_parity_fixtures() {
+    _cmp_mem_source=src/tests/compiler_backend_cmp_mem_fold_smoke.tl
+    _cmp_mem_stdout='cmp-mem fold smoke: compares=35338 words=388 indirect=280 acc=1579\n'
+    _cmp_mem_levels=
+
+    # Keep this as a fixed matrix rather than two host-specific call sites: CI
+    # on either host must execute both the unfused opt0 reference and the opt2
+    # folded path. The postcondition makes deleting or skipping either level a
+    # hard failure instead of silently returning this source to dead coverage.
+    for _cmp_mem_level in 0 2; do
+        _cmp_mem_label="backend-cmp-mem-fold-parity-opt$_cmp_mem_level"
+        if [ "$HOST_OS" = linux ]; then
+            run_linux_program_fixture \
+                "$_cmp_mem_label" \
+                "$_cmp_mem_source" \
+                0 \
+                "$_cmp_mem_level" \
+                "$_cmp_mem_stdout"
+        else
+            run_windows_program_fixture \
+                "$_cmp_mem_label" \
+                "$_cmp_mem_source" \
+                0 \
+                "$_cmp_mem_level" \
+                "$_cmp_mem_stdout"
+        fi
+        _cmp_mem_levels="${_cmp_mem_levels}${_cmp_mem_levels:+ }$_cmp_mem_level"
+    done
+
+    if [ "$_cmp_mem_levels" != "0 2" ]; then
+        echo "FAIL: backend cmp-mem parity requires opt levels '0 2', ran '$_cmp_mem_levels'" >&2
+        exit 1
+    fi
+    echo "Backend cmp-mem opt0/opt2 runtime parity checks passed."
 }
 
 assert_manifest_case() {
@@ -2921,6 +2999,11 @@ windows_print_manifest_summary() {
     echo "  differential oracle: legacy powershell=$WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS cygpath=$WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS"
 }
 
+if [ "$BACKEND_CMP_MEM_FOLD_PARITY_ONLY" -eq 1 ]; then
+    run_backend_cmp_mem_fold_parity_fixtures
+    exit 0
+fi
+
 ci_timing_run manifest validate validate_manifest
 if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
     echo "integration manifest validation passed for $HOST_OS"
@@ -3377,6 +3460,8 @@ if [ "$failed" -gt 0 ]; then
     echo "$failed integration case(s) failed out of $ran" >&2
     exit 1
 fi
+
+run_backend_cmp_mem_fold_parity_fixtures
 
 if [ "$HOST_OS" = linux ]; then
     run_linux_backend_fixtures

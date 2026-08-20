@@ -15457,3 +15457,9 @@
         unit
         (set! ok false))
       ok)))
+
+(test
+  compiler-lower-profile-job-isolation
+  (test.assert-true
+    (compiler_lower.compiler-lower-profile-job-isolation-tests-ok?)
+    "lower profile reset and observations stay isolated per job"))

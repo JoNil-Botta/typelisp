@@ -86374,7 +86374,7 @@
         next))))
 
 ;; R3-P2b: import-placeholder expansions get their OWN two-generation ring, not
-;; a slot in the 32-declaration batch ring above, and the difference is a
+;; a slot in the declaration-generation batch ring above. The difference is a
 ;; soundness argument rather than a tuning knob.
 ;;
 ;; Every splice arm resets the whole per-splice cache family before it hands the
@@ -86390,8 +86390,8 @@
 ;;
 ;; That is the cadence rule this packet is built on: A GENERATION'S DESTROY
 ;; CADENCE MUST BE THE RESET CADENCE OF THE CACHES THAT ALLOCATE INTO IT. The
-;; 32-declaration batch ring destroys on a counter with no relation to the
-;; splice cadence, and putting the placeholder arm on it SIGSEGVs the
+;; declaration-generation batch ring destroys on a counter with no relation to
+;; the splice cadence, and putting the placeholder arm on it SIGSEGVs the
 ;; linux-x86_64 self-compile between the 4th splice and the next.
 ;;
 ;; State that outlives the reset -- the two generated-module/decls memos, which

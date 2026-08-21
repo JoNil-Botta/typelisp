@@ -104957,22 +104957,21 @@
   [facts : OptAliasFacts]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : OptAliasFacts
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
     facts
     (opt-alias-run-from
-      (opt-alias-update-facts facts (ir.compiler-ir-instr-seq-ref instrs index))
-      instrs
+      (opt-alias-update-facts
+        facts
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index))
+      (compiler-opt-global-shared-view instrs)
       (+ index 1))))
 
-(define (opt-alias-run
-  [facts : OptAliasFacts]
-  [instrs : ir.CompilerIrInstrList]) : OptAliasFacts
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) facts]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (opt-alias-run
-        (opt-alias-update-facts facts instr)
-        (compiler-opt-box-shared-view rest))]))
+(define (opt-alias-run [facts : OptAliasFacts] [instrs : ir.CompilerIrInstrSeq]) : OptAliasFacts
+  (opt-alias-run-from facts instrs 0))
 
 ;; --- implicit scratch-region candidate report -------------------------------
 ;;

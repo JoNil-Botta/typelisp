@@ -1751,7 +1751,7 @@
     (compiler_ir_types.compiler-ir-function-cons
       (opt-spans-function-with-frame instrs frame)
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (opt-spans-program [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrProgram
   (opt-spans-program-with-frame instrs 4))
@@ -2022,7 +2022,7 @@
       (compiler_ir_types.compiler-ir-function-cons
         (opt-inline-span-callee symbols)
         compiler_ir_types.CompilerIrFunctionList.Nil))
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-optimize-spans-inline-callee-ok?) : bool
   (let
@@ -2663,7 +2663,7 @@
               4
               (opt-aggregate-phi-flowed-blocks))
             compiler_ir_types.CompilerIrFunctionList.Nil)
-          compiler_ir_types.CompilerIrExternList.Nil)))
+          (compiler_ir_types.compiler-ir-extern-seq-empty))))
     0))
 
 (define (opt-aggregate-positive-classified?) : bool
@@ -3309,7 +3309,7 @@
             4
             blocks)
           compiler_ir_types.CompilerIrFunctionList.Nil)
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [candidates : opt_aggregate_candidate_vec.Vec
       (compiler_optimize.opt-aggregate-allocation-candidates
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -4014,7 +4014,7 @@
             1
             blocks)
           compiler_ir_types.CompilerIrFunctionList.Nil)
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (match (compiler_optimize.opt-verify-program program)
       [(compiler_optimize.ResultCompilerOptimizeVerify.Err message)
         (if (string.eq
@@ -11798,7 +11798,7 @@
     (compiler_ir_types.compiler-ir-function-cons
       (opt-test-function instrs)
       (compiler_ir_types.CompilerIrFunctionList.Nil))
-    (compiler_ir_types.CompilerIrExternList.Nil)))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 ;; Self-test helper: exposes the first optimized block as a list for existing
 ;; instruction-count assertions; not used by production passes.
@@ -12140,7 +12140,7 @@
                   "C:/repo/stdlib/runtime.tl::int-to-string"
                   (opt-global-dce-return-instrs 17))
                 (compiler_ir_types.CompilerIrFunctionList.Nil)))))))
-    (compiler_ir_types.CompilerIrExternList.Nil)))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (opt-global-dce-no-main-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
@@ -12150,7 +12150,7 @@
       (compiler_ir_types.compiler-ir-function-cons
         (opt-test-function-named "dead" (opt-global-dce-return-instrs 9))
         (compiler_ir_types.CompilerIrFunctionList.Nil)))
-    (compiler_ir_types.CompilerIrExternList.Nil)))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-optimize-global-dce-ok?) : bool
   (let
@@ -13721,7 +13721,7 @@
         (compiler_ir_types.compiler-ir-function-cons
           (opt-test-function-named "dead" (opt-global-dce-return-instrs 9))
           compiler_ir_types.CompilerIrFunctionList.Nil)))
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (opt-inline-count-binop-dst-from
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -25819,7 +25819,7 @@
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)
         functions
-        (compiler_ir_types.CompilerIrExternList.Nil)))))
+        (compiler_ir_types.compiler-ir-extern-seq-empty)))))
 
 (define (opt-ssa-representation-index-for-function
   [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrRepresentationIndex
@@ -48717,7 +48717,7 @@
     (compiler_ir_types.compiler-ir-function-cons
       (opt-scratch-reset-level-function)
       (compiler_ir_types.CompilerIrFunctionList.Nil))
-    (compiler_ir_types.CompilerIrExternList.Nil)))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (opt-scratch-reset-call-blocked-blocks) : compiler_ir_types.CompilerIrBlockList
   (opt-scratch-reset-blocks-with-body

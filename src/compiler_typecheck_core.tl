@@ -229,6 +229,25 @@
 (defstruct TcUnusedUnsafeState
   (address i64))
 
+;; Aggregate scalar layout accelerators are retained for the lifetime of one
+;; compiler job. Their fixed arrays stay lazy because ordinary tooling requests
+;; may never lower an aggregate; the identity fields reject equal numeric name
+;; IDs from another intern owner or reset generation.
+(defstruct TcAggScalarCacheStateData
+  (owner-arena i64)
+  (size-cache (__tl_dyn-array i64))
+  (size-intern-table-id i64)
+  (size-intern-generation i64)
+  (align-cache (__tl_dyn-array i64))
+  (align-intern-table-id i64)
+  (align-intern-generation i64)
+  (regwords-cache (__tl_dyn-array i64))
+  (regwords-intern-table-id i64)
+  (regwords-intern-generation i64))
+
+(defstruct TcAggScalarCacheState
+  (address i64))
+
 (defstruct TcMacroCallSiteActiveDecl
   (path-id i64)
   (editable bool)
@@ -429,6 +448,7 @@
   (macro-call-sites TcMacroCallSiteState)
   (scratch-arenas TcScratchArenaState)
   (unused-unsafe TcUnusedUnsafeState)
+  (agg-scalar-caches TcAggScalarCacheState)
   ;; Lazily points into the expansion scratch arena while one macro walk owns
   ;; a segmented declaration/path view. Zero outside that structural scope, so
   ;; idle compiler jobs retain no segment table or maximum-capacity storage.
@@ -593,6 +613,33 @@
               (ptr-cast (__tl_array-data cell) : (Ptr TcUnusedUnsafeStateData))))
           : i64)))))
 
+(define (tc-agg-scalar-cache-state-new) : TcAggScalarCacheState
+  (let
+    [cell : (__tl_dyn-array TcAggScalarCacheStateData)
+      (array.make-array TcAggScalarCacheStateData 1)]
+    (begin
+      (set!
+        (array-ref cell 0)
+        (TcAggScalarCacheStateData
+          (arena.tl_arena_current)
+          (array.make-array i64 0)
+          -1
+          -1
+          (array.make-array i64 0)
+          -1
+          -1
+          (array.make-array i64 0)
+          -1
+          -1))
+      (TcAggScalarCacheState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast
+                (__tl_array-data cell)
+                : (Ptr TcAggScalarCacheStateData))))
+          : i64)))))
+
 (define (tc-job-state-new) : TcJobState
   (let
     [cell : (__tl_dyn-array TcJobStateData) (array.make-array TcJobStateData 1)]
@@ -616,6 +663,7 @@
           (tc-macro-call-site-state-new)
           (tc-scratch-arena-state-new)
           (tc-unused-unsafe-state-new)
+          (tc-agg-scalar-cache-state-new)
           0))
       (TcJobState
         (cast
@@ -729,6 +777,9 @@
 (define (tc-job-state-unused-unsafe [state : TcJobState]) : TcUnusedUnsafeState
   (tc-job-state-field state unused-unsafe TcUnusedUnsafeState))
 
+(define (tc-job-state-agg-scalar-caches [state : TcJobState]) : TcAggScalarCacheState
+  (tc-job-state-field state agg-scalar-caches TcAggScalarCacheState))
+
 (define (tc-job-state-macro-program-view-address [state : TcJobState]) : i64
   (tc-job-state-field state macro-program-view-address i64))
 
@@ -835,6 +886,19 @@
   (unsafe
     (ptr-write!
       (int->ptr (cast state.address : u64) : (MutPtr TcThreadNameKindStateData))
+      data)))
+
+(define (tc-agg-scalar-cache-state-data [state : TcAggScalarCacheState]) : TcAggScalarCacheStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast state.address : u64) : (Ptr TcAggScalarCacheStateData)))))
+
+(define (tc-agg-scalar-cache-state-data-set!
+  [state : TcAggScalarCacheState]
+  [data : TcAggScalarCacheStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast state.address : u64) : (MutPtr TcAggScalarCacheStateData))
       data)))
 
 (define (tc-job-state-set-topenv-membership-enabled!
@@ -2469,30 +2533,25 @@
   (Empty)
   (Full i64 TcInlineAggregateLayout))
 
-;; One global value owns the persistent arena and every table whose backing
-;; storage is allocated in it. Keeping the owner beside its dependents makes a
-;; later branded generation swap a whole-state move instead of a protocol over
-;; unrelated globals. Refs #6257.
+;; Transitional owner for the remaining process-global type-resolution and
+;; complete aggregate-layout tables. Both tables are mutable and still require
+;; explicit job ownership; they are not immutable exceptions. Keeping their
+;; arenas beside the dependent views makes that later move a whole-state swap
+;; instead of a protocol over unrelated globals. Refs #6257 and #4960.
 (defstruct TcLazyGlobalTableState
   (owner arena.Arena)
   ;; Complete aggregate layouts contain retained field/payload/variant arrays.
   ;; Keep their owner in the same state as the slots that publish those views.
   (agg-layout-storage-owner arena.Arena)
   (type-needs-resolution-slots (__tl_dyn-array i64))
-  (agg-layout-cache (__tl_dyn-array TcAggLayoutCacheSlot))
-  (agg-size-cache (__tl_dyn-array i64))
-  (agg-align-cache (__tl_dyn-array i64))
-  (agg-regwords-cache (__tl_dyn-array i64)))
+  (agg-layout-cache (__tl_dyn-array TcAggLayoutCacheSlot)))
 
 (define tc-lazy-global-table-state : TcLazyGlobalTableState
   (TcLazyGlobalTableState
     (arena.Arena 0)
     (arena.Arena 0)
     (array.make-array i64 0)
-    (array.make-array TcAggLayoutCacheSlot 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)))
+    (array.make-array TcAggLayoutCacheSlot 0)))
 
 (define (tc-agg-layout-cache-storage-arena-handle-value) : i64
   (arena.raw-handle
@@ -52503,10 +52562,11 @@
 ;; layout-for re-walks the whole layout on every lower-type-size query, which is
 ;; ~70% of the -O1 lower phase. The cache must do NO allocation during lowering
 ;; (the scratch-arena hazard makes a grown map / cached field-list dangle):
-;; so it is a FIXED global i64 array, allocated once at startup (persistent, like
-;; the AST node pool) and only read/written thereafter. Keyed by the intern id of
-;; the nominal type name: symbol handles can be reassigned when specialization
-;; rebuilds the symbol table, while intern ids are append-only until intern-reset!.
+;; so it is a FIXED job-owned i64 array, allocated lazily in the owning compiler
+;; job's lifetime arena and only read/written by that job thereafter. It is keyed
+;; by the intern id of the nominal type name: symbol handles can be reassigned
+;; when specialization rebuilds the symbol table, while intern ids are
+;; append-only until that owning interner is reset.
 ;; A size is encoded as size+1 (0 = uncached); only fully-resolved layouts are
 ;; cached (Err forward-refs stay uncached until their nested types resolve).
 ;; Entries are valid only for the current program; tc-agg-caches-reset! forces
@@ -52519,44 +52579,57 @@
 ;; rebuilds that table after inserting generated declarations, so a cached value
 ;; under an old handle index could be returned for a different type whose new
 ;; handle reuses the same index. Intern ids are stable across that rebuild.
-;; Intern generation remains the cheap clear token across programs, while
-;; tc-agg-caches-reset! covers lower/test paths that reuse cache arrays without
-;; resetting the intern table.
-(define tc-agg-size-cache-generation : i64
-  -1)
+;; The owning source-name session's table and reset generation are the cheap
+;; clear tokens across programs, while tc-agg-caches-reset-for-job! covers
+;; lower/test paths that reuse cache arrays without resetting the intern table.
+(define (tc-agg-scalar-cache-clear! [slots : (__tl_dyn-array i64)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (array-length slots))
+      (begin
+        (set! (array-ref slots index) 0)
+        (set! index (+ index 1))))))
 
-(define (tc-agg-size-cache-storage-ensure!) : unit
-  (if (=
-    (array-length
-      (__tl-project-field tc-lazy-global-table-state agg-size-cache))
-    tc-agg-scalar-cache-capacity)
-    unit
-    (let
-      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
-      (in-arena
-        owner
-        (__tl-project-set-field
-          tc-lazy-global-table-state
-          agg-size-cache
-          (array.make-array i64 tc-agg-scalar-cache-capacity))))))
-
-(define (tc-agg-size-cache-ensure!) : unit
-  (begin
-    (tc-agg-size-cache-storage-ensure!)
-    (if (= tc-agg-size-cache-generation (ci.intern-generation))
+(define (tc-agg-size-cache-storage-ensure-for-state!
+  [state : TcAggScalarCacheState]) : unit
+  (let
+    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
+    (if (= (array-length data.size-cache) tc-agg-scalar-cache-capacity)
       unit
-      (let
-        [i : i64 0]
+      (begin
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (set!
+            data.size-cache
+            (array.make-array i64 tc-agg-scalar-cache-capacity)))
+        (tc-agg-scalar-cache-state-data-set! state data)))))
+
+(define (tc-agg-size-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
+  (tc-agg-size-cache-storage-ensure-for-state!
+    (tc-job-state-agg-scalar-caches job-state)))
+
+;; Serial/test compatibility adapter. Production batch prewarming supplies the
+;; CompilerDriverState-owned job explicitly.
+(define (tc-agg-size-cache-storage-ensure!) : unit
+  (tc-agg-size-cache-storage-ensure-for-job! (tc-serial-job-state)))
+
+(define (tc-agg-size-cache-ensure-for-state!
+  [state : TcAggScalarCacheState]
+  [intern-table-id : i64]
+  [intern-generation : i64]) : unit
+  (begin
+    (tc-agg-size-cache-storage-ensure-for-state! state)
+    (let
+      [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
+      (if (and
+        (= data.size-intern-table-id intern-table-id)
+        (= data.size-intern-generation intern-generation))
+        unit
         (begin
-          (while (< i tc-agg-scalar-cache-capacity)
-            (begin
-              (set!
-                (array-ref
-                  (__tl-project-field tc-lazy-global-table-state agg-size-cache)
-                  i)
-                0)
-              (set! i (+ i 1))))
-          (set! tc-agg-size-cache-generation (ci.intern-generation)))))))
+          (tc-agg-scalar-cache-clear! data.size-cache)
+          (set! data.size-intern-table-id intern-table-id)
+          (set! data.size-intern-generation intern-generation)
+          (tc-agg-scalar-cache-state-data-set! state data))))))
 
 (define (tc-agg-scalar-cache-key-id [name-id : i64]) : i64
   (if (>= name-id tc-agg-scalar-cache-capacity)
@@ -52567,128 +52640,135 @@
   [ctx : TcContext]
   [name-id : i64]
   [fallback : i64]) : i64
-  (begin
-    (tc-agg-size-cache-ensure!)
-    (let
-      [key : i64 (tc-agg-scalar-cache-key-id name-id)]
-      (if (< key 0)
-        (match (tc-inline-aggregate-layout-for-with-stack
-          ctx
-          (tc-nominal-name-id-display name-id)
-          name-id
-          TcStringList.Nil)
-          [(ResultTcInlineAggregateLayout.Ok layout)
-            (tc-inline-aggregate-layout-size layout)]
-          [(ResultTcInlineAggregateLayout.Err _) fallback])
-        (let
-          [cached : i64
-            (array-ref
-              (__tl-project-field tc-lazy-global-table-state agg-size-cache)
-              key)]
-          (if (> cached 0)
-            (- cached 1)
-            (match (tc-inline-aggregate-layout-for-with-stack
-              ctx
-              (tc-nominal-name-id-display name-id)
-              name-id
-              TcStringList.Nil)
-              [(ResultTcInlineAggregateLayout.Ok layout)
-                (let
-                  [size : i64 (tc-inline-aggregate-layout-size layout)]
-                  (begin
-                    (set!
-                      (array-ref
-                        (__tl-project-field
-                          tc-lazy-global-table-state
-                          agg-size-cache)
-                        key)
-                      (+ size 1))
-                    size))]
-              [(ResultTcInlineAggregateLayout.Err _) fallback])))))))
+  (let
+    [state : TcAggScalarCacheState
+      (tc-job-state-agg-scalar-caches (tc-context-job-state ctx))]
+    [source-names : ci.InternSourceNameSessionHandle
+      (tc-context-source-names ctx)]
+    (begin
+      (tc-agg-size-cache-ensure-for-state!
+        state
+        (ci.intern-source-name-session-handle-table-id source-names)
+        (ci.intern-source-name-session-handle-reset-generation source-names))
+      (let
+        [key : i64 (tc-agg-scalar-cache-key-id name-id)]
+        (if (< key 0)
+          (match (tc-inline-aggregate-layout-for-with-stack
+            ctx
+            (tc-nominal-name-id-display name-id)
+            name-id
+            TcStringList.Nil)
+            [(ResultTcInlineAggregateLayout.Ok layout)
+              (tc-inline-aggregate-layout-size layout)]
+            [(ResultTcInlineAggregateLayout.Err _) fallback])
+          (let
+            [slots : (__tl_dyn-array i64)
+              (__tl-project-field
+                (tc-agg-scalar-cache-state-data state)
+                size-cache)]
+            [cached : i64 (array-ref slots key)]
+            (if (> cached 0)
+              (- cached 1)
+              (match (tc-inline-aggregate-layout-for-with-stack
+                ctx
+                (tc-nominal-name-id-display name-id)
+                name-id
+                TcStringList.Nil)
+                [(ResultTcInlineAggregateLayout.Ok layout)
+                  (let
+                    [size : i64 (tc-inline-aggregate-layout-size layout)]
+                    (begin
+                      (set! (array-ref slots key) (+ size 1))
+                      size))]
+                [(ResultTcInlineAggregateLayout.Err _) fallback]))))))))
 
 ;; Same arena-safe fixed cache for bare aggregate ALIGN queries. Lowering
 ;; asks for alignment on the same hot aggregate paths as size; rebuilding the full
 ;; layout here defeats the size/regword caches.
-(define tc-agg-align-cache-generation : i64
-  -1)
+(define (tc-agg-align-cache-storage-ensure-for-state!
+  [state : TcAggScalarCacheState]) : unit
+  (let
+    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
+    (if (= (array-length data.align-cache) tc-agg-scalar-cache-capacity)
+      unit
+      (begin
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (set!
+            data.align-cache
+            (array.make-array i64 tc-agg-scalar-cache-capacity)))
+        (tc-agg-scalar-cache-state-data-set! state data)))))
+
+(define (tc-agg-align-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
+  (tc-agg-align-cache-storage-ensure-for-state!
+    (tc-job-state-agg-scalar-caches job-state)))
 
 (define (tc-agg-align-cache-storage-ensure!) : unit
-  (if (=
-    (array-length
-      (__tl-project-field tc-lazy-global-table-state agg-align-cache))
-    tc-agg-scalar-cache-capacity)
-    unit
-    (let
-      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
-      (in-arena
-        owner
-        (__tl-project-set-field
-          tc-lazy-global-table-state
-          agg-align-cache
-          (array.make-array i64 tc-agg-scalar-cache-capacity))))))
+  (tc-agg-align-cache-storage-ensure-for-job! (tc-serial-job-state)))
 
-(define (tc-agg-align-cache-ensure!) : unit
+(define (tc-agg-align-cache-ensure-for-state!
+  [state : TcAggScalarCacheState]
+  [intern-table-id : i64]
+  [intern-generation : i64]) : unit
   (begin
-    (tc-agg-align-cache-storage-ensure!)
-    (if (= tc-agg-align-cache-generation (ci.intern-generation))
-      unit
-      (let
-        [i : i64 0]
+    (tc-agg-align-cache-storage-ensure-for-state! state)
+    (let
+      [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
+      (if (and
+        (= data.align-intern-table-id intern-table-id)
+        (= data.align-intern-generation intern-generation))
+        unit
         (begin
-          (while (< i tc-agg-scalar-cache-capacity)
-            (begin
-              (set!
-                (array-ref
-                  (__tl-project-field
-                    tc-lazy-global-table-state
-                    agg-align-cache)
-                  i)
-                0)
-              (set! i (+ i 1))))
-          (set! tc-agg-align-cache-generation (ci.intern-generation)))))))
+          (tc-agg-scalar-cache-clear! data.align-cache)
+          (set! data.align-intern-table-id intern-table-id)
+          (set! data.align-intern-generation intern-generation)
+          (tc-agg-scalar-cache-state-data-set! state data))))))
 
 (define (tc-inline-aggregate-align-cached
   [ctx : TcContext]
   [name-id : i64]
   [fallback : i64]) : i64
-  (begin
-    (tc-agg-align-cache-ensure!)
-    (let
-      [key : i64 (tc-agg-scalar-cache-key-id name-id)]
-      (if (< key 0)
-        (match (tc-inline-aggregate-layout-for-with-stack
-          ctx
-          (tc-nominal-name-id-display name-id)
-          name-id
-          TcStringList.Nil)
-          [(ResultTcInlineAggregateLayout.Ok layout)
-            (tc-inline-aggregate-layout-align layout)]
-          [(ResultTcInlineAggregateLayout.Err _) fallback])
-        (let
-          [cached : i64
-            (array-ref
-              (__tl-project-field tc-lazy-global-table-state agg-align-cache)
-              key)]
-          (if (> cached 0)
-            (- cached 1)
-            (match (tc-inline-aggregate-layout-for-with-stack
-              ctx
-              (tc-nominal-name-id-display name-id)
-              name-id
-              TcStringList.Nil)
-              [(ResultTcInlineAggregateLayout.Ok layout)
-                (let
-                  [align : i64 (tc-inline-aggregate-layout-align layout)]
-                  (begin
-                    (set!
-                      (array-ref
-                        (__tl-project-field
-                          tc-lazy-global-table-state
-                          agg-align-cache)
-                        key)
-                      (+ align 1))
-                    align))]
-              [(ResultTcInlineAggregateLayout.Err _) fallback])))))))
+  (let
+    [state : TcAggScalarCacheState
+      (tc-job-state-agg-scalar-caches (tc-context-job-state ctx))]
+    [source-names : ci.InternSourceNameSessionHandle
+      (tc-context-source-names ctx)]
+    (begin
+      (tc-agg-align-cache-ensure-for-state!
+        state
+        (ci.intern-source-name-session-handle-table-id source-names)
+        (ci.intern-source-name-session-handle-reset-generation source-names))
+      (let
+        [key : i64 (tc-agg-scalar-cache-key-id name-id)]
+        (if (< key 0)
+          (match (tc-inline-aggregate-layout-for-with-stack
+            ctx
+            (tc-nominal-name-id-display name-id)
+            name-id
+            TcStringList.Nil)
+            [(ResultTcInlineAggregateLayout.Ok layout)
+              (tc-inline-aggregate-layout-align layout)]
+            [(ResultTcInlineAggregateLayout.Err _) fallback])
+          (let
+            [slots : (__tl_dyn-array i64)
+              (__tl-project-field
+                (tc-agg-scalar-cache-state-data state)
+                align-cache)]
+            [cached : i64 (array-ref slots key)]
+            (if (> cached 0)
+              (- cached 1)
+              (match (tc-inline-aggregate-layout-for-with-stack
+                ctx
+                (tc-nominal-name-id-display name-id)
+                name-id
+                TcStringList.Nil)
+                [(ResultTcInlineAggregateLayout.Ok layout)
+                  (let
+                    [align : i64 (tc-inline-aggregate-layout-align layout)]
+                    (begin
+                      (set! (array-ref slots key) (+ align 1))
+                      align))]
+                [(ResultTcInlineAggregateLayout.Err _) fallback]))))))))
 
 ;; Compile-time cache: memoize a bare aggregate's register-resident word count
 ;; (0 = not register-resident, else 1 or 2). Same arena-safe intern-id keyed
@@ -52697,50 +52777,66 @@
 ;; words+1 (0 = uncached). Only fully-resolved layouts are cached.
 ;; Same per-program keying as the size cache, so it is gated on
 ;; intern-generation and explicitly invalidated at lower boundaries.
-(define tc-agg-regwords-cache-generation : i64
-  -1)
+(define (tc-agg-regwords-cache-storage-ensure-for-state!
+  [state : TcAggScalarCacheState]) : unit
+  (let
+    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
+    (if (= (array-length data.regwords-cache) tc-agg-scalar-cache-capacity)
+      unit
+      (begin
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (set!
+            data.regwords-cache
+            (array.make-array i64 tc-agg-scalar-cache-capacity)))
+        (tc-agg-scalar-cache-state-data-set! state data)))))
+
+(define (tc-agg-regwords-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
+  (tc-agg-regwords-cache-storage-ensure-for-state!
+    (tc-job-state-agg-scalar-caches job-state)))
 
 (define (tc-agg-regwords-cache-storage-ensure!) : unit
-  (if (=
-    (array-length
-      (__tl-project-field tc-lazy-global-table-state agg-regwords-cache))
-    tc-agg-scalar-cache-capacity)
-    unit
-    (let
-      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
-      (in-arena
-        owner
-        (__tl-project-set-field
-          tc-lazy-global-table-state
-          agg-regwords-cache
-          (array.make-array i64 tc-agg-scalar-cache-capacity))))))
+  (tc-agg-regwords-cache-storage-ensure-for-job! (tc-serial-job-state)))
+
+(define (tc-agg-scalar-caches-reset-for-job! [job-state : TcJobState]) : unit
+  (let
+    [state : TcAggScalarCacheState (tc-job-state-agg-scalar-caches job-state)]
+    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
+    (begin
+      (set! data.size-intern-table-id -1)
+      (set! data.size-intern-generation -1)
+      (set! data.align-intern-table-id -1)
+      (set! data.align-intern-generation -1)
+      (set! data.regwords-intern-table-id -1)
+      (set! data.regwords-intern-generation -1)
+      (tc-agg-scalar-cache-state-data-set! state data))))
+
+(define (tc-agg-caches-reset-for-job! [job-state : TcJobState]) : unit
+  (begin
+    ;; The retained aggregate-layout table remains process-owned in this slice.
+    (set! tc-agg-layout-cache-generation -1)
+    (tc-agg-scalar-caches-reset-for-job! job-state)))
 
 (define (tc-agg-caches-reset!) : unit
-  (begin
-    (set! tc-agg-layout-cache-generation -1)
-    (set! tc-agg-size-cache-generation -1)
-    (set! tc-agg-align-cache-generation -1)
-    (set! tc-agg-regwords-cache-generation -1)))
+  (tc-agg-caches-reset-for-job! (tc-serial-job-state)))
 
-(define (tc-agg-regwords-cache-ensure!) : unit
+(define (tc-agg-regwords-cache-ensure-for-state!
+  [state : TcAggScalarCacheState]
+  [intern-table-id : i64]
+  [intern-generation : i64]) : unit
   (begin
-    (tc-agg-regwords-cache-storage-ensure!)
-    (if (= tc-agg-regwords-cache-generation (ci.intern-generation))
-      unit
-      (let
-        [i : i64 0]
+    (tc-agg-regwords-cache-storage-ensure-for-state! state)
+    (let
+      [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
+      (if (and
+        (= data.regwords-intern-table-id intern-table-id)
+        (= data.regwords-intern-generation intern-generation))
+        unit
         (begin
-          (while (< i tc-agg-scalar-cache-capacity)
-            (begin
-              (set!
-                (array-ref
-                  (__tl-project-field
-                    tc-lazy-global-table-state
-                    agg-regwords-cache)
-                  i)
-                0)
-              (set! i (+ i 1))))
-          (set! tc-agg-regwords-cache-generation (ci.intern-generation)))))))
+          (tc-agg-scalar-cache-clear! data.regwords-cache)
+          (set! data.regwords-intern-table-id intern-table-id)
+          (set! data.regwords-intern-generation intern-generation)
+          (tc-agg-scalar-cache-state-data-set! state data))))))
 
 (define (tc-inline-aggregate-regwords-compute [ctx : TcContext] [name-id : i64]) : i64
   (match (tc-inline-aggregate-layout-for-with-stack
@@ -52755,40 +52851,43 @@
     [(ResultTcInlineAggregateLayout.Err _) 0]))
 
 (define (tc-inline-aggregate-regwords-cached [ctx : TcContext] [name-id : i64]) : i64
-  (begin
-    (tc-agg-regwords-cache-ensure!)
-    (let
-      [key : i64 (tc-agg-scalar-cache-key-id name-id)]
-      (if (< key 0)
-        (tc-inline-aggregate-regwords-compute ctx name-id)
-        (let
-          [cached : i64
-            (array-ref
-              (__tl-project-field tc-lazy-global-table-state agg-regwords-cache)
-              key)]
-          (if (> cached 0)
-            (- cached 1)
-            (match (tc-inline-aggregate-layout-for-with-stack
-              ctx
-              (tc-nominal-name-id-display name-id)
-              name-id
-              TcStringList.Nil)
-              [(ResultTcInlineAggregateLayout.Ok layout)
-                (let
-                  [words : i64
-                    (if (tc-inline-aggregate-layout-register-resident? layout)
-                      (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
-                      0)]
-                  (begin
-                    (set!
-                      (array-ref
-                        (__tl-project-field
-                          tc-lazy-global-table-state
-                          agg-regwords-cache)
-                        key)
-                      (+ words 1))
-                    words))]
-              [(ResultTcInlineAggregateLayout.Err _) 0])))))))
+  (let
+    [state : TcAggScalarCacheState
+      (tc-job-state-agg-scalar-caches (tc-context-job-state ctx))]
+    [source-names : ci.InternSourceNameSessionHandle
+      (tc-context-source-names ctx)]
+    (begin
+      (tc-agg-regwords-cache-ensure-for-state!
+        state
+        (ci.intern-source-name-session-handle-table-id source-names)
+        (ci.intern-source-name-session-handle-reset-generation source-names))
+      (let
+        [key : i64 (tc-agg-scalar-cache-key-id name-id)]
+        (if (< key 0)
+          (tc-inline-aggregate-regwords-compute ctx name-id)
+          (let
+            [slots : (__tl_dyn-array i64)
+              (__tl-project-field
+                (tc-agg-scalar-cache-state-data state)
+                regwords-cache)]
+            [cached : i64 (array-ref slots key)]
+            (if (> cached 0)
+              (- cached 1)
+              (match (tc-inline-aggregate-layout-for-with-stack
+                ctx
+                (tc-nominal-name-id-display name-id)
+                name-id
+                TcStringList.Nil)
+                [(ResultTcInlineAggregateLayout.Ok layout)
+                  (let
+                    [words : i64
+                      (if (tc-inline-aggregate-layout-register-resident? layout)
+                        (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
+                        0)]
+                    (begin
+                      (set! (array-ref slots key) (+ words 1))
+                      words))]
+                [(ResultTcInlineAggregateLayout.Err _) 0]))))))))
 
 ;; A struct/enum layout is "register-resident (1-word)" when it fits in a
 ;; single 8-byte machine word and is built only of word-class data. Such a value
@@ -97563,8 +97662,10 @@
   (let
     [caller : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
-    [proof-state : TcMacroState
-      (tc-job-state-macro-state (tc-serial-job-state))]
+    [job-state : TcJobState (tc-serial-job-state)]
+    [proof-state : TcMacroState (tc-job-state-macro-state job-state)]
+    [scalar-state : TcAggScalarCacheState
+      (tc-job-state-agg-scalar-caches job-state)]
     [initially-lazy? : bool
       (and
         (=
@@ -97579,15 +97680,21 @@
           0)
         (=
           (array-length
-            (__tl-project-field tc-lazy-global-table-state agg-size-cache))
+            (__tl-project-field
+              (tc-agg-scalar-cache-state-data scalar-state)
+              size-cache))
           0)
         (=
           (array-length
-            (__tl-project-field tc-lazy-global-table-state agg-align-cache))
+            (__tl-project-field
+              (tc-agg-scalar-cache-state-data scalar-state)
+              align-cache))
           0)
         (=
           (array-length
-            (__tl-project-field tc-lazy-global-table-state agg-regwords-cache))
+            (__tl-project-field
+              (tc-agg-scalar-cache-state-data scalar-state)
+              regwords-cache))
           0)
         (=
           (array-length
@@ -97601,6 +97708,8 @@
     [_size : unit (tc-agg-size-cache-storage-ensure!)]
     [_align : unit (tc-agg-align-cache-storage-ensure!)]
     [_regwords : unit (tc-agg-regwords-cache-storage-ensure!)]
+    [scalar-data : TcAggScalarCacheStateData
+      (tc-agg-scalar-cache-state-data scalar-state)]
     [_layout : unit (tc-agg-layout-cache-table-storage-ensure!)]
     [_macro-proof : unit
       (tc-macro-abstract-proof-qualified-key-storage-ensure! proof-state)]
@@ -97613,17 +97722,10 @@
               tc-lazy-global-table-state
               type-needs-resolution-slots))
           131072)
+        (= (array-length scalar-data.size-cache) tc-agg-scalar-cache-capacity)
+        (= (array-length scalar-data.align-cache) tc-agg-scalar-cache-capacity)
         (=
-          (array-length
-            (__tl-project-field tc-lazy-global-table-state agg-size-cache))
-          tc-agg-scalar-cache-capacity)
-        (=
-          (array-length
-            (__tl-project-field tc-lazy-global-table-state agg-align-cache))
-          tc-agg-scalar-cache-capacity)
-        (=
-          (array-length
-            (__tl-project-field tc-lazy-global-table-state agg-regwords-cache))
+          (array-length scalar-data.regwords-cache)
           tc-agg-scalar-cache-capacity)
         (=
           (array-length
@@ -97644,21 +97746,9 @@
             type-needs-resolution-slots)
           0)
         17)
-      (set!
-        (array-ref
-          (__tl-project-field tc-lazy-global-table-state agg-size-cache)
-          0)
-        29)
-      (set!
-        (array-ref
-          (__tl-project-field tc-lazy-global-table-state agg-align-cache)
-          0)
-        31)
-      (set!
-        (array-ref
-          (__tl-project-field tc-lazy-global-table-state agg-regwords-cache)
-          0)
-        37)
+      (set! (array-ref scalar-data.size-cache 0) 29)
+      (set! (array-ref scalar-data.align-cache 0) 31)
+      (set! (array-ref scalar-data.regwords-cache 0) 37)
       (set!
         (array-ref
           (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
@@ -97677,23 +97767,9 @@
                   type-needs-resolution-slots)
                 0)
               17)
-            (=
-              (array-ref
-                (__tl-project-field tc-lazy-global-table-state agg-size-cache)
-                0)
-              29)
-            (=
-              (array-ref
-                (__tl-project-field tc-lazy-global-table-state agg-align-cache)
-                0)
-              31)
-            (=
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  agg-regwords-cache)
-                0)
-              37)
+            (= (array-ref scalar-data.size-cache 0) 29)
+            (= (array-ref scalar-data.align-cache 0) 31)
+            (= (array-ref scalar-data.regwords-cache 0) 37)
             (match (tc-global-array-element-shared-view
               (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
               0)
@@ -97710,21 +97786,9 @@
                 type-needs-resolution-slots)
               0)
             0)
-          (set!
-            (array-ref
-              (__tl-project-field tc-lazy-global-table-state agg-size-cache)
-              0)
-            0)
-          (set!
-            (array-ref
-              (__tl-project-field tc-lazy-global-table-state agg-align-cache)
-              0)
-            0)
-          (set!
-            (array-ref
-              (__tl-project-field tc-lazy-global-table-state agg-regwords-cache)
-              0)
-            0)
+          (set! (array-ref scalar-data.size-cache 0) 0)
+          (set! (array-ref scalar-data.align-cache 0) 0)
+          (set! (array-ref scalar-data.regwords-cache 0) 0)
           (set!
             (array-ref (tc-macro-proof-field proof-state qualified-keys) 0)
             "")
@@ -97740,6 +97804,151 @@
               survived?
               unused-unsafe-lifetime?
               unused-unsafe-isolation?)))))))
+
+(cfg
+  test
+  (test
+    agg-scalar-cache-state-isolation
+    (let
+      [caller : arena.Arena (arena.current)]
+      [owner-a : arena.Arena (arena.make)]
+      [owner-b : arena.Arena (arena.make)]
+      [job-a-address : i64
+        (in-arena owner-a (__tl-project-field (tc-job-state-new) address))]
+      [job-b-address : i64
+        (in-arena owner-b (__tl-project-field (tc-job-state-new) address))]
+      [job-a : TcJobState (TcJobState job-a-address)]
+      [job-b : TcJobState (TcJobState job-b-address)]
+      [state-a : TcAggScalarCacheState (tc-job-state-agg-scalar-caches job-a)]
+      [state-b : TcAggScalarCacheState (tc-job-state-agg-scalar-caches job-b)]
+      [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+      [decoy : ci.InternCompatState (ci.intern-compat-state-new)]
+      [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+      [table-a : i64 (ci.intern-compat-state-table-id intern-a)]
+      [table-b : i64 (ci.intern-compat-state-table-id intern-b)]
+      [generation-a : i64 (ci.intern-compat-state-generation intern-a)]
+      [generation-b : i64 (ci.intern-compat-state-generation intern-b)]
+      [initially-lazy? : bool
+        (and
+          (=
+            (array-length (tc-agg-scalar-cache-state-data state-a).size-cache)
+            0)
+          (=
+            (array-length (tc-agg-scalar-cache-state-data state-a).align-cache)
+            0)
+          (=
+            (array-length
+              (tc-agg-scalar-cache-state-data state-a).regwords-cache)
+            0)
+          (=
+            (array-length (tc-agg-scalar-cache-state-data state-b).size-cache)
+            0)
+          (=
+            (array-length (tc-agg-scalar-cache-state-data state-b).align-cache)
+            0)
+          (=
+            (array-length
+              (tc-agg-scalar-cache-state-data state-b).regwords-cache)
+            0))]
+      [scratch : arena.Arena (arena.make)]
+      (begin
+        (unsafe
+          (arena.set! scratch))
+        (tc-agg-size-cache-storage-ensure-for-job! job-a)
+        (tc-agg-align-cache-storage-ensure-for-job! job-a)
+        (tc-agg-regwords-cache-storage-ensure-for-job! job-a)
+        (tc-agg-size-cache-storage-ensure-for-job! job-b)
+        (tc-agg-align-cache-storage-ensure-for-job! job-b)
+        (tc-agg-regwords-cache-storage-ensure-for-job! job-b)
+        (let
+          [restored-scratch? : bool (arena.eq? (arena.current) scratch)]
+          (begin
+            (unsafe
+              (arena.set! caller))
+            (unsafe
+              (arena.destroy scratch))
+            (tc-agg-size-cache-ensure-for-state! state-a table-a generation-a)
+            (tc-agg-align-cache-ensure-for-state! state-a table-a generation-a)
+            (tc-agg-regwords-cache-ensure-for-state!
+              state-a
+              table-a
+              generation-a)
+            (tc-agg-size-cache-ensure-for-state! state-b table-b generation-b)
+            (tc-agg-align-cache-ensure-for-state! state-b table-b generation-b)
+            (tc-agg-regwords-cache-ensure-for-state!
+              state-b
+              table-b
+              generation-b)
+            (let
+              [data-a : TcAggScalarCacheStateData
+                (tc-agg-scalar-cache-state-data state-a)]
+              [data-b : TcAggScalarCacheStateData
+                (tc-agg-scalar-cache-state-data state-b)]
+              (begin
+                (set! (array-ref data-a.size-cache 17) 9)
+                (set! (array-ref data-a.align-cache 17) 5)
+                (set! (array-ref data-a.regwords-cache 17) 3)
+                (set! (array-ref data-b.size-cache 17) 33)
+                (set! (array-ref data-b.align-cache 17) 17)
+                (set! (array-ref data-b.regwords-cache 17) 2)
+                (ci.intern-compat-state-install! decoy)
+                (tc-agg-caches-reset-for-job! job-a)
+                (tc-agg-size-cache-ensure-for-state!
+                  state-a
+                  table-a
+                  generation-a)
+                (tc-agg-align-cache-ensure-for-state!
+                  state-a
+                  table-a
+                  generation-a)
+                (tc-agg-regwords-cache-ensure-for-state!
+                  state-a
+                  table-a
+                  generation-a)
+                (let
+                  [reset-a : TcAggScalarCacheStateData
+                    (tc-agg-scalar-cache-state-data state-a)]
+                  [intact-b : TcAggScalarCacheStateData
+                    (tc-agg-scalar-cache-state-data state-b)]
+                  [isolated? : bool
+                    (and
+                      (= (array-ref reset-a.size-cache 17) 0)
+                      (= (array-ref reset-a.align-cache 17) 0)
+                      (= (array-ref reset-a.regwords-cache 17) 0)
+                      (= (array-ref intact-b.size-cache 17) 33)
+                      (= (array-ref intact-b.align-cache 17) 17)
+                      (= (array-ref intact-b.regwords-cache 17) 2)
+                      (= intact-b.size-intern-table-id table-b)
+                      (= intact-b.size-intern-generation generation-b)
+                      (= intact-b.align-intern-table-id table-b)
+                      (= intact-b.align-intern-generation generation-b)
+                      (= intact-b.regwords-intern-table-id table-b)
+                      (= intact-b.regwords-intern-generation generation-b))]
+                  (begin
+                    (unsafe
+                      (arena.destroy owner-a))
+                    (let
+                      [after-a-destroy : TcAggScalarCacheStateData
+                        (tc-agg-scalar-cache-state-data state-b)]
+                      [b-survived? : bool
+                        (and
+                          (= (array-ref after-a-destroy.size-cache 17) 33)
+                          (= (array-ref after-a-destroy.align-cache 17) 17)
+                          (= (array-ref after-a-destroy.regwords-cache 17) 2))]
+                      (begin
+                        (ci.intern-compat-state-install! installed)
+                        (unsafe
+                          (arena.destroy owner-b))
+                        (if (and
+                          initially-lazy?
+                          restored-scratch?
+                          isolated?
+                          b-survived?
+                          (not (= table-a table-b)))
+                          unit
+                          (io.panic
+                            "typecheck: aggregate scalar cache state isolation failed"))))))))))))))
 
 ;; Same numeric importer/alias IDs belong to different intern owners here.
 ;; Allocate both tables while an unrelated scratch arena is active, then prove
@@ -114175,7 +114384,7 @@
       (tc-macro-helper-env-cache-reset! macro-state)
       (tc-macro-module-env-cache-clear! macro-state)
       (tc-spmd-inline-helper-stack-reset!)
-      (tc-agg-caches-reset!)
+      (tc-agg-caches-reset-for-job! job-state)
       (tc-nominal-owner-cache-reset!)
       (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)
       (tc-unqualified-import-ambiguity-reset!)
@@ -114221,7 +114430,7 @@
       (tc-macro-helper-env-cache-reset! macro-state)
       (tc-macro-module-env-cache-clear! macro-state)
       (tc-spmd-inline-helper-stack-reset!)
-      (tc-agg-caches-reset!)
+      (tc-agg-caches-reset-for-job! job-state)
       (tc-nominal-owner-cache-reset!)
       (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)
       (tc-unqualified-import-ambiguity-reset!)

@@ -40424,7 +40424,9 @@
                 (ir.compiler-ir-spmd-call-arg-builder-push!
                   builder
                   (ir.CompilerIrSpmdCallArg.Arg
-                    (lower-spmd-ir-value-class resolved-ty varying)
+                    (lower-spmd-ir-value-class
+                      (lower-global-shared-view resolved-ty)
+                      varying)
                     value
                     resolved-ty))
                 (lower-spmd-call-args-from-values-at
@@ -40435,7 +40437,7 @@
                   index
                   args
                   params
-                  (__tl-box-place rest)
+                  (ir.compiler-ir-box-shared-view rest)
                   (+ arg-index 1)
                   builder)))])]
       [(ir.CompilerIrValueList.Nil) unit])))
@@ -62926,11 +62928,11 @@
         (ast.ast-param-list-len (& params)))]
     (lower-avx512-spmd-call-args-at
       ctx
-      (lower-state-function-state state)
+      (lower-state-function-state (lower-global-shared-view state))
       state
       env
       type-env
-      lane-locals
+      (lower-global-shared-view lane-locals)
       (lower-masked-vector-lane-locals-from-set lane-locals lanes)
       index
       index-var
@@ -63026,7 +63028,9 @@
                         (ir.compiler-ir-spmd-call-arg-builder-push!
                           builder
                           (ir.CompilerIrSpmdCallArg.Arg
-                            (lower-spmd-ir-value-class resolved-ty varying)
+                            (lower-spmd-ir-value-class
+                              (lower-global-shared-view resolved-ty)
+                              varying)
                             arg-value
                             resolved-ty))
                         (match (lower-avx512-spmd-call-args-at
@@ -63906,11 +63910,13 @@
               params
               cursor
               (ast.ast-param-fallback))
-              [(ast.AstParam.Param _ ty _ _)
+              [(ast.AstParam.Param _ ty _)
                 (let
                   [resolved : ast.AstType
                     (tc_core.tc-type-without-regions
-                      (tc_core.tc-resolve-type ctx ty))]
+                      (tc_core.tc-resolve-type
+                        (lower-global-shared-view ctx)
+                        ty))]
                   [class : ir.CompilerIrSpmdValueClass
                     (match (ast.ast-spmd-param-class-list-get
                       classes
@@ -63919,7 +63925,8 @@
                       [(ast.AstSpmdParamClass.Uniform)
                         ir.CompilerIrSpmdValueClass.Uniform]
                       [(ast.AstSpmdParamClass.Varying)
-                        (if (lower-type-bool? resolved)
+                        (if (lower-type-bool?
+                          (lower-global-shared-view resolved))
                           ir.CompilerIrSpmdValueClass.Mask
                           ir.CompilerIrSpmdValueClass.Varying)])]
                   (set!
@@ -64023,7 +64030,11 @@
       (lower-box-shared-view specialization.args)]
     [index-param : i64 specialization.index-param]
     [call-args : ir.CompilerIrSpmdCallArgSeq
-      (lower-spmd-package-call-args-at ctx (& params) (& classes) 0)]
+      (lower-spmd-package-call-args-at
+        (lower-global-shared-view ctx)
+        (& params)
+        (& classes)
+        0)]
     [index-name : String (lower-spmd-package-index-name (& params) index-param)]
     [ret-ty : ast.AstType
       (tc_core.tc-type-without-regions
@@ -64718,7 +64729,11 @@
               (lower-global-shared-view intern-state)
               structural-symbol))]
         [call-args : ir.CompilerIrSpmdCallArgSeq
-          (lower-spmd-package-call-args-at ctx (& params) (& classes) 0)]
+          (lower-spmd-package-call-args-at
+            (lower-global-shared-view ctx)
+            (& params)
+            (& classes)
+            0)]
         [index-name : String
           (lower-spmd-package-index-name (& params) index-param)]
         (match registration
@@ -65228,12 +65243,15 @@
                             (let
                               [helper-index : String
                                 (lower-spmd-helper-index-param
-                                  ctx
-                                  index
-                                  params
-                                  args)]
+                                  (lower-global-shared-view ctx)
+                                  (lower-global-shared-view index)
+                                  (lower-global-shared-view params)
+                                  (lower-global-shared-view args))]
                               [abi-call-args : ir.CompilerIrSpmdCallArgSeq
-                                (if (= (string.string-length helper-index) 0)
+                                (if (=
+                                  (string.string-length
+                                    (lower-global-shared-view helper-index))
+                                  0)
                                   call-args
                                   (lower-spmd-call-args-append
                                     call-args

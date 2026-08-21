@@ -2352,7 +2352,7 @@
       (opt-collect-call-args-array-uses set values 0)]))
 
 (define (opt-collect-spmd-call-args-uses
-  [set : opt_i64_i64_map.Map (:consume)]
+  [set : opt_i64_i64_map.Map]
   [args : ir.CompilerIrSpmdCallArgSeq]) : opt_i64_i64_map.Map
   (let
     [out : opt_i64_i64_map.Map set]
@@ -2874,7 +2874,9 @@
       (begin
         (match (array-ref args.slots i)
           [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-            (opt-collect-value-uses-array items value)])
+            (opt-collect-value-uses-array
+              (compiler-opt-global-shared-view items)
+              value)])
         (set! i (+ i 1))))))
 
 (define (opt-collect-phi-uses-array
@@ -4271,7 +4273,10 @@
         (begin
           (match (array-ref args.slots i)
             [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-              (if (opt-aggregate-value-has-pointer? base ptrs value)
+              (if (opt-aggregate-value-has-pointer?
+                base
+                (compiler-opt-global-shared-view ptrs)
+                value)
                 (set! found true)
                 unit)])
           (set! i (+ i 1))))
@@ -8406,7 +8411,11 @@
     [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
       (array.make-array ir.CompilerIrSpmdCallArg args.len)]
     (begin
-      (opt-copy-subst-spmd-call-args-array env args.slots out 0)
+      (opt-copy-subst-spmd-call-args-array
+        env
+        args.slots
+        (compiler-opt-global-shared-view out)
+        0)
       (ir.CompilerIrSpmdCallArgSeq out args.len))))
 
 ;; Rewrite the value-use operands of an instruction through the copy env. Phi
@@ -12667,7 +12676,12 @@
                 [(ir.CompilerIrSpmdCallArg.Arg _ value _)
                   (set!
                     result
-                    (opt-verify-value-use defs doms value use-block use-pos))])
+                    (opt-verify-value-use
+                      (compiler-opt-global-shared-view defs)
+                      (compiler-opt-global-shared-view doms)
+                      value
+                      use-block
+                      use-pos))])
               (set! i (+ i 1)))]))
       result)))
 
@@ -14899,7 +14913,11 @@
     [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
       (array.make-array ir.CompilerIrSpmdCallArg args.len)]
     (begin
-      (opt-ssa-rewrite-spmd-call-args-array env args.slots out 0)
+      (opt-ssa-rewrite-spmd-call-args-array
+        env
+        args.slots
+        (compiler-opt-global-shared-view out)
+        0)
       (ir.CompilerIrSpmdCallArgSeq out args.len))))
 
 (define (opt-ssa-rename-dst
@@ -15099,9 +15117,13 @@
           [(ir.CompilerIrSpmdCallResult.Value dst class ty)
             (let
               [out-mask : ir.CompilerIrValue
-                (opt-ssa-rewrite-value env active-mask)]
+                (opt-ssa-rewrite-value
+                  (compiler-opt-global-shared-view env)
+                  active-mask)]
               [out-args : ir.CompilerIrSpmdCallArgSeq
-                (opt-ssa-rewrite-spmd-call-args env args)]
+                (opt-ssa-rewrite-spmd-call-args
+                  (compiler-opt-global-shared-view env)
+                  args)]
               (match (opt-ssa-rename-dst facts env next-var dst)
                 [(OptSsaDstResult.Result out-dst next-env out-next)
                   (OptSsaInstrResult.Result
@@ -17523,7 +17545,7 @@
         use-block-id
         use-pos
         args.slots
-        out
+        (compiler-opt-global-shared-view out)
         0)
       (ir.CompilerIrSpmdCallArgSeq out args.len))))
 
@@ -40418,7 +40440,11 @@
     [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
       (array.make-array ir.CompilerIrSpmdCallArg args.len)]
     (begin
-      (opt-sccp-rewrite-spmd-call-args-array env args.slots out 0)
+      (opt-sccp-rewrite-spmd-call-args-array
+        env
+        args.slots
+        (compiler-opt-global-shared-view out)
+        0)
       (ir.CompilerIrSpmdCallArgSeq out args.len))))
 
 (define (opt-sccp-rewrite-phi-inputs
@@ -90495,7 +90521,7 @@
 
 (define (opt-inline-census-spmd-args
   [index : OptFunctionIndex]
-  [census : OptInlineCensus (:consume)]
+  [census : OptInlineCensus]
   [args : ir.CompilerIrSpmdCallArgSeq]) : OptInlineCensus
   (let
     [out : OptInlineCensus census]
@@ -90505,7 +90531,12 @@
         (begin
           (match (array-ref args.slots i)
             [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-              (set! out (opt-inline-census-value index out value))])
+              (set!
+                out
+                (opt-inline-census-value
+                  (compiler-opt-global-shared-view index)
+                  out
+                  value))])
           (set! i (+ i 1))))
       out)))
 
@@ -100672,7 +100703,7 @@
 
 (define (opt-reach-spmd-call-args
   [index : OptFunctionIndex]
-  [state : OptReachState (:consume)]
+  [state : OptReachState]
   [args : ir.CompilerIrSpmdCallArgSeq]) : OptReachState
   (let
     [out : OptReachState state]
@@ -100682,7 +100713,12 @@
         (begin
           (match (array-ref args.slots i)
             [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-              (set! out (opt-reach-value index out value))])
+              (set!
+                out
+                (opt-reach-value
+                  (compiler-opt-global-shared-view index)
+                  out
+                  value))])
           (set! i (+ i 1))))
       out)))
 
@@ -103324,7 +103360,7 @@
       (opt-const-globals-disq-args-array disq values 0)]))
 
 (define (opt-const-globals-disq-spmd-args
-  [disq : opt_i64_i64_map.Map (:consume)]
+  [disq : opt_i64_i64_map.Map]
   [args : ir.CompilerIrSpmdCallArgSeq]) : opt_i64_i64_map.Map
   (let
     [out : opt_i64_i64_map.Map disq]
@@ -108090,7 +108126,9 @@
                 (array-ref slots index)
                 (ir.CompilerIrSpmdCallArg.Arg
                   vclass
-                  (opt-global-cell-subst-value plan value)
+                  (opt-global-cell-subst-value
+                    (compiler-opt-global-shared-view plan)
+                    value)
                   ty))])
           (set! index (+ index 1))))
       (ir.CompilerIrSpmdCallArgSeq slots args.len))))

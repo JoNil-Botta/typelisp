@@ -49300,7 +49300,10 @@
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [uniform-only : bool]) : compiler_ir_types.CompilerIrValueList
-  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
+      (compiler-backend-global-shared-view args)))
     compiler_ir_types.CompilerIrValueList.Nil
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49322,7 +49325,10 @@
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [uniform-only : bool]) : compiler_ast_types.AstTypeList
-  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
+      (compiler-backend-global-shared-view args)))
     (compiler_ast_types.ast-type-list-new)
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49344,7 +49350,10 @@
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [want-mask : bool]) : i64
-  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
+      (compiler-backend-global-shared-view args)))
     0
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49432,7 +49441,10 @@
   [base-offset : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
+      (compiler-backend-global-shared-view args)))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49544,7 +49556,10 @@
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
+      (compiler-backend-global-shared-view args)))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49662,7 +49677,10 @@
   [base-offset : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
+      (compiler-backend-global-shared-view args)))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -53211,7 +53229,9 @@
       (begin
         (match (array-ref args.slots i)
           [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
-            (compiler-backend-count-value-use counts value)])
+            (compiler-backend-count-value-use
+              (compiler-backend-global-shared-view counts)
+              value)])
         (set! i (+ i 1))))))
 
 (define (compiler-backend-count-phi-input-uses
@@ -75878,7 +75898,7 @@
         0)]))
 
 (define (compiler-backend-collect-spmd-call-args-collections
-  [collections : CompilerBackendProgramCollections (:consume)]
+  [collections : CompilerBackendProgramCollections]
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]) : CompilerBackendProgramCollections
   (let
     [out : CompilerBackendProgramCollections collections]
@@ -78793,7 +78813,11 @@
             [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
               (set!
                 out
-                (compiler-backend-object-value-ref out site value program-index))])
+                (compiler-backend-object-value-ref
+                  out
+                  (compiler-backend-global-shared-view site)
+                  value
+                  (compiler-backend-global-shared-view program-index)))])
           (set! i (+ i 1))))
       out)))
 

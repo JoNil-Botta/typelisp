@@ -3450,7 +3450,9 @@
           (compiler-ir-clone-spmd-backend backend)
           lanes
           (compiler-ir-clone-value active-mask)
-          (compiler-ir-clone-spmd-call-arg-seq pools args)
+          (compiler-ir-clone-spmd-call-arg-seq
+            (compiler-ir-global-shared-view pools)
+            args)
           (compiler-ir-clone-spmd-call-result pools result)))]
     [(CompilerIrInstr.TailCall name args ty)
       (CompilerIrInstr.TailCall
@@ -6577,7 +6579,7 @@
         (compiler-ir-call-args-count args))]
     [(CompilerIrInstr.SpmdCall payload-box)
       (let
-        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [args (compiler-ir-box-field-shared-view payload-box args)]
         (compiler-ir-spmd-call-arg-seq-count args))]
     [(CompilerIrInstr.TailCall _ args _) (compiler-ir-call-args-count args)]
     [(CompilerIrInstr.TailCallIndirect _ args _)

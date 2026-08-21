@@ -36573,7 +36573,10 @@
       (begin
         (match (array-ref args.slots i)
           [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-            (compiler-reg-color-invalidate-value! roots invalid value)])
+            (compiler-reg-color-invalidate-value!
+              (compiler-reg-global-shared-view roots)
+              (compiler-reg-global-shared-view invalid)
+              value)])
         (set! i (+ i 1))))))
 
 (define (compiler-reg-color-invalidate-phi!
@@ -39439,7 +39442,9 @@
         (begin
           (set!
             (array-ref out i)
-            (compiler-reg-remap-spmd-call-arg remap (array-ref args.slots i)))
+            (compiler-reg-remap-spmd-call-arg
+              (compiler-reg-global-shared-view remap)
+              (compiler-reg-global-array-element-shared-view args.slots i)))
           (set! i (+ i 1))))
       (ir.CompilerIrSpmdCallArgSeq out args.len))))
 

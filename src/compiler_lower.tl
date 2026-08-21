@@ -4511,7 +4511,9 @@
             (tc_core.TcMaybeString.Some logical-name)]
           [(tc_core.TcMaybeString.No)
             (tc_core.TcMaybeString.Some
-              (tc_core.tc-env-key-name-text logical-id))])))))
+              (tc_core.tc-env-key-name-text-for-session
+                (lower-name-cache-structural-session (& cache))
+                logical-id))])))))
 
 (define (lower-type-env-count [env : tc_core.TcTypeEnv]) : i64
   (match (tc_core.tc-type-env-spine-step env)
@@ -5513,16 +5515,18 @@
       false)))
 
 (define (lower-resolve-name-id [state : LowerState] [source-id : i64]) : String
-  (if (and (>= source-id 0) (< source-id (ci.intern-capacity)))
-    (let
-      [names : LowerNameCache (lower-state-names state)]
+  (let
+    [names : LowerNameCache (lower-state-names state)]
+    (if (and (>= source-id 0) (< source-id (ci.intern-capacity)))
       (match (lower-name-cache-resolve-id-display names source-id)
         [(tc_core.TcMaybeString.Some logical-name) logical-name]
-        [(tc_core.TcMaybeString.No) (ci.intern-str source-id)]))
-    (match (lower-name-cache-lookup-id (lower-state-names state) source-id)
-      [(tc_core.TcMaybeString.Some logical-name) logical-name]
-      [(tc_core.TcMaybeString.No)
-        (tc_core.tc-nominal-name-id-display source-id)])))
+        [(tc_core.TcMaybeString.No) (ci.intern-str source-id)])
+      (match (lower-name-cache-lookup-id names source-id)
+        [(tc_core.TcMaybeString.Some logical-name) logical-name]
+        [(tc_core.TcMaybeString.No)
+          (tc_core.tc-nominal-name-id-display-for-session
+            (lower-name-cache-structural-session (& names))
+            source-id)]))))
 
 (define (lower-resolve-name-symbol-id [state : LowerState] [source-id : i64]) : i64
   (let
@@ -5643,7 +5647,9 @@
     [source-name : String
       (if (and (>= source-id 0) (< source-id (ci.intern-capacity)))
         (ci.intern-str source-id)
-        (tc_core.tc-nominal-name-id-display source-id))]
+        (tc_core.tc-nominal-name-id-display-for-session
+          (lower-name-cache-structural-session (& state-names))
+          source-id))]
     [resolved-name : String
       (if local?
         source-name

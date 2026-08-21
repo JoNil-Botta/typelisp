@@ -12798,6 +12798,48 @@
 (define (tc-module-name-id-by-id [module-id : i64] [name-id : i64]) : i64
   (csym.compiler-symbol-module-key-id-by-id module-id name-id))
 
+(define (tc-module-name-id-by-id-for-session
+  [session : cis.InternStructuralSessionHandle]
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (cond
+    [(csym.compiler-symbol-root-module-id? module-id) name-id]
+    [(and
+        (ci.intern-renderable-id? name-id)
+        (ci.intern-qualified? name-id)
+        (= (ci.intern-qualified-module-id name-id) module-id))
+      (let
+        [qualified-module-id : i64 (ci.intern-qualified-module-id name-id)]
+        [qualified-base-id : i64 (ci.intern-qualified-base-id name-id)]
+        (if (csym.compiler-symbol-root-module-id? qualified-module-id)
+          qualified-base-id
+          (cis.intern-structural-key-raw
+            (cis.intern-structural-session-composite-pair-key
+              session
+              qualified-module-id
+              qualified-base-id))))]
+    [else
+      (match (cis.intern-structural-session-record-for-raw session name-id)
+        [(cis.InternMaybeStructuralRecord.Some record)
+          (if (= record.kind (ci.intern-structural-kind-pair))
+            (cis.intern-structural-key-raw
+              (cis.intern-structural-session-composite-triple-key
+                session
+                module-id
+                record.left-id
+                record.right-id))
+            (cis.intern-structural-key-raw
+              (cis.intern-structural-session-composite-pair-key
+                session
+                module-id
+                name-id)))]
+        [(cis.InternMaybeStructuralRecord.No)
+          (cis.intern-structural-key-raw
+            (cis.intern-structural-session-composite-pair-key
+              session
+              module-id
+              name-id))])]))
+
 (define (tc-env-key-has-name-id? [key : i64]) : bool
   (and
     (>= key 0)
@@ -12809,7 +12851,8 @@
   [name-id : i64]) : i64
   (cond
     [(macro-hygiene-global-id? session name-id)
-      (csym.compiler-symbol-module-key-id-by-id
+      (tc-module-name-id-by-id-for-session
+        session
         (macro-hygiene-global-module-id session name-id)
         (macro-hygiene-structural-source-name-id session name-id))]
     [(and
@@ -24066,6 +24109,15 @@
       (csym.compiler-symbol-kind-defstruct))
       (ast.ast-ty-struct-args name-id lifetimes)
       (ast.ast-ty-var-args name-id lifetimes))))
+
+(define (tc-nominal-name-id-display-for-session
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : String
+  ;; Nominal module/name composites may be appended through an explicit
+  ;; structural owner after the compatibility interner's cached table length
+  ;; was published. Resolve them from the capability rather than relying on
+  ;; that ambient snapshot.
+  (tc-hygiene-name-text-id-for-session session name-id))
 
 (define (tc-nominal-name-id-display [name-id : i64]) : String
   (ast.ast-nominal-name-id-display name-id))
@@ -36559,15 +36611,23 @@
   [wanted-qualifier-id : i64]
   [env : TcTypeEnv]
   [candidate-id : i64]) : bool
-  (if (>= wanted-qualifier-id 0)
-    (tc-name-bound-id?
-      env
-      (tc-module-name-id-by-id wanted-qualifier-id candidate-id))
-    (or
-      (tc-name-bound-id? env candidate-id)
-      (and
-        module-qualified
-        (tc-name-bound-id? env (tc-module-name-id-by-id module-id candidate-id))))))
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-type-env-structural-session env)]
+    (if (>= wanted-qualifier-id 0)
+      (tc-name-bound-id?
+        env
+        (tc-module-name-id-by-id-for-session
+          session
+          wanted-qualifier-id
+          candidate-id))
+      (or
+        (tc-name-bound-id? env candidate-id)
+        (and
+          module-qualified
+          (tc-name-bound-id?
+            env
+            (tc-module-name-id-by-id-for-session session module-id candidate-id)))))))
 
 (define (tc-unbound-better-candidate?
   [distance : i64]

@@ -1620,9 +1620,19 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 73,400,320 physical payload bytes, leaving 55,462 nodes of headroom.
     # #5754's context-projected expression reads cross the boundary to 36
     # segments: the authoritative Windows probe measured 2,298,673 used nodes,
-    # 2,359,296 capacity, and 75,497,472 physical payload bytes.
+    # 2,359,296 capacity, and 75,497,472 physical payload bytes. The
+    # instruction-gap bank's second series (bounds_dom run widening, LICM
+    # frame-object and global-box provenance, per-cell call mod-ref, block
+    # layout, cold-arm carriers, loop ladders; ~16,000 optimizer/regalloc/
+    # backend lines with their self-tests) adds ~22,800 checked nodes on top of
+    # the #6731 tree and crosses to 37 segments: the Linux-host selfhost probe
+    # measured 2,365,142 used nodes against the 2,359,296 line (main measured
+    # 2,342,380 on the same host, which over-reads the Windows probe by
+    # ~3,000 nodes), so the authoritative Windows probe lands a few thousand
+    # nodes past the boundary: 2,424,832 capacity and 77,594,624 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 36 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 37 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain
@@ -1648,8 +1658,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # multi-exit rotation series' classified exit placement adds macro-expanded
     # type structure on top of main: its authoritative tree measured 24,589
     # used nodes, still 25 segments with 1,011 nodes below the 26-segment line.
+    # The instruction-gap bank's optimizer, regalloc, and backend test surface
+    # crosses that line: its authoritative Windows probe measured 25,643 used
+    # nodes, 26 segments, 26,624 capacity, and 638,976 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 25 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 26 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Same series, same probe: 8,527 used nodes against 9,216 capacity, 689
     # nodes of headroom below the 10-segment line.

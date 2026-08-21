@@ -3345,6 +3345,10 @@
       (compiler_optimize_tests.compiler-optimize-bounds-dom-slice-word-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bounds-run-self-test"
+      (compiler_optimize_tests.compiler-optimize-bounds-run-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-dom-cmp-rule-a-self-test"
       (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-self-test)
       42)
@@ -3429,6 +3433,22 @@
       (compiler_optimize_tests.compiler-optimize-licm-word-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-local-slot-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-local-slot-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-global-mod-ref-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-global-mod-ref-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-frozen-global-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-frozen-global-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-global-cell-call-mod-ref-self-test"
+      (compiler_optimize_tests.compiler-optimize-global-cell-call-mod-ref-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-licm-unswitch-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-unswitch-self-test)
       42)
@@ -3482,6 +3502,10 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-mask-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-mask-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-pipeline-self-test"
@@ -4504,6 +4528,10 @@
       (compiler_optimize_tests.compiler-optimize-flag-exit-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-flag-exit-general-self-test"
+      (compiler_optimize_tests.compiler-optimize-flag-exit-general-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-dead-phi-self-test"
       (compiler_optimize_tests.compiler-optimize-dead-phi-self-test)
       42)
@@ -4729,10 +4757,10 @@
     "a 220-instruction ten-parameter single-site callee absorbs whole at its one cold site"))
 
 (test
-  inline-single-site-wide-loop-site-refusal
+  inline-single-site-wide-loop-site-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-wide-loop-site-refusal-ok?)
-    "the same unbounded body stays out of line at an in-loop site"))
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-wide-loop-site-absorb-ok?)
+    "the same unbounded body absorbs at an in-loop site: the boundary retires per iteration"))
 
 (test
   inline-single-site-narrow-small-caller-refusal
@@ -4745,6 +4773,24 @@
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-large-caller-refusal-ok?)
     "below the arity floor and past the narrow caller band, the body stays out of line"))
+
+(test
+  inline-single-site-narrow-loop-site-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-loop-site-absorb-ok?)
+    "below the arity floor a small call-free body still moves at an in-loop site"))
+
+(test
+  inline-single-site-narrow-straight-site-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-straight-site-refusal-ok?)
+    "the same body at a straight-line site stays out: below the floor there is no marshalling to retire"))
+
+(test
+  inline-single-site-narrow-oversize-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-oversize-refusal-ok?)
+    "past the loop tier's size class the in-loop waiver stops admitting a below-floor boundary"))
 
 (test
   inline-single-site-size-cap-absorb
@@ -4781,6 +4827,18 @@
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-single-site-call-bearing-refusal-ok?)
     "a wide single-site callee that calls out stays out of line: the band cannot price its callee's calls"))
+
+(test
+  inline-single-site-loop-site-call-bearing-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-loop-site-call-bearing-absorb-ok?)
+    "the same call-carrying callee absorbs at an in-loop site: its calls already ran per iteration"))
+
+(test
+  inline-single-site-cascade-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-cascade-site-ok?)
+    "the cascade clause refuses at a straight-line site and comes off at an in-loop one"))
 
 (test
   inline-single-site-address-taken-refusal

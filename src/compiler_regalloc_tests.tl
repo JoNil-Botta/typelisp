@@ -726,23 +726,236 @@
       [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
         (let
           [weights : (__tl_dyn-array i64)
-            (reg.compiler-reg-call-hole-block-weights blocks)]
+            (reg.compiler-reg-call-hole-block-weights
+              (reg.compiler-reg-function-loop-depths blocks))]
           (and
-            ;; The ladder itself: 8^depth, capped at 8^4.
-            (= (reg.compiler-reg-call-hole-block-weight 0) 1)
-            (= (reg.compiler-reg-call-hole-block-weight 1) 8)
-            (= (reg.compiler-reg-call-hole-block-weight 2) 64)
-            (= (reg.compiler-reg-call-hole-block-weight 3) 512)
-            (= (reg.compiler-reg-call-hole-block-weight 4) 4096)
-            (= (reg.compiler-reg-call-hole-block-weight 9) 4096)
+            ;; The ladder itself: 4 * 8^depth, capped at 8^4. The x4 scale is
+            ;; what leaves the cold-arm quarter an integer at depth 0.
+            (= (reg.compiler-reg-call-hole-block-weight 0) 4)
+            (= (reg.compiler-reg-call-hole-block-weight 1) 32)
+            (= (reg.compiler-reg-call-hole-block-weight 2) 256)
+            (= (reg.compiler-reg-call-hole-block-weight 3) 2048)
+            (= (reg.compiler-reg-call-hole-block-weight 4) 16384)
+            (= (reg.compiler-reg-call-hole-block-weight 9) 16384)
+            (= (reg.compiler-reg-call-hole-cold-arm-weight 4) 1)
+            (= (reg.compiler-reg-call-hole-cold-arm-weight 32) 8)
+            (= (reg.compiler-reg-call-hole-cold-arm-weight 1) 1)
             (= (array-length weights) 6)
-            (= (array-ref weights 0) 1)
-            (= (array-ref weights 1) 8)
-            (= (array-ref weights 2) 8)
-            (= (array-ref weights 3) 8)
+            (= (array-ref weights 0) 4)
+            (= (array-ref weights 1) 32)
+            (= (array-ref weights 2) 32)
+            (= (array-ref weights 3) 32)
             ;; the exit-only arm, laid out inside the loop
-            (= (array-ref weights 4) 1)
-            (= (array-ref weights 5) 1)))])))
+            (= (array-ref weights 4) 4)
+            (= (array-ref weights 5) 4)))])))
+
+;; --- P7 cold-arm discount ---------------------------------------------------
+;; The PRED_CALL discount and the two things that bound it. `cold` is a depth-0
+;; side arm with a call, bypassed by an empty edge: the function can reach its
+;; `Return` without it and the bypass does no work it skips, so it is discounted
+;; to a quarter. `body` and `arm` both call from INSIDE the loop, and both keep
+;; their full depth weight whatever their shape -- what a discount buys is a
+;; saving at the entry frequency, and an in-loop arm's carriers run per
+;; iteration, so a misprediction there is unbounded. Blocks with no call are
+;; never discounted, and neither is the entry block itself (it post-dominates
+;; itself).
+(cfg
+  test
+  (define (compiler-reg-call-hole-cold-arm-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "call_hole_cold_arm")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      3
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Bool false)
+              (ir.compiler-ir-label "cold")
+              (ir.compiler-ir-label "join"))
+            ir.CompilerIrInstrList.Nil))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "cold")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Call
+                0
+                (ir.compiler-ir-test-symbol "f")
+                (ir.CompilerIrCallArgs.Nil)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "join")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "header")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Branch
+                    (ir.CompilerIrValue.Bool false)
+                    (ir.compiler-ir-label "body")
+                    (ir.compiler-ir-label "exit"))
+                  ir.CompilerIrInstrList.Nil))
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  (ir.compiler-ir-label "body")
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Call
+                      1
+                      (ir.compiler-ir-test-symbol "g")
+                      (ir.CompilerIrCallArgs.Nil)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Branch
+                        (ir.CompilerIrValue.Bool false)
+                        (ir.compiler-ir-label "arm")
+                        (ir.compiler-ir-label "latch"))
+                      ir.CompilerIrInstrList.Nil)))
+                (ir.compiler-ir-block-cons
+                  (ir.compiler-ir-block
+                    (ir.compiler-ir-label "arm")
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Call
+                        2
+                        (ir.compiler-ir-test-symbol "h")
+                        (ir.CompilerIrCallArgs.Nil)
+                        (compiler-reg-i64-ty))
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                        ir.CompilerIrInstrList.Nil)))
+                  (ir.compiler-ir-block-cons
+                    (ir.compiler-ir-block
+                      (ir.compiler-ir-label "latch")
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Jump
+                          (ir.compiler-ir-label "header"))
+                        ir.CompilerIrInstrList.Nil))
+                    (ir.compiler-ir-block-cons
+                      (ir.compiler-ir-block
+                        (ir.compiler-ir-label "exit")
+                        (ir.compiler-ir-instr-cons
+                          (ir.CompilerIrInstr.Return
+                            (ir.CompilerIrMaybeValue.Some
+                              (ir.CompilerIrValue.I64 0)))
+                          ir.CompilerIrInstrList.Nil))
+                      ir.CompilerIrBlockList.Nil)))))))))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-cold-arm-weight-ok?) : bool
+    (match (compiler-reg-call-hole-cold-arm-function)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
+        (let
+          [arms : reg.CompilerRegCallHoleWeights
+            (reg.compiler-reg-call-hole-cold-arm-weights
+              (ast.ast-node-pool-reader-type-segment-bases)
+              self-name
+              (live.compiler-live-ir-block-list-to-seq blocks))]
+          [weights : (__tl_dyn-array i64) arms.weights]
+          [cold : (__tl_dyn-array bool) arms.cold]
+          (and
+            (= (array-length weights) 8)
+            ;; entry / join: depth 0, no call
+            (= (array-ref weights 0) 4)
+            (not (array-ref cold 0))
+            (= (array-ref weights 2) 4)
+            (not (array-ref cold 2))
+            ;; cold: a depth-0 side arm that calls
+            (= (array-ref weights 1) 1)
+            (array-ref cold 1)
+            ;; header / latch: depth 1, no call
+            (= (array-ref weights 3) 32)
+            (not (array-ref cold 3))
+            (= (array-ref weights 6) 32)
+            (not (array-ref cold 6))
+            ;; body and arm: depth-1 calls, never discounted
+            (= (array-ref weights 4) 32)
+            (not (array-ref cold 4))
+            (= (array-ref weights 5) 32)
+            (not (array-ref cold 5))
+            ;; exit: depth 0, no call
+            (= (array-ref weights 7) 4)
+            (not (array-ref cold 7))
+            (compiler-reg-call-hole-bypass-loop-ok?)))])))
+
+;; The second bound: a depth-0 call arm whose BYPASS runs a loop the arm skips
+;; is not a detour and is not discounted. `fast` is the shape that matters --
+;; the bounds-check-eliminated arm of a versioned region, a bulk call bypassed
+;; by the scalar loop it replaces -- and it is taken essentially always, so
+;; predicting it cold is how a once-called helper loses instructions it never
+;; gets back.
+(cfg
+  test
+  (define (compiler-reg-call-hole-bypass-loop-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "call_hole_bypass_loop")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      1
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Bool false)
+              (ir.compiler-ir-label "fast")
+              (ir.compiler-ir-label "slow"))
+            ir.CompilerIrInstrList.Nil))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "fast")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Call
+                0
+                (ir.compiler-ir-test-symbol "bulk")
+                (ir.CompilerIrCallArgs.Nil)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "slow")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Bool false)
+                  (ir.compiler-ir-label "slow")
+                  (ir.compiler-ir-label "join"))
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "join")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
+                  ir.CompilerIrInstrList.Nil))
+              ir.CompilerIrBlockList.Nil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-bypass-loop-ok?) : bool
+    (match (compiler-reg-call-hole-bypass-loop-function)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
+        (let
+          [arms : reg.CompilerRegCallHoleWeights
+            (reg.compiler-reg-call-hole-cold-arm-weights
+              (ast.ast-node-pool-reader-type-segment-bases)
+              self-name
+              (live.compiler-live-ir-block-list-to-seq blocks))]
+          (and
+            (= (array-length arms.weights) 4)
+            ;; `slow` is the loop, so `fast` keeps its full depth-0 weight
+            (= (array-ref arms.weights 1) 4)
+            (not (array-ref arms.cold 1))
+            (= (array-ref arms.weights 2) 32)
+            (= (array-ref arms.weights 3) 4)))])))
 
 ;; Candidate selection. The three refusals are independent: an ineligible value
 ;; (no flag), a value the previous round dropped, and a value whose cost is not
@@ -759,8 +972,21 @@
       [cost : (__tl_dyn-array i64) (array.make-array i64 vars)]
       [max-ref : (__tl_dyn-array i64) (array.make-array i64 vars)]
       [max-clobber : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [max-clobber-hot : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [csr : (__tl_dyn-array bool) (array.make-array bool vars)]
       [picked : (__tl_dyn-array bool) (array.make-array bool vars)]
       [selected : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [scores : reg.CompilerRegCallHoleScores
+        (reg.CompilerRegCallHoleScores
+          flags
+          csr
+          dropped
+          benefit
+          cost
+          max-ref
+          max-clobber
+          max-clobber-hot
+          8)]
       [first : i64 0]
       [after-drop : i64 0]
       (begin
@@ -801,30 +1027,83 @@
         (set! (array-ref max-clobber 5) 0)
         (set!
           first
-          (reg.compiler-reg-call-hole-select!
-            vars
-            (reg.compiler-reg-global-shared-view flags)
-            (reg.compiler-reg-global-shared-view dropped)
-            (reg.compiler-reg-global-shared-view benefit)
-            (reg.compiler-reg-global-shared-view cost)
-            (reg.compiler-reg-global-shared-view max-ref)
-            (reg.compiler-reg-global-shared-view max-clobber)
-            (reg.compiler-reg-global-shared-view picked)
-            (reg.compiler-reg-global-shared-view selected)))
+          (reg.compiler-reg-call-hole-select! vars scores picked selected))
         (set! (array-ref dropped 0) true)
         (set!
           after-drop
-          (reg.compiler-reg-call-hole-select!
-            vars
-            (reg.compiler-reg-global-shared-view flags)
-            (reg.compiler-reg-global-shared-view dropped)
-            (reg.compiler-reg-global-shared-view benefit)
-            (reg.compiler-reg-global-shared-view cost)
-            (reg.compiler-reg-global-shared-view max-ref)
-            (reg.compiler-reg-global-shared-view max-clobber)
-            (reg.compiler-reg-global-shared-view picked)
-            (reg.compiler-reg-global-shared-view selected)))
+          (reg.compiler-reg-call-hole-select! vars scores picked selected))
         (and (= first 1) (= (array-ref selected 0) 0) (= after-drop 0))))))
+
+;; The csr class reads the same arrays through a DIFFERENT rule: the crossings
+;; that have to be colder than the hottest reference are only the ones in blocks
+;; the cold-arm discount did NOT reach (`max-clobber-hot`), and the carriers have
+;; to cost strictly less than the push/pop pair a callee-saved home costs
+;; (`csr-cost`). Values 0 and 3 carry the SAME numbers in the two classes and
+;; land on opposite sides: the csr rule admits 0, because every one of its
+;; crossings is on a cold arm and the carriers cost less than the pair, while
+;; the memory rule refuses 3, because its benefit does not exceed its cost.
+;; Value 1 is the refusal the CSR term exists for -- a value crossing so many
+;; cold arms that carrying it is dearer than the pair.
+(cfg
+  test
+  (define (compiler-reg-call-hole-csr-qualify-ok?) : bool
+    (let
+      [vars : i64 4]
+      [flags : (__tl_dyn-array bool) (array.make-array bool vars)]
+      [csr : (__tl_dyn-array bool) (array.make-array bool vars)]
+      [dropped : (__tl_dyn-array bool) (array.make-array bool vars)]
+      [benefit : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [cost : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [max-ref : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [max-clobber : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [max-clobber-hot : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [scores : reg.CompilerRegCallHoleScores
+        (reg.CompilerRegCallHoleScores
+          flags
+          csr
+          dropped
+          benefit
+          cost
+          max-ref
+          max-clobber
+          max-clobber-hot
+          8)]
+      (begin
+        ;; 0: csr, all crossings cold, carriers below the pair -> admitted.
+        ;; 1: the same value crossing more cold calls -> refused, strictly.
+        ;; 2: csr, but one crossing is in an UNDISCOUNTED block as hot as its
+        ;;    hottest reference -> refused.
+        ;; 3: the same numbers as 0 but in the MEMORY class, where benefit must
+        ;;    exceed cost and the undiscounted maximum is what is compared.
+        (set! (array-ref flags 0) true)
+        (set! (array-ref flags 1) true)
+        (set! (array-ref flags 2) true)
+        (set! (array-ref flags 3) true)
+        (set! (array-ref csr 0) true)
+        (set! (array-ref csr 1) true)
+        (set! (array-ref csr 2) true)
+        (set! (array-ref benefit 0) 4)
+        (set! (array-ref cost 0) 7)
+        (set! (array-ref max-ref 0) 4)
+        (set! (array-ref max-clobber 0) 1)
+        (set! (array-ref benefit 1) 4)
+        (set! (array-ref cost 1) 8)
+        (set! (array-ref max-ref 1) 4)
+        (set! (array-ref max-clobber 1) 1)
+        (set! (array-ref benefit 2) 4)
+        (set! (array-ref cost 2) 2)
+        (set! (array-ref max-ref 2) 4)
+        (set! (array-ref max-clobber 2) 4)
+        (set! (array-ref max-clobber-hot 2) 4)
+        (set! (array-ref benefit 3) 4)
+        (set! (array-ref cost 3) 7)
+        (set! (array-ref max-ref 3) 4)
+        (set! (array-ref max-clobber 3) 1)
+        (and
+          (reg.compiler-reg-call-hole-qualifies? scores 0)
+          (not (reg.compiler-reg-call-hole-qualifies? scores 1))
+          (not (reg.compiler-reg-call-hole-qualifies? scores 2))
+          (not (reg.compiler-reg-call-hole-qualifies? scores 3)))))))
 
 ;; The rewrite shape. One value crosses three calls in one block: the first two
 ;; are consecutive with no intervening def, so the SECOND store is elided and the
@@ -898,6 +1177,7 @@
       [func : ir.CompilerIrFunction (compiler-reg-call-hole-rewrite-function)]
       [carrier : (__tl_dyn-array i64) (array.make-array i64 7)]
       [selected : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [csr : (__tl_dyn-array bool) (array.make-array bool 7)]
       [valid : (__tl_dyn-array bool) (array.make-array bool 7)]
       (match (reg.compiler-reg-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
@@ -911,6 +1191,7 @@
               [rewritten : ir.CompilerIrBlockList
                 (reg.compiler-reg-call-hole-rewrite-blocks
                   (ast.ast-node-pool-reader-type-segment-bases)
+                  csr
                   (live.compiler-live-ir-block-list-to-seq blocks)
                   (live.compiler-live-analyze-function-edge-precise
                     (reg.compiler-reg-global-shared-view func))
@@ -972,7 +1253,87 @@
                     (ir.compiler-ir-instr-seq-ref instrs 11)
                     5)
                   (compiler-reg-call-hole-return?
-                    (ir.compiler-ir-instr-seq-ref instrs 12))))))]))))
+                    (ir.compiler-ir-instr-seq-ref instrs 12))
+                  (compiler-reg-call-hole-elided-shape-ok?)))))]))))
+
+;; The same fixture read as a CSR candidate. The reload after `call f` is dead --
+;; nothing reads %0 before `call g` overwrites it again -- so it is not emitted,
+;; and the run costs one store and one reload instead of one store and two
+;; reloads. The reload after `call g` survives: %0 is multiplied right after it.
+(cfg
+  test
+  (define (compiler-reg-call-hole-elided-shape-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-call-hole-rewrite-function)]
+      [carrier : (__tl_dyn-array i64) (array.make-array i64 7)]
+      [selected : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [csr : (__tl_dyn-array bool) (array.make-array bool 7)]
+      [valid : (__tl_dyn-array bool) (array.make-array bool 7)]
+      (match func
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+          (begin
+            (reg.compiler-reg-fill-i64-array carrier (- 0 1))
+            (set! (array-ref carrier 0) vars)
+            (set! (array-ref selected 0) 0)
+            (set! (array-ref csr 0) true)
+            (let
+              [rewritten : ir.CompilerIrBlockList
+                (reg.compiler-reg-call-hole-rewrite-blocks
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  csr
+                  (live.compiler-live-ir-block-list-to-seq blocks)
+                  (live.compiler-live-analyze-function-edge-precise func)
+                  (reg.compiler-reg-function-var-types func)
+                  carrier
+                  selected
+                  1
+                  valid)]
+              (let
+                [seq : ir.CompilerIrBlockSeq
+                  (live.compiler-live-ir-block-list-to-seq rewritten)]
+                [instrs : ir.CompilerIrInstrSeq
+                  (match (ir.compiler-ir-block-seq-ref seq 0)
+                    [(ir.CompilerIrBlock.Block _ found) found])]
+                (and
+                  ;; 8 original + 2 stores + 2 reloads
+                  (= (ir.compiler-ir-instr-seq-count instrs) 12)
+                  (compiler-reg-call-hole-mov-const?
+                    (ir.compiler-ir-instr-seq-ref instrs 0)
+                    0)
+                  (compiler-reg-cold-call-test-mov?
+                    (ir.compiler-ir-instr-seq-ref instrs 1)
+                    6
+                    0)
+                  (compiler-reg-call-hole-call?
+                    (ir.compiler-ir-instr-seq-ref instrs 2))
+                  ;; the reload after call f is DEAD and is not emitted
+                  (compiler-reg-call-hole-call?
+                    (ir.compiler-ir-instr-seq-ref instrs 3))
+                  (compiler-reg-cold-call-test-mov?
+                    (ir.compiler-ir-instr-seq-ref instrs 4)
+                    0
+                    6)
+                  (compiler-reg-call-hole-binop?
+                    (ir.compiler-ir-instr-seq-ref instrs 5)
+                    3)
+                  (compiler-reg-call-hole-mov-const?
+                    (ir.compiler-ir-instr-seq-ref instrs 6)
+                    0)
+                  (compiler-reg-cold-call-test-mov?
+                    (ir.compiler-ir-instr-seq-ref instrs 7)
+                    6
+                    0)
+                  (compiler-reg-call-hole-call?
+                    (ir.compiler-ir-instr-seq-ref instrs 8))
+                  (compiler-reg-cold-call-test-mov?
+                    (ir.compiler-ir-instr-seq-ref instrs 9)
+                    0
+                    6)
+                  (compiler-reg-call-hole-binop?
+                    (ir.compiler-ir-instr-seq-ref instrs 10)
+                    5)
+                  (compiler-reg-call-hole-return?
+                    (ir.compiler-ir-instr-seq-ref instrs 11))))))]))))
 
 (cfg
   test
@@ -1007,8 +1368,12 @@
       [(ir.CompilerIrInstr.Return _) true]
       [_ false])))
 
-;; The verify path: a selection the replan still homes in memory is dropped, so
-;; the next round rewrites without it; one the replan registerised is kept.
+;; The verify path, one row per class: a MEMORY selection the replan still
+;; homes in memory is dropped and one it registerised is kept, while a CSR
+;; selection is dropped unless the replan moved it OUT of the callee-saved set
+;; -- a csr candidate the replan homes callee-saved again has gained nothing and
+;; its carriers would be pure overhead, exactly like a still-spilled one. The
+;; next round then rewrites without the dropped ones.
 (cfg
   test
   (define (compiler-reg-call-hole-drop-ok?) : bool
@@ -1024,27 +1389,44 @@
                 1
                 (reg.CompilerRegLocation.Spill
                   (reg.compiler-reg-stack-slot-offset 1)))
-              (reg.compiler-reg-assignment-table-empty)))
+              (reg.compiler-reg-assignments-prepend
+                (reg.CompilerRegAssignment
+                  2
+                  (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r13))
+                (reg.compiler-reg-assignments-prepend
+                  (reg.CompilerRegAssignment
+                    3
+                    (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rdi))
+                  (reg.compiler-reg-assignment-table-empty)))))
           (live.compiler-live-set-empty)
           (reg.compiler-reg-interval-seq-empty)
           (reg.compiler-reg-var-types-empty)
           (reg.compiler-reg-call-split-empty)
           (reg.compiler-reg-split-plan-empty))]
-      [selected : (__tl_dyn-array i64) (array.make-array i64 2)]
-      [dropped : (__tl_dyn-array bool) (array.make-array bool 2)]
+      [selected : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [dropped : (__tl_dyn-array bool) (array.make-array bool 4)]
+      [csr : (__tl_dyn-array bool) (array.make-array bool 4)]
       (begin
         (set! (array-ref selected 0) 0)
         (set! (array-ref selected 1) 1)
+        (set! (array-ref selected 2) 2)
+        (set! (array-ref selected 3) 3)
+        (set! (array-ref csr 2) true)
+        (set! (array-ref csr 3) true)
         (and
           (=
-            (reg.compiler-reg-call-hole-drop-still-spilled!
+            (reg.compiler-reg-call-hole-drop-unimproved!
+              cabi.CompilerRegTargetAbi.Linux
               plan
+              csr
               selected
-              2
-              (reg.compiler-reg-global-shared-view dropped))
-            1)
+              4
+              dropped)
+            2)
           (not (array-ref dropped 0))
-          (array-ref dropped 1))))))
+          (array-ref dropped 1)
+          (array-ref dropped 2)
+          (not (array-ref dropped 3)))))))
 
 ;; End to end. Ten values are computed in the entry block, held live across ONE
 ;; call there, and used inside the loop as a multiply's LHS -- a position the
@@ -1308,6 +1690,394 @@
               (reg.compiler-reg-call-hole-split-temp-start
                 (reg.compiler-reg-global-shared-view split))
               (- 0 1)))]))))
+
+;; --- P7 the csr class, end to end -------------------------------------------
+;; The merged-kernel shape the inliner produces: a hot straight path that uses
+;; all three parameters and no call, plus a cold side arm that calls twice. The
+;; parameters are live through those calls, so the ABI-pin gate refuses their
+;; incoming registers and the greedy's `is-param -> csr-only` rule gives each of
+;; them a callee-saved home -- three pushes and three pops on EVERY call of the
+;; function, for an arm that runs almost never. Nothing in the memory-reference
+;; cost model can see that, because a callee-saved home costs no reference.
+;;
+;; After the round the crossings are carried in the cold arm, the pin walk hands
+;; each parameter its incoming register back, and the plan uses no callee-saved
+;; register at all.
+(cfg
+  test
+  (define (compiler-reg-call-hole-csr-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "call_hole_csr")
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
+        (ir.compiler-ir-param-cons
+          (ir.CompilerIrParam.Param "b" (compiler-reg-i64-ty) 1)
+          (ir.compiler-ir-param-cons
+            (ir.CompilerIrParam.Param "c" (compiler-reg-i64-ty) 2)
+            ir.CompilerIrParamList.Nil)))
+      (ast.AstType.I64)
+      8
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.BinOp
+              3
+              (ir.CompilerIrBinOp.Lt)
+              (ir.CompilerIrValue.Var 0)
+              (ir.CompilerIrValue.Var 1)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var 3)
+                (ir.compiler-ir-label "grow")
+                (ir.compiler-ir-label "hot"))
+              ir.CompilerIrInstrList.Nil)))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "grow")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Call
+                4
+                (ir.compiler-ir-test-symbol "f")
+                (ir.CompilerIrCallArgs.Nil)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Call
+                  5
+                  (ir.compiler-ir-test-symbol "g")
+                  (ir.CompilerIrCallArgs.Nil)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "hot"))
+                  ir.CompilerIrInstrList.Nil))))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "hot")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  6
+                  (ir.CompilerIrBinOp.Add)
+                  (ir.CompilerIrValue.Var 0)
+                  (ir.CompilerIrValue.Var 1)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    7
+                    (ir.CompilerIrBinOp.Add)
+                    (ir.CompilerIrValue.Var 6)
+                    (ir.CompilerIrValue.Var 2)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Return
+                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 7)))
+                    ir.CompilerIrInstrList.Nil))))
+            ir.CompilerIrBlockList.Nil))))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-plan-register?
+    [plan : reg.CompilerRegPlan]
+    [var : i64]
+    [want : i64]) : bool
+    (reg.compiler-reg-location-register?
+      (reg.compiler-reg-assignment-lookup
+        (reg.compiler-reg-plan-assignments plan)
+        var)
+      want)))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-csr-split-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-call-hole-csr-function)]
+      [type-info : reg.CompilerRegVarTypes
+        (reg.compiler-reg-function-var-types func)]
+      [plan : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-cold-for-abi
+          cabi.CompilerRegTargetAbi.Linux
+          func
+          (- 0 1))]
+      [assignments : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-plan-assignments plan)]
+      [split : reg.CompilerRegCallHoleSplit
+        (reg.compiler-reg-call-hole-split-rewrite-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          cabi.CompilerRegTargetAbi.Linux
+          func
+          type-info
+          plan
+          (- 0 1))]
+      [split-vars : i64 (reg.compiler-reg-call-hole-split-vars split)]
+      [split-plan : reg.CompilerRegPlan
+        (reg.compiler-reg-call-hole-split-plan split)]
+      (and
+        ;; The defect: no spill anywhere, but all three parameters homed in
+        ;; callee-saved registers because they cross the cold arm's calls.
+        (not (reg.compiler-reg-assignment-table-has-spill? assignments))
+        (reg.compiler-reg-call-hole-csr-home?
+          cabi.CompilerRegTargetAbi.Linux
+          assignments
+          0)
+        (reg.compiler-reg-call-hole-csr-home?
+          cabi.CompilerRegTargetAbi.Linux
+          assignments
+          1)
+        (reg.compiler-reg-call-hole-csr-home?
+          cabi.CompilerRegTargetAbi.Linux
+          assignments
+          2)
+        (=
+          (reg.compiler-reg-call-hole-plan-csr-count
+            cabi.CompilerRegTargetAbi.Linux
+            8
+            plan)
+          3)
+        ;; One carrier per parameter, minted at the old watermark.
+        (= split-vars 11)
+        (= (reg.compiler-reg-call-hole-split-temp-start split) 8)
+        (reg.compiler-reg-cold-call-carriers-stack? split-plan 8 split-vars)
+        ;; Every parameter is back in its incoming ABI register ...
+        (compiler-reg-call-hole-plan-register?
+          split-plan
+          0
+          cabi.compiler-reg-id-rdi)
+        (compiler-reg-call-hole-plan-register?
+          split-plan
+          1
+          cabi.compiler-reg-id-rsi)
+        (compiler-reg-call-hole-plan-register?
+          split-plan
+          2
+          cabi.compiler-reg-id-rdx)
+        ;; ... so the prologue saves nothing at all.
+        (=
+          (reg.compiler-reg-call-hole-plan-csr-count
+            cabi.CompilerRegTargetAbi.Linux
+            split-vars
+            split-plan)
+          0)))))
+
+;; The CSR term is what makes the comparison strict, and it cuts both ways. One
+;; parameter is live across `arms` cold side arms, each with one call. A carrier
+;; is stored once per arm (the elision claim is per block and every arm is its
+;; own block) and reloaded once, so the trade is 2 per arm at the discounted
+;; cold-arm weight of 1, against the 2 instructions a push and a pop cost at the
+;; entry weight of 4. Three arms (6) buy the pair back; four (8) do not, and the
+;; round declines outright and returns its input untouched.
+(cfg
+  test
+  (define (compiler-reg-call-hole-arm-label [prefix : String] [index : i64]) : String
+    (str_cat.str-cat prefix (string.int->string index))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-guard-label [index : i64]) : String
+    (if (= index 0)
+      "entry"
+      (compiler-reg-call-hole-arm-label "guard" index))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-join-label [index : i64] [arms : i64]) : String
+    (if (>= index arms)
+      "hot"
+      (compiler-reg-call-hole-guard-label index))))
+
+;; guard_k / cold_k for k in [index, arms), then the hot tail.
+(cfg
+  test
+  (define (compiler-reg-call-hole-cold-arms-name) : i64
+    (ir.compiler-ir-test-symbol "call_hole_cold_arms")))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-cold-arms-chain
+    [index : i64]
+    [arms : i64]
+    [callee : i64]) : ir.CompilerIrBlockList
+    (if (>= index arms)
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "hot")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.BinOp
+              (+ arms 1)
+              (ir.CompilerIrBinOp.Add)
+              (ir.CompilerIrValue.Var 0)
+              (ir.CompilerIrValue.I64 1)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some
+                  (ir.CompilerIrValue.Var (+ arms 1))))
+              ir.CompilerIrInstrList.Nil)))
+        ir.CompilerIrBlockList.Nil)
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label (compiler-reg-call-hole-guard-label index))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Bool false)
+              (ir.compiler-ir-label
+                (compiler-reg-call-hole-arm-label "cold" index))
+              (ir.compiler-ir-label
+                (compiler-reg-call-hole-join-label (+ index 1) arms)))
+            ir.CompilerIrInstrList.Nil))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label
+              (compiler-reg-call-hole-arm-label "cold" index))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Call
+                (+ index 1)
+                callee
+                (ir.CompilerIrCallArgs.Nil)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump
+                  (ir.compiler-ir-label
+                    (compiler-reg-call-hole-join-label (+ index 1) arms)))
+                ir.CompilerIrInstrList.Nil)))
+          (compiler-reg-call-hole-cold-arms-chain (+ index 1) arms callee))))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-cold-arms-function
+    [arms : i64]
+    [callee : i64]) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (compiler-reg-call-hole-cold-arms-name)
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
+        ir.CompilerIrParamList.Nil)
+      (ast.AstType.I64)
+      (+ arms 2)
+      (compiler-reg-call-hole-cold-arms-chain 0 arms callee))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-cold-arms-split [arms : i64] [callee : i64]) : reg.CompilerRegCallHoleSplit
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-call-hole-cold-arms-function arms callee)]
+      [type-info : reg.CompilerRegVarTypes
+        (reg.compiler-reg-function-var-types func)]
+      [plan : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-cold-for-abi
+          cabi.CompilerRegTargetAbi.Linux
+          func
+          (- 0 1))]
+      (reg.compiler-reg-call-hole-split-rewrite-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        cabi.CompilerRegTargetAbi.Linux
+        func
+        type-info
+        plan
+        (- 0 1)))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-csr-cost-strict-ok?) : bool
+    (let
+      [three : reg.CompilerRegCallHoleSplit
+        (compiler-reg-call-hole-cold-arms-split
+          3
+          (ir.compiler-ir-test-symbol "f"))]
+      [four : reg.CompilerRegCallHoleSplit
+        (compiler-reg-call-hole-cold-arms-split
+          4
+          (ir.compiler-ir-test-symbol "f"))]
+      (and
+        ;; 3 arms: one carrier minted above the 5 original vars, and the
+        ;; parameter is pinned back into %rdi.
+        (= (reg.compiler-reg-call-hole-split-vars three) 6)
+        (= (reg.compiler-reg-call-hole-split-temp-start three) 5)
+        (compiler-reg-call-hole-plan-register?
+          (reg.compiler-reg-call-hole-split-plan three)
+          0
+          cabi.compiler-reg-id-rdi)
+        (=
+          (reg.compiler-reg-call-hole-plan-csr-count
+            cabi.CompilerRegTargetAbi.Linux
+            6
+            (reg.compiler-reg-call-hole-split-plan three))
+          0)
+        ;; 4 arms: the carriers now cost exactly what the pair costs, and the
+        ;; rule is strictly-below, so nothing is selected and the round returns
+        ;; its input untouched.
+        (= (reg.compiler-reg-call-hole-split-vars four) 6)
+        (= (reg.compiler-reg-call-hole-split-temp-start four) (- 0 1))))))
+
+;; --- P7b the recursion exclusion --------------------------------------------
+;; PRED_CALL's recursion exclusion on the same fixture the discount is measured
+;; with: the two functions below differ in ONE symbol, the callee inside the
+;; arm, so everything the classification and the cost model see is otherwise
+;; identical and the arm's SHAPE cannot be what separates them.
+;;
+;; With a foreign callee the arm is a depth-0 side arm that calls: discounted to
+;; a quarter, and one arm's carriers (2 x 1) buy back the parameter's push and
+;; pop (2 x 4), so the round fires and the pin walk hands %rdi back. With the
+;; self-call the arm keeps its full depth-0 weight, because for a self-recursive
+;; function the arm runs on every activation but the last; the carriers now cost
+;; 2 x 4 against the pair's 2 x 4, the comparison is strictly-below, and the
+;; round declines and returns its input untouched. That is `deeprec`'s arithmetic
+;; in tests/integration/csr_push_prologue.tl with one value instead of four
+;; (4 x 2 x 4 against four pairs = 32 against 32), and it is why its push
+;; prologue and shrink-wrapped base case survive.
+(cfg
+  test
+  (define (compiler-reg-call-hole-recursive-arm-weights [callee : i64]) : reg.CompilerRegCallHoleWeights
+    (match (compiler-reg-call-hole-cold-arms-function 1 callee)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
+        (reg.compiler-reg-call-hole-cold-arm-weights
+          (ast.ast-node-pool-reader-type-segment-bases)
+          self-name
+          (live.compiler-live-ir-block-list-to-seq blocks))])))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-recursive-arm-ok?) : bool
+    (let
+      [self : i64 (compiler-reg-call-hole-cold-arms-name)]
+      [foreign-name : i64 (ir.compiler-ir-test-symbol "f")]
+      [foreign : reg.CompilerRegCallHoleWeights
+        (compiler-reg-call-hole-recursive-arm-weights foreign-name)]
+      [recursive : reg.CompilerRegCallHoleWeights
+        (compiler-reg-call-hole-recursive-arm-weights self)]
+      [foreign-split : reg.CompilerRegCallHoleSplit
+        (compiler-reg-call-hole-cold-arms-split 1 foreign-name)]
+      [recursive-split : reg.CompilerRegCallHoleSplit
+        (compiler-reg-call-hole-cold-arms-split 1 self)]
+      (and
+        ;; entry / hot call nothing and are never discounted, either way.
+        (= (array-length foreign.weights) 3)
+        (= (array-ref foreign.weights 0) 4)
+        (not (array-ref foreign.cold 0))
+        (= (array-ref foreign.weights 2) 4)
+        (not (array-ref foreign.cold 2))
+        ;; the foreign arm IS a cold arm ...
+        (= (array-ref foreign.weights 1) 1)
+        (array-ref foreign.cold 1)
+        ;; ... and the self-recursive one, same block, same shape, is not.
+        (= (array-length recursive.weights) 3)
+        (= (array-ref recursive.weights 0) 4)
+        (= (array-ref recursive.weights 1) 4)
+        (not (array-ref recursive.cold 1))
+        (= (array-ref recursive.weights 2) 4)
+        ;; The round follows the weights. Foreign: one carrier minted above the
+        ;; three original vars, and the parameter is back in %rdi.
+        (= (reg.compiler-reg-call-hole-split-vars foreign-split) 4)
+        (= (reg.compiler-reg-call-hole-split-temp-start foreign-split) 3)
+        (compiler-reg-call-hole-plan-register?
+          (reg.compiler-reg-call-hole-split-plan foreign-split)
+          0
+          cabi.compiler-reg-id-rdi)
+        ;; Recursive: nothing selected, input returned untouched.
+        (= (reg.compiler-reg-call-hole-split-vars recursive-split) 3)
+        (=
+          (reg.compiler-reg-call-hole-split-temp-start recursive-split)
+          (- 0 1))))))
 
 ;; --- P3c loop-boundary parking ----------------------------------------------
 ;; Two fixtures carry the whole round.
@@ -2331,6 +3101,850 @@
                 (reg.compiler-reg-global-shared-view split))
               (- 0 1)))]))))
 
+;; --- P12: the merged-kernel shape, and the two ladders that decide it --------
+;; A hand-inlined kernel puts its hottest loop DEEP. `it-intern-slice` inlined
+;; into its driver leaves the byte compare at loop depth 5, inside a depth-4
+;; probe loop, inside the per-symbol / per-pass / per-round loops. Two frequency
+;; ladders used to flatten at depth 4, and both of them then decided that loop
+;; against itself:
+;;
+;;   * P3c's parking cost model (`compiler-reg-loop-park-block-weight`). The
+;;     round prices "park a value the loop never touches" as W(preheader) plus
+;;     one W(exit) per live exit, against W(body) per reference an L-resident
+;;     makes. On a ladder that flattens, a depth-5 body and a depth-4 boundary
+;;     weigh the SAME, so the boundary costs at least twice one resident
+;;     reference and `compiler-reg-loop-park-pair!` can never accept -- however
+;;     hot the loop actually is.
+;;
+;;   * the greedy's spill weight (`compiler-reg-loop-depth-weight`). A reference
+;;     at depth 5 scored exactly as much as one at depth 4, so the byte loop's
+;;     own base pointer ranked level with the hoisted Vec headers the loop never
+;;     touches, and lost the tie on var id.
+;;
+;; `loop_park_deep_nest` is that shape reduced to its skeleton: four plain outer
+;; loops around a ROTATED inner loop in the versioner's `__bce_fast` form -- a
+;; landing block that is the dedicated preheader, a header that opens with the
+;; induction phi, the trip test at the bottom -- whose body reads TWO base
+;; pointers defined one level out, with three values live across the whole nest
+;; that the inner loop never mentions.
+(cfg
+  test
+  (define (compiler-reg-park-nest-levels) : i64
+    4))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-label [prefix : String] [level : i64]) : i64
+    (ir.compiler-ir-label (str_cat.str-cat prefix (string.int->string level)))))
+
+;; Per-level var ids: counter, trip condition, increment.
+(cfg
+  test
+  (define (compiler-reg-park-nest-ctr [level : i64]) : i64
+    (+ 20 (* 3 level))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-cond [level : i64]) : i64
+    (+ 21 (* 3 level))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-next [level : i64]) : i64
+    (+ 22 (* 3 level))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-binop
+    [dst : i64]
+    [op : ir.CompilerIrBinOp]
+    [lhs : ir.CompilerIrValue]
+    [rhs : ir.CompilerIrValue]) : ir.CompilerIrInstr
+    (ir.CompilerIrInstr.BinOp dst op lhs rhs (compiler-reg-i64-ty))))
+
+;; entry: mint the three through values, then descend into the nest.
+(cfg
+  test
+  (define (compiler-reg-park-nest-entry-block) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "entry")
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Mov
+          10
+          (ir.CompilerIrValue.I64 11)
+          (compiler-reg-i64-ty))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            11
+            (ir.CompilerIrValue.I64 12)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              12
+              (ir.CompilerIrValue.I64 13)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Jump (compiler-reg-park-nest-label "pre." 0))
+              ir.CompilerIrInstrList.Nil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-pre-block [level : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (compiler-reg-park-nest-label "pre." level)
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Jump (compiler-reg-park-nest-label "hdr." level))
+        ir.CompilerIrInstrList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-hdr-block [level : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (compiler-reg-park-nest-label "hdr." level)
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Phi
+          (compiler-reg-park-nest-ctr level)
+          (ir.compiler-ir-phi-input-cons
+            (ir.CompilerIrValue.I64 0)
+            (compiler-reg-park-nest-label "pre." level)
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.Var (compiler-reg-park-nest-next level))
+              (compiler-reg-park-nest-label "lat." level)
+              ir.CompilerIrPhiInputList.Nil))
+          (compiler-reg-i64-ty))
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            (compiler-reg-park-nest-cond level)
+            (ir.CompilerIrBinOp.Lt)
+            (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level))
+            (ir.CompilerIrValue.Var 0))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var (compiler-reg-park-nest-cond level))
+              (compiler-reg-park-nest-label "body." level)
+              (compiler-reg-park-nest-label "exit." level))
+            ir.CompilerIrInstrList.Nil))))))
+
+;; The innermost level's body is where the two base pointers are computed: once
+;; per entry into the inner loop, one level OUT from the references that read
+;; them, which is the merged kernel's own shape.
+(cfg
+  test
+  (define (compiler-reg-park-nest-body-block [level : i64] [levels : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (compiler-reg-park-nest-label "body." level)
+      (if (< level (- levels 1))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump
+            (compiler-reg-park-nest-label "pre." (+ level 1)))
+          ir.CompilerIrInstrList.Nil)
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            1
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level)))
+          (ir.compiler-ir-instr-cons
+            (compiler-reg-park-nest-binop
+              2
+              (ir.CompilerIrBinOp.Add)
+              (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level))
+              (ir.CompilerIrValue.Var 0))
+            (ir.compiler-ir-instr-cons
+              (compiler-reg-park-nest-binop
+                67
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 10)
+                (ir.CompilerIrValue.Var 11))
+              (ir.compiler-ir-instr-cons
+                (compiler-reg-park-nest-binop
+                  68
+                  (ir.CompilerIrBinOp.Add)
+                  (ir.CompilerIrValue.Var 67)
+                  (ir.CompilerIrValue.Var 12))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "land"))
+                  ir.CompilerIrInstrList.Nil)))))))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-lat-block [level : i64] [levels : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (compiler-reg-park-nest-label "lat." level)
+      (if (= level (- levels 1))
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            69
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 66)
+            (ir.CompilerIrValue.Var 68))
+          (ir.compiler-ir-instr-cons
+            (compiler-reg-park-nest-binop
+              (compiler-reg-park-nest-next level)
+              (ir.CompilerIrBinOp.Add)
+              (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level))
+              (ir.CompilerIrValue.Var 69))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Jump
+                (compiler-reg-park-nest-label "hdr." level))
+              ir.CompilerIrInstrList.Nil)))
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            (compiler-reg-park-nest-next level)
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var (compiler-reg-park-nest-ctr level))
+            (ir.CompilerIrValue.I64 1))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Jump
+              (compiler-reg-park-nest-label "hdr." level))
+            ir.CompilerIrInstrList.Nil))))))
+
+;; The outermost exit is the only place the three through values are read, so
+;; each of them is live across every loop of the nest and mentioned in none.
+(cfg
+  test
+  (define (compiler-reg-park-nest-exit-block [level : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (compiler-reg-park-nest-label "exit." level)
+      (if (> level 0)
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump
+            (compiler-reg-park-nest-label "lat." (- level 1)))
+          ir.CompilerIrInstrList.Nil)
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            70
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 10)
+            (ir.CompilerIrValue.Var 11))
+          (ir.compiler-ir-instr-cons
+            (compiler-reg-park-nest-binop
+              71
+              (ir.CompilerIrBinOp.Add)
+              (ir.CompilerIrValue.Var 70)
+              (ir.CompilerIrValue.Var 12))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 71)))
+              ir.CompilerIrInstrList.Nil)))))))
+
+;; The rotated inner loop, in the versioner's `__bce_fast` form: `land` is the
+;; rotate landing block and the loop's dedicated preheader, `ihdr` opens with
+;; the induction phi, and the trip test lives at the bottom in `imerge`. Both
+;; exits leave for a block that opens with a phi, so both are SPLICED sites.
+(cfg
+  test
+  (define (compiler-reg-park-nest-land-block) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "land")
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "ihdr"))
+        ir.CompilerIrInstrList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-ihdr-block) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "ihdr")
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Phi
+          60
+          (ir.compiler-ir-phi-input-cons
+            (ir.CompilerIrValue.I64 0)
+            (ir.compiler-ir-label "land")
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.Var 64)
+              (ir.compiler-ir-label "imerge")
+              ir.CompilerIrPhiInputList.Nil))
+          (compiler-reg-i64-ty))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "ibody"))
+          ir.CompilerIrInstrList.Nil)))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-ibody-block) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "ibody")
+      (ir.compiler-ir-instr-cons
+        (compiler-reg-park-nest-binop
+          61
+          (ir.CompilerIrBinOp.Add)
+          (ir.CompilerIrValue.Var 1)
+          (ir.CompilerIrValue.Var 60))
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            62
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 2)
+            (ir.CompilerIrValue.Var 60))
+          (ir.compiler-ir-instr-cons
+            (compiler-reg-park-nest-binop
+              63
+              (ir.CompilerIrBinOp.Lt)
+              (ir.CompilerIrValue.Var 61)
+              (ir.CompilerIrValue.Var 62))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var 63)
+                (ir.compiler-ir-label "imerge")
+                (ir.compiler-ir-label "iexit"))
+              ir.CompilerIrInstrList.Nil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-imerge-block) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "imerge")
+      (ir.compiler-ir-instr-cons
+        (compiler-reg-park-nest-binop
+          64
+          (ir.CompilerIrBinOp.Add)
+          (ir.CompilerIrValue.Var 60)
+          (ir.CompilerIrValue.I64 1))
+        (ir.compiler-ir-instr-cons
+          (compiler-reg-park-nest-binop
+            65
+            (ir.CompilerIrBinOp.Lt)
+            (ir.CompilerIrValue.Var 64)
+            (ir.CompilerIrValue.Var 0))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var 65)
+              (ir.compiler-ir-label "ihdr")
+              (ir.compiler-ir-label "iexit"))
+            ir.CompilerIrInstrList.Nil))))))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-iexit-block [levels : i64]) : ir.CompilerIrBlock
+    (ir.compiler-ir-block
+      (ir.compiler-ir-label "iexit")
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Phi
+          66
+          (ir.compiler-ir-phi-input-cons
+            (ir.CompilerIrValue.I64 0)
+            (ir.compiler-ir-label "ibody")
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.I64 1)
+              (ir.compiler-ir-label "imerge")
+              ir.CompilerIrPhiInputList.Nil))
+          (compiler-reg-i64-ty))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump
+            (compiler-reg-park-nest-label "lat." (- levels 1)))
+          ir.CompilerIrInstrList.Nil)))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-nest-function) : ir.CompilerIrFunction
+    (let
+      [levels : i64 (compiler-reg-park-nest-levels)]
+      [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+        (array.make-array ir.CompilerIrBlock (+ 6 (* 5 levels)))]
+      [write : i64 0]
+      [level : i64 0]
+      (begin
+        (set! (array-ref blocks write) (compiler-reg-park-nest-entry-block))
+        (set! write (+ write 1))
+        (while (< level levels)
+          (begin
+            (set!
+              (array-ref blocks write)
+              (compiler-reg-park-nest-pre-block level))
+            (set!
+              (array-ref blocks (+ write 1))
+              (compiler-reg-park-nest-hdr-block level))
+            (set!
+              (array-ref blocks (+ write 2))
+              (compiler-reg-park-nest-body-block level levels))
+            (set! write (+ write 3))
+            (set! level (+ level 1))))
+        (set! (array-ref blocks write) (compiler-reg-park-nest-land-block))
+        (set!
+          (array-ref blocks (+ write 1))
+          (compiler-reg-park-nest-ihdr-block))
+        (set!
+          (array-ref blocks (+ write 2))
+          (compiler-reg-park-nest-ibody-block))
+        (set!
+          (array-ref blocks (+ write 3))
+          (compiler-reg-park-nest-imerge-block))
+        (set!
+          (array-ref blocks (+ write 4))
+          (compiler-reg-park-nest-iexit-block levels))
+        (set! write (+ write 5))
+        (set! level (- levels 1))
+        (while (>= level 0)
+          (begin
+            (set!
+              (array-ref blocks write)
+              (compiler-reg-park-nest-lat-block level levels))
+            (set!
+              (array-ref blocks (+ write 1))
+              (compiler-reg-park-nest-exit-block level))
+            (set! write (+ write 2))
+            (set! level (- level 1))))
+        (ir.CompilerIrFunction.Function
+          (ir.compiler-ir-test-symbol "loop_park_deep_nest")
+          (ir.compiler-ir-param-cons
+            (ir.CompilerIrParam.Param "bound" (compiler-reg-i64-ty) 0)
+            ir.CompilerIrParamList.Nil)
+          (ast.AstType.I64)
+          80
+          (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq blocks write)))))))
+
+;; Two small builders for a hand-written plan, so the fixture can say exactly
+;; which values the greedy is imagined to have homed.
+(cfg
+  test
+  (define (compiler-reg-park-nest-reg
+    [var : i64]
+    [id : i64]
+    [rest : reg.CompilerRegAssignmentTable]) : reg.CompilerRegAssignmentTable
+    (reg.compiler-reg-assignments-prepend
+      (reg.CompilerRegAssignment var (reg.CompilerRegLocation.Register id))
+      rest)))
+
+(cfg
+  test
+  (define (compiler-reg-park-nest-spill
+    [var : i64]
+    [slot : i64]
+    [rest : reg.CompilerRegAssignmentTable]) : reg.CompilerRegAssignmentTable
+    (reg.compiler-reg-assignments-prepend
+      (reg.CompilerRegAssignment
+        var
+        (reg.CompilerRegLocation.Spill
+          (reg.compiler-reg-stack-slot-offset slot)))
+      rest)))
+
+;; The plan the round is handed. Every OTHER resident of the inner loop already
+;; holds a register, so the two base pointers are its only spilled residents and
+;; the pairing it has to make is exactly base <-> through value -- one register
+;; freed over the loop per base that needs one.
+;;
+;; With `bases-homed` true the two bases hold registers and a through value is
+;; in memory instead: the function still HAS a spill, the loop still has values
+;; live across it, and there is still nothing a parked register could rescue.
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-nest-plan [bases-homed : bool]) : reg.CompilerRegPlan
+    (reg.CompilerRegPlan.Plan
+      (compiler-reg-park-nest-reg
+        0
+        cabi.compiler-reg-id-rax
+        (compiler-reg-park-nest-reg
+          60
+          cabi.compiler-reg-id-rcx
+          (compiler-reg-park-nest-reg
+            61
+            cabi.compiler-reg-id-rdx
+            (compiler-reg-park-nest-reg
+              62
+              cabi.compiler-reg-id-rsi
+              (compiler-reg-park-nest-reg
+                63
+                cabi.compiler-reg-id-rdi
+                (compiler-reg-park-nest-reg
+                  64
+                  cabi.compiler-reg-id-r8
+                  (compiler-reg-park-nest-reg
+                    65
+                    cabi.compiler-reg-id-r9
+                    (compiler-reg-park-nest-reg
+                      10
+                      cabi.compiler-reg-id-r12
+                      (compiler-reg-park-nest-reg
+                        11
+                        cabi.compiler-reg-id-r13
+                        (if bases-homed
+                          (compiler-reg-park-nest-spill
+                            12
+                            3
+                            (compiler-reg-park-nest-reg
+                              1
+                              cabi.compiler-reg-id-rbx
+                              (compiler-reg-park-nest-reg
+                                2
+                                cabi.compiler-reg-id-r15
+                                (reg.compiler-reg-assignment-table-empty))))
+                          (compiler-reg-park-nest-reg
+                            12
+                            cabi.compiler-reg-id-r14
+                            (compiler-reg-park-nest-spill
+                              1
+                              1
+                              (compiler-reg-park-nest-spill
+                                2
+                                2
+                                (reg.compiler-reg-assignment-table-empty))))))))))))))
+      (live.compiler-live-set-empty)
+      (reg.compiler-reg-interval-seq-empty)
+      (reg.compiler-reg-var-types-empty)
+      (reg.compiler-reg-call-split-empty)
+      (reg.compiler-reg-split-plan-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-nest-split [bases-homed : bool]) : reg.CompilerRegCallHoleSplit
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-loop-park-deep-nest-function)]
+      (reg.compiler-reg-loop-park-rewrite-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        cabi.CompilerRegTargetAbi.Linux
+        func
+        (reg.compiler-reg-function-var-types func)
+        (compiler-reg-loop-park-deep-nest-plan bases-homed)
+        (- 0 1)
+        false))))
+
+;; (1) The rotated inner-loop shape PARKS. Two base pointers are in memory and
+;; the loop has three values live across it that it never mentions, so the round
+;; parks one per base -- the trade the flattened cost ladder made arithmetically
+;; impossible at this depth, whatever the trip count.
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-parks-ok?) : bool
+    (let
+      [split : reg.CompilerRegCallHoleSplit
+        (compiler-reg-loop-park-deep-nest-split false)]
+      (match (compiler-reg-loop-park-deep-nest-function)
+        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+          (and
+            ;; one park per base: a parked value frees ONE register over the
+            ;; loop and the loop has two operands that each need one
+            (= (reg.compiler-reg-call-hole-split-vars split) (+ vars 2))
+            (= (reg.compiler-reg-call-hole-split-temp-start split) vars)
+            ;; every carrier is forced to the stack, so the boundary movs pay
+            ;; for themselves inside the round's own estimate
+            (reg.compiler-reg-cold-call-carriers-stack?
+              (reg.compiler-reg-call-hole-split-plan split)
+              vars
+              (+ vars 2)))]))))
+
+;; (2) BOTH bases of the two-base inner loop come out of the round in registers.
+;; One park frees one register over the loop and the loop has two operands that
+;; need one, so a round that rescues only the first leaves the byte compare
+;; reloading one base through the emergency scavenge on every iteration.
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-two-bases-homed-ok?) : bool
+    (let
+      [split : reg.CompilerRegCallHoleSplit
+        (compiler-reg-loop-park-deep-nest-split false)]
+      [assignments : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-plan-assignments
+          (reg.compiler-reg-call-hole-split-plan split))]
+      (and
+        (reg.compiler-reg-call-hole-register-homed? assignments 1)
+        (reg.compiler-reg-call-hole-register-homed? assignments 2)))))
+
+;; (3) The negative. With both bases already in registers the inner loop has no
+;; spilled resident, so no parked register could rescue anything and the round
+;; hands back its input untouched -- same watermark, same threshold -- even
+;; though the function still has a spilled value elsewhere and the loop still
+;; has through values it could otherwise have parked.
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-declines-ok?) : bool
+    (let
+      [split : reg.CompilerRegCallHoleSplit
+        (compiler-reg-loop-park-deep-nest-split true)]
+      (match (compiler-reg-loop-park-deep-nest-function)
+        [(ir.CompilerIrFunction.Function _ _ _ vars _)
+          (and
+            (= (reg.compiler-reg-call-hole-split-vars split) vars)
+            (= (reg.compiler-reg-call-hole-split-temp-start split) (- 0 1)))]))))
+
+;; And the ranking side of the same fixture, read straight off the greedy's own
+;; spill weights. Base pointer %1 has one reference INSIDE the inner loop plus
+;; its definition one level out; %67 is a value the inner loop never touches
+;; with two references at that outer level. Flattened at depth 4 the two score
+;; identically, and an exact tie is broken by var id rather than by frequency --
+;; which is how a 15.2M-execution reference lost its register to a 2.5M one.
+;; Continued to the nest cap, the loop's own operand wins on frequency.
+(cfg
+  test
+  (define (compiler-reg-loop-park-deep-ranking-ok?) : bool
+    (let
+      [weights : (__tl_dyn-array i64)
+        (reg.compiler-reg-function-spill-weights
+          (compiler-reg-loop-park-deep-nest-function))]
+      (and
+        (> (array-ref weights 1) (array-ref weights 67))
+        (> (array-ref weights 2) (array-ref weights 67))))))
+
+;; The invariant both ladders now keep, stated as arithmetic. P3c's cost model
+;; is only meaningful while one loop level is a FIXED factor: the preheader
+;; store and each exit reload have to stay 1/8 of one in-loop reference, and one
+;; loop level deeper has to stay worth 2 in the greedy's ranking. A ladder that
+;; saturates breaks both claims at the saturation point, and does it silently.
+;; Block depths themselves saturate at `compiler-reg-loop-depth-max`, so that is
+;; where the ladders may -- and do -- stop.
+(cfg
+  test
+  (define (compiler-reg-park-ladder-step-ok? [depth : i64]) : bool
+    (if (>= depth (reg.compiler-reg-loop-depth-max))
+      true
+      (and
+        (=
+          (reg.compiler-reg-loop-park-block-weight (+ depth 1))
+          (* 8 (reg.compiler-reg-loop-park-block-weight depth)))
+        (=
+          (reg.compiler-reg-loop-depth-weight (+ depth 1))
+          (* 2 (reg.compiler-reg-loop-depth-weight depth)))
+        (compiler-reg-park-ladder-step-ok? (+ depth 1))))))
+
+(cfg
+  test
+  (define (compiler-reg-park-ladder-ok?) : bool
+    (and
+      (compiler-reg-park-ladder-step-ok? 0)
+      ;; and the parking ladder still agrees with P3's on every depth P3 itself
+      ;; resolves, so the two rounds price a shallow function identically
+      (=
+        (reg.compiler-reg-loop-park-block-weight 0)
+        (reg.compiler-reg-call-hole-block-weight 0))
+      (=
+        (reg.compiler-reg-loop-park-block-weight 4)
+        (reg.compiler-reg-call-hole-block-weight 4)))))
+
+;; --- P3d scavenge occupancy: segmented liveness, not the coarse hull ---------
+;; The backend's scratch picker asks "which registers carry a live value at this
+;; instruction" through an occupancy table built from these intervals. Built from
+;; each var's coarse HULL that answer saturates in a merged body: the allocator
+;; homes two values in one register exactly when their SEGMENTS are disjoint, and
+;; the union of their hulls then covers the hole between them, so every register
+;; reads occupied everywhere and every spilled-base reload -- which needs a real
+;; register and cannot become a memory operand -- falls to the emergency
+;; save/reload/restore tier.
+;;
+;; Two properties the backend depends on are pinned here.
+;;
+;; (1) With the block-entry live-in bridge OFF, the coarse starts/ends are
+;;     BIT-IDENTICAL to `compiler-reg-live-intervals`, so nothing that reads the
+;;     hull arrays (divmod own-src election, value-live-after queries) changes;
+;;     and a var dead across a middle block gets more than one segment, with no
+;;     segment covering that block -- the hole the occupancy table must expose.
+;; (2) The bridge itself still does its job when it is ON. It exists so a hull
+;;     start is not mistaken for the value's own definition under a block layout
+;;     that puts a flow-in block ahead of the defining one (see
+;;     compiler-reg-live-in-block-point), and it must stay OFF for the scavenge
+;;     table because the point one below a block belongs to the PREVIOUS block in
+;;     emission order. The rotated fixture below is exactly that layout: `latch`
+;;     reads var 1 and is laid out before `body`, which defines it.
+(cfg
+  test
+  (define (compiler-reg-scavenge-hole-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "scavenge_segment_hole")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      4
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 7)
+              (ast.AstType.I64))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                1
+                (ir.CompilerIrValue.Var 0)
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "middle"))
+                ir.CompilerIrInstrList.Nil))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "middle")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                2
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 1)
+                (ir.CompilerIrValue.I64 1)
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "tail"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "tail")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Mov
+                  0
+                  (ir.CompilerIrValue.I64 9)
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    3
+                    (ir.CompilerIrBinOp.Add)
+                    (ir.CompilerIrValue.Var 0)
+                    (ir.CompilerIrValue.Var 2)
+                    (ast.AstType.I64))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Return
+                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
+                    ir.CompilerIrInstrList.Nil))))
+            ir.CompilerIrBlockList.Nil))))))
+
+;; Rotated layout: entry -> body -> latch -> {body, exit}. Var 1 is READ in
+;; `latch` (laid out second) and DEFINED in `body` (laid out third).
+(cfg
+  test
+  (define (compiler-reg-scavenge-rotated-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "scavenge_segment_rotated")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      3
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body"))
+            ir.CompilerIrInstrList.Nil))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "latch")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                2
+                (ir.CompilerIrBinOp.Lt)
+                (ir.CompilerIrValue.Var 1)
+                (ir.CompilerIrValue.I64 10)
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Var 2)
+                  (ir.compiler-ir-label "body")
+                  (ir.compiler-ir-label "exit"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "body")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Mov
+                  1
+                  (ir.CompilerIrValue.I64 7)
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                  ir.CompilerIrInstrList.Nil)))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "exit")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
+                  ir.CompilerIrInstrList.Nil))
+              ir.CompilerIrBlockList.Nil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-scavenge-hull-arrays-eq?
+    [left : reg.CompilerRegIntervalIndex]
+    [right : reg.CompilerRegIntervalIndex]
+    [vars : i64]
+    [var : i64]) : bool
+    (if (>= var vars)
+      true
+      (and
+        (= (array-ref left.starts var) (array-ref right.starts var))
+        (= (array-ref left.ends var) (array-ref right.ends var))
+        (compiler-reg-scavenge-hull-arrays-eq? left right vars (+ var 1))))))
+
+(cfg
+  test
+  (define (compiler-reg-scavenge-segments-cover?
+    [segments : reg.CompilerRegIntervalSeq]
+    [point : i64]
+    [index : i64]) : bool
+    (if (>= index (reg.compiler-reg-interval-seq-count segments))
+      false
+      (let
+        [row : reg.CompilerRegInterval
+          (reg.compiler-reg-interval-seq-ref segments index)]
+        (or
+          (and (<= row.start point) (<= point row.end))
+          (compiler-reg-scavenge-segments-cover? segments point (+ index 1)))))))
+
+(cfg
+  test
+  (define (compiler-reg-scavenge-segment-hulls-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-scavenge-hole-function)]
+      [liveness : live.CompilerFunctionLiveness
+        (live.compiler-live-analyze-function func)]
+      [hull-only : reg.CompilerRegIntervalIndex
+        (reg.compiler-reg-interval-index-build
+          (reg.compiler-reg-live-intervals func liveness)
+          4)]
+      [unseeded : reg.CompilerRegIntervalSelection
+        (reg.compiler-reg-live-interval-selection-with-live-in
+          func
+          liveness
+          false)]
+      [rotated : ir.CompilerIrFunction (compiler-reg-scavenge-rotated-function)]
+      [rotated-liveness : live.CompilerFunctionLiveness
+        (live.compiler-live-analyze-function rotated)]
+      [rotated-unseeded : reg.CompilerRegIntervalSelection
+        (reg.compiler-reg-live-interval-selection-with-live-in
+          rotated
+          rotated-liveness
+          false)]
+      [rotated-seeded : reg.CompilerRegIntervalSelection
+        (reg.compiler-reg-live-interval-selection rotated rotated-liveness)]
+      (match unseeded
+        [(reg.CompilerRegIntervalSelection.Selection _ index)
+          (match rotated-unseeded
+            [(reg.CompilerRegIntervalSelection.Selection _ rotated-index)
+              (match rotated-seeded
+                [(reg.CompilerRegIntervalSelection.Selection
+                    _
+                    rotated-seeded-index)
+                  (and
+                    ;; (1a) the coarse arrays are the hull builder's, unchanged
+                    (compiler-reg-scavenge-hull-arrays-eq? hull-only index 4 0)
+                    ;; (1b) var 0 is defined and consumed in `entry`, untouched
+                    ;; in `middle`, then redefined and consumed in `tail`
+                    (>=
+                      (reg.compiler-reg-interval-seq-count
+                        (array-ref index.segments 0))
+                      2)
+                    ;; ... and the hole is real: `middle`'s two instructions sit
+                    ;; at points 6 and 8, inside var 0's hull [0, 12]
+                    (= (array-ref index.starts 0) 0)
+                    (= (array-ref index.ends 0) 12)
+                    (compiler-reg-scavenge-segments-cover?
+                      (array-ref index.segments 0)
+                      0
+                      0)
+                    (compiler-reg-scavenge-segments-cover?
+                      (array-ref index.segments 0)
+                      10
+                      0)
+                    (not
+                      (compiler-reg-scavenge-segments-cover?
+                        (array-ref index.segments 0)
+                        6
+                        0))
+                    (not
+                      (compiler-reg-scavenge-segments-cover?
+                        (array-ref index.segments 0)
+                        8
+                        0))
+                    ;; (2) the bridge is what the flag switches: var 1 flows into
+                    ;; `latch` (block point 2) from the later-laid-out `body`, so
+                    ;; with the bridge on its interval opens at 1 instead of 2
+                    (= (array-ref rotated-index.starts 1) 2)
+                    (= (array-ref rotated-seeded-index.starts 1) 1))])])]))))
+
 ;; Fast scalar backend plan: keep type discovery for emission decisions, but
 ;; leave values in their stack slots instead of spending compile time on liveness
 ;; and register assignment. AVX/vector backend modes still use full regalloc.
@@ -3278,7 +4892,60 @@
       (compiler-reg-self-loop-exit-live-phi-mask-shape-ok? loop-first-mask)
       (compiler-reg-self-loop-exit-live-phi-mask-shape-ok? exit-first-mask)
       (= (array-ref fixed-register-mask 0) 0)
-      (= (array-ref fixed-register-mask 3) 0))))
+      (= (array-ref fixed-register-mask 1) 0)
+      (= (array-ref fixed-register-mask 3) 0)
+      (= (array-ref fixed-register-mask 4) 0))))
+
+;; The counter web of the same self-loop must reach ONE home end to end: with
+;; v1/v4 coalesced the back edge carries no phi copy at all, which is what turns
+;; `lea ; cmp ; jge exit ; mov ; jmp top` into `add ; cmp ; jl top`. The
+;; accumulator web (v0/v3) keeps the home it already had.
+(define (compiler-reg-self-loop-counter-coalesce-plan-ok?) : bool
+  (match (reg.compiler-reg-plan-function-scalar-for-abi
+    cabi.CompilerRegTargetAbi.Linux
+    (compiler-reg-self-loop-exit-live-phi-function true))
+    [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+      (and
+        (compiler-reg-location-any-register?
+          (reg.compiler-reg-assignment-lookup assignments 1))
+        (compiler-reg-same-location? assignments 1 4)
+        (compiler-reg-same-location? assignments 0 3)
+        (compiler-reg-different-location? assignments 1 0))]))
+
+;; Negative 1: the counter PHI RESULT is read on the exit edge. One register
+;; cannot hold both -- the increment would overwrite the value the exit reads --
+;; so the web stays excluded and the back edge keeps its copy.
+;; Negative 2: the counter PHI RESULT is read again INSIDE the block, after the
+;; increment that feeds the back edge. Same conclusion, different witness.
+(define (compiler-reg-self-loop-counter-negative-masks-ok?) : bool
+  (let
+    [exit-read : ir.CompilerIrFunction
+      (compiler-reg-self-loop-counter-exit-read-function)]
+    [late-read : ir.CompilerIrFunction
+      (compiler-reg-self-loop-counter-late-read-function)]
+    [exit-read-mask : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-phi-touched-safe
+        exit-read
+        (live.compiler-live-analyze-function-edge-precise exit-read))]
+    [late-read-mask : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-phi-touched-safe
+        late-read
+        (live.compiler-live-analyze-function-edge-precise late-read))]
+    (and
+      (= (array-ref exit-read-mask 0) 0)
+      (= (array-ref exit-read-mask 1) 0)
+      (= (array-ref late-read-mask 0) 0)
+      (= (array-ref late-read-mask 1) 0)
+      (match (reg.compiler-reg-plan-function-scalar-for-abi
+        cabi.CompilerRegTargetAbi.Linux
+        exit-read)
+        [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+          (compiler-reg-different-location? assignments 0 1)])
+      (match (reg.compiler-reg-plan-function-scalar-for-abi
+        cabi.CompilerRegTargetAbi.Linux
+        late-read)
+        [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+          (compiler-reg-different-location? assignments 0 1)]))))
 
 (cfg
   test
@@ -9956,8 +11623,11 @@
   (test
     regalloc-self-loop-exit-live-phi
     (test.assert-true
-      (compiler-reg-self-loop-exit-live-phi-mask-ok?)
-      "self-loop safety admits accumulator, excludes live counter, and ignores successor order")))
+      (and
+        (compiler-reg-self-loop-exit-live-phi-mask-ok?)
+        (compiler-reg-self-loop-counter-coalesce-plan-ok?)
+        (compiler-reg-self-loop-counter-negative-masks-ok?))
+      "self-loop safety admits accumulator and counter webs, refuses a phi result read past its increment, and ignores successor order")))
 
 (cfg
   test
@@ -12662,8 +14332,11 @@
 ;; Single-block accumulator carry plus a loop counter. The accumulator back-edge
 ;; value is defined in the block and only feeds successor phis, so EP relaxation
 ;; may merge its back-edge copy with the header phi even though the value is also
-;; live on the exit edge. The counter back-edge value feeds the exit compare and
-;; must remain excluded. Both branch successor orderings exercise edge neutrality.
+;; live on the exit edge. The counter back-edge value feeds the exit compare, but
+;; the counter PHI RESULT is dead from the increment onwards and leaves the block
+;; on no edge, so that web is relaxed too -- one register carries the phi result
+;; and then the increment, and the back edge needs no copy.
+;; Both branch successor orderings exercise edge neutrality.
 (define (compiler-reg-self-loop-exit-live-phi-function [loop-first : bool]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ir.compiler-ir-test-symbol "self_loop_exit_live_phi")
@@ -12751,8 +14424,131 @@
   (and
     (= (array-ref mask 0) 1)
     (= (array-ref mask 3) 1)
-    (= (array-ref mask 1) 0)
-    (= (array-ref mask 4) 0)))
+    (= (array-ref mask 1) 1)
+    (= (array-ref mask 4) 1)))
+
+;; Negative counter shape 1: the exit returns the PHI RESULT v0, not the
+;; increment v1, so v0 is live on the exit edge. Sharing one register would let
+;; `add` destroy the value the exit reads, so the web must stay excluded.
+(define (compiler-reg-self-loop-counter-exit-read-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "self_loop_counter_exit_read")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I64)
+    3
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
+          ir.CompilerIrInstrList.Nil))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "loop")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Phi
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.I64 0)
+                (ir.compiler-ir-label "entry")
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.compiler-ir-label "loop")
+                  ir.CompilerIrPhiInputList.Nil))
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                1
+                ir.CompilerIrBinOp.Add
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  2
+                  ir.CompilerIrBinOp.Lt
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.CompilerIrValue.I64 10)
+                  (ast.AstType.Bool))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Branch
+                    (ir.CompilerIrValue.Var 2)
+                    (ir.compiler-ir-label "loop")
+                    (ir.compiler-ir-label "exit"))
+                  ir.CompilerIrInstrList.Nil)))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "exit")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
+              ir.CompilerIrInstrList.Nil))
+          ir.CompilerIrBlockList.Nil)))))
+
+;; Negative counter shape 2: the PHI RESULT v0 is read AGAIN inside the block,
+;; after the increment v1 that feeds the back edge. The increment would destroy
+;; v0 before that read, so the web must stay excluded here too.
+(define (compiler-reg-self-loop-counter-late-read-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "self_loop_counter_late_read")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I64)
+    4
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
+          ir.CompilerIrInstrList.Nil))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "loop")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Phi
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.I64 0)
+                (ir.compiler-ir-label "entry")
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.compiler-ir-label "loop")
+                  ir.CompilerIrPhiInputList.Nil))
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                1
+                ir.CompilerIrBinOp.Add
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  2
+                  ir.CompilerIrBinOp.Mul
+                  (ir.CompilerIrValue.Var 0)
+                  (ir.CompilerIrValue.I64 3)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    3
+                    ir.CompilerIrBinOp.Lt
+                    (ir.CompilerIrValue.Var 1)
+                    (ir.CompilerIrValue.I64 10)
+                    (ast.AstType.Bool))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Branch
+                      (ir.CompilerIrValue.Var 3)
+                      (ir.compiler-ir-label "loop")
+                      (ir.compiler-ir-label "exit"))
+                    ir.CompilerIrInstrList.Nil))))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "exit")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
+              ir.CompilerIrInstrList.Nil))
+          ir.CompilerIrBlockList.Nil)))))
 
 (define (compiler-reg-destructive-straight-chain-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -13422,6 +15218,166 @@
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
                   ir.CompilerIrInstrList.Nil))))))
       ir.CompilerIrBlockList.Nil)))
+
+;; ---------------------------------------------------------------------------
+;; P22: nested value-identical copies coalesce ACROSS a call.
+;;
+;; Every fixture below is the loop-index/bounds-check shape the benchmarks show:
+;; a long-lived value `0` that is live across a real call (so the kind-6
+;; clobber-span exclusion keeps it out of the plain same-value relation) and a
+;; short copy `1` of it whose whole live hull sits inside `0`'s. The merged
+;; class hull is then exactly `0`'s hull, so the class inherits the call
+;; crossing `0` already carried and nothing else.
+(define (compiler-reg-p22-nested-copy-function
+  [copy : ir.CompilerIrInstr]
+  [use-ty : ast.AstType]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "p22_nested_copy")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I64)
+    3
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            0
+            (ir.CompilerIrValue.I64 7)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            copy
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Store
+                (ir.compiler-ir-test-symbol "g")
+                (ir.CompilerIrValue.Var 1)
+                use-ty)
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Call
+                  2
+                  (ir.compiler-ir-test-symbol "side_effect")
+                  ir.CompilerIrCallArgs.Nil
+                  (ast.AstType.Unit))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Store
+                    (ir.compiler-ir-test-symbol "g")
+                    (ir.CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Return
+                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
+                    ir.CompilerIrInstrList.Nil)))))))
+      ir.CompilerIrBlockList.Nil)))
+
+;; The mutable-source hazard must survive the relaxation: `0` is redefined
+;; INSIDE the copy's liveness, so the two are not the same value at the copy's
+;; use however neatly their hulls nest.
+(define (compiler-reg-p22-nested-reject-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "p22_nested_reject")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I64)
+    3
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            0
+            (ir.CompilerIrValue.I64 7)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              1
+              (ir.CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                0
+                (ir.CompilerIrValue.I64 9)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Store
+                  (ir.compiler-ir-test-symbol "g")
+                  (ir.CompilerIrValue.Var 1)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Call
+                    2
+                    (ir.compiler-ir-test-symbol "side_effect")
+                    ir.CompilerIrCallArgs.Nil
+                    (ast.AstType.Unit))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Store
+                      (ir.compiler-ir-test-symbol "g")
+                      (ir.CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Return
+                        (ir.CompilerIrMaybeValue.Some
+                          (ir.CompilerIrValue.Var 0)))
+                      ir.CompilerIrInstrList.Nil))))))))
+      ir.CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-p22-nested-same-home? [func : ir.CompilerIrFunction]) : bool
+  (match (reg.compiler-reg-plan-function-scalar func)
+    [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+      (compiler-reg-same-location? assignments 0 1)]))
+
+(define (compiler-reg-p22-nested-copy-ok?) : bool
+  (and
+    ;; A same-width signedness cast whose source stays live shares its home.
+    (compiler-reg-p22-nested-same-home?
+      (compiler-reg-p22-nested-copy-function
+        (ir.CompilerIrInstr.Cast
+          1
+          (ir.CompilerIrValue.Var 0)
+          (ast.AstType.I64)
+          (ast.AstType.U64))
+        (ast.AstType.U64)))
+    ;; Same in the other signedness direction.
+    (compiler-reg-p22-nested-same-home?
+      (compiler-reg-p22-nested-copy-function
+        (ir.CompilerIrInstr.Cast
+          1
+          (ir.CompilerIrValue.Var 0)
+          (ast.AstType.U64)
+          (ast.AstType.I64))
+        (compiler-reg-i64-ty)))
+    ;; A plain Mov whose source stays live shares its home.
+    (compiler-reg-p22-nested-same-home?
+      (compiler-reg-p22-nested-copy-function
+        (ir.CompilerIrInstr.Mov
+          1
+          (ir.CompilerIrValue.Var 0)
+          (compiler-reg-i64-ty))
+        (compiler-reg-i64-ty)))
+    ;; A NARROWING cast is real work -- the destination home holds the
+    ;; sign-normalized 32-bit value, which is not the source's bit pattern --
+    ;; so it must keep its own home.
+    (not
+      (compiler-reg-p22-nested-same-home?
+        (compiler-reg-p22-nested-copy-function
+          (ir.CompilerIrInstr.Cast
+            1
+            (ir.CompilerIrValue.Var 0)
+            (ast.AstType.I64)
+            (ast.AstType.I32))
+          (ast.AstType.I32))))
+    ;; A widening cast is real work too.
+    (not
+      (compiler-reg-p22-nested-same-home?
+        (compiler-reg-p22-nested-copy-function
+          (ir.CompilerIrInstr.Cast
+            1
+            (ir.CompilerIrValue.Var 0)
+            (ast.AstType.I32)
+            (compiler-reg-i64-ty))
+          (compiler-reg-i64-ty))))
+    ;; Nesting lifts the clobber-span refusal ONLY. A source redefined inside
+    ;; the copy's liveness is still refused.
+    (not
+      (compiler-reg-p22-nested-same-home?
+        (compiler-reg-p22-nested-reject-function)))))
 
 (define (compiler-reg-interference-blocks-coalesce-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -15435,7 +17391,10 @@
             (ast.ast-node-pool-reader-type-segment-bases)
             (clone func)
             0))
-        (reg.compiler-reg-function-var-types (clone func))
+        (reg.compiler-reg-same-value-eligible-vars
+          interval-index
+          (live.compiler-live-set-empty))
+        (reg.compiler-reg-function-var-types func)
         interval-index)]))
 
 (define (compiler-reg-sv-multi-ok?) : bool
@@ -18259,6 +20218,9 @@
       "compiler-reg-coalesce-ok?"
       (compiler-reg-coalesce-ok?))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-p22-nested-copy-ok?"
+      (compiler-reg-p22-nested-copy-ok?))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-liveness-handle-ok?"
       (cfg test (compiler-reg-liveness-handle-ok?) true))
     (compiler-regalloc-self-test-require!
@@ -18317,6 +20279,21 @@
       "compiler-reg-call-hole-declines-ok?"
       (cfg test (compiler-reg-call-hole-declines-ok?) true))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-cold-arm-weight-ok?"
+      (cfg test (compiler-reg-call-hole-cold-arm-weight-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-csr-qualify-ok?"
+      (cfg test (compiler-reg-call-hole-csr-qualify-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-csr-split-ok?"
+      (cfg test (compiler-reg-call-hole-csr-split-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-csr-cost-strict-ok?"
+      (cfg test (compiler-reg-call-hole-csr-cost-strict-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-recursive-arm-ok?"
+      (cfg test (compiler-reg-call-hole-recursive-arm-ok?) true))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-loop-park-detect-ok?"
       (cfg test (compiler-reg-loop-park-detect-ok?) true))
     (compiler-regalloc-self-test-require!
@@ -18340,6 +20317,24 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-park-declines-ok?"
       (cfg test (compiler-reg-loop-park-declines-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-deep-parks-ok?"
+      (cfg test (compiler-reg-loop-park-deep-parks-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-deep-two-bases-homed-ok?"
+      (cfg test (compiler-reg-loop-park-deep-two-bases-homed-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-deep-declines-ok?"
+      (cfg test (compiler-reg-loop-park-deep-declines-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-park-deep-ranking-ok?"
+      (cfg test (compiler-reg-loop-park-deep-ranking-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-park-ladder-ok?"
+      (cfg test (compiler-reg-park-ladder-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-scavenge-segment-hulls-ok?"
+      (cfg test (compiler-reg-scavenge-segment-hulls-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-call-live-ok?"
       (compiler-reg-scalar-call-live-ok?))

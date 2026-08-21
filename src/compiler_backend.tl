@@ -1106,7 +1106,7 @@
   [state : CompilerBackendState]
   [type-segment-bases : i64]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]) : compiler_ir_types.CompilerIrRepresentationIndex
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : compiler_ir_types.CompilerIrRepresentationIndex
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (if data.has-representations
@@ -2023,7 +2023,7 @@
   (ret-ty compiler_ast_types.AstType)
   (plan CompilerBackendRuntimePlan)
   (functions compiler_ir_types.CompilerIrFunctionList)
-  (externs compiler_ir_types.CompilerIrExternList)
+  (externs compiler_ir_types.CompilerIrExternSeq)
   (program-index CompilerBackendProgramIndex)
   (spans compiler_ir_types.CompilerSourceSpans)
   (span-index CompilerBackendSourceSpanIndex)
@@ -31778,17 +31778,7 @@
                 (compiler-backend-binop-scavenge-exclude-build)
                 5
                 "%rax"
-                (compiler-backend-global-shared-view backend-state))]
-            [true-target : i64
-              (compiler-backend-jump-resolve-target
-                (compiler-backend-global-shared-view backend-state)
-                true-label
-                (compiler-backend-global-shared-view fallthrough))]
-            [false-target : i64
-              (compiler-backend-jump-resolve-target
-                (compiler-backend-global-shared-view backend-state)
-                false-label
-                (compiler-backend-global-shared-view fallthrough))]
+                backend-state)]
             (match (compiler-backend-emit-load-value-with-plan
               (compiler-backend-global-shared-view assignments)
               (compiler-backend-global-shared-view cond)
@@ -31798,42 +31788,18 @@
                 (ResultCompilerBackend.Ok
                   (str_cat.str-cat
                     load
-                    (str_cat.str-cat
-                      "    testq "
-                      (compiler-backend-global-shared-view test-reg)
-                      ", "
-                      (compiler-backend-global-shared-view test-reg)
-                      "\n")
-                    (if (compiler-backend-jump-target-is-fallthrough?
-                      false-target
-                      (compiler-backend-global-shared-view fallthrough))
-                      (str_cat.str-cat
-                        "    jne "
-                        (compiler-backend-asm-label
-                          (compiler-backend-global-shared-view function)
-                          true-target)
-                        "\n"
-                        "")
-                      (if (compiler-backend-jump-target-is-fallthrough?
-                        true-target
-                        (compiler-backend-global-shared-view fallthrough))
-                        (str_cat.str-cat
-                          "    je "
-                          (compiler-backend-asm-label
-                            (compiler-backend-global-shared-view function)
-                            false-target)
-                          "\n"
-                          "")
-                        (str_cat.str-cat
-                          "    jne "
-                          (compiler-backend-asm-label
-                            (compiler-backend-global-shared-view function)
-                            true-target)
-                          "\n    jmp "
-                          (compiler-backend-asm-label
-                            (compiler-backend-global-shared-view function)
-                            false-target)
-                          "\n")))))]
+                    (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
+                    ;; Non-scalar conditions can emergency-borrow an occupied
+                    ;; register while materializing the value. Flush that
+                    ;; restore after `testq` and before either edge, just like
+                    ;; the Var/fallback paths above; appending it after the
+                    ;; conditional jump restores only the fallthrough edge.
+                    (compiler-backend-emit-branch-jumps
+                      function
+                      true-label
+                      false-label
+                      fallthrough
+                      backend-state)))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)]))])]))
 
@@ -33134,7 +33100,7 @@
   [ok-label : i64]
   [plan : CompilerBackendRuntimePlan]
   [_functions : compiler_ir_types.CompilerIrFunctionList]
-  [_externs : compiler_ir_types.CompilerIrExternList]
+  [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
     [call-space : i64
@@ -38401,17 +38367,9 @@
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (compiler_ir_types.compiler-ir-function-seq-count seq)]))
 
-(define (compiler-backend-extern-list-count
-  [externs : compiler_ir_types.CompilerIrExternList]) : i64
-  (match externs
-    [(compiler_ir_types.CompilerIrExternList.Nil) 0]
-    [(compiler_ir_types.CompilerIrExternList.Cons _ rest)
-      (+
-        1
-        (compiler-backend-extern-list-count
-          (compiler_ir_types.compiler-ir-box-shared-view rest)))]
-    [(compiler_ir_types.CompilerIrExternList.Array seq)
-      (compiler_ir_types.compiler-ir-extern-seq-count seq)]))
+(define (compiler-backend-extern-seq-count
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : i64
+  (compiler_ir_types.compiler-ir-extern-seq-count externs))
 
 (define (compiler-backend-program-index-bind-name
   [backend-state : CompilerBackendState]
@@ -38582,141 +38540,164 @@
 
 (define (compiler-backend-program-index-extern-signatures-into
   [type-segment-bases : i64]
-  [externs : compiler_ir_types.CompilerIrExternList]
-  [signature-ids : backend_i64_i64_map.Map]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [signature-ids : backend_i64_i64_map.Map (:consume)]
   [names : (__tl_dyn-array String)]
   [signatures : (__tl_dyn-array CompilerBackendMaybeSignature)]
   [call-infos : (__tl_dyn-array i64)]
   [index : i64]) : backend_i64_i64_map.Map
-  (match externs
-    [(compiler_ir_types.CompilerIrExternList.Nil) signature-ids]
-    [(compiler_ir_types.CompilerIrExternList.Cons item rest)
-      (match item
-        [(compiler_ir_types.CompilerIrExtern.Extern
-            extern-name-id
-            source-name-id
-            extern-name
-            ty
-            abi
-            _
-            _
-            _)
-          (let
-            [call-info : i64
-              (compiler-backend-program-index-extern-call-info
+  (compiler-backend-program-index-extern-signature-seq-into
+    type-segment-bases
+    externs
+    signature-ids
+    names
+    signatures
+    call-infos
+    index
+    0))
+
+(define (compiler-backend-program-index-extern-signature-seq-into
+  [type-segment-bases : i64]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [signature-ids : backend_i64_i64_map.Map (:consume)]
+  [names : (__tl_dyn-array String)]
+  [signatures : (__tl_dyn-array CompilerBackendMaybeSignature)]
+  [call-infos : (__tl_dyn-array i64)]
+  [out-index : i64]
+  [seq-index : i64]) : backend_i64_i64_map.Map
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+    signature-ids
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+      [(compiler_ir_types.CompilerIrExtern.Extern
+          extern-name-id
+          source-name-id
+          extern-name
+          ty
+          abi
+          _
+          _
+          _)
+        (let
+          [call-info : i64
+            (compiler-backend-program-index-extern-call-info
+              type-segment-bases
+              ty
+              abi)]
+          (begin
+            (set! (array-ref names out-index) extern-name)
+            (set!
+              (array-ref signatures out-index)
+              (compiler-backend-program-index-extern-signature
                 type-segment-bases
-                (compiler-backend-global-shared-view ty)
-                abi)]
-            (begin
-              (set! (array-ref names index) extern-name)
-              (set!
-                (array-ref signatures index)
-                (compiler-backend-program-index-extern-signature
-                  type-segment-bases
-                  ty))
-              (set! (array-ref call-infos index) call-info)
-              (if (compiler-backend-extern-call-info-aggregate-params?
-                call-info)
-                (begin
-                  (compiler_regalloc.compiler-reg-add-c-memory-call-name!
-                    extern-name-id)
-                  (compiler_regalloc.compiler-reg-add-c-memory-call-name!
-                    source-name-id))
-                unit)
-              (compiler-backend-program-index-extern-signatures-into
-                type-segment-bases
-                (compiler_ir_types.compiler-ir-box-shared-view rest)
-                (compiler-backend-program-index-bind-extern-ids
-                  signature-ids
-                  extern-name-id
-                  source-name-id
-                  index)
-                names
-                signatures
-                call-infos
-                (+ index 1))))])]
-    [(compiler_ir_types.CompilerIrExternList.Array seq)
-      (compiler-backend-program-index-extern-signatures-into
-        type-segment-bases
-        (compiler_ir_types.compiler-ir-extern-seq-to-list seq)
-        signature-ids
-        names
-        signatures
-        call-infos
-        index)]))
+                ty))
+            (set! (array-ref call-infos out-index) call-info)
+            (if (compiler-backend-extern-call-info-aggregate-params? call-info)
+              (begin
+                (compiler_regalloc.compiler-reg-add-c-memory-call-name!
+                  extern-name-id)
+                (compiler_regalloc.compiler-reg-add-c-memory-call-name!
+                  source-name-id))
+              unit)
+            (compiler-backend-program-index-extern-signature-seq-into
+              type-segment-bases
+              externs
+              (compiler-backend-program-index-bind-extern-ids
+                signature-ids
+                extern-name-id
+                source-name-id
+                out-index)
+              names
+              signatures
+              call-infos
+              (+ out-index 1)
+              (+ seq-index 1))))])))
 
 ;; Link symbols have their own intern identity, distinct from source identity.
 (define (compiler-backend-program-index-extern-links-into
-  [externs : compiler_ir_types.CompilerIrExternList]
-  [link-references : backend_i64_i64_map.Map]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [link-references : backend_i64_i64_map.Map (:consume)]
   [link-symbols : (__tl_dyn-array i64)]
   [provideds : (__tl_dyn-array bool)]
   [index : i64]) : backend_i64_i64_map.Map
-  (let
-    [out : backend_i64_i64_map.Map
-      (compiler-backend-global-shared-view link-references)]
-    (match externs
-      [(compiler_ir_types.CompilerIrExternList.Nil) out]
-      [(compiler_ir_types.CompilerIrExternList.Cons item rest)
-        (match item
-          [(compiler_ir_types.CompilerIrExtern.Extern
-              _
-              _
-              _
-              _
-              _
-              link-symbol
-              _
-              provided)
-            (begin
-              (set! (array-ref link-symbols index) link-symbol)
-              (set! (array-ref provideds index) provided)
-              (backend_i64_i64_map.insert-ref! (&mut out) link-symbol index)
-              (compiler-backend-program-index-extern-links-into
-                (compiler_ir_types.compiler-ir-box-shared-view rest)
-                out
-                link-symbols
-                provideds
-                (+ index 1)))])]
-      [(compiler_ir_types.CompilerIrExternList.Array seq)
-        (compiler-backend-program-index-extern-links-into
-          (compiler_ir_types.compiler-ir-extern-seq-to-list seq)
-          out
-          link-symbols
-          provideds
-          index)])))
+  (compiler-backend-program-index-extern-link-seq-into
+    externs
+    link-references
+    link-symbols
+    provideds
+    index
+    0))
+
+(define (compiler-backend-program-index-extern-link-seq-into
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [link-references : backend_i64_i64_map.Map (:consume)]
+  [link-symbols : (__tl_dyn-array i64)]
+  [provideds : (__tl_dyn-array bool)]
+  [out-index : i64]
+  [seq-index : i64]) : backend_i64_i64_map.Map
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+    link-references
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+      [(compiler_ir_types.CompilerIrExtern.Extern
+          _
+          _
+          _
+          _
+          _
+          link-symbol
+          _
+          provided)
+        (begin
+          (set! (array-ref link-symbols out-index) link-symbol)
+          (set! (array-ref provideds out-index) provided)
+          (backend_i64_i64_map.insert-ref!
+            (&mut link-references)
+            link-symbol
+            out-index)
+          (compiler-backend-program-index-extern-link-seq-into
+            externs
+            link-references
+            link-symbols
+            provideds
+            (+ out-index 1)
+            (+ seq-index 1)))])))
 
 ;; Logical extern names carry parser/generated identities.
 (define (compiler-backend-program-index-extern-reference-names-into
-  [externs : compiler_ir_types.CompilerIrExternList]
-  [reference-ids : backend_i64_i64_map.Map]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [reference-ids : backend_i64_i64_map.Map (:consume)]
   [index : i64]) : backend_i64_i64_map.Map
-  (match externs
-    [(compiler_ir_types.CompilerIrExternList.Nil) reference-ids]
-    [(compiler_ir_types.CompilerIrExternList.Cons item rest)
-      (match item
-        [(compiler_ir_types.CompilerIrExtern.Extern
+  (compiler-backend-program-index-extern-reference-name-seq-into
+    externs
+    reference-ids
+    index
+    0))
+
+(define (compiler-backend-program-index-extern-reference-name-seq-into
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [reference-ids : backend_i64_i64_map.Map (:consume)]
+  [out-index : i64]
+  [seq-index : i64]) : backend_i64_i64_map.Map
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+    reference-ids
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+      [(compiler_ir_types.CompilerIrExtern.Extern
+          extern-name-id
+          source-name-id
+          _
+          _
+          _
+          _
+          _
+          _)
+        (compiler-backend-program-index-extern-reference-name-seq-into
+          externs
+          (compiler-backend-program-index-bind-extern-ids
+            reference-ids
             extern-name-id
             source-name-id
-            _
-            _
-            _
-            _
-            _
-            _)
-          (compiler-backend-program-index-extern-reference-names-into
-            (compiler_ir_types.compiler-ir-box-shared-view rest)
-            (compiler-backend-program-index-bind-extern-ids
-              reference-ids
-              extern-name-id
-              source-name-id
-              index)
-            (+ index 1))])]
-    [(compiler_ir_types.CompilerIrExternList.Array seq)
-      (compiler-backend-program-index-extern-reference-names-into
-        (compiler_ir_types.compiler-ir-extern-seq-to-list seq)
-        reference-ids
-        index)]))
+            out-index)
+          (+ out-index 1)
+          (+ seq-index 1))])))
 
 ;; The aggregate type name a register-group value carries (for the
 ;; type-name -> word-count map). Empty for non-aggregate types.
@@ -38979,17 +38960,13 @@
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [profile-state : profile_state.CompilerProfileState]) : CompilerBackendProgramIndex
   (let
     [_clear-c-memory-calls : unit
       (compiler_regalloc.compiler-reg-clear-c-memory-call-names!)]
-    [function-count : i64
-      (compiler-backend-function-list-count
-        (compiler-backend-global-shared-view functions))]
-    [extern-count : i64
-      (compiler-backend-extern-list-count
-        (compiler-backend-global-shared-view externs))]
+    [function-count : i64 (compiler-backend-function-list-count functions)]
+    [extern-count : i64 (compiler-backend-extern-seq-count externs)]
     [function-names : (__tl_dyn-array String)
       (array.make-array String function-count)]
     [function-signatures : (__tl_dyn-array CompilerBackendMaybeSignature)
@@ -39063,7 +39040,7 @@
 (define (compiler-backend-program-index-build-with-profile-state
   [type-segment-bases : i64]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [profile-state : profile_state.CompilerProfileState]) : CompilerBackendProgramIndex
   (compiler-backend-program-index-build-with-backend-state-and-profile-state
     (compiler-backend-state-new (ci.intern-compat-state-capture-active))
@@ -39075,7 +39052,7 @@
 (define (compiler-backend-program-index-build
   [type-segment-bases : i64]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]) : CompilerBackendProgramIndex
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : CompilerBackendProgramIndex
   (compiler-backend-program-index-build-with-profile-state
     type-segment-bases
     functions
@@ -39896,63 +39873,68 @@
 
 (define (compiler-backend-validate-extern-symbols-into
   [backend-state : CompilerBackendState]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [seen : backend_string_i64_map.Map]) : ResultCompilerBackendSymbolValidation
-  (match externs
-    [(compiler_ir_types.CompilerIrExternList.Nil)
-      (ResultCompilerBackendSymbolValidation.Ok seen)]
-    [(compiler_ir_types.CompilerIrExternList.Cons ext rest)
-      (match ext
-        [(compiler_ir_types.CompilerIrExtern.Extern
-            name-id
-            _
-            _
-            _
-            _
-            link-symbol-id
-            _
-            provided)
-          (if (compiler-backend-emits-extern-symbol?
+  (compiler-backend-validate-extern-symbol-seq-into
+    backend-state
+    externs
+    plan
+    seen
+    0))
+
+(define (compiler-backend-validate-extern-symbol-seq-into
+  [backend-state : CompilerBackendState]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [plan : CompilerBackendRuntimePlan]
+  [seen : backend_string_i64_map.Map]
+  [seq-index : i64]) : ResultCompilerBackendSymbolValidation
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+    (ResultCompilerBackendSymbolValidation.Ok seen)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+      [(compiler_ir_types.CompilerIrExtern.Extern
+          name-id
+          _
+          _
+          _
+          _
+          link-symbol-id
+          _
+          provided)
+        (if (compiler-backend-emits-extern-symbol?
+          backend-state
+          name-id
+          link-symbol-id
+          provided
+          plan)
+          (let
+            [symbol : String
+              (compiler-backend-link-symbol-id
+                link-symbol-id
+                plan
+                backend-state)]
+            (if (backend_string_i64_map.contains? (& seen) symbol)
+              (compiler-backend-symbol-validation-error
+                (str_cat.str-cat
+                  "backend: extern symbol collides with emitted symbol "
+                  symbol))
+              (compiler-backend-validate-extern-symbol-seq-into
+                backend-state
+                externs
+                plan
+                seen
+                (+ seq-index 1))))
+          (compiler-backend-validate-extern-symbol-seq-into
             backend-state
-            name-id
-            link-symbol-id
-            provided
-            (compiler-backend-global-shared-view plan))
-            (let
-              [symbol : String
-                (compiler-backend-link-symbol-id
-                  link-symbol-id
-                  (compiler-backend-global-shared-view plan)
-                  backend-state)]
-              (if (backend_string_i64_map.contains?
-                (& seen)
-                (compiler-backend-global-shared-view symbol))
-                (compiler-backend-symbol-validation-error
-                  (str_cat.str-cat
-                    "backend: extern symbol collides with emitted symbol "
-                    symbol))
-                (compiler-backend-validate-extern-symbols-into
-                  backend-state
-                  (compiler_ir_types.compiler-ir-box-shared-view rest)
-                  plan
-                  seen)))
-            (compiler-backend-validate-extern-symbols-into
-              backend-state
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              plan
-              seen))])]
-    [(compiler_ir_types.CompilerIrExternList.Array seq)
-      (compiler-backend-validate-extern-symbols-into
-        backend-state
-        (compiler_ir_types.compiler-ir-extern-seq-to-list seq)
-        plan
-        seen)]))
+            externs
+            plan
+            seen
+            (+ seq-index 1)))])))
 
 (define (compiler-backend-validate-function-symbols
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
   (match (compiler-backend-validate-global-symbols-into
@@ -47517,7 +47499,7 @@
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
   [_functions : compiler_ir_types.CompilerIrFunctionList]
-  [_externs : compiler_ir_types.CompilerIrExternList]
+  [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -48241,48 +48223,71 @@
                 [src-home : String
                   (compiler-backend-value-scalar-register
                     backend-state
-                    (compiler-backend-global-shared-view assignments)
-                    (compiler-backend-global-shared-view src))]
-                [exclude : (__tl_dyn-array String)
-                  (if (string.eq
-                    (compiler-backend-global-shared-view src-home)
-                    "")
-                    (array.make-array String 0)
-                    (compiler-backend-one-exclude
-                      (compiler-backend-global-shared-view src-home)))]
-                [exclude-n : i64
-                  (if (string.eq
-                    (compiler-backend-global-shared-view src-home)
-                    "")
-                    0
-                    1)]
-                [reg : String
-                  (compiler-backend-planned-or-scavenge-reg
-                    planned0
-                    dst
-                    exclude
-                    exclude-n
-                    "%r8"
-                    backend-state)]
-                (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
-                  type-segment-bases
-                  (compiler-backend-global-shared-view assignments)
-                  (compiler-backend-global-shared-view src)
-                  (compiler-backend-global-shared-view ty)
-                  (compiler-backend-global-shared-view reg)
-                  (compiler-backend-global-shared-view program-index))
-                  [(ResultCompilerBackend.Ok load)
-                    (ResultCompilerBackend.Ok
-                      (str_cat.str-cat
-                        load
-                        (compiler-backend-emit-store-typed-var-with-plan
-                          (compiler-backend-global-shared-view assignments)
-                          dst
-                          (compiler-backend-global-shared-view reg)
-                          (compiler-backend-global-shared-view ty)
-                          backend-state)))]
-                  [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err message)]))))])]))
+                    assignments
+                    src)]
+                ;; The mirror image of the load above, and the reason it is
+                ;; worth its own arm: a register-homed source moving to a
+                ;; MEMORY-homed destination is a single `movq %src, N(%rsp)`.
+                ;; Routing it through the scratch instead costs an extra
+                ;; instruction per store, and the P3/P7 call-hole carriers are
+                ;; made of exactly this move -- their carrier is forced to a
+                ;; frame slot by construction, so every crossing paid
+                ;; `movq %reg, %r8 ; movq %r8, N(%rsp)` for a store x86 does in
+                ;; one. The width argument is the load's, unchanged: a var's
+                ;; register home already holds the normalized 64-bit value, so
+                ;; the store needs no per-type narrowing -- and the narrowing
+                ;; the scratch path did emit went into the SCRATCH, which is
+                ;; why it could not simply be dropped there.
+                ;;
+                ;; `compiler-backend-value-scalar-register` answers non-empty
+                ;; only for a var with a plain Register home (never a pair,
+                ;; never a forwarded AddrOf), so this arm needs no scratch at
+                ;; all and asks the scavenger for none: strictly fewer
+                ;; registers are touched than the plan reserved.
+                (if (and (string.eq dst-home "") (not (string.eq src-home "")))
+                  (ResultCompilerBackend.Ok
+                    (compiler-backend-emit-store-typed-var-with-plan
+                      assignments
+                      dst
+                      src-home
+                      ty
+                      backend-state))
+                  (let
+                    [exclude : (__tl_dyn-array String)
+                      (if (string.eq src-home "")
+                        (array.make-array String 0)
+                        (compiler-backend-one-exclude src-home))]
+                    [exclude-n : i64
+                      (if (string.eq src-home "")
+                        0
+                        1)]
+                    [reg : String
+                      (compiler-backend-planned-or-scavenge-reg
+                        planned0
+                        dst
+                        exclude
+                        exclude-n
+                        "%r8"
+                        backend-state)]
+                    (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                      type-segment-bases
+                      assignments
+                      src
+                      ty
+                      reg
+                      program-index)
+                      [(ResultCompilerBackend.Ok load)
+                        (ResultCompilerBackend.Ok
+                          (str_cat.str-cat
+                            load
+                            (compiler-backend-emit-store-typed-var-with-plan
+                              assignments
+                              dst
+                              reg
+                              ty
+                              backend-state)))]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)]))))))])]))
 
 (define (compiler-backend-emit-mov
   [type-segment-bases : i64]
@@ -48607,7 +48612,7 @@
   [ty : compiler_ast_types.AstType]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [_externs : compiler_ir_types.CompilerIrExternList]
+  [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -48909,7 +48914,7 @@
   [ty : compiler_ast_types.AstType]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [_externs : compiler_ir_types.CompilerIrExternList]
+  [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -49001,7 +49006,7 @@
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -59499,7 +59504,7 @@
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
   [_functions : compiler_ir_types.CompilerIrFunctionList]
-  [_externs : compiler_ir_types.CompilerIrExternList]
+  [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]) : ResultCompilerBackend
   (let
@@ -59632,7 +59637,7 @@
   [types : compiler_regalloc.CompilerRegVarTypes]
   [func : compiler_ir_types.CompilerIrValue]
   [_functions : compiler_ir_types.CompilerIrFunctionList]
-  [_externs : compiler_ir_types.CompilerIrExternList]
+  [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : compiler_ast_types.AstTypeList
   (match (compiler-backend-global-shared-view func)
     [(compiler_ir_types.CompilerIrValue.Function name)
@@ -59691,7 +59696,7 @@
   [func : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : compiler_ast_types.AstTypeList
   (let
     [declared : compiler_ast_types.AstTypeList
@@ -59799,7 +59804,7 @@
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -60001,7 +60006,7 @@
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -60039,7 +60044,7 @@
   [types : compiler_regalloc.CompilerRegVarTypes]
   [vars : i64]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -60218,7 +60223,7 @@
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -60366,7 +60371,7 @@
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
-  [_externs : compiler_ir_types.CompilerIrExternList]
+  [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -60476,7 +60481,7 @@
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -65471,7 +65476,7 @@
   [ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
@@ -65617,7 +65622,7 @@
   [ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
@@ -65717,7 +65722,7 @@
   [ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
@@ -65832,7 +65837,7 @@
   [ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
@@ -66855,11 +66860,56 @@
             (set! bit-index (+ bit-index 1)))))
       count)))
 
+;; ---------------------------------------------------------------------------
+;; SEGMENT-PRECISE SCAVENGE OCCUPANCY.
+;;
+;; The occupancy table below answers "which registers carry a live value at
+;; instruction i" for every scratch pick the emitter makes. It used to be built
+;; from each var's COARSE HULL [starts[v], ends[v]] -- one contiguous range per
+;; var -- because that is all `compiler-reg-interval-index-build` produces.
+;;
+;; A hull is not liveness. The allocator itself decides interference on the
+;; SEGMENTED intervals (compiler-reg-vars-interfere-segmented-index?), so it
+;; legitimately homes two values in one register whenever their hulls overlap
+;; but their live segments do not. Read back through hulls, that same register
+;; then looks occupied across the union of both hulls -- including the hole
+;; where neither value is live. In a small function the difference is noise; in
+;; a merged/inlined body it is fatal: any register holding one long-hulled value
+;; anywhere reads occupied everywhere, so the union the pick queries saturates
+;; to "every register busy" and EVERY scratch demand -- including a spilled
+;; array base's reload, which needs a register and cannot be a memory operand --
+;; falls to the emergency tier, which saves an occupant, reloads, and restores
+;; it: four instructions where two would do.
+;;
+;; Measured on the widened-inline harness (target/wsl/patches/widen-inline-
+;; experiment.py, cfg_domloops): every one of the 67 emergency picks in that
+;; binary -- 61 of them inside the merged `cfg-function` -- reported the same
+;; occupied mask 0x387FF, i.e. all eleven pooled GP registers plus rax/rsi/rdi,
+;; and the hot loop paid a save/restore pair around each of its four base
+;; reloads. With the segments those 61 sites all find a free register.
+;;
+;; Using the segments makes the answer exact rather than merely cheap, and it
+;; can only REMOVE bits: a segment set covers a subset of its own hull. Every
+;; other guard the pick applies is untouched -- the instruction's operand/def
+;; reserved mask, the explicit exclude list, the callee-saved plan-mask rule and
+;; the forward staging window all still hold, so a register is handed out only
+;; when nothing live occupies it. Vars with no segment row (the synthetic
+;; const-hoist and scratch-plan pseudo-vars appended past the function's var
+;; count) keep the hull, which for a single-range synthetic interval is the same
+;; answer.
+(define (compiler-backend-scavenge-var-segment-count
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
+  [var : i64]) : i64
+  (if (or (< var 0) (>= var (array-length segments)))
+    0
+    (compiler_regalloc.compiler-reg-interval-seq-count (array-ref segments var))))
+
 (define (compiler-backend-scavenge-occupancy-event-capacity
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
   [present : (__tl_dyn-array i64)]
   [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)]
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
   [limit : i64]
   [vars : i64]
   [instr-count : i64]) : i64
@@ -66884,12 +66934,25 @@
                 (if (>= raw-end-i instr-count)
                   (- instr-count 1)
                   raw-end-i)]
+              [ranges : i64
+                (let
+                  [count : i64
+                    (compiler-backend-scavenge-var-segment-count segments v)]
+                  (if (< count 1)
+                    1
+                    count))]
               (if (and (not (= loc-mask 0)) (<= start-i end-i))
+                ;; One open/close pair per occupied bit per RANGE. A segmented
+                ;; var contributes one range per segment; the count is an upper
+                ;; bound (an empty or out-of-window segment simply goes unused),
+                ;; which is all this sizing pass has to be.
                 (set!
                   events
                   (+
                     events
-                    (* 2 (compiler-backend-scavenge-mask-bit-count loc-mask))))
+                    (*
+                      ranges
+                      (* 2 (compiler-backend-scavenge-mask-bit-count loc-mask)))))
                 unit))
             unit)
           (set! v (+ v 1))))
@@ -67050,10 +67113,52 @@
           (set! bit-index (+ bit-index 1))))
       mask)))
 
+(define (compiler-backend-scavenge-occupancy-add-var-segments!
+  [heads : (__tl_dyn-array i64)]
+  [event-bits : (__tl_dyn-array i64)]
+  [event-deltas : (__tl_dyn-array i64)]
+  [event-next : (__tl_dyn-array i64)]
+  [rows : compiler_regalloc.CompilerRegIntervalSeq]
+  [count : i64]
+  [instr-count : i64]
+  [loc-mask : i64]
+  [used : i64]) : i64
+  (let
+    [index : i64 0]
+    [event-used : i64 used]
+    (begin
+      (while (< index count)
+        (let
+          [row : compiler_regalloc.CompilerRegInterval
+            (compiler_regalloc.compiler-reg-interval-seq-ref rows index)]
+          [start-i : i64 (/ row.start 2)]
+          [raw-end-i : i64 (/ row.end 2)]
+          [end-i : i64
+            (if (>= raw-end-i instr-count)
+              (- instr-count 1)
+              raw-end-i)]
+          (begin
+            (if (and (>= row.start 0) (>= row.end 0) (<= start-i end-i))
+              (set!
+                event-used
+                (compiler-backend-scavenge-occupancy-add-range!
+                  heads
+                  event-bits
+                  event-deltas
+                  event-next
+                  start-i
+                  end-i
+                  loc-mask
+                  event-used))
+              unit)
+            (set! index (+ index 1)))))
+      event-used)))
+
 (define (compiler-backend-scavenge-occupancy-build
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
   [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
   [vars : i64]) : (__tl_dyn-array i64)
   (let
     [instr-count : i64
@@ -67068,10 +67173,11 @@
     [limit : i64 (array-length present)]
     [max-events : i64
       (compiler-backend-scavenge-occupancy-event-capacity
-        (compiler-backend-global-shared-view starts)
-        (compiler-backend-global-shared-view ends)
-        (compiler-backend-global-shared-view present)
-        (compiler-backend-global-shared-view items)
+        starts
+        ends
+        present
+        items
+        segments
         limit
         vars
         instr-count)]
@@ -67107,18 +67213,33 @@
                 (if (>= raw-end-i instr-count)
                   (- instr-count 1)
                   raw-end-i)]
+              [seg-count : i64
+                (compiler-backend-scavenge-var-segment-count segments v)]
               (if (and (not (= loc-mask 0)) (<= start-i end-i))
-                (set!
-                  event-used
-                  (compiler-backend-scavenge-occupancy-add-range!
-                    (compiler-backend-global-shared-view heads)
-                    (compiler-backend-global-shared-view event-bits)
-                    (compiler-backend-global-shared-view event-deltas)
-                    (compiler-backend-global-shared-view event-next)
-                    start-i
-                    end-i
-                    loc-mask
-                    event-used))
+                (if (< seg-count 1)
+                  (set!
+                    event-used
+                    (compiler-backend-scavenge-occupancy-add-range!
+                      heads
+                      event-bits
+                      event-deltas
+                      event-next
+                      start-i
+                      end-i
+                      loc-mask
+                      event-used))
+                  (set!
+                    event-used
+                    (compiler-backend-scavenge-occupancy-add-var-segments!
+                      heads
+                      event-bits
+                      event-deltas
+                      event-next
+                      (array-ref segments v)
+                      seg-count
+                      instr-count
+                      loc-mask
+                      event-used)))
                 unit))
             unit)
           (set! v (+ v 1))))
@@ -67379,14 +67500,16 @@
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
   [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
   [plan-mask : i64]
   [vars : i64]) : unit
   (let
     [occupied-masks : (__tl_dyn-array i64)
       (compiler-backend-scavenge-occupancy-build
-        (compiler-backend-global-shared-view starts)
-        (compiler-backend-global-shared-view ends)
-        (compiler-backend-global-shared-view assignment-index)
+        starts
+        ends
+        assignment-index
+        segments
         vars)]
     (compiler-backend-set-scavenge-ctx-ready!
       function-state
@@ -67397,6 +67520,9 @@
       occupied-masks
       vars)))
 
+;; Hull-only entry for the fixtures and the empty-plan path: an absent segment
+;; row means "use this var's hull", so passing no rows reproduces the original
+;; coarse table exactly.
 (define (compiler-backend-set-scavenge-ctx!
   [function-state : CompilerBackendFunctionState]
   [starts : (__tl_dyn-array i64)]
@@ -67410,6 +67536,7 @@
         starts
         ends
         assignment-index
+        (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
         plan-mask
         vars)]))
 
@@ -67467,6 +67594,7 @@
   [slot-vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [intervals : compiler_regalloc.CompilerRegIntervalSeq]
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
   [backend-state : CompilerBackendState]) : unit
   (let
     [abi-mask : i64
@@ -67485,6 +67613,7 @@
               (__tl_make-array i64 0)
               (__tl_make-array i64 0)
               assignment-index
+              segments
               (bit-or plan-mask abi-mask)
               0)])
         (match (compiler-backend-scavenge-assignments-build
@@ -67508,6 +67637,7 @@
                   starts
                   (compiler-backend-global-shared-view ends)
                   assignment-index
+                  segments
                   slot-vars)
                 slot-vars))])))))
 
@@ -68152,7 +68282,17 @@
     [vars : i64]
     [point : i64]
     [reg : String]) : unit
+    ;; The oracle is the installed occupancy TABLE, not the coarse hull arrays:
+    ;; that table is what every pick consults, it is segment-precise (see
+    ;; compiler-backend-scavenge-var-segment-count), and a hull re-derivation
+    ;; would flag a legitimately free register inside a resident's liveness hole
+    ;; as a violation. `starts`/`ends`/`assignment-index`/`vars` stay in the
+    ;; signature because the used-var and live-through self-checks below still
+    ;; read them as their independent liveness oracle.
     (if (or
+      (compiler-backend-scavenge-reg-free-in-mask?
+        (compiler-backend-scavenge-occupied-mask-at-point function-state point)
+        reg)
       (compiler-backend-scavenge-free-for-instr?
         starts
         ends
@@ -72580,7 +72720,7 @@
   [functions : compiler_ir_types.CompilerIrFunctionList]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -73301,14 +73441,22 @@
             ;; the frame merely by numbering temporary register intervals.
             [(compiler_regalloc.CompilerRegColoring.None) remat-vars]
             [(compiler_regalloc.CompilerRegColoring.Remap _ slots) slots])]
-        [scavenge-intervals
-          : compiler_regalloc.CompilerRegIntervalSeq
+        [scavenge-selection
+          : compiler_regalloc.CompilerRegIntervalSelection
           ;; Scavenge occupancy must be keyed to the FINAL emitted IR at
           ;; instruction precision. The allocator plan intervals predate
           ;; call-save/remat rewrites and frame slot compaction, and the cheap
           ;; block interval builder can miss within-block live-through scratch
           ;; hazards. The full live-after intervals are the source of truth for
           ;; register-owned values that must not be scavenged.
+          ;;
+          ;; The SEGMENTED build is used (one walk, same liveness): its coarse
+          ;; starts/ends are identical to the plain hull builder's -- the
+          ;; block-entry live-in bridge is off, see
+          ;; compiler-reg-live-interval-selection-with-live-in -- and its per-var
+          ;; segment rows give the occupancy table the allocator's own notion of
+          ;; where a register actually carries a live value, instead of a hull
+          ;; that saturates every register in a merged body.
           (if (compiler-backend-assignments-have-register-home?
             (compiler-backend-global-shared-view scavenge-assignments))
             (let
@@ -73318,12 +73466,25 @@
                   (compiler-backend-global-shared-view emit-params)
                   (compiler-backend-global-shared-view ret-ty)
                   scratch-vars
-                  (compiler-backend-global-shared-view emit-blocks-list))]
-              (compiler_regalloc.compiler-reg-live-intervals
-                (compiler-backend-global-shared-view scavenge-func)
-                (compiler_liveness.compiler-live-analyze-function
-                  (compiler-backend-global-shared-view scavenge-func))))
-            (compiler_regalloc.compiler-reg-interval-seq-empty))]
+                  emit-blocks-list)]
+              (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
+                scavenge-func
+                (compiler_liveness.compiler-live-analyze-function scavenge-func)
+                false))
+            (compiler_regalloc.CompilerRegIntervalSelection.Selection
+              (compiler_regalloc.compiler-reg-interval-seq-empty)
+              (compiler_regalloc.compiler-reg-interval-index-build
+                (compiler_regalloc.compiler-reg-interval-seq-empty)
+                0)))]
+        [scavenge-intervals : compiler_regalloc.CompilerRegIntervalSeq
+          (match scavenge-selection
+            [(compiler_regalloc.CompilerRegIntervalSelection.Selection hulls _)
+              hulls])]
+        [scavenge-segments : (__tl_dyn-array
+          compiler_regalloc.CompilerRegIntervalSeq)
+          (match scavenge-selection
+            [(compiler_regalloc.CompilerRegIntervalSelection.Selection _ index)
+              index.segments])]
         [types : compiler_regalloc.CompilerRegVarTypes
           (match (compiler-backend-global-shared-view coloring)
             [(compiler_regalloc.CompilerRegColoring.None)
@@ -73613,6 +73774,10 @@
                 (compiler-backend-global-shared-view scratch-plan)
                 scavenge-base-vars
                 scavenge-base-intervals)
+              ;; Rows exist only for the emitted function's own vars; the
+              ;; const-hoist and scratch-plan pseudo-vars appended above sit past
+              ;; the end of this array and fall back to their single-range hulls.
+              scavenge-segments
               program-index.backend-state)
             (compiler-backend-function-scratch-set-i64-array!
               function-state
@@ -74451,7 +74616,7 @@
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -74517,7 +74682,7 @@
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -74627,7 +74792,7 @@
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -74730,7 +74895,7 @@
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -74822,7 +74987,7 @@
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -74942,7 +75107,7 @@
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -75048,7 +75213,7 @@
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -75111,7 +75276,7 @@
 (define (compiler-backend-emit-closure-descriptor-entry-into
   [name : i64]
   [_functions : compiler_ir_types.CompilerIrFunctionList]
-  [_externs : compiler_ir_types.CompilerIrExternList]
+  [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match (compiler-backend-index-signature
@@ -75128,7 +75293,7 @@
   [names : BackendSymbolSeq]
   [index : i64]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (>= index names.len)
@@ -75149,7 +75314,7 @@
 (define (compiler-backend-emit-closure-descriptors-into
   [names : BackendSymbolSeq]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (= names.len 0)
@@ -75198,7 +75363,7 @@
   [_ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
   [_functions : compiler_ir_types.CompilerIrFunctionList]
-  [_externs : compiler_ir_types.CompilerIrExternList]
+  [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
     [params : compiler_ir_types.CompilerIrParamList
@@ -75348,7 +75513,7 @@
   [ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
     [backend-state : CompilerBackendState program-index.backend-state]
@@ -75410,7 +75575,7 @@
   [names : BackendSymbolSeq]
   [index : i64]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
@@ -75463,7 +75628,7 @@
   [names : BackendSymbolSeq]
   [index : i64]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
@@ -75536,7 +75701,7 @@
   [target : CompilerBackendTarget]
   [names : BackendSymbolSeq]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
@@ -76886,93 +77051,85 @@
 (define (compiler-backend-runtime-index-externs
   [backend-state : CompilerBackendState]
   [index : CompilerBackendRuntimeIndex]
-  [externs : compiler_ir_types.CompilerIrExternList]) : CompilerBackendRuntimeIndex
-  (match externs
-    [(compiler_ir_types.CompilerIrExternList.Nil) index]
-    [(compiler_ir_types.CompilerIrExternList.Cons item rest)
-      (match item
-        [(compiler_ir_types.CompilerIrExtern.Extern
-            name-id
-            source-name-id
-            _
-            _
-            _
-            link-symbol
-            _
-            provided)
-          (let
-            [with-startup-role : CompilerBackendRuntimeIndex
-              (compiler-backend-runtime-index-with-startup-profile-role
-                index
-                link-symbol
-                backend-state)]
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : CompilerBackendRuntimeIndex
+  (compiler-backend-runtime-index-extern-seq backend-state index externs 0))
+
+(define (compiler-backend-runtime-index-extern-seq
+  [backend-state : CompilerBackendState]
+  [index : CompilerBackendRuntimeIndex]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [seq-index : i64]) : CompilerBackendRuntimeIndex
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+    index
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+      [(compiler_ir_types.CompilerIrExtern.Extern
+          name-id
+          source-name-id
+          _
+          _
+          _
+          link-symbol
+          _
+          provided)
+        (let
+          [with-startup-role : CompilerBackendRuntimeIndex
+            (compiler-backend-runtime-index-with-startup-profile-role
+              index
+              link-symbol
+              backend-state)]
+          (compiler-backend-runtime-index-extern-seq
+            backend-state
             (if provided
-              (compiler-backend-runtime-index-externs
-                backend-state
-                with-startup-role
-                (compiler_ir_types.compiler-ir-box-shared-view rest))
-              (let
-                [with-names : CompilerBackendRuntimeIndex
+              with-startup-role
+              (compiler-backend-runtime-index-with-extern-role
+                (compiler-backend-runtime-index-add-extern-name
                   (compiler-backend-runtime-index-add-extern-name
                     (compiler-backend-runtime-index-add-extern-name
-                      (compiler-backend-runtime-index-add-extern-name
-                        with-startup-role
-                        name-id)
-                      source-name-id)
-                    link-symbol)]
-                [with-runtime-role : CompilerBackendRuntimeIndex
-                  (compiler-backend-runtime-index-with-extern-role
-                    with-names
-                    name-id
-                    link-symbol)]
-                (compiler-backend-runtime-index-externs
-                  backend-state
-                  with-runtime-role
-                  (compiler_ir_types.compiler-ir-box-shared-view rest)))))])]
-    [(compiler_ir_types.CompilerIrExternList.Array seq)
-      (compiler-backend-runtime-index-externs
-        backend-state
-        index
-        (compiler_ir_types.compiler-ir-extern-seq-to-list seq))]))
+                      with-startup-role
+                      name-id)
+                    source-name-id)
+                  link-symbol)
+                name-id
+                link-symbol))
+            externs
+            (+ seq-index 1)))])))
 
 (define (compiler-backend-runtime-index-arena-debug-call-links
-  [index : CompilerBackendRuntimeIndex]
-  [externs : compiler_ir_types.CompilerIrExternList]) : CompilerBackendRuntimeIndex
-  (match externs
-    [(compiler_ir_types.CompilerIrExternList.Nil) index]
-    [(compiler_ir_types.CompilerIrExternList.Cons item rest)
-      (match item
-        [(compiler_ir_types.CompilerIrExtern.Extern
-            name-id
-            source-name-id
-            _
-            _
-            _
-            link-symbol
-            _
-            _)
-          (compiler-backend-runtime-index-arena-debug-call-links
-            (if (and
-              (cbi.compiler-builtin-backend-runtime-arena-debug-id? link-symbol)
-              (or
-                (compiler-backend-runtime-index-calls?
-                  (compiler-backend-global-shared-view index)
-                  name-id)
-                (compiler-backend-runtime-index-calls?
-                  (compiler-backend-global-shared-view index)
-                  source-name-id)))
-              (compiler-backend-runtime-index-add-call index link-symbol)
-              index)
-            (compiler_ir_types.compiler-ir-box-shared-view rest))])]
-    [(compiler_ir_types.CompilerIrExternList.Array seq)
-      (compiler-backend-runtime-index-arena-debug-call-links
-        index
-        (compiler_ir_types.compiler-ir-extern-seq-to-list seq))]))
+  [index : CompilerBackendRuntimeIndex (:consume)]
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : CompilerBackendRuntimeIndex
+  (compiler-backend-runtime-index-arena-debug-call-link-seq index externs 0))
+
+(define (compiler-backend-runtime-index-arena-debug-call-link-seq
+  [index : CompilerBackendRuntimeIndex (:consume)]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [seq-index : i64]) : CompilerBackendRuntimeIndex
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+    index
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+      [(compiler_ir_types.CompilerIrExtern.Extern
+          name-id
+          source-name-id
+          _
+          _
+          _
+          link-symbol
+          _
+          _)
+        (compiler-backend-runtime-index-arena-debug-call-link-seq
+          (if (and
+            (cbi.compiler-builtin-backend-runtime-arena-debug-id? link-symbol)
+            (or
+              (compiler-backend-runtime-index-calls? index name-id)
+              (compiler-backend-runtime-index-calls? index source-name-id)))
+            (compiler-backend-runtime-index-add-call index link-symbol)
+            index)
+          externs
+          (+ seq-index 1))])))
 
 (define (compiler-backend-runtime-index
   [backend-state : CompilerBackendState]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]) : CompilerBackendRuntimeIndex
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : CompilerBackendRuntimeIndex
   (compiler-backend-runtime-index-arena-debug-call-links
     (compiler-backend-runtime-index-functions
       (compiler-backend-runtime-index-externs
@@ -77078,7 +77235,7 @@
 (define (compiler-backend-runtime-plan-with-index-for-with-backend-state
   [backend-state : CompilerBackendState]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]) : ResultBackendRuntimePlanWithIndex
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : ResultBackendRuntimePlanWithIndex
   (let
     [index : CompilerBackendRuntimeIndex
       (compiler-backend-runtime-index
@@ -77324,7 +77481,7 @@
 (define (compiler-backend-runtime-plan-for-with-backend-state
   [backend-state : CompilerBackendState]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]) : ResultBackendRuntimePlan
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : ResultBackendRuntimePlan
   (match (compiler-backend-runtime-plan-with-index-for-with-backend-state
     backend-state
     functions
@@ -77336,7 +77493,7 @@
 
 (define (compiler-backend-runtime-plan-for
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]) : ResultBackendRuntimePlan
+  [externs : compiler_ir_types.CompilerIrExternSeq]) : ResultBackendRuntimePlan
   (compiler-backend-runtime-plan-for-with-backend-state
     (compiler-backend-state-new (ci.intern-compat-state-capture-active))
     functions
@@ -77405,24 +77562,46 @@
 
 (define (compiler-backend-emit-externs-into
   [backend-state : CompilerBackendState]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : CompilerBackendRuntimeIndex]
   [referenced-functions : BackendSymbolSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match externs
-    [(compiler_ir_types.CompilerIrExternList.Nil) buf]
-    [(compiler_ir_types.CompilerIrExternList.Cons item rest)
-      (match item
-        [(compiler_ir_types.CompilerIrExtern.Extern
-            name-id
-            source-name-id
-            name
-            _
-            _
-            link-symbol-id
-            _
-            provided)
+  (compiler-backend-emit-extern-seq-into
+    backend-state
+    externs
+    plan
+    runtime-index
+    referenced-functions
+    buf
+    0))
+
+(define (compiler-backend-emit-extern-seq-into
+  [backend-state : CompilerBackendState]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [plan : CompilerBackendRuntimePlan]
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced-functions : BackendSymbolSeq]
+  [buf : text_buf.TextBuf]
+  [seq-index : i64]) : text_buf.TextBuf
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+    buf
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+      [(compiler_ir_types.CompilerIrExtern.Extern
+          name-id
+          source-name-id
+          _
+          _
+          _
+          link-symbol-id
+          _
+          provided)
+        (compiler-backend-emit-extern-seq-into
+          backend-state
+          externs
+          plan
+          runtime-index
+          referenced-functions
           (if (and
             (compiler-backend-emits-extern-symbol?
               backend-state
@@ -77436,36 +77615,17 @@
               name-id
               source-name-id
               link-symbol-id))
-            (compiler-backend-emit-externs-into
-              backend-state
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              (compiler-backend-global-shared-view plan)
-              runtime-index
-              referenced-functions
-              (text_buf.append
-                (text_buf.append buf ".extern ")
-                (str_cat.str-cat
-                  (compiler-backend-link-symbol-id
-                    link-symbol-id
-                    (compiler-backend-global-shared-view plan)
-                    backend-state)
-                  "\n"
-                  "")))
-            (compiler-backend-emit-externs-into
-              backend-state
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              (compiler-backend-global-shared-view plan)
-              runtime-index
-              referenced-functions
-              buf))])]
-    [(compiler_ir_types.CompilerIrExternList.Array seq)
-      (compiler-backend-emit-externs-into
-        backend-state
-        (compiler_ir_types.compiler-ir-extern-seq-to-list seq)
-        (compiler-backend-global-shared-view plan)
-        runtime-index
-        referenced-functions
-        buf)]))
+            (text_buf.append
+              (text_buf.append buf ".extern ")
+              (str_cat.str-cat
+                (compiler-backend-link-symbol-id
+                  link-symbol-id
+                  plan
+                  backend-state)
+                "\n"
+                ""))
+            buf)
+          (+ seq-index 1))])))
 
 ;; `tl_current_arena` is the stable first-segment root handle shared by tl_alloc,
 ;; the region runtime, and the first-class arena builtins. Physical growth heads
@@ -77854,7 +78014,7 @@
 (define (compiler-backend-emit-program-prefix-buffer
   [target : CompilerBackendTarget]
   [entry-functions : compiler_ir_types.CompilerIrFunctionList]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [runtime-features
     : (& features runtime_common.CompilerBackendRuntimeFeatures)]
@@ -78018,7 +78178,7 @@
   [mode : CompilerBackendMode]
   [entry-functions : compiler_ir_types.CompilerIrFunctionList]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : CompilerBackendRuntimeIndex]
   [program-index : CompilerBackendProgramIndex]
@@ -81765,87 +81925,89 @@
 
 (define (compiler-backend-object-externs
   [parts : object_target.CompilerBackendObjectTargetParts]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : CompilerBackendRuntimeIndex]
   [referenced-functions : BackendSymbolSeq]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match externs
-    [(compiler_ir_types.CompilerIrExternList.Nil) parts]
-    [(compiler_ir_types.CompilerIrExternList.Cons item rest)
-      (match item
-        [(compiler_ir_types.CompilerIrExtern.Extern
-            name-id
-            source-name-id
-            _
-            _
-            _
-            link-symbol-id
-            _
-            provided)
-          (let
-            [link-symbol : String
-              (compiler-backend-link-symbol-id
-                link-symbol-id
-                (compiler-backend-global-shared-view plan)
-                program-index.backend-state)]
-            [relocations : cobj.CompilerObjectRelocationBuilder
-              parts.relocations]
-            ;; Direct calls relocate through the exact link symbol. Bare extern
-            ;; values can relocate through a resolved or parser source identity,
-            ;; notably in generated TLCI entry modules.
-            [has-relocation : bool
-              (backend-or4
-                (cobj.compiler-object-relocation-builder-targets?
-                  (compiler-backend-global-shared-view relocations)
-                  (compiler-backend-global-shared-view link-symbol))
-                (cobj.compiler-object-relocation-builder-targets?
-                  (compiler-backend-global-shared-view relocations)
-                  (compiler-backend-state-user-symbol-id
-                    program-index.backend-state
-                    name-id))
-                (cobj.compiler-object-relocation-builder-targets?
-                  relocations
-                  (compiler-backend-state-user-symbol-id
-                    program-index.backend-state
-                    source-name-id))
-                false)]
-            (compiler-backend-object-externs
-              (if (and
-                (not
-                  (compiler-backend-object-runtime-symbol-provided-id?
-                    (compiler-backend-global-shared-view plan)
-                    program-index.backend-state
-                    link-symbol-id))
-                (compiler-backend-emits-extern-symbol?
+  (compiler-backend-object-extern-seq
+    parts
+    externs
+    plan
+    runtime-index
+    referenced-functions
+    program-index
+    0))
+
+(define (compiler-backend-object-extern-seq
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [plan : CompilerBackendRuntimePlan]
+  [runtime-index : CompilerBackendRuntimeIndex]
+  [referenced-functions : BackendSymbolSeq]
+  [program-index : CompilerBackendProgramIndex]
+  [seq-index : i64]) : object_target.CompilerBackendObjectTargetParts
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+    parts
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+      [(compiler_ir_types.CompilerIrExtern.Extern
+          name-id
+          source-name-id
+          _
+          _
+          _
+          link-symbol-id
+          _
+          provided)
+        (let
+          [link-symbol : String
+            (compiler-backend-link-symbol-id
+              link-symbol-id
+              plan
+              program-index.backend-state)]
+          [relocations : cobj.CompilerObjectRelocationBuilder parts.relocations]
+          [has-relocation : bool
+            (backend-or4
+              (cobj.compiler-object-relocation-builder-targets?
+                relocations
+                link-symbol)
+              (cobj.compiler-object-relocation-builder-targets?
+                relocations
+                (compiler-backend-state-user-symbol-id
                   program-index.backend-state
-                  name-id
-                  link-symbol-id
-                  provided
-                  (compiler-backend-global-shared-view plan))
-                ;; Object relocations are the exact reference inventory. In
-                ;; particular, generated indirect C calls can relocate through
-                ;; a resolved identity that is not one of the extern record's
-                ;; parser, logical, or link ids.
-                has-relocation)
-                (object_target.compiler-backend-object-symbol-extern
-                  (compiler-backend-global-shared-view parts)
-                  (compiler-backend-global-shared-view link-symbol)
-                  (cobj.CompilerObjectSymbolKind.Function))
-                (compiler-backend-global-shared-view parts))
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              (compiler-backend-global-shared-view plan)
-              (compiler-backend-global-shared-view runtime-index)
-              (compiler-backend-global-shared-view referenced-functions)
-              program-index))])]
-    [(compiler_ir_types.CompilerIrExternList.Array seq)
-      (compiler-backend-object-externs
-        (compiler-backend-global-shared-view parts)
-        (compiler_ir_types.compiler-ir-extern-seq-to-list seq)
-        (compiler-backend-global-shared-view plan)
-        (compiler-backend-global-shared-view runtime-index)
-        (compiler-backend-global-shared-view referenced-functions)
-        program-index)]))
+                  name-id))
+              (cobj.compiler-object-relocation-builder-targets?
+                relocations
+                (compiler-backend-state-user-symbol-id
+                  program-index.backend-state
+                  source-name-id))
+              false)]
+          (compiler-backend-object-extern-seq
+            (if (and
+              (not
+                (compiler-backend-object-runtime-symbol-provided-id?
+                  plan
+                  program-index.backend-state
+                  link-symbol-id))
+              (compiler-backend-emits-extern-symbol?
+                program-index.backend-state
+                name-id
+                link-symbol-id
+                provided
+                plan)
+              ;; Object relocations are the exact reference inventory.
+              has-relocation)
+              (object_target.compiler-backend-object-symbol-extern
+                parts
+                link-symbol
+                (cobj.CompilerObjectSymbolKind.Function))
+              parts)
+            externs
+            plan
+            runtime-index
+            referenced-functions
+            program-index
+            (+ seq-index 1)))])))
 
 ;; Emitted in this order (the old cons chain was built back-to-front).
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringSeq
@@ -81991,7 +82153,7 @@
   [_mode : CompilerBackendMode]
   [entry-functions : compiler_ir_types.CompilerIrFunctionList]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [externs : compiler_ir_types.CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [emit-entry : bool]
@@ -87220,6 +87382,11 @@
   [raw-asm : String]
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]) : unit
+  ;; #block-layout does NOT run here. The text is appended to the batch exactly
+  ;; as the emitter left it and each chunk is laid out inside the peephole's own
+  ;; line walk at flush time: a batch chunk IS one whole emitted text, which is
+  ;; the unit the layout rewrites are stated over, so folding the pass into that
+  ;; walk keeps its input and its result while parsing the text once.
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
@@ -87320,6 +87487,14 @@
 ;; (an indented directive, `.globl sym`, a label with a trailing comment) or an
 ;; interior colon disqualifies it, so only real label definitions -- the one
 ;; thing that emits zero bytes -- can separate a `jmp` from its target.
+;; Is [start, end) `name:` with nothing but name bytes before the colon? The
+;; name is checked eight bytes at a time, for the same reason the line splitter
+;; is: emitted local names run to thirty-odd bytes, this is asked of every
+;; unindented line of every function, and the byte loop it replaced was the
+;; single most expensive piece of the layout index. One word rejects a space, a
+;; tab and a second colon at once -- three `x - ones & ~x & highs` probes ORed
+;; together -- and the sub-word tail is covered by one final word that OVERLAPS
+;; the last full one, so no byte loop remains for a name of eight bytes or more.
 (define (compiler-backend-asm-label-def-line?
   [data : (Ptr u8)]
   [start : i64]
@@ -87328,20 +87503,74 @@
     false
     (if (not (= (compiler-backend-peephole-byte-at data (- end 1)) 58))
       false
-      (let
-        [limit : i64 (- end 1)]
-        [i : i64 start]
-        [ok : bool true]
+      (compiler-backend-asm-label-name-clean? data start end))))
+
+;; The walk itself, for a caller that has already established the length and the
+;; trailing colon.
+(define (compiler-backend-asm-label-name-clean?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    ;; 0x0101..., 0x8080..., 0x2020..., 0x0909..., 0x3a3a...
+    [ones : i64 72340172838076673]
+    [highs : i64 -9187201950435737472]
+    [spaces : i64 2314885530818453536]
+    [tabs : i64 651061555542690057]
+    [colons : i64 4195730024608447034]
+    [limit : i64 (- end 1)]
+    [word-limit : i64 (- limit 8)]
+    [i : i64 start]
+    (begin
+      (while (<= i word-limit)
+        (let
+          [w : i64
+            (unsafe
+              (ptr-read (ptr-cast (ptr-offset data i) : (Ptr i64))))]
+          [xs : i64 (bit-xor w spaces)]
+          [xt : i64 (bit-xor w tabs)]
+          [xc : i64 (bit-xor w colons)]
+          (begin
+            (unless
+              (=
+                (bit-and
+                  (bit-or
+                    (bit-and (- xs ones) (bit-xor xs -1))
+                    (bit-or
+                      (bit-and (- xt ones) (bit-xor xt -1))
+                      (bit-and (- xc ones) (bit-xor xc -1))))
+                  highs)
+                0)
+              (return false))
+            (set! i (+ i 8)))))
+      (if (> i start)
+        ;; One overlapping word covers whatever the stride left behind.
+        (if (>= word-limit start)
+          (let
+            [w : i64
+              (unsafe
+                (ptr-read (ptr-cast (ptr-offset data word-limit) : (Ptr i64))))]
+            [xs : i64 (bit-xor w spaces)]
+            [xt : i64 (bit-xor w tabs)]
+            [xc : i64 (bit-xor w colons)]
+            (=
+              (bit-and
+                (bit-or
+                  (bit-and (- xs ones) (bit-xor xs -1))
+                  (bit-or
+                    (bit-and (- xt ones) (bit-xor xt -1))
+                    (bit-and (- xc ones) (bit-xor xc -1))))
+                highs)
+              0))
+          true)
         (begin
-          (while (and ok (< i limit))
+          (while (< i limit)
             (let
               [b : i64 (compiler-backend-peephole-byte-at data i)]
               (begin
-                (if (or (= b 32) (= b 9) (= b 58))
-                  (set! ok false)
-                  unit)
+                (when (or (= b 32) (= b 9) (= b 58)) (return false))
                 (set! i (+ i 1)))))
-          ok)))))
+          true)))))
 
 ;; Does the line begin with the emitted direct-jump prefix `"    jmp "`?
 ;; Tested byte-wise, `j` first: this runs on every line of the body, and the `j`
@@ -87385,6 +87614,2325 @@
                     unit)
                   (set! i (+ i 1)))))
             ok))))))
+
+;; ---------------------------------------------------------------------------
+;; #block-layout: post-register-allocation block layout of one emitted
+;; function's assembly text, run INSIDE the streaming peephole's line walk:
+;; the walk's own line split is the layout index, the analysis reorders that
+;; index into a plan, and the walk then visits the plan's lines instead of the
+;; text's, so the layout rewrites cost no second parse and no second copy of
+;; the text. Two independent rewrites share the one index;
+;; `compiler-backend-layout-mode` selects which run, so each can be measured on
+;; its own.
+;;
+;;  1. TAIL DUPLICATION (mode bit 1). A `jmp L` whose target block starts a
+;;     short straight-line run that ends in an unconditional `jmp` is replaced
+;;     by a copy of that run. Every exit of the run is an explicit jump naming
+;;     the ORIGINAL labels, so the copy defines no label of its own and L stays
+;;     where it is for its other predecessors; the path through the site loses
+;;     exactly one instruction, the `jmp`. Runs that end in `ret`, touch the
+;;     stack (`pushq`/`popq`/`leave`), call, or carry a directive are refused:
+;;     an epilogue copy would need its own unwind description, and a directive
+;;     (a switch/abort data blob, a `.seh_` note) is not something a second copy
+;;     may define twice.
+;;
+;;  2. PREDICTED-COLD ARM OUT-OF-LINING (mode bit 2). `jmp T` followed by a
+;;     region that ends exactly where `T:` is defined is a two-arm branch whose
+;;     second arm was laid out between the first arm and the join. When every
+;;     branch entering that region is predicted NOT-TAKEN, the region moves to
+;;     the end of its function body -- still inside the function's label range,
+;;     before the trailing `.size`/`.seh_endproc` -- and the `jmp T` is dropped:
+;;     the hot arm falls into the join and only the cold arm pays a jump back.
+;;     Moving a contiguous run of emitted lines is safe because every operand
+;;     the backend emits names a symbol, never a numeric displacement from the
+;;     instruction pointer, so a region carries its own data blobs and internal
+;;     branches with it.
+;;
+;; The static prediction is the standard opcode set (Ball & Larus 1993, "Branch
+;; prediction for free"; GCC's PRED_OPCODE_*), read off the flag setter that
+;; immediately precedes the branch:
+;;   * `x < 0` / `x <= 0` predicted FALSE and `x >= 0` / `x > 0` predicted TRUE
+;;     (flag setter `testq r, r` or `cmpq $0, r`);
+;;   * `x == c` predicted FALSE and `x != c` predicted TRUE (`cmpq $c, r`);
+;;   * GUARD CHAIN: a branch bailing to the label the previous predicted-cold
+;;     branch already bailed to is predicted FALSE as well. The `and`-lowered
+;;     clauses of one guard share a failure arm, so the second clause of a range
+;;     check (`i >= n` after `i < 0`) inherits the first clause's prediction.
+;;   * SENTINEL ARM (out-of-lining only): an arm that is nothing but one or two
+;;     constant materialisations and falls into the join is the failure arm of a
+;;     checked read -- `(if (and (>= i 0) (< i n)) (array-ref s i) -1)` lowers to
+;;     exactly that -- which is GCC's constant-return heuristic in its
+;;     non-return form. Only used when no branch into the arm is predicted TRUE
+;;     and no unconditional jump enters it.
+;; A branch the set says nothing about predicts nothing, and a region with any
+;; such entry keeps its place: layout follows IR order everywhere else.
+(define compiler-backend-layout-flag-label : i64
+  1)
+(define compiler-backend-layout-flag-jmp : i64
+  2)
+(define compiler-backend-layout-flag-jcc : i64
+  4)
+(define compiler-backend-layout-flag-directive : i64
+  8)
+(define compiler-backend-layout-flag-barrier : i64
+  16)
+(define compiler-backend-layout-flag-ret : i64
+  32)
+(define compiler-backend-layout-flag-call : i64
+  64)
+(define compiler-backend-layout-flag-stack : i64
+  128)
+(define compiler-backend-layout-flag-blank : i64
+  256)
+
+;; Prediction codes stored per branch line.
+(define compiler-backend-layout-predict-unknown : i64
+  0)
+(define compiler-backend-layout-predict-cold : i64
+  1)
+(define compiler-backend-layout-predict-hot : i64
+  2)
+(define compiler-backend-layout-mode-dup : i64
+  1)
+(define compiler-backend-layout-mode-sink : i64
+  2)
+
+;; Production layout: both mechanisms.
+(define compiler-backend-layout-mode : i64
+  3)
+
+;; Emitted instructions copied at one duplication site. Three is LLVM's
+;; post-allocation tail-duplication budget; four admits the two-block
+;; `cmp/jcc` + `mov/jmp` join the measured shapes need.
+(define compiler-backend-layout-dup-run-cap : i64
+  4)
+
+;; Lines in an out-of-lined region. A cold arm longer than this is a whole
+;; slow-path loop version, and moving it stops paying for the index it costs.
+(define compiler-backend-layout-region-line-cap : i64
+  256)
+
+;; Instructions in a sentinel arm.
+(define compiler-backend-layout-sentinel-arm-cap : i64
+  2)
+
+;; Predicted-cold entries an arm needs before the opcode heuristics alone are
+;; taken as evidence. One opcode-predicted branch is a coin flip weighted about
+;; two to one (Ball & Larus measured the opcode heuristics at roughly 60-70%),
+;; and paying a jump on the arm that keeps executing costs exactly what the
+;; other arm saves. Two clauses bailing to the SAME arm is the guard shape --
+;; the `and`-lowered clauses of a bounds or range check -- which is the case
+;; this packet is about. Measured: at one entry the rule loses (gvn_table's
+;; `facts_insert` / `facts_remove` / `table_invalidate_var`, whose lone
+;; `x < 0` / `x == c` tests are true on every trip); at two it wins on every
+;; row.
+(define compiler-backend-layout-guard-chain-entries : i64
+  2)
+
+;; Per-line index of one emitted assembly text, shared by the standalone entry
+;; and by the streaming peephole's record walk. Two words per line:
+;;
+;;  * `starts`  line k runs from `starts[k]` to `starts[k + 1] - 1`. The split
+;;              the peephole performs anyway IS the index, so there is no
+;;              second scan and no `ends` array; the array holds `lines + 1`
+;;              entries and its last one closes the last line.
+;;  * `flags`   the nine line predicates in the low bits, plus -- for a branch
+;;              line only -- its operand's byte offset from the line start, in
+;;              bits `flag-ops-shift` and up. A label line's name is its whole
+;;              span minus the trailing colon and no other line carries an
+;;              operand either rewrite reads, so the operand-range arrays are
+;;              gone as well. The offset stays OUT of a non-branch word on
+;;              purpose: `flag-setter-kind` recognises a plain instruction by a
+;;              flags word of exactly zero.
+;;
+;; The lines a rewrite ever revisits are listed as the index is built --
+;; `labels` for the label table, `flow` for every branch, return and delimiting
+;; directive -- so each analysis pass walks its own short list instead of every
+;; line of the function again.
+(define compiler-backend-layout-flag-ops-shift : i64
+  16)
+
+;; Lines to size the index for, from the byte count. Emitted assembly averages
+;; well over twenty bytes per line; a text that beats the estimate is served by
+;; one doubling retry rather than by a counting pass over every text.
+(define (compiler-backend-layout-line-capacity [n : i64]) : i64
+  (+ (/ n 20) 16))
+
+;; The plan the analysis hands its two consumers. `len` = 0 is the identity: no
+;; line moved, so the walk visits `lines` lines in order and the standalone
+;; entry returns its input String untouched.
+(defstruct CompilerBackendLayoutPlan
+  (starts (__tl_dyn-array i64))
+  (plan (__tl_dyn-array i64))
+  (lines i64)
+  (len i64))
+
+(define (compiler-backend-layout-flag? [flags : i64] [bit : i64]) : bool
+  (not (= (bit-and flags bit) 0)))
+
+(define (compiler-backend-layout-space-byte? [b : i64]) : bool
+  (or (= b 32) (= b 9)))
+
+(define (compiler-backend-layout-skip-spaces
+  [data : (Ptr u8)]
+  [i : i64]
+  [end : i64]) : i64
+  (let
+    [k : i64 i]
+    (begin
+      (while (and
+        (< k end)
+        (compiler-backend-layout-space-byte?
+          (compiler-backend-peephole-byte-at data k)))
+        (set! k (+ k 1)))
+      k)))
+
+(define (compiler-backend-layout-token-end
+  [data : (Ptr u8)]
+  [i : i64]
+  [end : i64]) : i64
+  (let
+    [k : i64 i]
+    (begin
+      (while (and
+        (< k end)
+        (not
+          (compiler-backend-layout-space-byte?
+            (compiler-backend-peephole-byte-at data k))))
+        (set! k (+ k 1)))
+      k)))
+
+(define (compiler-backend-layout-bare-symbol?
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : bool
+  (if (<= e s)
+    false
+    (let
+      [b : i64 (compiler-backend-peephole-byte-at data s)]
+      (and
+        (not (= b 42))
+        (not (= b 37))
+        (not (= b 40))
+        (not (= b 44))
+        (>= (compiler-backend-peephole-scan-byte-range data s e 32) e)))))
+
+;; Directives that delimit a function or an object: nothing may move across one,
+;; and the first of them after a join is where an out-of-lined region is
+;; re-inserted. Every `.seh_` note counts -- Windows unwind describes a
+;; prologue/epilogue by position, so no `.seh_` line may be moved or copied.
+;;
+;; The second byte selects the arm: no two of these names share it except the
+;; three `s` spellings, so a directive pays one byte compare and at most three
+;; name compares instead of the eight it used to walk through -- and the token
+;; end, which is a walk of its own, is only measured once that byte has already
+;; said a barrier is possible. Every emitted `.quad`, `.byte` and `.zero` leaves
+;; here on the byte compare alone.
+(define (compiler-backend-layout-barrier-line?
+  [data : (Ptr u8)]
+  [t : i64]
+  [e : i64]) : bool
+  (if (< (+ t 1) e)
+    (let
+      [b1 : i64 (compiler-backend-peephole-byte-at data (+ t 1))]
+      (if (or (= b1 103) (= b1 115) (= b1 116) (= b1 100) (= b1 99) (= b1 101))
+        (let
+          [tend : i64 (compiler-backend-layout-token-end data t e)]
+          (cond
+            [(= b1 103)
+              (compiler-backend-peephole-range-eq? data t tend ".globl")]
+            [(= b1 115)
+              (or
+                (compiler-backend-peephole-range-eq? data t tend ".size")
+                (compiler-backend-peephole-range-eq? data t tend ".section")
+                (and
+                  (>= (- tend t) 5)
+                  (compiler-backend-peephole-range-eq? data t (+ t 5) ".seh_")))]
+            [(= b1 116)
+              (or
+                (compiler-backend-peephole-range-eq? data t tend ".type")
+                (compiler-backend-peephole-range-eq? data t tend ".text"))]
+            [(= b1 100)
+              (compiler-backend-peephole-range-eq? data t tend ".data")]
+            [(= b1 99)
+              (compiler-backend-peephole-range-eq? data t tend ".comm")]
+            [else (compiler-backend-peephole-range-eq? data t tend ".extern")]))
+        false))
+    false))
+
+;; Are two label names equal? Eight bytes at a time: emitted local names run to
+;; thirty-odd bytes and share long prefixes, so the byte-wise compare the rest
+;; of the peephole uses would spend most of the pass here. The tail is folded
+;; into one more word read that overlaps the last full word, which is in range
+;; whenever the name is at least eight bytes -- shorter names take the byte
+;; loop.
+(define (compiler-backend-layout-name-eq?
+  [data : (Ptr u8)]
+  [ls : i64]
+  [le : i64]
+  [rs : i64]
+  [re : i64]) : bool
+  (let
+    [len : i64 (- le ls)]
+    (if (not (= len (- re rs)))
+      false
+      (if (< len 8)
+        (compiler-backend-peephole-ranges-eq? data ls le data rs re)
+        (let
+          [i : i64 0]
+          [stop : i64 (- len 8)]
+          [ok : bool true]
+          (begin
+            (while (and ok (< i stop))
+              (begin
+                (unless
+                  (=
+                    (unsafe
+                      (ptr-read
+                        (ptr-cast (ptr-offset data (+ ls i)) : (Ptr i64))))
+                    (unsafe
+                      (ptr-read
+                        (ptr-cast (ptr-offset data (+ rs i)) : (Ptr i64)))))
+                  (set! ok false))
+                (set! i (+ i 8))))
+            (and
+              ok
+              (=
+                (unsafe
+                  (ptr-read (ptr-cast (ptr-offset data (- le 8)) : (Ptr i64))))
+                (unsafe
+                  (ptr-read (ptr-cast (ptr-offset data (- re 8)) : (Ptr i64))))))))))))
+
+;; Only the backend's own function-local labels take part in either rewrite.
+;; A global symbol operand is a tail call into another function, and pinning the
+;; rewrites to `.L` names also makes this pass agree with itself whether it is
+;; handed one function's text or a whole program's: local names are unique per
+;; function, global ones are not scoped at all.
+(define (compiler-backend-layout-local-label?
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : bool
+  (and
+    (>= (- e s) 2)
+    (= (compiler-backend-peephole-byte-at data s) 46)
+    (= (compiler-backend-peephole-byte-at data (+ s 1)) 76)))
+
+;; `movq $c, %reg` / `movl $c, %reg` / `movabsq $c, %reg` / `xorl %r, %r`: an
+;; instruction whose whole effect is to place a literal in a register. Asked
+;; only of the handful of lines inside a candidate arm, never of every line.
+(define (compiler-backend-layout-const-line?
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : bool
+  (let
+    [t : i64 (compiler-backend-layout-skip-spaces data s e)]
+    [tend : i64 0]
+    (begin
+      (set! tend (compiler-backend-layout-token-end data t e))
+      (let
+        [ops : i64 (compiler-backend-layout-skip-spaces data tend e)]
+        [comma : i64 (compiler-backend-peephole-scan-byte-range data tend e 44)]
+        (if (or (>= comma e) (>= ops e))
+          false
+          (let
+            [rhs : i64 (compiler-backend-layout-skip-spaces data (+ comma 1) e)]
+            (if (>= rhs e)
+              false
+              (if (or
+                (compiler-backend-peephole-range-eq? data t tend "movq")
+                (compiler-backend-peephole-range-eq? data t tend "movl")
+                (compiler-backend-peephole-range-eq? data t tend "movabsq"))
+                (and
+                  (= (compiler-backend-peephole-byte-at data ops) 36)
+                  (= (compiler-backend-peephole-byte-at data rhs) 37)
+                  (>=
+                    (compiler-backend-peephole-scan-byte-range data rhs e 40)
+                    e))
+                (and
+                  (or
+                    (compiler-backend-peephole-range-eq? data t tend "xorl")
+                    (compiler-backend-peephole-range-eq? data t tend "xorq"))
+                  (= (compiler-backend-peephole-byte-at data ops) 37)
+                  (compiler-backend-peephole-ranges-eq?
+                    data
+                    ops
+                    comma
+                    data
+                    rhs
+                    e))))))))))
+
+;; Is this `call` line one of the runtime's noreturn aborts? Asked only of the
+;; line behind a duplication site.
+(define (compiler-backend-layout-abort-line?
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : bool
+  (compiler-backend-peephole-line-noreturn-abort? data s e))
+
+;; One line's predicate set, packed with the operand offset its consumers need:
+;; the jump target for a branch line. A label line needs no offset (its name
+;; starts at the line start) and no other line has an operand at all.
+;;
+;; This runs on every line of every emitted function and almost every line is of
+;; no interest to either rewrite, so the reject is what it is written around.
+;; An emitted instruction is indented and a label definition is not, which the
+;; first byte settles; the mnemonic then starts four bytes in, and its first
+;; byte alone rules out everything but a jump, a return, a call, a stack
+;; instruction and a directive. Only those, and the unindented lines, are looked
+;; at further. The literal-materialisation and noreturn-abort questions are NOT
+;; asked here: only a candidate arm and the line behind a duplication site ever
+;; need them.
+(define (compiler-backend-layout-classify-token
+  [data : (Ptr u8)]
+  [s : i64]
+  [t : i64]
+  [e : i64]) : i64
+  (let
+    [b0 : i64 (compiler-backend-peephole-byte-at data t)]
+    (if (= b0 46)
+      ;; A directive is settled by its name; the bytes behind the head are of
+      ;; no use to it, so they are not read on this arm at all.
+      (bit-or
+        compiler-backend-layout-flag-directive
+        (if (compiler-backend-layout-barrier-line? data t e)
+          compiler-backend-layout-flag-barrier
+          0))
+      (let
+        [b1 : i64
+          (if (< (+ t 1) e)
+            (compiler-backend-peephole-byte-at data (+ t 1))
+            0)]
+        [b2 : i64
+          (if (< (+ t 2) e)
+            (compiler-backend-peephole-byte-at data (+ t 2))
+            0)]
+        [b3 : i64
+          (if (< (+ t 3) e)
+            (compiler-backend-peephole-byte-at data (+ t 3))
+            0)]
+        (cond
+          [(= b0 106)
+            (let
+              [jmp? : bool (and (= b1 109) (= b2 112) (= b3 32))]
+              [tend : i64
+                (if jmp?
+                  (+ t 3)
+                  (compiler-backend-layout-token-end data t e))]
+              [ops : i64 (compiler-backend-layout-skip-spaces data tend e)]
+              (if (and
+                (>= (- tend t) 2)
+                (compiler-backend-layout-bare-symbol? data ops e))
+                (bit-or
+                  (if jmp?
+                    compiler-backend-layout-flag-jmp
+                    compiler-backend-layout-flag-jcc)
+                  (shl (- ops s) compiler-backend-layout-flag-ops-shift))
+                0))]
+          [(and (= b0 114) (= b1 101) (= b2 116) (or (= b3 32) (= b3 113)))
+            compiler-backend-layout-flag-ret]
+          [(and (= b0 99) (= b1 97) (= b2 108) (= b3 108))
+            compiler-backend-layout-flag-call]
+          [(and (= b0 112) (or (= b1 117) (= b1 111)) (not (= b2 32)))
+            compiler-backend-layout-flag-stack]
+          [(and (= b0 108) (= b1 101) (= b2 97) (= b3 118))
+            compiler-backend-layout-flag-stack]
+          [else 0])))))
+
+;; The one-shape mnemonics, settled by the three bytes behind the head: `ret`,
+;; `call`, `pushq`/`popq` and `leave` carry a flag and nothing else, so they
+;; never need the token walk a directive or a branch does. `kind` is the head
+;; table's answer, and the byte reads keep that table's zero-past-the-line
+;; convention, so this agrees with `classify-token` on every line either can
+;; see.
+(define (compiler-backend-layout-classify-simple
+  [data : (Ptr u8)]
+  [t : i64]
+  [e : i64]
+  [kind : i64]) : i64
+  (let
+    [b1 : i64
+      (if (< (+ t 1) e)
+        (compiler-backend-peephole-byte-at data (+ t 1))
+        0)]
+    [b2 : i64
+      (if (< (+ t 2) e)
+        (compiler-backend-peephole-byte-at data (+ t 2))
+        0)]
+    [b3 : i64
+      (if (< (+ t 3) e)
+        (compiler-backend-peephole-byte-at data (+ t 3))
+        0)]
+    (cond
+      [(= kind 50)
+        (if (and (= b1 101) (= b2 116) (or (= b3 32) (= b3 113)))
+          compiler-backend-layout-flag-ret
+          0)]
+      [(= kind 51)
+        (if (and (= b1 97) (= b2 108) (= b3 108))
+          compiler-backend-layout-flag-call
+          0)]
+      [(= kind 52)
+        (if (and (or (= b1 117) (= b1 111)) (not (= b2 32)))
+          compiler-backend-layout-flag-stack
+          0)]
+      [else
+        (if (and (= b1 101) (= b2 97) (= b3 118))
+          compiler-backend-layout-flag-stack
+          0)])))
+
+(define (compiler-backend-layout-classify-line
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : i64
+  (if (= (compiler-backend-peephole-byte-at data s) 32)
+    (let
+      [t : i64
+        (if (and
+          (< (+ s 4) e)
+          (= (compiler-backend-peephole-byte-at data (+ s 3)) 32)
+          (not (= (compiler-backend-peephole-byte-at data (+ s 4)) 32)))
+          (+ s 4)
+          (compiler-backend-layout-skip-spaces data s e))]
+      (if (>= t e)
+        compiler-backend-layout-flag-blank
+        (let
+          [head : i64 (compiler-backend-peephole-byte-at data t)]
+          (if (or
+            (= head 106)
+            (= head 46)
+            (= head 114)
+            (= head 99)
+            (= head 112)
+            (= head 108))
+            (compiler-backend-layout-classify-token data s t e)
+            0))))
+    (let
+      [head : i64 (compiler-backend-peephole-byte-at data s)]
+      [t : i64
+        (if (or (= head 32) (= head 9))
+          (compiler-backend-layout-skip-spaces data s e)
+          s)]
+      (cond
+        [(>= t e) compiler-backend-layout-flag-blank]
+        [(and
+            (= (compiler-backend-peephole-byte-at data (- e 1)) 58)
+            (>= (- e s) 2)
+            (compiler-backend-asm-label-name-clean? data s e))
+          compiler-backend-layout-flag-label]
+        [else (compiler-backend-layout-classify-token data s t e)]))))
+
+;; What a mnemonic's first byte can make of a line, as a byte per possible head:
+;; `0` nothing, `1` walk the token (`.` 46 for a directive, `j` 106 for a
+;; branch), `2` `ret` (114), `3` `call` (99), `4` `pushq`/`popq` (112), `5`
+;; `leave` (108). Seventy per cent of emitted lines are `0`, and for them this
+;; is one indexed byte load where six compare-and-branch pairs used to stand;
+;; the four one-shape kinds are then settled by three byte compares in a leaf
+;; instead of a call into the token dispatch and its spill frame, which is two
+;; thirds of the calls that dispatch used to take. A shift over a bit set would
+;; filter as well but costs the shift-amount guards the language inserts around
+;; a variable shift, and would not carry the kind.
+(define compiler-backend-layout-head-table : String
+  "0000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000003000000105000402000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+
+(define (compiler-backend-layout-split-lines
+  [data : (Ptr u8)]
+  [n : i64]
+  [cap : i64]
+  [starts : (MutPtr i64)]) : i64
+  (let
+    [k : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (when (>= k cap) (return -1))
+          (unsafe
+            (ptr-write! (ptr-offset starts k) i))
+          (set! i (+ (compiler-backend-peephole-scan-byte-range data i n 10) 1))
+          (set! k (+ k 1))))
+      (unsafe
+        (ptr-write! (ptr-offset starts k) i))
+      k)))
+
+;; Classify each split line into `flags`.
+;;
+;; The emitted instruction shape -- four leading spaces, then a mnemonic -- is
+;; recognised inline here, because it is the shape of nearly every line and the
+;; general classifier's call, frame and dispatch cost more than its answer.
+;; Anything else (a label definition, a directive at column zero, an oddly
+;; indented or very short line) falls out to `classify-line`, which is the
+;; function this fast path is a specialisation of.
+;;
+;; Listing the classified lines is a SEPARATE walk below, not a tail of this
+;; loop: the four list cursors and their counters are dead weight on the ninety
+;; per cent of lines that are never listed, and holding them here pushed the
+;; span and flag cursors into memory, where every iteration paid for reloading
+;; them.
+(define (compiler-backend-layout-classify-lines!
+  [data : (Ptr u8)]
+  [lines : i64]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]) : unit
+  (let
+    [head-table : (Ptr u8)
+      (unsafe
+        (string-data compiler-backend-layout-head-table))]
+    [k : i64 0]
+    [i : i64
+      (unsafe
+        (ptr-read (ptr-offset starts 0)))]
+    (begin
+      (while (< k lines)
+        (let
+          [next : i64
+            (unsafe
+              (ptr-read (ptr-offset starts (+ k 1))))]
+          [e : i64 (- next 1)]
+          [head : i64
+            (if (< (+ i 4) e)
+              (compiler-backend-peephole-byte-at data (+ i 4))
+              32)]
+          (begin
+            (unsafe
+              (ptr-write!
+                (ptr-offset flags k)
+                (if (and
+                  (not (= head 32))
+                  (= (compiler-backend-peephole-byte-at data i) 32)
+                  (= (compiler-backend-peephole-byte-at data (+ i 3)) 32))
+                  (let
+                    [kind : i64
+                      (compiler-backend-peephole-byte-at head-table head)]
+                    (cond
+                      [(= kind 48) 0]
+                      [(= kind 49)
+                        (compiler-backend-layout-classify-token
+                          data
+                          i
+                          (+ i 4)
+                          e)]
+                      [else
+                        (compiler-backend-layout-classify-simple
+                          data
+                          (+ i 4)
+                          e
+                          kind)]))
+                  (compiler-backend-layout-classify-line data i e))))
+            (set! i next)
+            (set! k (+ k 1)))))
+      unit)))
+
+;; List the lines the analysis revisits -- `labels` for the label table, `flow`
+;; for every branch, return and delimiting directive -- so each later pass walks
+;; its own short list instead of every line of the function again. `counts`
+;; returns the label, flow and `jmp` totals; the `jmp` total decides whether
+;; either rewrite has anything to look at.
+(define (compiler-backend-layout-list-lines!
+  [lines : i64]
+  [flags : (MutPtr i64)]
+  [labels : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [counts : (__tl_dyn-array i64)]) : unit
+  (let
+    [flow-bits : i64
+      (bit-or
+        compiler-backend-layout-flag-jmp
+        (bit-or
+          compiler-backend-layout-flag-jcc
+          (bit-or
+            compiler-backend-layout-flag-ret
+            compiler-backend-layout-flag-barrier)))]
+    [listed-bits : i64 (bit-or flow-bits compiler-backend-layout-flag-label)]
+    [k : i64 0]
+    [label-count : i64 0]
+    [flow-count : i64 0]
+    [jumps : i64 0]
+    (begin
+      (while (< k lines)
+        (let
+          [line-flags : i64
+            (unsafe
+              (ptr-read (ptr-offset flags k)))]
+          (begin
+            (unless
+              (= (bit-and line-flags listed-bits) 0)
+              (begin
+                (unless
+                  (= (bit-and line-flags compiler-backend-layout-flag-label) 0)
+                  (begin
+                    (unsafe
+                      (ptr-write! (ptr-offset labels label-count) k))
+                    ;; The label's ORDINAL rides in the same high half a branch
+                    ;; line spends on its operand offset -- no line is both --
+                    ;; so the reference counters are four words per label
+                    ;; instead of four per line.
+                    (unsafe
+                      (ptr-write!
+                        (ptr-offset flags k)
+                        (bit-or
+                          line-flags
+                          (shl
+                            label-count
+                            compiler-backend-layout-flag-ops-shift))))
+                    (set! label-count (+ label-count 1))))
+                (unless
+                  (= (bit-and line-flags flow-bits) 0)
+                  (begin
+                    (unsafe
+                      (ptr-write! (ptr-offset flow flow-count) k))
+                    (set! flow-count (+ flow-count 1))
+                    (unless
+                      (=
+                        (bit-and line-flags compiler-backend-layout-flag-jmp)
+                        0)
+                      (set! jumps (+ jumps 1)))))))
+            (set! k (+ k 1)))))
+      (set! (array-ref counts 0) label-count)
+      (set! (array-ref counts 1) flow-count)
+      (set! (array-ref counts 2) jumps)
+      unit)))
+
+;; Label name hash: three word reads and a multiply-shift. Emitted local labels
+;; share a long per-function prefix AND, once inlining has run, a long common
+;; tail (`.Lf7_inl.entry.4.if_then` beside `.Lf7_inl.entry.9.if_then`), so both
+;; ends alone leave the distinguishing bytes unread -- the middle word is what
+;; separates them. Measured over this compiler's own emitted labels, grouped per
+;; function as production sees them: 1.36 probes per insert against 1.65 for the
+;; byte-at-a-time fold this replaced, at a fraction of its cost. The multiply is
+;; the standard Fibonacci-constant scramble and wraps deliberately; the ranked
+;; bits are the high ones, which every input bit reaches. The hash is private to
+;; one analysis and only ever orders probes, so its spelling is free to change.
+(define (compiler-backend-layout-hash [data : (Ptr u8)] [s : i64] [e : i64]) : i64
+  (let
+    [len : i64 (- e s)]
+    (if (< len 8)
+      (let
+        [h : i64 (bit-and (+ 2166136261 (* 131 len)) 1073741823)]
+        [k : i64 s]
+        (begin
+          (while (< k e)
+            (begin
+              (set!
+                h
+                (bit-and
+                  (+ (* h 131) (compiler-backend-peephole-byte-at data k))
+                  1073741823))
+              (set! k (+ k 1))))
+          h))
+      (let
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-cast (ptr-offset data s) : (Ptr i64))))]
+        [tail : i64
+          (unsafe
+            (ptr-read (ptr-cast (ptr-offset data (- e 8)) : (Ptr i64))))]
+        [middle : i64
+          (unsafe
+            (ptr-read
+              (ptr-cast (ptr-offset data (+ s (- (shr len 1) 4))) : (Ptr i64))))]
+        [mixed : i64
+          (bit-xor (bit-xor head tail) (bit-xor (* 3 middle) (* 131 len)))]
+        [folded : i64 (bit-xor mixed (shr mixed 32))]
+        (bit-and (shr (* folded 2654435761) 34) 1073741823)))))
+
+;; Power-of-two table for `count` names. The extra slots are zero words the
+;; allocator already cleared.
+(define (compiler-backend-layout-table-capacity [count : i64]) : i64
+  (let
+    [cap : i64 16]
+    (begin
+      (while (< cap (* 2 (+ count 1)))
+        (set! cap (* cap 2)))
+      cap)))
+
+;; Open-addressed label table, two words per slot: the defining line index plus
+;; one -- so zero stays the empty marker -- and the name's hash. Holding the
+;; hash means a probe that lands on another name is rejected by one integer
+;; compare instead of a name compare. A duplicate name keeps its FIRST
+;; definition: the emitter never repeats one inside a function, and keeping the
+;; first is the conservative answer if a caller ever hands this pass a whole
+;; program.
+(define (compiler-backend-layout-table-insert!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [table : (MutPtr i64)]
+  [cap : i64]
+  [line : i64]) : unit
+  (let
+    [s : i64
+      (unsafe
+        (ptr-read (ptr-offset starts line)))]
+    [e : i64
+      (-
+        (unsafe
+          (ptr-read (ptr-offset starts (+ line 1))))
+        2)]
+    [h : i64 (compiler-backend-layout-hash data s e)]
+    [mask : i64 (- cap 1)]
+    [slot : i64 (bit-and h mask)]
+    [placed : bool false]
+    [probes : i64 0]
+    (begin
+      (while (and (not placed) (< probes cap))
+        (let
+          [cell : i64 (* 2 slot)]
+          [held : i64
+            (unsafe
+              (ptr-read (ptr-offset table cell)))]
+          (begin
+            (cond
+              [(= held 0)
+                (begin
+                  (unsafe
+                    (ptr-write! (ptr-offset table cell) (+ line 1)))
+                  (unsafe
+                    (ptr-write! (ptr-offset table (+ cell 1)) h))
+                  (set! placed true))]
+              [(and
+                  (=
+                    (unsafe
+                      (ptr-read (ptr-offset table (+ cell 1))))
+                    h)
+                  (compiler-backend-layout-name-eq?
+                    data
+                    s
+                    e
+                    (unsafe
+                      (ptr-read (ptr-offset starts (- held 1))))
+                    (-
+                      (unsafe
+                        (ptr-read (ptr-offset starts held)))
+                      2)))
+                (set! placed true)]
+              [else (set! slot (bit-and (+ slot 1) mask))])
+            (set! probes (+ probes 1)))))
+      unit)))
+
+;; Defining line of the label spelled in [s, e), or -1.
+(define (compiler-backend-layout-table-lookup
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [table : (MutPtr i64)]
+  [cap : i64]
+  [s : i64]
+  [e : i64]) : i64
+  (let
+    [h : i64 (compiler-backend-layout-hash data s e)]
+    [mask : i64 (- cap 1)]
+    [slot : i64 (bit-and h mask)]
+    [found : i64 -1]
+    [done : bool false]
+    [probes : i64 0]
+    (begin
+      (while (and (not done) (< probes cap))
+        (let
+          [cell : i64 (* 2 slot)]
+          [held : i64
+            (unsafe
+              (ptr-read (ptr-offset table cell)))]
+          (begin
+            (cond
+              [(= held 0) (set! done true)]
+              [(and
+                  (=
+                    (unsafe
+                      (ptr-read (ptr-offset table (+ cell 1))))
+                    h)
+                  (compiler-backend-layout-name-eq?
+                    data
+                    s
+                    e
+                    (unsafe
+                      (ptr-read (ptr-offset starts (- held 1))))
+                    (-
+                      (unsafe
+                        (ptr-read (ptr-offset starts held)))
+                      2)))
+                (begin
+                  (set! found (- held 1))
+                  (set! done true))]
+              [else (set! slot (bit-and (+ slot 1) mask))])
+            (set! probes (+ probes 1)))))
+      found)))
+
+;; Fill the label table from the label lines.
+(define (compiler-backend-layout-build-table!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [labels : (MutPtr i64)]
+  [label-count : i64]
+  [table : (MutPtr i64)]
+  [cap : i64]) : unit
+  (let
+    [k : i64 0]
+    (begin
+      (while (< k label-count)
+        (begin
+          (compiler-backend-layout-table-insert!
+            data
+            starts
+            table
+            cap
+            (unsafe
+              (ptr-read (ptr-offset labels k))))
+          (set! k (+ k 1))))
+      unit)))
+
+;; Resolve the direct branch operands selected by `which` to the lines that
+;; define them. The unconditional jumps are resolved first because both
+;; rewrites are stated over them; the conditional ones are resolved only if a
+;; region shape turns out to want a prediction, which is the only thing that
+;; ever reads their targets.
+(define (compiler-backend-layout-resolve-targets!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [flow-count : i64]
+  [which : i64]
+  [target : (MutPtr i64)]
+  [table : (MutPtr i64)]
+  [cap : i64]) : unit
+  (let
+    [k : i64 0]
+    (begin
+      (while (< k flow-count)
+        (let
+          [i : i64
+            (unsafe
+              (ptr-read (ptr-offset flow k)))]
+          [line-flags : i64
+            (unsafe
+              (ptr-read (ptr-offset flags i)))]
+          (begin
+            (unless
+              (= (bit-and line-flags which) 0)
+              (let
+                [ops : i64
+                  (+
+                    (unsafe
+                      (ptr-read (ptr-offset starts i)))
+                    (shr line-flags compiler-backend-layout-flag-ops-shift))]
+                [ope : i64
+                  (-
+                    (unsafe
+                      (ptr-read (ptr-offset starts (+ i 1))))
+                    1)]
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset target i)
+                    (if (compiler-backend-layout-local-label? data ops ope)
+                      (compiler-backend-layout-table-lookup
+                        data
+                        starts
+                        table
+                        cap
+                        ops
+                        ope)
+                      -1)))))
+            (set! k (+ k 1)))))
+      unit)))
+
+;; The flag setter a branch reads: 0 none, 1 a comparison against zero
+;; (`testq r, r` or `cmpq $0, r`), 2 a comparison against a non-zero literal.
+(define (compiler-backend-layout-flag-setter-kind
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [i : i64]) : i64
+  (let
+    [j : i64 (- i 1)]
+    [kind : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (not done) (>= j 0))
+        (if (=
+          (bit-and
+            (unsafe
+              (ptr-read (ptr-offset flags j)))
+            (bit-or
+              compiler-backend-layout-flag-label
+              compiler-backend-layout-flag-blank))
+          0)
+          (set! done true)
+          (set! j (- j 1))))
+      (when
+        (>= j 0)
+        (when
+          (=
+            (unsafe
+              (ptr-read (ptr-offset flags j)))
+            0)
+          (let
+            [s : i64
+              (unsafe
+                (ptr-read (ptr-offset starts j)))]
+            [e : i64
+              (-
+                (unsafe
+                  (ptr-read (ptr-offset starts (+ j 1))))
+                1)]
+            [t : i64 (compiler-backend-layout-skip-spaces data s e)]
+            [tend : i64 (compiler-backend-layout-token-end data t e)]
+            [ops : i64 (compiler-backend-layout-skip-spaces data tend e)]
+            [comma : i64
+              (compiler-backend-peephole-scan-byte-range data tend e 44)]
+            (when
+              (< comma e)
+              (let
+                [rhs : i64
+                  (compiler-backend-layout-skip-spaces data (+ comma 1) e)]
+                [b0 : i64 (compiler-backend-peephole-byte-at data t)]
+                (cond
+                  [(and
+                      (= b0 116)
+                      (or
+                        (compiler-backend-peephole-range-eq?
+                          data
+                          t
+                          tend
+                          "testq")
+                        (compiler-backend-peephole-range-eq?
+                          data
+                          t
+                          tend
+                          "testl")
+                        (compiler-backend-peephole-range-eq? data t tend "test"))
+                      (= (compiler-backend-peephole-byte-at data ops) 37)
+                      (compiler-backend-peephole-ranges-eq?
+                        data
+                        ops
+                        comma
+                        data
+                        rhs
+                        e))
+                    (set! kind 1)]
+                  [(and
+                      (= b0 99)
+                      (or
+                        (compiler-backend-peephole-range-eq? data t tend "cmpq")
+                        (compiler-backend-peephole-range-eq? data t tend "cmpl")
+                        (compiler-backend-peephole-range-eq? data t tend "cmp"))
+                      (= (compiler-backend-peephole-byte-at data ops) 36))
+                    (set!
+                      kind
+                      (if (and
+                        (= (- comma ops) 2)
+                        (=
+                          (compiler-backend-peephole-byte-at data (+ ops 1))
+                          48))
+                        1
+                        2))]
+                  [else unit]))))))
+      kind)))
+
+;; Ball-Larus opcode prediction for one conditional branch, or "unknown". The
+;; condition code is read as bytes: one for `l` `g` `s` `e` `z`, two for `le`
+;; `ge` `ns` `ne` `nz`. Everything else -- the unsigned codes, the flag codes --
+;; predicts nothing.
+(define (compiler-backend-layout-opcode-prediction
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [i : i64]) : i64
+  (let
+    [kind : i64 (compiler-backend-layout-flag-setter-kind data starts flags i)]
+    (if (= kind 0)
+      compiler-backend-layout-predict-unknown
+      (let
+        [s : i64
+          (unsafe
+            (ptr-read (ptr-offset starts i)))]
+        [e : i64
+          (-
+            (unsafe
+              (ptr-read (ptr-offset starts (+ i 1))))
+            1)]
+        [t : i64 (compiler-backend-layout-skip-spaces data s e)]
+        [tend : i64 (compiler-backend-layout-token-end data t e)]
+        [n : i64 (- (- tend t) 1)]
+        [c0 : i64 (compiler-backend-peephole-byte-at data (+ t 1))]
+        [c1 : i64
+          (if (>= n 2)
+            (compiler-backend-peephole-byte-at data (+ t 2))
+            0)]
+        (cond
+          [(and (= n 1) (or (= c0 101) (= c0 122)))
+            compiler-backend-layout-predict-cold]
+          [(and (= n 2) (= c0 110) (or (= c1 101) (= c1 122)))
+            compiler-backend-layout-predict-hot]
+          [(not (= kind 1)) compiler-backend-layout-predict-unknown]
+          [(and (= n 1) (or (= c0 108) (= c0 115)))
+            compiler-backend-layout-predict-cold]
+          [(and (= n 2) (= c0 108) (= c1 101))
+            compiler-backend-layout-predict-cold]
+          [(and (= n 1) (= c0 103)) compiler-backend-layout-predict-hot]
+          [(and (= n 2) (= c0 103) (= c1 101))
+            compiler-backend-layout-predict-hot]
+          [(and (= n 2) (= c0 110) (= c1 115))
+            compiler-backend-layout-predict-hot]
+          [else compiler-backend-layout-predict-unknown])))))
+
+;; Per-branch prediction and the per-label reference tally, in one walk of the
+;; flow list. The guard chain is applied in emission order: a branch the opcode
+;; set cannot call inherits COLD when it bails to the same label the previous
+;; predicted-cold branch bailed to. The chain breaks at any unconditional
+;; transfer and at any branch naming a different label. `refs` holds four
+;; counters per LABEL line (all / unconditional / predicted-cold /
+;; predicted-hot), so a region's entry set is a sum over its own label lines
+;; instead of a scan; tallying in this same walk is exact because the only
+;; prediction a branch's tally reads is its own.
+(define (compiler-backend-layout-predict-and-tally!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [pred : (MutPtr i64)]
+  [refs : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [flow-count : i64]) : unit
+  (let
+    [chain : i64 -1]
+    [k : i64 0]
+    (begin
+      (while (< k flow-count)
+        (let
+          [i : i64
+            (unsafe
+              (ptr-read (ptr-offset flow k)))]
+          [line-flags : i64
+            (unsafe
+              (ptr-read (ptr-offset flags i)))]
+          (begin
+            (cond
+              [(not (= (bit-and line-flags compiler-backend-layout-flag-jcc) 0))
+                (let
+                  [to : i64
+                    (unsafe
+                      (ptr-read (ptr-offset target i)))]
+                  [base : i64
+                    (compiler-backend-layout-opcode-prediction
+                      data
+                      starts
+                      flags
+                      i)]
+                  [final : i64 0]
+                  (begin
+                    (set!
+                      final
+                      (if (and
+                        (= base compiler-backend-layout-predict-unknown)
+                        (>= to 0)
+                        (= to chain))
+                        compiler-backend-layout-predict-cold
+                        base))
+                    (unsafe
+                      (ptr-write! (ptr-offset pred i) final))
+                    (if (= final compiler-backend-layout-predict-cold)
+                      (set! chain to)
+                      (unless (= to chain) (set! chain -1)))
+                    (when
+                      (>= to 0)
+                      (let
+                        [cell : i64
+                          (*
+                            4
+                            (shr
+                              (unsafe
+                                (ptr-read (ptr-offset flags to)))
+                              compiler-backend-layout-flag-ops-shift))]
+                        [slot : i64
+                          (cond
+                            [(= final compiler-backend-layout-predict-cold) 2]
+                            [(= final compiler-backend-layout-predict-hot) 3]
+                            [else 0])]
+                        (begin
+                          (unsafe
+                            (ptr-write!
+                              (ptr-offset refs cell)
+                              (+
+                                (unsafe
+                                  (ptr-read (ptr-offset refs cell)))
+                                1)))
+                          (when
+                            (> slot 0)
+                            (unsafe
+                              (ptr-write!
+                                (ptr-offset refs (+ cell slot))
+                                (+
+                                  (unsafe
+                                    (ptr-read (ptr-offset refs (+ cell slot))))
+                                  1))))
+                          unit)))))]
+              [(not (= (bit-and line-flags compiler-backend-layout-flag-jmp) 0))
+                (let
+                  [to : i64
+                    (unsafe
+                      (ptr-read (ptr-offset target i)))]
+                  (begin
+                    (set! chain -1)
+                    (when
+                      (>= to 0)
+                      (let
+                        [cell : i64
+                          (*
+                            4
+                            (shr
+                              (unsafe
+                                (ptr-read (ptr-offset flags to)))
+                              compiler-backend-layout-flag-ops-shift))]
+                        (begin
+                          (unsafe
+                            (ptr-write!
+                              (ptr-offset refs cell)
+                              (+
+                                (unsafe
+                                  (ptr-read (ptr-offset refs cell)))
+                                1)))
+                          (unsafe
+                            (ptr-write!
+                              (ptr-offset refs (+ cell 1))
+                              (+
+                                (unsafe
+                                  (ptr-read (ptr-offset refs (+ cell 1))))
+                                1)))
+                          unit)))))]
+              [else (set! chain -1)])
+            (set! k (+ k 1)))))
+      unit)))
+
+;; Everything the selector needs to know about the region [rs, re) -- the lines
+;; between a `jmp T` and the definition of `T` -- packed into one word by one
+;; walk, because this runs for every forward `jmp` in every function:
+;;   bit 0   the shape is a candidate at all: the region starts at a label,
+;;           carries at least one real line, stays under the line cap and holds
+;;           no function- or object-delimiting directive;
+;;   bit 1   a jump must follow the region where it lands. Only a region whose
+;;           LAST line is itself an unconditional transfer needs none: a region
+;;           ending in label definitions needs one even when the instruction
+;;           before those labels is a `jmp`, because the labels are entry points
+;;           of their own and where they stood they fell into the join;
+;;   bit 2   the sentinel shape: the region is nothing but one or two literal
+;;           materialisations.
+(define compiler-backend-layout-region-shape-ok : i64
+  1)
+(define compiler-backend-layout-region-needs-jump : i64
+  2)
+(define compiler-backend-layout-region-sentinel : i64
+  4)
+
+(define (compiler-backend-layout-region-scan
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [rs : i64]
+  [re : i64]) : i64
+  (if (or
+    (>= rs re)
+    (> (- re rs) compiler-backend-layout-region-line-cap)
+    (=
+      (bit-and
+        (unsafe
+          (ptr-read (ptr-offset flags rs)))
+        compiler-backend-layout-flag-label)
+      0))
+    0
+    (let
+      [skip-bits : i64
+        (bit-or
+          compiler-backend-layout-flag-label
+          compiler-backend-layout-flag-blank)]
+      [stop-bits : i64
+        (bit-or
+          compiler-backend-layout-flag-jmp
+          compiler-backend-layout-flag-ret)]
+      [k : i64 rs]
+      [body : i64 0]
+      [barrier : bool false]
+      [only-const : bool true]
+      (begin
+        (while (< k re)
+          (let
+            [line-flags : i64
+              (unsafe
+                (ptr-read (ptr-offset flags k)))]
+            (begin
+              (unless
+                (= (bit-and line-flags compiler-backend-layout-flag-barrier) 0)
+                (set! barrier true))
+              (when
+                (= (bit-and line-flags skip-bits) 0)
+                (begin
+                  (set! body (+ body 1))
+                  (when
+                    (and
+                      only-const
+                      (<= body compiler-backend-layout-sentinel-arm-cap))
+                    (unless
+                      (compiler-backend-layout-const-line?
+                        data
+                        (unsafe
+                          (ptr-read (ptr-offset starts k)))
+                        (-
+                          (unsafe
+                            (ptr-read (ptr-offset starts (+ k 1))))
+                          1))
+                      (set! only-const false)))))
+              (set! k (+ k 1)))))
+        (if (or barrier (= body 0))
+          0
+          (bit-or
+            compiler-backend-layout-region-shape-ok
+            (bit-or
+              (if (=
+                (bit-and
+                  (unsafe
+                    (ptr-read (ptr-offset flags (- re 1))))
+                  stop-bits)
+                0)
+                compiler-backend-layout-region-needs-jump
+                0)
+              (if (and
+                only-const
+                (<= body compiler-backend-layout-sentinel-arm-cap))
+                compiler-backend-layout-region-sentinel
+                0))))))))
+
+;; Is every branch into the region predicted NOT-TAKEN? Counted as a sum over
+;; the region's own label lines minus the branches that stay inside it: an
+;; internal back edge is not an entry. The opcode heuristics carry the arm only
+;; in the guard shape -- at least `guard-chain-entries` clauses bailing to it,
+;; every one of them predicted NOT-TAKEN. `sentinel?` swaps that in for the
+;; constant-arm heuristic, which needs only that nothing entering the arm is
+;; predicted TAKEN and that no unconditional jump names it.
+(define (compiler-backend-layout-region-cold?
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [pred : (MutPtr i64)]
+  [refs : (MutPtr i64)]
+  [rs : i64]
+  [re : i64]
+  [sentinel? : bool]) : bool
+  (let
+    [branch-bits : i64
+      (bit-or compiler-backend-layout-flag-jmp compiler-backend-layout-flag-jcc)]
+    [total : i64 0]
+    [uncond : i64 0]
+    [cold : i64 0]
+    [hot : i64 0]
+    [k : i64 rs]
+    (begin
+      (while (< k re)
+        (let
+          [line-flags : i64
+            (unsafe
+              (ptr-read (ptr-offset flags k)))]
+          (begin
+            (unless
+              (= (bit-and line-flags compiler-backend-layout-flag-label) 0)
+              (let
+                [cell : i64
+                  (* 4 (shr line-flags compiler-backend-layout-flag-ops-shift))]
+                (begin
+                  (set!
+                    total
+                    (+
+                      total
+                      (unsafe
+                        (ptr-read (ptr-offset refs cell)))))
+                  (set!
+                    uncond
+                    (+
+                      uncond
+                      (unsafe
+                        (ptr-read (ptr-offset refs (+ cell 1))))))
+                  (set!
+                    cold
+                    (+
+                      cold
+                      (unsafe
+                        (ptr-read (ptr-offset refs (+ cell 2))))))
+                  (set!
+                    hot
+                    (+
+                      hot
+                      (unsafe
+                        (ptr-read (ptr-offset refs (+ cell 3))))))
+                  unit)))
+            (unless
+              (= (bit-and line-flags branch-bits) 0)
+              (let
+                [to : i64
+                  (unsafe
+                    (ptr-read (ptr-offset target k)))]
+                (when
+                  (and (>= to rs) (< to re))
+                  (begin
+                    (set! total (- total 1))
+                    (cond
+                      [(not
+                          (=
+                            (bit-and
+                              line-flags
+                              compiler-backend-layout-flag-jmp)
+                            0))
+                        (set! uncond (- uncond 1))]
+                      [(=
+                          (unsafe
+                            (ptr-read (ptr-offset pred k)))
+                          compiler-backend-layout-predict-cold)
+                        (set! cold (- cold 1))]
+                      [(=
+                          (unsafe
+                            (ptr-read (ptr-offset pred k)))
+                          compiler-backend-layout-predict-hot)
+                        (set! hot (- hot 1))]
+                      [else unit])))))
+            (set! k (+ k 1)))))
+      (and
+        (> total 0)
+        (= uncond 0)
+        (if sentinel?
+          (= hot 0)
+          (and
+            (= cold total)
+            (>= cold compiler-backend-layout-guard-chain-entries)))))))
+
+;; Choose the regions to lay out of line, walking the flow list rather than
+;; every line. Accepted regions never overlap: a candidate whose `jmp` sits
+;; inside one already taken is skipped, so each line moves at most once. An
+;; accepted region is re-inserted at the first delimiting directive at or after
+;; its join -- the `.size` / `.seh_endproc` that closes the function the join
+;; belongs to -- found by advancing one cursor along the same flow list, which
+;; is sound because the accepted joins only ever move forward. Returns the
+;; number selected.
+;; Collect the regions whose SHAPE admits out-of-lining: a forward `jmp` whose
+;; target block starts right behind it, holds a real line, stays under the line
+;; cap and carries no delimiting directive. Nothing here needs a prediction, so
+;; a function without a single candidate never pays for one -- which is what
+;; this phase is separated out for. The non-overlap guard is NOT applied here:
+;; it turns on acceptance, which the second phase decides, and scanning a region
+;; the guard will later drop costs a walk and changes no answer.
+(define (compiler-backend-layout-collect-sink-shapes!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [flow-count : i64]
+  [cand-p : (MutPtr i64)]
+  [cand-q : (MutPtr i64)]
+  [cand-shape : (MutPtr i64)]) : i64
+  (let
+    [count : i64 0]
+    [k : i64 0]
+    (begin
+      (while (< k flow-count)
+        (let
+          [i : i64
+            (unsafe
+              (ptr-read (ptr-offset flow k)))]
+          (begin
+            (unless
+              (=
+                (bit-and
+                  (unsafe
+                    (ptr-read (ptr-offset flags i)))
+                  compiler-backend-layout-flag-jmp)
+                0)
+              (let
+                [q : i64
+                  (unsafe
+                    (ptr-read (ptr-offset target i)))]
+                [rs : i64 (+ i 1)]
+                (when
+                  (> q rs)
+                  (let
+                    [shape : i64
+                      (compiler-backend-layout-region-scan
+                        data
+                        starts
+                        flags
+                        rs
+                        q)]
+                    (unless
+                      (=
+                        (bit-and shape compiler-backend-layout-region-shape-ok)
+                        0)
+                      (begin
+                        (unsafe
+                          (ptr-write! (ptr-offset cand-p count) i))
+                        (unsafe
+                          (ptr-write! (ptr-offset cand-q count) q))
+                        (unsafe
+                          (ptr-write! (ptr-offset cand-shape count) shape))
+                        (set! count (+ count 1))))))))
+            (set! k (+ k 1)))))
+      count)))
+
+;; Choose the regions to lay out of line from the shape candidates, in emission
+;; order. Accepted regions never overlap: a candidate whose `jmp` sits inside
+;; one already taken is skipped, so each line moves at most once. An accepted
+;; region is re-inserted at the first delimiting directive at or after its join
+;; -- the `.size` / `.seh_endproc` that closes the function the join belongs to
+;; -- found by advancing one cursor along the flow list, which is sound because
+;; the accepted joins only ever move forward. The candidate arrays are compacted
+;; in place: the write index never runs ahead of the read index. Returns the
+;; number selected.
+(define (compiler-backend-layout-select-sinks!
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [pred : (MutPtr i64)]
+  [refs : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [flow-count : i64]
+  [lines : i64]
+  [candidates : i64]
+  [sink-p : (MutPtr i64)]
+  [sink-q : (MutPtr i64)]
+  [cand-shape : (MutPtr i64)]
+  [sink-tail : (MutPtr i64)]
+  [sink-jump : (MutPtr i64)]) : i64
+  (let
+    [count : i64 0]
+    [guard : i64 0]
+    [tail-cursor : i64 0]
+    [k : i64 0]
+    (begin
+      (while (< k candidates)
+        (let
+          [i : i64
+            (unsafe
+              (ptr-read (ptr-offset sink-p k)))]
+          [q : i64
+            (unsafe
+              (ptr-read (ptr-offset sink-q k)))]
+          [shape : i64
+            (unsafe
+              (ptr-read (ptr-offset cand-shape k)))]
+          [rs : i64 (+ i 1)]
+          (begin
+            (when
+              (and
+                (>= i guard)
+                (or
+                  (compiler-backend-layout-region-cold?
+                    flags
+                    target
+                    pred
+                    refs
+                    rs
+                    q
+                    false)
+                  (and
+                    (not
+                      (=
+                        (bit-and shape compiler-backend-layout-region-sentinel)
+                        0))
+                    (compiler-backend-layout-region-cold?
+                      flags
+                      target
+                      pred
+                      refs
+                      rs
+                      q
+                      true))))
+              (begin
+                (while (and
+                  (< tail-cursor flow-count)
+                  (or
+                    (<
+                      (unsafe
+                        (ptr-read (ptr-offset flow tail-cursor)))
+                      q)
+                    (=
+                      (bit-and
+                        (unsafe
+                          (ptr-read
+                            (ptr-offset
+                              flags
+                              (unsafe
+                                (ptr-read (ptr-offset flow tail-cursor))))))
+                        compiler-backend-layout-flag-barrier)
+                      0)))
+                  (set! tail-cursor (+ tail-cursor 1)))
+                (unsafe
+                  (ptr-write! (ptr-offset sink-p count) i))
+                (unsafe
+                  (ptr-write! (ptr-offset sink-q count) q))
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset sink-tail count)
+                    (if (< tail-cursor flow-count)
+                      (unsafe
+                        (ptr-read (ptr-offset flow tail-cursor)))
+                      lines)))
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset sink-jump count)
+                    (if (=
+                      (bit-and shape compiler-backend-layout-region-needs-jump)
+                      0)
+                      0
+                      1)))
+                (set! count (+ count 1))
+                (set! guard q)))
+            (set! k (+ k 1)))))
+      count)))
+
+;; The straight-line run a `jmp L` may absorb: the instructions from L onward,
+;; label definitions skipped (the copy defines none), up to and including the
+;; first unconditional `jmp`. Returns that terminator's line, or -1 when the run
+;; is too long or holds anything a copy must not carry.
+(define (compiler-backend-layout-dup-run-end
+  [flags : (MutPtr i64)]
+  [lines : i64]
+  [site : i64]
+  [label : i64]) : i64
+  (let
+    [refuse-bits : i64
+      (bit-or
+        compiler-backend-layout-flag-blank
+        (bit-or
+          compiler-backend-layout-flag-directive
+          (bit-or
+            compiler-backend-layout-flag-call
+            (bit-or
+              compiler-backend-layout-flag-ret
+              compiler-backend-layout-flag-stack))))]
+    [k : i64 (+ label 1)]
+    [taken : i64 0]
+    [term : i64 -1]
+    [failed : bool false]
+    (begin
+      (while (and (not failed) (< term 0) (< k lines))
+        (let
+          [line-flags : i64
+            (unsafe
+              (ptr-read (ptr-offset flags k)))]
+          (cond
+            [(not (= (bit-and line-flags compiler-backend-layout-flag-label) 0))
+              (set! k (+ k 1))]
+            [(or (= k site) (not (= (bit-and line-flags refuse-bits) 0)))
+              (set! failed true)]
+            [else
+              (begin
+                (set! taken (+ taken 1))
+                (if (> taken compiler-backend-layout-dup-run-cap)
+                  (set! failed true)
+                  (if (=
+                    (bit-and line-flags compiler-backend-layout-flag-jmp)
+                    0)
+                    (set! k (+ k 1))
+                    (set! term k))))])))
+      (if failed
+        -1
+        term))))
+
+;; Is the target already where execution would arrive by falling through nothing
+;; but label definitions? Then the `jmp` is not a jump at all -- the assembled
+;; peephole deletes it outright -- and copying a run over it would replace a
+;; free edge with real instructions.
+(define (compiler-backend-layout-fallthrough-target?
+  [flags : (MutPtr i64)]
+  [site : i64]
+  [label : i64]) : bool
+  (if (< label site)
+    false
+    (let
+      [skip-bits : i64
+        (bit-or
+          compiler-backend-layout-flag-label
+          compiler-backend-layout-flag-blank)]
+      [k : i64 (+ site 1)]
+      [only-labels : bool true]
+      (begin
+        (while (and only-labels (< k label))
+          (begin
+            (when
+              (=
+                (bit-and
+                  (unsafe
+                    (ptr-read (ptr-offset flags k)))
+                  skip-bits)
+                0)
+              (set! only-labels false))
+            (set! k (+ k 1))))
+        only-labels))))
+
+;; Is the line before this site a call that never returns? The `jmp` behind an
+;; abort call is dead text; copying a run into it only grows the function.
+(define (compiler-backend-layout-after-abort?
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [i : i64]) : bool
+  (let
+    [skip-bits : i64
+      (bit-or
+        compiler-backend-layout-flag-label
+        compiler-backend-layout-flag-blank)]
+    [j : i64 (- i 1)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (>= j 0))
+        (if (=
+          (bit-and
+            (unsafe
+              (ptr-read (ptr-offset flags j)))
+            skip-bits)
+          0)
+          (set! done true)
+          (set! j (- j 1))))
+      (and
+        (>= j 0)
+        (not
+          (=
+            (bit-and
+              (unsafe
+                (ptr-read (ptr-offset flags j)))
+              compiler-backend-layout-flag-call)
+            0))
+        (compiler-backend-layout-abort-line?
+          data
+          (unsafe
+            (ptr-read (ptr-offset starts j)))
+          (-
+            (unsafe
+              (ptr-read (ptr-offset starts (+ j 1))))
+            1))))))
+
+;; Choose the duplication sites, again over the flow list. A `jmp` inside a
+;; region already chosen for out-of-lining is left alone, so the two mechanisms
+;; never rewrite the same line. Returns the number selected.
+(define (compiler-backend-layout-select-dups!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [flow : (MutPtr i64)]
+  [flow-count : i64]
+  [lines : i64]
+  [sink-p : (MutPtr i64)]
+  [sink-q : (MutPtr i64)]
+  [sinks : i64]
+  [dup-p : (MutPtr i64)]
+  [dup-from : (MutPtr i64)]
+  [dup-to : (MutPtr i64)]) : i64
+  (let
+    [count : i64 0]
+    [cursor : i64 0]
+    [k : i64 0]
+    (begin
+      (while (< k flow-count)
+        (let
+          [i : i64
+            (unsafe
+              (ptr-read (ptr-offset flow k)))]
+          (begin
+            (unless
+              (=
+                (bit-and
+                  (unsafe
+                    (ptr-read (ptr-offset flags i)))
+                  compiler-backend-layout-flag-jmp)
+                0)
+              (begin
+                (while (and
+                  (< cursor sinks)
+                  (<
+                    (unsafe
+                      (ptr-read (ptr-offset sink-q cursor)))
+                    i))
+                  (set! cursor (+ cursor 1)))
+                (unless
+                  (and
+                    (< cursor sinks)
+                    (>=
+                      i
+                      (unsafe
+                        (ptr-read (ptr-offset sink-p cursor))))
+                    (<
+                      i
+                      (unsafe
+                        (ptr-read (ptr-offset sink-q cursor)))))
+                  (let
+                    [label : i64
+                      (unsafe
+                        (ptr-read (ptr-offset target i)))]
+                    (when
+                      (>= label 0)
+                      (let
+                        [term : i64
+                          (compiler-backend-layout-dup-run-end
+                            flags
+                            lines
+                            i
+                            label)]
+                        (when
+                          (and
+                            (>= term 0)
+                            (not
+                              (compiler-backend-layout-fallthrough-target?
+                                flags
+                                i
+                                label))
+                            (not
+                              (compiler-backend-layout-after-abort?
+                                data
+                                starts
+                                flags
+                                i)))
+                          (begin
+                            (unsafe
+                              (ptr-write! (ptr-offset dup-p count) i))
+                            (unsafe
+                              (ptr-write!
+                                (ptr-offset dup-from count)
+                                (+ label 1)))
+                            (unsafe
+                              (ptr-write! (ptr-offset dup-to count) term))
+                            (set! count (+ count 1))))))))))
+            (set! k (+ k 1)))))
+      count)))
+
+;; The output as a sequence of source lines: every entry names a line of the
+;; input, so a duplicated run is that run's lines listed twice and an
+;; out-of-lined region is its lines listed at the insertion point instead of
+;; where they stood. The jump appended behind a moved region is the very `jmp T`
+;; line the move deleted, so no text is ever synthesized.
+(define (compiler-backend-layout-build-plan
+  [flags : (MutPtr i64)]
+  [lines : i64]
+  [sink-p : (MutPtr i64)]
+  [sink-q : (MutPtr i64)]
+  [sink-tail : (MutPtr i64)]
+  [sink-jump : (MutPtr i64)]
+  [sinks : i64]
+  [dup-p : (MutPtr i64)]
+  [dup-from : (MutPtr i64)]
+  [dup-to : (MutPtr i64)]
+  [dups : i64]
+  [plan : (MutPtr i64)]) : i64
+  (let
+    [skip-bits : i64
+      (bit-or
+        compiler-backend-layout-flag-label
+        compiler-backend-layout-flag-blank)]
+    [len : i64 0]
+    [skipped : i64 0]
+    [placed : i64 0]
+    [di : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i lines)
+        (begin
+          (while (and
+            (< placed skipped)
+            (=
+              (unsafe
+                (ptr-read (ptr-offset sink-tail placed)))
+              i))
+            (let
+              [k : i64
+                (+
+                  (unsafe
+                    (ptr-read (ptr-offset sink-p placed)))
+                  1)]
+              (begin
+                (while (<
+                  k
+                  (unsafe
+                    (ptr-read (ptr-offset sink-q placed))))
+                  (begin
+                    (unsafe
+                      (ptr-write! (ptr-offset plan len) k))
+                    (set! len (+ len 1))
+                    (set! k (+ k 1))))
+                (when
+                  (=
+                    (unsafe
+                      (ptr-read (ptr-offset sink-jump placed)))
+                    1)
+                  (begin
+                    (unsafe
+                      (ptr-write!
+                        (ptr-offset plan len)
+                        (unsafe
+                          (ptr-read (ptr-offset sink-p placed)))))
+                    (set! len (+ len 1))))
+                (set! placed (+ placed 1)))))
+          (cond
+            [(and
+                (< skipped sinks)
+                (=
+                  i
+                  (unsafe
+                    (ptr-read (ptr-offset sink-p skipped)))))
+              (begin
+                (set!
+                  i
+                  (unsafe
+                    (ptr-read (ptr-offset sink-q skipped))))
+                (set! skipped (+ skipped 1)))]
+            [(and
+                (< di dups)
+                (=
+                  i
+                  (unsafe
+                    (ptr-read (ptr-offset dup-p di)))))
+              (let
+                [k : i64
+                  (unsafe
+                    (ptr-read (ptr-offset dup-from di)))]
+                [stop : i64
+                  (unsafe
+                    (ptr-read (ptr-offset dup-to di)))]
+                (begin
+                  (while (<= k stop)
+                    (begin
+                      (when
+                        (=
+                          (bit-and
+                            (unsafe
+                              (ptr-read (ptr-offset flags k)))
+                            skip-bits)
+                          0)
+                        (begin
+                          (unsafe
+                            (ptr-write! (ptr-offset plan len) k))
+                          (set! len (+ len 1))))
+                      (set! k (+ k 1))))
+                  (set! di (+ di 1))
+                  (set! i (+ i 1))))]
+            [else
+              (begin
+                (unsafe
+                  (ptr-write! (ptr-offset plan len) i))
+                (set! len (+ len 1))
+                (set! i (+ i 1)))])))
+      (while (< placed skipped)
+        (let
+          [k : i64
+            (+
+              (unsafe
+                (ptr-read (ptr-offset sink-p placed)))
+              1)]
+          (begin
+            (while (<
+              k
+              (unsafe
+                (ptr-read (ptr-offset sink-q placed))))
+              (begin
+                (unsafe
+                  (ptr-write! (ptr-offset plan len) k))
+                (set! len (+ len 1))
+                (set! k (+ k 1))))
+            (when
+              (=
+                (unsafe
+                  (ptr-read (ptr-offset sink-jump placed)))
+                1)
+              (begin
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset plan len)
+                    (unsafe
+                      (ptr-read (ptr-offset sink-p placed)))))
+                (set! len (+ len 1))))
+            (set! placed (+ placed 1)))))
+      len)))
+
+;; The analysis proper. Everything here is scratch except the two words the plan
+;; carries out: `starts`, which the caller's line walk reads instead of
+;; splitting the text a second time, and `plan` itself. `len` = 0 means neither
+;; mechanism fired and the caller walks the lines in order. With `layout?` off
+;; -- the bare peephole the unit tests exercise -- only the line split runs.
+(define (compiler-backend-layout-analyze
+  [asm : String]
+  [n : i64]
+  [mode : i64]
+  [layout? : bool]) : CompilerBackendLayoutPlan
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data asm))]
+    [classify? : bool
+      (and
+        layout?
+        (> n 0)
+        (= (compiler-backend-peephole-byte-at data (- n 1)) 10))]
+    [cap : i64 (compiler-backend-layout-line-capacity n)]
+    [list-cap : i64
+      (if classify?
+        cap
+        0)]
+    [counts : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [starts : (__tl_dyn-array i64) (array.make-array i64 (+ cap 1))]
+    [flags : (__tl_dyn-array i64) (array.make-array i64 list-cap)]
+    [labels : (__tl_dyn-array i64) (array.make-array i64 list-cap)]
+    [flow : (__tl_dyn-array i64) (array.make-array i64 list-cap)]
+    [lines : i64
+      (compiler-backend-layout-split-lines
+        data
+        n
+        cap
+        (unsafe
+          (array-data starts)))]
+    (begin
+      ;; The estimate is generous for emitted assembly; a text that beats it is
+      ;; served by doubling and splitting again. This second call site is also
+      ;; what keeps the split OUT of line: absorbed into this function it lost
+      ;; its SWAR constants to the register pressure of everything below.
+      (while (< lines 0)
+        (begin
+          (set! cap (* 2 cap))
+          (set!
+            list-cap
+            (if classify?
+              cap
+              0))
+          (set! starts (array.make-array i64 (+ cap 1)))
+          (set! flags (array.make-array i64 list-cap))
+          (set! labels (array.make-array i64 list-cap))
+          (set! flow (array.make-array i64 list-cap))
+          (set!
+            lines
+            (compiler-backend-layout-split-lines
+              data
+              n
+              cap
+              (unsafe
+                (array-data starts))))))
+      (when
+        classify?
+        (let
+          [flags-out : (MutPtr i64)
+            (unsafe
+              (array-data flags))]
+          (begin
+            (compiler-backend-layout-classify-lines!
+              data
+              lines
+              (unsafe
+                (array-data starts))
+              flags-out)
+            (compiler-backend-layout-list-lines!
+              lines
+              flags-out
+              (unsafe
+                (array-data labels))
+              (unsafe
+                (array-data flow))
+              counts))))
+      (let
+        [jumps : i64
+          (if classify?
+            (array-ref counts 2)
+            0)]
+        (if (= jumps 0)
+          (CompilerBackendLayoutPlan starts (array.make-array i64 0) lines 0)
+          (let
+            [label-count : i64 (array-ref counts 0)]
+            [flow-count : i64 (array-ref counts 1)]
+            [table-cap : i64
+              (compiler-backend-layout-table-capacity label-count)]
+            [table : (__tl_dyn-array i64)
+              (array.make-array i64 (* 2 table-cap))]
+            [target : (__tl_dyn-array i64) (array.make-array i64 lines)]
+            [pred : (__tl_dyn-array i64) (array.make-array i64 lines)]
+            [refs : (__tl_dyn-array i64)
+              (array.make-array i64 (* 4 (+ label-count 1)))]
+            ;; One allocation for the eight per-`jmp` site columns.
+            [sites : (__tl_dyn-array i64) (array.make-array i64 (* 8 jumps))]
+            [sites-raw : (MutPtr i64)
+              (unsafe
+                (array-data sites))]
+            [sink-p-raw : (MutPtr i64) sites-raw]
+            [sink-q-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw jumps))]
+            [cand-shape-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 2 jumps)))]
+            [sink-tail-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 3 jumps)))]
+            [sink-jump-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 4 jumps)))]
+            [dup-p-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 5 jumps)))]
+            [dup-from-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 6 jumps)))]
+            [dup-to-raw : (MutPtr i64)
+              (unsafe
+                (ptr-offset sites-raw (* 7 jumps)))]
+            [starts-raw : (MutPtr i64)
+              (unsafe
+                (array-data starts))]
+            [flags-raw : (MutPtr i64)
+              (unsafe
+                (array-data flags))]
+            [flow-raw : (MutPtr i64)
+              (unsafe
+                (array-data flow))]
+            [target-raw : (MutPtr i64)
+              (unsafe
+                (array-data target))]
+            [pred-raw : (MutPtr i64)
+              (unsafe
+                (array-data pred))]
+            [refs-raw : (MutPtr i64)
+              (unsafe
+                (array-data refs))]
+            [table-raw : (MutPtr i64)
+              (unsafe
+                (array-data table))]
+            [_table : unit
+              (compiler-backend-layout-build-table!
+                data
+                starts-raw
+                (unsafe
+                  (array-data labels))
+                label-count
+                table-raw
+                table-cap)]
+            [_resolve : unit
+              (compiler-backend-layout-resolve-targets!
+                data
+                starts-raw
+                flags-raw
+                flow-raw
+                flow-count
+                compiler-backend-layout-flag-jmp
+                target-raw
+                table-raw
+                table-cap)]
+            [candidates : i64
+              (if (compiler-backend-layout-flag?
+                mode
+                compiler-backend-layout-mode-sink)
+                (compiler-backend-layout-collect-sink-shapes!
+                  data
+                  starts-raw
+                  flags-raw
+                  target-raw
+                  flow-raw
+                  flow-count
+                  sink-p-raw
+                  sink-q-raw
+                  cand-shape-raw)
+                0)]
+            ;; The prediction and the conditional branches' targets feed
+            ;; nothing but the coldness test, so a function whose shapes all
+            ;; failed never runs either.
+            [_resolve-jcc : unit
+              (if (> candidates 0)
+                (compiler-backend-layout-resolve-targets!
+                  data
+                  starts-raw
+                  flags-raw
+                  flow-raw
+                  flow-count
+                  compiler-backend-layout-flag-jcc
+                  target-raw
+                  table-raw
+                  table-cap)
+                unit)]
+            [_predict : unit
+              (if (> candidates 0)
+                (compiler-backend-layout-predict-and-tally!
+                  data
+                  starts-raw
+                  flags-raw
+                  target-raw
+                  pred-raw
+                  refs-raw
+                  flow-raw
+                  flow-count)
+                unit)]
+            [sinks : i64
+              (if (> candidates 0)
+                (compiler-backend-layout-select-sinks!
+                  flags-raw
+                  target-raw
+                  pred-raw
+                  refs-raw
+                  flow-raw
+                  flow-count
+                  lines
+                  candidates
+                  sink-p-raw
+                  sink-q-raw
+                  cand-shape-raw
+                  sink-tail-raw
+                  sink-jump-raw)
+                0)]
+            [dups : i64
+              (if (compiler-backend-layout-flag?
+                mode
+                compiler-backend-layout-mode-dup)
+                (compiler-backend-layout-select-dups!
+                  data
+                  starts-raw
+                  flags-raw
+                  target-raw
+                  flow-raw
+                  flow-count
+                  lines
+                  sink-p-raw
+                  sink-q-raw
+                  sinks
+                  dup-p-raw
+                  dup-from-raw
+                  dup-to-raw)
+                0)]
+            (if (and (= sinks 0) (= dups 0))
+              (CompilerBackendLayoutPlan
+                starts
+                (array.make-array i64 0)
+                lines
+                0)
+              (let
+                [plan : (__tl_dyn-array i64)
+                  (array.make-array
+                    i64
+                    (+
+                      lines
+                      (+
+                        (* dups compiler-backend-layout-dup-run-cap)
+                        (+ sinks 4))))]
+                [len : i64
+                  (compiler-backend-layout-build-plan
+                    flags-raw
+                    lines
+                    sink-p-raw
+                    sink-q-raw
+                    sink-tail-raw
+                    sink-jump-raw
+                    sinks
+                    dup-p-raw
+                    dup-from-raw
+                    dup-to-raw
+                    dups
+                    (unsafe
+                      (array-data plan)))]
+                (CompilerBackendLayoutPlan starts plan lines len)))))))))
+
+;; Render a non-identity plan. Consecutive entries that are also consecutive
+;; source lines copy as one range, so the untouched stretches of a function cost
+;; one memcpy each. Only the standalone entry renders: the streaming pipeline
+;; feeds the plan straight into the peephole's line walk and never materializes
+;; this text at all.
+(define (compiler-backend-layout-render
+  [asm : String]
+  [starts : (__tl_dyn-array i64)]
+  [plan : (__tl_dyn-array i64)]
+  [len : i64]) : String
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data asm))]
+    [total : i64 0]
+    [k : i64 0]
+    (begin
+      (while (< k len)
+        (let
+          [line : i64 (array-ref plan k)]
+          (begin
+            (set!
+              total
+              (+
+                total
+                (- (array-ref starts (+ line 1)) (array-ref starts line))))
+            (set! k (+ k 1)))))
+      (if (= total 0)
+        ""
+        (let
+          [out : (__tl_dyn-array u8) (array.make-array u8 total)]
+          [dst : (MutPtr u8)
+            (unsafe
+              (array-data out))]
+          [pos : i64 0]
+          [run-start : i64 0]
+          [run-end : i64 0]
+          [active : bool false]
+          [j : i64 0]
+          (begin
+            (while (< j len)
+              (let
+                [line : i64 (array-ref plan j)]
+                [s : i64 (array-ref starts line)]
+                [e : i64 (array-ref starts (+ line 1))]
+                (begin
+                  (if (and active (= s run-end))
+                    (set! run-end e)
+                    (begin
+                      (when
+                        active
+                        (begin
+                          (text_buf_borrowed.copy-byte-range-into
+                            data
+                            run-start
+                            (- run-end run-start)
+                            dst
+                            pos)
+                          (set! pos (+ pos (- run-end run-start)))))
+                      (set! active true)
+                      (set! run-start s)
+                      (set! run-end e)))
+                  (set! j (+ j 1)))))
+            (when
+              active
+              (begin
+                (text_buf_borrowed.copy-byte-range-into
+                  data
+                  run-start
+                  (- run-end run-start)
+                  dst
+                  pos)
+                (set! pos (+ pos (- run-end run-start)))))
+            (unsafe
+              (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))))
+
+;; #block-layout entry: rewrite one emitted assembly text under `mode`
+;; (bit 1 tail duplication, bit 2 cold-arm out-of-lining). The unit tests and
+;; the standalone profiling driver use this text-to-text spelling; production
+;; runs the same analysis inside the peephole's record walk and never builds
+;; the intermediate text.
+(define (compiler-backend-layout-run
+  [asm : String]
+  [mode : i64]
+  [home : arena.Arena]) : String
+  (let
+    [n : i64 (string.string-length asm)]
+    [laid-out : CompilerBackendLayoutPlan
+      (compiler-backend-layout-analyze asm n mode true)]
+    (if (= laid-out.len 0)
+      asm
+      (in-arena
+        home
+        (compiler-backend-layout-render
+          asm
+          laid-out.starts
+          laid-out.plan
+          laid-out.len)))))
+
+(define (compiler-backend-layout-asm-with-mode [asm : String] [mode : i64]) : String
+  (let
+    [home : arena.Arena (arena.current)]
+    [out : String ""]
+    (begin
+      (with-scratch
+        (let
+          [rendered : String (compiler-backend-layout-run asm mode home)]
+          (begin
+            (set! out rendered)
+            unit)))
+      out)))
 
 ;; Streaming peephole over line RECORDS: identical rule set, pair state and
 ;; owner-map handling to the text pass it replaces, except that each surviving
@@ -87508,17 +90056,46 @@
               backend-state.address
               stream.address
               asm-data)]
-          [i : i64 0]
+          ;; #block-layout: split and classify this chunk once. `starts` is the
+          ;; line split the walk below would have performed anyway, and `plan`
+          ;; -- when either rewrite fired -- is the order the walk visits those
+          ;; lines in, which is exactly the text the standalone entry would have
+          ;; rendered and re-parsed.
+          [laid-out : CompilerBackendLayoutPlan
+            (compiler-backend-layout-analyze
+              asm
+              n
+              compiler-backend-layout-mode
+              drop-fallthrough?)]
+          [lay-starts : (MutPtr i64)
+            (unsafe
+              (array-data laid-out.starts))]
+          [lay-plan : (MutPtr i64)
+            (unsafe
+              (array-data laid-out.plan))]
+          [lay-len : i64 laid-out.len]
+          [steps : i64
+            (if (= lay-len 0)
+              laid-out.lines
+              lay-len)]
+          [step : i64 0]
           (begin
-            (while (< i n)
+            (while (< step steps)
               (let
                 ;; The line ends at its newline, or at the chunk end.
+                [source-line : i64
+                  (if (= lay-len 0)
+                    step
+                    (unsafe
+                      (ptr-read (ptr-offset lay-plan step))))]
+                [i : i64
+                  (unsafe
+                    (ptr-read (ptr-offset lay-starts source-line)))]
                 [end : i64
-                  (compiler-backend-peephole-scan-byte-range asm-data i n 10)]
-                [next-start : i64
-                  (if (< end n)
-                    (+ end 1)
-                    end)]
+                  (-
+                    (unsafe
+                      (ptr-read (ptr-offset lay-starts (+ source-line 1))))
+                    1)]
                 [line-newline : bool (< end n)]
                 [line : CompilerBackendPeepholeLine
                   (if parse-slot-b?
@@ -87774,7 +90351,7 @@
                             (compiler-backend-peephole-desc-end
                               (compiler-backend-global-shared-view pending))))
                         unit)))
-                  (set! i next-start))))
+                  (set! step (+ step 1)))))
             (set! c (+ c 1)))))
       (if held-jmp?
         ;; Group end with a candidate still deferred: the old pass kept it,
@@ -87940,6 +90517,14 @@
   ;; compile path; the missed cascades are optional code-size rewrites.
   ;; GAP5 then sweeps never-read local frame stores recorded during emission --
   ;; over the same records, so the text is rendered exactly once.
+  ;; #block-layout: the whole-text mirror of the streaming pipeline. The
+  ;; streamed path lays out each emitted text as its own chunk of the walk; this
+  ;; entry hands the walk the SAME texts concatenated as one chunk, and the
+  ;; rewrites are function-local (they never cross a delimiting directive and
+  ;; only name `.L` labels), so laying out the concatenation is laying out each
+  ;; piece. Both are gated inside the walk on `drop-fallthrough?`, the flag that
+  ;; already distinguishes the production shape from the bare peephole the unit
+  ;; tests exercise.
   (let
     [records : CompilerBackendPeepholeLineVec
       (compiler-backend-peephole-asm-once-records
@@ -88898,28 +91483,24 @@
     src
     (CompilerBackendTarget.Linux)))
 
-(define (compiler-backend-runtime-helper-externs) : compiler_ir_types.CompilerIrExternList
-  (compiler_ir_types.compiler-ir-extern-cons
+(define (compiler-backend-runtime-helper-externs) : compiler_ir_types.CompilerIrExternSeq
+  (compiler_ir_types.compiler-ir-extern-seq4
     (compiler_ir_types.compiler-ir-extern-default-id
       cbi.compiler-builtin-id-tl-alloc
       "tl_alloc"
       (compiler_ast_types.AstType.I64))
-    (compiler_ir_types.compiler-ir-extern-cons
-      (compiler_ir_types.compiler-ir-extern-default-id
-        cbi.compiler-builtin-id-tl-substring
-        "tl_substring"
-        (compiler_ast_types.AstType.I64))
-      (compiler_ir_types.compiler-ir-extern-cons
-        (compiler_ir_types.compiler-ir-extern-default-id
-          cbi.compiler-builtin-id-tl-string-concat
-          "tl_string_concat"
-          (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.compiler-ir-extern-cons
-          (compiler_ir_types.compiler-ir-extern-default-id
-            cbi.compiler-builtin-id-tl-int-to-string
-            "tl_int_to_string"
-            (compiler_ast_types.AstType.String))
-          compiler_ir_types.CompilerIrExternList.Nil)))))
+    (compiler_ir_types.compiler-ir-extern-default-id
+      cbi.compiler-builtin-id-tl-substring
+      "tl_substring"
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-extern-default-id
+      cbi.compiler-builtin-id-tl-string-concat
+      "tl_string_concat"
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-extern-default-id
+      cbi.compiler-builtin-id-tl-int-to-string
+      "tl_int_to_string"
+      (compiler_ast_types.AstType.String))))
 
 (define (compiler-backend-test-symbol [name : String]) : i64
   (compiler_ir_types.compiler-ir-test-symbol name))
@@ -89422,12 +92003,11 @@
                     (compiler_ir_types.CompilerIrValue.I64 42)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
-    (compiler_ir_types.compiler-ir-extern-cons
+    (compiler_ir_types.compiler-ir-extern-seq1
       (compiler_ir_types.compiler-ir-extern-default-id
         cbi.compiler-builtin-id-tl-str-view
         "tl_str_view"
-        (compiler_ast_types.AstType.I64))
-      compiler_ir_types.CompilerIrExternList.Nil)))
+        (compiler_ast_types.AstType.I64)))))
 
 (define (compiler-backend-unused-str-view-extern-ok?) : bool
   (match (compiler-backend-emit-program-linux
@@ -89468,7 +92048,7 @@
                     (compiler_ir_types.CompilerIrValue.I64 42)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil)
-      (compiler_ir_types.compiler-ir-extern-cons
+      (compiler_ir_types.compiler-ir-extern-seq1
         (compiler_ir_types.CompilerIrExtern.Extern
           name-id
           name-id
@@ -89477,8 +92057,7 @@
           (compiler_ast_types.AstExternAbi.C)
           link-symbol-id
           (compiler_ast_types.ast-extern-link-input-list-new)
-          false)
-        compiler_ir_types.CompilerIrExternList.Nil))))
+          false)))))
 
 (define (compiler-backend-unused-foreign-link-extern-ok?) : bool
   (match (compiler-backend-emit-program-linux
@@ -89522,7 +92101,7 @@
                       (compiler_ir_types.CompilerIrValue.I64 42)))))
               compiler_ir_types.CompilerIrBlockList.Nil))
           compiler_ir_types.CompilerIrFunctionList.Nil)
-        (compiler_ir_types.compiler-ir-extern-cons
+        (compiler_ir_types.compiler-ir-extern-seq1
           (compiler_ir_types.CompilerIrExtern.Extern
             name-id
             source-name-id
@@ -89531,8 +92110,7 @@
             (compiler_ast_types.AstExternAbi.C)
             link-symbol-id
             (compiler_ast_types.ast-extern-link-input-list-new)
-            false)
-          compiler_ir_types.CompilerIrExternList.Nil)))))
+            false))))))
 
 (define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
   (match (compiler-backend-emit-program-linux
@@ -89846,7 +92424,7 @@
                     (compiler_ir_types.CompilerIrValue.Var 0)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-user-helper-name-ok?) : bool
   (match (compiler-backend-emit-program-linux
@@ -89922,12 +92500,11 @@
                     (compiler_ir_types.CompilerIrValue.Var 0)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
-    (compiler_ir_types.compiler-ir-extern-cons
+    (compiler_ir_types.compiler-ir-extern-seq1
       (compiler_ir_types.compiler-ir-extern-default-id
         cbi.compiler-builtin-id-tl-substring
         "tl_substring"
-        (compiler_ast_types.AstType.I64))
-      compiler_ir_types.CompilerIrExternList.Nil)))
+        (compiler_ast_types.AstType.I64)))))
 
 (define (compiler-backend-runtime-coexist-ok?) : bool
   (match (compiler-backend-emit-program-linux
@@ -90006,7 +92583,7 @@
                     (compiler_ir_types.CompilerIrValue.Var 0)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-module-symbol-ok?) : bool
   (match (compiler-backend-emit-program-linux

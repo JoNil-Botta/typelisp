@@ -3,8 +3,9 @@
 (import compiler_ir_types)
 (import compiler_ast_types)
 (import compiler_diagnostic)
+(import compiler_intern as ci)
 (import stdlib.string)
-(import compiler_owned_view as owned_view)
+(import stdlib.str_cat_runtime as str_cat)
 
 (define (compiler-lower-spmd-package-callable-source) : String
   "(module spmd_fixture)
@@ -173,28 +174,119 @@
 (define (compiler-lower-spmd-package-symbol-collision-ok?) : bool
   (let
     [state : compiler_lower.CompilerLowerState
-      (compiler_lower.compiler-lower-state-new)]
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (ci.intern-compat-state-new))]
     [_package : unit
       (compiler_lower.compiler-lower-state-set-spmd-package!
         state
         "collision_fixture")]
-    [symbol : i64 (compiler_ir_types.compiler-ir-test-symbol "__collision")]
+    [intern-state : ci.InternCompatState
+      (compiler_lower.compiler-lower-state-interns state)]
+    [classes : compiler_ast_types.AstSpmdParamClassList
+      (compiler_ast_types.ast-spmd-param-class-list-new)]
+    [canonical-handle : i64
+      (ci.intern-compat-state-intern intern-state "collision/helper")]
+    ;; The result type is a typed structural component even though this
+    ;; deliberately inconsistent fixture keeps the old serialized signature
+    ;; byte-identical. Both recipes therefore produce the same stable hash and
+    ;; linker spelling while retaining distinct identity and symbol handles.
+    [identity-a : i64
+      (compiler_lower.lower-spmd-package-structural-symbol
+        state
+        "collision_fixture"
+        "collision/helper"
+        canonical-handle
+        "(-> i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
+        1
+        classes
+        (compiler_ast_types.AstSpmdResultClass.Uniform)
+        -1)]
+    [identity-b : i64
+      (compiler_lower.lower-spmd-package-structural-symbol
+        state
+        "collision_fixture"
+        "collision/helper"
+        canonical-handle
+        "(-> i64)"
+        (compiler_ast_types.AstType.F64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
+        1
+        classes
+        (compiler_ast_types.AstSpmdResultClass.Uniform)
+        -1)]
+    [expected-symbol : String
+      (compiler_lower.lower-spmd-package-symbol
+        "collision_fixture"
+        "collision/helper"
+        "(-> i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
+        1
+        ""
+        "u"
+        -1)]
     [first : compiler_lower.LowerSpmdPackageSymbolRegistration
       (compiler_lower.lower-spmd-package-symbol-register
         state
-        symbol
-        "identity-a")]
+        (compiler_lower.lower-spmd-package-structural-linker-symbol
+          intern-state
+          identity-a)
+        (compiler_lower.lower-spmd-package-structural-registration-key
+          intern-state
+          identity-a)
+        (compiler_lower.lower-spmd-package-structural-identity
+          intern-state
+          identity-a))]
     [repeat : compiler_lower.LowerSpmdPackageSymbolRegistration
       (compiler_lower.lower-spmd-package-symbol-register
         state
-        symbol
-        "identity-a")]
+        (compiler_lower.lower-spmd-package-structural-linker-symbol
+          intern-state
+          identity-a)
+        (compiler_lower.lower-spmd-package-structural-registration-key
+          intern-state
+          identity-a)
+        (compiler_lower.lower-spmd-package-structural-identity
+          intern-state
+          identity-a))]
     [collision : compiler_lower.LowerSpmdPackageSymbolRegistration
       (compiler_lower.lower-spmd-package-symbol-register
         state
-        symbol
-        "identity-b")]
+        (compiler_lower.lower-spmd-package-structural-linker-symbol
+          intern-state
+          identity-b)
+        (compiler_lower.lower-spmd-package-structural-registration-key
+          intern-state
+          identity-b)
+        (compiler_lower.lower-spmd-package-structural-identity
+          intern-state
+          identity-b))]
     (and
+      (not
+        (=
+          (compiler_lower.lower-spmd-package-structural-identity
+            intern-state
+            identity-a)
+          (compiler_lower.lower-spmd-package-structural-identity
+            intern-state
+            identity-b)))
+      (not
+        (=
+          (compiler_lower.lower-spmd-package-structural-linker-symbol
+            intern-state
+            identity-a)
+          (compiler_lower.lower-spmd-package-structural-linker-symbol
+            intern-state
+            identity-b)))
+      (=
+        (compiler_lower.lower-spmd-package-structural-registration-key
+          intern-state
+          identity-a)
+        (compiler_lower.lower-spmd-package-structural-registration-key
+          intern-state
+          identity-b))
       (match first
         [(compiler_lower.LowerSpmdPackageSymbolRegistration.New) true]
         [_ false])
@@ -205,8 +297,309 @@
         [(compiler_lower.LowerSpmdPackageSymbolRegistration.Collision message)
           (string.eq
             message
-            "lower: :spmd-callable stable symbol collision for __collision")]
+            (str_cat.str-cat
+              "lower: :spmd-callable stable symbol collision for "
+              expected-symbol))]
         [_ false]))))
+
+(define (compiler-lower-spmd-package-test-classes
+  [first : compiler_ast_types.AstSpmdParamClass]
+  [second : compiler_ast_types.AstSpmdParamClass]) : compiler_ast_types.AstSpmdParamClassList
+  (let
+    [classes : compiler_ast_types.AstSpmdParamClassList
+      (compiler_ast_types.ast-spmd-param-class-list-new)]
+    (begin
+      (compiler_ast_types.ast-spmd-param-class-list-push (&mut classes) first)
+      (compiler_ast_types.ast-spmd-param-class-list-push (&mut classes) second)
+      classes)))
+
+(define (compiler-lower-spmd-test-identity
+  [state : compiler_lower.CompilerLowerState]
+  [record : i64]) : i64
+  (compiler_lower.lower-spmd-package-structural-identity
+    (compiler_lower.compiler-lower-state-interns state)
+    record))
+
+(define (compiler-lower-spmd-test-symbol
+  [state : compiler_lower.CompilerLowerState]
+  [record : i64]) : i64
+  (compiler_lower.lower-spmd-package-structural-linker-symbol
+    (compiler_lower.compiler-lower-state-interns state)
+    record))
+
+(define (compiler-lower-spmd-test-registration-key
+  [state : compiler_lower.CompilerLowerState]
+  [record : i64]) : i64
+  (compiler_lower.lower-spmd-package-structural-registration-key
+    (compiler_lower.compiler-lower-state-interns state)
+    record))
+
+(define (compiler-lower-spmd-test-identity-components
+  [state : compiler_lower.CompilerLowerState]
+  [record : i64]) : i64
+  (compiler_lower.lower-spmd-package-structural-identity-components
+    (compiler_lower.compiler-lower-state-interns state)
+    record))
+
+(define (compiler-lower-spmd-structural-symbols-ok?) : bool
+  (let
+    [state-a : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (ci.intern-compat-state-new))]
+    [state-b : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (ci.intern-compat-state-new))]
+    [_package-a : unit
+      (compiler_lower.compiler-lower-state-set-spmd-package! state-a "pkg-a")]
+    [_package-b : unit
+      (compiler_lower.compiler-lower-state-set-spmd-package! state-b "pkg-a")]
+    [intern-a : ci.InternCompatState
+      (compiler_lower.compiler-lower-state-interns state-a)]
+    [intern-b : ci.InternCompatState
+      (compiler_lower.compiler-lower-state-interns state-b)]
+    [canonical-a : i64 (ci.intern-compat-state-intern intern-a "pkg-a/helper")]
+    [canonical-b : i64 (ci.intern-compat-state-intern intern-b "pkg-a/helper")]
+    [varying-uniform : compiler_ast_types.AstSpmdParamClassList
+      (compiler-lower-spmd-package-test-classes
+        compiler_ast_types.AstSpmdParamClass.Varying
+        compiler_ast_types.AstSpmdParamClass.Uniform)]
+    [uniform-varying : compiler_ast_types.AstSpmdParamClassList
+      (compiler-lower-spmd-package-test-classes
+        compiler_ast_types.AstSpmdParamClass.Uniform
+        compiler_ast_types.AstSpmdParamClass.Varying)]
+    [base : i64
+      (compiler_lower.lower-spmd-package-structural-symbol
+        state-a
+        "pkg-a"
+        "pkg-a/helper"
+        canonical-a
+        "(-> i64 i64 i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        8
+        varying-uniform
+        (compiler_ast_types.AstSpmdResultClass.Varying)
+        0)]
+    [repeat : i64
+      (compiler_lower.lower-spmd-package-structural-symbol
+        state-a
+        "pkg-a"
+        "pkg-a/helper"
+        canonical-a
+        "(-> i64 i64 i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        8
+        varying-uniform
+        (compiler_ast_types.AstSpmdResultClass.Varying)
+        0)]
+    [different-lanes : i64
+      (compiler_lower.lower-spmd-package-structural-symbol
+        state-a
+        "pkg-a"
+        "pkg-a/helper"
+        canonical-a
+        "(-> i64 i64 i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        16
+        varying-uniform
+        (compiler_ast_types.AstSpmdResultClass.Varying)
+        0)]
+    [different-args : i64
+      (compiler_lower.lower-spmd-package-structural-symbol
+        state-a
+        "pkg-a"
+        "pkg-a/helper"
+        canonical-a
+        "(-> i64 i64 i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        8
+        uniform-varying
+        (compiler_ast_types.AstSpmdResultClass.Varying)
+        0)]
+    [different-result : i64
+      (compiler_lower.lower-spmd-package-structural-symbol
+        state-a
+        "pkg-a"
+        "pkg-a/helper"
+        canonical-a
+        "(-> i64 i64 i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        8
+        varying-uniform
+        (compiler_ast_types.AstSpmdResultClass.Uniform)
+        0)]
+    [other-state : i64
+      (compiler_lower.lower-spmd-package-structural-symbol
+        state-b
+        "pkg-a"
+        "pkg-a/helper"
+        canonical-b
+        "(-> i64 i64 i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        8
+        varying-uniform
+        (compiler_ast_types.AstSpmdResultClass.Varying)
+        0)]
+    [source-name : i64 (ci.intern-generated-canonical-name "value")]
+    [private-param : i64
+      (compiler_lower.lower-spmd-private-param-symbol
+        state-a
+        source-name
+        (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+        (compiler_lower.CompilerLowerMode.Avx2))]
+    [private-param-repeat : i64
+      (compiler_lower.lower-spmd-private-param-symbol
+        state-a
+        source-name
+        (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+        (compiler_lower.CompilerLowerMode.Avx2))]
+    [private-param-mask : i64
+      (compiler_lower.lower-spmd-private-param-symbol
+        state-a
+        source-name
+        (compiler_ir_types.CompilerIrSpmdValueClass.Mask)
+        (compiler_lower.CompilerLowerMode.Avx2))]
+    [private-param-text : String
+      (compiler_lower.lower-spmd-private-param-name
+        state-a
+        source-name
+        (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+        (compiler_lower.CompilerLowerMode.Avx2))]
+    [private-helper : i64
+      (compiler_lower.lower-spmd-private-helper-symbol
+        state-a
+        (ci.intern-compat-state-intern intern-a "__tl_lambda_fixture_0")
+        (compiler_ast_types.AstType.Bool)
+        true)]
+    [expected-identity : String
+      (compiler_lower.lower-spmd-package-symbol-identity
+        "pkg-a"
+        "pkg-a/helper"
+        "(-> i64 i64 i64)"
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        8
+        "vu"
+        "v"
+        0)]
+    [expected-symbol : String
+      (compiler_lower.lower-spmd-package-symbol
+        "pkg-a"
+        "pkg-a/helper"
+        "(-> i64 i64 i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        8
+        "vu"
+        "v"
+        0)]
+    [unrendered : bool
+      (and
+        (=
+          (string.string-length
+            (ci.intern-compat-state-str
+              intern-a
+              (compiler-lower-spmd-test-identity state-a base)))
+          0)
+        (=
+          (string.string-length
+            (ci.intern-compat-state-str
+              intern-a
+              (compiler-lower-spmd-test-symbol state-a base)))
+          0)
+        (=
+          (string.string-length
+            (ci.intern-compat-state-str intern-a private-helper))
+          0))]
+    (begin
+      (compiler_lower.lower-materialize-generated-role-symbols! state-a)
+      (compiler_lower.lower-materialize-generated-role-symbols! state-b)
+      (let
+        [old-other-symbol : i64
+          (compiler-lower-spmd-test-symbol state-b other-state)]
+        [other-rendered-ok : bool
+          (string.eq
+            (ci.intern-compat-state-str
+              intern-b
+              (compiler-lower-spmd-test-symbol state-b other-state))
+            expected-symbol)]
+        (begin
+          (compiler_lower.compiler-lower-state-reset! state-b)
+          (ci.intern-compat-state-reset! intern-b)
+          (and
+            unrendered
+            (=
+              (compiler-lower-spmd-test-identity state-a base)
+              (compiler-lower-spmd-test-identity state-a repeat))
+            (=
+              (compiler-lower-spmd-test-symbol state-a base)
+              (compiler-lower-spmd-test-symbol state-a repeat))
+            (=
+              (compiler-lower-spmd-test-registration-key state-a base)
+              (compiler-lower-spmd-test-registration-key state-a repeat))
+            (not
+              (=
+                (compiler-lower-spmd-test-identity state-a base)
+                (compiler-lower-spmd-test-identity state-a different-lanes)))
+            (not
+              (=
+                (compiler-lower-spmd-test-identity state-a base)
+                (compiler-lower-spmd-test-identity state-a different-args)))
+            (not
+              (=
+                (compiler-lower-spmd-test-identity state-a base)
+                (compiler-lower-spmd-test-identity state-a different-result)))
+            (not
+              (=
+                (compiler-lower-spmd-test-identity-components state-a base)
+                (compiler-lower-spmd-test-identity-components
+                  state-b
+                  other-state)))
+            (= private-param private-param-repeat)
+            (not (= private-param private-param-mask))
+            (string.eq private-param-text "__tl_spmd_varying_arg_avx2_value")
+            (string.eq
+              (ci.intern-compat-state-str intern-a private-helper)
+              "__tl_spmd_ret_mask___tl_lambda_fixture_0")
+            (string.eq
+              (ci.intern-compat-state-str
+                intern-a
+                (compiler-lower-spmd-test-identity state-a base))
+              expected-identity)
+            (string.eq
+              (ci.intern-compat-state-str
+                intern-a
+                (compiler-lower-spmd-test-symbol state-a base))
+              expected-symbol)
+            other-rendered-ok
+            (cfg
+              test
+              (and
+                (=
+                  (compiler_lower.compiler-lower-profile-spmd-identity-serializations-value
+                    state-a)
+                  4)
+                (=
+                  (compiler_lower.compiler-lower-profile-spmd-stable-hash-computations-value
+                    state-a)
+                  4)
+                (=
+                  (compiler_lower.compiler-lower-profile-spmd-render-cache-misses-value
+                    state-a)
+                  4)
+                (>=
+                  (compiler_lower.compiler-lower-profile-spmd-render-cache-hits-value
+                    state-a)
+                  5))
+              true)
+            (not
+              (ci.intern-compat-state-generated-id-active?
+                intern-b
+                old-other-symbol))))))))
 
 (define (compiler-lower-spmd-package-callable-validation-errors-ok?) : bool
   (and
@@ -297,6 +690,7 @@
 
 (define (compiler-lower-spmd-package-callable-tests-ok?) : bool
   (and
+    (compiler-lower-spmd-structural-symbols-ok?)
     (compiler-lower-spmd-package-helper-count-ok?
       (compiler-lower-spmd-package-callable-source)
       (compiler_lower.CompilerLowerMode.Scalar)

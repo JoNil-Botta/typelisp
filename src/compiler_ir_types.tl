@@ -1023,13 +1023,8 @@
   (slots (__tl_dyn-array CompilerIrExtern))
   (len i64))
 
-(defenum CompilerIrExternList
-  (Nil)
-  (Cons CompilerIrExtern (Box CompilerIrExternList))
-  (Array CompilerIrExternSeq))
-
 (defenum CompilerIrProgram
-  (Program CompilerIrGlobalSeq CompilerIrFunctionList CompilerIrExternList))
+  (Program CompilerIrGlobalSeq CompilerIrFunctionList CompilerIrExternSeq))
 
 ;; Immutable, job-owned nominal representation facts captured from lowered
 ;; whole-program IR before optimization. The count map uses 0 for conflicting
@@ -2131,6 +2126,10 @@
   (slots (__tl_dyn-array CompilerIrGlobal))
   (len i64))
 
+(defstruct CompilerIrExternBuilder
+  (slots (__tl_dyn-array CompilerIrExtern))
+  (len i64))
+
 (define (compiler-ir-builder-capacity [capacity : i64]) : i64
   (if (< capacity 1)
     1
@@ -2473,10 +2472,37 @@
         builder.len)
       (CompilerIrGlobalSeq slots builder.len))))
 
-(define (compiler-ir-extern-cons
-  [extern : CompilerIrExtern]
-  [rest : CompilerIrExternList]) : CompilerIrExternList
-  (CompilerIrExternList.Cons extern (box rest)))
+(define (compiler-ir-extern-seq-empty) : CompilerIrExternSeq
+  (CompilerIrExternSeq (make-array CompilerIrExtern 0) 0))
+
+(define (compiler-ir-extern-seq1 [a : CompilerIrExtern]) : CompilerIrExternSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrExtern) (make-array CompilerIrExtern 1)]
+    (begin
+      (set! (array-ref slots 0) a)
+      (CompilerIrExternSeq slots 1))))
+
+(define (compiler-ir-extern-seq2 [a : CompilerIrExtern] [b : CompilerIrExtern]) : CompilerIrExternSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrExtern) (make-array CompilerIrExtern 2)]
+    (begin
+      (set! (array-ref slots 0) a)
+      (set! (array-ref slots 1) b)
+      (CompilerIrExternSeq slots 2))))
+
+(define (compiler-ir-extern-seq4
+  [a : CompilerIrExtern]
+  [b : CompilerIrExtern]
+  [c : CompilerIrExtern]
+  [d : CompilerIrExtern]) : CompilerIrExternSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrExtern) (make-array CompilerIrExtern 4)]
+    (begin
+      (set! (array-ref slots 0) a)
+      (set! (array-ref slots 1) b)
+      (set! (array-ref slots 2) c)
+      (set! (array-ref slots 3) d)
+      (CompilerIrExternSeq slots 4))))
 
 (define (compiler-ir-global-seq-count [globals : CompilerIrGlobalSeq]) : i64
   globals.len)
@@ -2486,47 +2512,78 @@
   [index : i64]) : CompilerIrGlobal
   (compiler-ir-array-shared-view globals.slots index))
 
-(define (compiler-ir-extern-list-fill-array-reversed
-  [externs : CompilerIrExternList]
-  [slots : (__tl_dyn-array CompilerIrExtern)]
-  [index : i64]) : unit
-  (match (compiler-ir-global-shared-view externs)
-    [(CompilerIrExternList.Nil) unit]
-    [(CompilerIrExternList.Cons extern rest)
-      (begin
-        (set! (array-ref slots index) extern)
-        (compiler-ir-extern-list-fill-array-reversed
-          (compiler-ir-extern-list-box-shared-view rest)
-          slots
-          (- index 1)))]
-    [(CompilerIrExternList.Array seq)
-      (let
-        [i : i64 0]
-        [n : i64 seq.len]
-        [write : i64 index]
-        [src : (__tl_dyn-array CompilerIrExtern) seq.slots]
-        (while (< i n)
-          (begin
-            (set! (array-ref slots write) (compiler-ir-array-shared-view src i))
-            (set! write (- write 1))
-            (set! i (+ i 1)))))]))
+(define (compiler-ir-extern-builder-with-capacity [capacity : i64]) : CompilerIrExternBuilder
+  (let
+    [cap : i64 (compiler-ir-builder-capacity capacity)]
+    (CompilerIrExternBuilder (make-array CompilerIrExtern cap) 0)))
 
-(define (compiler-ir-extern-seq-to-list [externs : CompilerIrExternSeq]) : CompilerIrExternList
+(define (compiler-ir-extern-builder-copy-range!
+  [dst : (&mut dst (__tl_dyn-array CompilerIrExtern))]
+  [src : (& src (__tl_dyn-array CompilerIrExtern))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (set! (array-ref dst index) (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-extern-builder-grow!
+  [builder : (&mut builder CompilerIrExternBuilder)]) : unit
+  (let
+    [old-cap : i64 (array-length builder.slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array CompilerIrExtern)
+      (make-array CompilerIrExtern new-cap)]
+    (begin
+      (compiler-ir-extern-builder-copy-range!
+        (&mut bigger)
+        (& builder.slots)
+        builder.len)
+      (set! builder.slots bigger))))
+
+(define (compiler-ir-extern-builder-push!
+  [builder : (&mut builder CompilerIrExternBuilder)]
+  [extern : CompilerIrExtern]) : unit
+  (begin
+    (if (< builder.len (array-length builder.slots))
+      unit
+      (compiler-ir-extern-builder-grow! builder))
+    (let
+      [index : i64 builder.len]
+      (begin
+        (set! (array-ref builder.slots index) extern)
+        (set! builder.len (+ index 1))))))
+
+(define (compiler-ir-extern-builder-from-seq [externs : CompilerIrExternSeq]) : CompilerIrExternBuilder
+  (let
+    [builder : CompilerIrExternBuilder
+      (compiler-ir-extern-builder-with-capacity externs.len)]
+    (begin
+      (compiler-ir-extern-builder-copy-range!
+        (&mut builder.slots)
+        (& externs.slots)
+        externs.len)
+      (set! builder.len externs.len)
+      builder)))
+
+(define (compiler-ir-extern-builder-to-seq [builder : CompilerIrExternBuilder]) : CompilerIrExternSeq
+  (CompilerIrExternSeq builder.slots builder.len))
+
+(define (compiler-ir-extern-builder-snapshot-seq
+  [builder : (& builder CompilerIrExternBuilder)]) : CompilerIrExternSeq
   (let
     [slots : (__tl_dyn-array CompilerIrExtern)
-      (compiler-ir-global-shared-view externs.slots)]
-    [cursor : i64 (- externs.len 1)]
-    [out : CompilerIrExternList CompilerIrExternList.Nil]
+      (make-array CompilerIrExtern builder.len)]
     (begin
-      (while (>= cursor 0)
-        (begin
-          (set!
-            out
-            (compiler-ir-extern-cons
-              (compiler-ir-array-shared-view slots cursor)
-              out))
-          (set! cursor (- cursor 1))))
-      out)))
+      (compiler-ir-extern-builder-copy-range!
+        (&mut slots)
+        (& builder.slots)
+        builder.len)
+      (CompilerIrExternSeq slots builder.len))))
 
 (define (compiler-ir-extern-seq-count [externs : CompilerIrExternSeq]) : i64
   externs.len)
@@ -2535,20 +2592,6 @@
   [externs : CompilerIrExternSeq]
   [index : i64]) : CompilerIrExtern
   (compiler-ir-array-shared-view externs.slots index))
-
-(define (compiler-ir-extern-list-compact-reversed
-  [externs : CompilerIrExternList]) : CompilerIrExternList
-  (let
-    [count : i64
-      (compiler-ir-extern-list-count (compiler-ir-global-shared-view externs))]
-    [slots : (__tl_dyn-array CompilerIrExtern)
-      (array.make-array CompilerIrExtern count)]
-    (begin
-      (compiler-ir-extern-list-fill-array-reversed
-        (compiler-ir-global-shared-view externs)
-        (compiler-ir-global-shared-view slots)
-        (- count 1))
-      (CompilerIrExternList.Array (CompilerIrExternSeq slots count)))))
 
 (define (compiler-ir-extern-default-id
   [name-id : i64]
@@ -3663,47 +3706,23 @@
         (clone links)
         provided)]))
 
-(define (compiler-ir-clone-extern-list-acc
+(define (compiler-ir-clone-extern-seq
   [pools : ast.AstNodePoolContext]
-  [externs : CompilerIrExternList]
-  [acc : CompilerIrExternList]) : CompilerIrExternList
-  (match (compiler-ir-global-shared-view externs)
-    [(CompilerIrExternList.Nil) acc]
-    [(CompilerIrExternList.Cons extern rest)
-      (compiler-ir-clone-extern-list-acc
-        (compiler-ir-global-shared-view pools)
-        (compiler-ir-extern-list-box-shared-view rest)
-        (compiler-ir-extern-cons
-          (compiler-ir-clone-extern
-            (compiler-ir-global-shared-view pools)
-            extern)
-          acc))]
-    [(CompilerIrExternList.Array seq)
-      (compiler-ir-clone-extern-list-acc
-        (compiler-ir-global-shared-view pools)
-        (compiler-ir-extern-seq-to-list seq)
-        acc)]))
-
-(define (compiler-ir-extern-list-reverse-onto
-  [externs : CompilerIrExternList]
-  [acc : CompilerIrExternList]) : CompilerIrExternList
-  (match (compiler-ir-global-shared-view externs)
-    [(CompilerIrExternList.Nil) acc]
-    [(CompilerIrExternList.Cons extern rest)
-      (compiler-ir-extern-list-reverse-onto
-        (compiler-ir-extern-list-box-shared-view rest)
-        (compiler-ir-extern-cons extern acc))]
-    [(CompilerIrExternList.Array seq)
-      (compiler-ir-extern-list-reverse-onto
-        (compiler-ir-extern-seq-to-list seq)
-        acc)]))
-
-(define (compiler-ir-clone-extern-list
-  [pools : ast.AstNodePoolContext]
-  [externs : CompilerIrExternList]) : CompilerIrExternList
-  (compiler-ir-extern-list-reverse-onto
-    (compiler-ir-clone-extern-list-acc pools externs CompilerIrExternList.Nil)
-    CompilerIrExternList.Nil))
+  [externs : CompilerIrExternSeq]) : CompilerIrExternSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrExtern)
+      (make-array CompilerIrExtern externs.len)]
+    [index : i64 0]
+    (begin
+      (while (< index externs.len)
+        (begin
+          (set!
+            (array-ref slots index)
+            (compiler-ir-clone-extern
+              pools
+              (compiler-ir-extern-seq-ref externs index)))
+          (set! index (+ index 1))))
+      (CompilerIrExternSeq slots externs.len))))
 
 ;; Relocate only the program shell whose lists are allocated by the enclosing
 ;; lowerer arena. Function payloads already live in lower-ir-arena and remain
@@ -3746,9 +3765,7 @@
           (compiler-ir-global-shared-view pools)
           globals)
         (compiler-ir-clone-function-list-shell functions)
-        (compiler-ir-clone-extern-list
-          (compiler-ir-global-shared-view pools)
-          externs))]))
+        (compiler-ir-clone-extern-seq pools externs))]))
 
 (define (compiler-ir-type-list-render-at
   [type-segment-bases : i64]
@@ -5199,24 +5216,25 @@
           "")
         "\n")]))
 
-(define (compiler-ir-extern-list-render-into
+(define (compiler-ir-extern-seq-render-into
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
-  [externs : CompilerIrExternList]) : text_buf.TextBuf
-  (match (compiler-ir-global-shared-view externs)
-    [(CompilerIrExternList.Nil) buf]
-    [(CompilerIrExternList.Array seq)
-      (compiler-ir-extern-list-render-into
-        type-segment-bases
-        buf
-        (compiler-ir-extern-seq-to-list seq))]
-    [(CompilerIrExternList.Cons extern rest)
-      (compiler-ir-extern-list-render-into
-        type-segment-bases
-        (text_buf.append
-          buf
-          (compiler-ir-extern-render type-segment-bases extern))
-        (compiler-ir-box-shared-view rest))]))
+  [externs : CompilerIrExternSeq]) : text_buf.TextBuf
+  (let
+    [index : i64 0]
+    [out : text_buf.TextBuf buf]
+    (begin
+      (while (< index externs.len)
+        (begin
+          (set!
+            out
+            (text_buf.append
+              out
+              (compiler-ir-extern-render
+                type-segment-bases
+                (compiler-ir-extern-seq-ref externs index))))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-ir-program-render
   [type-segment-bases : i64]
@@ -5234,15 +5252,12 @@
             globals-buf
             (text_buf.append globals-buf "\n"))]
         [externs-buf : text_buf.TextBuf
-          (compiler-ir-extern-list-render-into
+          (compiler-ir-extern-seq-render-into
             type-segment-bases
             globals-sep-buf
             (compiler-ir-global-shared-view externs))]
         [externs-sep-buf : text_buf.TextBuf
-          (if (=
-            (compiler-ir-extern-list-count
-              (compiler-ir-global-shared-view externs))
-            0)
+          (if (= (compiler-ir-extern-seq-count externs) 0)
             externs-buf
             (text_buf.append externs-buf "\n"))]
         (text_buf.render
@@ -6529,13 +6544,6 @@
             (* externs 100)
             (+ (* blocks 1000) (+ (* instructions 10000) (* vars 100000))))))]))
 
-(define (compiler-ir-extern-list-count [externs : CompilerIrExternList]) : i64
-  (match (compiler-ir-global-shared-view externs)
-    [(CompilerIrExternList.Nil) 0]
-    [(CompilerIrExternList.Cons _ rest)
-      (+ 1 (compiler-ir-extern-list-count (compiler-ir-box-shared-view rest)))]
-    [(CompilerIrExternList.Array seq) (compiler-ir-extern-seq-count seq)]))
-
 (define (compiler-ir-max-i64 [a : i64] [b : i64]) : i64
   (if (> a b)
     a
@@ -7001,23 +7009,15 @@
     [(CompilerIrProgram.Program globals functions externs)
       (CompilerIrSummary.Summary
         (compiler-ir-global-seq-count globals)
-        (compiler-ir-function-list-count
-          (compiler-ir-global-shared-view functions))
-        (compiler-ir-extern-list-count externs)
-        (compiler-ir-function-list-block-count
-          (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-instruction-count
-          (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-var-count
-          (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-empty-block-count
-          (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-max-instruction-count
-          (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-max-block-instruction-count
-          (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-call-arg-count
-          (compiler-ir-global-shared-view functions))
+        (compiler-ir-function-list-count functions)
+        (compiler-ir-extern-seq-count externs)
+        (compiler-ir-function-list-block-count functions)
+        (compiler-ir-function-list-instruction-count functions)
+        (compiler-ir-function-list-var-count functions)
+        (compiler-ir-function-list-empty-block-count functions)
+        (compiler-ir-function-list-max-instruction-count functions)
+        (compiler-ir-function-list-max-block-instruction-count functions)
+        (compiler-ir-function-list-call-arg-count functions)
         (compiler-ir-function-list-phi-input-count functions))]))
 
 (define (compiler-ir-type-list-name-at
@@ -9063,27 +9063,33 @@
     globals
     0))
 
+(define (compiler-ir-representation-collect-one-externs-from
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [externs : CompilerIrExternSeq]
+  [position : i64]) : CompilerIrRepresentationIndex
+  (if (>= position externs.len)
+    index
+    (match (compiler-ir-extern-seq-ref externs position)
+      [(CompilerIrExtern.Extern _ _ _ ty _ _ _ _)
+        (compiler-ir-representation-collect-one-externs-from
+          type-segment-bases
+          (compiler-ir-representation-collect-one-type
+            type-segment-bases
+            index
+            ty)
+          externs
+          (+ position 1))])))
+
 (define (compiler-ir-representation-collect-one-externs
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex]
-  [externs : CompilerIrExternList]) : CompilerIrRepresentationIndex
-  (match (compiler-ir-global-shared-view externs)
-    [(CompilerIrExternList.Nil) index]
-    [(CompilerIrExternList.Cons extern rest)
-      (match extern
-        [(CompilerIrExtern.Extern _ _ _ ty _ _ _ _)
-          (compiler-ir-representation-collect-one-externs
-            type-segment-bases
-            (compiler-ir-representation-collect-one-type
-              type-segment-bases
-              index
-              ty)
-            (compiler-ir-box-shared-view rest))])]
-    [(CompilerIrExternList.Array seq)
-      (compiler-ir-representation-collect-one-externs
-        type-segment-bases
-        index
-        (compiler-ir-extern-seq-to-list seq))]))
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [externs : CompilerIrExternSeq]) : CompilerIrRepresentationIndex
+  (compiler-ir-representation-collect-one-externs-from
+    type-segment-bases
+    index
+    externs
+    0))
 
 (define (compiler-ir-representation-index-build
   [type-segment-bases : i64]

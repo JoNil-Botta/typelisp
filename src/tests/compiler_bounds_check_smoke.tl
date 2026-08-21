@@ -43,7 +43,7 @@
                   (ir.CompilerIrInstrList.Nil)))))
           (ir.CompilerIrBlockList.Nil)))
       (ir.CompilerIrFunctionList.Nil))
-    ir.CompilerIrExternList.Nil))
+    (ir.compiler-ir-extern-seq-empty)))
 
 (define (main) : i64
   (begin

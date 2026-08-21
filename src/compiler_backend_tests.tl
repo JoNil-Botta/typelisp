@@ -309,6 +309,7 @@
                   starts
                   ends
                   assignment-index
+                  (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
                   slot-vars)
                 slot-vars))])))))
 
@@ -1552,7 +1553,7 @@
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [runtime-globals : compiler_ir_types.CompilerIrGlobalSeq
       (let
         [builder : compiler_ir_types.CompilerIrGlobalBuilder
@@ -1569,7 +1570,7 @@
       (compiler_ir_types.CompilerIrProgram.Program
         runtime-globals
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (match (compiler_backend.compiler-backend-object-program-eligibility
         backend-state
@@ -3706,7 +3707,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil))
+      (compiler_ir_types.compiler-ir-extern-seq-empty)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler-backend-c-abi-call-result-store-bool-asm-ok? asm)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -3721,7 +3722,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil))
+      (compiler_ir_types.compiler-ir-extern-seq-empty)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler-backend-typelisp-call-result-store-bool-asm-ok? asm)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -3846,7 +3847,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     [prev-starts : (__tl_dyn-array i64)
@@ -3916,7 +3917,7 @@
         ""
         (compiler_regalloc.compiler-reg-var-types-empty)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         3
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
@@ -4074,7 +4075,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     [_abi : unit
@@ -4085,7 +4086,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     [prev-starts : (__tl_dyn-array i64)
@@ -4182,7 +4183,7 @@
         ""
         (compiler_regalloc.compiler-reg-var-types-empty)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         3
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
@@ -5617,7 +5618,7 @@
               (compiler-backend-call-save-main-instrs))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-call-save-r9-wrap-ok?) : bool
   (let
@@ -7541,7 +7542,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)
+          (compiler_ir_types.compiler-ir-extern-seq-empty))
         8
         ""
         (compiler_backend.compiler-backend-state-new
@@ -7560,7 +7561,52 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)
+          (compiler_ir_types.compiler-ir-extern-seq-empty))
+        ""
+        ""
+        ""
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+        [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
+      ;; P22: a same-width signedness Cast is a value-identical copy, so a
+      ;; coalesced pair (one home for both endpoints) must emit NOTHING. The
+      ;; identical-type early return above cannot answer this one -- I64 and
+      ;; U64 are different types -- so the elision has to come from the
+      ;; same-width arm loading the source into its own home.
+      (match (compiler_backend.compiler-backend-emit-cast
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        "_tl_test"
+        (compiler_ir_types.compiler-ir-label "entry")
+        coalesced
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64)
+        (compiler_ast_types.AstType.U64)
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-extern-seq-empty))
+        ""
+        ""
+        ""
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+        [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
+      (match (compiler_backend.compiler-backend-emit-cast
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        "_tl_test"
+        (compiler_ir_types.compiler-ir-label "entry")
+        coalesced
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.U64)
+        (compiler_ast_types.AstType.I64)
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
         ""
@@ -7580,7 +7626,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)
+          (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
         ""
@@ -7601,7 +7647,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)
+          (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
         ""
@@ -7629,7 +7675,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState index.backend-state]
     (and
       (match (compiler_backend.compiler-backend-emit-mov
@@ -7659,19 +7705,23 @@
           (string.eq asm "    movq $7, -16(%rbp)\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
+;; Staging through the planned scratch is what a MEMORY-to-memory move needs,
+;; and it is all it is for: the source is spilled, so the value has to be in a
+;; register before it can be stored, and that register is the planned scratch
+;; and never %rax. A register-homed source does NOT take this path -- see
+;; compiler-backend-mov-register-to-slot-ok?.
 (define (compiler-backend-mov-scratch-staging-ok?) : bool
   (let
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [int-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
-          (compiler_regalloc.CompilerRegLocation.Register
-            compiler_abi.compiler-reg-id-r12))
+          (compiler_regalloc.CompilerRegLocation.Spill -24))
         (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [float-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
@@ -7694,8 +7744,8 @@
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              (owned_view.compiler-owned-shared-view asm)
-              "    movq %r12, %r8\n")
+              asm
+              "    movq -24(%rbp), %r8\n")
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
               "    movq %r8, -16(%rbp)\n")
@@ -7726,6 +7776,84 @@
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view asm)
                 "%xmm0")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))))
+
+;; P7b: a Mov from a REGISTER-homed value to a MEMORY-homed one is a single
+;; store. x86 stores a register into a frame slot in one instruction, so routing
+;; the move through a scratch (`movq %r12, %r8 ; movq %r8, -16(%rbp)`) spends an
+;; instruction to reach the same state. The P3/P7 call-hole carriers are made of
+;; exactly this Mov -- the carrier is forced to a frame slot by construction --
+;; so every crossing the rewrite inserts used to pay for it.
+;;
+;; Both memory destinations are covered: a var the plan spilled, and a var it
+;; never assigned at all (the bare slot). The narrow type pins the width claim
+;; the register-destination fast path already relies on -- a var's register home
+;; holds the normalized 64-bit value, so the copy needs no per-type narrowing,
+;; and emitting that narrowing into the scratch was the only reason the old path
+;; could not simply drop it. The planned scratch is named on every call and must
+;; not appear in the output: this arm asks the scavenger for nothing.
+(define (compiler-backend-mov-register-to-slot-ok?) : bool
+  (let
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
+    [slot-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    [spill-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Spill -40))
+        slot-assignments)]
+    (and
+      ;; unassigned destination -> its bare slot, one store
+      (match (compiler_backend.compiler-backend-emit-mov
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        slot-assignments
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64)
+        index
+        2
+        (cfg scratch-vreg "%r8" "")
+        index.backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (string.eq asm "    movq %r12, -16(%rbp)\n")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
+      ;; spilled destination -> its frame offset, one store
+      (match (compiler_backend.compiler-backend-emit-mov
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        spill-assignments
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64)
+        index
+        2
+        (cfg scratch-vreg "%r8" "")
+        index.backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (string.eq asm "    movq %r12, -40(%rbp)\n")]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])
+      ;; a narrow type changes nothing: no narrowing, no scratch
+      (match (compiler_backend.compiler-backend-emit-mov
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        spill-assignments
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I32)
+        index
+        2
+        (cfg scratch-vreg "%r8" "")
+        index.backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (string.eq asm "    movq %r12, -40(%rbp)\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-register-group-test-type) : compiler_ast_types.AstType
@@ -7952,7 +8080,7 @@
       (compiler_backend.compiler-backend-program-index-build
         bases
         functions
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (compiler_ir_types.compiler-ir-symbol-owned? group0-id)
       (compiler_ir_types.compiler-ir-symbol-owned? group2-id)
@@ -8093,7 +8221,7 @@
       (compiler_backend.compiler-backend-program-index-build
         bases
         functions
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (=
         (compiler_backend.compiler-backend-group-word-count
@@ -8184,7 +8312,7 @@
       (compiler_backend.compiler-backend-program-index-build
         bases
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [memory40 : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Struct
         (compiler_ir_types.compiler-ir-symbol
@@ -8221,8 +8349,8 @@
         (compiler_ir_types.CompilerIrValue.Var 2)
         dynamic-args
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
-        (owned_view.compiler-owned-shared-view index))]
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
+        index)]
     [effective-dynamic-type : compiler_ast_types.AstType
       (compiler_ast_types.ast-type-segment-bases-get
         bases
@@ -8513,7 +8641,7 @@
               1
               compiler_ir_types.CompilerIrBlockList.Nil)
             compiler_ir_types.CompilerIrFunctionList.Nil)
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [indirect-slots : i64
         (compiler_regalloc.compiler-reg-scratch-vreg-slots
           bases
@@ -8596,7 +8724,7 @@
       (compiler_backend.compiler-backend-program-index-build
         bases
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (=
         (compiler_backend.compiler-backend-type-size
@@ -8856,7 +8984,7 @@
                 compiler_ir_types.CompilerIrInstrList.Nil))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil)
-      compiler_ir_types.CompilerIrExternList.Nil)))
+      (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-register-group-f64-test-type) : compiler_ast_types.AstType
   (compiler_ast_types.AstType.Struct (ci.intern "BackendGroupF64Test")))
@@ -8890,7 +9018,7 @@
                 compiler_ir_types.CompilerIrInstrList.Nil))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil)
-      compiler_ir_types.CompilerIrExternList.Nil)))
+      (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-register-group-mov-error-ok?
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -9152,7 +9280,7 @@
       (compiler_ir_types.compiler-ir-function-cons
         (compiler-backend-descriptor-pair-consumer)
         compiler_ir_types.CompilerIrFunctionList.Nil))
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-descriptor-pair-spill-order-ok?) : bool
   (let
@@ -9451,7 +9579,7 @@
     (compiler_ir_types.compiler-ir-function-cons
       (compiler-backend-descriptor-pair-object-main)
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-descriptor-pair-object-target-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -9789,6 +9917,59 @@
             previous-offset)
           ok)))))
 
+;; A non-scalar branch condition (notably a Global) is materialized through the
+;; generic load path. If that path emergency-borrows a live register, restore it
+;; after `testq` but before the first jump so both successors observe the saved
+;; value. The Var branch path already used the shared jump emitter; this pins the
+;; generic path to the same rule.
+(define (compiler-backend-global-branch-emergency-restore-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [function-state : compiler_backend.CompilerBackendFunctionState
+      (compiler_backend.compiler-backend-state-function-state backend-state)]
+    [_slot : unit
+      (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        function-state
+        -64)]
+    [_pending : unit
+      (compiler_backend.compiler-backend-emergency-add! function-state "%r9")]
+    (match (compiler_backend.compiler-backend-emit-branch-with-plan
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
+      "global_branch_restore"
+      (compiler_ir_types.CompilerIrValue.Global
+        (ci.intern "global_branch_restore_condition"))
+      (compiler_ir_types.compiler-ir-label "yes")
+      (compiler_ir_types.compiler-ir-label "no")
+      (compiler_backend.CompilerBackendMaybeLabel.No)
+      "%r9"
+      backend-state)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (let
+          [test-pos : i64
+            (compiler_backend.compiler-backend-string-find-from
+              asm
+              "    testq %r9, %r9\n"
+              0)]
+          [restore-pos : i64
+            (compiler_backend.compiler-backend-string-find-from
+              asm
+              "    movq -64(%rbp), %r9\n"
+              0)]
+          [jump-pos : i64
+            (compiler_backend.compiler-backend-string-find-from
+              asm
+              "    jne "
+              0)]
+          (and
+            (>= test-pos 0)
+            (> restore-pos test-pos)
+            (> jump-pos restore-pos)
+            (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-restore-suppressed
+              function-state)))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
     [counts : (__tl_dyn-array i64) (array.make-array i64 12)]
@@ -9958,7 +10139,7 @@
             (compiler_ir_types.CompilerIrProgram.Program
               globals
               functions
-              compiler_ir_types.CompilerIrExternList.Nil))]
+              (compiler_ir_types.compiler-ir-extern-seq-empty)))]
         (and
           (compiler_backend.compiler-backend-symbol-list-contains-id?
             (compiler_backend.compiler-backend-program-collections-functions
@@ -10089,7 +10270,7 @@
       (compiler_backend.compiler-backend-program-index-build
         bases
         functions
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (= plain-key root-key)
       (not (= qualified-key opaque-key))
@@ -10298,7 +10479,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [values : compiler_ir_types.CompilerIrValueList
       (compiler_ir_types.compiler-ir-value-cons
         (compiler_ir_types.CompilerIrValue.String "object-walked")
@@ -10360,7 +10541,7 @@
     (compiler_ir_types.CompilerIrProgram.Program
       (compiler_ir_types.compiler-ir-global-seq-empty)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil))
+      (compiler_ir_types.compiler-ir-extern-seq-empty)))
     [(compiler_backend.ResultBackendRuntimePlan.Ok plan)
       (compiler-backend-ir-walker-object-refs-with-plan plan)]
     [(compiler_backend.ResultBackendRuntimePlan.Err _) false]))
@@ -11949,7 +12130,7 @@
             1
             compiler_ir_types.CompilerIrBlockList.Nil)
           compiler_ir_types.CompilerIrFunctionList.Nil))
-      compiler_ir_types.CompilerIrExternList.Nil)))
+      (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-call-arg-rax-group-consumer-not-forwardable?) : bool
   (match (compiler-backend-emit-rax-forward-test-instrs-with-index
@@ -12027,8 +12208,8 @@
         (compiler_ast_types.AstType.I64)
         runtime-plan
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
-        (owned_view.compiler-owned-shared-view program-index)
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
+        program-index
         (compiler_ir_types.compiler-source-spans-empty)
         (compiler_backend.compiler-backend-source-span-index-build
           (compiler_ir_types.compiler-source-spans-empty))
@@ -12049,7 +12230,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)))
+      (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-rax-forwarding-ok?) : bool
   (match (compiler-backend-emit-rax-forward-test-instrs
@@ -12205,7 +12386,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     (match (compiler-backend-test-emit-instrs-text
@@ -12223,7 +12404,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
         (compiler_backend.compiler-backend-source-span-index-build-with-backend-state
@@ -12780,6 +12961,505 @@
     (not (compiler-backend-peephole-single-dest-mnemonic? "testq"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "cmpq"))))
 
+;; #block-layout: the two post-emission layout rewrites, over assembly text.
+;; Each case names the rule it pins; `mode` selects the mechanism so a case can
+;; never pass by accident through the other one.
+(define (compiler-backend-layout-case?
+  [mode : i64]
+  [input : String]
+  [want : String]) : bool
+  (string.eq
+    (compiler_backend.compiler-backend-layout-asm-with-mode input mode)
+    want))
+
+(define (compiler-backend-layout-unchanged? [mode : i64] [input : String]) : bool
+  (compiler-backend-layout-case? mode input input))
+
+;; TAIL DUPLICATION. The straight-line run at the target -- across the label
+;; that splits it in two, up to the unconditional jump that ends it -- replaces
+;; the `jmp`, and the block it came from stays put for its other predecessors.
+(define (compiler-backend-layout-tail-duplication-ok?) : bool
+  (and
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+"
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    cmpq %rdx, %r9
+    jl .Lf0_body
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; REFUSED above the run cap: one more instruction than the budget.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    addq $2, %rdi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; REFUSED for a run that carries a directive: an alignment or data blob
+    ;; belongs to the block that defines it and may not be emitted twice.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+    .balign 8
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; REFUSED for a run that touches the stack: a second epilogue copy would
+    ;; need its own unwind description.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    popq %r12
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; REFUSED behind a noreturn abort call: that `jmp` is dead text.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %rdx, %r9
+    jb .Lf0_ok
+    call tl_oob_abort_at
+    jmp .Lf0_join
+.Lf0_ok:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_entry
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; REFUSED when the target is where execution arrives anyway: the assembled
+    ;; peephole deletes that `jmp` for free.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_alias:
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_alias
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; PHI EDGE COPIES: the copies this edge owes its target are emitted before
+    ;; the `jmp` today, and the duplicated run lands behind them unchanged.
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry_branch_true:
+    movq %rax, %rbx
+    movq %rcx, %r8
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+"
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry_branch_true:
+    movq %rax, %rbx
+    movq %rcx, %r8
+    cmpq %rdx, %r9
+    jl .Lf0_body
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")))
+
+;; PREDICTED-COLD ARM OUT-OF-LINING, one case per prediction rule.
+(define (compiler-backend-layout-cold-arm-ok?) : bool
+  (and
+    ;; RANGE CHECK: `i < 0` predicted false, and the `i >= n` clause bailing to
+    ;; the same arm inherits that prediction. The arm moves behind the body and
+    ;; the hot arm falls into the join.
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rdi, %rdi
+    jl .Lf1_if_else.7
+.Lf1_if_then.0:
+    cmpq %r9, %rdi
+    jge .Lf1_if_else.7
+.Lf1_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf1_cont
+.Lf1_if_else.7:
+    movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
+.Lf1_cont:
+    cmpq $40, %rcx
+    ret
+    .size g, . - g
+"
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rdi, %rdi
+    jl .Lf1_if_else.7
+.Lf1_if_then.0:
+    cmpq %r9, %rdi
+    jge .Lf1_if_else.7
+.Lf1_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf1_cont:
+    cmpq $40, %rcx
+    ret
+.Lf1_if_else.7:
+    movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
+    jmp .Lf1_cont
+    .size g, . - g
+")
+    ;; SENTINEL ARM: one lone `i >= n` says nothing on its own, but an arm that
+    ;; is nothing except a literal is the failure arm of a checked read.
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_if_else.7
+.Lf0_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf0_cont
+.Lf0_if_else.7:
+    movq $-1, %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    ret
+    .size f, . - f
+"
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_if_else.7
+.Lf0_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    ret
+.Lf0_if_else.7:
+    movq $-1, %rcx
+    jmp .Lf0_cont
+    .size f, . - f
+")
+    ;; EQUALITY WITH A CONSTANT predicted false, twice over: the guard shape the
+    ;; opcode heuristics are trusted in.
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl h
+    .type h,@function
+h:
+.Lf2_entry:
+    cmpq $40, %rcx
+    je .Lf2_else
+.Lf2_a:
+    cmpq $41, %rcx
+    je .Lf2_else
+.Lf2_then:
+    movq %rdx, %rax
+    imulq %rsi, %rax
+    jmp .Lf2_cont
+.Lf2_else:
+    subq %rdx, %rax
+    addq %rsi, %rax
+.Lf2_cont:
+    ret
+    .size h, . - h
+"
+      ".globl h
+    .type h,@function
+h:
+.Lf2_entry:
+    cmpq $40, %rcx
+    je .Lf2_else
+.Lf2_a:
+    cmpq $41, %rcx
+    je .Lf2_else
+.Lf2_then:
+    movq %rdx, %rax
+    imulq %rsi, %rax
+.Lf2_cont:
+    ret
+.Lf2_else:
+    subq %rdx, %rax
+    addq %rsi, %rax
+    jmp .Lf2_cont
+    .size h, . - h
+")
+    ;; `x != c` is predicted TRUE, so the arm it names is the HOT one and stays.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl h
+    .type h,@function
+h:
+.Lf2_entry:
+    cmpq $40, %rcx
+    jne .Lf2_else
+.Lf2_a:
+    cmpq $41, %rcx
+    jne .Lf2_else
+.Lf2_then:
+    movq %rdx, %rax
+    imulq %rsi, %rax
+    jmp .Lf2_cont
+.Lf2_else:
+    subq %rdx, %rax
+    addq %rsi, %rax
+.Lf2_cont:
+    ret
+    .size h, . - h
+")
+    ;; ONE opcode-predicted clause is not the guard shape: a lone `x < 0` over a
+    ;; real arm is a coin flip, and paying a jump on a coin flip is not a win.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl h
+    .type h,@function
+h:
+.Lf2_entry:
+    testq %rax, %rax
+    jl .Lf2_else
+.Lf2_then:
+    movq %rdx, %rcx
+    imulq %rsi, %rcx
+    jmp .Lf2_cont
+.Lf2_else:
+    subq %rdx, %rcx
+    addq %rsi, %rcx
+.Lf2_cont:
+    ret
+    .size h, . - h
+")
+    ;; NO PREDICTION AT ALL: two register operands the opcode set says nothing
+    ;; about. IR order is kept.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl h
+    .type h,@function
+h:
+.Lf2_entry:
+    cmpq %r9, %rdi
+    jge .Lf2_if_else.7
+.Lf2_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf2_cont
+.Lf2_if_else.7:
+    subq %rdx, %rcx
+    imulq %rsi, %rcx
+.Lf2_cont:
+    cmpq $40, %rcx
+    ret
+    .size h, . - h
+")
+    ;; An unconditional jump into the arm is an entry no heuristic predicted:
+    ;; the arm keeps its place.
+    (compiler-backend-layout-unchanged?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rdi, %rdi
+    jl .Lf1_if_else.7
+.Lf1_if_then.0:
+    cmpq %r9, %rdi
+    jge .Lf1_if_else.7
+.Lf1_if_then.5:
+    testq %rsi, %rsi
+    jne .Lf1_if_then.6
+.Lf1_if_then.5b:
+    jmp .Lf1_if_else.7
+.Lf1_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf1_cont
+.Lf1_if_else.7:
+    movq $-1, %rcx
+    addq $3, %rcx
+.Lf1_cont:
+    cmpq $40, %rcx
+    ret
+    .size g, . - g
+")
+    ;; An arm whose last line is a LABEL still needs the jump behind it: those
+    ;; labels are entry points of their own and fell straight into the join.
+    (compiler-backend-layout-case?
+      compiler_backend.compiler-backend-layout-mode-sink
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rax, %rax
+    jl .Lf1_else
+.Lf1_a:
+    cmpq %rsi, %rax
+    jge .Lf1_else
+.Lf1_then:
+    movq %rdx, %rcx
+    jmp .Lf1_join
+.Lf1_else:
+    xorl %ecx, %ecx
+    jmp .Lf1_other
+.Lf1_alias:
+.Lf1_join:
+    movq %rcx, %rax
+    ret
+.Lf1_other:
+    movq $7, %rax
+    ret
+    .size g, . - g
+"
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rax, %rax
+    jl .Lf1_else
+.Lf1_a:
+    cmpq %rsi, %rax
+    jge .Lf1_else
+.Lf1_then:
+    movq %rdx, %rcx
+.Lf1_join:
+    movq %rcx, %rax
+    ret
+.Lf1_other:
+    movq $7, %rax
+    ret
+.Lf1_else:
+    xorl %ecx, %ecx
+    jmp .Lf1_other
+.Lf1_alias:
+    jmp .Lf1_join
+    .size g, . - g
+")))
+
+(define (compiler-backend-layout-ok?) : bool
+  (and
+    (compiler-backend-layout-tail-duplication-ok?)
+    (compiler-backend-layout-cold-arm-ok?)))
+
 (define (compiler-backend-peephole-ok?) : bool
   (and
     true
@@ -12790,6 +13470,7 @@
     (compiler-backend-direct-immediate-mov-ok?)
     true
     (compiler-backend-mov-scratch-staging-ok?)
+    (compiler-backend-mov-register-to-slot-ok?)
     (compiler-backend-peephole-asm-ok?)
     (compiler-backend-binop-operand-folding-ok?)
     (compiler-backend-bounds-operand-folding-ok?)
@@ -12807,6 +13488,7 @@
     (compiler-backend-peephole-detailed-abort-guard-ok?)
     (compiler-backend-peephole-drop-fallthrough-chain-ok?)
     (compiler-backend-peephole-drop-fallthrough-abort-guard-ok?)
+    (compiler-backend-layout-ok?)
     true
     (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)
@@ -12853,7 +13535,7 @@
                 compiler_ir_types.CompilerIrInstrList.Nil))
             compiler_ir_types.CompilerIrBlockList.Nil)))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-fallthrough-jump-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
@@ -13244,7 +13926,7 @@
                   compiler_ir_types.CompilerIrInstrList.Nil)))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-call-return-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
@@ -13546,7 +14228,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     (begin
@@ -13685,7 +14367,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     (begin
@@ -13945,7 +14627,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     [_targets : unit
@@ -14010,7 +14692,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     4
     ""
     ""
@@ -14050,7 +14732,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     4
     ""
     ""
@@ -14074,7 +14756,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)
+          (compiler_ir_types.compiler-ir-extern-seq-empty))
         4
         ""
         ""
@@ -14098,7 +14780,7 @@
             (compiler_backend.compiler-backend-program-index-build
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
               compiler_ir_types.CompilerIrFunctionList.Nil
-              compiler_ir_types.CompilerIrExternList.Nil)
+              (compiler_ir_types.compiler-ir-extern-seq-empty))
             4
             ""
             ""
@@ -14145,7 +14827,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     (compiler-backend-test-emit-instrs-text
@@ -14163,7 +14845,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
         (compiler_backend.compiler-backend-source-span-index-build-with-backend-state
@@ -14507,7 +15189,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     (match (compiler-backend-test-emit-instrs-text
@@ -14525,7 +15207,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
         (compiler_backend.compiler-backend-source-span-index-build-with-backend-state
@@ -14567,7 +15249,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     [prev-count : i64
@@ -14677,7 +15359,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     [prev-count : i64
@@ -14789,7 +15471,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         program-index.backend-state]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -15028,7 +15710,7 @@
           (compiler_backend.compiler-backend-program-index-build
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             compiler_ir_types.CompilerIrFunctionList.Nil
-            compiler_ir_types.CompilerIrExternList.Nil)
+            (compiler_ir_types.compiler-ir-extern-seq-empty))
           2
           ""
           ""
@@ -15071,7 +15753,7 @@
           (compiler_backend.compiler-backend-program-index-build
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             compiler_ir_types.CompilerIrFunctionList.Nil
-            compiler_ir_types.CompilerIrExternList.Nil)
+            (compiler_ir_types.compiler-ir-extern-seq-empty))
           2
           ""
           ""
@@ -15094,7 +15776,7 @@
           (compiler_backend.compiler-backend-program-index-build
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             compiler_ir_types.CompilerIrFunctionList.Nil
-            compiler_ir_types.CompilerIrExternList.Nil)
+            (compiler_ir_types.compiler-ir-extern-seq-empty))
           3
           ""
           ""
@@ -15125,7 +15807,7 @@
           (compiler_backend.compiler-backend-program-index-build
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             compiler_ir_types.CompilerIrFunctionList.Nil
-            compiler_ir_types.CompilerIrExternList.Nil)
+            (compiler_ir_types.compiler-ir-extern-seq-empty))
           2
           ""
           ""
@@ -15272,7 +15954,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)
+        (compiler_ir_types.compiler-ir-extern-seq-empty))
       2
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
@@ -15325,7 +16007,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)
+        (compiler_ir_types.compiler-ir-extern-seq-empty))
       2
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
@@ -15370,7 +16052,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)
+        (compiler_ir_types.compiler-ir-extern-seq-empty))
       2
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
@@ -16363,7 +17045,7 @@
               compiler_ir_types.CompilerIrInstrList.Nil))
           compiler_ir_types.CompilerIrBlockList.Nil))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-explicit-state-duplicate-function-program
   [name-id : i64]) : compiler_ir_types.CompilerIrProgram
@@ -16400,7 +17082,7 @@
                 compiler_ir_types.CompilerIrInstrList.Nil))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-explicit-state-buffer-result-ok?
   [result : compiler_backend.ResultCompilerBackendBuffer]) : bool
@@ -16874,7 +17556,7 @@
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-empty)]
     [linux-state : compiler_backend.CompilerBackendState
@@ -17094,7 +17776,7 @@
                   compiler_ir_types.CompilerIrInstrList.Nil))
               compiler_ir_types.CompilerIrBlockList.Nil))
           compiler_ir_types.CompilerIrFunctionList.Nil)
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (match (compiler_backend.compiler-backend-emit-program-linux-with-spans
       program
       spans)
@@ -17177,7 +17859,7 @@
                       compiler_ir_types.CompilerIrInstrList.Nil))
                   compiler_ir_types.CompilerIrBlockList.Nil))))))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-total-switch-test-cases) : compiler_ir_types.CompilerIrSwitchCaseList
   (compiler_ir_types.compiler-ir-switch-case-cons
@@ -17280,7 +17962,7 @@
         2
         (compiler-backend-total-switch-test-blocks true))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-forwarded-total-switch-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -17345,7 +18027,7 @@
         2
         (compiler-backend-forwarded-total-switch-test-blocks))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-spoofed-total-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
@@ -17358,7 +18040,7 @@
         2
         (compiler-backend-total-switch-test-blocks false))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-total-switch-source) : String
   "(defenum TotalSwitchValue
@@ -17644,7 +18326,7 @@
                     compiler_ir_types.CompilerIrInstrList.Nil))
                 compiler_ir_types.CompilerIrBlockList.Nil)))))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-switch-base-asm-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
@@ -17707,7 +18389,7 @@
               compiler_ir_types.CompilerIrInstrList.Nil))
           compiler_ir_types.CompilerIrBlockList.Nil))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-switch-shape-diagnostic-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
@@ -17761,7 +18443,7 @@
                   compiler_ir_types.CompilerIrInstrList.Nil)))
             compiler_ir_types.CompilerIrBlockList.Nil)))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-switch-phi-edge-copy-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
@@ -17854,7 +18536,7 @@
                   compiler_ir_types.CompilerIrInstrList.Nil)))
             compiler_ir_types.CompilerIrBlockList.Nil)))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-switch-negative-case-label-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
@@ -21274,7 +21956,7 @@
     (compiler_ir_types.compiler-ir-function-cons
       func
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-vector-call-lifetime-function) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -23244,7 +23926,7 @@
                       compiler_ir_types.CompilerIrInstrList.Nil)))
                 compiler_ir_types.CompilerIrBlockList.Nil)))
           compiler_ir_types.CompilerIrFunctionList.Nil)
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert
@@ -23330,7 +24012,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     [prev-starts : (__tl_dyn-array i64)
@@ -23437,7 +24119,7 @@
           (owned_view.compiler-owned-shared-view instr)
           vars)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
         (compiler_backend.compiler-backend-source-span-index-build-with-backend-state
@@ -23586,7 +24268,7 @@
         backend-state
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         (profile_state.compiler-profile-state-new))]
     [_abi : unit
       (compiler_backend.compiler-backend-set-current-fn-abi!
@@ -23760,7 +24442,7 @@
         (compiler_ast_types.AstType.I64)
         runtime-plan
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
         (compiler_backend.compiler-backend-source-span-index-build-with-backend-state
@@ -24395,18 +25077,16 @@
 
 (define (compiler-backend-region-extern-runtime-plan-ok?) : bool
   (let
-    [externs : compiler_ir_types.CompilerIrExternList
-      (compiler_ir_types.compiler-ir-extern-cons
+    [externs : compiler_ir_types.CompilerIrExternSeq
+      (compiler_ir_types.compiler-ir-extern-seq2
         (compiler_ir_types.compiler-ir-extern-default-id
           cbi.compiler-builtin-id-tl-region-mark
           "tl_region_mark"
           (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.compiler-ir-extern-cons
-          (compiler_ir_types.compiler-ir-extern-default-id
-            cbi.compiler-builtin-id-tl-region-reset
-            "tl_region_reset"
-            (compiler_ast_types.AstType.Unit))
-          compiler_ir_types.CompilerIrExternList.Nil))]
+        (compiler_ir_types.compiler-ir-extern-default-id
+          cbi.compiler-builtin-id-tl-region-reset
+          "tl_region_reset"
+          (compiler_ast_types.AstType.Unit)))]
     (match (compiler_backend.compiler-backend-runtime-plan-for
       compiler_ir_types.CompilerIrFunctionList.Nil
       externs)
@@ -24422,8 +25102,8 @@
   (let
     [local-id : i64 (ci.intern "compiler-startup-profile-process-entry-probe")]
     [link-id : i64 (ci.intern "tl_startup_profile_process_entry_tick")]
-    [externs : compiler_ir_types.CompilerIrExternList
-      (compiler_ir_types.compiler-ir-extern-cons
+    [externs : compiler_ir_types.CompilerIrExternSeq
+      (compiler_ir_types.compiler-ir-extern-seq1
         (compiler_ir_types.CompilerIrExtern.Extern
           local-id
           local-id
@@ -24434,8 +25114,7 @@
           (compiler_ast_types.AstExternAbi.C)
           link-id
           (compiler_ast_types.ast-extern-link-input-list-new)
-          true)
-        compiler_ir_types.CompilerIrExternList.Nil)]
+          true))]
     (match (compiler_backend.compiler-backend-runtime-plan-for
       compiler_ir_types.CompilerIrFunctionList.Nil
       externs)
@@ -24451,7 +25130,7 @@
               (& features))
             (match (compiler_backend.compiler-backend-runtime-plan-for
               compiler_ir_types.CompilerIrFunctionList.Nil
-              compiler_ir_types.CompilerIrExternList.Nil)
+              (compiler_ir_types.compiler-ir-extern-seq-empty))
               [(compiler_backend.ResultBackendRuntimePlan.Ok empty-plan)
                 (not
                   (compiler_backend.compiler-backend-runtime-tail-startup-profile?
@@ -24489,8 +25168,8 @@
                   compiler_ir_types.CompilerIrInstrList.Nil)))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil)]
-    [externs : compiler_ir_types.CompilerIrExternList
-      (compiler_ir_types.compiler-ir-extern-cons
+    [externs : compiler_ir_types.CompilerIrExternSeq
+      (compiler_ir_types.compiler-ir-extern-seq1
         (compiler_ir_types.CompilerIrExtern.Extern
           local-protect-id
           local-protect-id
@@ -24503,8 +25182,7 @@
           (compiler_ast_types.AstExternAbi.C)
           protect-id
           (compiler_ast_types.ast-extern-link-input-list-new)
-          false)
-        compiler_ir_types.CompilerIrExternList.Nil)]
+          false))]
     (match (compiler_backend.compiler-backend-runtime-plan-for
       functions
       externs)
@@ -24555,7 +25233,7 @@
               compiler_ir_types.CompilerIrFunctionList.Nil))))]
     (match (compiler_backend.compiler-backend-runtime-plan-for
       functions
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
       [(compiler_backend.ResultBackendRuntimePlan.Ok plan)
         (compiler_backend.backend-and8
           (compiler-backend-test-plan-provides?
@@ -26658,7 +27336,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (match (compiler_backend.compiler-backend-emit-store-ptr
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -27514,15 +28192,22 @@
   (match (compiler-backend-copy-bytes-live-through-asm)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
+        ;; The property is that %r9 still holds the value after the CopyBytes:
+        ;; the copy's scratch avoided it, and no emergency save/restore was
+        ;; needed. P7b makes the store that reads it ONE register-to-slot movq
+        ;; in either cfg -- there is no scratch left to stage it through, so
+        ;; neither staging spelling may appear.
         (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (cfg scratch-vreg "    movq %r9, %rax\n" "    movq %r9, %r8\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (cfg
-            scratch-vreg
-            "    movq %rax, -32(%rbp)\n"
-            "    movq %r8, -32(%rbp)\n"))
+          asm
+          "    movq %r9, -32(%rbp)\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r9, %rax\n"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r9, %r8\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -27710,7 +28395,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [reg-src : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -29757,7 +30442,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     ""
@@ -29821,7 +30506,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     ""
@@ -29891,7 +30576,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     ""
@@ -29954,7 +30639,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     ""
@@ -30023,7 +30708,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     ""
@@ -30105,7 +30790,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     ""
@@ -30168,7 +30853,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     ""
@@ -30236,7 +30921,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     ""
@@ -30319,7 +31004,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     (compiler_backend.compiler-backend-state-new
@@ -30422,7 +31107,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     (compiler_backend.compiler-backend-state-new
@@ -30488,7 +31173,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     (compiler_backend.compiler-backend-state-new
@@ -30554,7 +31239,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     (compiler_backend.compiler-backend-state-new
@@ -30611,7 +31296,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
     (compiler_backend.compiler-backend-state-new
@@ -32990,7 +33675,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     [prev-starts : (__tl_dyn-array i64)
@@ -36253,7 +36938,7 @@
                   compiler_ir_types.CompilerIrInstrList.Nil))
               compiler_ir_types.CompilerIrBlockList.Nil))))
       compiler_ir_types.CompilerIrFunctionList.Nil)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-global-compare-branch-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
@@ -36811,7 +37496,7 @@
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       compiler_ir_types.CompilerIrFunctionList.Nil
-      compiler_ir_types.CompilerIrExternList.Nil)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
     0
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -37078,7 +37763,7 @@
           2
           compiler_ir_types.CompilerIrBlockList.Nil)
         compiler_ir_types.CompilerIrFunctionList.Nil)
-      compiler_ir_types.CompilerIrExternList.Nil)))
+      (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-linux-atomic-pressure-types
   [group : compiler_ast_types.AstType]
@@ -38096,7 +38781,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     [_abi : unit
@@ -38188,7 +38873,7 @@
         types
         1
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         backend-state)]
@@ -38263,16 +38948,15 @@
   (let
     [name-id : i64 (ci.intern (owned_view.compiler-owned-shared-view name))]
     [caller-id : i64 (ci.intern "caller")]
-    [externs : compiler_ir_types.CompilerIrExternList
-      (compiler_ir_types.compiler-ir-extern-cons
+    [externs : compiler_ir_types.CompilerIrExternSeq
+      (compiler_ir_types.compiler-ir-extern-seq1
         (compiler-backend-non-direct-tail-call-extern
           name-id
           name
           (ci.intern symbol)
           params
-          (owned_view.compiler-owned-shared-view ret)
-          abi)
-        compiler_ir_types.CompilerIrExternList.Nil)]
+          ret
+          abi))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -38515,7 +39199,7 @@
   (compiler_backend.compiler-backend-program-index-build
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-known-function-call-functions)
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-known-function-call-env-zero
   [target : compiler_backend.CompilerBackendTarget]) : String
@@ -38545,7 +39229,7 @@
       ""
       (compiler_regalloc.compiler-reg-var-types-empty)
       functions
-      compiler_ir_types.CompilerIrExternList.Nil
+      (compiler_ir_types.compiler-ir-extern-seq-empty)
       index
       2
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
@@ -38571,7 +39255,7 @@
       ""
       (compiler_regalloc.compiler-reg-var-types-empty)
       functions
-      compiler_ir_types.CompilerIrExternList.Nil
+      (compiler_ir_types.compiler-ir-extern-seq-empty)
       index
       2
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
@@ -38661,8 +39345,8 @@
             ""
             (compiler_regalloc.compiler-reg-var-types-empty)
             functions
-            compiler_ir_types.CompilerIrExternList.Nil
-            (owned_view.compiler-owned-shared-view index)
+            (compiler_ir_types.compiler-ir-extern-seq-empty)
+            index
             2
             (compiler_diagnostic.compiler-diagnostic-at-start "" "")
             index.backend-state)]
@@ -38746,8 +39430,8 @@
           ""
           (compiler_regalloc.compiler-reg-var-types-empty)
           functions
-          compiler_ir_types.CompilerIrExternList.Nil
-          (owned_view.compiler-owned-shared-view index)
+          (compiler_ir_types.compiler-ir-extern-seq-empty)
+          index
           2
           (compiler_diagnostic.compiler-diagnostic-at-start "" "")
           index.backend-state)
@@ -38988,7 +39672,7 @@
                 compiler_ir_types.CompilerIrInstrList.Nil))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
-    compiler_ir_types.CompilerIrExternList.Nil))
+    (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-clean-module-symbol-collision-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
@@ -40042,8 +40726,8 @@
   [provided-id : i64]
   [provided-link-id : i64]
   [referenced-id : i64]
-  [referenced-link-id : i64]) : compiler_ir_types.CompilerIrExternList
-  (compiler_ir_types.compiler-ir-extern-cons
+  [referenced-link-id : i64]) : compiler_ir_types.CompilerIrExternSeq
+  (compiler_ir_types.compiler-ir-extern-seq2
     (compiler_ir_types.CompilerIrExtern.Extern
       provided-id
       provided-id
@@ -40055,21 +40739,19 @@
       provided-link-id
       (compiler_ast_types.ast-extern-link-input-list-new)
       true)
-    (compiler_ir_types.compiler-ir-extern-cons
-      (compiler_ir_types.CompilerIrExtern.Extern
-        referenced-id
-        referenced-id
-        "referenced_decl"
-        (compiler_ast_types.ast-ty-func
-          (compiler_ast_types.ast-type-cons
-            (compiler_ast_types.AstType.I64)
-            (compiler_ast_types.ast-type-list-new))
-          (compiler_ast_types.AstType.I64))
-        (compiler_ast_types.AstExternAbi.C)
-        referenced-link-id
-        (compiler_ast_types.ast-extern-link-input-list-new)
-        false)
-      compiler_ir_types.CompilerIrExternList.Nil)))
+    (compiler_ir_types.CompilerIrExtern.Extern
+      referenced-id
+      referenced-id
+      "referenced_decl"
+      (compiler_ast_types.ast-ty-func
+        (compiler_ast_types.ast-type-cons
+          (compiler_ast_types.AstType.I64)
+          (compiler_ast_types.ast-type-list-new))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ast_types.AstExternAbi.C)
+      referenced-link-id
+      (compiler_ast_types.ast-extern-link-input-list-new)
+      false)))
 
 ;; A backend job owns one exact intern capability and one cache arena.  Keep a
 ;; compact one-word smoke here so the state boundary itself is exercised before
@@ -40715,7 +41397,7 @@
             0
             compiler_ir_types.CompilerIrBlockList.Nil)
           compiler_ir_types.CompilerIrFunctionList.Nil)
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (string.eq
         (compiler_backend.compiler-backend-runtime-prelude-string-helper-symbol
@@ -40867,7 +41549,7 @@
               0
               compiler_ir_types.CompilerIrBlockList.Nil)
             compiler_ir_types.CompilerIrFunctionList.Nil)
-          (compiler_ir_types.compiler-ir-extern-cons
+          (compiler_ir_types.compiler-ir-extern-seq2
             (compiler_ir_types.CompilerIrExtern.Extern
               extern-id
               extern-id
@@ -40879,21 +41561,19 @@
               extern-link-id
               (compiler_ast_types.ast-extern-link-input-list-new)
               false)
-            (compiler_ir_types.compiler-ir-extern-cons
-              (compiler_ir_types.CompilerIrExtern.Extern
-                same-name-id
-                same-name-id
-                (owned_view.compiler-owned-shared-view extern-name)
-                (compiler_ast_types.ast-ty-func
-                  (compiler_ast_types.ast-type-cons
-                    (compiler_ast_types.AstType.I64)
-                    (compiler_ast_types.ast-type-list-new))
-                  (compiler_ast_types.AstType.I64))
-                (compiler_ast_types.AstExternAbi.C)
-                same-name-link-id
-                (compiler_ast_types.ast-extern-link-input-list-new)
-                false)
-              compiler_ir_types.CompilerIrExternList.Nil)))]
+            (compiler_ir_types.CompilerIrExtern.Extern
+              same-name-id
+              same-name-id
+              extern-name
+              (compiler_ast_types.ast-ty-func
+                (compiler_ast_types.ast-type-cons
+                  (compiler_ast_types.AstType.I64)
+                  (compiler_ast_types.ast-type-list-new))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ast_types.AstExternAbi.C)
+              same-name-link-id
+              (compiler_ast_types.ast-extern-link-input-list-new)
+              false)))]
       (and
         (= source-count-before (ci.intern-pool-len))
         (compiler_backend.backend-and8
@@ -42572,7 +43252,7 @@
                 compiler_ir_types.CompilerIrInstrList.Nil))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil)
-      compiler_ir_types.CompilerIrExternList.Nil)))
+      (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-scratch-vreg-aggregate-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler_regalloc.compiler-reg-assignments-prepend
@@ -43555,7 +44235,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       (match (compiler_backend.compiler-backend-emit-pack-words
@@ -43693,7 +44373,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       (match (compiler_backend.compiler-backend-emit-addr-of
@@ -43760,7 +44440,7 @@
                             (compiler_ir_types.compiler-ir-label "ok")
                             (compiler-backend-runtime-helper-full-plan)
                             compiler_ir_types.CompilerIrFunctionList.Nil
-                            compiler_ir_types.CompilerIrExternList.Nil
+                            (compiler_ir_types.compiler-ir-extern-seq-empty)
                             index)
                             [(compiler_backend.ResultCompilerBackend.Ok bounds)
                               (and
@@ -44305,8 +44985,8 @@
       [aggregate-ty : compiler_ast_types.AstType
         (compiler_ast_types.AstType.Struct
           (ci.intern "ScratchCMemoryAggregate"))]
-      [externs : compiler_ir_types.CompilerIrExternList
-        (compiler_ir_types.compiler-ir-extern-cons
+      [externs : compiler_ir_types.CompilerIrExternSeq
+        (compiler_ir_types.compiler-ir-extern-seq1
           (compiler-backend-non-direct-tail-call-extern
             name
             "scratch_c_memory_arg"
@@ -44315,8 +44995,7 @@
               aggregate-ty
               (compiler_ast_types.ast-type-list-new))
             (compiler_ast_types.AstType.Unit)
-            (compiler_ast_types.AstExternAbi.C))
-          compiler_ir_types.CompilerIrExternList.Nil)]
+            (compiler_ast_types.AstExternAbi.C)))]
       [_index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -44565,7 +45244,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       (match (compiler_backend.compiler-backend-emit-load-instr
@@ -46246,7 +46925,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       [cast-assignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -47209,9 +47888,10 @@
       (let
         [masks : (__tl_dyn-array i64)
           (compiler_backend.compiler-backend-scavenge-occupancy-build
-            (owned_view.compiler-owned-shared-view starts)
-            (owned_view.compiler-owned-shared-view ends)
-            (owned_view.compiler-owned-shared-view assignment-index)
+            starts
+            ends
+            assignment-index
+            (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
             5)]
         (and
           (= (array-length masks) 5)
@@ -47266,6 +47946,173 @@
               (bit-or
                 (compiler_backend.compiler-backend-scavenge-reg-bit "%r11")
                 (compiler_backend.compiler-backend-scavenge-reg-bit "%xmm2")))))))))
+
+;; --- P3d: the occupancy table honours liveness HOLES ------------------------
+;; Two values legitimately share one register when their SEGMENTS are disjoint
+;; (that is the interference rule the allocator itself uses). Asked through the
+;; coarse hulls, that register then reads occupied across the hole between them,
+;; and in a merged body every register reads occupied everywhere -- so every
+;; scratch demand, including a spilled array base's reload, degrades to the
+;; emergency save/reload/restore tier. These pin the three properties the fix
+;; rests on: the hole is reported free, the live segments are still reported
+;; occupied, and a var with NO segment row keeps its hull.
+(define (compiler-backend-scavenge-segment-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        0
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r10))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r11))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
+    2))
+
+;; var 0: hull [0,16] made of segments [0,4] and [12,16] -- dead over 6..10.
+;; var 1: hull [0,16] with no segment row at all, the shape the const-hoist and
+;; scratch-plan pseudo-vars have once they are appended past the emitted
+;; function's own var count.
+(define (compiler-backend-scavenge-segment-masks [rows : i64]) : (__tl_dyn-array
+    i64)
+  (let
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)
+      (array.make-array compiler_regalloc.CompilerRegIntervalSeq rows)]
+    (begin
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref ends 0) 16)
+      (set! (array-ref starts 1) 0)
+      (set! (array-ref ends 1) 16)
+      (if (> rows 0)
+        (set!
+          (array-ref segments 0)
+          (compiler_regalloc.compiler-reg-interval-seq-prepend
+            (compiler_regalloc.CompilerRegInterval 0 0 4)
+            (compiler_regalloc.compiler-reg-interval-seq-prepend
+              (compiler_regalloc.CompilerRegInterval 0 12 16)
+              (compiler_regalloc.compiler-reg-interval-seq-empty))))
+        unit)
+      (compiler_backend.compiler-backend-scavenge-occupancy-build
+        starts
+        ends
+        (compiler-backend-scavenge-segment-assignments)
+        segments
+        2))))
+
+(define (compiler-backend-scavenge-segment-subset-ok?
+  [hull : (__tl_dyn-array i64)]
+  [segmented : (__tl_dyn-array i64)]
+  [index : i64]) : bool
+  (if (>= index (array-length hull))
+    true
+    (and
+      (=
+        (bit-and
+          (array-ref segmented index)
+          (bit-xor (array-ref hull index) -1))
+        0)
+      (compiler-backend-scavenge-segment-subset-ok? hull segmented (+ index 1)))))
+
+(define (compiler-backend-scavenge-segment-occupancy-ok?) : bool
+  (let
+    [hull : (__tl_dyn-array i64) (compiler-backend-scavenge-segment-masks 0)]
+    [segmented : (__tl_dyn-array i64)
+      (compiler-backend-scavenge-segment-masks 2)]
+    [r10 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r10")]
+    [r11 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r11")]
+    (and
+      (= (array-length hull) 9)
+      (= (array-length segmented) 9)
+      ;; hull: %r10 busy right across the hole (instruction index 4 = point 8)
+      (not (= (bit-and (array-ref hull 4) r10) 0))
+      ;; segments: the hole reads free ...
+      (= (bit-and (array-ref segmented 4) r10) 0)
+      ;; ... while both live segments still read busy
+      (not (= (bit-and (array-ref segmented 0) r10) 0))
+      (not (= (bit-and (array-ref segmented 2) r10) 0))
+      (not (= (bit-and (array-ref segmented 6) r10) 0))
+      (not (= (bit-and (array-ref segmented 8) r10) 0))
+      ;; var 1 has no segment row: its hull answer is retained everywhere
+      (not (= (bit-and (array-ref segmented 4) r11) 0))
+      (not (= (bit-and (array-ref hull 4) r11) 0))
+      ;; monotone: the table can only LOSE bits, never gain one
+      (compiler-backend-scavenge-segment-subset-ok? hull segmented 0))))
+
+;; The consequence at the pick. With every candidate reading occupied the picker
+;; runs off the end of the pool and returns its emergency fallback with a pending
+;; save (the emitter then brackets the reload with a save and a restore). With
+;; the hole exposed it returns the free register outright and nothing is pending,
+;; so the reload is a plain `mov`.
+(define (compiler-backend-scavenge-segment-pick-busy-mask) : i64
+  (bit-or
+    (compiler_backend.compiler-backend-scavenge-reg-bit "%r9")
+    (bit-or
+      (compiler_backend.compiler-backend-scavenge-reg-bit "%r8")
+      (bit-or
+        (compiler_backend.compiler-backend-scavenge-reg-bit "%r12")
+        (bit-or
+          (compiler_backend.compiler-backend-scavenge-reg-bit "%r13")
+          (bit-or
+            (compiler_backend.compiler-backend-scavenge-reg-bit "%r14")
+            (bit-or
+              (compiler_backend.compiler-backend-scavenge-reg-bit "%r15")
+              (bit-or
+                (compiler_backend.compiler-backend-scavenge-reg-bit "%rbx")
+                (bit-or
+                  (compiler_backend.compiler-backend-scavenge-reg-bit "%rsi")
+                  (compiler_backend.compiler-backend-scavenge-reg-bit "%rdi"))))))))))
+
+(define (compiler-backend-scavenge-segment-pick-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [function-state : compiler_backend.CompilerBackendFunctionState
+      (compiler_backend.compiler-backend-state-function-state backend-state)]
+    ;; %rax/%rdx/%rcx are the fixed-register exclude every arithmetic site uses.
+    [exclude : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-binop-scavenge-exclude-build)]
+    [hull : (__tl_dyn-array i64) (compiler-backend-scavenge-segment-masks 0)]
+    [segmented : (__tl_dyn-array i64)
+      (compiler-backend-scavenge-segment-masks 2)]
+    [busy : i64
+      (bit-or
+        (array-ref hull 4)
+        (compiler-backend-scavenge-segment-pick-busy-mask))]
+    [hull-pick : String
+      (compiler_backend.compiler-backend-scavenge-pick-with-mask
+        function-state
+        busy
+        exclude
+        5
+        "%r8")]
+    [hull-pending? : bool
+      (compiler_backend.compiler-backend-function-scratch-bool?
+        function-state
+        compiler_backend.compiler-backend-scratch-bool-emergency-pending)]
+    [segment-pick : String
+      (compiler_backend.compiler-backend-scavenge-pick-with-mask
+        function-state
+        (bit-or
+          (array-ref segmented 4)
+          (compiler-backend-scavenge-segment-pick-busy-mask))
+        exclude
+        5
+        "%r8")]
+    (and
+      ;; Everything reads occupied, so no candidate is usable and the picker
+      ;; drops into the emergency tier: it returns the first NON-EXCLUDED pool
+      ;; candidate (%r9, itself occupied) and marks it pending, which is what
+      ;; makes the emitter bracket the reload with a save and a restore.
+      (string.eq hull-pick "%r9")
+      hull-pending?
+      ;; The hole frees %r10, so the picker hands it back directly -- the reload
+      ;; is a plain `mov` with nothing to preserve.
+      (string.eq segment-pick "%r10"))))
 
 (define (compiler-backend-scavenge-loop-live-through-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -47549,7 +48396,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -47597,6 +48444,7 @@
               starts
               ends
               assignment-index
+              (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
               3)
             3)])
       (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
@@ -47826,6 +48674,7 @@
         (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
           assignments
           vars)
+        (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
         0
         vars))))
 
@@ -47991,7 +48840,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState index.backend-state]
     (match (compiler_backend.compiler-backend-emit-param-spills
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -48052,7 +48901,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -48148,7 +48997,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -48671,7 +49520,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         program-index.backend-state]
       [function-state : compiler_backend.CompilerBackendFunctionState
@@ -48707,7 +49556,7 @@
         (compiler_ir_types.compiler-ir-label "bounds_ok")
         (compiler-backend-runtime-helper-full-plan)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (let
@@ -51484,6 +52333,8 @@ b_keep:
         (compiler-backend-shrinkwrap-admission-state-ok?)
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
+        (compiler-backend-scavenge-segment-occupancy-ok?)
+        (compiler-backend-scavenge-segment-pick-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)
         (compiler-backend-phi-rotated-back-edge-ok?)
         (compiler-backend-divmod-live-dividend-src-ok?)
@@ -51624,6 +52475,7 @@ b_keep:
         (compiler-backend-reg-part-pools-ok?)
         (compiler-backend-scavenge-emergency-reg-support-ok?)
         (compiler-backend-debug-location-preserves-emergency-wrap-ok?)
+        (compiler-backend-global-branch-emergency-restore-ok?)
         (compiler-backend-ir-walkers-fail-closed-ok?))
       (compiler-backend-optimizer-rewrite-diagnostic-ok?)
       (and

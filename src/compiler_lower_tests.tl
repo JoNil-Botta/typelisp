@@ -7331,12 +7331,10 @@
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ _ externs)
-          (match (match (owned_view.compiler-owned-shared-view externs)
-            [(compiler_ir_types.CompilerIrExternList.Array seq)
-              (compiler_ir_types.compiler-ir-extern-seq-to-list seq)]
-            [_ externs])
-            [(compiler_ir_types.CompilerIrExternList.Cons
-                (compiler_ir_types.CompilerIrExtern.Extern
+          (and
+            (= externs.len 1)
+            (match (compiler_ir_types.compiler-ir-extern-seq-ref externs 0)
+              [(compiler_ir_types.CompilerIrExtern.Extern
                   name-id
                   name-id
                   name
@@ -7345,14 +7343,12 @@
                   symbol-id
                   link-inputs
                   _)
-                compiler_ir_types.CompilerIrExternList.Nil)
-              (and
-                (string.eq (ci.intern-str name-id) "ffi-add")
-                (string.eq name "ffi-add")
-                (string.eq (ci.intern-str symbol-id) "ffi_add")
-                (compiler_ast_types.ast-extern-abi-c? abi)
-                (compiler-lower-extern-link-inputs-ok? link-inputs))]
-            [_ false])])]
+                (and
+                  (string.eq (ci.intern-str name-id) "ffi-add")
+                  (string.eq name "ffi-add")
+                  (string.eq (ci.intern-str symbol-id) "ffi_add")
+                  (compiler_ast_types.ast-extern-abi-c? abi)
+                  (compiler-lower-extern-link-inputs-ok? link-inputs))]))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-extern-value-fnptr-source) : String
@@ -7622,9 +7618,7 @@
               (if (= globals.len 3)
                 unit
                 (set! ok false))
-              (if (match (owned_view.compiler-owned-shared-view externs)
-                [(compiler_ir_types.CompilerIrExternList.Array _) true]
-                [_ false])
+              (if (= externs.len 1)
                 unit
                 (set! ok false))
               (if (lower-test-global-list-has-name?
@@ -7640,9 +7634,7 @@
               (if (lower-test-global-list-has-name? globals "widened")
                 unit
                 (set! ok false))
-              (if (=
-                (compiler_ir_types.compiler-ir-extern-list-count externs)
-                1)
+              (if (= (compiler_ir_types.compiler-ir-extern-seq-count externs) 1)
                 unit
                 (set! ok false))
               (if (>
@@ -15147,14 +15139,9 @@
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program _ functions externs)
           (and
-            (=
-              (compiler_ir_types.compiler-ir-function-list-count
-                (compiler_ir_types.compiler-ir-global-shared-view functions))
-              1)
-            (= (compiler_ir_types.compiler-ir-extern-list-count externs) 0)
-            (lower-test-function-defined?
-              (compiler_ir_types.compiler-ir-global-shared-view functions)
-              "main"))])]
+            (= (compiler_ir_types.compiler-ir-function-list-count functions) 1)
+            (= (compiler_ir_types.compiler-ir-extern-seq-count externs) 0)
+            (lower-test-function-defined? functions "main"))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-kept-ok?
@@ -16270,21 +16257,32 @@
         [source-id : i64
           (ci.intern-generated-name "lower-function-state-isolation-temp")]
         [symbol : i64 81173]
+        [identity-a : i64
+          (ci.intern-compat-state-intern
+            (compiler_lower.compiler-lower-state-interns owner-a)
+            "identity-a")]
+        [identity-b : i64
+          (ci.intern-compat-state-intern
+            (compiler_lower.compiler-lower-state-interns owner-b)
+            "identity-b")]
         [registered-a : compiler_lower.LowerSpmdPackageSymbolRegistration
           (compiler_lower.lower-spmd-package-symbol-register
             owner-a
             symbol
-            "identity-a")]
+            symbol
+            identity-a)]
         [registered-b : compiler_lower.LowerSpmdPackageSymbolRegistration
           (compiler_lower.lower-spmd-package-symbol-register
             owner-b
             symbol
-            "identity-b")]
+            symbol
+            identity-b)]
         [repeated-b : compiler_lower.LowerSpmdPackageSymbolRegistration
           (compiler_lower.lower-spmd-package-symbol-register
             owner-b
             symbol
-            "identity-b")]
+            symbol
+            identity-b)]
         (begin
           (compiler_lower.compiler-lower-function-state-inline-helper-stack-set!
             function-a
@@ -16458,11 +16456,135 @@
                         (match (compiler_lower.lower-spmd-package-symbol-register
                           owner-b
                           symbol
-                          "identity-b")
+                          symbol
+                          identity-b)
                           [(compiler_lower.LowerSpmdPackageSymbolRegistration.Existing)
                             true]
                           [_ false])
                         (compiler_lower.compiler-lower-state-reset? owner-a)))))))))))))
+
+(define (compiler-lower-spmd-structural-profile-ok?) : bool
+  (let
+    [state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (ci.intern-compat-state-new))]
+    [_package : unit
+      (compiler_lower.compiler-lower-state-set-spmd-package!
+        state
+        "profile-pkg")]
+    [intern-state : ci.InternCompatState
+      (compiler_lower.compiler-lower-state-interns state)]
+    [canonical : i64
+      (ci.intern-compat-state-intern intern-state "profile-pkg/helper")]
+    [classes : compiler_ast_types.AstSpmdParamClassList
+      (compiler_ast_types.ast-spmd-param-class-list-new)]
+    [_class : unit
+      (compiler_ast_types.ast-spmd-param-class-list-push
+        (&mut classes)
+        compiler_ast_types.AstSpmdParamClass.Varying)]
+    [first : i64
+      (compiler_lower.lower-spmd-package-structural-symbol
+        state
+        "profile-pkg"
+        "profile-pkg/helper"
+        canonical
+        "(-> i64 i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        8
+        classes
+        (compiler_ast_types.AstSpmdResultClass.Varying)
+        0)]
+    [repeat : i64
+      (compiler_lower.lower-spmd-package-structural-symbol
+        state
+        "profile-pkg"
+        "profile-pkg/helper"
+        canonical
+        "(-> i64 i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        8
+        classes
+        (compiler_ast_types.AstSpmdResultClass.Varying)
+        0)]
+    [expected : String
+      (compiler_lower.lower-spmd-package-symbol
+        "profile-pkg"
+        "profile-pkg/helper"
+        "(-> i64 i64)"
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
+        8
+        "v"
+        "v"
+        0)]
+    [lazy-before : bool
+      (and
+        (=
+          (string.string-length
+            (ci.intern-compat-state-str
+              intern-state
+              (compiler_lower.lower-spmd-package-structural-identity
+                intern-state
+                first)))
+          0)
+        (=
+          (string.string-length
+            (ci.intern-compat-state-str
+              intern-state
+              (compiler_lower.lower-spmd-package-structural-linker-symbol
+                intern-state
+                first)))
+          0))]
+    (begin
+      (compiler_lower.lower-materialize-generated-role-symbols! state)
+      (and
+        lazy-before
+        (=
+          (compiler_lower.lower-spmd-package-structural-identity
+            intern-state
+            first)
+          (compiler_lower.lower-spmd-package-structural-identity
+            intern-state
+            repeat))
+        (=
+          (compiler_lower.lower-spmd-package-structural-linker-symbol
+            intern-state
+            first)
+          (compiler_lower.lower-spmd-package-structural-linker-symbol
+            intern-state
+            repeat))
+        (=
+          (compiler_lower.lower-spmd-package-structural-registration-key
+            intern-state
+            first)
+          (compiler_lower.lower-spmd-package-structural-registration-key
+            intern-state
+            repeat))
+        (string.eq
+          (ci.intern-compat-state-str
+            intern-state
+            (compiler_lower.lower-spmd-package-structural-linker-symbol
+              intern-state
+              first))
+          expected)
+        (=
+          (compiler_lower.compiler-lower-profile-spmd-identity-serializations-value
+            state)
+          1)
+        (=
+          (compiler_lower.compiler-lower-profile-spmd-stable-hash-computations-value
+            state)
+          1)
+        (=
+          (compiler_lower.compiler-lower-profile-spmd-render-cache-misses-value
+            state)
+          1)
+        (>=
+          (compiler_lower.compiler-lower-profile-spmd-render-cache-hits-value
+            state)
+          2)))))
 
 (define (compiler-lower-checked-pools-abort-lifecycle-ok?) : bool
   (compiler_lower.compiler-lower-checked-pools-abort-lifecycle-ok?))
@@ -18018,3 +18140,9 @@
   (test.assert-true
     (compiler_lower.compiler-lower-profile-job-isolation-tests-ok?)
     "lower profile reset and observations stay isolated per job"))
+
+(test
+  compiler-lower-spmd-structural-profile
+  (test.assert-true
+    (compiler-lower-spmd-structural-profile-ok?)
+    "SPMD identity serialization and stable hashing are cached per structural recipe"))

@@ -7126,7 +7126,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)
+          (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
         ""
@@ -7146,7 +7146,7 @@
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)
+          (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
         ""
@@ -7332,7 +7332,7 @@
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [slot-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment

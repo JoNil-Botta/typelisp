@@ -49269,27 +49269,14 @@
                       (compiler-backend-global-shared-view instr-diag))))])))])))
 
 (define (compiler-backend-spmd-call-arg-at
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]) : compiler_ir_types.CompilerIrSpmdCallArg
-  (match args
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Nil)
-      (compiler_ir_types.CompilerIrSpmdCallArg.Arg
-        (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
-        compiler_ir_types.CompilerIrValue.Unit
-        (compiler_ast_types.AstType.Unit))]
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
-      (if (and (>= index 0) (< index seq.len))
-        (array-ref seq.slots index)
-        (compiler_ir_types.CompilerIrSpmdCallArg.Arg
-          (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
-          compiler_ir_types.CompilerIrValue.Unit
-          (compiler_ast_types.AstType.Unit)))]
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Cons arg rest)
-      (if (= index 0)
-        arg
-        (compiler-backend-spmd-call-arg-at
-          (compiler_ir_types.compiler-ir-box-shared-view rest)
-          (- index 1)))]))
+  (if (and (>= index 0) (< index args.len))
+    (array-ref args.slots index)
+    (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+      (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+      compiler_ir_types.CompilerIrValue.Unit
+      (compiler_ast_types.AstType.Unit))))
 
 (define (compiler-backend-spmd-class-uniform?
   [class : compiler_ir_types.CompilerIrSpmdValueClass]) : bool
@@ -49310,13 +49297,10 @@
     [_ false]))
 
 (define (compiler-backend-spmd-call-values-from
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [uniform-only : bool]) : compiler_ir_types.CompilerIrValueList
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-count
-      (compiler-backend-global-shared-view args)))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     compiler_ir_types.CompilerIrValueList.Nil
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49335,13 +49319,10 @@
             rest))])))
 
 (define (compiler-backend-spmd-call-types-from
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [uniform-only : bool]) : compiler_ast_types.AstTypeList
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-count
-      (compiler-backend-global-shared-view args)))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     (compiler_ast_types.ast-type-list-new)
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49360,13 +49341,10 @@
             rest))])))
 
 (define (compiler-backend-spmd-call-class-count
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [want-mask : bool]) : i64
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-count
-      (compiler-backend-global-shared-view args)))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     0
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49381,7 +49359,7 @@
           (compiler-backend-spmd-call-class-count args (+ index 1) want-mask))])))
 
 (define (compiler-backend-spmd-avx2-special-count
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]) : i64
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]) : i64
   (+
     1
     (+
@@ -49447,17 +49425,14 @@
 (define (compiler-backend-spmd-avx2-save-args
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [special-index : i64]
   [lanes : i64]
   [base-offset : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-count
-      (compiler-backend-global-shared-view args)))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49563,16 +49538,13 @@
 (define (compiler-backend-spmd-private-vector-args-asm
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [vector-index : i64]
   [lanes : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-count
-      (compiler-backend-global-shared-view args)))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49683,17 +49655,14 @@
 
 (define (compiler-backend-spmd-private-save-mask-args
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [mask-index : i64]
   [lanes : i64]
   [base-offset : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-spmd-call-arg-count
-      (compiler-backend-global-shared-view args)))
+  (if (>= index (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count args))
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
@@ -49846,7 +49815,7 @@
   [target : CompilerBackendTarget]
   [name : i64]
   [active-mask : compiler_ir_types.CompilerIrValue]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [plan : CompilerBackendRuntimePlan]
@@ -49924,7 +49893,7 @@
   [name : i64]
   [lanes : i64]
   [active-mask : compiler_ir_types.CompilerIrValue]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [plan : CompilerBackendRuntimePlan]
@@ -50059,7 +50028,7 @@
   [name : i64]
   [lanes : i64]
   [active-mask : compiler_ir_types.CompilerIrValue]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [plan : CompilerBackendRuntimePlan]
@@ -50177,7 +50146,7 @@
   [backend : compiler_ir_types.CompilerIrSpmdBackend]
   [lanes : i64]
   [active-mask : compiler_ir_types.CompilerIrValue]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [plan : CompilerBackendRuntimePlan]
@@ -53235,33 +53204,15 @@
 
 (define (compiler-backend-count-spmd-call-args-uses
   [counts : (__tl_dyn-array i64)]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]) : unit
-  (match args
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Nil) unit]
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Cons arg rest)
-      (match arg
-        [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
-          (begin
-            (compiler-backend-count-value-use
-              (compiler-backend-global-shared-view counts)
-              value)
-            (compiler-backend-count-spmd-call-args-uses
-              counts
-              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
-      (let
-        [i : i64 0]
-        [count : i64 seq.len]
-        [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
-          seq.slots]
-        (while (< i count)
-          (begin
-            (match (array-ref slots i)
-              [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
-                (compiler-backend-count-value-use
-                  (compiler-backend-global-shared-view counts)
-                  value)])
-            (set! i (+ i 1)))))]))
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]) : unit
+  (let
+    [i : i64 0]
+    (while (< i args.len)
+      (begin
+        (match (array-ref args.slots i)
+          [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
+            (compiler-backend-count-value-use counts value)])
+        (set! i (+ i 1))))))
 
 (define (compiler-backend-count-phi-input-uses
   [counts : (__tl_dyn-array i64)]
@@ -75927,33 +75878,19 @@
         0)]))
 
 (define (compiler-backend-collect-spmd-call-args-collections
-  [collections : CompilerBackendProgramCollections]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]) : CompilerBackendProgramCollections
-  (match args
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Nil) collections]
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Cons arg rest)
-      (match arg
-        [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
-          (compiler-backend-collect-spmd-call-args-collections
-            (compiler-backend-collect-value-collections collections value)
-            (compiler_ir_types.compiler-ir-box-shared-view rest))])]
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
-      (let
-        [out : CompilerBackendProgramCollections collections]
-        [i : i64 0]
-        [count : i64 seq.len]
-        [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
-          seq.slots]
+  [collections : CompilerBackendProgramCollections (:consume)]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]) : CompilerBackendProgramCollections
+  (let
+    [out : CompilerBackendProgramCollections collections]
+    [i : i64 0]
+    (begin
+      (while (< i args.len)
         (begin
-          (while (< i count)
-            (begin
-              (match (array-ref slots i)
-                [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
-                  (set!
-                    out
-                    (compiler-backend-collect-value-collections out value))])
-              (set! i (+ i 1))))
-          out))]))
+          (match (array-ref args.slots i)
+            [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
+              (set! out (compiler-backend-collect-value-collections out value))])
+          (set! i (+ i 1))))
+      out)))
 
 (define (compiler-backend-collect-phi-collections
   [collections : CompilerBackendProgramCollections]
@@ -78844,43 +78781,21 @@
 (define (compiler-backend-object-spmd-call-args
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
-  [args : compiler_ir_types.CompilerIrSpmdCallArgList]
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match args
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Nil) parts]
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Cons arg rest)
-      (match arg
-        [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
-          (compiler-backend-object-spmd-call-args
-            (compiler-backend-object-value-ref
-              parts
-              (compiler-backend-global-shared-view site)
-              value
-              (compiler-backend-global-shared-view program-index))
-            (compiler-backend-global-shared-view site)
-            (compiler_ir_types.compiler-ir-box-shared-view rest)
-            (compiler-backend-global-shared-view program-index))])]
-    [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
-      (let
-        [out : object_target.CompilerBackendObjectTargetParts parts]
-        [i : i64 0]
-        [count : i64 seq.len]
-        [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
-          seq.slots]
+  (let
+    [out : object_target.CompilerBackendObjectTargetParts parts]
+    [i : i64 0]
+    (begin
+      (while (< i args.len)
         (begin
-          (while (< i count)
-            (begin
-              (match (array-ref slots i)
-                [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
-                  (set!
-                    out
-                    (compiler-backend-object-value-ref
-                      out
-                      (compiler-backend-global-shared-view site)
-                      value
-                      (compiler-backend-global-shared-view program-index)))])
-              (set! i (+ i 1))))
-          out))]))
+          (match (array-ref args.slots i)
+            [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
+              (set!
+                out
+                (compiler-backend-object-value-ref out site value program-index))])
+          (set! i (+ i 1))))
+      out)))
 
 (define (compiler-backend-object-value-list-ref
   [parts : object_target.CompilerBackendObjectTargetParts]

@@ -247,11 +247,12 @@
   (let
     [prefix : byte_buf.ByteBuf
       (byte_buf.from-array-prefix
-        (make-array (make-u8 65) (make-u8 0) (make-u8 255))
+        (__tl_make-array (make-u8 65) (make-u8 0) (make-u8 255))
         2)]
-    [copied : (Array u8) (byte_buf.to-array prefix)]
+    [copied : (__tl_dyn-array u8) (byte_buf.to-array prefix)]
     [full : byte_buf.ByteBuf
-      (byte_buf.from-array (make-array (make-u8 7) (make-u8 8) (make-u8 9)))]
+      (byte_buf.from-array
+        (__tl_make-array (make-u8 7) (make-u8 8) (make-u8 9)))]
     (begin
       (test.assert-i64-eq (byte_buf.len prefix) 2 "array prefix len")
       (test.assert-i64-eq (array-length copied) 2 "to-array live len")

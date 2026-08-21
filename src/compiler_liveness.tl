@@ -1137,19 +1137,8 @@
           (compiler-live-spmd-call-args-seq-vars seq (+ index 1))
           value)])))
 
-(define (compiler-live-spmd-call-args-vars
-  [args : ir.CompilerIrSpmdCallArgList]) : CompilerLiveI64Set
-  (match args
-    [(ir.CompilerIrSpmdCallArgList.Nil) (compiler-live-set-empty)]
-    [(ir.CompilerIrSpmdCallArgList.Cons arg rest)
-      (match arg
-        [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-          (compiler-live-value-vars-into
-            (compiler-live-spmd-call-args-vars
-              (compiler-live-box-shared-view rest))
-            value)])]
-    [(ir.CompilerIrSpmdCallArgList.Array seq)
-      (compiler-live-spmd-call-args-seq-vars seq 0)]))
+(define (compiler-live-spmd-call-args-vars [args : ir.CompilerIrSpmdCallArgSeq]) : CompilerLiveI64Set
+  (compiler-live-spmd-call-args-seq-vars args 0))
 
 (define (compiler-live-maybe-value-vars [value : ir.CompilerIrMaybeValue]) : CompilerLiveI64Set
   (match value
@@ -1562,18 +1551,8 @@
 (define (compiler-live-use-ids-add-spmd-args!
   [out : (__tl_dyn-array i64)]
   [n : i64]
-  [args : ir.CompilerIrSpmdCallArgList]) : i64
-  (match args
-    [(ir.CompilerIrSpmdCallArgList.Nil) n]
-    [(ir.CompilerIrSpmdCallArgList.Array seq)
-      (compiler-live-use-ids-add-spmd-args-seq! out n seq 0)]
-    [(ir.CompilerIrSpmdCallArgList.Cons arg rest)
-      (compiler-live-use-ids-add-spmd-args!
-        (compiler-live-shared-view out)
-        (match arg
-          [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-            (compiler-live-use-ids-add-value! out n value)])
-        (compiler-live-box-shared-view rest))]))
+  [args : ir.CompilerIrSpmdCallArgSeq]) : i64
+  (compiler-live-use-ids-add-spmd-args-seq! out n args 0))
 
 ;; Write the distinct used var ids of `instr` into `out`, returning the count,
 ;; or -1 when they do not fit (caller falls back to compiler-live-instr-uses).

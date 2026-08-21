@@ -589,20 +589,29 @@
         2
         "first-func"))))
 
-(define (compiler-ir-smoke-spmd-call-shape-ok?) : bool
+(define (compiler-ir-smoke-spmd-call-args) : compiler_ir_types.CompilerIrSpmdCallArgSeq
   (let
-    [args : compiler_ir_types.CompilerIrSpmdCallArgList
-      (compiler_ir_types.ir-spmd-call-arg-cons
+    [builder : compiler_ir_types.CompilerIrSpmdCallArgBuilder
+      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-with-capacity 1)]
+    (begin
+      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
+        (&mut builder)
         (compiler_ir_types.CompilerIrSpmdCallArg.Arg
           (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
           (compiler_ir_types.CompilerIrValue.Var 21)
-          (ast.AstType.I64))
-        (compiler_ir_types.ir-spmd-call-arg-cons
-          (compiler_ir_types.CompilerIrSpmdCallArg.Arg
-            (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
-            (compiler_ir_types.CompilerIrValue.Var 22)
-            (ast.AstType.I64))
-          compiler_ir_types.CompilerIrSpmdCallArgList.Nil))]
+          (ast.AstType.I64)))
+      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+          (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+          (compiler_ir_types.CompilerIrValue.Var 22)
+          (ast.AstType.I64)))
+      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-to-seq builder))))
+
+(define (compiler-ir-smoke-spmd-call-shape-ok?) : bool
+  (let
+    [args : compiler_ir_types.CompilerIrSpmdCallArgSeq
+      (compiler-ir-smoke-spmd-call-args)]
     [instr : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.ir-instr-spmd-call
         (compiler-ir-smoke-symbol-id "helper")
@@ -635,14 +644,8 @@
       (match (compiler_ir_types.compiler-ir-global-shared-view instr)
         [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
           (let
-            [stored-args
-              (compiler_ir_types.compiler-ir-box-field-shared-view
-                payload-box
-                args)]
-            (match stored-args
-              [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
-                (= seq.len 2)]
-              [_ false]))]
+            [stored-args (__tl-project-field (__tl-box-place payload-box) args)]
+            (and (= stored-args.len 2) (= (array-length stored-args.slots) 2)))]
         [_ false])
       (compiler_ir_types.compiler-ir-effect-is?
         (compiler_ir_types.compiler-ir-global-shared-view instr)

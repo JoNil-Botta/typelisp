@@ -36566,35 +36566,15 @@
 (define (compiler-reg-color-invalidate-spmd-call-args!
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]
-  [args : ir.CompilerIrSpmdCallArgList]) : unit
-  (match args
-    [(ir.CompilerIrSpmdCallArgList.Nil) unit]
-    [(ir.CompilerIrSpmdCallArgList.Cons arg rest)
-      (match arg
-        [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-          (begin
-            (compiler-reg-color-invalidate-value!
-              (compiler-reg-global-shared-view roots)
-              (compiler-reg-global-shared-view invalid)
-              value)
-            (compiler-reg-color-invalidate-spmd-call-args!
-              roots
-              invalid
-              (compiler-reg-box-shared-view rest)))])]
-    [(ir.CompilerIrSpmdCallArgList.Array seq)
-      (let
-        [i : i64 0]
-        [count : i64 seq.len]
-        [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg) seq.slots]
-        (while (< i count)
-          (begin
-            (match (array-ref slots i)
-              [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-                (compiler-reg-color-invalidate-value!
-                  (compiler-reg-global-shared-view roots)
-                  (compiler-reg-global-shared-view invalid)
-                  value)])
-            (set! i (+ i 1)))))]))
+  [args : ir.CompilerIrSpmdCallArgSeq]) : unit
+  (let
+    [i : i64 0]
+    (while (< i args.len)
+      (begin
+        (match (array-ref args.slots i)
+          [(ir.CompilerIrSpmdCallArg.Arg _ value _)
+            (compiler-reg-color-invalidate-value! roots invalid value)])
+        (set! i (+ i 1))))))
 
 (define (compiler-reg-color-invalidate-phi!
   [roots : (__tl_dyn-array i64)]
@@ -39449,36 +39429,19 @@
 
 (define (compiler-reg-remap-spmd-call-args
   [remap : (__tl_dyn-array i64)]
-  [args : ir.CompilerIrSpmdCallArgList]) : ir.CompilerIrSpmdCallArgList
-  (match args
-    [(ir.CompilerIrSpmdCallArgList.Nil) ir.CompilerIrSpmdCallArgList.Nil]
-    [(ir.CompilerIrSpmdCallArgList.Cons arg rest)
-      (ir.CompilerIrSpmdCallArgList.Cons
-        (compiler-reg-remap-spmd-call-arg
-          (compiler-reg-global-shared-view remap)
-          arg)
-        (box
-          (compiler-reg-remap-spmd-call-args
-            (compiler-reg-global-shared-view remap)
-            (compiler-reg-box-shared-view rest))))]
-    [(ir.CompilerIrSpmdCallArgList.Array seq)
-      (let
-        [count : i64 seq.len]
-        [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg) seq.slots]
-        [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-          (array.make-array ir.CompilerIrSpmdCallArg count)]
-        [i : i64 0]
+  [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
+  (let
+    [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
+      (array.make-array ir.CompilerIrSpmdCallArg args.len)]
+    [i : i64 0]
+    (begin
+      (while (< i args.len)
         (begin
-          (while (< i count)
-            (begin
-              (set!
-                (array-ref out i)
-                (compiler-reg-remap-spmd-call-arg
-                  (compiler-reg-global-shared-view remap)
-                  (compiler-reg-global-array-element-shared-view slots i)))
-              (set! i (+ i 1))))
-          (ir.CompilerIrSpmdCallArgList.Array
-            (ir.CompilerIrSpmdCallArgSeq out count))))]))
+          (set!
+            (array-ref out i)
+            (compiler-reg-remap-spmd-call-arg remap (array-ref args.slots i)))
+          (set! i (+ i 1))))
+      (ir.CompilerIrSpmdCallArgSeq out args.len))))
 
 (define (compiler-reg-remap-spmd-call-result
   [remap : (__tl_dyn-array i64)]

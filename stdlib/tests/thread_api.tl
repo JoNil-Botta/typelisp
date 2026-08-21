@@ -6,9 +6,9 @@
 (import stdlib.str_cat)
 (import stdlib.string)
 
-(define (test-array-i64-addr [items : (Array i64)]) : i64
+(define (test-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
 
 (define (test-addr->mut-i64 [addr : i64]) : (MutPtr i64)
   (unsafe
@@ -177,8 +177,8 @@
   [sem : thread.ThreadSemaphore]
   [a : thread.Thread]
   [b : thread.Thread]
-  [out-a : (Array i64)]
-  [out-b : (Array i64)]) : i64
+  [out-a : (__tl_dyn-array i64)]
+  [out-b : (__tl_dyn-array i64)]) : i64
   (let
     [result : i64 42]
     [a-code : i64 -1]
@@ -211,10 +211,10 @@
 
 (define (thread-api-run-with-semaphore [sem : thread.ThreadSemaphore]) : i64
   (let
-    [out-a : (Array i64) (array.make-array i64 1)]
-    [out-b : (Array i64) (array.make-array i64 1)]
-    [ctx-a : (Array i64) (array.make-array i64 3)]
-    [ctx-b : (Array i64) (array.make-array i64 3)]
+    [out-a : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [out-b : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [ctx-a : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [ctx-b : (__tl_dyn-array i64) (array.make-array i64 3)]
     [sem-handle : i64 sem.handle]
     (begin
       (set! (array-ref ctx-a 0) (test-array-i64-addr out-a))

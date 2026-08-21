@@ -25,13 +25,13 @@
 ;: Construct an owned three-byte string containing an interior NUL.
 (define (env-api-string-with-nul) : String
   (let
-    [bytes : (Array u8) (array.make-array u8 3)]
+    [bytes : (__tl_dyn-array u8) (array.make-array u8 3)]
     (begin
       (set! (array-ref bytes 0) (cast 'a' : u8))
       (set! (array-ref bytes 1) (cast 0 : u8))
       (set! (array-ref bytes 2) (cast 'b' : u8))
       (unsafe
-        (string-from-bytes (ptr-cast (array-data bytes) : (Ptr u8)) 3)))))
+        (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 3)))))
 
 (define (env-api-assert-none [value : env.EnvMaybeString] [message : String]) : unit
   (match value

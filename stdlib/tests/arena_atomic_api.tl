@@ -22,9 +22,9 @@
 ;; The raw thread bridge accepts and returns only i64. These helpers isolate
 ;; the unsafe conversion used to pass context/publication storage to workers
 ;; and to inspect retained arena allocations after every worker has joined.
-(define (arena-atomic-array-i64-addr [items : (Array i64)]) : i64
+(define (arena-atomic-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
 
 (define (arena-atomic-raw-read [base : i64] [index : i64]) : i64
   (unsafe
@@ -69,7 +69,7 @@
     (< iteration arena-atomic-allocations-per-worker)
     (let
       [length : i64 (arena-atomic-allocation-length worker iteration)]
-      [items : (Array i64) (array.make-array i64 length)]
+      [items : (__tl_dyn-array i64) (array.make-array i64 length)]
       [slot : i64 (arena-atomic-publication-slot worker iteration)]
       (begin
         (set!
@@ -115,8 +115,8 @@
   [worker : i64]
   [addresses : i64]
   [lengths : i64]
-  [start-gate : i64]) : (Array i64)
-  (make-array owner worker addresses lengths start-gate))
+  [start-gate : i64]) : (__tl_dyn-array i64)
+  (__tl_make-array owner worker addresses lengths start-gate))
 
 (define (arena-atomic-thread-or [spawn : thread.ThreadSpawnResult]) : thread.Thread
   (thread.Thread
@@ -209,7 +209,7 @@
   [second : thread.Thread]
   [third : thread.Thread]) : i64
   (let
-    [context : (Array i64)
+    [context : (__tl_dyn-array i64)
       (arena-atomic-context owner 3 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
       (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
@@ -238,7 +238,7 @@
   [first : thread.Thread]
   [second : thread.Thread]) : i64
   (let
-    [context : (Array i64)
+    [context : (__tl_dyn-array i64)
       (arena-atomic-context owner 2 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
       (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
@@ -260,7 +260,7 @@
   [start-gate : i64]
   [first : thread.Thread]) : i64
   (let
-    [context : (Array i64)
+    [context : (__tl_dyn-array i64)
       (arena-atomic-context owner 1 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
       (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
@@ -280,7 +280,7 @@
   [lengths : i64]
   [start-gate : i64]) : i64
   (let
-    [context : (Array i64)
+    [context : (__tl_dyn-array i64)
       (arena-atomic-context owner 0 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
       (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
@@ -296,11 +296,11 @@
 (define (main) : i64
   (let
     [owner : arena.Arena (arena.make-atomic)]
-    [published-addresses : (Array i64)
+    [published-addresses : (__tl_dyn-array i64)
       (array.make-array i64 arena-atomic-publication-count)]
-    [published-lengths : (Array i64)
+    [published-lengths : (__tl_dyn-array i64)
       (array.make-array i64 arena-atomic-publication-count)]
-    [start-gate : (Array i64) (array.make-array i64 1)]
+    [start-gate : (__tl_dyn-array i64) (array.make-array i64 1)]
     [start-gate-address : i64 (arena-atomic-array-i64-addr start-gate)]
     [_ : unit (arena-atomic-raw-store! start-gate-address 0)]
     [result : i64

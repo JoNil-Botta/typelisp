@@ -49,6 +49,9 @@ surfaces replace them.
   available.
 - Thread runtime context/result cells that use compiler-private
   `__tl_dyn-array` storage behind owned public wrappers.
+- Focused thread, synchronization, arena-atomic, byte-buffer, environment, and
+  process-runtime fixtures use private `__tl_dyn-array` buffers when exercising
+  raw storage and compatibility boundaries.
 
 ## Feature Coverage That Must Remain
 

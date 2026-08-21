@@ -978,14 +978,14 @@
       [selected : (__tl_dyn-array i64) (array.make-array i64 vars)]
       [scores : reg.CompilerRegCallHoleScores
         (reg.CompilerRegCallHoleScores
-          flags
-          csr
-          dropped
-          benefit
-          cost
-          max-ref
-          max-clobber
-          max-clobber-hot
+          (reg.compiler-reg-global-shared-view flags)
+          (reg.compiler-reg-global-shared-view csr)
+          (reg.compiler-reg-global-shared-view dropped)
+          (reg.compiler-reg-global-shared-view benefit)
+          (reg.compiler-reg-global-shared-view cost)
+          (reg.compiler-reg-global-shared-view max-ref)
+          (reg.compiler-reg-global-shared-view max-clobber)
+          (reg.compiler-reg-global-shared-view max-clobber-hot)
           8)]
       [first : i64 0]
       [after-drop : i64 0]
@@ -1027,11 +1027,19 @@
         (set! (array-ref max-clobber 5) 0)
         (set!
           first
-          (reg.compiler-reg-call-hole-select! vars scores picked selected))
+          (reg.compiler-reg-call-hole-select!
+            vars
+            (reg.compiler-reg-global-shared-view scores)
+            (reg.compiler-reg-global-shared-view picked)
+            (reg.compiler-reg-global-shared-view selected)))
         (set! (array-ref dropped 0) true)
         (set!
           after-drop
-          (reg.compiler-reg-call-hole-select! vars scores picked selected))
+          (reg.compiler-reg-call-hole-select!
+            vars
+            scores
+            picked
+            (reg.compiler-reg-global-shared-view selected)))
         (and (= first 1) (= (array-ref selected 0) 0) (= after-drop 0))))))
 
 ;; The csr class reads the same arrays through a DIFFERENT rule: the crossings
@@ -1059,14 +1067,14 @@
       [max-clobber-hot : (__tl_dyn-array i64) (array.make-array i64 vars)]
       [scores : reg.CompilerRegCallHoleScores
         (reg.CompilerRegCallHoleScores
-          flags
-          csr
-          dropped
-          benefit
-          cost
-          max-ref
-          max-clobber
-          max-clobber-hot
+          (reg.compiler-reg-global-shared-view flags)
+          (reg.compiler-reg-global-shared-view csr)
+          (reg.compiler-reg-global-shared-view dropped)
+          (reg.compiler-reg-global-shared-view benefit)
+          (reg.compiler-reg-global-shared-view cost)
+          (reg.compiler-reg-global-shared-view max-ref)
+          (reg.compiler-reg-global-shared-view max-clobber)
+          (reg.compiler-reg-global-shared-view max-clobber-hot)
           8)]
       (begin
         ;; 0: csr, all crossings cold, carriers below the pair -> admitted.
@@ -1100,9 +1108,17 @@
         (set! (array-ref max-ref 3) 4)
         (set! (array-ref max-clobber 3) 1)
         (and
-          (reg.compiler-reg-call-hole-qualifies? scores 0)
-          (not (reg.compiler-reg-call-hole-qualifies? scores 1))
-          (not (reg.compiler-reg-call-hole-qualifies? scores 2))
+          (reg.compiler-reg-call-hole-qualifies?
+            (reg.compiler-reg-global-shared-view scores)
+            0)
+          (not
+            (reg.compiler-reg-call-hole-qualifies?
+              (reg.compiler-reg-global-shared-view scores)
+              1))
+          (not
+            (reg.compiler-reg-call-hole-qualifies?
+              (reg.compiler-reg-global-shared-view scores)
+              2))
           (not (reg.compiler-reg-call-hole-qualifies? scores 3)))))))
 
 ;; The rewrite shape. One value crosses three calls in one block: the first two
@@ -1269,10 +1285,12 @@
       [selected : (__tl_dyn-array i64) (array.make-array i64 1)]
       [csr : (__tl_dyn-array bool) (array.make-array bool 7)]
       [valid : (__tl_dyn-array bool) (array.make-array bool 7)]
-      (match func
+      (match (reg.compiler-reg-global-shared-view func)
         [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
           (begin
-            (reg.compiler-reg-fill-i64-array carrier (- 0 1))
+            (reg.compiler-reg-fill-i64-array
+              (reg.compiler-reg-global-shared-view carrier)
+              (- 0 1))
             (set! (array-ref carrier 0) vars)
             (set! (array-ref selected 0) 0)
             (set! (array-ref csr 0) true)
@@ -1282,7 +1300,8 @@
                   (ast.ast-node-pool-reader-type-segment-bases)
                   csr
                   (live.compiler-live-ir-block-list-to-seq blocks)
-                  (live.compiler-live-analyze-function-edge-precise func)
+                  (live.compiler-live-analyze-function-edge-precise
+                    (reg.compiler-reg-global-shared-view func))
                   (reg.compiler-reg-function-var-types func)
                   carrier
                   selected
@@ -1421,7 +1440,7 @@
               csr
               selected
               4
-              dropped)
+              (reg.compiler-reg-global-shared-view dropped))
             2)
           (not (array-ref dropped 0))
           (array-ref dropped 1)
@@ -1792,36 +1811,43 @@
     (let
       [func : ir.CompilerIrFunction (compiler-reg-call-hole-csr-function)]
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types func)]
+        (reg.compiler-reg-function-var-types
+          (reg.compiler-reg-global-shared-view func))]
       [plan : reg.CompilerRegPlan
         (reg.compiler-reg-plan-function-scalar-cold-for-abi
           cabi.CompilerRegTargetAbi.Linux
-          func
+          (reg.compiler-reg-global-shared-view func)
           (- 0 1))]
       [assignments : reg.CompilerRegAssignmentTable
-        (reg.compiler-reg-plan-assignments plan)]
+        (reg.compiler-reg-plan-assignments
+          (reg.compiler-reg-global-shared-view plan))]
       [split : reg.CompilerRegCallHoleSplit
         (reg.compiler-reg-call-hole-split-rewrite-function
           (ast.ast-node-pool-reader-type-segment-bases)
           cabi.CompilerRegTargetAbi.Linux
           func
           type-info
-          plan
+          (reg.compiler-reg-global-shared-view plan)
           (- 0 1))]
-      [split-vars : i64 (reg.compiler-reg-call-hole-split-vars split)]
+      [split-vars : i64
+        (reg.compiler-reg-call-hole-split-vars
+          (reg.compiler-reg-global-shared-view split))]
       [split-plan : reg.CompilerRegPlan
-        (reg.compiler-reg-call-hole-split-plan split)]
+        (reg.compiler-reg-call-hole-split-plan
+          (reg.compiler-reg-global-shared-view split))]
       (and
         ;; The defect: no spill anywhere, but all three parameters homed in
         ;; callee-saved registers because they cross the cold arm's calls.
-        (not (reg.compiler-reg-assignment-table-has-spill? assignments))
+        (not
+          (reg.compiler-reg-assignment-table-has-spill?
+            (reg.compiler-reg-global-shared-view assignments)))
         (reg.compiler-reg-call-hole-csr-home?
           cabi.CompilerRegTargetAbi.Linux
-          assignments
+          (reg.compiler-reg-global-shared-view assignments)
           0)
         (reg.compiler-reg-call-hole-csr-home?
           cabi.CompilerRegTargetAbi.Linux
-          assignments
+          (reg.compiler-reg-global-shared-view assignments)
           1)
         (reg.compiler-reg-call-hole-csr-home?
           cabi.CompilerRegTargetAbi.Linux
@@ -1836,18 +1862,21 @@
         ;; One carrier per parameter, minted at the old watermark.
         (= split-vars 11)
         (= (reg.compiler-reg-call-hole-split-temp-start split) 8)
-        (reg.compiler-reg-cold-call-carriers-stack? split-plan 8 split-vars)
+        (reg.compiler-reg-cold-call-carriers-stack?
+          (reg.compiler-reg-global-shared-view split-plan)
+          8
+          split-vars)
         ;; Every parameter is back in its incoming ABI register ...
         (compiler-reg-call-hole-plan-register?
-          split-plan
+          (reg.compiler-reg-global-shared-view split-plan)
           0
           cabi.compiler-reg-id-rdi)
         (compiler-reg-call-hole-plan-register?
-          split-plan
+          (reg.compiler-reg-global-shared-view split-plan)
           1
           cabi.compiler-reg-id-rsi)
         (compiler-reg-call-hole-plan-register?
-          split-plan
+          (reg.compiler-reg-global-shared-view split-plan)
           2
           cabi.compiler-reg-id-rdx)
         ;; ... so the prologue saves nothing at all.
@@ -1962,16 +1991,17 @@
       [func : ir.CompilerIrFunction
         (compiler-reg-call-hole-cold-arms-function arms callee)]
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types func)]
+        (reg.compiler-reg-function-var-types
+          (reg.compiler-reg-global-shared-view func))]
       [plan : reg.CompilerRegPlan
         (reg.compiler-reg-plan-function-scalar-cold-for-abi
           cabi.CompilerRegTargetAbi.Linux
-          func
+          (reg.compiler-reg-global-shared-view func)
           (- 0 1))]
       (reg.compiler-reg-call-hole-split-rewrite-function
         (ast.ast-node-pool-reader-type-segment-bases)
         cabi.CompilerRegTargetAbi.Linux
-        func
+        (reg.compiler-reg-global-shared-view func)
         type-info
         plan
         (- 0 1)))))
@@ -1991,10 +2021,17 @@
       (and
         ;; 3 arms: one carrier minted above the 5 original vars, and the
         ;; parameter is pinned back into %rdi.
-        (= (reg.compiler-reg-call-hole-split-vars three) 6)
-        (= (reg.compiler-reg-call-hole-split-temp-start three) 5)
+        (=
+          (reg.compiler-reg-call-hole-split-vars
+            (reg.compiler-reg-global-shared-view three))
+          6)
+        (=
+          (reg.compiler-reg-call-hole-split-temp-start
+            (reg.compiler-reg-global-shared-view three))
+          5)
         (compiler-reg-call-hole-plan-register?
-          (reg.compiler-reg-call-hole-split-plan three)
+          (reg.compiler-reg-call-hole-split-plan
+            (reg.compiler-reg-global-shared-view three))
           0
           cabi.compiler-reg-id-rdi)
         (=
@@ -2006,7 +2043,10 @@
         ;; 4 arms: the carriers now cost exactly what the pair costs, and the
         ;; rule is strictly-below, so nothing is selected and the round returns
         ;; its input untouched.
-        (= (reg.compiler-reg-call-hole-split-vars four) 6)
+        (=
+          (reg.compiler-reg-call-hole-split-vars
+            (reg.compiler-reg-global-shared-view four))
+          6)
         (= (reg.compiler-reg-call-hole-split-temp-start four) (- 0 1))))))
 
 ;; --- P7b the recursion exclusion --------------------------------------------
@@ -2067,14 +2107,23 @@
         (= (array-ref recursive.weights 2) 4)
         ;; The round follows the weights. Foreign: one carrier minted above the
         ;; three original vars, and the parameter is back in %rdi.
-        (= (reg.compiler-reg-call-hole-split-vars foreign-split) 4)
-        (= (reg.compiler-reg-call-hole-split-temp-start foreign-split) 3)
+        (=
+          (reg.compiler-reg-call-hole-split-vars
+            (reg.compiler-reg-global-shared-view foreign-split))
+          4)
+        (=
+          (reg.compiler-reg-call-hole-split-temp-start
+            (reg.compiler-reg-global-shared-view foreign-split))
+          3)
         (compiler-reg-call-hole-plan-register?
           (reg.compiler-reg-call-hole-split-plan foreign-split)
           0
           cabi.compiler-reg-id-rdi)
         ;; Recursive: nothing selected, input returned untouched.
-        (= (reg.compiler-reg-call-hole-split-vars recursive-split) 3)
+        (=
+          (reg.compiler-reg-call-hole-split-vars
+            (reg.compiler-reg-global-shared-view recursive-split))
+          3)
         (=
           (reg.compiler-reg-call-hole-split-temp-start recursive-split)
           (- 0 1))))))
@@ -3594,7 +3643,7 @@
       (reg.compiler-reg-loop-park-rewrite-function
         (ast.ast-node-pool-reader-type-segment-bases)
         cabi.CompilerRegTargetAbi.Linux
-        func
+        (reg.compiler-reg-global-shared-view func)
         (reg.compiler-reg-function-var-types func)
         (compiler-reg-loop-park-deep-nest-plan bases-homed)
         (- 0 1)
@@ -3615,8 +3664,14 @@
           (and
             ;; one park per base: a parked value frees ONE register over the
             ;; loop and the loop has two operands that each need one
-            (= (reg.compiler-reg-call-hole-split-vars split) (+ vars 2))
-            (= (reg.compiler-reg-call-hole-split-temp-start split) vars)
+            (=
+              (reg.compiler-reg-call-hole-split-vars
+                (reg.compiler-reg-global-shared-view split))
+              (+ vars 2))
+            (=
+              (reg.compiler-reg-call-hole-split-temp-start
+                (reg.compiler-reg-global-shared-view split))
+              vars)
             ;; every carrier is forced to the stack, so the boundary movs pay
             ;; for themselves inside the round's own estimate
             (reg.compiler-reg-cold-call-carriers-stack?
@@ -3638,7 +3693,9 @@
         (reg.compiler-reg-plan-assignments
           (reg.compiler-reg-call-hole-split-plan split))]
       (and
-        (reg.compiler-reg-call-hole-register-homed? assignments 1)
+        (reg.compiler-reg-call-hole-register-homed?
+          (reg.compiler-reg-global-shared-view assignments)
+          1)
         (reg.compiler-reg-call-hole-register-homed? assignments 2)))))
 
 ;; (3) The negative. With both bases already in registers the inner loop has no
@@ -3655,7 +3712,10 @@
       (match (compiler-reg-loop-park-deep-nest-function)
         [(ir.CompilerIrFunction.Function _ _ _ vars _)
           (and
-            (= (reg.compiler-reg-call-hole-split-vars split) vars)
+            (=
+              (reg.compiler-reg-call-hole-split-vars
+                (reg.compiler-reg-global-shared-view split))
+              vars)
             (= (reg.compiler-reg-call-hole-split-temp-start split) (- 0 1)))]))))
 
 ;; And the ranking side of the same fixture, read straight off the greedy's own
@@ -3880,10 +3940,13 @@
     (let
       [func : ir.CompilerIrFunction (compiler-reg-scavenge-hole-function)]
       [liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function func)]
+        (live.compiler-live-analyze-function
+          (reg.compiler-reg-global-shared-view func))]
       [hull-only : reg.CompilerRegIntervalIndex
         (reg.compiler-reg-interval-index-build
-          (reg.compiler-reg-live-intervals func liveness)
+          (reg.compiler-reg-live-intervals
+            (reg.compiler-reg-global-shared-view func)
+            (reg.compiler-reg-global-shared-view liveness))
           4)]
       [unseeded : reg.CompilerRegIntervalSelection
         (reg.compiler-reg-live-interval-selection-with-live-in
@@ -3892,11 +3955,12 @@
           false)]
       [rotated : ir.CompilerIrFunction (compiler-reg-scavenge-rotated-function)]
       [rotated-liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function rotated)]
+        (live.compiler-live-analyze-function
+          (reg.compiler-reg-global-shared-view rotated))]
       [rotated-unseeded : reg.CompilerRegIntervalSelection
         (reg.compiler-reg-live-interval-selection-with-live-in
-          rotated
-          rotated-liveness
+          (reg.compiler-reg-global-shared-view rotated)
+          (reg.compiler-reg-global-shared-view rotated-liveness)
           false)]
       [rotated-seeded : reg.CompilerRegIntervalSelection
         (reg.compiler-reg-live-interval-selection rotated rotated-liveness)]
@@ -3910,33 +3974,47 @@
                     rotated-seeded-index)
                   (and
                     ;; (1a) the coarse arrays are the hull builder's, unchanged
-                    (compiler-reg-scavenge-hull-arrays-eq? hull-only index 4 0)
+                    (compiler-reg-scavenge-hull-arrays-eq?
+                      hull-only
+                      (reg.compiler-reg-global-shared-view index)
+                      4
+                      0)
                     ;; (1b) var 0 is defined and consumed in `entry`, untouched
                     ;; in `middle`, then redefined and consumed in `tail`
                     (>=
                       (reg.compiler-reg-interval-seq-count
-                        (array-ref index.segments 0))
+                        (reg.compiler-reg-global-array-element-shared-view
+                          index.segments
+                          0))
                       2)
                     ;; ... and the hole is real: `middle`'s two instructions sit
                     ;; at points 6 and 8, inside var 0's hull [0, 12]
                     (= (array-ref index.starts 0) 0)
                     (= (array-ref index.ends 0) 12)
                     (compiler-reg-scavenge-segments-cover?
-                      (array-ref index.segments 0)
+                      (reg.compiler-reg-global-array-element-shared-view
+                        index.segments
+                        0)
                       0
                       0)
                     (compiler-reg-scavenge-segments-cover?
-                      (array-ref index.segments 0)
+                      (reg.compiler-reg-global-array-element-shared-view
+                        index.segments
+                        0)
                       10
                       0)
                     (not
                       (compiler-reg-scavenge-segments-cover?
-                        (array-ref index.segments 0)
+                        (reg.compiler-reg-global-array-element-shared-view
+                          index.segments
+                          0)
                         6
                         0))
                     (not
                       (compiler-reg-scavenge-segments-cover?
-                        (array-ref index.segments 0)
+                        (reg.compiler-reg-global-array-element-shared-view
+                          index.segments
+                          0)
                         8
                         0))
                     ;; (2) the bridge is what the flag switches: var 1 flows into

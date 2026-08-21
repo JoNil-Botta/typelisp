@@ -10356,6 +10356,54 @@
       (array-push! xs i)
       (set! (array-ref out i) (array-ref xs i)))))")
 
+(define (compiler-lower-masked-preheader-windows-avx2-cap-source) : String
+  "(define (fill
+    [xs : (Array i32)]
+    [out : (Array i32)]
+    [n : i64]
+    [a : i32]
+    [b : i32]
+    [c : i32]
+    [d : i32]
+    [e : i32]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (if (< (array-ref xs i) a)
+      (+ (+ (+ (+ (array-ref xs i) b) c) d) e)
+      (- (array-ref xs i) a)))))")
+
+(define (compiler-lower-masked-preheader-windows-avx2-cap-ok?) : bool
+  (and
+    (match (compiler_lower.lower-compiler-source-with-mode
+      (compiler-lower-masked-preheader-windows-avx2-cap-source)
+      (compiler_lower.CompilerLowerMode.Avx2))
+      [(compiler_lower.ResultCompilerLower.Ok program _)
+        (match program
+          [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+            (=
+              (lower-test-function-splat-shape-count
+                functions
+                "fill"
+                8
+                (compiler_ast_types.AstType.I32))
+              5)])]
+      [(compiler_lower.ResultCompilerLower.Err _) false])
+    (match (compiler_lower.lower-compiler-source-with-mode
+      (compiler-lower-masked-preheader-windows-avx2-cap-source)
+      (compiler_lower.CompilerLowerMode.WindowsAvx2))
+      [(compiler_lower.ResultCompilerLower.Ok program _)
+        (match program
+          [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+            ;; Two preheader vectors plus three local full-body and tail splats.
+            (=
+              (lower-test-function-splat-shape-count
+                functions
+                "fill"
+                8
+                (compiler_ast_types.AstType.I32))
+              8)])]
+      [(compiler_lower.ResultCompilerLower.Err _) false])))
+
 (define (compiler-lower-masked-preheader-unsafe-rejected?
   [mode : compiler_lower.CompilerLowerMode]) : bool
   (and
@@ -10379,7 +10427,8 @@
     (compiler-lower-masked-preheader-unsafe-rejected?
       (compiler_lower.CompilerLowerMode.Avx2))
     (compiler-lower-masked-preheader-unsafe-rejected?
-      (compiler_lower.CompilerLowerMode.Avx512))))
+      (compiler_lower.CompilerLowerMode.Avx512))
+    (compiler-lower-masked-preheader-windows-avx2-cap-ok?)))
 
 (define (compiler-lower-masked-load-cache-tests-ok?) : bool
   (and

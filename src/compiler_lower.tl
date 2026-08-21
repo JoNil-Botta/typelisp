@@ -15020,6 +15020,19 @@
             uniform-count
             (+ count 1))))]))
 
+;; Windows AVX2 has six volatile vector registers. Keep four available for
+;; masked expression and shift-guard temporaries: forcing more than two
+;; loop-wide vectors through the current allocator can corrupt nested masked
+;; recurrences under the Windows calling convention.
+(define (lower-masked-preheader-uniform-can-add? [state : LowerState]) : bool
+  (match (lower-state-masked-preheader-cache state)
+    [(LowerMaybeMaskedPreheaderCache.No) false]
+    [(LowerMaybeMaskedPreheaderCache.Some cache)
+      (match (lower-state-mode state)
+        [(CompilerLowerMode.WindowsAvx2)
+          (< (__tl-project-field (__tl-box-place cache) uniform-count) 2)]
+        [_ true])]))
+
 (define (lower-masked-preheader-array-data-get
   [state : LowerState]
   [array-var : i64]) : LowerMaybeIrValue
@@ -60394,23 +60407,9 @@
   [lanes : i64]
   [elem-ty : ast.AstType]
   [plan : LowerVectorMapValue]) : LowerState
-  (match plan
-    [(LowerVectorMapValue.Uniform value)
-      (match (lower-masked-preheader-uniform-get state value elem-ty)
-        [(LowerMaybeIrValue.Some _) state]
-        [(LowerMaybeIrValue.No)
-          (match (lower-emit-splat state value lanes elem-ty)
-            [(LowerExpr.Expr next-state vector _)
-              (begin
-                (lower-masked-preheader-uniform-add!
-                  next-state
-                  value
-                  elem-ty
-                  vector)
-                next-state)])])]
-    [(LowerVectorMapValue.LaneCount)
-      (let
-        [value : ir.CompilerIrValue (ir.CompilerIrValue.I64 lanes)]
+  (if (lower-masked-preheader-uniform-can-add? state)
+    (match plan
+      [(LowerVectorMapValue.Uniform value)
         (match (lower-masked-preheader-uniform-get state value elem-ty)
           [(LowerMaybeIrValue.Some _) state]
           [(LowerMaybeIrValue.No)
@@ -60422,20 +60421,36 @@
                     value
                     elem-ty
                     vector)
-                  next-state)])]))]
-    [(LowerVectorMapValue.BinOp _ lhs rhs)
-      (lower-masked-preheader-cache-plan-uniforms
+                  next-state)])])]
+      [(LowerVectorMapValue.LaneCount)
+        (let
+          [value : ir.CompilerIrValue (ir.CompilerIrValue.I64 lanes)]
+          (match (lower-masked-preheader-uniform-get state value elem-ty)
+            [(LowerMaybeIrValue.Some _) state]
+            [(LowerMaybeIrValue.No)
+              (match (lower-emit-splat state value lanes elem-ty)
+                [(LowerExpr.Expr next-state vector _)
+                  (begin
+                    (lower-masked-preheader-uniform-add!
+                      next-state
+                      value
+                      elem-ty
+                      vector)
+                    next-state)])]))]
+      [(LowerVectorMapValue.BinOp _ lhs rhs)
         (lower-masked-preheader-cache-plan-uniforms
-          state
+          (lower-masked-preheader-cache-plan-uniforms
+            state
+            lanes
+            elem-ty
+            (__tl-box-place lhs))
           lanes
           elem-ty
-          (__tl-box-place lhs))
-        lanes
-        elem-ty
-        (__tl-box-place rhs))]
-    ;; Shuffle selectors can have a different lane type from their values.
-    ;; Their masked emitter retains ownership of that materialization.
-    [_ state]))
+          (__tl-box-place rhs))]
+      ;; Shuffle selectors can have a different lane type from their values.
+      ;; Their masked emitter retains ownership of that materialization.
+      [_ state])
+    state))
 
 (define (lower-masked-preheader-cache-expr
   [ctx : tc_core.TcContext]

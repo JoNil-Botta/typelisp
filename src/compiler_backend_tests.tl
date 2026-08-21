@@ -7651,7 +7651,7 @@
         1
         (compiler_ir_types.CompilerIrValue.I64 7)
         (compiler_ast_types.AstType.I64)
-        index
+        (owned_view.compiler-owned-shared-view index)
         8
         ""
         backend-state)
@@ -8493,7 +8493,7 @@
         (compiler_regalloc.compiler-reg-var-types-insert
           (compiler_regalloc.compiler-reg-var-types-empty)
           0
-          memory)]
+          (owned_view.compiler-owned-shared-view memory))]
       [args : compiler_ir_types.CompilerIrCallArgs
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.Var 0))]
@@ -8519,11 +8519,11 @@
           bases
           compiler_abi.CompilerRegTargetAbi.Linux
           (compiler_regalloc.compiler-reg-assignment-table-empty)
-          types
+          (owned_view.compiler-owned-shared-view types)
           (compiler_ir_types.CompilerIrInstr.CallIndirect
             1
             (compiler_ir_types.CompilerIrValue.Var 2)
-            args
+            (owned_view.compiler-owned-shared-view args)
             (compiler_ast_types.AstType.I64))
           (compiler_regalloc.compiler-reg-label-seq-empty)
           (compiler_regalloc.compiler-reg-label-seq-empty)
@@ -8533,11 +8533,11 @@
           bases
           compiler_abi.CompilerRegTargetAbi.Linux
           (compiler_regalloc.compiler-reg-assignment-table-empty)
-          types
+          (owned_view.compiler-owned-shared-view types)
           (compiler_ir_types.CompilerIrInstr.Call
             1
             name
-            args
+            (owned_view.compiler-owned-shared-view args)
             (compiler_ast_types.AstType.I64))
           (compiler_regalloc.compiler-reg-label-seq-empty)
           (compiler_regalloc.compiler-reg-label-seq-empty)
@@ -8547,10 +8547,10 @@
           bases
           compiler_abi.CompilerRegTargetAbi.Linux
           (compiler_regalloc.compiler-reg-assignment-table-empty)
-          types
+          (owned_view.compiler-owned-shared-view types)
           (compiler_ir_types.CompilerIrInstr.TailCall
             name
-            args
+            (owned_view.compiler-owned-shared-view args)
             (compiler_ast_types.AstType.I64))
           (compiler_regalloc.compiler-reg-label-seq-empty)
           (compiler_regalloc.compiler-reg-label-seq-empty)
@@ -12096,14 +12096,14 @@
                   scratch-vreg
                   (and
                     (compiler_backend.compiler-backend-string-contains?
-                      shift-asm
+                      (owned_view.compiler-owned-shared-view shift-asm)
                       "    movl $1, %eax\n")
                     (compiler_backend.compiler-backend-string-contains?
-                      shift-asm
+                      (owned_view.compiler-owned-shared-view shift-asm)
                       "    movq -16(%rbp), %rcx\n")
                     (not
                       (compiler_backend.compiler-backend-string-contains?
-                        shift-asm
+                        (owned_view.compiler-owned-shared-view shift-asm)
                         "    movq -16(%rbp), %rax\n")))
                   true))]
             [(compiler_backend.ResultCompilerBackend.Err _) false])]
@@ -14822,7 +14822,7 @@
         program-index
         2
         ""
-        planned
+        (owned_view.compiler-owned-shared-view planned)
         "")
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -23709,7 +23709,7 @@
         scratch-vreg
         (compiler_backend.CompilerBackendRuntimePlan.WithScratch
           (box (compiler-backend-runtime-helper-full-plan))
-          scratch)
+          (owned_view.compiler-owned-shared-view scratch))
         (compiler-backend-runtime-helper-full-plan))]
     [_scratch-position : unit
       (begin
@@ -33104,6 +33104,497 @@
             "%r8")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-int-return-compare-direct-rhs-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rax))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-rsi))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      backend-state
+      (ci.intern "ret_int_compare")
+      compiler_ir_types.CompilerIrBlockList.Nil
+      (compiler-backend-scratch-test-types-from 0 2)
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      2
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.I64)
+      ""
+      ""
+      ""
+      ""
+      "")
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    cmpq %rsi, %rax\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    sete %al\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "%r8")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-int-return-compare-direct-memory-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rax))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Spill -16))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      backend-state
+      (ci.intern "ret_int_compare_memory")
+      compiler_ir_types.CompilerIrBlockList.Nil
+      (compiler-backend-scratch-test-types-from 0 2)
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      2
+      (compiler_ir_types.CompilerIrBinOp.Ge)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.I64)
+      ""
+      ""
+      ""
+      ""
+      "")
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    cmpq -16(%rbp), %rax\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    setge %al\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "%r8")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-int-return-compare-remat-immediate-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rax))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Remat
+              (compiler_ir_types.CompilerIrValue.I64 0)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      backend-state
+      (ci.intern "ret_int_compare_remat")
+      compiler_ir_types.CompilerIrBlockList.Nil
+      (compiler-backend-scratch-test-types-from 0 2)
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      2
+      (compiler_ir_types.CompilerIrBinOp.Ge)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.I64)
+      ""
+      ""
+      ""
+      ""
+      "")
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    testq %rax, %rax\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    setge %al\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "%r8")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-int-return-compare-planned-conflict-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rsi))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-rax))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      backend-state
+      (ci.intern "ret_int_compare_planned_conflict")
+      compiler_ir_types.CompilerIrBlockList.Nil
+      (compiler-backend-scratch-test-types-from 0 2)
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      2
+      (compiler_ir_types.CompilerIrBinOp.Ge)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.I64)
+      "%rax"
+      "%r8"
+      ""
+      ""
+      "")
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq %rax, %r8\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq %rsi, %rax\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    cmpq %r8, %rax\n"))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-int-return-compare-lhs-plan-conflict-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rcx))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-rax))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      backend-state
+      (ci.intern "ret_int_compare_lhs_plan_conflict")
+      compiler_ir_types.CompilerIrBlockList.Nil
+      (compiler-backend-scratch-test-types-from 0 2)
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      2
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.I64)
+      "%rcx"
+      "%r8"
+      ""
+      ""
+      "")
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    movq %rax, %r8\n    movq %rcx, %rax\n    cmpq %r8, %rax\n")]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-int-return-compare-global-memory-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rax))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Remat
+              (compiler_ir_types.CompilerIrValue.Global
+                (ci.intern "tls_current_arena"))))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      backend-state
+      (ci.intern "ret_int_compare_global")
+      compiler_ir_types.CompilerIrBlockList.Nil
+      (compiler-backend-scratch-test-types-from 0 2)
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      2
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.I64)
+      ""
+      ""
+      ""
+      ""
+      "")
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "(%rip), %rax\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    sete %al\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "%r8")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-int-return-compare-reuses-lhs-home-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rsi))
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      backend-state
+      (ci.intern "ret_int_compare_reuse_lhs")
+      compiler_ir_types.CompilerIrBlockList.Nil
+      (compiler-backend-scratch-test-types-from 0 1)
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      1
+      (compiler_ir_types.CompilerIrBinOp.Ne)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 0x7ff0000000000000)
+      (compiler_ast_types.AstType.U64)
+      ""
+      ""
+      ""
+      ""
+      "")
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    movq %rsi, %rax\n    movq $9218868437227405312, %rsi\n    cmpq %rsi, %rax\n")]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-int-return-compare-rax-frame-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Spill -8))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-rax))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      backend-state
+      (ci.intern "ret_int_compare_rax_frame")
+      compiler_ir_types.CompilerIrBlockList.Nil
+      (compiler-backend-scratch-test-types-from 0 2)
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      2
+      (compiler_ir_types.CompilerIrBinOp.Ne)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.U64)
+      ""
+      ""
+      ""
+      ""
+      "")
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq %rax, ")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq -8(%rbp), %rax\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    cmpq ")
+          (cfg
+            scratch-vreg
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view asm)
+                "%r8"))
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movq %rax, %r8\n")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-int-return-compare-swapped-memory-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Spill -8))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Remat
+              (compiler_ir_types.CompilerIrValue.I64 0x7ff0000000000000)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      backend-state
+      (ci.intern "ret_int_compare_swapped_memory")
+      compiler_ir_types.CompilerIrBlockList.Nil
+      (compiler-backend-scratch-test-types-from 0 2)
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      2
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.U64)
+      ""
+      ""
+      ""
+      ""
+      "")
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq $9218868437227405312, %rax\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    cmpq -8(%rbp), %rax\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    seta %al\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "%r8")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-int-return-compare-remat-frame-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Remat
+            (compiler_ir_types.CompilerIrValue.I64 0x7ff0000000000001)))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Remat
+              (compiler_ir_types.CompilerIrValue.I64 0x7ff0000000000002)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    (match (compiler_backend.compiler-backend-emit-binop-return-with-plan
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      backend-state
+      (ci.intern "ret_int_compare_remat_frame")
+      compiler_ir_types.CompilerIrBlockList.Nil
+      (compiler-backend-scratch-test-types-from 0 2)
+      (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+      assignments
+      2
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.U64)
+      ""
+      ""
+      ""
+      ""
+      "")
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (cfg
+          scratch-vreg
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movq $9218868437227405313, %rax\n")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movq %rax, ")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movq $9218868437227405314, %rax\n")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    cmpq ")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    seta %al\n")
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view asm)
+                "%r8")))
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq $9218868437227405314, %r8\n    movq $9218868437227405313, %rax\n    cmpq %r8, %rax\n    setb %al\n"))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
 ;; Backend-owned replacement for the Rust bool logic codegen checks:
 ;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
 ;; bool equality still uses the comparison/setcc path.
@@ -35708,11 +36199,11 @@
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        ;; The 64-bit global compare now materialises in %r9 (scratch reg
-        ;; choice changed); the load-bearing check is the width (cmpq, not cmpb).
+        ;; The RHS global is a legal scalar memory source, so the materialized
+        ;; compare needs only the result staging register.
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    cmpq %r8, %r9\n")
+          "(%rip), %r8\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -35769,11 +36260,10 @@
     (compiler-backend-global-compare-program))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        ;; The 64-bit global compare now materialises in %r9 (scratch reg
-        ;; choice changed); the load-bearing check is the width (cmpq, not cmpb).
+        ;; Compare/branch fusion likewise reads the RHS global directly.
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    cmpq %r8, %r9\n")
+          "(%rip), %r9\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -40344,7 +40834,7 @@
           referenced-link-id)
         (string.eq
           (compiler_backend.compiler-backend-index-extern-link-symbol
-            index
+            (owned_view.compiler-owned-shared-view index)
             referenced-link-id)
           referenced-link)))))
 
@@ -42545,25 +43035,47 @@
       [listed : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_call_target"
-          blocks
+          (owned_view.compiler-owned-shared-view blocks)
           3
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_call_target_dense"
           (compiler_ir_types.compiler-ir-block-list-compact blocks)
           3
-          assignments)]
-      [reg : String (compiler-backend-scratch-test-register listed 0)]
-      [dense-reg : String (compiler-backend-scratch-test-register dense 0)]
+          (owned_view.compiler-owned-shared-view assignments))]
+      [reg : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view listed)
+          0)]
+      [dense-reg : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view dense)
+          0)]
       (and
-        (= (compiler-backend-scratch-test-plan-count listed) 2)
-        (= (compiler-backend-scratch-test-success-count listed) 2)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view listed))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view listed))
+          2)
         (string.eq reg "%r10")
         (string.eq dense-reg reg)
-        (not (string.eq (compiler-backend-scratch-test-register listed 1) ""))
-        (not (string.eq reg (compiler-backend-scratch-test-register listed 1)))
-        (match listed
+        (not
+          (string.eq
+            (compiler-backend-scratch-test-register
+              (owned_view.compiler-owned-shared-view listed)
+              1)
+            ""))
+        (not
+          (string.eq
+            reg
+            (compiler-backend-scratch-test-register
+              (owned_view.compiler-owned-shared-view listed)
+              1)))
+        (match (owned_view.compiler-owned-shared-view listed)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result
               out-plan
               scratch)
@@ -42573,7 +43085,9 @@
               (= (compiler_regalloc.compiler-reg-plan-var-count out-plan 3) 3)
               (let
                 [item : compiler_regalloc.CompilerRegScratchAssignment
-                  (array-ref scratch.items 0)]
+                  (compiler_ir_types.compiler-ir-array-shared-view
+                    (owned_view.compiler-owned-shared-view scratch.items)
+                    0)]
                 [requirement : compiler_regalloc.CompilerRegScratchRequirement
                   item.requirement]
                 [assigned : i64 item.register]
@@ -42593,20 +43107,20 @@
                     [_ false]))))])
         ;; Wrapping is per-function: the base runtime plan still exposes the
         ;; immutable empty scratch plan after a function-specific view exists.
-        (match listed
+        (match (owned_view.compiler-owned-shared-view listed)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ scratch)
             (let
               [base : compiler_backend.CompilerBackendRuntimePlan
                 (compiler-backend-runtime-helper-full-plan)]
               [wrapped : compiler_backend.CompilerBackendRuntimePlan
                 (compiler_backend.CompilerBackendRuntimePlan.WithScratch
-                  (box base)
+                  (box (owned_view.compiler-owned-shared-view base))
                   scratch)]
               (and
                 (=
                   (compiler_regalloc.compiler-reg-scratch-plan-count
                     (compiler_backend.compiler-backend-runtime-plan-scratch
-                      wrapped))
+                      (owned_view.compiler-owned-shared-view wrapped)))
                   2)
                 (=
                   (compiler_regalloc.compiler-reg-scratch-plan-count
@@ -42631,44 +43145,67 @@
       [listed : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_switch"
-          blocks
+          (owned_view.compiler-owned-shared-view blocks)
           1
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_switch_dense"
           (compiler_ir_types.compiler-ir-block-list-compact blocks)
           1
-          assignments)]
-      [index-reg : String (compiler-backend-scratch-test-register listed 0)]
-      [table-reg : String (compiler-backend-scratch-test-register listed 1)]
+          (owned_view.compiler-owned-shared-view assignments))]
+      [index-reg : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view listed)
+          0)]
+      [table-reg : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view listed)
+          1)]
       (and
-        (= (compiler-backend-scratch-test-plan-count listed) 2)
-        (= (compiler-backend-scratch-test-success-count listed) 2)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view listed))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view listed))
+          2)
         (not (string.eq index-reg ""))
         (not (string.eq table-reg ""))
         (not (string.eq index-reg table-reg))
         (not (string.eq index-reg "%r8"))
         (not (string.eq table-reg "%r8"))
-        (string.eq index-reg (compiler-backend-scratch-test-register dense 0))
-        (string.eq table-reg (compiler-backend-scratch-test-register dense 1))
-        (match listed
+        (string.eq
+          index-reg
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view dense)
+            0))
+        (string.eq
+          table-reg
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view dense)
+            1))
+        (match (owned_view.compiler-owned-shared-view listed)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
-            (and
-              (compiler_regalloc.compiler-reg-id-seq-contains?
-                (__tl-project-field
-                  (__tl-project-field
-                    (__tl-project-field (array-ref plan.items 0) requirement)
-                    constraint)
-                  excluded)
-                compiler_abi.compiler-reg-id-r8)
-              (compiler_regalloc.compiler-reg-id-seq-contains?
-                (__tl-project-field
-                  (__tl-project-field
-                    (__tl-project-field (array-ref plan.items 1) requirement)
-                    constraint)
-                  excluded)
-                compiler_abi.compiler-reg-id-r8))])))
+            (let
+              [index-item : compiler_regalloc.CompilerRegScratchAssignment
+                (compiler_ir_types.compiler-ir-array-shared-view
+                  (owned_view.compiler-owned-shared-view plan.items)
+                  0)]
+              [table-item : compiler_regalloc.CompilerRegScratchAssignment
+                (compiler_ir_types.compiler-ir-array-shared-view
+                  (owned_view.compiler-owned-shared-view plan.items)
+                  1)]
+              (and
+                (compiler_regalloc.compiler-reg-id-seq-contains?
+                  (owned_view.compiler-owned-shared-view
+                    index-item.requirement.constraint.excluded)
+                  compiler_abi.compiler-reg-id-r8)
+                (compiler_regalloc.compiler-reg-id-seq-contains?
+                  (owned_view.compiler-owned-shared-view
+                    table-item.requirement.constraint.excluded)
+                  compiler_abi.compiler-reg-id-r8)))])))
     true))
 
 (define (compiler-backend-scratch-vreg-aggregate-plan-ok?) : bool
@@ -42683,7 +43220,7 @@
           (compiler-backend-scratch-vreg-aggregate-test-blocks)
           3
           (compiler-backend-scratch-vreg-aggregate-test-assignments)
-          index.representations)]
+          (owned_view.compiler-owned-shared-view index.representations))]
       [gp-result : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-with-representations
           "scratch_vreg_aggregate_gp"
@@ -42691,31 +43228,72 @@
           3
           (compiler-backend-scratch-vreg-aggregate-test-assignments)
           index.representations)]
-      [reg0 : String (compiler-backend-scratch-test-register result 0)]
-      [reg1 : String (compiler-backend-scratch-test-register result 1)]
-      [gp0 : String (compiler-backend-scratch-test-register gp-result 0)]
-      [gp1 : String (compiler-backend-scratch-test-register gp-result 1)]
+      [reg0 : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          0)]
+      [reg1 : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          1)]
+      [gp0 : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view gp-result)
+          0)]
+      [gp1 : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view gp-result)
+          1)]
       (and
-        (= (compiler-backend-scratch-test-plan-count result) 2)
-        (= (compiler-backend-scratch-test-success-count result) 2)
-        (compiler_backend.compiler-backend-string-prefix-at? reg0 "%xmm" 0)
-        (not (string.eq reg1 ""))
-        (not (string.eq reg0 reg1))
-        (not (string.eq reg0 "%r8"))
-        (not (string.eq reg0 "%xmm4"))
-        (not (string.eq reg0 "%xmm6"))
-        (not (string.eq reg1 "%r8"))
-        (not (string.eq reg1 "%r10"))
-        (not (string.eq reg1 "%r11"))
-        (not (string.eq reg1 "%r13"))
-        (= (compiler-backend-scratch-test-plan-count gp-result) 2)
-        (= (compiler-backend-scratch-test-success-count gp-result) 2)
-        (not (string.eq gp0 ""))
-        (not (string.eq gp1 ""))
-        (not (string.eq gp0 gp1))
-        (not (compiler_backend.compiler-backend-string-prefix-at? gp0 "%xmm" 0))
-        (not (compiler_backend.compiler-backend-string-prefix-at? gp1 "%xmm" 0))
-        (match result
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view result))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view result))
+          2)
+        (compiler_backend.compiler-backend-string-prefix-at?
+          (owned_view.compiler-owned-shared-view reg0)
+          "%xmm"
+          0)
+        (not (string.eq (owned_view.compiler-owned-shared-view reg1) ""))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view reg0)
+            (owned_view.compiler-owned-shared-view reg1)))
+        (not (string.eq (owned_view.compiler-owned-shared-view reg0) "%r8"))
+        (not (string.eq (owned_view.compiler-owned-shared-view reg0) "%xmm4"))
+        (not (string.eq (owned_view.compiler-owned-shared-view reg0) "%xmm6"))
+        (not (string.eq (owned_view.compiler-owned-shared-view reg1) "%r8"))
+        (not (string.eq (owned_view.compiler-owned-shared-view reg1) "%r10"))
+        (not (string.eq (owned_view.compiler-owned-shared-view reg1) "%r11"))
+        (not (string.eq (owned_view.compiler-owned-shared-view reg1) "%r13"))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view gp-result))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view gp-result))
+          2)
+        (not (string.eq (owned_view.compiler-owned-shared-view gp0) ""))
+        (not (string.eq (owned_view.compiler-owned-shared-view gp1) ""))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view gp0)
+            (owned_view.compiler-owned-shared-view gp1)))
+        (not
+          (compiler_backend.compiler-backend-string-prefix-at?
+            (owned_view.compiler-owned-shared-view gp0)
+            "%xmm"
+            0))
+        (not
+          (compiler_backend.compiler-backend-string-prefix-at?
+            (owned_view.compiler-owned-shared-view gp1)
+            "%xmm"
+            0))
+        (match (owned_view.compiler-owned-shared-view result)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
               (match (__tl-project-field
@@ -42762,7 +43340,7 @@
           "scratch_vreg_float_phi_linux"
           (compiler-backend-scratch-vreg-float-phi-test-blocks)
           4
-          float-types
+          (owned_view.compiler-owned-shared-view float-types)
           (compiler-backend-scratch-vreg-float-phi-test-assignments))]
       [float-windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -42780,55 +43358,130 @@
           5
           (compiler-backend-scratch-float-phi-branch-types)
           (compiler-backend-scratch-float-phi-branch-assignments))]
-      [cycle : String (compiler-backend-scratch-test-register result 0)]
-      [stage : String (compiler-backend-scratch-test-register result 1)]
+      [cycle : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          0)]
+      [stage : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          1)]
       [float-linux-xmm : String
-        (compiler-backend-scratch-test-register float-linux 2)]
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view float-linux)
+          2)]
       [float-windows-xmm : String
-        (compiler-backend-scratch-test-register float-windows 2)]
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view float-windows)
+          2)]
       [float-branch-xmm : String
-        (compiler-backend-scratch-test-register float-branch 3)]
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view float-branch)
+          3)]
       (and
-        (= (compiler-backend-scratch-test-plan-count result) 2)
-        (= (compiler-backend-scratch-test-success-count result) 2)
-        (not (string.eq cycle ""))
-        (not (string.eq stage ""))
-        (not (string.eq cycle stage))
-        (not (string.eq cycle "%r12"))
-        (not (string.eq cycle "%r13"))
-        (not (string.eq stage "%r12"))
-        (not (string.eq stage "%r13"))
-        (= (compiler-backend-scratch-test-plan-count float-linux) 3)
-        (= (compiler-backend-scratch-test-success-count float-linux) 3)
-        (= (compiler-backend-scratch-test-plan-count float-windows) 3)
-        (= (compiler-backend-scratch-test-success-count float-windows) 3)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view result))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view result))
+          2)
+        (not (string.eq (owned_view.compiler-owned-shared-view cycle) ""))
+        (not (string.eq (owned_view.compiler-owned-shared-view stage) ""))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view cycle)
+            (owned_view.compiler-owned-shared-view stage)))
+        (not (string.eq (owned_view.compiler-owned-shared-view cycle) "%r12"))
+        (not (string.eq (owned_view.compiler-owned-shared-view cycle) "%r13"))
+        (not (string.eq (owned_view.compiler-owned-shared-view stage) "%r12"))
+        (not (string.eq (owned_view.compiler-owned-shared-view stage) "%r13"))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view float-linux))
+          3)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view float-linux))
+          3)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view float-windows))
+          3)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view float-windows))
+          3)
         (compiler_backend.compiler-backend-string-prefix-at?
-          float-linux-xmm
+          (owned_view.compiler-owned-shared-view float-linux-xmm)
           "%xmm"
           0)
         (compiler_backend.compiler-backend-string-prefix-at?
-          float-windows-xmm
+          (owned_view.compiler-owned-shared-view float-windows-xmm)
           "%xmm"
           0)
-        (not (string.eq float-linux-xmm "%xmm2"))
-        (not (string.eq float-linux-xmm "%xmm3"))
-        (not (string.eq float-linux-xmm "%xmm4"))
-        (not (string.eq float-linux-xmm "%xmm5"))
-        (not (string.eq float-windows-xmm "%xmm2"))
-        (not (string.eq float-windows-xmm "%xmm3"))
-        (not (string.eq float-windows-xmm "%xmm4"))
-        (not (string.eq float-windows-xmm "%xmm5"))
-        (= (compiler-backend-scratch-test-plan-count float-branch) 7)
-        (= (compiler-backend-scratch-test-success-count float-branch) 7)
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-linux-xmm)
+            "%xmm2"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-linux-xmm)
+            "%xmm3"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-linux-xmm)
+            "%xmm4"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-linux-xmm)
+            "%xmm5"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-windows-xmm)
+            "%xmm2"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-windows-xmm)
+            "%xmm3"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-windows-xmm)
+            "%xmm4"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-windows-xmm)
+            "%xmm5"))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view float-branch))
+          7)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view float-branch))
+          7)
         (compiler_backend.compiler-backend-string-prefix-at?
-          float-branch-xmm
+          (owned_view.compiler-owned-shared-view float-branch-xmm)
           "%xmm"
           0)
-        (not (string.eq float-branch-xmm "%xmm2"))
-        (not (string.eq float-branch-xmm "%xmm3"))
-        (not (string.eq float-branch-xmm "%xmm4"))
-        (not (string.eq float-branch-xmm "%xmm5"))
-        (match result
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-branch-xmm)
+            "%xmm2"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-branch-xmm)
+            "%xmm3"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-branch-xmm)
+            "%xmm4"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view float-branch-xmm)
+            "%xmm5"))
+        (match (owned_view.compiler-owned-shared-view result)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
               (match (__tl-project-field
@@ -42842,7 +43495,7 @@
                 [(compiler_regalloc.CompilerRegScratchRole.PhiStage) true]
                 [_ false])
               true)])
-        (match float-linux
+        (match (owned_view.compiler-owned-shared-view float-linux)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
               (match (__tl-project-field
@@ -42857,7 +43510,7 @@
                 register-class)
                 [(compiler_regalloc.CompilerRegScratchClass.Xmm) true]
                 [_ false]))])
-        (match float-branch
+        (match (owned_view.compiler-owned-shared-view float-branch)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (match (__tl-project-field
               (__tl-project-field (array-ref plan.items 3) requirement)
@@ -42907,7 +43560,7 @@
         index.backend-state]
       (match (compiler_backend.compiler-backend-emit-pack-words
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        cycle-assignments
+        (owned_view.compiler-owned-shared-view cycle-assignments)
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.CompilerIrValue.Var 1)
         "-24(%rbp)"
@@ -42932,11 +43585,11 @@
             [(compiler_backend.ResultCompilerBackend.Ok call-stage)
               (match (compiler_backend.compiler-backend-emit-phi-edge-copies
                 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-                phi-stage-assignments
+                (owned_view.compiler-owned-shared-view phi-stage-assignments)
                 (compiler-backend-phi-same-home-blocks)
                 (compiler_ir_types.compiler-ir-label "join")
                 (compiler_ir_types.compiler-ir-label "entry")
-                index
+                (owned_view.compiler-owned-shared-view index)
                 2
                 "%r15"
                 "%r14"
@@ -42944,11 +43597,11 @@
                 [(compiler_backend.ResultCompilerBackend.Ok phi-stage)
                   (match (compiler_backend.compiler-backend-emit-phi-edge-copies
                     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-                    cycle-assignments
+                    (owned_view.compiler-owned-shared-view cycle-assignments)
                     (compiler-backend-phi-cycle-blocks)
                     (compiler_ir_types.compiler-ir-label "join")
                     (compiler_ir_types.compiler-ir-label "back")
-                    index
+                    (owned_view.compiler-owned-shared-view index)
                     2
                     "%r14"
                     "%r15"
@@ -42958,53 +43611,55 @@
                         (string.eq
                           (compiler_backend.compiler-backend-phi-planned-avoiding-value-home
                             backend-state
-                            cycle-assignments
+                            (owned_view.compiler-owned-shared-view
+                              cycle-assignments)
                             (compiler_ir_types.CompilerIrValue.Var 0)
                             "%r12")
                           "")
                         (string.eq
                           (compiler_backend.compiler-backend-phi-planned-avoiding-value-home
                             backend-state
-                            cycle-assignments
+                            (owned_view.compiler-owned-shared-view
+                              cycle-assignments)
                             (compiler_ir_types.CompilerIrValue.Var 0)
                             "%r14")
                           "%r14")
                         (compiler_backend.compiler-backend-string-contains?
-                          aggregate
+                          (owned_view.compiler-owned-shared-view aggregate)
                           "    movq %r12, %r14\n")
                         (compiler_backend.compiler-backend-string-contains?
-                          aggregate
+                          (owned_view.compiler-owned-shared-view aggregate)
                           "    movq %r13, %r15\n")
                         (compiler_backend.compiler-backend-string-contains?
-                          call-stage
+                          (owned_view.compiler-owned-shared-view call-stage)
                           "    movq -16(%rbp), %r14\n")
                         (compiler_backend.compiler-backend-string-contains?
-                          call-stage
+                          (owned_view.compiler-owned-shared-view call-stage)
                           "    movq %r14, 0(%rsp)\n")
                         (compiler_backend.compiler-backend-string-contains?
-                          phi-stage
+                          (owned_view.compiler-owned-shared-view phi-stage)
                           "    movq -16(%rbp), %r14\n")
                         (compiler_backend.compiler-backend-string-contains?
-                          phi-stage
+                          (owned_view.compiler-owned-shared-view phi-stage)
                           "    movq %r14, -8(%rbp)\n")
                         (not
                           (compiler_backend.compiler-backend-string-contains?
-                            phi-stage
+                            (owned_view.compiler-owned-shared-view phi-stage)
                             "pushq"))
                         (not
                           (compiler_backend.compiler-backend-string-contains?
-                            phi-stage
+                            (owned_view.compiler-owned-shared-view phi-stage)
                             "popq"))
                         (compiler_backend.compiler-backend-string-contains?
-                          phi-cycle
+                          (owned_view.compiler-owned-shared-view phi-cycle)
                           "    movq %r12, %r14\n")
                         (compiler_backend.compiler-backend-string-contains?
-                          phi-cycle
+                          (owned_view.compiler-owned-shared-view phi-cycle)
                           "    movq %r14, %r13\n")
                         ;; A register cycle must not fall back to any frame slot.
                         (not
                           (compiler_backend.compiler-backend-string-contains?
-                            phi-cycle
+                            (owned_view.compiler-owned-shared-view phi-cycle)
                             "(%rbp)")))]
                     [(compiler_backend.ResultCompilerBackend.Err _) false])]
                 [(compiler_backend.ResultCompilerBackend.Err _) false])]
@@ -43042,7 +43697,7 @@
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       (match (compiler_backend.compiler-backend-emit-addr-of
-        assignments
+        (owned_view.compiler-owned-shared-view assignments)
         2
         0
         "%r14"
@@ -43050,7 +43705,7 @@
         [(compiler_backend.ResultCompilerBackend.Ok addr-of)
           (match (compiler_backend.compiler-backend-emit-gep
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             2
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.Var 1)
@@ -43062,7 +43717,7 @@
             [(compiler_backend.ResultCompilerBackend.Ok gep)
               (match (compiler_backend.compiler-backend-emit-load-instr
                 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-                assignments
+                (owned_view.compiler-owned-shared-view assignments)
                 1
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 (compiler_ast_types.AstType.I64)
@@ -43072,18 +43727,18 @@
                 [(compiler_backend.ResultCompilerBackend.Ok load)
                   (match (compiler_backend.compiler-backend-emit-store-ptr
                     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-                    assignments
+                    (owned_view.compiler-owned-shared-view assignments)
                     (compiler_ir_types.CompilerIrValue.Var 0)
                     (compiler_ir_types.CompilerIrValue.Var 1)
                     (compiler_ast_types.AstType.I64)
-                    index
+                    (owned_view.compiler-owned-shared-view index)
                     "%r14"
                     "%r15"
                     backend-state)
                     [(compiler_backend.ResultCompilerBackend.Ok store)
                       (match (compiler_backend.compiler-backend-emit-copy-bytes
                         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-                        assignments
+                        (owned_view.compiler-owned-shared-view assignments)
                         (compiler_ir_types.CompilerIrValue.Var 0)
                         (compiler_ir_types.CompilerIrValue.Var 1)
                         7
@@ -43096,7 +43751,7 @@
                           (match (compiler_backend.compiler-backend-emit-bounds-check
                             (compiler_backend.CompilerBackendTarget.Linux)
                             "scratch_memory"
-                            assignments
+                            (owned_view.compiler-owned-shared-view assignments)
                             "%r14"
                             "%r15"
                             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -43113,37 +43768,37 @@
                                   addr-of
                                   "%r14")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  gep
+                                  (owned_view.compiler-owned-shared-view gep)
                                   "%r14")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  gep
+                                  (owned_view.compiler-owned-shared-view gep)
                                   "%r15")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  load
+                                  (owned_view.compiler-owned-shared-view load)
                                   "%r14")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  load
+                                  (owned_view.compiler-owned-shared-view load)
                                   "%r15")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  store
+                                  (owned_view.compiler-owned-shared-view store)
                                   "%r14")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  store
+                                  (owned_view.compiler-owned-shared-view store)
                                   "%r15")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  copy
+                                  (owned_view.compiler-owned-shared-view copy)
                                   "%r12")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  copy
+                                  (owned_view.compiler-owned-shared-view copy)
                                   "%r13")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  copy
+                                  (owned_view.compiler-owned-shared-view copy)
                                   "%r14")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  bounds
+                                  (owned_view.compiler-owned-shared-view bounds)
                                   "%r15")
                                 (compiler_backend.compiler-backend-string-contains?
-                                  bounds
+                                  (owned_view.compiler-owned-shared-view bounds)
                                   "%r14"))]
                             [(compiler_backend.ResultCompilerBackend.Err _)
                               false])]
@@ -43180,7 +43835,7 @@
       [pack : compiler_backend.ResultCompilerBackend
         (compiler_backend.compiler-backend-emit-pack-words
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          assignments
+          (owned_view.compiler-owned-shared-view assignments)
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ir_types.CompilerIrValue.Var 1)
           "-24(%rbp)"
@@ -43189,7 +43844,7 @@
           false
           "%xmm14"
           "%r15"
-          diag
+          (owned_view.compiler-owned-shared-view diag)
           backend-state)]
       [_group-enable : unit
         (compiler_backend.compiler-backend-group-vars-enable!
@@ -43199,21 +43854,21 @@
       [word : compiler_backend.ResultCompilerBackend
         (compiler_backend.compiler-backend-emit-word
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          assignments
+          (owned_view.compiler-owned-shared-view assignments)
           2
           (compiler_ir_types.CompilerIrValue.Var 0)
           0
           (compiler_ast_types.AstType.F64)
           3
           "%xmm13"
-          diag
+          (owned_view.compiler-owned-shared-view diag)
           backend-state)]
       [_group-disable : unit
         (compiler_backend.compiler-backend-group-vars-disable! backend-state)]
       [copy : compiler_backend.ResultCompilerBackend
         (compiler_backend.compiler-backend-emit-copy-bytes
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          assignments
+          (owned_view.compiler-owned-shared-view assignments)
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ir_types.CompilerIrValue.Var 1)
           24
@@ -43230,7 +43885,7 @@
           (compiler_backend.compiler-backend-emit-c-memory-stack-arg
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (compiler_backend.CompilerBackendTarget.Linux)
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             (compiler_ir_types.CompilerIrValue.Var 0)
             0
             24
@@ -43242,28 +43897,28 @@
           "")]
       (and
         (compiler-backend-scratch-vreg-result-contains?
-          pack
+          (owned_view.compiler-owned-shared-view pack)
           "    movsd -8(%rbp), %xmm14\n")
         (compiler-backend-scratch-vreg-result-contains?
-          pack
+          (owned_view.compiler-owned-shared-view pack)
           "    movq -16(%rbp), %r15\n")
         (compiler-backend-scratch-vreg-result-contains?
-          word
+          (owned_view.compiler-owned-shared-view word)
           "    movsd -8(%rbp), %xmm13\n")
         (compiler-backend-scratch-vreg-result-contains?
-          word
+          (owned_view.compiler-owned-shared-view word)
           "    movsd %xmm13, -24(%rbp)\n")
         (compiler-backend-scratch-vreg-result-contains?
-          copy
+          (owned_view.compiler-owned-shared-view copy)
           "    movups (%r13), %xmm12\n")
         (compiler-backend-scratch-vreg-result-contains?
-          copy
+          (owned_view.compiler-owned-shared-view copy)
           "    movups %xmm12, (%r12)\n")
         (compiler-backend-scratch-vreg-result-contains?
-          c-memory
+          (owned_view.compiler-owned-shared-view c-memory)
           "    movups (%r14), %xmm11\n")
         (compiler-backend-scratch-vreg-result-contains?
-          c-memory
+          (owned_view.compiler-owned-shared-view c-memory)
           "    movups %xmm11, 0(%rsp)\n")))
     true))
 
@@ -43324,24 +43979,33 @@
           (compiler-backend-scratch-vreg-c-abi-return-test-blocks)
           2
           (compiler-backend-scratch-vreg-c-abi-return-test-assignments))]
-      [planned : String (compiler-backend-scratch-test-register result 0)]
+      [planned : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          0)]
       [backend-state : compiler_backend.CompilerBackendState
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active))]
       (and
-        (= (compiler-backend-scratch-test-plan-count result) 2)
-        (= (compiler-backend-scratch-test-success-count result) 2)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view result))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view result))
+          2)
         (string.eq planned "%r12")
         (string.eq
           (compiler_backend.compiler-backend-scavenge-c-abi-return-base-save-reg
-            planned
+            (owned_view.compiler-owned-shared-view planned)
             backend-state)
           planned)
         (string.eq
           (compiler_backend.compiler-backend-scavenge-c-abi-return-store-base-reg
-            planned
+            (owned_view.compiler-owned-shared-view planned)
             backend-state)
-          planned)))
+          (owned_view.compiler-owned-shared-view planned))))
     true))
 
 (define (compiler-backend-scratch-vreg-bounds-plan-ok?) : bool
@@ -43360,12 +44024,24 @@
           "scratch_vreg_bounds"
           (compiler-backend-scratch-vreg-bounds-test-blocks)
           2
-          assignments)]
-      [planned-len : String (compiler-backend-scratch-test-register result 0)]
-      [planned-index : String (compiler-backend-scratch-test-register result 1)]
+          (owned_view.compiler-owned-shared-view assignments))]
+      [planned-len : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          0)]
+      [planned-index : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          1)]
       (and
-        (= (compiler-backend-scratch-test-plan-count result) 2)
-        (= (compiler-backend-scratch-test-success-count result) 2)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view result))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view result))
+          2)
         (not (string.eq planned-len ""))
         (not (string.eq planned-index ""))
         (not (string.eq planned-len planned-index))
@@ -43449,38 +44125,45 @@
       [listed : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_fused_sibling"
-          blocks
+          (owned_view.compiler-owned-shared-view blocks)
           6
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_fused_sibling_dense"
-          (compiler_ir_types.compiler-ir-block-list-compact blocks)
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (owned_view.compiler-owned-shared-view blocks))
           6
-          assignments)]
-      (match listed
+          (owned_view.compiler-owned-shared-view assignments))]
+      (match (owned_view.compiler-owned-shared-view listed)
         [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
-          (match dense
+          (match (owned_view.compiler-owned-shared-view dense)
             [(compiler_regalloc.CompilerRegScratchPlanResult.Result
                 _
                 dense-plan)
               (let
                 [items : (__tl_dyn-array
                   compiler_regalloc.CompilerRegScratchAssignment)
-                  plan.items]
+                  (owned_view.compiler-owned-shared-view plan.items)]
                 [dense-items : (__tl_dyn-array
                   compiler_regalloc.CompilerRegScratchAssignment)
-                  dense-plan.items]
+                  (owned_view.compiler-owned-shared-view dense-plan.items)]
                 (and
                   (= (array-length items) 7)
-                  (= (compiler-backend-scratch-test-success-count listed) 7)
-                  (= (compiler-backend-scratch-test-success-count dense) 7)
+                  (=
+                    (compiler-backend-scratch-test-success-count
+                      (owned_view.compiler-owned-shared-view listed))
+                    7)
+                  (=
+                    (compiler-backend-scratch-test-success-count
+                      (owned_view.compiler-owned-shared-view dense))
+                    7)
                   (compiler-backend-scratch-items-registers-unique-from?
-                    items
+                    (owned_view.compiler-owned-shared-view items)
                     0)
                   (compiler-backend-scratch-fused-items-shape-from?
-                    items
-                    dense-items
+                    (owned_view.compiler-owned-shared-view items)
+                    (owned_view.compiler-owned-shared-view dense-items)
                     0)))])]))
     true))
 
@@ -43494,12 +44177,27 @@
           (compiler-backend-scratch-vreg-memory-test-blocks)
           2
           (compiler-backend-scratch-vreg-memory-test-assignments))]
-      [dst : String (compiler-backend-scratch-test-register result 0)]
-      [src : String (compiler-backend-scratch-test-register result 1)]
-      [value : String (compiler-backend-scratch-test-register result 2)]
+      [dst : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          0)]
+      [src : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          1)]
+      [value : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          2)]
       (and
-        (= (compiler-backend-scratch-test-plan-count result) 3)
-        (= (compiler-backend-scratch-test-success-count result) 3)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view result))
+          3)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view result))
+          3)
         (not (string.eq dst ""))
         (not (string.eq src ""))
         (not (string.eq value ""))
@@ -43526,44 +44224,70 @@
           "scratch_vreg_copy_xmm_linux"
           (compiler-backend-scratch-vreg-copy-xmm-test-blocks)
           2
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
           (compiler_abi.CompilerRegTargetAbi.Windows)
           "scratch_vreg_copy_xmm_windows"
           (compiler-backend-scratch-vreg-copy-xmm-test-blocks)
           2
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [exact : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_copy_xmm_exact"
           (compiler-backend-scratch-vreg-copy-xmm-exact-test-blocks)
           2
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       (and
-        (= (compiler-backend-scratch-test-plan-count linux) 4)
-        (= (compiler-backend-scratch-test-success-count linux) 4)
-        (= (compiler-backend-scratch-test-plan-count windows) 4)
-        (= (compiler-backend-scratch-test-success-count windows) 4)
-        (= (compiler-backend-scratch-test-plan-count exact) 3)
-        (= (compiler-backend-scratch-test-success-count exact) 3)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view linux))
+          4)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view linux))
+          4)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view windows))
+          4)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view windows))
+          4)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view exact))
+          3)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view exact))
+          3)
         (compiler_backend.compiler-backend-string-prefix-at?
-          (compiler-backend-scratch-test-register linux 2)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view linux)
+            2)
           "%xmm"
           0)
         (compiler_backend.compiler-backend-string-prefix-at?
-          (compiler-backend-scratch-test-register windows 2)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view windows)
+            2)
           "%xmm"
           0)
         (compiler_backend.compiler-backend-string-prefix-at?
-          (compiler-backend-scratch-test-register exact 2)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view exact)
+            2)
           "%xmm"
           0)
-        (match linux
+        (match (owned_view.compiler-owned-shared-view linux)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (let
+              [item : compiler_regalloc.CompilerRegScratchAssignment
+                (compiler_ir_types.compiler-ir-array-shared-view plan.items 2)]
               [requirement : compiler_regalloc.CompilerRegScratchRequirement
-                (__tl-project-field (array-ref plan.items 2) requirement)]
+                (owned_view.compiler-owned-shared-view item.requirement)]
               (and
                 (match requirement.role
                   [(compiler_regalloc.CompilerRegScratchRole.CopyValueXmm) true]
@@ -43615,79 +44339,125 @@
         (compiler-backend-scratch-test-result-for-abi
           (compiler_abi.CompilerRegTargetAbi.Linux)
           "scratch_c_memory_linux"
-          blocks
+          (owned_view.compiler-owned-shared-view blocks)
           3
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
           (compiler_abi.CompilerRegTargetAbi.Windows)
           "scratch_c_memory_windows"
-          blocks
+          (owned_view.compiler-owned-shared-view blocks)
           3
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [indirect-linux : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
           (compiler_abi.CompilerRegTargetAbi.Linux)
           "scratch_c_memory_indirect_linux"
           (compiler-backend-scratch-vreg-c-memory-indirect-test-blocks true)
           3
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [indirect-windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
           (compiler_abi.CompilerRegTargetAbi.Windows)
           "scratch_c_memory_indirect_windows"
           (compiler-backend-scratch-vreg-c-memory-indirect-test-blocks true)
           3
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [indirect-no-marker : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
           (compiler_abi.CompilerRegTargetAbi.Linux)
           "scratch_c_memory_indirect_no_marker"
           (compiler-backend-scratch-vreg-c-memory-indirect-test-blocks false)
           3
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       (and
-        (= (compiler-backend-scratch-test-plan-count linux) 2)
-        (= (compiler-backend-scratch-test-success-count linux) 2)
-        (= (compiler-backend-scratch-test-plan-count windows) 1)
-        (= (compiler-backend-scratch-test-success-count windows) 1)
-        (= (compiler-backend-scratch-test-plan-count indirect-linux) 3)
-        (= (compiler-backend-scratch-test-success-count indirect-linux) 3)
-        (= (compiler-backend-scratch-test-plan-count indirect-windows) 2)
-        (= (compiler-backend-scratch-test-success-count indirect-windows) 2)
-        (= (compiler-backend-scratch-test-plan-count indirect-no-marker) 2)
-        (= (compiler-backend-scratch-test-success-count indirect-no-marker) 2)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view linux))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view linux))
+          2)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view windows))
+          1)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view windows))
+          1)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view indirect-linux))
+          3)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view indirect-linux))
+          3)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view indirect-windows))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view indirect-windows))
+          2)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view indirect-no-marker))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view indirect-no-marker))
+          2)
         ;; Target and staging are simultaneous and must receive distinct homes;
         ;; a newly selected callee-saved home is published into the plan.
         (not
           (string.eq
-            (compiler-backend-scratch-test-register indirect-linux 1)
+            (compiler-backend-scratch-test-register
+              (owned_view.compiler-owned-shared-view indirect-linux)
+              1)
             ""))
         (not
           (string.eq
-            (compiler-backend-scratch-test-register indirect-windows 1)
+            (compiler-backend-scratch-test-register
+              (owned_view.compiler-owned-shared-view indirect-windows)
+              1)
             ""))
         (not
           (string.eq
-            (compiler-backend-scratch-test-register indirect-no-marker 1)
+            (compiler-backend-scratch-test-register
+              (owned_view.compiler-owned-shared-view indirect-no-marker)
+              1)
             ""))
         (not
           (string.eq
-            (compiler-backend-scratch-test-register indirect-linux 0)
-            (compiler-backend-scratch-test-register indirect-linux 1)))
+            (compiler-backend-scratch-test-register
+              (owned_view.compiler-owned-shared-view indirect-linux)
+              0)
+            (compiler-backend-scratch-test-register
+              (owned_view.compiler-owned-shared-view indirect-linux)
+              1)))
         (compiler_backend.compiler-backend-string-prefix-at?
-          (compiler-backend-scratch-test-register linux 1)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view linux)
+            1)
           "%xmm"
           0)
         (compiler_backend.compiler-backend-string-prefix-at?
-          (compiler-backend-scratch-test-register indirect-linux 2)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view indirect-linux)
+            2)
           "%xmm"
           0)
-        (match linux
+        (match (owned_view.compiler-owned-shared-view linux)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (let
+              [item : compiler_regalloc.CompilerRegScratchAssignment
+                (compiler_ir_types.compiler-ir-array-shared-view plan.items 1)]
               [requirement : compiler_regalloc.CompilerRegScratchRequirement
-                (__tl-project-field (array-ref plan.items 1) requirement)]
+                (owned_view.compiler-owned-shared-view item.requirement)]
               (and
                 (match requirement.role
                   [(compiler_regalloc.CompilerRegScratchRole.CallMemoryXmm)
@@ -43746,31 +44516,43 @@
           "scratch_vreg_float_load"
           (compiler-backend-scratch-vreg-float-load-test-blocks)
           2
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [load-windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
           (compiler_abi.CompilerRegTargetAbi.Windows)
           "scratch_vreg_float_load_windows"
           (compiler-backend-scratch-vreg-float-load-test-blocks)
           2
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [store-ptr : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_float_store_ptr"
           (compiler-backend-scratch-vreg-float-store-ptr-test-blocks)
           2
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [store : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_float_store"
           (compiler-backend-scratch-vreg-float-store-test-blocks)
           2
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       (and
-        (compiler-backend-scratch-vreg-float-memory-result-ok? load-linux 2 1)
-        (compiler-backend-scratch-vreg-float-memory-result-ok? load-windows 2 1)
-        (compiler-backend-scratch-vreg-float-memory-result-ok? store-ptr 2 1)
-        (compiler-backend-scratch-vreg-float-memory-result-ok? store 1 0)))
+        (compiler-backend-scratch-vreg-float-memory-result-ok?
+          (owned_view.compiler-owned-shared-view load-linux)
+          2
+          1)
+        (compiler-backend-scratch-vreg-float-memory-result-ok?
+          (owned_view.compiler-owned-shared-view load-windows)
+          2
+          1)
+        (compiler-backend-scratch-vreg-float-memory-result-ok?
+          (owned_view.compiler-owned-shared-view store-ptr)
+          2
+          1)
+        (compiler-backend-scratch-vreg-float-memory-result-ok?
+          (owned_view.compiler-owned-shared-view store)
+          1
+          0)))
     true))
 
 (define (compiler-backend-scratch-vreg-float-memory-emission-uses-plan-ok?) : bool
@@ -43788,7 +44570,7 @@
         index.backend-state]
       (match (compiler_backend.compiler-backend-emit-load-instr
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        assignments
+        (owned_view.compiler-owned-shared-view assignments)
         0
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ast_types.AstType.F64)
@@ -43798,22 +44580,22 @@
         [(compiler_backend.ResultCompilerBackend.Ok load)
           (match (compiler_backend.compiler-backend-emit-store-ptr
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.F64)
-            index
+            (owned_view.compiler-owned-shared-view index)
             "%r15"
             "%xmm15"
             backend-state)
             [(compiler_backend.ResultCompilerBackend.Ok store-ptr)
               (match (compiler_backend.compiler-backend-emit-store-value-to-address
                 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-                assignments
+                (owned_view.compiler-owned-shared-view assignments)
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 (compiler_ast_types.AstType.F64)
                 "scratch_float_global(%rip)"
-                index
+                (owned_view.compiler-owned-shared-view index)
                 (array.make-array String 0)
                 0
                 "%xmm13"
@@ -43822,7 +44604,7 @@
                   (let
                     [fused-load : String
                       (compiler_backend.compiler-backend-emit-load-float-address-to-var
-                        assignments
+                        (owned_view.compiler-owned-shared-view assignments)
                         0
                         "8(%r12)"
                         (compiler_ast_types.AstType.F64)
@@ -43830,16 +44612,16 @@
                         backend-state)]
                     (and
                       (compiler_backend.compiler-backend-string-contains?
-                        load
+                        (owned_view.compiler-owned-shared-view load)
                         "%r14")
                       (compiler_backend.compiler-backend-string-contains?
-                        load
+                        (owned_view.compiler-owned-shared-view load)
                         "%xmm14")
                       (compiler_backend.compiler-backend-string-contains?
-                        store-ptr
+                        (owned_view.compiler-owned-shared-view store-ptr)
                         "%r15")
                       (compiler_backend.compiler-backend-string-contains?
-                        store-ptr
+                        (owned_view.compiler-owned-shared-view store-ptr)
                         "%xmm15")
                       (compiler_backend.compiler-backend-string-contains?
                         store
@@ -43901,7 +44683,7 @@
           "scratch_float_arith"
           (compiler-backend-scratch-vreg-float-arith-test-blocks)
           2
-          f64-types
+          (owned_view.compiler-owned-shared-view f64-types)
           (compiler-backend-scratch-vreg-float-arith-test-assignments))]
       [arith-windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -43909,7 +44691,7 @@
           "scratch_float_arith_windows"
           (compiler-backend-scratch-vreg-float-arith-test-blocks)
           2
-          f64-types
+          (owned_view.compiler-owned-shared-view f64-types)
           (compiler-backend-scratch-vreg-float-arith-test-assignments))]
       [compare : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -43917,7 +44699,7 @@
           "scratch_float_compare"
           (compiler-backend-scratch-vreg-float-compare-test-blocks)
           3
-          f32-compare-types
+          (owned_view.compiler-owned-shared-view f32-compare-types)
           (compiler-backend-scratch-vreg-float-compare-test-assignments))]
       [compare-windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -43925,7 +44707,7 @@
           "scratch_float_compare_windows"
           (compiler-backend-scratch-vreg-float-compare-test-blocks)
           3
-          f32-compare-types
+          (owned_view.compiler-owned-shared-view f32-compare-types)
           (compiler-backend-scratch-vreg-float-compare-test-assignments))]
       [unop : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -43933,7 +44715,7 @@
           "scratch_float_unop"
           (compiler-backend-scratch-vreg-float-unop-test-blocks)
           2
-          f64-types
+          (owned_view.compiler-owned-shared-view f64-types)
           (compiler-backend-scratch-vreg-float-unop-test-assignments))]
       [arith-return : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -43941,7 +44723,7 @@
           "scratch_float_arith_return"
           (compiler-backend-scratch-vreg-float-arith-return-test-blocks)
           3
-          f64-types
+          (owned_view.compiler-owned-shared-view f64-types)
           (compiler-backend-scratch-vreg-float-arith-return-test-assignments))]
       [arith-return-windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -43949,7 +44731,7 @@
           "scratch_float_arith_return_windows"
           (compiler-backend-scratch-vreg-float-arith-return-test-blocks)
           3
-          f64-types
+          (owned_view.compiler-owned-shared-view f64-types)
           (compiler-backend-scratch-vreg-float-arith-return-test-assignments))]
       [compare-return : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -43957,7 +44739,7 @@
           "scratch_float_compare_return"
           (compiler-backend-scratch-vreg-float-compare-return-test-blocks)
           3
-          f64-compare-types
+          (owned_view.compiler-owned-shared-view f64-compare-types)
           (compiler-backend-scratch-vreg-float-compare-return-test-assignments))]
       [compare-return-windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -43965,56 +44747,143 @@
           "scratch_float_compare_return_windows"
           (compiler-backend-scratch-vreg-float-compare-return-test-blocks)
           3
-          f64-compare-types
+          (owned_view.compiler-owned-shared-view f64-compare-types)
           (compiler-backend-scratch-vreg-float-compare-return-test-assignments))]
-      [arith-reg : String (compiler-backend-scratch-test-register arith 0)]
-      [compare-xmm : String (compiler-backend-scratch-test-register compare 0)]
-      [compare-gp : String (compiler-backend-scratch-test-register compare 1)]
+      [arith-reg : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view arith)
+          0)]
+      [compare-xmm : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view compare)
+          0)]
+      [compare-gp : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view compare)
+          1)]
       [return-rhs : String
-        (compiler-backend-scratch-test-register arith-return 1)]
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view arith-return)
+          1)]
       (and
-        (= (compiler-backend-scratch-test-plan-count arith) 1)
-        (= (compiler-backend-scratch-test-success-count arith) 1)
-        (= (compiler-backend-scratch-test-plan-count arith-windows) 1)
-        (= (compiler-backend-scratch-test-success-count arith-windows) 1)
-        (>= (compiler-backend-scratch-test-xmm-family-index arith-reg) 0)
-        (not (= (compiler-backend-scratch-test-xmm-family-index arith-reg) 6))
-        (= (compiler-backend-scratch-test-plan-count compare) 2)
-        (= (compiler-backend-scratch-test-success-count compare) 2)
-        (= (compiler-backend-scratch-test-plan-count compare-windows) 2)
-        (= (compiler-backend-scratch-test-success-count compare-windows) 2)
-        (>= (compiler-backend-scratch-test-xmm-family-index compare-xmm) 0)
-        (< (compiler-backend-scratch-test-xmm-family-index compare-gp) 0)
-        (not (= (compiler-backend-scratch-test-xmm-family-index compare-xmm) 7))
-        (= (compiler-backend-scratch-test-plan-count unop) 1)
-        (= (compiler-backend-scratch-test-success-count unop) 1)
-        (= (compiler-backend-scratch-test-plan-count arith-return) 2)
-        (= (compiler-backend-scratch-test-success-count arith-return) 2)
-        (= (compiler-backend-scratch-test-plan-count arith-return-windows) 2)
-        (= (compiler-backend-scratch-test-success-count arith-return-windows) 2)
-        (string.eq
-          (compiler-backend-scratch-test-register arith-return 0)
-          "%xmm0")
-        (not (string.eq return-rhs "%xmm0"))
-        (= (compiler-backend-scratch-test-plan-count compare-return) 2)
-        (= (compiler-backend-scratch-test-success-count compare-return) 2)
-        (= (compiler-backend-scratch-test-plan-count compare-return-windows) 2)
         (=
-          (compiler-backend-scratch-test-success-count compare-return-windows)
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view arith))
+          1)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view arith))
+          1)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view arith-windows))
+          1)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view arith-windows))
+          1)
+        (>=
+          (compiler-backend-scratch-test-xmm-family-index
+            (owned_view.compiler-owned-shared-view arith-reg))
+          0)
+        (not
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view arith-reg))
+            6))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view compare))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view compare))
+          2)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view compare-windows))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view compare-windows))
+          2)
+        (>=
+          (compiler-backend-scratch-test-xmm-family-index
+            (owned_view.compiler-owned-shared-view compare-xmm))
+          0)
+        (<
+          (compiler-backend-scratch-test-xmm-family-index
+            (owned_view.compiler-owned-shared-view compare-gp))
+          0)
+        (not
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view compare-xmm))
+            7))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view unop))
+          1)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view unop))
+          1)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view arith-return))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view arith-return))
+          2)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view arith-return-windows))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view arith-return-windows))
           2)
         (string.eq
-          (compiler-backend-scratch-test-register compare-return 0)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view arith-return)
+            0)
+          "%xmm0")
+        (not
+          (string.eq (owned_view.compiler-owned-shared-view return-rhs) "%xmm0"))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view compare-return))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view compare-return))
+          2)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view compare-return-windows))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view compare-return-windows))
+          2)
+        (string.eq
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view compare-return)
+            0)
           "%rax")
         (>=
           (compiler-backend-scratch-test-xmm-family-index
-            (compiler-backend-scratch-test-register compare-return 1))
+            (compiler-backend-scratch-test-register
+              (owned_view.compiler-owned-shared-view compare-return)
+              1))
           0)
         (=
           (compiler_regalloc.compiler-reg-scratch-vreg-slots
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (compiler_abi.CompilerRegTargetAbi.Linux)
             direct-arith-assignments
-            f64-types
+            (owned_view.compiler-owned-shared-view f64-types)
             (compiler_ir_types.CompilerIrInstr.BinOp
               0
               (compiler_ir_types.CompilerIrBinOp.Add)
@@ -44031,7 +44900,7 @@
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (compiler_abi.CompilerRegTargetAbi.Windows)
             direct-compare-assignments
-            f64-compare-types
+            (owned_view.compiler-owned-shared-view f64-compare-types)
             (compiler_ir_types.CompilerIrInstr.BinOp
               0
               (compiler_ir_types.CompilerIrBinOp.Ne)
@@ -44055,11 +44924,13 @@
           (compiler_ir_types.CompilerIrBinOp.Gt))
         (compiler_regalloc.compiler-reg-scratch-compare-op?
           (compiler_ir_types.CompilerIrBinOp.Ge))
-        (match arith-return
+        (match (owned_view.compiler-owned-shared-view arith-return)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (let
+              [item : compiler_regalloc.CompilerRegScratchAssignment
+                (compiler_ir_types.compiler-ir-array-shared-view plan.items 0)]
               [requirement : compiler_regalloc.CompilerRegScratchRequirement
-                (__tl-project-field (array-ref plan.items 0) requirement)]
+                (owned_view.compiler-owned-shared-view item.requirement)]
               (and
                 (match requirement.role
                   [(compiler_regalloc.CompilerRegScratchRole.FloatReturnResultXmm)
@@ -44071,11 +44942,13 @@
                 (match requirement.constraint.register-class
                   [(compiler_regalloc.CompilerRegScratchClass.Xmm) true]
                   [_ false])))])
-        (match compare-return
+        (match (owned_view.compiler-owned-shared-view compare-return)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (let
+              [item : compiler_regalloc.CompilerRegScratchAssignment
+                (compiler_ir_types.compiler-ir-array-shared-view plan.items 0)]
               [requirement : compiler_regalloc.CompilerRegScratchRequirement
-                (__tl-project-field (array-ref plan.items 0) requirement)]
+                (owned_view.compiler-owned-shared-view item.requirement)]
               (and
                 (match requirement.role
                   [(compiler_regalloc.CompilerRegScratchRole.FloatReturnResultGp)
@@ -44087,7 +44960,7 @@
                 (match requirement.constraint.register-class
                   [(compiler_regalloc.CompilerRegScratchClass.Gp) true]
                   [_ false])))])
-        (match arith
+        (match (owned_view.compiler-owned-shared-view arith)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (match (__tl-project-field
               (__tl-project-field (array-ref plan.items 0) requirement)
@@ -44095,7 +44968,7 @@
               [(compiler_regalloc.CompilerRegScratchRole.FloatArithmeticResultXmm)
                 true]
               [_ false])])
-        (match compare
+        (match (owned_view.compiler-owned-shared-view compare)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
               (match (__tl-project-field
@@ -44110,7 +44983,7 @@
                 [(compiler_regalloc.CompilerRegScratchRole.FloatCompareResultGp)
                   true]
                 [_ false]))])
-        (match unop
+        (match (owned_view.compiler-owned-shared-view unop)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (match (__tl-project-field
               (__tl-project-field (array-ref plan.items 0) requirement)
@@ -44201,25 +45074,29 @@
                               arith
                               "%xmm14")
                             (compiler_backend.compiler-backend-string-contains?
-                              compare
+                              (owned_view.compiler-owned-shared-view compare)
                               "%xmm13")
                             (compiler_backend.compiler-backend-string-contains?
-                              compare
+                              (owned_view.compiler-owned-shared-view compare)
                               "%r14")
                             (compiler_backend.compiler-backend-string-contains?
                               unop
                               "%xmm15")
                             (compiler_backend.compiler-backend-string-contains?
-                              arith-return
+                              (owned_view.compiler-owned-shared-view
+                                arith-return)
                               "%xmm14")
                             (compiler_backend.compiler-backend-string-contains?
-                              arith-return
+                              (owned_view.compiler-owned-shared-view
+                                arith-return)
                               "%xmm0")
                             (compiler_backend.compiler-backend-string-contains?
-                              compare-return
+                              (owned_view.compiler-owned-shared-view
+                                compare-return)
                               "%xmm14")
                             (compiler_backend.compiler-backend-string-contains?
-                              compare-return
+                              (owned_view.compiler-owned-shared-view
+                                compare-return)
                               "%rax"))]
                         [(compiler_backend.ResultCompilerBackend.Err _) false])]
                     [(compiler_backend.ResultCompilerBackend.Err _) false])]
@@ -44241,10 +45118,25 @@
       (and
         ;; The target itself remains in %r10; argument staging receives a
         ;; separate planned home before the tail epilogue restores saved state.
-        (= (compiler-backend-scratch-test-plan-count result) 2)
-        (= (compiler-backend-scratch-test-success-count result) 2)
-        (string.eq (compiler-backend-scratch-test-register result 0) "%r10")
-        (not (string.eq (compiler-backend-scratch-test-register result 1) ""))))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view result))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view result))
+          2)
+        (string.eq
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view result)
+            0)
+          "%r10")
+        (not
+          (string.eq
+            (compiler-backend-scratch-test-register
+              (owned_view.compiler-owned-shared-view result)
+              1)
+            ""))))
     true))
 
 (define (compiler-backend-scratch-vreg-simd-plan-ok?) : bool
@@ -44256,13 +45148,14 @@
       [splat : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_splat"
-          splat-blocks
+          (owned_view.compiler-owned-shared-view splat-blocks)
           2
           (compiler-backend-scratch-vreg-splat-test-assignments))]
       [splat-dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_splat_dense"
-          (compiler_ir_types.compiler-ir-block-list-compact splat-blocks)
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (owned_view.compiler-owned-shared-view splat-blocks))
           2
           (compiler-backend-scratch-vreg-splat-test-assignments))]
       [reduce-blocks : compiler_ir_types.CompilerIrBlockList
@@ -44270,13 +45163,14 @@
       [reduce : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_reduce"
-          reduce-blocks
+          (owned_view.compiler-owned-shared-view reduce-blocks)
           2
           (compiler-backend-scratch-vreg-reduce-test-assignments))]
       [reduce-dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_reduce_dense"
-          (compiler_ir_types.compiler-ir-block-list-compact reduce-blocks)
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (owned_view.compiler-owned-shared-view reduce-blocks))
           2
           (compiler-backend-scratch-vreg-reduce-test-assignments))]
       [prefix-blocks : compiler_ir_types.CompilerIrBlockList
@@ -44284,88 +45178,183 @@
       [prefix : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_prefix"
-          prefix-blocks
+          (owned_view.compiler-owned-shared-view prefix-blocks)
           3
           (compiler-backend-scratch-vreg-prefix-test-assignments))]
       [prefix-dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_prefix_dense"
-          (compiler_ir_types.compiler-ir-block-list-compact prefix-blocks)
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (owned_view.compiler-owned-shared-view prefix-blocks))
           3
           (compiler-backend-scratch-vreg-prefix-test-assignments))]
-      [splat-gp : String (compiler-backend-scratch-test-register splat 0)]
-      [splat-xmm : String (compiler-backend-scratch-test-register splat 1)]
-      [reduce-acc : String (compiler-backend-scratch-test-register reduce 0)]
-      [reduce-temp : String (compiler-backend-scratch-test-register reduce 1)]
-      [prefix-gp : String (compiler-backend-scratch-test-register prefix 0)]
-      [prefix-xmm : String (compiler-backend-scratch-test-register prefix 1)]
-      [prefix-work0 : String (compiler-backend-scratch-test-register prefix 2)]
-      [prefix-work1 : String (compiler-backend-scratch-test-register prefix 3)]
+      [splat-gp : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view splat)
+          0)]
+      [splat-xmm : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view splat)
+          1)]
+      [reduce-acc : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view reduce)
+          0)]
+      [reduce-temp : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view reduce)
+          1)]
+      [prefix-gp : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view prefix)
+          0)]
+      [prefix-xmm : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view prefix)
+          1)]
+      [prefix-work0 : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view prefix)
+          2)]
+      [prefix-work1 : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view prefix)
+          3)]
       (and
-        (= (compiler-backend-scratch-test-plan-count splat) 2)
-        (= (compiler-backend-scratch-test-success-count splat) 2)
-        (not (string.eq splat-gp ""))
-        (not (string.eq splat-xmm ""))
-        (not (string.eq splat-gp "%r8"))
-        (not (= (compiler-backend-scratch-test-xmm-family-index splat-xmm) 6))
-        (string.eq
-          splat-gp
-          (compiler-backend-scratch-test-register splat-dense 0))
-        (string.eq
-          splat-xmm
-          (compiler-backend-scratch-test-register splat-dense 1))
-        (= (compiler-backend-scratch-test-plan-count reduce) 2)
-        (= (compiler-backend-scratch-test-success-count reduce) 2)
-        (not (string.eq reduce-acc ""))
-        (not (string.eq reduce-temp ""))
-        (not (string.eq reduce-acc reduce-temp))
-        (not (= (compiler-backend-scratch-test-xmm-family-index reduce-acc) 2))
-        (not (= (compiler-backend-scratch-test-xmm-family-index reduce-acc) 6))
-        (not (= (compiler-backend-scratch-test-xmm-family-index reduce-temp) 2))
-        (not (= (compiler-backend-scratch-test-xmm-family-index reduce-temp) 6))
-        (string.eq
-          reduce-acc
-          (compiler-backend-scratch-test-register reduce-dense 0))
-        (string.eq
-          reduce-temp
-          (compiler-backend-scratch-test-register reduce-dense 1))
-        (= (compiler-backend-scratch-test-plan-count prefix) 4)
-        (= (compiler-backend-scratch-test-success-count prefix) 4)
-        (not (string.eq prefix-gp ""))
-        (not (string.eq prefix-xmm ""))
-        (not (string.eq prefix-work0 ""))
-        (not (string.eq prefix-work1 ""))
-        (not (string.eq prefix-gp "%r8"))
-        (not (= (compiler-backend-scratch-test-xmm-family-index prefix-xmm) 6))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view splat))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view splat))
+          2)
+        (not (string.eq (owned_view.compiler-owned-shared-view splat-gp) ""))
+        (not (string.eq (owned_view.compiler-owned-shared-view splat-xmm) ""))
+        (not (string.eq (owned_view.compiler-owned-shared-view splat-gp) "%r8"))
         (not
-          (= (compiler-backend-scratch-test-xmm-family-index prefix-work0) 6))
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view splat-xmm))
+            6))
+        (string.eq
+          (owned_view.compiler-owned-shared-view splat-gp)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view splat-dense)
+            0))
+        (string.eq
+          (owned_view.compiler-owned-shared-view splat-xmm)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view splat-dense)
+            1))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view reduce))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view reduce))
+          2)
+        (not (string.eq (owned_view.compiler-owned-shared-view reduce-acc) ""))
+        (not (string.eq (owned_view.compiler-owned-shared-view reduce-temp) ""))
         (not
-          (= (compiler-backend-scratch-test-xmm-family-index prefix-work1) 6))
+          (string.eq
+            (owned_view.compiler-owned-shared-view reduce-acc)
+            (owned_view.compiler-owned-shared-view reduce-temp)))
+        (not
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view reduce-acc))
+            2))
+        (not
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view reduce-acc))
+            6))
+        (not
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view reduce-temp))
+            2))
+        (not
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view reduce-temp))
+            6))
+        (string.eq
+          (owned_view.compiler-owned-shared-view reduce-acc)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view reduce-dense)
+            0))
+        (string.eq
+          (owned_view.compiler-owned-shared-view reduce-temp)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view reduce-dense)
+            1))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view prefix))
+          4)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view prefix))
+          4)
+        (not (string.eq (owned_view.compiler-owned-shared-view prefix-gp) ""))
+        (not (string.eq (owned_view.compiler-owned-shared-view prefix-xmm) ""))
+        (not
+          (string.eq (owned_view.compiler-owned-shared-view prefix-work0) ""))
+        (not
+          (string.eq (owned_view.compiler-owned-shared-view prefix-work1) ""))
+        (not
+          (string.eq (owned_view.compiler-owned-shared-view prefix-gp) "%r8"))
+        (not
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view prefix-xmm))
+            6))
+        (not
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view prefix-work0))
+            6))
+        (not
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view prefix-work1))
+            6))
         (not
           (compiler-backend-scratch-test-registers-overlap?
-            prefix-xmm
-            prefix-work0))
+            (owned_view.compiler-owned-shared-view prefix-xmm)
+            (owned_view.compiler-owned-shared-view prefix-work0)))
         (not
           (compiler-backend-scratch-test-registers-overlap?
-            prefix-xmm
-            prefix-work1))
+            (owned_view.compiler-owned-shared-view prefix-xmm)
+            (owned_view.compiler-owned-shared-view prefix-work1)))
         (not
           (compiler-backend-scratch-test-registers-overlap?
-            prefix-work0
-            prefix-work1))
+            (owned_view.compiler-owned-shared-view prefix-work0)
+            (owned_view.compiler-owned-shared-view prefix-work1)))
         (string.eq
-          prefix-gp
-          (compiler-backend-scratch-test-register prefix-dense 0))
+          (owned_view.compiler-owned-shared-view prefix-gp)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view prefix-dense)
+            0))
         (string.eq
-          prefix-xmm
-          (compiler-backend-scratch-test-register prefix-dense 1))
+          (owned_view.compiler-owned-shared-view prefix-xmm)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view prefix-dense)
+            1))
         (string.eq
-          prefix-work0
-          (compiler-backend-scratch-test-register prefix-dense 2))
+          (owned_view.compiler-owned-shared-view prefix-work0)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view prefix-dense)
+            2))
         (string.eq
-          prefix-work1
-          (compiler-backend-scratch-test-register prefix-dense 3))
-        (match splat
+          (owned_view.compiler-owned-shared-view prefix-work1)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view prefix-dense)
+            3))
+        (match (owned_view.compiler-owned-shared-view splat)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
               (match (__tl-project-field
@@ -44378,7 +45367,7 @@
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.SplatValueXmm) true]
                 [_ false]))])
-        (match reduce
+        (match (owned_view.compiler-owned-shared-view reduce)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
               (match (__tl-project-field
@@ -44393,7 +45382,7 @@
                 [(compiler_regalloc.CompilerRegScratchRole.VectorReduceScratch)
                   true]
                 [_ false]))])
-        (match prefix
+        (match (owned_view.compiler-owned-shared-view prefix)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
               (match (__tl-project-field
@@ -44490,78 +45479,88 @@
       [listed : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_indexed_simd"
-          blocks
+          (owned_view.compiler-owned-shared-view blocks)
           12
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_indexed_simd_dense"
-          (compiler_ir_types.compiler-ir-block-list-compact blocks)
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (owned_view.compiler-owned-shared-view blocks))
           12
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [fused-blocks : compiler_ir_types.CompilerIrBlockList
         (compiler-backend-scratch-vreg-indexed-simd-fused-blocks)]
       [fused : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_indexed_simd_fused"
-          fused-blocks
+          (owned_view.compiler-owned-shared-view fused-blocks)
           5
           (compiler-backend-scratch-vreg-indexed-simd-fused-assignments))]
       [fused-dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_indexed_simd_fused_dense"
-          (compiler_ir_types.compiler-ir-block-list-compact fused-blocks)
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (owned_view.compiler-owned-shared-view fused-blocks))
           5
           (compiler-backend-scratch-vreg-indexed-simd-fused-assignments))]
-      (match listed
+      (match (owned_view.compiler-owned-shared-view listed)
         [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
-          (match dense
+          (match (owned_view.compiler-owned-shared-view dense)
             [(compiler_regalloc.CompilerRegScratchPlanResult.Result
                 _
                 dense-plan)
-              (match fused
+              (match (owned_view.compiler-owned-shared-view fused)
                 [(compiler_regalloc.CompilerRegScratchPlanResult.Result
                     _
                     fused-plan)
-                  (match fused-dense
+                  (match (owned_view.compiler-owned-shared-view fused-dense)
                     [(compiler_regalloc.CompilerRegScratchPlanResult.Result
                         _
                         fused-dense-plan)
                       (let
                         [constant-base : i64
                           (compiler_regalloc.compiler-reg-scratch-plan-register
-                            plan
+                            (owned_view.compiler-owned-shared-view plan)
                             16
                             0)]
                         [vector-constant-base : i64
                           (compiler_regalloc.compiler-reg-scratch-plan-register
-                            plan
+                            (owned_view.compiler-owned-shared-view plan)
                             18
                             0)]
+                        [fused-base-item : compiler_regalloc.CompilerRegScratchAssignment
+                          (compiler_ir_types.compiler-ir-array-shared-view
+                            (owned_view.compiler-owned-shared-view
+                              fused-plan.items)
+                            0)]
+                        [fused-index-item : compiler_regalloc.CompilerRegScratchAssignment
+                          (compiler_ir_types.compiler-ir-array-shared-view
+                            (owned_view.compiler-owned-shared-view
+                              fused-plan.items)
+                            1)]
                         [fused-base : compiler_regalloc.CompilerRegScratchRequirement
-                          (__tl-project-field
-                            (array-ref fused-plan.items 0)
-                            requirement)]
+                          (owned_view.compiler-owned-shared-view
+                            fused-base-item.requirement)]
                         [fused-index : compiler_regalloc.CompilerRegScratchRequirement
-                          (__tl-project-field
-                            (array-ref fused-plan.items 1)
-                            requirement)]
+                          (owned_view.compiler-owned-shared-view
+                            fused-index-item.requirement)]
                         (and
                           (=
                             (compiler_regalloc.compiler-reg-scratch-plan-count
-                              plan)
+                              (owned_view.compiler-owned-shared-view plan))
                             18)
                           (=
                             (compiler_backend.compiler-backend-scratch-plan-success-count
-                              plan)
+                              (owned_view.compiler-owned-shared-view plan))
                             18)
                           (=
                             (compiler_regalloc.compiler-reg-scratch-plan-count
-                              dense-plan)
+                              (owned_view.compiler-owned-shared-view dense-plan))
                             18)
                           (compiler-backend-scratch-vreg-indexed-simd-points-ok?
-                            plan
-                            dense-plan
+                            (owned_view.compiler-owned-shared-view plan)
+                            (owned_view.compiler-owned-shared-view dense-plan)
                             0)
                           (not
                             (=
@@ -44570,12 +45569,12 @@
                           (=
                             constant-base
                             (compiler_regalloc.compiler-reg-scratch-plan-register
-                              dense-plan
+                              (owned_view.compiler-owned-shared-view dense-plan)
                               16
                               0))
                           (=
                             (compiler_regalloc.compiler-reg-scratch-plan-register
-                              plan
+                              (owned_view.compiler-owned-shared-view plan)
                               16
                               1)
                             compiler_abi.compiler-reg-id-invalid)
@@ -44586,40 +45585,40 @@
                           (=
                             vector-constant-base
                             (compiler_regalloc.compiler-reg-scratch-plan-register
-                              dense-plan
+                              (owned_view.compiler-owned-shared-view dense-plan)
                               18
                               0))
                           (=
                             (compiler_regalloc.compiler-reg-scratch-plan-register
-                              plan
+                              (owned_view.compiler-owned-shared-view plan)
                               18
                               1)
                             compiler_abi.compiler-reg-id-invalid)
                           (not
                             (= constant-base compiler_abi.compiler-reg-id-r12))
                           (compiler-backend-scratch-vreg-indexed-simd-role?
-                            plan
+                            (owned_view.compiler-owned-shared-view plan)
                             0
                             true)
                           (compiler-backend-scratch-vreg-indexed-simd-role?
-                            plan
+                            (owned_view.compiler-owned-shared-view plan)
                             1
                             false)
                           (compiler-backend-scratch-vreg-indexed-simd-role?
-                            plan
+                            (owned_view.compiler-owned-shared-view plan)
                             16
                             true)
                           (compiler-backend-scratch-vreg-indexed-simd-role?
-                            plan
+                            (owned_view.compiler-owned-shared-view plan)
                             17
                             true)
                           (=
                             (compiler_regalloc.compiler-reg-scratch-plan-count
-                              fused-plan)
+                              (owned_view.compiler-owned-shared-view fused-plan))
                             2)
                           (=
                             (compiler_backend.compiler-backend-scratch-plan-success-count
-                              fused-plan)
+                              (owned_view.compiler-owned-shared-view fused-plan))
                             2)
                           (= fused-base.lo 0)
                           (= fused-base.hi 3)
@@ -44627,20 +45626,22 @@
                           (= fused-index.hi 3)
                           (=
                             (compiler_regalloc.compiler-reg-scratch-plan-register
-                              fused-plan
+                              (owned_view.compiler-owned-shared-view fused-plan)
                               0
                               0)
                             (compiler_regalloc.compiler-reg-scratch-plan-register
-                              fused-dense-plan
+                              (owned_view.compiler-owned-shared-view
+                                fused-dense-plan)
                               0
                               0))
                           (=
                             (compiler_regalloc.compiler-reg-scratch-plan-register
-                              fused-plan
+                              (owned_view.compiler-owned-shared-view fused-plan)
                               0
                               1)
                             (compiler_regalloc.compiler-reg-scratch-plan-register
-                              fused-dense-plan
+                              (owned_view.compiler-owned-shared-view
+                                fused-dense-plan)
                               0
                               1))))])])])]))
     true))
@@ -44772,22 +45773,23 @@
       [listed : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_tail_mask"
-          blocks
+          (owned_view.compiler-owned-shared-view blocks)
           4
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_tail_mask_dense"
-          (compiler_ir_types.compiler-ir-block-list-compact blocks)
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (owned_view.compiler-owned-shared-view blocks))
           4
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
           (compiler_abi.CompilerRegTargetAbi.Windows)
           "scratch_vreg_tail_mask_windows"
-          blocks
+          (owned_view.compiler-owned-shared-view blocks)
           4
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [pressure : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_tail_mask_pressure"
@@ -44801,42 +45803,43 @@
           (compiler-backend-scratch-vreg-tail-mask-pressure-blocks)
           5
           (compiler-backend-scratch-vreg-tail-mask-pressure-assignments))]
-      (match listed
+      (match (owned_view.compiler-owned-shared-view listed)
         [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
-          (match dense
+          (match (owned_view.compiler-owned-shared-view dense)
             [(compiler_regalloc.CompilerRegScratchPlanResult.Result
                 _
                 dense-plan)
-              (match windows
+              (match (owned_view.compiler-owned-shared-view windows)
                 [(compiler_regalloc.CompilerRegScratchPlanResult.Result
                     _
                     windows-plan)
                   (and
                     (compiler-backend-scratch-vreg-tail-mask-plan-pair-ok?
-                      plan
-                      dense-plan)
+                      (owned_view.compiler-owned-shared-view plan)
+                      (owned_view.compiler-owned-shared-view dense-plan))
                     (=
                       (compiler_regalloc.compiler-reg-scratch-plan-register
-                        windows-plan
+                        (owned_view.compiler-owned-shared-view windows-plan)
                         0
                         0)
                       compiler_abi.compiler-reg-id-rcx)
                     (=
                       (compiler_backend.compiler-backend-scratch-plan-success-count
-                        windows-plan)
+                        (owned_view.compiler-owned-shared-view windows-plan))
                       3)
-                    (match pressure
+                    (match (owned_view.compiler-owned-shared-view pressure)
                       [(compiler_regalloc.CompilerRegScratchPlanResult.Result
                           _
                           pressure-plan)
                         (compiler-backend-scratch-vreg-tail-mask-pressure-plan-ok?
-                          pressure-plan)])
-                    (match pressure-windows
+                          (owned_view.compiler-owned-shared-view pressure-plan))])
+                    (match (owned_view.compiler-owned-shared-view
+                      pressure-windows)
                       [(compiler_regalloc.CompilerRegScratchPlanResult.Result
                           _
                           pressure-plan)
                         (compiler-backend-scratch-vreg-tail-mask-pressure-plan-ok?
-                          pressure-plan)]))])])]))
+                          (owned_view.compiler-owned-shared-view pressure-plan))]))])])]))
     true))
 
 (define (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?) : bool
@@ -44880,12 +45883,12 @@
         (compiler_ast_types.AstType.I64)
         "%r14"
         "%xmm14"
-        diag
+        (owned_view.compiler-owned-shared-view diag)
         backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok splat)
           (match (compiler_backend.compiler-backend-emit-vector-reduce
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            reduce-assignments
+            (owned_view.compiler-owned-shared-view reduce-assignments)
             1
             (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -44893,12 +45896,12 @@
             (compiler_ast_types.AstType.I64)
             "%xmm14"
             "%xmm15"
-            diag
+            (owned_view.compiler-owned-shared-view diag)
             backend-state)
             [(compiler_backend.ResultCompilerBackend.Ok avx2)
               (match (compiler_backend.compiler-backend-emit-vector-reduce
                 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-                reduce-assignments
+                (owned_view.compiler-owned-shared-view reduce-assignments)
                 1
                 (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
                 (compiler_ir_types.CompilerIrValue.Var 0)
@@ -44906,27 +45909,27 @@
                 (compiler_ast_types.AstType.I64)
                 "%xmm14"
                 "%xmm15"
-                diag
+                (owned_view.compiler-owned-shared-view diag)
                 backend-state)
                 [(compiler_backend.ResultCompilerBackend.Ok avx512)
                   (and
                     (compiler_backend.compiler-backend-string-contains?
-                      splat
+                      (owned_view.compiler-owned-shared-view splat)
                       "%r14")
                     (compiler_backend.compiler-backend-string-contains?
-                      splat
+                      (owned_view.compiler-owned-shared-view splat)
                       "%xmm14")
                     (compiler_backend.compiler-backend-string-contains?
-                      avx2
+                      (owned_view.compiler-owned-shared-view avx2)
                       "%xmm14")
                     (compiler_backend.compiler-backend-string-contains?
-                      avx2
+                      (owned_view.compiler-owned-shared-view avx2)
                       "%xmm15")
                     (compiler_backend.compiler-backend-string-contains?
-                      avx512
+                      (owned_view.compiler-owned-shared-view avx512)
                       "%xmm14")
                     (compiler_backend.compiler-backend-string-contains?
-                      avx512
+                      (owned_view.compiler-owned-shared-view avx512)
                       "%xmm15"))]
                 [(compiler_backend.ResultCompilerBackend.Err _) false])]
             [(compiler_backend.ResultCompilerBackend.Err _) false])]
@@ -44942,20 +45945,21 @@
       [cast : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_float_cast"
-          cast-blocks
+          (owned_view.compiler-owned-shared-view cast-blocks)
           2
           (compiler-backend-scratch-vreg-cast-test-assignments))]
       [cast-dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_float_cast_dense"
-          (compiler_ir_types.compiler-ir-block-list-compact cast-blocks)
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (owned_view.compiler-owned-shared-view cast-blocks))
           2
           (compiler-backend-scratch-vreg-cast-test-assignments))]
       [cast-windows : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
           (compiler_abi.CompilerRegTargetAbi.Windows)
           "scratch_vreg_float_cast_windows"
-          cast-blocks
+          (owned_view.compiler-owned-shared-view cast-blocks)
           2
           (compiler-backend-scratch-vreg-cast-test-assignments))]
       [gp-only : compiler_regalloc.CompilerRegScratchPlanResult
@@ -44969,13 +45973,14 @@
       [bitcast : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_float_bitcast"
-          bitcast-blocks
+          (owned_view.compiler-owned-shared-view bitcast-blocks)
           2
           (compiler-backend-scratch-vreg-bitcast-test-assignments))]
       [bitcast-dense : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_float_bitcast_dense"
-          (compiler_ir_types.compiler-ir-block-list-compact bitcast-blocks)
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (owned_view.compiler-owned-shared-view bitcast-blocks))
           2
           (compiler-backend-scratch-vreg-bitcast-test-assignments))]
       [mov : compiler_regalloc.CompilerRegScratchPlanResult
@@ -44984,19 +45989,46 @@
           (compiler-backend-scratch-vreg-float-mov-test-blocks)
           2
           (compiler-backend-scratch-vreg-float-mov-test-assignments))]
-      [cast-xmm : String (compiler-backend-scratch-test-register cast 0)]
-      [cast-gp0 : String (compiler-backend-scratch-test-register cast 1)]
-      [cast-gp1 : String (compiler-backend-scratch-test-register cast 2)]
+      [cast-xmm : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view cast)
+          0)]
+      [cast-gp0 : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view cast)
+          1)]
+      [cast-gp1 : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view cast)
+          2)]
       [cast-win-xmm : String
-        (compiler-backend-scratch-test-register cast-windows 0)]
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view cast-windows)
+          0)]
       [cast-win-gp0 : String
-        (compiler-backend-scratch-test-register cast-windows 1)]
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view cast-windows)
+          1)]
       [cast-win-gp1 : String
-        (compiler-backend-scratch-test-register cast-windows 2)]
-      [gp-only-reg : String (compiler-backend-scratch-test-register gp-only 0)]
-      [bitcast-xmm : String (compiler-backend-scratch-test-register bitcast 0)]
-      [bitcast-gp : String (compiler-backend-scratch-test-register bitcast 1)]
-      [mov-xmm : String (compiler-backend-scratch-test-register mov 0)]
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view cast-windows)
+          2)]
+      [gp-only-reg : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view gp-only)
+          0)]
+      [bitcast-xmm : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view bitcast)
+          0)]
+      [bitcast-gp : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view bitcast)
+          1)]
+      [mov-xmm : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view mov)
+          0)]
       [same-home : compiler_regalloc.CompilerRegAssignmentTable
         (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
@@ -45008,54 +46040,132 @@
               (compiler_regalloc.CompilerRegLocation.Spill -8))
             (compiler_regalloc.compiler-reg-assignment-table-empty)))]
       (and
-        (= (compiler-backend-scratch-test-plan-count cast) 3)
-        (= (compiler-backend-scratch-test-success-count cast) 3)
-        (>= (compiler-backend-scratch-test-xmm-family-index cast-xmm) 0)
-        (not (string.eq cast-gp0 ""))
-        (not (string.eq cast-gp1 ""))
-        (not (string.eq cast-gp0 cast-gp1))
-        (not (string.eq cast-gp0 "%r12"))
-        (not (string.eq cast-gp1 "%r12"))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view cast))
+          3)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view cast))
+          3)
+        (>=
+          (compiler-backend-scratch-test-xmm-family-index
+            (owned_view.compiler-owned-shared-view cast-xmm))
+          0)
+        (not (string.eq (owned_view.compiler-owned-shared-view cast-gp0) ""))
+        (not (string.eq (owned_view.compiler-owned-shared-view cast-gp1) ""))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view cast-gp0)
+            (owned_view.compiler-owned-shared-view cast-gp1)))
+        (not
+          (string.eq (owned_view.compiler-owned-shared-view cast-gp0) "%r12"))
+        (not
+          (string.eq (owned_view.compiler-owned-shared-view cast-gp1) "%r12"))
         (string.eq
-          cast-xmm
-          (compiler-backend-scratch-test-register cast-dense 0))
+          (owned_view.compiler-owned-shared-view cast-xmm)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view cast-dense)
+            0))
         (string.eq
-          cast-gp0
-          (compiler-backend-scratch-test-register cast-dense 1))
+          (owned_view.compiler-owned-shared-view cast-gp0)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view cast-dense)
+            1))
         (string.eq
-          cast-gp1
-          (compiler-backend-scratch-test-register cast-dense 2))
-        (= (compiler-backend-scratch-test-plan-count cast-windows) 3)
-        (= (compiler-backend-scratch-test-success-count cast-windows) 3)
-        (>= (compiler-backend-scratch-test-xmm-family-index cast-win-xmm) 0)
-        (not (string.eq cast-win-gp0 ""))
-        (not (string.eq cast-win-gp1 ""))
-        (not (string.eq cast-win-gp0 cast-win-gp1))
-        (not (string.eq cast-win-gp0 "%r12"))
-        (not (string.eq cast-win-gp1 "%r12"))
-        (= (compiler-backend-scratch-test-plan-count gp-only) 1)
-        (= (compiler-backend-scratch-test-success-count gp-only) 1)
-        (not (string.eq gp-only-reg ""))
-        (< (compiler-backend-scratch-test-xmm-family-index gp-only-reg) 0)
-        (= (compiler-backend-scratch-test-plan-count bitcast) 2)
-        (= (compiler-backend-scratch-test-success-count bitcast) 2)
-        (>= (compiler-backend-scratch-test-xmm-family-index bitcast-xmm) 0)
-        (not (string.eq bitcast-gp ""))
-        (< (compiler-backend-scratch-test-xmm-family-index bitcast-gp) 0)
+          (owned_view.compiler-owned-shared-view cast-gp1)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view cast-dense)
+            2))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view cast-windows))
+          3)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view cast-windows))
+          3)
+        (>=
+          (compiler-backend-scratch-test-xmm-family-index
+            (owned_view.compiler-owned-shared-view cast-win-xmm))
+          0)
+        (not
+          (string.eq (owned_view.compiler-owned-shared-view cast-win-gp0) ""))
+        (not
+          (string.eq (owned_view.compiler-owned-shared-view cast-win-gp1) ""))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view cast-win-gp0)
+            (owned_view.compiler-owned-shared-view cast-win-gp1)))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view cast-win-gp0)
+            "%r12"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view cast-win-gp1)
+            "%r12"))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view gp-only))
+          1)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view gp-only))
+          1)
+        (not (string.eq (owned_view.compiler-owned-shared-view gp-only-reg) ""))
+        (<
+          (compiler-backend-scratch-test-xmm-family-index
+            (owned_view.compiler-owned-shared-view gp-only-reg))
+          0)
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view bitcast))
+          2)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view bitcast))
+          2)
+        (>=
+          (compiler-backend-scratch-test-xmm-family-index
+            (owned_view.compiler-owned-shared-view bitcast-xmm))
+          0)
+        (not (string.eq (owned_view.compiler-owned-shared-view bitcast-gp) ""))
+        (<
+          (compiler-backend-scratch-test-xmm-family-index
+            (owned_view.compiler-owned-shared-view bitcast-gp))
+          0)
         (string.eq
-          bitcast-xmm
-          (compiler-backend-scratch-test-register bitcast-dense 0))
+          (owned_view.compiler-owned-shared-view bitcast-xmm)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view bitcast-dense)
+            0))
         (string.eq
-          bitcast-gp
-          (compiler-backend-scratch-test-register bitcast-dense 1))
-        (= (compiler-backend-scratch-test-plan-count mov) 1)
-        (= (compiler-backend-scratch-test-success-count mov) 1)
-        (>= (compiler-backend-scratch-test-xmm-family-index mov-xmm) 0)
-        (not (= (compiler-backend-scratch-test-xmm-family-index mov-xmm) 6))
+          (owned_view.compiler-owned-shared-view bitcast-gp)
+          (compiler-backend-scratch-test-register
+            (owned_view.compiler-owned-shared-view bitcast-dense)
+            1))
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view mov))
+          1)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view mov))
+          1)
+        (>=
+          (compiler-backend-scratch-test-xmm-family-index
+            (owned_view.compiler-owned-shared-view mov-xmm))
+          0)
+        (not
+          (=
+            (compiler-backend-scratch-test-xmm-family-index
+              (owned_view.compiler-owned-shared-view mov-xmm))
+            6))
         (=
           (compiler_regalloc.compiler-reg-scratch-cast-slot-count
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            same-home
+            (owned_view.compiler-owned-shared-view same-home)
             1
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ast_types.AstType.F64)
@@ -45065,7 +46175,7 @@
           (compiler_regalloc.compiler-reg-scratch-vreg-slots
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (compiler_abi.CompilerRegTargetAbi.Linux)
-            same-home
+            (owned_view.compiler-owned-shared-view same-home)
             (compiler_regalloc.compiler-reg-var-types-empty)
             (compiler_ir_types.CompilerIrInstr.Mov
               1
@@ -45075,7 +46185,7 @@
             (compiler_regalloc.compiler-reg-label-seq-empty)
             false)
           0)
-        (match cast
+        (match (owned_view.compiler-owned-shared-view cast)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
               (match (__tl-project-field
@@ -45096,14 +46206,14 @@
                 [(compiler_regalloc.CompilerRegScratchRole.FloatCastScratchGp)
                   true]
                 [_ false]))])
-        (match gp-only
+        (match (owned_view.compiler-owned-shared-view gp-only)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (match (__tl-project-field
               (__tl-project-field (array-ref plan.items 0) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.FloatCastValueGp) true]
               [_ false])])
-        (match bitcast
+        (match (owned_view.compiler-owned-shared-view bitcast)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
               (match (__tl-project-field
@@ -45118,7 +46228,7 @@
                 [(compiler_regalloc.CompilerRegScratchRole.FloatBitcastValueGp)
                   true]
                 [_ false]))])
-        (match mov
+        (match (owned_view.compiler-owned-shared-view mov)
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (match (__tl-project-field
               (__tl-project-field (array-ref plan.items 0) requirement)
@@ -45156,7 +46266,7 @@
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.U64)
         (compiler_ast_types.AstType.F64)
-        index
+        (owned_view.compiler-owned-shared-view index)
         "%xmm14"
         "%r14"
         "%r15"
@@ -45171,7 +46281,7 @@
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ast_types.AstType.I64)
             (compiler_ast_types.AstType.F64)
-            index
+            (owned_view.compiler-owned-shared-view index)
             "%r14"
             ""
             ""
@@ -45184,7 +46294,7 @@
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 (compiler_ast_types.AstType.F64)
                 (compiler_ast_types.AstType.U64)
-                index
+                (owned_view.compiler-owned-shared-view index)
                 "%xmm14"
                 "%r14"
                 backend-state)
@@ -45195,36 +46305,36 @@
                     1
                     (compiler_ir_types.CompilerIrValue.Var 0)
                     (compiler_ast_types.AstType.F64)
-                    index
+                    (owned_view.compiler-owned-shared-view index)
                     2
                     "%xmm14"
                     backend-state)
                     [(compiler_backend.ResultCompilerBackend.Ok mov-asm)
                       (and
                         (compiler_backend.compiler-backend-string-contains?
-                          cast-asm
+                          (owned_view.compiler-owned-shared-view cast-asm)
                           "%xmm14")
                         (compiler_backend.compiler-backend-string-contains?
-                          cast-asm
+                          (owned_view.compiler-owned-shared-view cast-asm)
                           "%r14")
                         (compiler_backend.compiler-backend-string-contains?
-                          cast-asm
+                          (owned_view.compiler-owned-shared-view cast-asm)
                           "%r15")
                         (compiler_backend.compiler-backend-string-contains?
-                          gp-only-asm
+                          (owned_view.compiler-owned-shared-view gp-only-asm)
                           "%r14")
                         (compiler_backend.compiler-backend-string-contains?
-                          gp-only-asm
+                          (owned_view.compiler-owned-shared-view gp-only-asm)
                           "%xmm6")
                         (not
                           (compiler_backend.compiler-backend-string-contains?
-                            gp-only-asm
+                            (owned_view.compiler-owned-shared-view gp-only-asm)
                             "%xmm14"))
                         (compiler_backend.compiler-backend-string-contains?
-                          bitcast-asm
+                          (owned_view.compiler-owned-shared-view bitcast-asm)
                           "%xmm14")
                         (compiler_backend.compiler-backend-string-contains?
-                          bitcast-asm
+                          (owned_view.compiler-owned-shared-view bitcast-asm)
                           "%r14")
                         (compiler_backend.compiler-backend-string-contains?
                           mov-asm
@@ -45255,9 +46365,12 @@
           (compiler_abi.CompilerRegTargetAbi.Linux))]
       [occupancy : compiler_regalloc.CompilerRegGreedyOccupancy
         (compiler_regalloc.compiler-reg-greedy-occupancy-make
-          assignments
-          (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
-          registers
+          (owned_view.compiler-owned-shared-view assignments)
+          (compiler_regalloc.CompilerRegIntervalIndex
+            (owned_view.compiler-owned-shared-view starts)
+            (owned_view.compiler-owned-shared-view ends)
+            (owned_view.compiler-owned-shared-view segments))
+          (owned_view.compiler-owned-shared-view registers)
           (array-length registers))]
       [ref-counts : (__tl_dyn-array i64) (array.make-array i64 5)]
       [gp-fixed-rcx : compiler_regalloc.CompilerRegScratchConstraint
@@ -45293,11 +46406,21 @@
           (compiler_regalloc.compiler-reg-id-seq-empty)
           compiler_abi.compiler-reg-id-invalid)]
       (begin
-        (compiler_regalloc.compiler-reg-fill-i64-array starts -1)
-        (compiler_regalloc.compiler-reg-fill-i64-array ends -1)
-        (compiler_regalloc.compiler-reg-fill-i64-array present 0)
-        (compiler_regalloc.compiler-reg-fill-i64-array ref-counts 0)
-        (compiler_regalloc.compiler-reg-fill-interval-seq-array! segments 0)
+        (compiler_regalloc.compiler-reg-fill-i64-array
+          (owned_view.compiler-owned-shared-view starts)
+          -1)
+        (compiler_regalloc.compiler-reg-fill-i64-array
+          (owned_view.compiler-owned-shared-view ends)
+          -1)
+        (compiler_regalloc.compiler-reg-fill-i64-array
+          (owned_view.compiler-owned-shared-view present)
+          0)
+        (compiler_regalloc.compiler-reg-fill-i64-array
+          (owned_view.compiler-owned-shared-view ref-counts)
+          0)
+        (compiler_regalloc.compiler-reg-fill-interval-seq-array!
+          (owned_view.compiler-owned-shared-view segments)
+          0)
         ;; Fixed RCX overlaps the simultaneous conflict below.
         (set!
           (array-ref items 0)
@@ -45306,7 +46429,7 @@
               0
               0
               (compiler_regalloc.CompilerRegScratchRole.CallTarget)
-              gp-fixed-rcx
+              (owned_view.compiler-owned-shared-view gp-fixed-rcx)
               0
               1
               0)
@@ -45351,7 +46474,7 @@
               0
               3
               (compiler_regalloc.CompilerRegScratchRole.BoundsLength)
-              gp-fixed-rcx
+              (owned_view.compiler-owned-shared-view gp-fixed-rcx)
               0
               3
               3)
@@ -45376,25 +46499,33 @@
         (let
           [i : i64 0]
           (while (< i 5)
-            (begin
-              (compiler_regalloc.compiler-reg-scratch-mark-requirement!
-                starts
-                ends
-                segments
-                present
-                types
-                (__tl-project-field (array-ref items i) requirement))
-              (set! i (+ i 1)))))
+            (let
+              [item : compiler_regalloc.CompilerRegScratchAssignment
+                (compiler_ir_types.compiler-ir-array-shared-view
+                  (owned_view.compiler-owned-shared-view items)
+                  i)]
+              (begin
+                (compiler_regalloc.compiler-reg-scratch-mark-requirement!
+                  (owned_view.compiler-owned-shared-view starts)
+                  (owned_view.compiler-owned-shared-view ends)
+                  (owned_view.compiler-owned-shared-view segments)
+                  (owned_view.compiler-owned-shared-view present)
+                  (owned_view.compiler-owned-shared-view types)
+                  (owned_view.compiler-owned-shared-view item.requirement))
+                (set! i (+ i 1))))))
         (compiler_regalloc.compiler-reg-scratch-assign-items!
           (compiler_abi.CompilerRegTargetAbi.Linux)
-          items
+          (owned_view.compiler-owned-shared-view items)
           0
-          assignments
-          occupancy
-          (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
+          (owned_view.compiler-owned-shared-view assignments)
+          (owned_view.compiler-owned-shared-view occupancy)
+          (compiler_regalloc.CompilerRegIntervalIndex
+            (owned_view.compiler-owned-shared-view starts)
+            (owned_view.compiler-owned-shared-view ends)
+            (owned_view.compiler-owned-shared-view segments))
           (array.make-array i64 0)
-          ref-counts
-          registers
+          (owned_view.compiler-owned-shared-view ref-counts)
+          (owned_view.compiler-owned-shared-view registers)
           (array-length registers)
           (compiler_regalloc.compiler-reg-scratch-default-pool
             (compiler_abi.CompilerRegTargetAbi.Linux)
@@ -46951,7 +48082,7 @@
         (compiler_ir_types.CompilerIrValue.I64 12)
         (compiler_ast_types.AstType.I64)
         index
-        planned
+        (owned_view.compiler-owned-shared-view planned)
         ""
         ""
         backend-state)
@@ -46962,21 +48093,21 @@
                 asm
                 backend-state)]
             (and
-              (string.eq planned "%rdi")
+              (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq %rdi, -64(%rbp)\n")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq 0(%rbp), %rdi\n")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq $11, (%rdi)\n")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq $12, 8(%rdi)\n")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq -64(%rbp), %rdi\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
@@ -47047,7 +48178,7 @@
         (compiler_ast_types.AstType.I64)
         index
         0
-        planned
+        (owned_view.compiler-owned-shared-view planned)
         ""
         ""
         backend-state)
@@ -47058,18 +48189,425 @@
                 asm
                 backend-state)]
             (and
-              (string.eq planned "%rdi")
+              (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq %rdi, -64(%rbp)\n")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq 0(%rbp), %rdi\n")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq $12, 8(%rdi)\n")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq -64(%rbp), %rdi\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+    true))
+
+;; A standalone staged GEP consumes its address plan before loading a spilled
+;; descriptor. The planner may deliberately lend that stage an ordinary
+;; live-through home, so selecting the planned spelling must arm the same local
+;; preservation wrapper as fused stores, bounds checks, and other consumers.
+(define (compiler-backend-gep-staged-arms-planned-preserve-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [_plan-init : unit
+        (begin
+          (set!
+            (array-ref items 0)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                0
+                (compiler_regalloc.CompilerRegScratchRole.MemoryAddress)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                2)
+              true
+              false
+              compiler_abi.compiler-reg-id-rdi))
+          (set! (array-ref firsts 0) 0)
+          (set! (array-ref slots 0) 1))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
+      [index : compiler_backend.CompilerBackendProgramIndex
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        index.backend-state]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            0
+            (compiler_regalloc.CompilerRegLocation.Spill 0))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              1
+              (compiler_regalloc.CompilerRegLocation.Spill -8))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+      [function-state : compiler_backend.CompilerBackendFunctionState
+        (compiler_backend.compiler-backend-state-function-state backend-state)]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          function-state
+          -64)]
+      [planned : String
+        (compiler_backend.compiler-backend-scratch-plan-register-here
+          plan
+          0
+          backend-state)]
+      (match (compiler_backend.compiler-backend-emit-gep
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        assignments
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64)
+        0
+        (owned_view.compiler-owned-shared-view planned)
+        ""
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (let
+            [wrapped : String
+              (compiler_backend.compiler-backend-emergency-wrap
+                asm
+                backend-state)]
+            (and
+              (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq %rdi, -64(%rbp)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq 0(%rbp), %rdi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    addq $8, %rdi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq %rdi, -8(%rbp)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq -64(%rbp), %rdi\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+    true))
+
+;; A fused GEP+Load with a spilled descriptor uses the address plan to
+;; materialize the descriptor before dereferencing it. That plan may borrow an
+;; ordinary live-through home, just like the standalone staged GEP plan above.
+(define (compiler-backend-gep-load-arms-planned-address-preserve-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [_plan-init : unit
+        (begin
+          (set!
+            (array-ref items 0)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                0
+                (compiler_regalloc.CompilerRegScratchRole.MemoryAddress)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                2)
+              true
+              false
+              compiler_abi.compiler-reg-id-rdi))
+          (set! (array-ref firsts 0) 0)
+          (set! (array-ref slots 0) 1))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
+      [index : compiler_backend.CompilerBackendProgramIndex
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        index.backend-state]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            0
+            (compiler_regalloc.CompilerRegLocation.Spill 0))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              1
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-r12))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+      [function-state : compiler_backend.CompilerBackendFunctionState
+        (compiler_backend.compiler-backend-state-function-state backend-state)]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          function-state
+          -64)]
+      [planned : String
+        (compiler_backend.compiler-backend-scratch-plan-register-here
+          plan
+          0
+          backend-state)]
+      (match (compiler_backend.compiler-backend-emit-load-from-gep
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        assignments
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64)
+        (compiler_ast_types.AstType.I64)
+        ""
+        0
+        (owned_view.compiler-owned-shared-view planned)
+        ""
+        ""
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (let
+            [wrapped : String
+              (compiler_backend.compiler-backend-emergency-wrap
+                asm
+                backend-state)]
+            (and
+              (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq %rdi, -64(%rbp)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq 0(%rbp), %rdi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq 8(%rdi), %r12\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq -64(%rbp), %rdi\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+    true))
+
+;; CopyBytes uses one GP scratch for each residual chunk that cannot be moved
+;; through the XMM plan. The scratch may borrow an ordinary value live through
+;; the copy, so its selection must arm the instruction's preservation wrapper.
+(define (compiler-backend-copy-bytes-arms-planned-value-preserve-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [_plan-init : unit
+        (begin
+          (set!
+            (array-ref items 0)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                0
+                (compiler_regalloc.CompilerRegScratchRole.CopyValue)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                2)
+              true
+              false
+              compiler_abi.compiler-reg-id-rdi))
+          (set! (array-ref firsts 0) 0)
+          (set! (array-ref slots 0) 1))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
+      [index : compiler_backend.CompilerBackendProgramIndex
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        index.backend-state]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            0
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r12))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              1
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-r13))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+      [function-state : compiler_backend.CompilerBackendFunctionState
+        (compiler_backend.compiler-backend-state-function-state backend-state)]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          function-state
+          -64)]
+      [planned : String
+        (compiler_backend.compiler-backend-scratch-plan-register-here
+          plan
+          0
+          backend-state)]
+      (match (compiler_backend.compiler-backend-emit-copy-bytes
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        assignments
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        8
+        ""
+        ""
+        (owned_view.compiler-owned-shared-view planned)
+        ""
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (let
+            [wrapped : String
+              (compiler_backend.compiler-backend-emergency-wrap
+                asm
+                backend-state)]
+            (and
+              (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq %rdi, -64(%rbp)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq (%r13), %rdi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq %rdi, (%r12)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq -64(%rbp), %rdi\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+    true))
+
+;; A dynamic GEP store with a spilled base stages even a register-homed index.
+;; If the plan borrows a live-through home for that index copy, consuming the
+;; index plan must arm preservation before the address is composed.
+(define (compiler-backend-gep-store-arms-planned-index-preserve-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [_plan-init : unit
+        (begin
+          (set!
+            (array-ref items 0)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                0
+                (compiler_regalloc.CompilerRegScratchRole.MemoryIndex)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                2)
+              true
+              false
+              compiler_abi.compiler-reg-id-rdi))
+          (set! (array-ref firsts 0) 0)
+          (set! (array-ref slots 0) 1))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
+      [index : compiler_backend.CompilerBackendProgramIndex
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        index.backend-state]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            0
+            (compiler_regalloc.CompilerRegLocation.Spill 0))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              1
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-rax))
+            (compiler_regalloc.compiler-reg-assignments-prepend
+              (compiler_regalloc.CompilerRegAssignment
+                2
+                (compiler_regalloc.CompilerRegLocation.Register
+                  compiler_abi.compiler-reg-id-rsi))
+              (compiler_regalloc.compiler-reg-assignment-table-empty))))]
+      [function-state : compiler_backend.CompilerBackendFunctionState
+        (compiler_backend.compiler-backend-state-function-state backend-state)]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          function-state
+          -64)]
+      [planned : String
+        (compiler_backend.compiler-backend-scratch-plan-register-here
+          plan
+          0
+          backend-state)]
+      (match (compiler_backend.compiler-backend-emit-store-to-gep
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        assignments
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64)
+        index
+        0
+        "%r10"
+        (owned_view.compiler-owned-shared-view planned)
+        ""
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (let
+            [wrapped : String
+              (compiler_backend.compiler-backend-emergency-wrap
+                asm
+                backend-state)]
+            (and
+              (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq %rdi, -64(%rbp)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq %rax, %rdi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
+                "    movq %rsi, (%r10,%rdi,8)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq -64(%rbp), %rdi\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
@@ -47163,7 +48701,7 @@
         "_tl_test"
         assignments
         ""
-        planned-index
+        (owned_view.compiler-owned-shared-view planned-index)
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ir_types.compiler-ir-label "bounds_ok")
@@ -47178,18 +48716,20 @@
                 asm
                 backend-state)]
             (and
-              (string.eq planned-index "%rsi")
+              (string.eq
+                (owned_view.compiler-owned-shared-view planned-index)
+                "%rsi")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq %rsi, -64(%rbp)\n")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq -8(%rbp), %rsi\n")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    cmpq %r12, %rsi\n")
               (compiler_backend.compiler-backend-string-contains?
-                wrapped
+                (owned_view.compiler-owned-shared-view wrapped)
                 "    movq -64(%rbp), %rsi\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
@@ -47276,20 +48816,23 @@
         (compiler_ir_types.compiler-ir-block-cons
           (compiler_ir_types.compiler-ir-block
             (compiler_ir_types.compiler-ir-label "entry")
-            instrs)
+            (owned_view.compiler-owned-shared-view instrs))
           compiler_ir_types.CompilerIrBlockList.Nil)]
       [scratch-result : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
           (compiler_abi.CompilerRegTargetAbi.Windows)
           "divmod_polish_preserve"
-          blocks
+          (owned_view.compiler-owned-shared-view blocks)
           26
-          assignments)]
+          (owned_view.compiler-owned-shared-view assignments))]
       [scratch : compiler_regalloc.CompilerRegScratchPlan
         (match scratch-result
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan) plan])]
       [src-id : i64
-        (compiler_regalloc.compiler-reg-scratch-plan-register scratch 2 3)]
+        (compiler_regalloc.compiler-reg-scratch-plan-register
+          (owned_view.compiler-owned-shared-view scratch)
+          2
+          3)]
       [src : String (compiler_abi.compiler-abi-register-spelling src-id)]
       [backend-state : compiler_backend.CompilerBackendState
         (compiler_backend.compiler-backend-state-new
@@ -47299,24 +48842,36 @@
           (compiler_backend.compiler-backend-state-function-state backend-state)
           -256)]
       (match (compiler-backend-emit-test-instrs-target-with-backend-state
-        instrs
-        assignments
+        (owned_view.compiler-owned-shared-view instrs)
+        (owned_view.compiler-owned-shared-view assignments)
         26
         (compiler_backend.CompilerBackendTarget.Windows)
         backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (not (= src-id compiler_abi.compiler-reg-id-invalid))
-            (compiler_regalloc.compiler-reg-scratch-plan-preserve? scratch 2 3)
+            (compiler_regalloc.compiler-reg-scratch-plan-preserve?
+              (owned_view.compiler-owned-shared-view scratch)
+              2
+              3)
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
-              (str_cat.str-cat "    movq " src ", -256(%rbp)\n"))
+              (str_cat.str-cat
+                "    movq "
+                (owned_view.compiler-owned-shared-view src)
+                ", -256(%rbp)\n"))
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
-              (str_cat.str-cat "), " src "\n"))
+              (str_cat.str-cat
+                "), "
+                (owned_view.compiler-owned-shared-view src)
+                "\n"))
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
-              (str_cat.str-cat "    movq -256(%rbp), " src "\n")))]
+              (str_cat.str-cat
+                "    movq -256(%rbp), "
+                (owned_view.compiler-owned-shared-view src)
+                "\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
 
@@ -47355,6 +48910,223 @@
           (compiler_regalloc.CompilerRegLocation.Spill -24))
         (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
+;; Safe literal div/mod folds a single-use Mov (and an optional Cast) into the
+;; consumer. The emission cursor still names the producer, so the fusion must
+;; explicitly fetch the consumer's modeled scratch point.
+(define (compiler-backend-scratch-vreg-fused-divmod-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Mov
+      1
+      (compiler_ir_types.CompilerIrValue.I64 10)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        2
+        (compiler_ir_types.CompilerIrBinOp.Div)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 2)))
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (compiler-backend-scratch-vreg-fused-cast-divmod-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Mov
+      1
+      (compiler_ir_types.CompilerIrValue.I64 10)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Cast
+        2
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.I64)
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          3
+          (compiler_ir_types.CompilerIrBinOp.Div)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 3)))
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (compiler-backend-scratch-vreg-fused-divmod-assignments
+  [with-cast : bool]) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        compiler_abi.compiler-reg-id-r12))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Spill -16))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Spill -24))
+        (if with-cast
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              3
+              (compiler_regalloc.CompilerRegLocation.Spill -32))
+            (compiler_regalloc.compiler-reg-assignment-table-empty))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
+
+(define (compiler-backend-scratch-vreg-fused-divmod-emission-uses-consumer-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (compiler-backend-emit-test-instrs
+      (compiler-backend-scratch-vreg-fused-divmod-instrs)
+      (compiler-backend-scratch-vreg-fused-divmod-assignments false)
+      3)
+      [(compiler_backend.ResultCompilerBackend.Ok direct-asm)
+        (match (compiler-backend-emit-test-instrs
+          (compiler-backend-scratch-vreg-fused-cast-divmod-instrs)
+          (compiler-backend-scratch-vreg-fused-divmod-assignments true)
+          4)
+          [(compiler_backend.ResultCompilerBackend.Ok cast-asm)
+            (and
+              (not
+                (compiler_backend.compiler-backend-string-contains?
+                  (owned_view.compiler-owned-shared-view direct-asm)
+                  "    movq $10, -16(%rbp)\n"))
+              (not
+                (compiler_backend.compiler-backend-string-contains?
+                  (owned_view.compiler-owned-shared-view cast-asm)
+                  "    movq $10, -16(%rbp)\n")))]
+          [(compiler_backend.ResultCompilerBackend.Err _) false])]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    true))
+
+;; A pointer-typed Gep can feed StorePtr through a scalar Mov. The producer
+;; fusion skips both instructions, so the value staging scratch belongs to the
+;; StorePtr two sites ahead rather than to the intervening scratch-free Mov.
+(define (compiler-backend-scratch-vreg-fused-gep-mov-store-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      3
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        4
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.U64))
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (compiler-backend-scratch-vreg-fused-gep-mov-store-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Spill -8))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Spill -16))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Spill -24))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            3
+            (compiler_regalloc.CompilerRegLocation.Spill -32))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              4
+              (compiler_regalloc.CompilerRegLocation.Spill -40))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
+
+(define (compiler-backend-scratch-vreg-fused-gep-mov-store-emission-uses-store-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (compiler-backend-emit-test-instrs
+      (compiler-backend-scratch-vreg-fused-gep-mov-store-instrs)
+      (compiler-backend-scratch-vreg-fused-gep-mov-store-assignments)
+      5)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq -24(%rbp), ")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movq -32(%rbp), -40(%rbp)\n")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    true))
+
+;; Gep+Load+Compare+Branch keeps the address scratch at the producer site and
+;; reuses the comparison's unmaterialized result slot to stage a spilled RHS.
+(define (compiler-backend-scratch-vreg-fused-gep-load-compare-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          4
+          (compiler_ir_types.CompilerIrBinOp.Eq)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.compiler-ir-label "match")
+            (compiler_ir_types.compiler-ir-label "next"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (compiler-backend-scratch-vreg-fused-gep-load-compare-assignments-from
+  [var : i64]) : compiler_regalloc.CompilerRegAssignmentTable
+  (if (= var 5)
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        var
+        (compiler_regalloc.CompilerRegLocation.Spill (* -8 (+ var 1))))
+      (compiler-backend-scratch-vreg-fused-gep-load-compare-assignments-from
+        (+ var 1)))))
+
+(define (compiler-backend-scratch-vreg-fused-gep-load-compare-emission-uses-site-plans-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (compiler-backend-emit-test-instrs
+      (compiler-backend-scratch-vreg-fused-gep-load-compare-instrs)
+      (compiler-backend-scratch-vreg-fused-gep-load-compare-assignments-from 0)
+      5)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    cmpq ")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            ".L_tl_test_match"))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    true))
+
 (define (compiler-backend-scratch-vreg-scalar-plan-ok?) : bool
   (cfg
     scratch-vreg
@@ -47370,31 +49142,62 @@
           (let
             [items : (__tl_dyn-array
               compiler_regalloc.CompilerRegScratchAssignment)
-              plan.items]
+              (owned_view.compiler-owned-shared-view plan.items)]
             [rax : String
-              (compiler-backend-scratch-test-plan-register-string plan 0 0)]
+              (compiler-backend-scratch-test-plan-register-string
+                (owned_view.compiler-owned-shared-view plan)
+                0
+                0)]
             [rdx : String
-              (compiler-backend-scratch-test-plan-register-string plan 0 1)]
+              (compiler-backend-scratch-test-plan-register-string
+                (owned_view.compiler-owned-shared-view plan)
+                0
+                1)]
             [temp0 : String
-              (compiler-backend-scratch-test-plan-register-string plan 0 2)]
+              (compiler-backend-scratch-test-plan-register-string
+                (owned_view.compiler-owned-shared-view plan)
+                0
+                2)]
             [temp1 : String
-              (compiler-backend-scratch-test-plan-register-string plan 0 3)]
+              (compiler-backend-scratch-test-plan-register-string
+                (owned_view.compiler-owned-shared-view plan)
+                0
+                3)]
             [temp2 : String
-              (compiler-backend-scratch-test-plan-register-string plan 0 4)]
+              (compiler-backend-scratch-test-plan-register-string
+                (owned_view.compiler-owned-shared-view plan)
+                0
+                4)]
             (and
-              (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 5)
-              (string.eq rax "%rax")
-              (string.eq rdx "%rdx")
-              (not (string.eq temp0 ""))
-              (not (string.eq temp1 ""))
-              (not (string.eq temp2 ""))
-              (not (string.eq temp0 temp1))
-              (not (string.eq temp0 temp2))
-              (not (string.eq temp1 temp2))
-              (not (string.eq temp0 "%rax"))
-              (not (string.eq temp0 "%rdx"))
-              (not (string.eq temp0 "%r12"))
-              (not (string.eq temp0 "%r13"))
+              (=
+                (compiler_regalloc.compiler-reg-scratch-plan-count
+                  (owned_view.compiler-owned-shared-view plan))
+                5)
+              (string.eq (owned_view.compiler-owned-shared-view rax) "%rax")
+              (string.eq (owned_view.compiler-owned-shared-view rdx) "%rdx")
+              (not (string.eq (owned_view.compiler-owned-shared-view temp0) ""))
+              (not (string.eq (owned_view.compiler-owned-shared-view temp1) ""))
+              (not (string.eq (owned_view.compiler-owned-shared-view temp2) ""))
+              (not
+                (string.eq
+                  (owned_view.compiler-owned-shared-view temp0)
+                  (owned_view.compiler-owned-shared-view temp1)))
+              (not
+                (string.eq
+                  (owned_view.compiler-owned-shared-view temp0)
+                  (owned_view.compiler-owned-shared-view temp2)))
+              (not
+                (string.eq
+                  (owned_view.compiler-owned-shared-view temp1)
+                  (owned_view.compiler-owned-shared-view temp2)))
+              (not
+                (string.eq (owned_view.compiler-owned-shared-view temp0) "%rax"))
+              (not
+                (string.eq (owned_view.compiler-owned-shared-view temp0) "%rdx"))
+              (not
+                (string.eq (owned_view.compiler-owned-shared-view temp0) "%r12"))
+              (not
+                (string.eq (owned_view.compiler-owned-shared-view temp0) "%r13"))
               (match (__tl-project-field
                 (__tl-project-field (array-ref items 0) requirement)
                 role)
@@ -47447,14 +49250,26 @@
       [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
         (let
           [fixed : String
-            (compiler-backend-scratch-test-plan-register-string plan 0 0)]
+            (compiler-backend-scratch-test-plan-register-string
+              (owned_view.compiler-owned-shared-view plan)
+              0
+              0)]
           [result : String
-            (compiler-backend-scratch-test-plan-register-string plan 0 1)]
+            (compiler-backend-scratch-test-plan-register-string
+              (owned_view.compiler-owned-shared-view plan)
+              0
+              1)]
           (and
-            (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 2)
-            (string.eq fixed "%rcx")
-            (not (string.eq result ""))
-            (not (string.eq result fixed))
+            (=
+              (compiler_regalloc.compiler-reg-scratch-plan-count
+                (owned_view.compiler-owned-shared-view plan))
+              2)
+            (string.eq (owned_view.compiler-owned-shared-view fixed) "%rcx")
+            (not (string.eq (owned_view.compiler-owned-shared-view result) ""))
+            (not
+              (string.eq
+                (owned_view.compiler-owned-shared-view result)
+                (owned_view.compiler-owned-shared-view fixed)))
             (match (__tl-project-field
               (__tl-project-field (array-ref plan.items 0) requirement)
               role)
@@ -47490,16 +49305,134 @@
       (compiler-backend-scratch-vreg-scalar-assignments))
       [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
         (and
-          (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 1)
+          (=
+            (compiler_regalloc.compiler-reg-scratch-plan-count
+              (owned_view.compiler-owned-shared-view plan))
+            1)
           (not
             (string.eq
-              (compiler-backend-scratch-test-plan-register-string plan 0 0)
+              (compiler-backend-scratch-test-plan-register-string
+                (owned_view.compiler-owned-shared-view plan)
+                0
+                0)
               ""))
           (match (__tl-project-field
             (__tl-project-field (array-ref plan.items 0) requirement)
             role)
             [(compiler_regalloc.CompilerRegScratchRole.ScalarPrimary) true]
             [_ false]))])
+    true))
+
+(define (compiler-backend-scratch-vreg-scalar-return-compare-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          2
+          (compiler_ir_types.CompilerIrBinOp.Eq)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 2)))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; Return comparison operands can be forwarded after allocation just like the
+;; compare/branch shape. Keep both staging homes even when the allocation-time
+;; RHS is directly usable outside %rax.
+(define (compiler-backend-scratch-vreg-scalar-return-compare-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (compiler-backend-scratch-test-result
+      "scratch_vreg_scalar_return_compare"
+      (compiler-backend-scratch-vreg-scalar-return-compare-blocks)
+      3
+      (compiler-backend-scratch-vreg-scalar-assignments))
+      [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
+        (let
+          [primary : String
+            (compiler-backend-scratch-test-plan-register-string
+              (owned_view.compiler-owned-shared-view plan)
+              0
+              0)]
+          [secondary : String
+            (compiler-backend-scratch-test-plan-register-string
+              (owned_view.compiler-owned-shared-view plan)
+              0
+              1)]
+          (and
+            (=
+              (compiler_regalloc.compiler-reg-scratch-plan-count
+                (owned_view.compiler-owned-shared-view plan))
+              2)
+            (not (string.eq (owned_view.compiler-owned-shared-view primary) ""))
+            (not
+              (string.eq (owned_view.compiler-owned-shared-view secondary) ""))
+            (not
+              (string.eq (owned_view.compiler-owned-shared-view primary) "%rax"))
+            (not
+              (string.eq
+                (owned_view.compiler-owned-shared-view secondary)
+                "%rax"))
+            (not
+              (string.eq
+                (owned_view.compiler-owned-shared-view primary)
+                (owned_view.compiler-owned-shared-view secondary)))
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 0) requirement)
+              role)
+              [(compiler_regalloc.CompilerRegScratchRole.ScalarPrimary) true]
+              [_ false])
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 1) requirement)
+              role)
+              [(compiler_regalloc.CompilerRegScratchRole.ScalarSecondary) true]
+              [_ false])))])
+    true))
+
+;; Keep the complete optimized address-of fixture here: address forwarding can
+;; suppress both apparent compare-operand homes before fused compare/branch
+;; emission. The scratch inventory must retain both staging ordinals.
+(define (compiler-backend-scratch-vreg-address-compare-emission-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [source : String
+        "(defstruct ScratchReturnPair (x i64) (y i64))\n\
+(define (scratch-vreg-address-compare-score) : i64\n\
+  (let\n\
+    [item : ScratchReturnPair (ScratchReturnPair 3 4)]\n\
+    [addr : (MutPtr ScratchReturnPair) (unsafe (ptr-addr-of item))]\n\
+    [field : (MutPtr i64) (unsafe (ptr-addr-of item.x))]\n\
+    (begin\n\
+      (unsafe (ptr-write! field 9))\n\
+      (if (= (unsafe (ptr->int addr)) (unsafe (ptr->int (ptr-addr-of item))))\n\
+        (+ item.x item.y)\n\
+        1000))))"]
+      (match (compiler_lower.lower-compiler-source-with-mode
+        source
+        (compiler_lower.CompilerLowerMode.Scalar))
+        [(compiler_lower.ResultCompilerLower.Ok program spans)
+          (match (compiler_optimize.optimize-program-with-spans program spans)
+            [(compiler_optimize.CompilerOptimizedProgram.Program
+                optimized
+                optimized-spans)
+              (match (compiler_backend.compiler-backend-emit-program-target-with-mode
+                optimized
+                (compiler_backend.CompilerBackendTarget.Linux)
+                (compiler_backend.CompilerBackendMode.Scalar)
+                optimized-spans
+                true)
+                [(compiler_backend.ResultCompilerBackend.Ok asm)
+                  (compiler_backend.compiler-backend-string-contains?
+                    (owned_view.compiler-owned-shared-view asm)
+                    "_tl_scratch_vreg_address_compare_score")]
+                [(compiler_backend.ResultCompilerBackend.Err _) false])])]
+        [(compiler_lower.ResultCompilerLower.Err _) false]))
     true))
 
 (define (compiler-backend-scratch-vreg-scalar-control-blocks) : compiler_ir_types.CompilerIrBlockList
@@ -47547,17 +49480,28 @@
       [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
         (let
           [primary : String
-            (compiler-backend-scratch-test-plan-register-string plan 0 0)]
+            (compiler-backend-scratch-test-plan-register-string
+              (owned_view.compiler-owned-shared-view plan)
+              0
+              0)]
           [rhs : String
-            (compiler-backend-scratch-test-plan-register-string plan 0 1)]
+            (compiler-backend-scratch-test-plan-register-string
+              (owned_view.compiler-owned-shared-view plan)
+              0
+              1)]
           [test : String
-            (compiler-backend-scratch-test-plan-register-string plan 2 0)]
+            (compiler-backend-scratch-test-plan-register-string
+              (owned_view.compiler-owned-shared-view plan)
+              2
+              0)]
           (and
-            (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 2)
-            ;; The compare emitter addresses a spilled lhs directly, so its one
-            ;; modeled scalar slot belongs to rhs staging (ordinal 0). The old
-            ;; generic direct predicate classified this in the opposite way and
-            ;; requested missing ordinal 1 during fused compare/branch emission.
+            (=
+              (compiler_regalloc.compiler-reg-scratch-plan-count
+                (owned_view.compiler-owned-shared-view plan))
+              3)
+            ;; Spilled operands remain directly addressable, but compare plans
+            ;; deliberately retain both staging ordinals because address
+            ;; forwarding can invalidate an apparent home after allocation.
             (compiler_regalloc.compiler-reg-scratch-compare-lhs-direct?
               (compiler-backend-scratch-vreg-scalar-control-assignments)
               (compiler_ir_types.CompilerIrValue.Var 0)
@@ -47576,9 +49520,7 @@
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 (compiler_ir_types.CompilerIrValue.Var 1)))
             (not (string.eq primary ""))
-            ;; One of the two spilled compare operands stages while the other is
-            ;; addressed directly from memory, so no secondary slot is needed.
-            (string.eq rhs "")
+            (not (string.eq rhs ""))
             (not (string.eq test ""))
             (=
               (__tl-project-field
@@ -47586,7 +49528,7 @@
                 hi)
               3)
             (match (__tl-project-field
-              (__tl-project-field (array-ref plan.items 1) requirement)
+              (__tl-project-field (array-ref plan.items 2) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.BranchTest) true]
               [_ false])))])
@@ -47647,45 +49589,82 @@
         "scratch_vreg_select"
         (compiler-backend-scratch-vreg-select-blocks)
         4
-        assignments)
+        (owned_view.compiler-owned-shared-view assignments))
         [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
           (let
             [result : String
-              (compiler-backend-scratch-test-plan-register-string plan 0 0)]
+              (compiler-backend-scratch-test-plan-register-string
+                (owned_view.compiler-owned-shared-view plan)
+                0
+                0)]
             [value : String
-              (compiler-backend-scratch-test-plan-register-string plan 0 1)]
+              (compiler-backend-scratch-test-plan-register-string
+                (owned_view.compiler-owned-shared-view plan)
+                0
+                1)]
             [test : String
-              (compiler-backend-scratch-test-plan-register-string plan 0 2)]
+              (compiler-backend-scratch-test-plan-register-string
+                (owned_view.compiler-owned-shared-view plan)
+                0
+                2)]
             (match (compiler_backend.compiler-backend-emit-scalar-select
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-              assignments
+              (owned_view.compiler-owned-shared-view assignments)
               3
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.CompilerIrValue.Var 2)
               (compiler_ast_types.AstType.I64)
-              result
-              value
-              test
+              (owned_view.compiler-owned-shared-view result)
+              (owned_view.compiler-owned-shared-view value)
+              (owned_view.compiler-owned-shared-view test)
               (compiler_diagnostic.compiler-diagnostic-at-start "" "")
               backend-state)
               [(compiler_backend.ResultCompilerBackend.Ok asm)
                 (and
-                  (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 3)
-                  (not (string.eq result ""))
-                  (not (string.eq value ""))
-                  (not (string.eq test ""))
-                  (not (string.eq result value))
-                  (not (string.eq result test))
-                  (not (string.eq value test))
-                  (not (string.eq result "%rax"))
-                  (not (string.eq result "%rdi"))
-                  (not (string.eq result "%r12"))
+                  (=
+                    (compiler_regalloc.compiler-reg-scratch-plan-count
+                      (owned_view.compiler-owned-shared-view plan))
+                    3)
+                  (not
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view result)
+                      ""))
+                  (not
+                    (string.eq (owned_view.compiler-owned-shared-view value) ""))
+                  (not
+                    (string.eq (owned_view.compiler-owned-shared-view test) ""))
+                  (not
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view result)
+                      (owned_view.compiler-owned-shared-view value)))
+                  (not
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view result)
+                      (owned_view.compiler-owned-shared-view test)))
+                  (not
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view value)
+                      (owned_view.compiler-owned-shared-view test)))
+                  (not
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view result)
+                      "%rax"))
+                  (not
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view result)
+                      "%rdi"))
+                  (not
+                    (string.eq
+                      (owned_view.compiler-owned-shared-view result)
+                      "%r12"))
                   (compiler_backend.compiler-backend-string-contains?
                     (owned_view.compiler-owned-shared-view asm)
                     (str_cat.str-cat
                       "    cmovne %rax, "
-                      (str_cat.str-cat result "\n")))
+                      (str_cat.str-cat
+                        (owned_view.compiler-owned-shared-view result)
+                        "\n")))
                   (not
                     (compiler_backend.compiler-backend-string-contains?
                       (owned_view.compiler-owned-shared-view asm)
@@ -47779,23 +49758,56 @@
                   (owned_view.compiler-owned-shared-view asm)
                   "%r14")))]
           [(compiler_backend.CompilerBackendMaybeAsm.No) false])]
+      [non-divmod-lazy? : bool
+        (match (compiler_backend.compiler-backend-binop-literal-divmod-asm-here-with-plan
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (compiler_ir_types.CompilerIrBinOp.Ge)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64)
+          ""
+          ""
+          ""
+          backend-state)
+          [(compiler_backend.CompilerBackendMaybeAsm.Some _) false]
+          [(compiler_backend.CompilerBackendMaybeAsm.No) true])]
+      [non-divmod-dst-lazy? : bool
+        (match (compiler_backend.compiler-backend-binop-literal-divmod-asm-dst-with-plan
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (compiler_ir_types.CompilerIrBinOp.Mul)
+          (compiler_ir_types.CompilerIrValue.Global (ci.intern "not_a_divisor"))
+          (compiler_ast_types.AstType.I64)
+          2
+          ""
+          ""
+          ""
+          backend-state)
+          [(compiler_backend.CompilerBackendMaybeAsm.Some _) false]
+          [(compiler_backend.CompilerBackendMaybeAsm.No) true])]
       (and
         (not
           (string.eq
             (compiler_backend.compiler-backend-scavenge-binop-return-rhs-reg
               backend-state
-              assignments
+              (owned_view.compiler-owned-shared-view assignments)
               (compiler_ir_types.CompilerIrBinOp.Eq)
+              (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.Var 1)
-              "%rax")
+              "%rax"
+              "%r8")
             "%rax"))
-        (compiler_backend.compiler-backend-string-contains? div-guard "%r12")
-        (compiler_backend.compiler-backend-string-contains? div-guard "%r13")
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view div-guard)
+          "%r12")
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view div-guard)
+          "%r13")
         literal-ok
+        non-divmod-lazy?
+        non-divmod-dst-lazy?
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-binop-spill-direct-shift
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             2
             (compiler_ir_types.CompilerIrBinOp.Shl
               (compiler_ast_types.AstType.I64))
@@ -47810,7 +49822,7 @@
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-binop-spill-direct-shift
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             2
             (compiler_ir_types.CompilerIrBinOp.Shl
               (compiler_ast_types.AstType.I64))
@@ -47825,7 +49837,7 @@
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-binop-spill-direct-shift
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            shift-register-assignments
+            (owned_view.compiler-owned-shared-view shift-register-assignments)
             2
             (compiler_ir_types.CompilerIrBinOp.Shl
               (compiler_ast_types.AstType.I64))
@@ -47841,7 +49853,7 @@
           (compiler-backend-scratch-vreg-result-contains?
             (compiler_backend.compiler-backend-emit-binop-spill-direct-shift
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-              shift-register-assignments
+              (owned_view.compiler-owned-shared-view shift-register-assignments)
               2
               (compiler_ir_types.CompilerIrBinOp.Shl
                 (compiler_ast_types.AstType.I64))
@@ -47855,20 +49867,20 @@
             "    shlq %cl, %rcx\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-branch-with-plan
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             "scratch_control"
             (compiler_ir_types.CompilerIrValue.Global
               (ci.intern "scratch_condition"))
             (compiler_ir_types.compiler-ir-label "yes")
             (compiler_ir_types.compiler-ir-label "no")
-            fallthrough
+            (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             backend-state)
           "    testq %r14, %r14\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-compare-branch-with-plan
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             "scratch_compare"
             (compiler_ir_types.CompilerIrBinOp.Eq)
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -47876,7 +49888,7 @@
             (compiler_ast_types.AstType.I64)
             (compiler_ir_types.compiler-ir-label "yes")
             (compiler_ir_types.compiler-ir-label "no")
-            fallthrough
+            (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r15"
             backend-state)
@@ -47884,7 +49896,7 @@
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-compare-branch-with-plan
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             "scratch_compare_collision"
             (compiler_ir_types.CompilerIrBinOp.Eq)
             (compiler_ir_types.CompilerIrValue.Global (ci.intern "scratch_lhs"))
@@ -47892,16 +49904,35 @@
             (compiler_ast_types.AstType.I64)
             (compiler_ir_types.compiler-ir-label "yes")
             (compiler_ir_types.compiler-ir-label "no")
-            fallthrough
+            (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r14"
             backend-state)
           "    cmpq ")
+        ;; The planner treats a global RHS as a direct scalar-memory source.
+        ;; Keep emission on that one-slot shape instead of consuming a second
+        ;; unmodeled scratch register to materialize the global value.
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler_backend.compiler-backend-emit-compare-branch-with-plan
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (owned_view.compiler-owned-shared-view assignments)
+            "scratch_compare_global_rhs"
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ir_types.CompilerIrValue.Global (ci.intern "scratch_rhs"))
+            (compiler_ast_types.AstType.I64)
+            (compiler_ir_types.compiler-ir-label "yes")
+            (compiler_ir_types.compiler-ir-label "no")
+            (owned_view.compiler-owned-shared-view fallthrough)
+            "%r14"
+            ""
+            backend-state)
+          "(%rip), %r14")
         (not
           (compiler-backend-scratch-vreg-result-contains?
             (compiler_backend.compiler-backend-emit-compare-branch-with-plan
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-              assignments
+              (owned_view.compiler-owned-shared-view assignments)
               "scratch_compare_collision"
               (compiler_ir_types.CompilerIrBinOp.Eq)
               (compiler_ir_types.CompilerIrValue.Global
@@ -47911,7 +49942,7 @@
               (compiler_ast_types.AstType.I64)
               (compiler_ir_types.compiler-ir-label "yes")
               (compiler_ir_types.compiler-ir-label "no")
-              fallthrough
+              (owned_view.compiler-owned-shared-view fallthrough)
               "%r14"
               "%r14"
               backend-state)
@@ -47919,7 +49950,7 @@
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-binop-direct-compare
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             2
             "%r14"
             (compiler_ir_types.CompilerIrBinOp.Eq)
@@ -47929,11 +49960,24 @@
             "%r14"
             backend-state)
           "    cmpq ")
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler_backend.compiler-backend-emit-binop-direct-compare
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (owned_view.compiler-owned-shared-view assignments)
+            2
+            "%r14"
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Global (ci.intern "scratch_rhs"))
+            (compiler_ast_types.AstType.I64)
+            "%r14"
+            backend-state)
+          "(%rip), %r14")
         (not
           (compiler-backend-scratch-vreg-result-contains?
             (compiler_backend.compiler-backend-emit-binop-direct-compare
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-              assignments
+              (owned_view.compiler-owned-shared-view assignments)
               2
               "%r14"
               (compiler_ir_types.CompilerIrBinOp.Eq)
@@ -47945,7 +49989,7 @@
             "    cmpq %r14, %r14\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-load-compare-branch-with-plan
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             "scratch_load_compare"
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrBinOp.Eq)
@@ -47953,15 +49997,33 @@
             (compiler_ast_types.AstType.I64)
             (compiler_ir_types.compiler-ir-label "yes")
             (compiler_ir_types.compiler-ir-label "no")
-            fallthrough
+            (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r15"
             backend-state)
           "    cmpq %r15, (%r14)\n")
+        ;; A fused load through a register-homed pointer needs no base scratch;
+        ;; the load plan's shape-stable ordinal may be absent from a direct
+        ;; unit invocation, and emission must use the pointer home itself.
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler_backend.compiler-backend-emit-load-compare-branch-with-plan
+            (owned_view.compiler-owned-shared-view shift-register-assignments)
+            "scratch_load_compare_direct_base"
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.I64)
+            (compiler_ir_types.compiler-ir-label "yes")
+            (compiler_ir_types.compiler-ir-label "no")
+            (owned_view.compiler-owned-shared-view fallthrough)
+            ""
+            ""
+            backend-state)
+          "    cmpq %r13, (%r12)\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-gep-load-compare-branch-with-plan
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             "scratch_gep_compare"
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.I64 2)
@@ -47971,7 +50033,7 @@
             (compiler_ast_types.AstType.I64)
             (compiler_ir_types.compiler-ir-label "yes")
             (compiler_ir_types.compiler-ir-label "no")
-            fallthrough
+            (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r15"
             backend-state)
@@ -47981,7 +50043,7 @@
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-gep-load-compare-branch-with-plan
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             "scratch_gep_compare"
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.I64 2)
@@ -47991,7 +50053,7 @@
             (compiler_ast_types.AstType.I64)
             (compiler_ir_types.compiler-ir-label "yes")
             (compiler_ir_types.compiler-ir-label "no")
-            fallthrough
+            (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r15"
             backend-state)
@@ -48000,7 +50062,7 @@
           (compiler-backend-scratch-vreg-result-contains?
             (compiler_backend.compiler-backend-emit-gep-load-compare-branch-with-plan
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-              assignments
+              (owned_view.compiler-owned-shared-view assignments)
               "scratch_gep_compare"
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.I64 2)
@@ -48010,14 +50072,14 @@
               (compiler_ast_types.AstType.I64)
               (compiler_ir_types.compiler-ir-label "yes")
               (compiler_ir_types.compiler-ir-label "no")
-              fallthrough
+              (owned_view.compiler-owned-shared-view fallthrough)
               "%r14"
               "%r15"
               backend-state)
             "    cmpq %r15, 16(%r14)\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-load-compare-branch-with-plan
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             "scratch_load_compare"
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrBinOp.BitTestNe)
@@ -48025,7 +50087,7 @@
             (compiler_ast_types.AstType.I64)
             (compiler_ir_types.compiler-ir-label "yes")
             (compiler_ir_types.compiler-ir-label "no")
-            fallthrough
+            (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r15"
             backend-state)
@@ -48033,7 +50095,7 @@
         (not
           (compiler-backend-scratch-vreg-result-contains?
             (compiler_backend.compiler-backend-emit-load-compare-branch-with-plan
-              assignments
+              (owned_view.compiler-owned-shared-view assignments)
               "scratch_load_compare"
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrBinOp.BitTestNe)
@@ -48041,14 +50103,14 @@
               (compiler_ast_types.AstType.I64)
               (compiler_ir_types.compiler-ir-label "yes")
               (compiler_ir_types.compiler-ir-label "no")
-              fallthrough
+              (owned_view.compiler-owned-shared-view fallthrough)
               "%r14"
               "%r15"
               backend-state)
             "    cmpq %r15, (%r14)\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-unop-with-plan
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             2
             (compiler_ir_types.CompilerIrUnOp.Neg)
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -48058,7 +50120,7 @@
           "    negq %r14\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-cpuid
-            assignments
+            (owned_view.compiler-owned-shared-view assignments)
             2
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.Var 1)
@@ -49401,8 +51463,13 @@ b_keep:
         (compiler-backend-scratch-vreg-conversion-plan-ok?)
         (compiler-backend-scratch-vreg-conversion-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-plan-ok?)
+        (compiler-backend-scratch-vreg-fused-divmod-emission-uses-consumer-plan-ok?)
+        (compiler-backend-scratch-vreg-fused-gep-mov-store-emission-uses-store-plan-ok?)
+        (compiler-backend-scratch-vreg-fused-gep-load-compare-emission-uses-site-plans-ok?)
         (compiler-backend-scratch-vreg-scalar-shift-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-return-plan-ok?)
+        (compiler-backend-scratch-vreg-scalar-return-compare-plan-ok?)
+        (compiler-backend-scratch-vreg-address-compare-emission-ok?)
         (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
         (compiler-backend-scratch-vreg-select-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
@@ -49423,6 +51490,10 @@ b_keep:
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-fused-store-pair-arms-planned-preserve-ok?)
         (compiler-backend-fused-gep-store-arms-planned-preserve-ok?)
+        (compiler-backend-gep-staged-arms-planned-preserve-ok?)
+        (compiler-backend-gep-load-arms-planned-address-preserve-ok?)
+        (compiler-backend-copy-bytes-arms-planned-value-preserve-ok?)
+        (compiler-backend-gep-store-arms-planned-index-preserve-ok?)
         (compiler-backend-bounds-index-arms-planned-preserve-ok?)
         (compiler-backend-divmod-polish-arms-planned-preserve-ok?)
         (compiler-backend-low-level-instr-ok?)
@@ -49519,6 +51590,16 @@ b_keep:
         (compiler-backend-float-return-binop-home-ok?)
         (compiler-backend-float-return-compare-home-ok?)
         (compiler-backend-int-return-binop-r8-live-ok?)
+        (compiler-backend-int-return-compare-direct-rhs-ok?)
+        (compiler-backend-int-return-compare-direct-memory-ok?)
+        (compiler-backend-int-return-compare-remat-immediate-ok?)
+        (compiler-backend-int-return-compare-planned-conflict-ok?)
+        (compiler-backend-int-return-compare-lhs-plan-conflict-ok?)
+        (compiler-backend-int-return-compare-global-memory-ok?)
+        (compiler-backend-int-return-compare-reuses-lhs-home-ok?)
+        (compiler-backend-int-return-compare-rax-frame-ok?)
+        (compiler-backend-int-return-compare-swapped-memory-ok?)
+        (compiler-backend-int-return-compare-remat-frame-ok?)
         (compiler-backend-bitcast-shape-ok?)
         (compiler-backend-direct-bitcast-home-ok?)
         (compiler-backend-spill-float-to-int-bitcast-home-ok?)
@@ -49678,3 +51759,68 @@ b_keep:
     (compiler-backend-object-semantic-eligibility-ok?))
     42
     (io.panic "backend: smoke output mismatch")))
+
+;; Scratch-vreg production emission fails closed when a fixture bypasses the
+;; planner. This focused aggregate exposes the suites whose fixtures install a
+;; complete modeled plan, so the scratch configuration has a stable smoke gate
+;; independent of legacy direct-emitter coverage.
+(define (compiler-backend-scratch-vreg-self-test) : i64
+  (if (and
+    (compiler-backend-scratch-vreg-call-target-plan-ok?)
+    (compiler-backend-scratch-vreg-switch-plan-ok?)
+    (compiler-backend-scratch-vreg-aggregate-plan-ok?)
+    (compiler-backend-scratch-vreg-phi-plan-ok?)
+    (compiler-backend-scratch-vreg-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-memory-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-aggregate-copy-c-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-future-window-ok?)
+    (compiler-backend-scratch-vreg-c-abi-return-plan-ok?)
+    (compiler-backend-scratch-vreg-bounds-plan-ok?)
+    (compiler-backend-scratch-vreg-fused-sibling-plan-ok?)
+    (compiler-backend-scratch-vreg-memory-plan-ok?)
+    (compiler-backend-scratch-vreg-copy-xmm-plan-ok?)
+    (compiler-backend-scratch-vreg-c-memory-plan-ok?)
+    (compiler-backend-scratch-vreg-float-memory-plan-ok?)
+    (compiler-backend-scratch-vreg-float-memory-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-float-compute-plan-ok?)
+    (compiler-backend-scratch-vreg-float-compute-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
+    (compiler-backend-scratch-vreg-simd-plan-ok?)
+    (compiler-backend-scratch-vreg-indexed-simd-plan-ok?)
+    (compiler-backend-scratch-vreg-tail-mask-plan-ok?)
+    (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-scalar-plan-ok?)
+    (compiler-backend-scratch-vreg-scalar-shift-plan-ok?)
+    (compiler-backend-scratch-vreg-scalar-return-plan-ok?)
+    (compiler-backend-scratch-vreg-scalar-return-compare-plan-ok?)
+    (compiler-backend-scratch-vreg-address-compare-emission-ok?)
+    (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
+    (compiler-backend-scratch-vreg-select-plan-ok?)
+    (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
+    (compiler-backend-gep-staged-arms-planned-preserve-ok?)
+    (compiler-backend-gep-load-arms-planned-address-preserve-ok?)
+    (compiler-backend-copy-bytes-arms-planned-value-preserve-ok?)
+    (compiler-backend-gep-store-arms-planned-index-preserve-ok?)
+    (compiler-backend-bounds-index-arms-planned-preserve-ok?)
+    (compiler-backend-divmod-polish-arms-planned-preserve-ok?)
+    (compiler-backend-scratch-vreg-constraint-shapes-ok?)
+    (compiler-backend-phi-parallel-copy-ok?)
+    (compiler-backend-phi-forward-edge-unbracket-ok?)
+    (compiler-backend-phi-planned-live-through-preserved-ok?)
+    (compiler-backend-phi-xmm-stage-preserved-ok?)
+    (compiler-backend-phi-xmm-fused-stage-preserved-ok?)
+    (compiler-backend-phi-xmm-back-edge-gap-preserved-ok?)
+    (compiler-backend-phi-group-cycle-copy-ok?)
+    (compiler-backend-phi-group-stack-copy-split-scratch-ok?)
+    (compiler-backend-phi-float-cycle-copy-ok?))
+    42
+    (io.panic "backend: scratch-vreg smoke output mismatch")))
+
+;; Test drivers are compiled as separate programs and do not inherit the cfg
+;; predicates baked into the compiler binary that emits them. Select the smoke
+;; aggregate from the backend module's compiled mode instead of the driver's
+;; command-line cfg set.
+(define (compiler-backend-configured-self-test) : i64
+  (if (compiler_backend.compiler-backend-scratch-vreg-enabled?)
+    (compiler-backend-scratch-vreg-self-test)
+    (compiler-backend-self-test)))

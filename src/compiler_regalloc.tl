@@ -6300,10 +6300,16 @@
                 type-segment-bases
                 (compiler-reg-global-shared-view func)
                 1)
-              (compiler-reg-clobber-kind-points type-segment-bases func 2)
+              (compiler-reg-clobber-kind-points
+                type-segment-bases
+                (compiler-reg-global-shared-view func)
+                2)
               (cfg
                 scratch-vreg
-                (compiler-reg-clobber-kind-points type-segment-bases func 5)
+                (compiler-reg-clobber-kind-points
+                  type-segment-bases
+                  (compiler-reg-global-shared-view func)
+                  5)
                 (live.compiler-live-set-empty))))]
         [(ir.CompilerIrParamList.Cons _ _)
           (let
@@ -6356,10 +6362,16 @@
                 type-segment-bases
                 (compiler-reg-global-shared-view func)
                 1)
-              (compiler-reg-clobber-kind-points type-segment-bases func 2)
+              (compiler-reg-clobber-kind-points
+                type-segment-bases
+                (compiler-reg-global-shared-view func)
+                2)
               (cfg
                 scratch-vreg
-                (compiler-reg-clobber-kind-points type-segment-bases func 5)
+                (compiler-reg-clobber-kind-points
+                  type-segment-bases
+                  (compiler-reg-global-shared-view func)
+                  5)
                 (live.compiler-live-set-empty))))])]))
 
 (define (compiler-reg-ineligible-instr
@@ -8529,6 +8541,29 @@
             (compiler-reg-param-count-defs!
               (compiler-reg-box-shared-view rest)
               counts))])]))
+
+;; Parameters are incoming values, never recomputation recipes. Mark them
+;; before visiting the body so an instruction whose destination reuses a
+;; parameter id cannot make the incoming value appear rematerialisable.
+(define (compiler-reg-param-poison-remat!
+  [params : ir.CompilerIrParamList]
+  [candidates : (__tl_dyn-array i64)]) : unit
+  (match (ir.compiler-ir-param-list-force-cons params)
+    [(ir.CompilerIrParamList.Nil) unit]
+    [(ir.CompilerIrParamList.Array seq)
+      (compiler-reg-param-poison-remat!
+        (ir.compiler-ir-param-seq-to-list seq)
+        candidates)]
+    [(ir.CompilerIrParamList.Cons param rest)
+      (match param
+        [(ir.CompilerIrParam.Param _ _ id)
+          (begin
+            (if (and (>= id 0) (< id (array-length candidates)))
+              (set! (array-ref candidates id) 2)
+              unit)
+            (compiler-reg-param-poison-remat!
+              (compiler-reg-box-shared-view rest)
+              candidates))])]))
 
 (define (compiler-reg-function-def-counts [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
@@ -12485,22 +12520,31 @@
       (compiler-reg-remat-init-vals!
         (compiler-reg-global-shared-view vals)
         vars)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-          (match (compiler-reg-global-shared-view blocks)
-            [(ir.CompilerIrBlockList.Array seq)
-              (compiler-reg-collect-remat-seq-from!
-                seq
-                0
-                def-counts
-                (compiler-reg-global-shared-view flags)
-                (compiler-reg-global-shared-view vals))]
-            [_
-              (compiler-reg-collect-remat-blocks!
-                blocks
-                def-counts
-                (compiler-reg-global-shared-view flags)
-                (compiler-reg-global-shared-view vals))])])
+      (match (compiler-reg-global-shared-view func)
+        [(ir.CompilerIrFunction.Function _ params _ _ blocks)
+          (begin
+            ;; Parameters are incoming values, never recipes. Keep this hard
+            ;; poison at the assignment-conversion boundary as well as in the
+            ;; later use-site remat table: a spilled parameter must retain its
+            ;; real incoming home even when another value in the function has
+            ;; a cheap Global/immediate definition.
+            (compiler-reg-param-poison-remat!
+              params
+              (compiler-reg-global-shared-view flags))
+            (match (compiler-reg-global-shared-view blocks)
+              [(ir.CompilerIrBlockList.Array seq)
+                (compiler-reg-collect-remat-seq-from!
+                  seq
+                  0
+                  def-counts
+                  (compiler-reg-global-shared-view flags)
+                  (compiler-reg-global-shared-view vals))]
+              [_
+                (compiler-reg-collect-remat-blocks!
+                  blocks
+                  def-counts
+                  (compiler-reg-global-shared-view flags)
+                  (compiler-reg-global-shared-view vals))]))])
       (while (< v vars)
         (begin
           ;; Skip vars the call-spanning saver shadows: those keep a real slot to
@@ -32855,7 +32899,9 @@
     [low-xmm-exclusions : (__tl_dyn-array CompilerRegIdSeq)
       (cfg
         scratch-vreg
-        (compiler-reg-low-xmm-exclusions eff-index low-xmm-clobber-points)
+        (compiler-reg-low-xmm-exclusions
+          (compiler-reg-global-shared-view eff-index)
+          (compiler-reg-global-shared-view low-xmm-clobber-points))
         (array.make-array CompilerRegIdSeq 0))]
     ;; `div-points` / `shift-points` (kinds 1 and 2) are the sets bound above;
     ;; the GAP3c pin demotion below and the greedy share that one computation.
@@ -39262,8 +39308,16 @@
             (match location
               [(CompilerRegLocation.Register _) true]
               [(CompilerRegLocation.Spill _) true]
+              [(CompilerRegLocation.Remat remat)
+                (or
+                  (compiler-reg-scratch-value-encodable-immediate?
+                    (compiler-reg-global-shared-view remat))
+                  (match remat
+                    [(ir.CompilerIrValue.Global _) true]
+                    [_ false]))]
               [_ false])]
           [(CompilerRegMaybeLocation.No) true])]
+      [(ir.CompilerIrValue.Global _) true]
       [_ false])))
 
 (define (compiler-reg-scratch-value-register-homed?
@@ -39807,7 +39861,9 @@
     (match _instr
       ;; Fixed-width ordinals keep the map independent of assignment failure.
       [(ir.CompilerIrInstr.Call _ name args _)
-        (if (compiler-reg-inline-fast-alloc-call? name args)
+        (if (compiler-reg-inline-fast-alloc-call?
+          (compiler-reg-global-shared-view name)
+          (compiler-reg-global-shared-view args))
           2
           (if (and
             (compiler-reg-linux-abi? _abi)
@@ -39870,11 +39926,19 @@
           0)]
       [(ir.CompilerIrInstr.Branch condition true-label false-label)
         (if (or
-          (compiler-reg-label-seq-contains? _phi-targets true-label)
-          (compiler-reg-label-seq-contains? _phi-targets false-label))
+          (compiler-reg-label-seq-contains?
+            (compiler-reg-global-shared-view _phi-targets)
+            true-label)
+          (compiler-reg-label-seq-contains?
+            (compiler-reg-global-shared-view _phi-targets)
+            false-label))
           (if (or
-            (compiler-reg-label-seq-contains? _phi-xmm-targets true-label)
-            (compiler-reg-label-seq-contains? _phi-xmm-targets false-label))
+            (compiler-reg-label-seq-contains?
+              (compiler-reg-global-shared-view _phi-xmm-targets)
+              true-label)
+            (compiler-reg-label-seq-contains?
+              (compiler-reg-global-shared-view _phi-xmm-targets)
+              false-label))
             4
             3)
           (if (compiler-reg-scratch-value-direct? _assignments condition)
@@ -39903,8 +39967,13 @@
       ;; their selected shape consumes; notably, a Var RHS immediately returned
       ;; through %rax gets one context-aware home instead of taxing every ALU.
       [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-        (if (compiler-reg-scratch-float-binop? _types lhs rhs ty)
-          (if (compiler-reg-scratch-compare-op? op)
+        (if (compiler-reg-scratch-float-binop?
+          (compiler-reg-global-shared-view _types)
+          (compiler-reg-global-shared-view lhs)
+          (compiler-reg-global-shared-view rhs)
+          (compiler-reg-global-shared-view ty))
+          (if (compiler-reg-scratch-compare-op?
+            (compiler-reg-global-shared-view op))
             (compiler-reg-scratch-float-compare-slot-count
               _assignments
               dst
@@ -39916,46 +39985,40 @@
               dst
               rhs
               _binop-return))
-          (if (compiler-reg-clobber-binop-div? op)
+          (if (compiler-reg-clobber-binop-div?
+            (compiler-reg-global-shared-view op))
             5
-            (if (compiler-reg-clobber-binop-shift? op rhs ty)
+            (if (compiler-reg-clobber-binop-shift?
+              (compiler-reg-global-shared-view op)
+              (compiler-reg-global-shared-view rhs)
+              (compiler-reg-global-shared-view ty))
               2
-              (if (ir.compiler-ir-binop-compare? op)
+              (if (ir.compiler-ir-binop-compare?
+                (compiler-reg-global-shared-view op))
                 ;; Fused comparisons keep two distinct operand homes live
                 ;; through the following Branch. A materialized spilled result
                 ;; still needs its setcc staging home even when either operand
                 ;; is directly addressable; the old zero here was the largest
                 ;; consumer/inventory mismatch under pressure.
-                (if (compiler-reg-scratch-var-register-homed? _assignments dst)
-                  (if (or
-                    (compiler-reg-scratch-compare-lhs-direct?
-                      _assignments
-                      lhs
-                      rhs)
-                    (compiler-reg-scratch-value-scalar-source-direct?
-                      _assignments
-                      rhs))
-                    1
-                    2)
-                  (+
-                    1
-                    (if (compiler-reg-scratch-value-scalar-source-direct?
-                      _assignments
-                      rhs)
-                      0
-                      1)))
+                ;; AddrOf/Gep forwarding can suppress an operand's apparent
+                ;; allocator home before either fused compare/branch or
+                ;; compare/return emission. Keep both scalar staging ordinals
+                ;; shape-stable even when the allocation-time view says an
+                ;; operand is direct; return emission can still need one after
+                ;; fixing the result in %rax.
+                2
                 (match op
                   ;; Constant shifts accumulate directly in a register-homed
                   ;; destination; a spill needs one result staging home.
                   [(ir.CompilerIrBinOp.Shl _)
                     (if (compiler-reg-scratch-var-register-homed?
-                      _assignments
+                      (compiler-reg-global-shared-view _assignments)
                       dst)
                       0
                       1)]
                   [(ir.CompilerIrBinOp.Shr _)
                     (if (compiler-reg-scratch-var-register-homed?
-                      _assignments
+                      (compiler-reg-global-shared-view _assignments)
                       dst)
                       0
                       1)]
@@ -39967,7 +40030,7 @@
                       1
                       (if (not
                         (compiler-reg-scratch-var-register-homed?
-                          _assignments
+                          (compiler-reg-global-shared-view _assignments)
                           dst))
                         ;; A spilled result always needs the primary staging
                         ;; home. A non-immediate rhs can also need an independent
@@ -39977,12 +40040,12 @@
                           rhs)
                           1
                           2)
-                        (match rhs
+                        (match (compiler-reg-global-shared-view rhs)
                           [(ir.CompilerIrValue.Var _)
                             (if (compiler-reg-scratch-value-same-home?
-                              _assignments
+                              (compiler-reg-global-shared-view _assignments)
                               dst
-                              rhs)
+                              (compiler-reg-global-shared-view rhs))
                               ;; The backend may forward an apparent register
                               ;; operand as an address, making it unavailable as
                               ;; the commuted source. Preserve rhs before its
@@ -40021,8 +40084,12 @@
           1)]
       [(ir.CompilerIrInstr.Gep dst base offset _)
         (if (and
-          (compiler-reg-scratch-var-register-homed? _assignments dst)
-          (compiler-reg-scratch-value-direct? _assignments base)
+          (compiler-reg-scratch-var-register-homed?
+            (compiler-reg-global-shared-view _assignments)
+            dst)
+          (compiler-reg-scratch-value-direct?
+            (compiler-reg-global-shared-view _assignments)
+            base)
           (compiler-reg-scratch-value-integer-immediate? offset))
           ;; Address forwarding can suppress an apparent register home after
           ;; allocation; keep the base staging slot modeled for that backend
@@ -40075,12 +40142,48 @@
           from-ty
           to-ty)]
       [(ir.CompilerIrInstr.Mov dst src ty)
-        (if (and
-          (compiler-reg-float-type? (compiler-reg-global-shared-view ty))
-          (not (compiler-reg-scratch-value-same-home? _assignments dst src))
-          (not (compiler-reg-scratch-var-register-homed? _assignments dst)))
-          1
-          0)]
+        (if (compiler-reg-scratch-mov-group-in-set?
+          (compiler-reg-global-shared-view _group-vars)
+          dst
+          (compiler-reg-global-shared-view src))
+          2
+          (if (compiler-reg-float-type? (compiler-reg-global-shared-view ty))
+            (if (and
+              (not
+                (compiler-reg-scratch-value-same-home?
+                  (compiler-reg-global-shared-view _assignments)
+                  dst
+                  (compiler-reg-global-shared-view src)))
+              (not
+                (compiler-reg-scratch-var-register-homed?
+                  (compiler-reg-global-shared-view _assignments)
+                  dst)))
+              1
+              0)
+            ;; Integer/handle moves can write immediates and same-home values
+            ;; directly. A register-homed destination also accepts a var with
+            ;; a normalized 64-bit home, or any non-narrow scalar/handle value.
+            ;; Every remaining shape takes the emitter's GP staging path.
+            (if (or
+              (compiler-reg-scratch-value-same-home?
+                (compiler-reg-global-shared-view _assignments)
+                dst
+                (compiler-reg-global-shared-view src))
+              (compiler-reg-scratch-value-encodable-immediate?
+                (compiler-reg-global-shared-view src))
+              (and
+                (compiler-reg-scratch-var-register-homed?
+                  (compiler-reg-global-shared-view _assignments)
+                  dst)
+                (or
+                  (match (compiler-reg-global-shared-view src)
+                    [(ir.CompilerIrValue.Var _) true]
+                    [_ false])
+                  (not
+                    (compiler-reg-narrow-scalar-type?
+                      (compiler-reg-global-shared-view ty))))))
+              0
+              1)))]
       ;; A non-memory splat stages integer lanes through GP+XMM and float lanes
       ;; through XMM. Keep the two fixed ordinals so emission lookup remains
       ;; stable regardless of the source home and selected element type.
@@ -41347,21 +41450,26 @@
   [var : i64]
   [binop-return : bool]) : CompilerRegScratchRequirement
   (match (compiler-reg-global-shared-view instr)
-    [(ir.CompilerIrInstr.Call _ _ _ _)
-      (CompilerRegScratchRequirement
-        point
-        ordinal
-        (if (= ordinal 0)
-          (CompilerRegScratchRole.CallStage)
-          (CompilerRegScratchRole.CallMemoryXmm))
-        (if (= ordinal 0)
-          (compiler-reg-scratch-call-stage-constraint policy)
-          (compiler-reg-scratch-xmm-constraint
-            (compiler-reg-global-shared-view assignments)
-            instr))
-        point
-        (+ point 1)
-        var)]
+    [(ir.CompilerIrInstr.Call _ name args _)
+      (let
+        [fast-alloc? : bool
+          (compiler-reg-inline-fast-alloc-call?
+            (compiler-reg-global-shared-view name)
+            (compiler-reg-global-shared-view args))]
+        (CompilerRegScratchRequirement
+          point
+          ordinal
+          (if (or (= ordinal 0) fast-alloc?)
+            (CompilerRegScratchRole.CallStage)
+            (CompilerRegScratchRole.CallMemoryXmm))
+          (if (or (= ordinal 0) fast-alloc?)
+            (compiler-reg-scratch-call-stage-constraint policy)
+            (compiler-reg-scratch-xmm-constraint
+              (compiler-reg-global-shared-view assignments)
+              instr))
+          point
+          (+ point 1)
+          var))]
     [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
       (CompilerRegScratchRequirement
         point
@@ -41627,10 +41735,9 @@
                       (compiler-reg-id-seq-prepend
                         cabi.compiler-reg-id-rcx
                         (compiler-reg-id-seq-empty))]
-                    ;; Return fusion fixes the result in %rax. Its single
-                    ;; modeled scalar slot is the RHS preservation/staging
-                    ;; home, so it must never be allocated to the accumulator
-                    ;; it is protecting.
+                    ;; Return fusion fixes the result in %rax. Its modeled
+                    ;; operand staging homes must never be allocated to the
+                    ;; accumulator they are protecting.
                     [binop-return
                       (compiler-reg-id-seq-prepend
                         cabi.compiler-reg-id-rax
@@ -41641,7 +41748,16 @@
             ordinal
             role
             constraint
-            point
+            (if (and
+              binop-return
+              (ir.compiler-ir-binop-compare?
+                (compiler-reg-global-shared-view op)))
+              ;; Return fusion first copies the LHS into %rax. Stage a
+              ;; non-direct RHS only after that operand use, allowing a
+              ;; register whose ordinary interval dies at this instruction to
+              ;; satisfy the modeled scratch requirement.
+              (+ point 1)
+              point)
             ;; A compare can fuse through the following Branch. Its operand
             ;; homes end at this IR point, so keep the planned homes live through
             ;; that successor point and explicitly exclude those operands above.
@@ -41942,10 +42058,16 @@
       (CompilerRegScratchRequirement
         point
         ordinal
-        (CompilerRegScratchRole.FloatMoveValueXmm)
-        (compiler-reg-scratch-xmm-constraint
-          (compiler-reg-global-shared-view assignments)
-          instr)
+        (if (compiler-reg-float-type? (compiler-reg-global-shared-view ty))
+          (CompilerRegScratchRole.FloatMoveValueXmm)
+          (CompilerRegScratchRole.ScalarPrimary))
+        (if (compiler-reg-float-type? (compiler-reg-global-shared-view ty))
+          (compiler-reg-scratch-xmm-constraint
+            (compiler-reg-global-shared-view assignments)
+            (compiler-reg-global-shared-view instr))
+          (compiler-reg-scratch-memory-constraint
+            (compiler-reg-global-shared-view assignments)
+            instr))
         point
         (+ point 1)
         var)]
@@ -44365,10 +44487,29 @@
               reg)]
           (begin
             (if (and
+              (compiler-reg-scratch-constraint-allows-register?
+                (compiler-reg-global-shared-view constraint)
+                reg)
               (not
                 (compiler-reg-id-seq-contains?
                   (compiler-reg-global-shared-view excluded)
                   reg))
+              (not
+                (compiler-reg-scratch-current-sibling-reserves-register?
+                  (compiler-reg-global-shared-view items)
+                  current
+                  reg))
+              (not
+                (compiler-reg-scratch-current-register-coalesced?
+                  (compiler-reg-global-shared-view assignments)
+                  (compiler-reg-global-shared-view interval-index)
+                  (compiler-reg-global-shared-view coalesce-parents)
+                  (compiler-reg-global-shared-view coalesced-hulls)
+                  (compiler-reg-global-shared-view items)
+                  current
+                  reg-index
+                  reg
+                  vars))
               (if (>= reg-index 0)
                 (compiler-reg-greedy-reg-free?
                   (compiler-reg-global-shared-view occupancy)
@@ -44618,6 +44759,24 @@
     (compiler-reg-global-shared-view xmm-pool)
     vars))
 
+(define (compiler-reg-scratch-phi-edge-role? [role : CompilerRegScratchRole]) : bool
+  (match role
+    [(CompilerRegScratchRole.PhiCycle) true]
+    [(CompilerRegScratchRole.PhiStage) true]
+    [(CompilerRegScratchRole.PhiCycleXmm) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-precedes-phi-edge?
+  [requirement : CompilerRegScratchRequirement]
+  [other : CompilerRegScratchRequirement]) : bool
+  (or
+    (and
+      (< requirement.point other.point)
+      (compiler-reg-scratch-phi-edge-role? other.role))
+    (and
+      (< other.point requirement.point)
+      (compiler-reg-scratch-phi-edge-role? requirement.role))))
+
 (define (compiler-reg-scratch-sibling-conflicts?
   [requirement : CompilerRegScratchRequirement]
   [other : CompilerRegScratchRequirement]) : bool
@@ -44638,6 +44797,13 @@
       [_ true])
     (not
       (or
+        ;; A fused producer has finished with its scratch before control reaches
+        ;; the branch edge and begins phi marshalling. The group-wide interval
+        ;; remains conservative against ordinary live values, but these two
+        ;; modeled scratch requirements may share one physical home.
+        (compiler-reg-scratch-precedes-phi-edge?
+          (compiler-reg-global-shared-view requirement)
+          (compiler-reg-global-shared-view other))
         (and
           (match requirement.role
             [(CompilerRegScratchRole.BranchTest) true]
@@ -44708,6 +44874,53 @@
               unit)
             (set! index (+ index 1)))))
       reserved)))
+
+(define (compiler-reg-scratch-current-sibling-reserves-register?
+  [items : (__tl_dyn-array CompilerRegScratchAssignment)]
+  [current : i64]
+  [reg : i64]) : bool
+  (if (= (array-length items) 0)
+    false
+    (let
+      [item : CompilerRegScratchAssignment
+        (compiler-reg-global-array-element-shared-view items current)]
+      (compiler-reg-scratch-sibling-reserves-register-from?
+        (compiler-reg-global-shared-view items)
+        current
+        (compiler-reg-global-shared-view item.requirement)
+        reg
+        0))))
+
+(define (compiler-reg-scratch-current-register-coalesced?
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [coalesce-parents : (__tl_dyn-array i64)]
+  [coalesced-hulls : CompilerRegScratchCoalescedHulls]
+  [items : (__tl_dyn-array CompilerRegScratchAssignment)]
+  [current : i64]
+  [reg-index : i64]
+  [reg : i64]
+  [vars : i64]) : bool
+  (if (= (array-length items) 0)
+    false
+    (let
+      [item : CompilerRegScratchAssignment
+        (compiler-reg-global-array-element-shared-view items current)]
+      [requirement : CompilerRegScratchRequirement
+        (compiler-reg-global-shared-view item.requirement)]
+      (if (>= reg-index 0)
+        (compiler-reg-scratch-register-coalesced-hulls-from?
+          (compiler-reg-global-shared-view coalesced-hulls)
+          (compiler-reg-global-shared-view requirement)
+          reg-index)
+        (compiler-reg-scratch-register-coalesced-gap-from?
+          (compiler-reg-global-shared-view assignments)
+          (compiler-reg-global-shared-view interval-index)
+          (compiler-reg-global-shared-view coalesce-parents)
+          (compiler-reg-global-shared-view requirement)
+          reg
+          0
+          (- vars (array-length items)))))))
 
 (define (compiler-reg-scratch-items-monotone?
   [items : (__tl_dyn-array CompilerRegScratchAssignment)]) : bool
@@ -44946,26 +45159,31 @@
   [_vars : i64]) : CompilerRegScratchPlanResult
   (cfg
     scratch-vreg
-    (match _func
+    (match (compiler-reg-global-shared-view _func)
       [(ir.CompilerIrFunction.Function function-name _ _ _ blocks)
         (let
           [phi-targets : CompilerRegLabelSeq
-            (compiler-reg-scratch-phi-targets-blocks blocks)]
+            (compiler-reg-scratch-phi-targets-blocks
+              (compiler-reg-global-shared-view blocks))]
           [phi-xmm-targets : CompilerRegLabelSeq
-            (compiler-reg-scratch-phi-xmm-targets-blocks blocks)]
+            (compiler-reg-scratch-phi-xmm-targets-blocks
+              (compiler-reg-global-shared-view blocks))]
           [scratch-count : i64
             (compiler-reg-scratch-vreg-count-blocks
               _type-segment-bases
               _abi
-              (compiler-reg-plan-assignments plan)
-              (compiler-reg-plan-types plan)
-              _group-vars
-              blocks
-              phi-targets
-              phi-xmm-targets
+              (compiler-reg-plan-assignments
+                (compiler-reg-global-shared-view plan))
+              (compiler-reg-plan-types (compiler-reg-global-shared-view plan))
+              (compiler-reg-global-shared-view _group-vars)
+              (compiler-reg-global-shared-view blocks)
+              (compiler-reg-global-shared-view phi-targets)
+              (compiler-reg-global-shared-view phi-xmm-targets)
               0)]
           [instruction-count : i64
-            (compiler-reg-scratch-vreg-instr-count-blocks blocks 0)]
+            (compiler-reg-scratch-vreg-instr-count-blocks
+              (compiler-reg-global-shared-view blocks)
+              0)]
           (if (= scratch-count 0)
             (CompilerRegScratchPlanResult.Result
               plan
@@ -44978,18 +45196,23 @@
               [scratch-policy : CompilerRegScratchPolicy
                 (compiler-reg-scratch-policy
                   _abi
-                  (compiler-reg-plan-assignments plan)
+                  (compiler-reg-plan-assignments
+                    (compiler-reg-global-shared-view plan))
                   (compiler-reg-scratch-phi-dst-registers-blocks
-                    (compiler-reg-plan-assignments plan)
-                    blocks)
-                  (live.compiler-live-ir-block-list-to-seq blocks))]
+                    (compiler-reg-plan-assignments
+                      (compiler-reg-global-shared-view plan))
+                    (compiler-reg-global-shared-view blocks))
+                  (live.compiler-live-ir-block-list-to-seq
+                    (compiler-reg-global-shared-view blocks)))]
               [base-type-info : CompilerRegVarTypes
-                (compiler-reg-plan-types plan)]
+                (compiler-reg-plan-types (compiler-reg-global-shared-view plan))]
               [liveness-handle : CompilerRegLivenessHandle
-                (compiler-reg-liveness-handle-make _func false)]
+                (compiler-reg-liveness-handle-make
+                  (compiler-reg-global-shared-view _func)
+                  false)]
               [base-interval-selection : CompilerRegIntervalSelection
                 (compiler-reg-live-interval-selection
-                  _func
+                  (compiler-reg-global-shared-view _func)
                   liveness-handle.baseline)]
               (match base-interval-selection
                 [(CompilerRegIntervalSelection.Selection _ base-index)
@@ -45013,45 +45236,60 @@
                     [slot-counts : (__tl_dyn-array i64)
                       (array.make-array i64 instruction-count)]
                     (begin
-                      (compiler-reg-fill-i64-array starts -1)
-                      (compiler-reg-fill-i64-array ends -1)
-                      (compiler-reg-fill-interval-seq-array! segments 0)
-                      (compiler-reg-copy-i64-array! starts base-index.starts 0)
-                      (compiler-reg-copy-i64-array! ends base-index.ends 0)
-                      (compiler-reg-copy-interval-seq-array!
-                        segments
-                        base-index.segments
+                      (compiler-reg-fill-i64-array
+                        (compiler-reg-global-shared-view starts)
+                        -1)
+                      (compiler-reg-fill-i64-array
+                        (compiler-reg-global-shared-view ends)
+                        -1)
+                      (compiler-reg-fill-interval-seq-array!
+                        (compiler-reg-global-shared-view segments)
                         0)
                       (compiler-reg-copy-i64-array!
-                        present
-                        base-type-info.present
+                        (compiler-reg-global-shared-view starts)
+                        (compiler-reg-global-shared-view base-index.starts)
+                        0)
+                      (compiler-reg-copy-i64-array!
+                        (compiler-reg-global-shared-view ends)
+                        (compiler-reg-global-shared-view base-index.ends)
+                        0)
+                      (compiler-reg-copy-interval-seq-array!
+                        (compiler-reg-global-shared-view segments)
+                        (compiler-reg-global-shared-view base-index.segments)
+                        0)
+                      (compiler-reg-copy-i64-array!
+                        (compiler-reg-global-shared-view present)
+                        (compiler-reg-global-shared-view base-type-info.present)
                         0)
                       (compiler-reg-copy-ast-type-array!
-                        types
-                        base-type-info.items
+                        (compiler-reg-global-shared-view types)
+                        (compiler-reg-global-shared-view base-type-info.items)
                         0)
                       (compiler-reg-scratch-fill-blocks!
                         _type-segment-bases
                         _abi
                         scratch-policy
-                        (compiler-reg-plan-assignments plan)
-                        (compiler-reg-plan-types plan)
-                        _group-vars
-                        blocks
-                        phi-targets
-                        phi-xmm-targets
+                        (compiler-reg-plan-assignments
+                          (compiler-reg-global-shared-view plan))
+                        (compiler-reg-plan-types
+                          (compiler-reg-global-shared-view plan))
+                        (compiler-reg-global-shared-view _group-vars)
+                        (compiler-reg-global-shared-view blocks)
+                        (compiler-reg-global-shared-view phi-targets)
+                        (compiler-reg-global-shared-view phi-xmm-targets)
                         0
                         0
                         _vars
-                        items
-                        firsts
-                        slot-counts
-                        starts
-                        ends
-                        segments
-                        present
-                        types)
-                      (if (compiler-reg-scratch-items-monotone? items)
+                        (compiler-reg-global-shared-view items)
+                        (compiler-reg-global-shared-view firsts)
+                        (compiler-reg-global-shared-view slot-counts)
+                        (compiler-reg-global-shared-view starts)
+                        (compiler-reg-global-shared-view ends)
+                        (compiler-reg-global-shared-view segments)
+                        (compiler-reg-global-shared-view present)
+                        (compiler-reg-global-shared-view types))
+                      (if (compiler-reg-scratch-items-monotone?
+                        (compiler-reg-global-shared-view items))
                         unit
                         (io.panic
                           "regalloc: modeled scratch requirements are out of order"))
@@ -45060,17 +45298,22 @@
                           (CompilerRegVarTypes
                             present
                             types
-                            base-type-info.representations)]
+                            (compiler-reg-global-shared-view
+                              base-type-info.representations))]
                         [interval-index : CompilerRegIntervalIndex
-                          (CompilerRegIntervalIndex starts ends segments)]
+                          (CompilerRegIntervalIndex
+                            (compiler-reg-global-shared-view starts)
+                            (compiler-reg-global-shared-view ends)
+                            (compiler-reg-global-shared-view segments))]
                         [intervals : CompilerRegIntervalSeq
                           (compiler-reg-interval-arrays-to-seq
-                            starts
-                            ends
+                            (compiler-reg-global-shared-view starts)
+                            (compiler-reg-global-shared-view ends)
                             (- out-vars 1)
                             (compiler-reg-interval-seq-empty))]
                         [plan-assignments : CompilerRegAssignmentTable
-                          (compiler-reg-plan-assignments plan)]
+                          (compiler-reg-plan-assignments
+                            (compiler-reg-global-shared-view plan))]
                         ;; The late planner reads ordinary homes but never
                         ;; publishes synthetic ids into the assignment table.
                         ;; Avoid cloning and default-filling an out-vars table
@@ -45084,9 +45327,9 @@
                           (array-length scratch-registers)]
                         [scratch-occupancy : CompilerRegGreedyOccupancy
                           (compiler-reg-greedy-occupancy-make
-                            assignments
-                            interval-index
-                            scratch-registers
+                            (compiler-reg-global-shared-view assignments)
+                            (compiler-reg-global-shared-view interval-index)
+                            (compiler-reg-global-shared-view scratch-registers)
                             scratch-register-count)]
                         [scratch-ref-counts : (__tl_dyn-array i64)
                           (array.make-array i64 _vars)]
@@ -45105,25 +45348,26 @@
                           ;; perturb the published ordinary coloring.
                           (compiler-reg-scratch-assign-items!
                             _abi
-                            items
+                            (compiler-reg-global-shared-view items)
                             0
-                            assignments
+                            (compiler-reg-global-shared-view assignments)
                             scratch-occupancy
-                            interval-index
-                            (compiler-reg-plan-coalesce-parents plan)
+                            (compiler-reg-global-shared-view interval-index)
+                            (compiler-reg-plan-coalesce-parents
+                              (compiler-reg-global-shared-view plan))
                             scratch-ref-counts
-                            scratch-registers
+                            (compiler-reg-global-shared-view scratch-registers)
                             scratch-register-count
-                            gp-pool
-                            xmm-pool
+                            (compiler-reg-global-shared-view gp-pool)
+                            (compiler-reg-global-shared-view xmm-pool)
                             out-vars)
                           (compiler-reg-scratch-assign-preserved-items!
                             gp-pool
                             xmm-pool
-                            items
+                            (compiler-reg-global-shared-view items)
                             0)
                           (compiler-reg-scratch-require-complete!
-                            items
+                            (compiler-reg-global-shared-view items)
                             function-name)
                           (CompilerRegScratchPlanResult.Result
                             (match plan
@@ -45982,7 +46226,9 @@
           (compiler-reg-fill-i64-array
             (compiler-reg-global-shared-view def-counts)
             0)
-          (compiler-reg-fill-i64-array candidates 0)
+          (compiler-reg-fill-i64-array
+            (compiler-reg-global-shared-view candidates)
+            0)
           (compiler-reg-fill-i64-array kinds 0)
           ;; Parameters are an implicit definition at function entry (their
           ;; incoming value). Count them so a param that is ALSO written by a
@@ -45991,7 +46237,10 @@
           ;; single-def rematerialisable var: rematerialising it would recompute
           ;; the constant at the loop-header use and silently drop the
           ;; first-iteration incoming argument value.
-          (compiler-reg-param-count-defs! params def-counts)
+          (compiler-reg-param-count-defs!
+            (compiler-reg-global-shared-view params)
+            def-counts)
+          (compiler-reg-param-poison-remat! params candidates)
           (compiler-reg-remat-table-record-blocks!
             (compiler-reg-global-shared-view table)
             blocks

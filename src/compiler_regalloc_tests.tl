@@ -5382,6 +5382,35 @@
 
 (cfg
   test
+  (define (compiler-reg-remat-parameter-global-rhs-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "remat_parameter_global_rhs")
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "x" (compiler-reg-i64-ty) 0)
+        (ir.compiler-ir-param-cons
+          (ir.CompilerIrParam.Param "y" (compiler-reg-i64-ty) 1)
+          ir.CompilerIrParamList.Nil))
+      (compiler-reg-i64-ty)
+      3
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.BinOp
+              2
+              (ir.CompilerIrBinOp.Mul)
+              (ir.CompilerIrValue.Var 0)
+              (ir.CompilerIrValue.Global
+                (ir.compiler-ir-test-symbol "global_value"))
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
+              ir.CompilerIrInstrList.Nil)))
+        ir.CompilerIrBlockList.Nil))))
+
+(cfg
+  test
   (define (compiler-reg-remat-single-spill-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
     (reg.CompilerRegPlan.Plan
       (reg.compiler-reg-assignments-prepend
@@ -5802,6 +5831,88 @@
                       (ir.compiler-ir-global-shared-view items)
                       vars
                       "global_value"))))])]))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-parameters-poisoned-ok?) : bool
+    (let
+      [table : reg.CompilerRegRematTable
+        (reg.compiler-reg-remat-table-build
+          (compiler-reg-remat-parameter-global-rhs-function))]
+      [candidates : (__tl_dyn-array i64) table.candidates]
+      (and
+        (= (array-ref candidates 0) 2)
+        (= (array-ref candidates 1) 2)
+        (= (array-ref candidates 2) 0)))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-parameter-assignment-keeps-home-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-remat-parameter-global-rhs-function)]
+      [assignments : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignments-prepend
+          (reg.CompilerRegAssignment
+            0
+            (reg.CompilerRegLocation.Spill
+              (reg.compiler-reg-stack-slot-offset 0)))
+          (reg.compiler-reg-assignment-table-empty))]
+      [rewritten : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-rewrite-remat-assignments
+          assignments
+          (ir.compiler-ir-global-shared-view func)
+          (compiler-reg-test-identity-coalesce 3)
+          (live.compiler-live-set-empty)
+          3)]
+      (match (reg.compiler-reg-assignment-lookup rewritten 0)
+        [(reg.CompilerRegMaybeLocation.Some (reg.CompilerRegLocation.Spill _))
+          true]
+        [_ false]))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-parameter-use-not-rewritten-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-remat-parameter-global-rhs-function)]
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-remat-single-spill-plan
+          (ir.compiler-ir-global-shared-view func))]
+      (match (ir.compiler-ir-global-shared-view func)
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+          (match (reg.compiler-reg-remat-rewrite-blocks
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (ir.compiler-ir-global-shared-view func)
+            blocks
+            vars
+            (reg.compiler-reg-function-var-types
+              (ir.compiler-ir-global-shared-view func))
+            (reg.compiler-reg-global-shared-view plan))
+            [(reg.CompilerRegCallSaveRewrite.Rewrite
+                rewritten
+                _
+                out-vars
+                extra-assignments
+                _)
+              (let
+                [block-seq : ir.CompilerIrBlockSeq
+                  (ir.compiler-ir-block-seq-from-list rewritten)]
+                (and
+                  (= out-vars vars)
+                  (= (reg.compiler-reg-assignment-count extra-assignments) 0)
+                  (match (ir.compiler-ir-block-seq-ref block-seq 0)
+                    [(ir.CompilerIrBlock.Block _ instrs)
+                      (match (ir.compiler-ir-instr-seq-ref instrs 0)
+                        [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+                          (and
+                            (match lhs
+                              [(ir.CompilerIrValue.Var id) (= id 0)]
+                              [_ false])
+                            (match rhs
+                              [(ir.CompilerIrValue.Global _) true]
+                              [_ false]))]
+                        [_ false])])))])]))))
 
 (cfg
   test
@@ -10481,12 +10592,21 @@
         [(reg.CompilerRegScratchPlanResult.Result out scratch-plan)
           (let
             [index-reg : i64
-              (reg.compiler-reg-scratch-plan-register scratch-plan 0 0)]
+              (reg.compiler-reg-scratch-plan-register
+                (reg.compiler-reg-global-shared-view scratch-plan)
+                0
+                0)]
             [table-reg : i64
-              (reg.compiler-reg-scratch-plan-register scratch-plan 0 1)]
+              (reg.compiler-reg-scratch-plan-register
+                (reg.compiler-reg-global-shared-view scratch-plan)
+                0
+                1)]
             (and
               (= (reg.compiler-reg-plan-var-count out 1) 1)
-              (= (reg.compiler-reg-scratch-plan-count scratch-plan) 2)
+              (=
+                (reg.compiler-reg-scratch-plan-count
+                  (reg.compiler-reg-global-shared-view scratch-plan))
+                2)
               (not (= index-reg cabi.compiler-reg-id-invalid))
               (not (= table-reg cabi.compiler-reg-id-invalid))
               (not (= index-reg table-reg))
@@ -10529,12 +10649,21 @@
         [(reg.CompilerRegScratchPlanResult.Result out scratch-plan)
           (let
             [length-reg : i64
-              (reg.compiler-reg-scratch-plan-register scratch-plan 0 0)]
+              (reg.compiler-reg-scratch-plan-register
+                (reg.compiler-reg-global-shared-view scratch-plan)
+                0
+                0)]
             [index-reg : i64
-              (reg.compiler-reg-scratch-plan-register scratch-plan 0 1)]
+              (reg.compiler-reg-scratch-plan-register
+                (reg.compiler-reg-global-shared-view scratch-plan)
+                0
+                1)]
             (and
               (= (reg.compiler-reg-plan-var-count out 1) 1)
-              (= (reg.compiler-reg-scratch-plan-count scratch-plan) 2)
+              (=
+                (reg.compiler-reg-scratch-plan-count
+                  (reg.compiler-reg-global-shared-view scratch-plan))
+                2)
               (not (= length-reg cabi.compiler-reg-id-invalid))
               (not (= index-reg cabi.compiler-reg-id-invalid))
               (not (= length-reg index-reg))
@@ -10597,12 +10726,26 @@
       2)
       [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
         (let
-          [dst : i64 (reg.compiler-reg-scratch-plan-register scratch-plan 0 0)]
-          [src : i64 (reg.compiler-reg-scratch-plan-register scratch-plan 0 1)]
+          [dst : i64
+            (reg.compiler-reg-scratch-plan-register
+              (reg.compiler-reg-global-shared-view scratch-plan)
+              0
+              0)]
+          [src : i64
+            (reg.compiler-reg-scratch-plan-register
+              (reg.compiler-reg-global-shared-view scratch-plan)
+              0
+              1)]
           [value : i64
-            (reg.compiler-reg-scratch-plan-register scratch-plan 0 2)]
+            (reg.compiler-reg-scratch-plan-register
+              (reg.compiler-reg-global-shared-view scratch-plan)
+              0
+              2)]
           (and
-            (= (reg.compiler-reg-scratch-plan-count scratch-plan) 3)
+            (=
+              (reg.compiler-reg-scratch-plan-count
+                (reg.compiler-reg-global-shared-view scratch-plan))
+              3)
             (not (= dst cabi.compiler-reg-id-invalid))
             (not (= src cabi.compiler-reg-id-invalid))
             (not (= value cabi.compiler-reg-id-invalid))
@@ -10616,6 +10759,393 @@
             (not (= value cabi.compiler-reg-id-r9))
             (not (= value cabi.compiler-reg-id-r10))))])
     true))
+
+(define (compiler-reg-scalar-mov-scratch-test-plan) : reg.CompilerRegPlan
+  (reg.CompilerRegPlan.Plan
+    (reg.compiler-reg-assignments-prepend
+      (reg.CompilerRegAssignment 0 (reg.CompilerRegLocation.Spill -8))
+      (reg.compiler-reg-assignments-prepend
+        (reg.CompilerRegAssignment 1 (reg.CompilerRegLocation.Spill -16))
+        (reg.compiler-reg-assignment-table-empty)))
+    (live.compiler-live-set-empty)
+    (reg.compiler-reg-interval-seq-prepend
+      (reg.CompilerRegInterval 0 0 1)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 0 1)
+        (reg.compiler-reg-interval-seq-empty)))
+    (reg.compiler-reg-var-types-insert
+      (reg.compiler-reg-var-types-insert
+        (reg.compiler-reg-var-types-empty)
+        0
+        (ast.AstType.I32))
+      1
+      (ast.AstType.I32))
+    (reg.compiler-reg-call-split-empty)
+    (reg.compiler-reg-split-plan-empty)))
+
+(define (compiler-reg-scalar-mov-scratch-test-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ci.intern "scalar_mov_scratch_vreg")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I32)
+    2
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            1
+            (ir.CompilerIrValue.Var 0)
+            (ast.AstType.I32))
+          ir.CompilerIrInstrList.Nil))
+      ir.CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-scalar-mov-scratch-vregs-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (reg.compiler-reg-plan-with-scratch-vreg-result
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (cabi.CompilerRegTargetAbi.Windows)
+      (compiler-reg-scalar-mov-scratch-test-function)
+      (compiler-reg-scalar-mov-scratch-test-plan)
+      2)
+      [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
+        (and
+          (=
+            (reg.compiler-reg-scratch-plan-count
+              (reg.compiler-reg-global-shared-view scratch-plan))
+            1)
+          (not
+            (=
+              (reg.compiler-reg-scratch-plan-register scratch-plan 0 0)
+              cabi.compiler-reg-id-invalid)))])
+    true))
+
+(define (compiler-reg-fast-alloc-scratch-test-plan) : reg.CompilerRegPlan
+  (reg.CompilerRegPlan.Plan
+    (reg.compiler-reg-assignments-prepend
+      (reg.CompilerRegAssignment 0 (reg.CompilerRegLocation.Spill -8))
+      (reg.compiler-reg-assignment-table-empty))
+    (live.compiler-live-set-empty)
+    (reg.compiler-reg-interval-seq-prepend
+      (reg.CompilerRegInterval 0 0 2)
+      (reg.compiler-reg-interval-seq-empty))
+    (reg.compiler-reg-var-types-insert
+      (reg.compiler-reg-var-types-empty)
+      0
+      (ast.AstType.U64))
+    (reg.compiler-reg-call-split-empty)
+    (reg.compiler-reg-split-plan-empty)))
+
+(define (compiler-reg-fast-alloc-scratch-test-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "fast_alloc_scratch_vregs")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.U64)
+    1
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Call
+            0
+            (ir.compiler-ir-test-symbol "tl_alloc")
+            (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 16))
+            (ast.AstType.U64))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Return
+              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
+            ir.CompilerIrInstrList.Nil)))
+      ir.CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-fast-alloc-scratch-vregs-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (reg.compiler-reg-plan-with-scratch-vreg-result
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (cabi.CompilerRegTargetAbi.Windows)
+      (compiler-reg-fast-alloc-scratch-test-function)
+      (compiler-reg-fast-alloc-scratch-test-plan)
+      1)
+      [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
+        (let
+          [root : i64
+            (reg.compiler-reg-scratch-plan-register
+              (reg.compiler-reg-global-shared-view scratch-plan)
+              0
+              0)]
+          [head : i64
+            (reg.compiler-reg-scratch-plan-register
+              (reg.compiler-reg-global-shared-view scratch-plan)
+              0
+              1)]
+          [xmm0 : i64 (cabi.compiler-abi-xmm-register-id 0)]
+          (and
+            (=
+              (reg.compiler-reg-scratch-plan-count
+                (reg.compiler-reg-global-shared-view scratch-plan))
+              2)
+            (>= root 0)
+            (>= head 0)
+            (< root xmm0)
+            (< head xmm0)
+            (not (= root head))))])
+    true))
+
+(define (compiler-reg-return-compare-rax-rhs-test-plan) : reg.CompilerRegPlan
+  (reg.CompilerRegPlan.Plan
+    (reg.compiler-reg-assignments-prepend
+      (reg.CompilerRegAssignment 0 (reg.CompilerRegLocation.Spill -8))
+      (reg.compiler-reg-assignments-prepend
+        (reg.CompilerRegAssignment
+          1
+          (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
+        (reg.compiler-reg-assignments-prepend
+          (reg.CompilerRegAssignment 2 (reg.CompilerRegLocation.Spill -16))
+          (reg.compiler-reg-assignment-table-empty))))
+    (live.compiler-live-set-empty)
+    (reg.compiler-reg-interval-seq-prepend
+      (reg.CompilerRegInterval 0 0 2)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 0 2)
+        (reg.compiler-reg-interval-seq-prepend
+          (reg.CompilerRegInterval 2 0 2)
+          (reg.compiler-reg-interval-seq-empty))))
+    (reg.compiler-reg-var-types-insert
+      (reg.compiler-reg-var-types-insert
+        (reg.compiler-reg-var-types-insert
+          (reg.compiler-reg-var-types-empty)
+          0
+          (ast.AstType.U64))
+        1
+        (ast.AstType.U64))
+      2
+      (ast.AstType.Bool))
+    (reg.compiler-reg-call-split-empty)
+    (reg.compiler-reg-split-plan-empty)))
+
+(define (compiler-reg-return-compare-rax-rhs-test-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "return_compare_rax_rhs")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.Bool)
+    3
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.BinOp
+            2
+            (ir.CompilerIrBinOp.Ne)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 1)
+            (ast.AstType.U64))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Return
+              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
+            ir.CompilerIrInstrList.Nil)))
+      ir.CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-return-compare-rax-rhs-scratch-vregs-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (reg.compiler-reg-plan-with-scratch-vreg-result
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (cabi.CompilerRegTargetAbi.Windows)
+      (compiler-reg-return-compare-rax-rhs-test-function)
+      (compiler-reg-return-compare-rax-rhs-test-plan)
+      3)
+      [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
+        (let
+          [primary : i64
+            (reg.compiler-reg-scratch-plan-register
+              (reg.compiler-reg-global-shared-view scratch-plan)
+              0
+              0)]
+          [alternate : i64
+            (reg.compiler-reg-scratch-plan-register
+              (reg.compiler-reg-global-shared-view scratch-plan)
+              0
+              1)]
+          (and
+            (=
+              (reg.compiler-reg-scratch-plan-count
+                (reg.compiler-reg-global-shared-view scratch-plan))
+              2)
+            (>= primary 0)
+            (>= alternate 0)
+            (not (= primary cabi.compiler-reg-id-rax))
+            (not (= alternate cabi.compiler-reg-id-rax))
+            (not (= primary alternate))))])
+    true))
+
+(define (compiler-reg-binop-global-rhs-scratch-test-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "binop_global_rhs_scratch")
+    (ir.compiler-ir-param-cons
+      (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 0)
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "y" (ast.AstType.I64) 1)
+        ir.CompilerIrParamList.Nil))
+    (ast.AstType.I64)
+    5
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.BinOp
+            2
+            (ir.CompilerIrBinOp.Mul)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Global
+              (ir.compiler-ir-test-symbol "binop_global_rhs_value"))
+            (ast.AstType.I64))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              3
+              (ir.CompilerIrValue.Var 2)
+              (ast.AstType.I64))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                4
+                (ir.CompilerIrBinOp.Sub)
+                (ir.CompilerIrValue.Var 1)
+                (ir.CompilerIrValue.Var 3)
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Return
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))
+                ir.CompilerIrInstrList.Nil)))))
+      ir.CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-binop-global-rhs-scratch-test-plan) : reg.CompilerRegPlan
+  (let
+    [func : ir.CompilerIrFunction
+      (compiler-reg-binop-global-rhs-scratch-test-function)]
+    [assignments : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignments-prepend
+        (reg.CompilerRegAssignment
+          0
+          (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
+        (reg.compiler-reg-assignments-prepend
+          (reg.CompilerRegAssignment 1 (reg.CompilerRegLocation.Spill -8))
+          (reg.compiler-reg-assignments-prepend
+            (reg.CompilerRegAssignment 2 (reg.CompilerRegLocation.Spill -16))
+            (reg.compiler-reg-assignments-prepend
+              (reg.CompilerRegAssignment 3 (reg.CompilerRegLocation.Spill -24))
+              (reg.compiler-reg-assignments-prepend
+                (reg.CompilerRegAssignment
+                  4
+                  (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
+                (reg.compiler-reg-assignment-table-empty))))))]
+    [types : reg.CompilerRegVarTypes
+      (reg.compiler-reg-var-types-insert
+        (reg.compiler-reg-var-types-insert
+          (reg.compiler-reg-var-types-insert
+            (reg.compiler-reg-var-types-insert
+              (reg.compiler-reg-var-types-insert
+                (reg.compiler-reg-var-types-empty)
+                0
+                (ast.AstType.I64))
+              1
+              (ast.AstType.I64))
+            2
+            (ast.AstType.I64))
+          3
+          (ast.AstType.I64))
+        4
+        (ast.AstType.I64))]
+    (reg.CompilerRegPlan.Plan
+      assignments
+      (live.compiler-live-set-empty)
+      (reg.compiler-reg-live-intervals
+        (ir.compiler-ir-global-shared-view func)
+        (live.compiler-live-analyze-function
+          (ir.compiler-ir-global-shared-view func)))
+      types
+      (reg.compiler-reg-call-split-empty)
+      (reg.compiler-reg-split-plan-empty))))
+
+(define (compiler-reg-binop-global-rhs-scratch-vregs-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-binop-global-rhs-scratch-test-function)]
+      [plan : reg.CompilerRegPlan
+        (compiler-reg-binop-global-rhs-scratch-test-plan)]
+      [types : reg.CompilerRegVarTypes
+        (reg.compiler-reg-plan-types (reg.compiler-reg-global-shared-view plan))]
+      [groups : live.CompilerLiveI64Set
+        (reg.compiler-reg-function-group-vars
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ir.compiler-ir-global-shared-view func)
+          (reg.compiler-reg-global-shared-view types))]
+      (match (reg.compiler-reg-plan-with-scratch-vreg-result-with-groups
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (cabi.CompilerRegTargetAbi.Windows)
+        (ir.compiler-ir-global-shared-view func)
+        groups
+        plan
+        5)
+        [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
+          (let
+            [lhs : i64
+              (reg.compiler-reg-scratch-plan-register
+                (reg.compiler-reg-global-shared-view scratch-plan)
+                0
+                0)]
+            [rhs : i64
+              (reg.compiler-reg-scratch-plan-register
+                (reg.compiler-reg-global-shared-view scratch-plan)
+                0
+                1)]
+            (and
+              (not (= lhs cabi.compiler-reg-id-invalid))
+              (not (= rhs cabi.compiler-reg-id-invalid))
+              (not (= lhs rhs))))]))
+    true))
+
+(define (compiler-reg-scratch-sibling-test-requirement
+  [point : i64]
+  [role : reg.CompilerRegScratchRole]) : reg.CompilerRegScratchRequirement
+  (reg.CompilerRegScratchRequirement
+    point
+    0
+    role
+    (reg.CompilerRegScratchConstraint
+      (reg.CompilerRegScratchClass.Gp)
+      (reg.compiler-reg-id-seq-empty)
+      (reg.compiler-reg-id-seq-empty)
+      cabi.compiler-reg-id-invalid)
+    10
+    20
+    0))
+
+(define (compiler-reg-scratch-producer-phi-sharing-ok?) : bool
+  (let
+    [producer : reg.CompilerRegScratchRequirement
+      (compiler-reg-scratch-sibling-test-requirement
+        12
+        (reg.CompilerRegScratchRole.ScalarSecondary))]
+    [phi : reg.CompilerRegScratchRequirement
+      (compiler-reg-scratch-sibling-test-requirement
+        14
+        (reg.CompilerRegScratchRole.PhiCycle))]
+    [same-point : reg.CompilerRegScratchRequirement
+      (compiler-reg-scratch-sibling-test-requirement
+        14
+        (reg.CompilerRegScratchRole.ScalarSecondary))]
+    (and
+      (not
+        (reg.compiler-reg-scratch-sibling-conflicts?
+          (reg.compiler-reg-global-shared-view producer)
+          (reg.compiler-reg-global-shared-view phi)))
+      (not
+        (reg.compiler-reg-scratch-sibling-conflicts?
+          (reg.compiler-reg-global-shared-view phi)
+          (reg.compiler-reg-global-shared-view producer)))
+      (reg.compiler-reg-scratch-sibling-conflicts? same-point phi))))
 
 (define (compiler-reg-early-scratch-test-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -18040,6 +18570,15 @@
       "compiler-reg-remat-global-mutation-refusal-ok?"
       (cfg test (compiler-reg-remat-global-mutation-refusal-ok?) true))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-remat-parameters-poisoned-ok?"
+      (cfg test (compiler-reg-remat-parameters-poisoned-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-remat-parameter-assignment-keeps-home-ok?"
+      (cfg test (compiler-reg-remat-parameter-assignment-keeps-home-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-remat-parameter-use-not-rewritten-ok?"
+      (cfg test (compiler-reg-remat-parameter-use-not-rewritten-ok?) true))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-spill-weight-eviction-ok?"
       (cfg test (compiler-reg-spill-weight-eviction-ok?) true))
     (compiler-regalloc-self-test-require!
@@ -18075,6 +18614,21 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-memory-scratch-vregs-ok?"
       (compiler-reg-memory-scratch-vregs-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-scalar-mov-scratch-vregs-ok?"
+      (compiler-reg-scalar-mov-scratch-vregs-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-fast-alloc-scratch-vregs-ok?"
+      (compiler-reg-fast-alloc-scratch-vregs-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-return-compare-rax-rhs-scratch-vregs-ok?"
+      (compiler-reg-return-compare-rax-rhs-scratch-vregs-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-binop-global-rhs-scratch-vregs-ok?"
+      (compiler-reg-binop-global-rhs-scratch-vregs-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-scratch-producer-phi-sharing-ok?"
+      (compiler-reg-scratch-producer-phi-sharing-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-early-scratch-model-ok?"
       (compiler-reg-early-scratch-model-ok?))

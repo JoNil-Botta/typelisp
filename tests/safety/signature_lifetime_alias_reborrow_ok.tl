@@ -12,7 +12,7 @@
   (fixed (Array i64 1)))
 
 (define (signature-alias-touch!
-  [items : (&mut source (Array SignatureAliasRec))]
+  [items : (&mut source (__tl_dyn-array SignatureAliasRec))]
   [index : i64]) : unit
   (let
     [item : (&mut source SignatureAliasRec) (&mut (array-ref items index))]
@@ -47,7 +47,8 @@
 
 (define (main) : i64
   (let
-    [items : (Array SignatureAliasRec) (array.make-array SignatureAliasRec 1)]
+    [items : (__tl_dyn-array SignatureAliasRec)
+      (array.make-array SignatureAliasRec 1)]
     [stored : SignatureAliasStored
       (SignatureAliasStored 7 (tuple 8 9) (array 10))]
     [value : i64 11]

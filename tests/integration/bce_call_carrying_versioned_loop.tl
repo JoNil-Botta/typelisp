@@ -33,7 +33,7 @@
 ;; Large enough (its own counted loop) that the inliner leaves the call site
 ;; alone, which is the point -- the versioner has to clone the call.
 (define (bump
-  [marks : (&mut marks (Array i64))]
+  [marks : (&mut marks (__tl_dyn-array i64))]
   [start : i64]
   [count : i64]
   [v : i64]) : i64
@@ -68,10 +68,10 @@
       (+ last guard))))
 
 (define (walk
-  [items : (& items (Array i64))]
-  [other : (& other (Array i64))]
-  [extra : (& extra (Array i64))]
-  [marks : (&mut marks (Array i64))]
+  [items : (& items (__tl_dyn-array i64))]
+  [other : (& other (__tl_dyn-array i64))]
+  [extra : (& extra (__tl_dyn-array i64))]
+  [marks : (&mut marks (__tl_dyn-array i64))]
   [n : i64]
   [seed : i64]) : i64
   (let
@@ -90,10 +90,10 @@
 
 ;; The same arithmetic with the helper's effect fused in by hand.
 (define (twin
-  [items : (& items (Array i64))]
-  [other : (& other (Array i64))]
-  [extra : (& extra (Array i64))]
-  [marks : (&mut marks (Array i64))]
+  [items : (& items (__tl_dyn-array i64))]
+  [other : (& other (__tl_dyn-array i64))]
+  [extra : (& extra (__tl_dyn-array i64))]
+  [marks : (&mut marks (__tl_dyn-array i64))]
   [n : i64]
   [seed : i64]) : i64
   (let
@@ -112,7 +112,7 @@
           (set! i (+ i 1))))
       acc)))
 
-(define (fill [a : (&mut a (Array i64))] [n : i64] [v : i64]) : unit
+(define (fill [a : (&mut a (__tl_dyn-array i64))] [n : i64] [v : i64]) : unit
   (let
     [i : i64 0]
     (begin
@@ -123,7 +123,10 @@
       unit)))
 
 ;; seed + sum over i < n of (items + other + (marks bump | -1)).
-(define (expected [extra : (& extra (Array i64))] [n : i64] [seed : i64]) : i64
+(define (expected
+  [extra : (& extra (__tl_dyn-array i64))]
+  [n : i64]
+  [seed : i64]) : i64
   (let
     [acc : i64 seed]
     [i : i64 0]

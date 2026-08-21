@@ -22,8 +22,8 @@
 (import stdlib.io)
 
 (define (scan-row
-  [xs : (Array i64)]
-  [ys : (Array i64)]
+  [xs : (__tl_dyn-array i64)]
+  [ys : (__tl_dyn-array i64)]
   [n : i64]
   [sentinel : i64]) : i64
   (let
@@ -41,8 +41,8 @@
 
 (define (main) : i64
   (let
-    [xs : (Array i64) (make-array i64 8)]
-    [ys : (Array i64) (make-array i64 4)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [ys : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [i : i64 0]
     (begin
       (while (< i 8)

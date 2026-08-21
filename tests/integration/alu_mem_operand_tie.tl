@@ -26,10 +26,10 @@
 ;; it; scripts/verify-asm-shape-gates.sh asserts the shape over the bounds-check-
 ;; eliminated fast body. The two call sites keep `fold-words` out of line.
 (define (fold-words
-  [a : (Array i64)]
-  [b : (Array i64)]
-  [c : (Array i64)]
-  [d : (Array i64)]
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [c : (__tl_dyn-array i64)]
+  [d : (__tl_dyn-array i64)]
   [seed : i64]) : i64
   (let
     [i : i64 0]
@@ -56,10 +56,10 @@
 ;; `bit-and` over a `bit-xor`, each with a fresh element read on one side and
 ;; the running value on the other), one op wider.
 (define (fold-nested
-  [a : (Array i64)]
-  [b : (Array i64)]
-  [c : (Array i64)]
-  [d : (Array i64)]
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [c : (__tl_dyn-array i64)]
+  [d : (__tl_dyn-array i64)]
   [seed : i64]) : i64
   (let
     [i : i64 0]
@@ -79,10 +79,10 @@
 
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 8)]
-    [b : (Array i64) (make-array i64 8)]
-    [c : (Array i64) (make-array i64 8)]
-    [d : (Array i64) (make-array i64 8)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [c : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [d : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [i : i64 0]
     (begin
       (while (< i 8)

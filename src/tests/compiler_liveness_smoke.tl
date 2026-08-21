@@ -6,18 +6,16 @@
 
 (define (compiler-live-smoke-spmd-call-use-def-ok?) : bool
   (let
-    [args : ir.CompilerIrSpmdCallArgList
-      (ir.ir-spmd-call-arg-cons
+    [args : ir.CompilerIrSpmdCallArgSeq
+      (ir.compiler-ir-spmd-call-arg-seq2
         (ir.CompilerIrSpmdCallArg.Arg
           (ir.CompilerIrSpmdValueClass.Uniform)
           (ir.CompilerIrValue.Var 21)
           (live_tests.compiler-live-i64-ty))
-        (ir.ir-spmd-call-arg-cons
-          (ir.CompilerIrSpmdCallArg.Arg
-            (ir.CompilerIrSpmdValueClass.Varying)
-            (ir.CompilerIrValue.Var 22)
-            (live_tests.compiler-live-i64-ty))
-          ir.CompilerIrSpmdCallArgList.Nil))]
+        (ir.CompilerIrSpmdCallArg.Arg
+          (ir.CompilerIrSpmdValueClass.Varying)
+          (ir.CompilerIrValue.Var 22)
+          (live_tests.compiler-live-i64-ty)))]
     [instr : ir.CompilerIrInstr
       (ir.ir-instr-spmd-call
         (ci.intern-generated-canonical-name "helper")

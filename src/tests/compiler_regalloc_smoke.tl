@@ -9,18 +9,16 @@
 
 (define (compiler-reg-smoke-spmd-call-function) : ir.CompilerIrFunction
   (let
-    [spmd-args : ir.CompilerIrSpmdCallArgList
-      (ir.ir-spmd-call-arg-cons
+    [spmd-args : ir.CompilerIrSpmdCallArgSeq
+      (ir.compiler-ir-spmd-call-arg-seq2
         (ir.CompilerIrSpmdCallArg.Arg
           (ir.CompilerIrSpmdValueClass.Uniform)
           (ir.CompilerIrValue.Var 1)
           (reg_tests.compiler-reg-i64-ty))
-        (ir.ir-spmd-call-arg-cons
-          (ir.CompilerIrSpmdCallArg.Arg
-            (ir.CompilerIrSpmdValueClass.Varying)
-            (ir.CompilerIrValue.Var 2)
-            (reg_tests.compiler-reg-i64-ty))
-          ir.CompilerIrSpmdCallArgList.Nil))]
+        (ir.CompilerIrSpmdCallArg.Arg
+          (ir.CompilerIrSpmdValueClass.Varying)
+          (ir.CompilerIrValue.Var 2)
+          (reg_tests.compiler-reg-i64-ty)))]
     (ir.CompilerIrFunction.Function
       (ci.intern-generated-canonical-name "spmd_call")
       ir.CompilerIrParamList.Nil

@@ -343,35 +343,35 @@
 (define windows-wait-max-finite-ms : i64
   4294967294)
 
-;: Return the integer address of an `Array u8` backing buffer.
-(define (array-u8-addr [buf : (Array u8)]) : i64
+;: Return the integer address of a private dynamic u8 backing buffer.
+(define (array-u8-addr [buf : (__tl_dyn-array u8)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
 
-;: Return the integer address of an `Array u64` backing buffer.
-(define (array-u64-addr [buf : (Array u64)]) : i64
+;: Return the integer address of a private dynamic u64 backing buffer.
+(define (array-u64-addr [buf : (__tl_dyn-array u64)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
 
 ;: Return the integer address of a private dynamic i64 backing buffer.
 (define (array-i64-addr [buf : (__tl_dyn-array i64)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
 
-;: Return the integer address of an `Array i32` backing buffer.
-(define (array-i32-addr [buf : (Array i32)]) : i64
+;: Return the integer address of a private dynamic i32 backing buffer.
+(define (array-i32-addr [buf : (__tl_dyn-array i32)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
 
-;: Return the integer address of an `Array String` backing buffer.
-(define (array-string-addr [buf : (Array String)]) : i64
+;: Return the integer address of a private dynamic String backing buffer.
+(define (array-string-addr [buf : (__tl_dyn-array String)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
 
 ;: Return the integer address of a private i64 Vec result cell.
 (define (array-i64-vec-addr [buf : (__tl_dyn-array thread-i64-vec.Vec)]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
 
 ;: Convert an integer address into a mutable i32 pointer.
 (define (addr->mut-i32 [addr : i64]) : (MutPtr i32)
@@ -511,10 +511,10 @@
 ;: Linux implementation of `spawn`.
 (define (linux-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
   (let
-    [stack : (Array u8) (array.make-array u8 default-stack-size)]
-    [clear-cell : (Array i32) (array.make-array i32 1)]
-    [started-cell : (Array i32) (array.make-array i32 1)]
-    [result-cell : (__tl_dyn-array i64) (make-array i64 1)]
+    [stack : (__tl_dyn-array u8) (array.make-array u8 default-stack-size)]
+    [clear-cell : (__tl_dyn-array i32) (array.make-array i32 1)]
+    [started-cell : (__tl_dyn-array i32) (array.make-array i32 1)]
+    [result-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [clear-addr : i64 (array-i32-addr clear-cell)]
     [started-addr : i64 (array-i32-addr started-cell)]
     [result-addr : i64 (array-i64-addr result-cell)]
@@ -547,9 +547,9 @@
   windows
   (define (thread-windows-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
     (let
-      [context : (Array u64) (array.make-array u64 4)]
-      [started-cell : (Array i32) (array.make-array i32 1)]
-      [result-cell : (__tl_dyn-array i64) (make-array i64 1)]
+      [context : (__tl_dyn-array u64) (array.make-array u64 4)]
+      [started-cell : (__tl_dyn-array i32) (array.make-array i32 1)]
+      [result-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [context-addr : i64 (array-u64-addr context)]
       [started-addr : i64 (array-i32-addr started-cell)]
       [result-addr : i64 (array-i64-addr result-cell)]
@@ -606,7 +606,6 @@
     0))
 
 ;: Spawn a compiler-checked direct nullary closure returning `String`.
-;:
 ;: The task runs with a fresh atomic arena as the active allocation target, then
 ;: copies its result into that arena before publishing it to the joiner. The
 ;: joined `String` therefore owns storage in an arena that can outlive both the
@@ -614,7 +613,8 @@
 (define (spawn-string [task : (-> String)]) : ThreadStringSpawnResult
   (let
     [owner : arena.Arena (arena.make-atomic)]
-    [result : (Array String) (in-arena owner (array.make-array String 1))]
+    [result : (__tl_dyn-array String)
+      (in-arena owner (array.make-array String 1))]
     [result-addr : i64 (array-string-addr result)]
     (match (spawn
       (lambda ([_ignored : i64]) : i64
@@ -638,7 +638,7 @@
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [result : (__tl_dyn-array thread-i64-vec.Vec)
-      (in-arena owner (make-array thread-i64-vec.Vec 1))]
+      (in-arena owner (__tl_make-array thread-i64-vec.Vec 1))]
     [result-addr : i64 (array-i64-vec-addr result)]
     (match (spawn
       (lambda ([_ignored : i64]) : i64
@@ -660,7 +660,7 @@
 (define (spawn-box-i64 [task : (-> (Box i64))]) : ThreadBoxI64SpawnResult
   (let
     [owner : arena.Arena (arena.make-atomic)]
-    [result : (__tl_dyn-array i64) (in-arena owner (make-array i64 1))]
+    [result : (__tl_dyn-array i64) (in-arena owner (__tl_make-array i64 1))]
     [result-addr : i64 (array-i64-addr result)]
     (match (spawn
       (lambda ([_ignored : i64]) : i64
@@ -848,7 +848,7 @@
       count)))
 
 ;: Count set CPU bits in a Linux affinity mask buffer.
-(define (count-affinity-bytes [mask : (Array u8)]) : i64
+(define (count-affinity-bytes [mask : (__tl_dyn-array u8)]) : i64
   (let
     [i : i64 0]
     [count : i64 0]
@@ -864,7 +864,7 @@
 ;: Linux implementation of `default-worker-count`.
 (define (linux-default-worker-count) : i64
   (let
-    [mask : (Array u8) (array.make-array u8 128)]
+    [mask : (__tl_dyn-array u8) (array.make-array u8 128)]
     [rc : i64
       (unsafe
         (syscall 204 0 128 (array-u8-addr mask)))]
@@ -940,7 +940,7 @@
       (thread-windows-wait-single sem.handle windows-wait-infinite)
       windows-wait-object-0)
     (let
-      [buf : (Array u64) (array.make-array u64 1)]
+      [buf : (__tl_dyn-array u64) (array.make-array u64 1)]
       [done : bool false]
       [ok : bool false]
       (begin
@@ -967,7 +967,7 @@
         (thread-windows-release-semaphore sem.handle (cast 1 : i32) 0)
         (cast 0 : i32)))
     (let
-      [buf : (Array u64) (array.make-array u64 1)]
+      [buf : (__tl_dyn-array u64) (array.make-array u64 1)]
       (begin
         (set! (array-ref buf 0) (cast 1 : u64))
         (=
@@ -1008,7 +1008,7 @@
 (test
   thread-api
   (let
-    [mask : (Array u8) (array.make-array u8 4)]
+    [mask : (__tl_dyn-array u8) (array.make-array u8 4)]
     (begin
       (set! (array-ref mask 0) (cast 0 : u8))
       (set! (array-ref mask 1) (cast 1 : u8))

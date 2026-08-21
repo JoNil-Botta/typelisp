@@ -9344,6 +9344,59 @@
             previous-offset)
           ok)))))
 
+;; A non-scalar branch condition (notably a Global) is materialized through the
+;; generic load path. If that path emergency-borrows a live register, restore it
+;; after `testq` but before the first jump so both successors observe the saved
+;; value. The Var branch path already used the shared jump emitter; this pins the
+;; generic path to the same rule.
+(define (compiler-backend-global-branch-emergency-restore-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [function-state : compiler_backend.CompilerBackendFunctionState
+      (compiler_backend.compiler-backend-state-function-state backend-state)]
+    [_slot : unit
+      (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        function-state
+        -64)]
+    [_pending : unit
+      (compiler_backend.compiler-backend-emergency-add! function-state "%r9")]
+    (match (compiler_backend.compiler-backend-emit-branch-with-plan
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
+      "global_branch_restore"
+      (compiler_ir_types.CompilerIrValue.Global
+        (ci.intern "global_branch_restore_condition"))
+      (compiler_ir_types.compiler-ir-label "yes")
+      (compiler_ir_types.compiler-ir-label "no")
+      (compiler_backend.CompilerBackendMaybeLabel.No)
+      "%r9"
+      backend-state)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (let
+          [test-pos : i64
+            (compiler_backend.compiler-backend-string-find-from
+              asm
+              "    testq %r9, %r9\n"
+              0)]
+          [restore-pos : i64
+            (compiler_backend.compiler-backend-string-find-from
+              asm
+              "    movq -64(%rbp), %r9\n"
+              0)]
+          [jump-pos : i64
+            (compiler_backend.compiler-backend-string-find-from
+              asm
+              "    jne "
+              0)]
+          (and
+            (>= test-pos 0)
+            (> restore-pos test-pos)
+            (> jump-pos restore-pos)
+            (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-restore-suppressed
+              function-state)))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
     [counts : (__tl_dyn-array i64) (array.make-array i64 12)]
@@ -48401,6 +48454,7 @@ b_keep:
         (compiler-backend-reg-part-pools-ok?)
         (compiler-backend-scavenge-emergency-reg-support-ok?)
         (compiler-backend-debug-location-preserves-emergency-wrap-ok?)
+        (compiler-backend-global-branch-emergency-restore-ok?)
         (compiler-backend-ir-walkers-fail-closed-ok?))
       (compiler-backend-optimizer-rewrite-diagnostic-ok?)
       (and

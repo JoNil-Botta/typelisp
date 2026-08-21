@@ -29510,16 +29510,6 @@
                 5
                 "%rax"
                 backend-state)]
-            [true-target : i64
-              (compiler-backend-jump-resolve-target
-                backend-state
-                true-label
-                fallthrough)]
-            [false-target : i64
-              (compiler-backend-jump-resolve-target
-                backend-state
-                false-label
-                fallthrough)]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               cond
@@ -29530,30 +29520,17 @@
                   (str_cat.str-cat
                     load
                     (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
-                    (if (compiler-backend-jump-target-is-fallthrough?
-                      false-target
-                      fallthrough)
-                      (str_cat.str-cat
-                        "    jne "
-                        (compiler-backend-asm-label function true-target)
-                        "\n"
-                        "")
-                      (if (compiler-backend-jump-target-is-fallthrough?
-                        true-target
-                        fallthrough)
-                        (str_cat.str-cat
-                          "    je "
-                          (compiler-backend-asm-label function false-target)
-                          "\n"
-                          "")
-                        (str_cat.str-cat
-                          "    jne "
-                          (compiler-backend-asm-label
-                            (string.copy function)
-                            true-target)
-                          "\n    jmp "
-                          (compiler-backend-asm-label function false-target)
-                          "\n")))))]
+                    ;; Non-scalar conditions can emergency-borrow an occupied
+                    ;; register while materializing the value. Flush that
+                    ;; restore after `testq` and before either edge, just like
+                    ;; the Var/fallback paths above; appending it after the
+                    ;; conditional jump restores only the fallthrough edge.
+                    (compiler-backend-emit-branch-jumps
+                      function
+                      true-label
+                      false-label
+                      fallthrough
+                      backend-state)))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)]))])]))
 

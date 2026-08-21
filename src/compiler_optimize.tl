@@ -8885,6 +8885,23 @@
       (opt-copy-update-env env (compiler-opt-global-shared-view rewritten))
       rewritten)))
 
+(define (opt-copy-instrs!
+  [env : OptCopyEnv]
+  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
+  (let
+    [count : i64 instrs.len]
+    [state : OptCopyEnv env]
+    [index : i64 0]
+    (while (< index count)
+      (match (opt-copy-instr
+        (compiler-opt-global-shared-view state)
+        (clone (array-ref instrs.slots index)))
+        [(OptCopyResult.Result next-state rewritten)
+          (begin
+            (set! (array-ref instrs.slots index) rewritten)
+            (set! state next-state)
+            (set! index (+ index 1)))]))))
+
 (define (opt-copy-instrs [env : OptCopyEnv] [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
   (match instrs
     [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]

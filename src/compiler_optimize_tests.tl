@@ -1993,8 +1993,8 @@
         (compiler_ast_types.AstType.I64))]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-instrs
-        dead
-        live
+        (clone dead)
+        (clone live)
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
             (compiler_ir_types.CompilerIrValue.Var 1))))]
@@ -2046,7 +2046,7 @@
         (compiler_ast_types.AstType.I64))]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-instrs
-        folded
+        (clone folded)
         (compiler_ir_types.CompilerIrInstr.AddrOf 3 2)
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -2092,8 +2092,8 @@
         (compiler_ast_types.AstType.I64))]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-instrs
-        first
-        second
+        (clone first)
+        (clone second)
         (compiler_ir_types.CompilerIrInstr.AddrOf 4 3)
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -2157,8 +2157,8 @@
       (compiler_ir_types.CompilerIrInstr.AddrOf 3 2)]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-instrs
-        producer
-        addr
+        (clone producer)
+        (clone addr)
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
             (compiler_ir_types.CompilerIrValue.I64 42))))]
@@ -2398,7 +2398,7 @@
         (compiler_ast_types.AstType.I64))]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-instrs
-        call
+        (clone call)
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
             (compiler_ir_types.CompilerIrValue.Var 1))))]
@@ -2445,9 +2445,9 @@
         (compiler_ast_types.AstType.I64))]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-instrs
-        pack
-        word
-        tail
+        (clone pack)
+        (clone word)
+        (clone tail)
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
             (compiler_ir_types.CompilerIrValue.Var 3))))]
@@ -3796,20 +3796,69 @@
     (cond
       [(not positive-changed) 1]
       [noop-changed 2]
-      [(not (= (opt-count-load-dst-instr-seq positive 5) 0)) 3]
+      [(not
+          (=
+            (opt-count-load-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view positive)
+              5)
+            0))
+        3]
       [(not (= (opt-mov-dst-i64-value-instr-seq positive 5 -1) 10)) 4]
-      [(not (= (opt-count-load-dst-instr-seq repeated 4) 0)) 5]
-      [(not (= (opt-count-load-dst-instr-seq repeated 6) 0)) 6]
+      [(not
+          (=
+            (opt-count-load-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view repeated)
+              4)
+            0))
+        5]
+      [(not
+          (=
+            (opt-count-load-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view repeated)
+              6)
+            0))
+        6]
       [(not (= (opt-count-mov-i64-value-instr-seq repeated 10) 2)) 7]
-      [(not (= (opt-count-load-dst-instr-seq overwritten 4) 0)) 8]
-      [(not (= (opt-mov-dst-i64-value-instr-seq overwritten 4 -1) 20)) 9]
+      [(not
+          (=
+            (opt-count-load-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view overwritten)
+              4)
+            0))
+        8]
+      [(not
+          (=
+            (opt-mov-dst-i64-value-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view overwritten)
+              4
+              -1)
+            20))
+        9]
       [(not (= (opt-count-mov-i64-value-instr-seq overwritten 10) 0)) 10]
-      [(not (= (opt-count-load-dst-instr-seq barrier 4) 1)) 11]
+      [(not
+          (=
+            (opt-count-load-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view barrier)
+              4)
+            1))
+        11]
       [(not (= (opt-count-mov-i64-value-instr-seq barrier 10) 0)) 12]
-      [(not (= (opt-count-load-dst-instr-seq escaped 4) 1)) 13]
+      [(not
+          (=
+            (opt-count-load-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view escaped)
+              4)
+            1))
+        13]
       [(not (= (opt-count-mov-i64-value-instr-seq escaped 10) 0)) 14]
       [(not (= (opt-count-load-dst-instr-seq array-typed 4) 1)) 15]
-      [(not (= (opt-count-load-dst-blocks branched 4) 1)) 16]
+      [(not
+          (=
+            (opt-count-load-dst-blocks
+              (compiler_optimize.compiler-opt-global-shared-view branched)
+              4)
+            1))
+        16]
       [(not (= (opt-count-mov-i64-value-blocks branched 10) 0)) 17]
       [else 42])))
 
@@ -4092,14 +4141,27 @@
     (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
       [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
         (let
-          [d (__tl-project-field (__tl-box-place payload-box) dst)]
-          [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+          [d
+            (compiler_optimize.compiler-opt-box-field-shared-view
+              payload-box
+              dst)]
+          [lhs
+            (compiler_optimize.compiler-opt-box-field-shared-view
+              payload-box
+              lhs)]
           (if (= d dst)
-            (match lhs
+            (match (compiler_optimize.compiler-opt-global-shared-view lhs)
               [(compiler_ir_types.CompilerIrValue.Var id) id]
               [_ (- 0 1)])
-            (opt-vector-binop-lhs-var-from instrs (+ index 1) dst)))]
-      [_ (opt-vector-binop-lhs-var-from instrs (+ index 1) dst)])))
+            (opt-vector-binop-lhs-var-from
+              (compiler_optimize.compiler-opt-global-shared-view instrs)
+              (+ index 1)
+              dst)))]
+      [_
+        (opt-vector-binop-lhs-var-from
+          (compiler_optimize.compiler-opt-global-shared-view instrs)
+          (+ index 1)
+          dst)])))
 
 (define (opt-vector-binop-lhs-var
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -4174,17 +4236,19 @@
       (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
-        instrs)]
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [dce : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-dce-instrs
-        (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)
-        instrs)]
+        (opt-test-collect-instrs-uses
+          (opt_i64_i64_map.with-capacity 64)
+          (compiler_optimize.compiler-opt-global-shared-view instrs))
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [bounds : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
         (compiler_optimize.OptBoundsCastEnv.Nil)
-        instrs)]
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [vector-cse : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -4239,7 +4303,12 @@
         1]
       [(not (= (compiler_ir_types.compiler-ir-instr-seq-count dce) 8)) 2]
       [(not (= (compiler_ir_types.compiler-ir-instr-seq-count bounds) 8)) 3]
-      [(not (= (opt-count-vector-binop-instrs vector-cse) 2)) 4]
+      [(not
+          (=
+            (opt-count-vector-binop-instrs
+              (compiler_optimize.compiler-opt-global-shared-view vector-cse))
+            2))
+        4]
       [(not (= (opt-mov-dst-type-tag vector-cse 3) 0)) 5]
       [(not
           (=
@@ -4249,7 +4318,12 @@
             2))
         6]
       [(not (= (opt-mov-dst-type-tag vector-reduce-cse 2) 0)) 7]
-      [(not (= (opt-count-arith-instr-seq vector-stale) 1)) 8]
+      [(not
+          (=
+            (opt-count-arith-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view vector-stale))
+            1))
+        8]
       [(not (= (opt-count-mov-i64-value-instr-seq vector-stale 11) 0)) 9]
       [(not (= (opt-vector-binop-lhs-var vector-copy 3) 2)) 10]
       [(not (= (opt-mask-binop-lhs-var mask-copy 3) 0)) 11]
@@ -4562,7 +4636,8 @@
         1)
       (compiler-optimize-self-test-require-i64!
         "constant-fold output arithmetic count"
-        (opt-count-arith-instr-seq optimized)
+        (opt-count-arith-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view optimized))
         0)
       (compiler-optimize-self-test-require-i64!
         "constant-fold literal sum"
@@ -5566,11 +5641,39 @@
         (compiler_optimize.OptConstEnv.Nil)
         (opt-strength-negative-instrs))]
     (cond
-      [(not (= (opt-count-arith-instr-seq pos) 0)) 1]
-      [(not (= (opt-sum-mov-var-src pos) 49)) 2]
-      [(not (= (opt-count-mov-i64-value-instr-seq pos 0) 2)) 3]
-      [(not (= (opt-count-mov-bool-value pos false) 2)) 4]
-      [(not (= (opt-count-mov-bool-value pos true) 2)) 5]
+      [(not
+          (=
+            (opt-count-arith-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view pos))
+            0))
+        1]
+      [(not
+          (=
+            (opt-sum-mov-var-src
+              (compiler_optimize.compiler-opt-global-shared-view pos))
+            49))
+        2]
+      [(not
+          (=
+            (opt-count-mov-i64-value-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view pos)
+              0)
+            2))
+        3]
+      [(not
+          (=
+            (opt-count-mov-bool-value
+              (compiler_optimize.compiler-opt-global-shared-view pos)
+              false)
+            2))
+        4]
+      [(not
+          (=
+            (opt-count-mov-bool-value
+              (compiler_optimize.compiler-opt-global-shared-view pos)
+              true)
+            2))
+        5]
       [(not
           (=
             (opt-mov-dst-type-tag pos 10)
@@ -5632,7 +5735,9 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
     [used : opt_i64_i64_map.Map
-      (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)]
+      (opt-test-collect-instrs-uses
+        (opt_i64_i64_map.with-capacity 64)
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [cleaned : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-dce-instrs used instrs)]
     (compiler_ir_types.compiler-ir-instr-seq-count cleaned)))
@@ -5718,9 +5823,13 @@
   (let
     [instrs : compiler_ir_types.CompilerIrInstrSeq (opt-dce-self-test-instrs)]
     [used : opt_i64_i64_map.Map
-      (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)]
+      (opt-test-collect-instrs-uses
+        (opt_i64_i64_map.with-capacity 64)
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [cleaned : compiler_ir_types.CompilerIrInstrSeq
-      (opt-test-dce-instrs used instrs)]
+      (opt-test-dce-instrs
+        (compiler_optimize.compiler-opt-global-shared-view used)
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [again : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-dce-instrs
         (opt-test-collect-instrs-uses
@@ -5739,7 +5848,8 @@
       (compiler_ir_types.compiler-ir-block-cons
         (compiler_ir_types.CompilerIrBlock.Block
           (compiler_ir_types.compiler-ir-label "entry")
-          (opt-test-instr-seq-copy instrs))
+          (opt-test-instr-seq-copy
+            (compiler_optimize.compiler-opt-global-shared-view instrs)))
         compiler_ir_types.CompilerIrBlockList.Nil)]
     [dead-result : compiler_optimize.OptBlockListPassResult
       (compiler_optimize.opt-dce-block-list-array-pass
@@ -5831,9 +5941,13 @@
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-dce-mem-self-test-instrs)]
     [used : opt_i64_i64_map.Map
-      (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)]
+      (opt-test-collect-instrs-uses
+        (opt_i64_i64_map.with-capacity 64)
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [cleaned : compiler_ir_types.CompilerIrInstrSeq
-      (opt-test-dce-instrs used instrs)]
+      (opt-test-dce-instrs
+        (compiler_optimize.compiler-opt-global-shared-view used)
+        instrs)]
     (if (compiler_optimize.opt-used-contains used 0)
       (if (= (compiler_ir_types.compiler-ir-instr-seq-count cleaned) 3)
         42
@@ -9933,8 +10047,10 @@
           (opt-copy-cse-instrs)))]
     [cse-dce : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-dce-instrs
-        (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) cse)
-        cse)]
+        (opt-test-collect-instrs-uses
+          (opt_i64_i64_map.with-capacity 64)
+          (compiler_optimize.compiler-opt-global-shared-view cse))
+        (compiler_optimize.compiler-opt-global-shared-view cse))]
     [f64 : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
@@ -12651,9 +12767,11 @@
     [level2-fixed : compiler_ir_types.CompilerIrProgram
       (compiler_optimize.optimize-program-with-level fixed-program 2)]
     [level0-instrs : compiler_ir_types.CompilerIrInstrSeq
-      (opt-program-first-instrs level0)]
+      (opt-program-first-instrs
+        (compiler_optimize.compiler-opt-global-shared-view level0))]
     [level1-instrs : compiler_ir_types.CompilerIrInstrSeq
-      (opt-program-first-instrs level1)]
+      (opt-program-first-instrs
+        (compiler_optimize.compiler-opt-global-shared-view level1))]
     [level2-instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-program-first-instrs level2)]
     [level1-fixed-instrs : compiler_ir_types.CompilerIrInstrSeq
@@ -14226,7 +14344,7 @@
             (compiler_ir_types.CompilerIrCallArgs.Two
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.Var 1))
-            ret)
+            (compiler_ast_types.ast-global-shared-view ret))
           (compiler_ir_types.CompilerIrInstr.Call
             3
             callee
@@ -14752,11 +14870,14 @@
       (match (compiler_ir_types.compiler-ir-global-shared-view block)
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (opt-count-indirect-call-instrs instrs)
-            (opt-count-indirect-call-blocks (__tl-box-place rest)))])]
+            (opt-count-indirect-call-instrs
+              (compiler_optimize.compiler-opt-global-shared-view instrs))
+            (opt-count-indirect-call-blocks
+              (compiler_optimize.compiler-opt-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-indirect-call-blocks
-        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+        (compiler_ir_types.compiler-ir-block-seq-to-list
+          (compiler_ir_types.compiler-ir-global-shared-view seq)))]))
 
 (define (opt-inline-mov-dst-src-from?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -15119,8 +15240,15 @@
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-inline-function-instrs optimized "main")]
     (and
-      (= (opt-count-direct-call-name-instr-seq instrs "bounds_inline") 0)
-      (= (opt-count-bounds-instrs instrs) 1)
+      (=
+        (opt-count-direct-call-name-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view instrs)
+          "bounds_inline")
+        0)
+      (=
+        (opt-count-bounds-instrs
+          (compiler_optimize.compiler-opt-global-shared-view instrs))
+        1)
       (> (compiler_ir_types.compiler-ir-instr-seq-count instrs) 0)
       (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
         [(compiler_ir_types.CompilerIrInstr.BoundsCheck
@@ -15146,8 +15274,15 @@
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-inline-function-instrs optimized "main")]
     (and
-      (= (opt-count-direct-call-name-instr-seq instrs "bounds_inline") 0)
-      (= (opt-count-bounds-instrs instrs) 2)
+      (=
+        (opt-count-direct-call-name-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view instrs)
+          "bounds_inline")
+        0)
+      (=
+        (opt-count-bounds-instrs
+          (compiler_optimize.compiler-opt-global-shared-view instrs))
+        2)
       (> (compiler_ir_types.compiler-ir-instr-seq-count instrs) 2)
       (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
         [(compiler_ir_types.CompilerIrInstr.BoundsCheck
@@ -15237,7 +15372,7 @@
     (and
       (=
         (opt-count-direct-call-name-instr-seq
-          accepted-instrs
+          (compiler_optimize.compiler-opt-global-shared-view accepted-instrs)
           "bounds_leaf_inline")
         0)
       (= (opt-count-bounds-instrs accepted-instrs) 1)
@@ -15283,23 +15418,25 @@
     (and
       (=
         (opt-count-direct-call-name-instr-seq
-          minimal-instrs
+          (compiler_optimize.compiler-opt-global-shared-view minimal-instrs)
           "bounds_leaf_inline")
         0)
       (= (opt-count-bounds-instrs minimal-instrs) 2)
       (=
         (opt-count-direct-call-name-instr-seq
-          boundary-instrs
+          (compiler_optimize.compiler-opt-global-shared-view boundary-instrs)
           "bounds_leaf_inline")
         0)
       (= (opt-count-bounds-instrs boundary-instrs) 2)
       (=
         (opt-count-direct-call-name-instr-seq
-          leaf-call-instrs
+          (compiler_optimize.compiler-opt-global-shared-view leaf-call-instrs)
           "bounds_leaf_call_inline")
         2)
       (=
-        (opt-count-direct-call-name-instr-seq leaf-call-instrs "opaque_sink")
+        (opt-count-direct-call-name-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view leaf-call-instrs)
+          "opaque_sink")
         0)
       (= (opt-count-bounds-instrs leaf-call-instrs) 0))))
 
@@ -15336,13 +15473,13 @@
           (compiler_ast_types.AstType.String)))
       (=
         (opt-count-direct-call-name-instr-seq
-          char-instrs
+          (compiler_optimize.compiler-opt-global-shared-view char-instrs)
           "bounds_leaf_char_inline")
         0)
       (= (opt-count-bounds-instrs char-instrs) 2)
       (=
         (opt-count-direct-call-name-instr-seq
-          owned-instrs
+          (compiler_optimize.compiler-opt-global-shared-view owned-instrs)
           "bounds_leaf_owned_inline")
         2)
       (= (opt-count-bounds-instrs owned-instrs) 0))))
@@ -15392,16 +15529,40 @@
         (opt-inline-multi-call-functions symbols)
         2)]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
-      (opt-inline-function-instrs optimized "main")]
+      (opt-inline-function-instrs
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "main")]
     [frame : i64 (opt-inline-function-frame optimized "main")]
     (cond
       [(not (= frame 8)) false]
       [(not (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 7)) false]
-      [(not (= (opt-count-direct-call-name-instr-seq instrs "inline_add") 0))
+      [(not
+          (=
+            (opt-count-direct-call-name-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view instrs)
+              "inline_add")
+            0))
         false]
-      [(not (= (opt-inline-count-binop-dst instrs 6) 1)) false]
-      [(not (= (opt-inline-count-binop-dst instrs 7) 1)) false]
-      [(not (opt-inline-mov-dst-src? instrs 2 6)) false]
+      [(not
+          (=
+            (opt-inline-count-binop-dst
+              (compiler_optimize.compiler-opt-global-shared-view instrs)
+              6)
+            1))
+        false]
+      [(not
+          (=
+            (opt-inline-count-binop-dst
+              (compiler_optimize.compiler-opt-global-shared-view instrs)
+              7)
+            1))
+        false]
+      [(not
+          (opt-inline-mov-dst-src?
+            (compiler_optimize.compiler-opt-global-shared-view instrs)
+            2
+            6))
+        false]
       [(not (opt-inline-mov-dst-src? instrs 3 7)) false]
       [else true])))
 
@@ -15414,14 +15575,32 @@
         (opt-inline-cascade-functions symbols)
         2)]
     [main-instrs : compiler_ir_types.CompilerIrInstrSeq
-      (opt-inline-function-instrs optimized "main")]
+      (opt-inline-function-instrs
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "main")]
     [mid-instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-inline-function-instrs optimized "inline_mid")]
     (and
-      (= (opt-count-direct-call-name-instr-seq main-instrs "inline_mid") 0)
-      (= (opt-count-direct-call-name-instr-seq main-instrs "inline_add") 0)
-      (= (opt-inline-count-binop-dst main-instrs 4) 1)
-      (= (opt-count-direct-call-name-instr-seq mid-instrs "inline_add") 0)
+      (=
+        (opt-count-direct-call-name-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view main-instrs)
+          "inline_mid")
+        0)
+      (=
+        (opt-count-direct-call-name-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view main-instrs)
+          "inline_add")
+        0)
+      (=
+        (opt-inline-count-binop-dst
+          (compiler_optimize.compiler-opt-global-shared-view main-instrs)
+          4)
+        1)
+      (=
+        (opt-count-direct-call-name-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view mid-instrs)
+          "inline_add")
+        0)
       (= (opt-inline-count-binop-dst mid-instrs 3) 1))))
 
 (define (compiler-optimize-inline-mutual-scc-refusal-ok?) : bool
@@ -15432,13 +15611,27 @@
         (opt-inline-mutual-functions)
         2)]
     [a-instrs : compiler_ir_types.CompilerIrInstrSeq
-      (opt-inline-function-instrs optimized "inline_mut_a")]
+      (opt-inline-function-instrs
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "inline_mut_a")]
     [b-instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-inline-function-instrs optimized "inline_mut_b")]
     (and
-      (= (opt-count-direct-call-name-instr-seq a-instrs "inline_mut_b") 1)
-      (= (opt-count-direct-call-name-instr-seq a-instrs "inline_mut_a") 0)
-      (= (opt-count-direct-call-name-instr-seq b-instrs "inline_mut_a") 1)
+      (=
+        (opt-count-direct-call-name-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view a-instrs)
+          "inline_mut_b")
+        1)
+      (=
+        (opt-count-direct-call-name-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view a-instrs)
+          "inline_mut_a")
+        0)
+      (=
+        (opt-count-direct-call-name-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view b-instrs)
+          "inline_mut_a")
+        1)
       (= (opt-count-direct-call-name-instr-seq b-instrs "inline_mut_b") 0))))
 
 (define (opt-inline-pack-words-are-vars-1-2?
@@ -15516,7 +15709,8 @@
         (and
           (=
             (opt-count-direct-call-name-instr-seq
-              (opt-function-first-instrs main)
+              (opt-function-first-instrs
+                (compiler_optimize.compiler-opt-global-shared-view main))
               "inline_group_word")
             0)
           (opt-inline-pack-word-remap-ok-scan
@@ -21650,7 +21844,8 @@
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [instrs : compiler_ir_types.CompilerIrInstrSeq
-            (opt-function-first-instrs main)]
+            (opt-function-first-instrs
+              (compiler_optimize.compiler-opt-global-shared-view main))]
           (begin
             (unless
               (=
@@ -21687,7 +21882,9 @@
             (unless
               (=
                 (opt-count-direct-call-name-instr-seq
-                  (opt-function-first-instrs devirt-direct)
+                  (opt-function-first-instrs
+                    (compiler_optimize.compiler-opt-global-shared-view
+                      devirt-direct))
                   "inline_add")
                 1)
               (return 7))
@@ -21743,7 +21940,9 @@
               [(compiler_optimize.OptMaybeFunction.Some indirect-main)
                 (let
                   [indirect-instrs : compiler_ir_types.CompilerIrInstrSeq
-                    (opt-function-first-instrs indirect-main)]
+                    (opt-function-first-instrs
+                      (compiler_optimize.compiler-opt-global-shared-view
+                        indirect-main))]
                   (begin
                     (unless
                       (=
@@ -26979,7 +27178,7 @@
           (compiler_ir_types.CompilerIrInstr.Mov
             3
             (compiler_ir_types.CompilerIrValue.Var 1)
-            ty)
+            (compiler_ast_types.ast-global-shared-view ty))
           (compiler_ir_types.CompilerIrInstr.Jump
             (compiler_ir_types.compiler-ir-label "join"))))
       (compiler_ir_types.compiler-ir-block-cons
@@ -26989,7 +27188,7 @@
             (compiler_ir_types.CompilerIrInstr.Mov
               3
               (compiler_ir_types.CompilerIrValue.Var 2)
-              ty)
+              (compiler_ast_types.ast-global-shared-view ty))
             (compiler_ir_types.CompilerIrInstr.Jump
               (compiler_ir_types.compiler-ir-label "join"))))
         (compiler_ir_types.compiler-ir-block-cons
@@ -27064,7 +27263,7 @@
         (compiler_ir_types.CompilerIrInstr.Mov
           3
           (compiler_ir_types.CompilerIrValue.Var 0)
-          ty)
+          (compiler_ast_types.ast-global-shared-view ty))
         (compiler_ir_types.CompilerIrInstr.Jump
           (compiler_ir_types.compiler-ir-label "loop"))))
     (compiler_ir_types.compiler-ir-block-cons
@@ -27082,7 +27281,7 @@
             (compiler_ir_types.CompilerIrInstr.Mov
               3
               (compiler_ir_types.CompilerIrValue.Var 1)
-              ty)
+              (compiler_ast_types.ast-global-shared-view ty))
             (compiler_ir_types.CompilerIrInstr.Jump
               (compiler_ir_types.compiler-ir-label "loop"))))
         (compiler_ir_types.compiler-ir-block-cons
@@ -27150,12 +27349,12 @@
           (compiler_ir_types.CompilerIrInstr.Mov
             1
             (compiler_ir_types.CompilerIrValue.Var 0)
-            ty)
+            (compiler_ast_types.ast-global-shared-view ty))
           (compiler_ir_types.CompilerIrInstr.AddrOf 2 1)
           (compiler_ir_types.CompilerIrInstr.Mov
             1
             (compiler_ir_types.CompilerIrValue.Var 0)
-            ty)
+            (compiler_ast_types.ast-global-shared-view ty))
           (compiler_ir_types.CompilerIrInstr.Return
             (compiler_ir_types.CompilerIrMaybeValue.Some
               (compiler_ir_types.CompilerIrValue.Var 1)))))
@@ -27177,11 +27376,13 @@
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "entry")
         (opt-test-instrs
-          (compiler_ir_types.CompilerIrInstr.Alloc 1 ty)
+          (compiler_ir_types.CompilerIrInstr.Alloc
+            1
+            (compiler_ast_types.ast-global-shared-view ty))
           (compiler_ir_types.CompilerIrInstr.Mov
             1
             (compiler_ir_types.CompilerIrValue.Var 0)
-            ty)
+            (compiler_ast_types.ast-global-shared-view ty))
           (compiler_ir_types.CompilerIrInstr.Return
             (compiler_ir_types.CompilerIrMaybeValue.Some
               (compiler_ir_types.CompilerIrValue.Var 1)))))
@@ -48085,7 +48286,8 @@
   [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.CompilerIrBlock.Block
-      (compiler_ir_types.compiler-ir-label header)
+      (compiler_ir_types.compiler-ir-label
+        (compiler_optimize.compiler-opt-global-shared-view header))
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.Phi
           phi
@@ -48106,7 +48308,8 @@
           (compiler_ast_types.AstType.Bool))
         (compiler_ir_types.CompilerIrInstr.Branch
           (compiler_ir_types.CompilerIrValue.Var cond-var)
-          (compiler_ir_types.compiler-ir-label body)
+          (compiler_ir_types.compiler-ir-label
+            (compiler_optimize.compiler-opt-global-shared-view body))
           (compiler_ir_types.compiler-ir-label exit-label))))
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.CompilerIrBlock.Block
@@ -48119,7 +48322,8 @@
             (compiler_ir_types.CompilerIrValue.I64 1)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Jump
-            (compiler_ir_types.compiler-ir-label latch))))
+            (compiler_ir_types.compiler-ir-label
+              (compiler_optimize.compiler-opt-global-shared-view latch)))))
       (compiler_ir_types.compiler-ir-block-cons
         (opt-dead-phi-test-jump-block latch header)
         tail))))

@@ -2021,7 +2021,10 @@
         (smoke-noop-int-cast-mov-instrs))]
     (begin
       (unless
-        (= (compiler_optimize_tests.opt-count-cast-instr-seq rewritten) 3)
+        (=
+          (compiler_optimize_tests.opt-count-cast-instr-seq
+            (opt.compiler-opt-global-shared-view rewritten))
+          3)
         (return 1))
       (unless
         (smoke-mov-dst-var-type?
@@ -3239,11 +3242,11 @@
       (opt.opt-function-index-build
         (ir.compiler-ir-function-cons
           (compiler_optimize_tests.opt-test-function-named
-            qualified
+            (clone qualified)
             (ir.compiler-ir-instr-seq-empty))
           (ir.compiler-ir-function-cons
             (compiler_optimize_tests.opt-test-function-named
-              plain
+              (clone plain)
               (ir.compiler-ir-instr-seq-empty))
             (ir.CompilerIrFunctionList.Nil))))]
     [starts : (__tl_dyn-array i64) index.leaf-starts]

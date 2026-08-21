@@ -1303,11 +1303,11 @@
   (let
     [source : String (lint-driver-smoke-raw-arena-op-source)]
     [ordinary-count : i64
-      (lint-driver-smoke-raw-arena-op-count "src/new_module.tl" source)]
+      (lint-driver-smoke-raw-arena-op-count "src/new_module.tl" (clone source))]
     [absolute-allowlisted-count : i64
       (lint-driver-smoke-raw-arena-op-count
         "C:\\checkout\\src\\compiler_ast_types.tl"
-        source)]
+        (clone source))]
     [similar-path-count : i64
       (lint-driver-smoke-raw-arena-op-count
         "src/not_compiler_ast_types.tl"

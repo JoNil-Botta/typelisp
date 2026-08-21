@@ -553,8 +553,12 @@
 (defstruct CompilerLowerSpmdPackageState
   (arena i64)
   (name String)
+  ;; Structural linker-spelling key -> structural SPMD identity handle. The
+  ;; full ABI serialization is never retained as the equality key.
   (symbol-identities lower_i64_i64_map.Map)
-  (identities (__tl_dyn-array String)))
+  ;; Identity handle -> stable v1 hash. Hashing is an allowed ABI boundary;
+  ;; cache it so repeated equal recipes do not serialize or hash again.
+  (identity-stable-hashes lower_i64_i64_map.Map))
 
 (defstruct CompilerLowerFunctionMemoStorage
   (arena i64)
@@ -585,7 +589,7 @@
     0
     ""
     (lower_i64_i64_map.with-capacity 0)
-    (__tl_make-array String 0)))
+    (lower_i64_i64_map.with-capacity 0)))
 
 (define (compiler-lower-function-memo-storage-empty) : CompilerLowerFunctionMemoStorage
   (CompilerLowerFunctionMemoStorage
@@ -2407,8 +2411,24 @@
     55))
 (cfg
   (any compile-profile test)
-  (define compiler-lower-profile-metric-end : i64
+  (define compiler-lower-profile-spmd-identity-serializations-metric : i64
     56))
+(cfg
+  (any compile-profile test)
+  (define compiler-lower-profile-spmd-stable-hash-computations-metric : i64
+    57))
+(cfg
+  (any compile-profile test)
+  (define compiler-lower-profile-spmd-render-cache-hits-metric : i64
+    58))
+(cfg
+  (any compile-profile test)
+  (define compiler-lower-profile-spmd-render-cache-misses-metric : i64
+    59))
+(cfg
+  (any compile-profile test)
+  (define compiler-lower-profile-metric-end : i64
+    60))
 (cfg
   compile-profile
   (define compiler-lower-profile-name-env-binds : i64
@@ -2790,7 +2810,90 @@
         (ci.intern-generated-symbol-role-dispatch-variant))
       (compiler-lower-profile-generated-role-counters
         "nullary_enum_object"
-        (ci.intern-generated-symbol-role-nullary-enum-object)))))
+        (ci.intern-generated-symbol-role-nullary-enum-object))
+      (compiler-lower-profile-generated-role-counters
+        "spmd_identity"
+        (ci.intern-generated-symbol-role-spmd-identity))
+      (compiler-lower-profile-generated-role-counters
+        "spmd_package_symbol"
+        (ci.intern-generated-symbol-role-spmd-package-symbol))
+      (compiler-lower-profile-generated-role-counters
+        "spmd_result_uniform"
+        (ci.intern-generated-symbol-role-spmd-result-uniform))
+      (compiler-lower-profile-generated-role-counters
+        "spmd_result_varying"
+        (ci.intern-generated-symbol-role-spmd-result-varying))
+      (compiler-lower-profile-generated-role-counters
+        "spmd_result_mask"
+        (ci.intern-generated-symbol-role-spmd-result-mask))
+      (compiler-lower-profile-generated-role-counters
+        "spmd_private_helper"
+        (ci.intern-generated-symbol-role-spmd-private-helper))
+      (compiler-lower-profile-generated-role-counters
+        "spmd_private_parameter"
+        (ci.intern-generated-symbol-role-spmd-private-parameter)))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-spmd-symbol-counters
+    [state : CompilerLowerState]) : unit
+    (begin
+      (compiler-lower-profile-counter
+        "spmd.identity.serializations"
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-spmd-identity-serializations-metric))
+      (compiler-lower-profile-counter
+        "spmd.stable_hash.computations"
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-spmd-stable-hash-computations-metric))
+      (compiler-lower-profile-counter
+        "spmd.render_cache.hits"
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-spmd-render-cache-hits-metric))
+      (compiler-lower-profile-counter
+        "spmd.render_cache.misses"
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-spmd-render-cache-misses-metric)))))
+
+(define (compiler-lower-profile-spmd-identity-serializations-value
+  [_state : CompilerLowerState]) : i64
+  (cfg
+    (any compile-profile test)
+    (compiler-lower-profile-value
+      _state
+      compiler-lower-profile-spmd-identity-serializations-metric)
+    0))
+
+(define (compiler-lower-profile-spmd-stable-hash-computations-value
+  [_state : CompilerLowerState]) : i64
+  (cfg
+    (any compile-profile test)
+    (compiler-lower-profile-value
+      _state
+      compiler-lower-profile-spmd-stable-hash-computations-metric)
+    0))
+
+(define (compiler-lower-profile-spmd-render-cache-hits-value
+  [_state : CompilerLowerState]) : i64
+  (cfg
+    (any compile-profile test)
+    (compiler-lower-profile-value
+      _state
+      compiler-lower-profile-spmd-render-cache-hits-metric)
+    0))
+
+(define (compiler-lower-profile-spmd-render-cache-misses-value
+  [_state : CompilerLowerState]) : i64
+  (cfg
+    (any compile-profile test)
+    (compiler-lower-profile-value
+      _state
+      compiler-lower-profile-spmd-render-cache-misses-metric)
+    0))
 
 (define (compiler-lower-profile-string-concat-reset
   [_state : CompilerLowerState]) : unit
@@ -8207,7 +8310,7 @@
             next
             (clone name)
             (lower_i64_i64_map.with-capacity 8)
-            (__tl_make-array String 0))]
+            (lower_i64_i64_map.with-capacity 8))]
         (begin
           (unsafe
             (arena.tl_arena_set home))
@@ -8641,7 +8744,7 @@
       (= (compiler-lower-state-read lower-state i64 module-decl-index-arena) 0)
       (string.eq package.name "")
       (= (lower_i64_i64_map.len (& package.symbol-identities)) 0)
-      (= (array-length package.identities) 0)
+      (= (lower_i64_i64_map.len (& package.identity-stable-hashes)) 0)
       (lower-comptime-error-ids-reset? lower-state)
       (compiler-lower-checked-pools-state-inert? lower-state))))
 
@@ -57838,40 +57941,303 @@
           (str_cat.str-cat "__tl_spmd_ret_uniform_" stable-name))]
       [_ stable-name])))
 
-(define (lower-spmd-package-symbol-register
+;; Typed scalar tags live only in fixed structural-record lanes. They are not
+;; serialized and therefore cannot perturb the versioned `spmd-call-v1` text.
+(define (lower-spmd-package-abi-role-tag) : i64
+  1)
+
+(define (lower-spmd-package-backend-role-tag
+  [backend : ir.CompilerIrSpmdBackend]) : i64
+  (match backend
+    [(ir.CompilerIrSpmdBackend.Scalar) 1]
+    [(ir.CompilerIrSpmdBackend.Avx2) 2]
+    [(ir.CompilerIrSpmdBackend.Avx512) 3]))
+
+(define (lower-spmd-package-result-role-tag [result : ast.AstSpmdResultClass]) : i64
+  (match result
+    [(ast.AstSpmdResultClass.Unit) 1]
+    [(ast.AstSpmdResultClass.Uniform) 2]
+    [(ast.AstSpmdResultClass.Varying) 3]))
+
+(define (lower-spmd-package-param-role-tag [class : ast.AstSpmdParamClass]) : i64
+  (match class
+    [(ast.AstSpmdParamClass.Uniform) 1]
+    [(ast.AstSpmdParamClass.Varying) 2]))
+
+(define (lower-spmd-private-param-class-role-tag
+  [class : ir.CompilerIrSpmdValueClass]) : i64
+  (match class
+    [(ir.CompilerIrSpmdValueClass.Uniform) 1]
+    [(ir.CompilerIrSpmdValueClass.Varying) 2]
+    [(ir.CompilerIrSpmdValueClass.Mask) 3]))
+
+(define (lower-spmd-private-param-mode-role-tag [mode : CompilerLowerMode]) : i64
+  (cond [(lower-mode-avx2? mode) 2] [(lower-mode-avx512? mode) 3] [else 1]))
+
+;; SPMD package ABI v1 admits only these resolved scalar source types. Keeping
+;; the return type as its own typed lane makes identities structurally distinct
+;; even if a future diagnostic fixture deliberately supplies equal serialized
+;; text at the stable-hash boundary.
+(define (lower-spmd-package-type-role-tag [ty : ast.AstType]) : i64
+  (match (tc_core.tc-type-without-regions ty)
+    [(ast.AstType.I64) 1]
+    [(ast.AstType.U64) 2]
+    [(ast.AstType.F64) 3]
+    [(ast.AstType.F32) 4]
+    [(ast.AstType.I32) 5]
+    [(ast.AstType.U32) 6]
+    [(ast.AstType.I16) 7]
+    [(ast.AstType.U16) 8]
+    [(ast.AstType.I8) 9]
+    [(ast.AstType.U8) 10]
+    [(ast.AstType.Bool) 11]
+    [(ast.AstType.Unit) 12]
+    [_ 0]))
+
+(define (lower-spmd-package-arg-classes-role-at
+  [intern-state : ci.InternCompatState]
+  [classes : (& classes ast.AstSpmdParamClassList)]
+  [index : i64]) : i64
+  (if (>= index (ast.ast-spmd-param-class-list-len classes))
+    0
+    (ci.intern-compat-state-composite-triple-id
+      intern-state
+      -6023
+      (lower-spmd-package-param-role-tag
+        (ast.ast-spmd-param-class-list-get
+          classes
+          index
+          ast.AstSpmdParamClass.Uniform))
+      (lower-spmd-package-arg-classes-role-at intern-state classes (+ index 1)))))
+
+(define (lower-spmd-result-wrapper-role
+  [result-ty : ast.AstType]
+  [varying? : bool]) : i64
+  (if varying?
+    (if (lower-type-bool? result-ty)
+      (ci.intern-generated-symbol-role-spmd-result-mask)
+      (ci.intern-generated-symbol-role-spmd-result-varying))
+    (ci.intern-generated-symbol-role-spmd-result-uniform)))
+
+(define (lower-spmd-package-stable-hash
   [lower-state : CompilerLowerState]
-  [symbol : i64]
-  [identity : String]) : LowerSpmdPackageSymbolRegistration
+  [identity : i64]
+  [identity-components : i64]) : i64
   (begin
     (compiler-lower-state-ensure-spmd-package! lower-state)
     (let
       [package : CompilerLowerSpmdPackageState
         (compiler-lower-state-spmd-package lower-state)]
-      (match (lower_i64_i64_map.get (& package.symbol-identities) symbol)
-        [(lower_i64_i64_map.LookupFound identity-index)
-          (if (string.eq (array-ref package.identities identity-index) identity)
+      (match (lower_i64_i64_map.get (& package.identity-stable-hashes) identity)
+        [(lower_i64_i64_map.LookupFound hash)
+          (begin
+            ;; Record the cached serialization lookup as a render-cache hit.
+            (lower-spmd-package-identity-render lower-state identity-components)
+            hash)]
+        [(lower_i64_i64_map.LookupMissing)
+          (let
+            [serialized : String
+              (lower-spmd-package-identity-render
+                lower-state
+                identity-components)]
+            [hash : i64 (stdlib.hash.string-key (& serialized))]
+            (begin
+              (cfg
+                (any compile-profile test)
+                (compiler-lower-profile-add!
+                  lower-state
+                  compiler-lower-profile-spmd-stable-hash-computations-metric
+                  1)
+                unit)
+              (in-arena
+                (arena.Arena package.arena)
+                (lower_i64_i64_map.insert-ref!
+                  (&mut package.identity-stable-hashes)
+                  identity
+                  hash))
+              (compiler-lower-state-write!
+                lower-state
+                CompilerLowerSpmdPackageState
+                spmd-package-state
+                package)
+              hash))]))))
+
+(define (lower-spmd-package-structural-symbol
+  [lower-state : CompilerLowerState]
+  [package-name : String]
+  [canonical-name : String]
+  [canonical-handle : i64]
+  [signature : String]
+  [result-ty : ast.AstType]
+  [backend : ir.CompilerIrSpmdBackend]
+  [lanes : i64]
+  [classes : ast.AstSpmdParamClassList]
+  [result : ast.AstSpmdResultClass]
+  [index-param : i64]) : i64
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    [package-atom : i64
+      (ci.intern-compat-state-intern intern-state package-name)]
+    [canonical-text-atom : i64
+      (ci.intern-compat-state-intern intern-state canonical-name)]
+    [signature-atom : i64
+      (ci.intern-compat-state-intern intern-state signature)]
+    [canonical-components : i64
+      (ci.intern-compat-state-composite-pair-id
+        intern-state
+        canonical-handle
+        canonical-text-atom)]
+    [source-components : i64
+      (ci.intern-compat-state-composite-pair-id
+        intern-state
+        package-atom
+        canonical-components)]
+    [signature-components : i64
+      (ci.intern-compat-state-composite-pair-id
+        intern-state
+        signature-atom
+        (lower-spmd-package-abi-role-tag))]
+    [arg-components : i64
+      (lower-spmd-package-arg-classes-role-at intern-state (& classes) 0)]
+    [result-components : i64
+      (ci.intern-compat-state-composite-pair-id
+        intern-state
+        (lower-spmd-package-result-role-tag result)
+        (lower-spmd-package-type-role-tag result-ty))]
+    [call-components : i64
+      (ci.intern-compat-state-composite-triple-id
+        intern-state
+        arg-components
+        result-components
+        index-param)]
+    [backend-components : i64
+      (ci.intern-compat-state-composite-triple-id
+        intern-state
+        (lower-spmd-package-backend-role-tag backend)
+        lanes
+        call-components)]
+    [identity-components : i64
+      (ci.intern-compat-state-composite-triple-id
+        intern-state
+        source-components
+        signature-components
+        backend-components)]
+    [identity : i64
+      (ci.intern-compat-state-generated-role-symbol-id
+        intern-state
+        (ci.intern-generated-symbol-role-spmd-identity)
+        identity-components)]
+    [stable-hash : i64
+      (lower-spmd-package-stable-hash lower-state identity identity-components)]
+    [symbol-components : i64
+      (ci.intern-compat-state-composite-pair-id
+        intern-state
+        identity-components
+        stable-hash)]
+    [stable-symbol : i64
+      (ci.intern-compat-state-generated-role-symbol-id
+        intern-state
+        (ci.intern-generated-symbol-role-spmd-package-symbol)
+        symbol-components)]
+    [final-role : i64
+      (match backend
+        [(ir.CompilerIrSpmdBackend.Avx512)
+          (lower-spmd-result-wrapper-role
+            result-ty
+            (match result
+              [(ast.AstSpmdResultClass.Varying) true]
+              [_ false]))]
+        [_ (ci.intern-generated-symbol-role-spmd-package-symbol)])]
+    [symbol : i64
+      (match backend
+        [(ir.CompilerIrSpmdBackend.Avx512)
+          (ci.intern-compat-state-generated-role-symbol-id
+            intern-state
+            final-role
+            stable-symbol)]
+        [_ stable-symbol])]
+    [registration-key : i64
+      (ci.intern-compat-state-composite-pair-id
+        intern-state
+        final-role
+        stable-hash)]
+    ;; One structural transport handle carries the typed identity, final
+    ;; symbol, collision key, and retained serializer recipe without requiring
+    ;; a generated aggregate declaration in the compiler's own source graph.
+    (ci.intern-compat-state-composite-triple-id
+      intern-state
+      identity
+      symbol
+      (ci.intern-compat-state-composite-pair-id
+        intern-state
+        registration-key
+        identity-components))))
+
+(define (lower-spmd-package-structural-identity
+  [intern-state : ci.InternCompatState]
+  [record : i64]) : i64
+  (ci.intern-compat-state-composite-left-id-unchecked intern-state record))
+
+(define (lower-spmd-package-structural-linker-symbol
+  [intern-state : ci.InternCompatState]
+  [record : i64]) : i64
+  (ci.intern-compat-state-composite-middle-id-unchecked intern-state record))
+
+(define (lower-spmd-package-structural-registration-key
+  [intern-state : ci.InternCompatState]
+  [record : i64]) : i64
+  (ci.intern-compat-state-composite-left-id-unchecked
+    intern-state
+    (ci.intern-compat-state-composite-right-id-unchecked intern-state record)))
+
+(define (lower-spmd-package-structural-identity-components
+  [intern-state : ci.InternCompatState]
+  [record : i64]) : i64
+  (ci.intern-compat-state-composite-right-id-unchecked
+    intern-state
+    (ci.intern-compat-state-composite-right-id-unchecked intern-state record)))
+
+(define (lower-spmd-package-symbol-register
+  [lower-state : CompilerLowerState]
+  [symbol : i64]
+  [registration-key : i64]
+  [identity : i64]) : LowerSpmdPackageSymbolRegistration
+  (begin
+    (compiler-lower-state-ensure-spmd-package! lower-state)
+    (let
+      [package : CompilerLowerSpmdPackageState
+        (compiler-lower-state-spmd-package lower-state)]
+      (match (lower_i64_i64_map.get
+        (& package.symbol-identities)
+        registration-key)
+        [(lower_i64_i64_map.LookupFound existing-identity)
+          (if (= existing-identity identity)
             LowerSpmdPackageSymbolRegistration.Existing
-            (LowerSpmdPackageSymbolRegistration.Collision
-              (str_cat.str-cat
-                "lower: :spmd-callable stable symbol collision for "
-                (ir.compiler-ir-symbol-text symbol))))]
+            (begin
+              ;; A collision is a diagnostic boundary. Materialize the exact
+              ;; linker spelling only on this exceptional path.
+              (lower-materialize-generated-role-symbols! lower-state)
+              (LowerSpmdPackageSymbolRegistration.Collision
+                (str_cat.str-cat
+                  "lower: :spmd-callable stable symbol collision for "
+                  (ci.intern-compat-state-str
+                    (compiler-lower-state-interns lower-state)
+                    symbol)))))]
         [(lower_i64_i64_map.LookupMissing)
           (in-arena
             (arena.Arena package.arena)
-            (let
-              [identity-index : i64 (array-length package.identities)]
-              (begin
-                (__tl_array-push! package.identities (clone identity))
-                (lower_i64_i64_map.insert-ref!
-                  (&mut package.symbol-identities)
-                  symbol
-                  identity-index)
-                (compiler-lower-state-write!
-                  lower-state
-                  CompilerLowerSpmdPackageState
-                  spmd-package-state
-                  package)
-                LowerSpmdPackageSymbolRegistration.New)))]))))
+            (begin
+              (lower_i64_i64_map.insert-ref!
+                (&mut package.symbol-identities)
+                registration-key
+                identity)
+              (compiler-lower-state-write!
+                lower-state
+                CompilerLowerSpmdPackageState
+                spmd-package-state
+                package)
+              LowerSpmdPackageSymbolRegistration.New))]))))
 
 (define (lower-spmd-package-lane-width-supported? [lanes : i64]) : bool
   (or (= lanes 8) (= lanes 16) (= lanes 32) (= lanes 64)))
@@ -58088,27 +58454,59 @@
 ;; and register planner use these prefixes to select the private vector/mask
 ;; ABI without exposing a vector type in the source type system.
 (define (lower-spmd-private-param-name
+  [lower-state : CompilerLowerState]
   [name : i64]
   [class : ir.CompilerIrSpmdValueClass]
   [mode : CompilerLowerMode]) : String
-  (match class
-    [(ir.CompilerIrSpmdValueClass.Uniform) (tc_core.tc-env-key-name-text name)]
-    [(ir.CompilerIrSpmdValueClass.Varying)
-      (if (lower-mode-avx2? mode)
-        (str_cat.str-cat
-          "__tl_spmd_varying_arg_avx2_"
-          (tc_core.tc-env-key-name-text name))
-        (str_cat.str-cat
-          "__tl_spmd_varying_arg_"
-          (tc_core.tc-env-key-name-text name)))]
-    [(ir.CompilerIrSpmdValueClass.Mask)
-      (if (lower-mode-avx2? mode)
-        (str_cat.str-cat
-          "__tl_spmd_mask_arg_avx2_"
-          (tc_core.tc-env-key-name-text name))
-        (str_cat.str-cat
-          "__tl_spmd_mask_arg_"
-          (tc_core.tc-env-key-name-text name)))]))
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    [handle : i64 (lower-spmd-private-param-symbol lower-state name class mode)]
+    [cached : String (ci.intern-compat-state-str intern-state handle)]
+    (if (> (string.string-length cached) 0)
+      cached
+      (ci.intern-compat-state-generated-role-symbol-materialize!
+        intern-state
+        (ci.intern-generated-symbol-role-spmd-private-parameter)
+        handle
+        (match class
+          [(ir.CompilerIrSpmdValueClass.Uniform)
+            (tc_core.tc-env-key-name-text name)]
+          [(ir.CompilerIrSpmdValueClass.Varying)
+            (if (lower-mode-avx2? mode)
+              (str_cat.str-cat
+                "__tl_spmd_varying_arg_avx2_"
+                (tc_core.tc-env-key-name-text name))
+              (str_cat.str-cat
+                "__tl_spmd_varying_arg_"
+                (tc_core.tc-env-key-name-text name)))]
+          [(ir.CompilerIrSpmdValueClass.Mask)
+            (if (lower-mode-avx2? mode)
+              (str_cat.str-cat
+                "__tl_spmd_mask_arg_avx2_"
+                (tc_core.tc-env-key-name-text name))
+              (str_cat.str-cat
+                "__tl_spmd_mask_arg_"
+                (tc_core.tc-env-key-name-text name)))])))))
+
+(define (lower-spmd-private-param-symbol
+  [lower-state : CompilerLowerState]
+  [name : i64]
+  [class : ir.CompilerIrSpmdValueClass]
+  [mode : CompilerLowerMode]) : i64
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    [components : i64
+      (ci.intern-compat-state-composite-triple-id
+        intern-state
+        name
+        (lower-spmd-private-param-class-role-tag class)
+        (lower-spmd-private-param-mode-role-tag mode))]
+    (ci.intern-compat-state-generated-role-symbol-id
+      intern-state
+      (ci.intern-generated-symbol-role-spmd-private-parameter)
+      components)))
 
 (define (lower-spmd-call-arg-at
   [args : ir.CompilerIrSpmdCallArgList]
@@ -58132,14 +58530,16 @@
         (lower-spmd-call-arg-at (__tl-box-place rest) (- index 1)))]))
 
 (define (lower-spmd-private-param-list
+  [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [params : ast.AstParamList]
   [args : ir.CompilerIrSpmdCallArgList]
   [mode : CompilerLowerMode]
   [idx : i64]) : ir.CompilerIrParamList
-  (lower-spmd-private-param-list-at ctx (& params) args mode 0 idx))
+  (lower-spmd-private-param-list-at lower-state ctx (& params) args mode 0 idx))
 
 (define (lower-spmd-private-param-list-at
+  [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
   [args : ir.CompilerIrSpmdCallArgList]
@@ -58154,13 +58554,14 @@
           [(ir.CompilerIrSpmdCallArg.Arg class _ _)
             (ir.compiler-ir-param-cons
               (ir.CompilerIrParam.Param
-                (lower-spmd-private-param-name name class mode)
+                (lower-spmd-private-param-name lower-state name class mode)
                 (lower-one-word-register-storage-type
                   ctx
                   (tc_core.tc-type-without-regions
                     (tc_core.tc-resolve-type ctx ty)))
                 idx)
               (lower-spmd-private-param-list-at
+                lower-state
                 ctx
                 params
                 args
@@ -58173,21 +58574,29 @@
   [hidden-name : i64]
   [result-ty : ast.AstType]
   [result-varying : bool]) : i64
-  (begin
-    ;; SPMD names remain a legacy text-derived domain (tracked separately from
-    ;; ordinary generated roles). Materialize the hidden ordinary lambda at
-    ;; this explicit compatibility boundary before SPMD derives its name.
-    (lower-materialize-generated-role-symbols!
-      (compiler-lower-state-from-name-cache names))
-    (let
-      [hidden-text : String (ir.compiler-ir-symbol-text hidden-name)]
-      [private-name : String
-        (if result-varying
-          (if (lower-type-bool? result-ty)
-            (str_cat.str-cat "__tl_spmd_ret_mask_" hidden-text)
-            (str_cat.str-cat "__tl_spmd_ret_varying_" hidden-text))
-          (str_cat.str-cat "__tl_spmd_ret_uniform_" hidden-text))]
-      (ci.intern-generated-canonical-name private-name))))
+  (lower-spmd-private-helper-symbol
+    (compiler-lower-state-from-name-cache names)
+    hidden-name
+    result-ty
+    result-varying))
+
+(define (lower-spmd-private-helper-symbol
+  [lower-state : CompilerLowerState]
+  [hidden-name : i64]
+  [result-ty : ast.AstType]
+  [result-varying : bool]) : i64
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    [private-base : i64
+      (ci.intern-compat-state-generated-role-symbol-id
+        intern-state
+        (ci.intern-generated-symbol-role-spmd-private-helper)
+        hidden-name)]
+    (ci.intern-compat-state-generated-role-symbol-id
+      intern-state
+      (lower-spmd-result-wrapper-role result-ty result-varying)
+      private-base)))
 
 (define (lower-spmd-helper-index-param-at
   [ctx : tc_core.TcContext]
@@ -58391,6 +58800,7 @@
                       (let
                         [source-params : ir.CompilerIrParamList
                           (lower-spmd-private-param-list
+                            (compiler-lower-state-from-name-cache names)
                             ctx
                             params
                             call-args
@@ -58552,6 +58962,7 @@
   [type-cache : LowerTypeCache]
   [function-state : CompilerLowerFunctionState]
   [canonical-name : String]
+  [canonical-handle : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
@@ -58578,43 +58989,43 @@
       (let
         [classes : ast.AstSpmdParamClassList
           (__tl-box-place specialization.args)]
-        [args-code : String (lower-spmd-ast-param-classes-code classes)]
-        [result-code : String
-          (lower-spmd-ast-result-class-code specialization.result)]
         [signature : String (lower-spmd-source-signature params ret)]
+        [resolved-ret : ast.AstType
+          (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
         [lanes : i64
           (match backend
             [(ir.CompilerIrSpmdBackend.Scalar) 1]
             [_ specialization.lanes])]
         [index-param : i64 specialization.index-param]
-        [hidden-name-text : String
-          (lower-spmd-package-symbol
+        [structural-symbol : i64
+          (lower-spmd-package-structural-symbol
+            lower-state
             package-name
             canonical-name
+            canonical-handle
             signature
-            ret
+            resolved-ret
             backend
             lanes
-            args-code
-            result-code
+            classes
+            specialization.result
             index-param)]
+        [intern-state : ci.InternCompatState
+          (compiler-lower-state-interns lower-state)]
         [hidden-name : i64
-          (ci.intern-generated-canonical-name hidden-name-text)]
-        [symbol-identity : String
-          (lower-spmd-package-symbol-identity
-            package-name
-            canonical-name
-            signature
-            backend
-            lanes
-            args-code
-            result-code
-            index-param)]
+          (lower-spmd-package-structural-linker-symbol
+            intern-state
+            structural-symbol)]
         [registration : LowerSpmdPackageSymbolRegistration
           (lower-spmd-package-symbol-register
             lower-state
             hidden-name
-            symbol-identity)]
+            (lower-spmd-package-structural-registration-key
+              intern-state
+              structural-symbol)
+            (lower-spmd-package-structural-identity
+              intern-state
+              structural-symbol))]
         [call-args : ir.CompilerIrSpmdCallArgList
           (lower-spmd-package-call-args-at ctx (& params) (& classes) 0)]
         [index-name : String
@@ -58673,6 +59084,7 @@
       type-cache
       function-state
       canonical-name
+      canonical-handle
       params
       ret
       body
@@ -66899,80 +67311,282 @@
     [(= tag 3) "__tl_dispatch_variant_avx512_"]
     [else ""]))
 
-(define (lower-generated-role-render
+(define (lower-spmd-package-result-code-from-role-tag [tag : i64]) : String
+  (cond [(= tag 1) "unit"] [(= tag 2) "u"] [(= tag 3) "v"] [else ""]))
+
+(define (lower-spmd-package-arg-classes-render
   [intern-state : ci.InternCompatState]
+  [components : i64]) : String
+  (if (= components 0)
+    ""
+    (if (and
+      (ci.intern-compat-state-composite-triple-id? intern-state components)
+      (=
+        (ci.intern-compat-state-composite-left-id-unchecked
+          intern-state
+          components)
+        -6023))
+      (str_cat.str-cat
+        (if (=
+          (ci.intern-compat-state-composite-middle-id-unchecked
+            intern-state
+            components)
+          1)
+          "u"
+          "v")
+        (lower-spmd-package-arg-classes-render
+          intern-state
+          (ci.intern-compat-state-composite-right-id-unchecked
+            intern-state
+            components)))
+      "")))
+
+;; This is the documented hashing/metadata boundary. Cache the byte-exact ABI
+;; serialization on the structural identity recipe; internal registration and
+;; deduplication compare only the identity handle.
+(define (lower-spmd-package-identity-render
+  [lower-state : CompilerLowerState]
+  [components : i64]) : String
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    [cached : String
+      (ci.intern-compat-state-composite-rendered-name intern-state components)]
+    (if (> (string.string-length cached) 0)
+      (begin
+        (cfg
+          (any compile-profile test)
+          (compiler-lower-profile-add!
+            lower-state
+            compiler-lower-profile-spmd-render-cache-hits-metric
+            1)
+          unit)
+        cached)
+      (let
+        [source-components : i64
+          (ci.intern-compat-state-composite-left-id-unchecked
+            intern-state
+            components)]
+        [signature-components : i64
+          (ci.intern-compat-state-composite-middle-id-unchecked
+            intern-state
+            components)]
+        [backend-components : i64
+          (ci.intern-compat-state-composite-right-id-unchecked
+            intern-state
+            components)]
+        [canonical-components : i64
+          (ci.intern-compat-state-composite-right-id-unchecked
+            intern-state
+            source-components)]
+        [call-components : i64
+          (ci.intern-compat-state-composite-right-id-unchecked
+            intern-state
+            backend-components)]
+        [result-components : i64
+          (ci.intern-compat-state-composite-middle-id-unchecked
+            intern-state
+            call-components)]
+        [rendered : String
+          (lower-spmd-package-symbol-identity
+            (ci.intern-compat-state-str
+              intern-state
+              (ci.intern-compat-state-composite-left-id-unchecked
+                intern-state
+                source-components))
+            (ci.intern-compat-state-str
+              intern-state
+              (ci.intern-compat-state-composite-right-id-unchecked
+                intern-state
+                canonical-components))
+            (ci.intern-compat-state-str
+              intern-state
+              (ci.intern-compat-state-composite-left-id-unchecked
+                intern-state
+                signature-components))
+            (match (ci.intern-compat-state-composite-left-id-unchecked
+              intern-state
+              backend-components)
+              [1 ir.CompilerIrSpmdBackend.Scalar]
+              [2 ir.CompilerIrSpmdBackend.Avx2]
+              [_ ir.CompilerIrSpmdBackend.Avx512])
+            (ci.intern-compat-state-composite-middle-id-unchecked
+              intern-state
+              backend-components)
+            (lower-spmd-package-arg-classes-render
+              intern-state
+              (ci.intern-compat-state-composite-left-id-unchecked
+                intern-state
+                call-components))
+            (lower-spmd-package-result-code-from-role-tag
+              (ci.intern-compat-state-composite-left-id-unchecked
+                intern-state
+                result-components))
+            (ci.intern-compat-state-composite-right-id-unchecked
+              intern-state
+              call-components))]
+        (begin
+          (cfg
+            (any compile-profile test)
+            (begin
+              (compiler-lower-profile-add!
+                lower-state
+                compiler-lower-profile-spmd-identity-serializations-metric
+                1)
+              (compiler-lower-profile-add!
+                lower-state
+                compiler-lower-profile-spmd-render-cache-misses-metric
+                1))
+            unit)
+          (ci.intern-compat-state-composite-rendered-name-record!
+            intern-state
+            components
+            rendered))))))
+
+(define (lower-spmd-result-wrapper-prefix [role : i64]) : String
+  (cond
+    [(= role (ci.intern-generated-symbol-role-spmd-result-uniform))
+      "__tl_spmd_ret_uniform_"]
+    [(= role (ci.intern-generated-symbol-role-spmd-result-varying))
+      "__tl_spmd_ret_varying_"]
+    [(= role (ci.intern-generated-symbol-role-spmd-result-mask))
+      "__tl_spmd_ret_mask_"]
+    [else ""]))
+
+(define (lower-generated-role-render
+  [lower-state : CompilerLowerState]
   [role : i64]
   [qualification : i64]
   [components : i64]) : String
-  (cond
-    [(= role (ci.intern-generated-symbol-role-lambda))
-      (if (ci.intern-compat-state-composite-pair-id? intern-state components)
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    (cond
+      [(= role (ci.intern-generated-symbol-role-lambda))
+        (if (ci.intern-compat-state-composite-pair-id? intern-state components)
+          (str_cat.str-cat
+            "__tl_lambda_"
+            (ir.compiler-ir-symbol-text
+              (ci.intern-compat-state-composite-left-id-unchecked
+                intern-state
+                components))
+            "_"
+            (string.int->string
+              (ci.intern-compat-state-composite-right-id-unchecked
+                intern-state
+                components)))
+          "")]
+      [(= role (ci.intern-generated-symbol-role-global-initializer))
         (str_cat.str-cat
-          "__tl_lambda_"
-          (ir.compiler-ir-symbol-text
+          "__global_init_"
+          (ir.compiler-ir-symbol-text components))]
+      [(= role (ci.intern-generated-symbol-role-cleanup-helper))
+        (if (ci.intern-compat-state-composite-pair-id?
+          intern-state
+          qualification)
+          (csym.compiler-symbol-module-key
+            (ci.intern-compat-state-str
+              intern-state
+              (ci.intern-compat-state-composite-left-id-unchecked
+                intern-state
+                qualification))
+            (ci.intern-compat-state-str
+              intern-state
+              (ci.intern-compat-state-composite-right-id-unchecked
+                intern-state
+                qualification)))
+          "")]
+      [(= role (ci.intern-generated-symbol-role-cleanup-parameter))
+        "__tl_cleanup_value"]
+      [(= role (ci.intern-generated-symbol-role-cleanup-payload))
+        (str_cat.str-cat
+          "__tl_cleanup_payload_"
+          (string.int->string components))]
+      [(= role (ci.intern-generated-symbol-role-dispatch-cache))
+        (lower-dispatch-cache-name (ir.compiler-ir-symbol-text components))]
+      [(= role (ci.intern-generated-symbol-role-dispatch-variant))
+        (if (ci.intern-compat-state-composite-triple-id?
+          intern-state
+          components)
+          (str_cat.str-cat
+            (lower-generated-role-dispatch-variant-prefix
+              (ci.intern-compat-state-composite-middle-id-unchecked
+                intern-state
+                components))
+            (ir.compiler-ir-symbol-text
+              (ci.intern-compat-state-composite-left-id-unchecked
+                intern-state
+                components))
+            "__"
+            (ir.compiler-ir-symbol-text
+              (ci.intern-compat-state-composite-right-id-unchecked
+                intern-state
+                components)))
+          "")]
+      [(= role (ci.intern-generated-symbol-role-nullary-enum-object))
+        (if (ci.intern-compat-state-composite-pair-id? intern-state components)
+          (str_cat.str-cat
+            "__enum_obj_"
+            (tc_core.tc-nominal-name-id-display
+              (ci.intern-compat-state-composite-left-id-unchecked
+                intern-state
+                components))
+            "_"
+            (tc_core.tc-env-key-name-text
+              (ci.intern-compat-state-composite-right-id-unchecked
+                intern-state
+                components)))
+          "")]
+      [(= role (ci.intern-generated-symbol-role-spmd-identity))
+        (lower-spmd-package-identity-render lower-state components)]
+      [(= role (ci.intern-generated-symbol-role-spmd-package-symbol))
+        (if (ci.intern-compat-state-composite-pair-id? intern-state components)
+          (str_cat.str-cat
+            "__tl_spmd_pkg_"
+            (string.int->string
+              (ci.intern-compat-state-composite-right-id-unchecked
+                intern-state
+                components)))
+          "")]
+      [(or
+          (= role (ci.intern-generated-symbol-role-spmd-result-uniform))
+          (= role (ci.intern-generated-symbol-role-spmd-result-varying))
+          (= role (ci.intern-generated-symbol-role-spmd-result-mask)))
+        (str_cat.str-cat
+          (lower-spmd-result-wrapper-prefix role)
+          (ci.intern-compat-state-str intern-state components))]
+      [(= role (ci.intern-generated-symbol-role-spmd-private-helper))
+        (ci.intern-compat-state-str intern-state components)]
+      [(= role (ci.intern-generated-symbol-role-spmd-private-parameter))
+        (let
+          [name : i64
             (ci.intern-compat-state-composite-left-id-unchecked
               intern-state
-              components))
-          "_"
-          (string.int->string
-            (ci.intern-compat-state-composite-right-id-unchecked
-              intern-state
-              components)))
-        "")]
-    [(= role (ci.intern-generated-symbol-role-global-initializer))
-      (str_cat.str-cat "__global_init_" (ir.compiler-ir-symbol-text components))]
-    [(= role (ci.intern-generated-symbol-role-cleanup-helper))
-      (if (ci.intern-compat-state-composite-pair-id? intern-state qualification)
-        (csym.compiler-symbol-module-key
-          (ci.intern-compat-state-str
-            intern-state
-            (ci.intern-compat-state-composite-left-id-unchecked
-              intern-state
-              qualification))
-          (ci.intern-compat-state-str
-            intern-state
-            (ci.intern-compat-state-composite-right-id-unchecked
-              intern-state
-              qualification)))
-        "")]
-    [(= role (ci.intern-generated-symbol-role-cleanup-parameter))
-      "__tl_cleanup_value"]
-    [(= role (ci.intern-generated-symbol-role-cleanup-payload))
-      (str_cat.str-cat "__tl_cleanup_payload_" (string.int->string components))]
-    [(= role (ci.intern-generated-symbol-role-dispatch-cache))
-      (lower-dispatch-cache-name (ir.compiler-ir-symbol-text components))]
-    [(= role (ci.intern-generated-symbol-role-dispatch-variant))
-      (if (ci.intern-compat-state-composite-triple-id? intern-state components)
-        (str_cat.str-cat
-          (lower-generated-role-dispatch-variant-prefix
+              components)]
+          [class : i64
             (ci.intern-compat-state-composite-middle-id-unchecked
               intern-state
-              components))
-          (ir.compiler-ir-symbol-text
-            (ci.intern-compat-state-composite-left-id-unchecked
-              intern-state
-              components))
-          "__"
-          (ir.compiler-ir-symbol-text
+              components)]
+          [mode : i64
             (ci.intern-compat-state-composite-right-id-unchecked
               intern-state
-              components)))
-        "")]
-    [(= role (ci.intern-generated-symbol-role-nullary-enum-object))
-      (if (ci.intern-compat-state-composite-pair-id? intern-state components)
-        (str_cat.str-cat
-          "__enum_obj_"
-          (tc_core.tc-nominal-name-id-display
-            (ci.intern-compat-state-composite-left-id-unchecked
-              intern-state
-              components))
-          "_"
-          (tc_core.tc-env-key-name-text
-            (ci.intern-compat-state-composite-right-id-unchecked
-              intern-state
-              components)))
-        "")]
-    [else ""]))
+              components)]
+          [source-name : String (tc_core.tc-env-key-name-text name)]
+          (cond
+            [(= class 1) source-name]
+            [(= class 2)
+              (str_cat.str-cat
+                (if (= mode 2)
+                  "__tl_spmd_varying_arg_avx2_"
+                  "__tl_spmd_varying_arg_")
+                source-name)]
+            [else
+              (str_cat.str-cat
+                (if (= mode 2)
+                  "__tl_spmd_mask_arg_avx2_"
+                  "__tl_spmd_mask_arg_")
+                source-name)]))]
+      [else ""])))
 
 (define (lower-materialize-generated-role-symbols!
   [lower-state : CompilerLowerState]) : unit
@@ -66990,7 +67604,12 @@
             index)]
         (begin
           (when
-            (> handle 0)
+            (and
+              (> handle 0)
+              (=
+                (string.string-length
+                  (ci.intern-compat-state-str intern-state handle))
+                0))
             (let
               [role : i64
                 (ci.intern-compat-state-generated-role-record-role-at
@@ -66998,7 +67617,7 @@
                   index)]
               [rendered : String
                 (lower-generated-role-render
-                  intern-state
+                  lower-state
                   role
                   (ci.intern-compat-state-generated-role-record-qualification-at
                     intern-state
@@ -68858,7 +69477,9 @@
                   (lower-materialize-generated-role-symbols! lower-state)
                   (cfg
                     compile-profile
-                    (compiler-lower-profile-generated-role-counters-all))
+                    (begin
+                      (compiler-lower-profile-generated-role-counters-all)
+                      (compiler-lower-profile-spmd-symbol-counters lower-state)))
                   (ResultCompilerLower.Ok
                     (ir.CompilerIrProgram.Program
                       success.globals

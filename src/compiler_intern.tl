@@ -2035,15 +2035,15 @@
 (cfg
   compile-profile
   (define intern-profile-generated-role-create-counts : (__tl_dyn-array i64)
-    (__tl_make-array i64 9)))
+    (__tl_make-array i64 16)))
 (cfg
   compile-profile
   (define intern-profile-generated-role-reuse-counts : (__tl_dyn-array i64)
-    (__tl_make-array i64 9)))
+    (__tl_make-array i64 16)))
 (cfg
   compile-profile
   (define intern-profile-generated-role-render-counts : (__tl_dyn-array i64)
-    (__tl_make-array i64 9)))
+    (__tl_make-array i64 16)))
 
 (cfg
   compile-profile
@@ -2065,7 +2065,7 @@
       (set! intern-profile-slice-miss-count 0)
       (let
         [index : i64 0]
-        (while (< index 9)
+        (while (< index 16)
           (begin
             (set!
               (array-ref intern-profile-generated-role-create-counts index)
@@ -2803,6 +2803,31 @@
 (define (intern-generated-symbol-role-nullary-enum-object) : i64
   -109)
 
+;; SPMD package ABI roles keep the versioned identity recipe distinct from the
+;; linker symbol derived from its stable hash. Result wrappers are shared by
+;; package exports and same-program private helpers; their structural base
+;; handle keeps those two domains distinct without spelling-based lookup.
+(define (intern-generated-symbol-role-spmd-identity) : i64
+  -110)
+
+(define (intern-generated-symbol-role-spmd-package-symbol) : i64
+  -111)
+
+(define (intern-generated-symbol-role-spmd-result-uniform) : i64
+  -112)
+
+(define (intern-generated-symbol-role-spmd-result-varying) : i64
+  -113)
+
+(define (intern-generated-symbol-role-spmd-result-mask) : i64
+  -114)
+
+(define (intern-generated-symbol-role-spmd-private-helper) : i64
+  -115)
+
+(define (intern-generated-symbol-role-spmd-private-parameter) : i64
+  -116)
+
 (define (intern-generated-symbol-role-index [role : i64]) : i64
   (cond
     [(= role (intern-generated-symbol-role-clone-helper)) 0]
@@ -2814,6 +2839,13 @@
     [(= role (intern-generated-symbol-role-dispatch-cache)) 6]
     [(= role (intern-generated-symbol-role-dispatch-variant)) 7]
     [(= role (intern-generated-symbol-role-nullary-enum-object)) 8]
+    [(= role (intern-generated-symbol-role-spmd-identity)) 9]
+    [(= role (intern-generated-symbol-role-spmd-package-symbol)) 10]
+    [(= role (intern-generated-symbol-role-spmd-result-uniform)) 11]
+    [(= role (intern-generated-symbol-role-spmd-result-varying)) 12]
+    [(= role (intern-generated-symbol-role-spmd-result-mask)) 13]
+    [(= role (intern-generated-symbol-role-spmd-private-helper)) 14]
+    [(= role (intern-generated-symbol-role-spmd-private-parameter)) 15]
     [else -1]))
 
 (define (intern-compat-state-generated-role-key

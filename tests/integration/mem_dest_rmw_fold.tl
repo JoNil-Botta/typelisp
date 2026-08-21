@@ -25,7 +25,10 @@
 ;; correctness twin: every kernel is checked against a hand-computed answer over
 ;; an ODD element count, so the unrolled fast body AND its remainder both run.
 ;; --- admitted: three ALU ops, each a pure word merge ------------------------
-(define (merge-or [a : (&mut a (Array i64))] [b : (& b (Array i64))] [n : i64]) : unit
+(define (merge-or
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
+  [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -33,7 +36,10 @@
         (set! (array-ref a i) (bit-or (array-ref a i) (array-ref b i)))
         (set! i (+ i 1))))))
 
-(define (merge-and [a : (&mut a (Array i64))] [b : (& b (Array i64))] [n : i64]) : unit
+(define (merge-and
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
+  [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -41,7 +47,10 @@
         (set! (array-ref a i) (bit-and (array-ref a i) (array-ref b i)))
         (set! i (+ i 1))))))
 
-(define (merge-add [a : (&mut a (Array i64))] [b : (& b (Array i64))] [n : i64]) : unit
+(define (merge-add
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
+  [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -51,7 +60,7 @@
 
 ;; The one-instruction form: the other operand is a loop-invariant register, so
 ;; no staging load is needed at all.
-(define (merge-reg [a : (&mut a (Array i64))] [mask : i64] [n : i64]) : unit
+(define (merge-reg [a : (&mut a (__tl_dyn-array i64))] [mask : i64] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -63,8 +72,8 @@
 ;; The store address is `i + 1`, not `i`: the loaded word and the stored word
 ;; are different memory, so there is no read-modify-write to fold.
 (define (merge-shifted
-  [a : (&mut a (Array i64))]
-  [b : (& b (Array i64))]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -76,9 +85,9 @@
 ;; The loaded element is read TWICE -- once by the merge and once by the write
 ;; to `c` -- so the fold may not retire it and its home stays load-bearing.
 (define (merge-reused
-  [a : (&mut a (Array i64))]
-  [b : (& b (Array i64))]
-  [c : (&mut c (Array i64))]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
+  [c : (&mut c (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -93,9 +102,9 @@
 ;; Another store lands between the load and the store-back, so the window is no
 ;; longer a read-modify-write of one address and the fold must decline.
 (define (merge-interposed
-  [a : (&mut a (Array i64))]
-  [b : (& b (Array i64))]
-  [c : (&mut c (Array i64))]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
+  [c : (&mut c (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -108,7 +117,10 @@
           (set! i (+ i 1)))))))
 
 ;; Byte-wide merge: the same source shape at a width the fold refuses.
-(define (merge-bytes [a : (&mut a (Array u8))] [b : (& b (Array u8))] [n : i64]) : unit
+(define (merge-bytes
+  [a : (&mut a (__tl_dyn-array u8))]
+  [b : (& b (__tl_dyn-array u8))]
+  [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -123,8 +135,8 @@
 ;; so the unroll tier refuses it and the load-and-store class keeps it at K=2.
 ;; The two mechanisms are independent and this kernel is where that is pinned.
 (define (merge-mixed
-  [a : (&mut a (Array i64))]
-  [tags : (&mut tags (Array u32))]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [tags : (&mut tags (__tl_dyn-array u32))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -138,7 +150,7 @@
 (define words : i64
   9)
 
-(define (fill [xs : (&mut xs (Array i64))] [seed : i64]) : unit
+(define (fill [xs : (&mut xs (__tl_dyn-array i64))] [seed : i64]) : unit
   (let
     [i : i64 0]
     (while (< i words)
@@ -146,7 +158,7 @@
         (set! (array-ref xs i) (+ seed i))
         (set! i (+ i 1))))))
 
-(define (checksum [xs : (& xs (Array i64))]) : i64
+(define (checksum [xs : (& xs (__tl_dyn-array i64))]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -203,12 +215,12 @@
 
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 (+ words 1))]
-    [b : (Array i64) (make-array i64 (+ words 1))]
-    [c : (Array i64) (make-array i64 (+ words 1))]
-    [ba : (Array u8) (make-array u8 (+ words 1))]
-    [bb : (Array u8) (make-array u8 (+ words 1))]
-    [tags : (Array u32) (make-array u32 (+ words 1))]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 (+ words 1))]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 (+ words 1))]
+    [c : (__tl_dyn-array i64) (__tl_make-array i64 (+ words 1))]
+    [ba : (__tl_dyn-array u8) (__tl_make-array u8 (+ words 1))]
+    [bb : (__tl_dyn-array u8) (__tl_make-array u8 (+ words 1))]
+    [tags : (__tl_dyn-array u32) (__tl_make-array u32 (+ words 1))]
     [i : i64 0]
     (begin
       ;; Every kernel runs over an ODD word count, so an unrolled fast body and

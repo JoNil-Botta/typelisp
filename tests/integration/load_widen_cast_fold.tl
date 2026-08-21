@@ -23,7 +23,10 @@
 ;; so the shapes stay in their own frames. A fold that dropped or mis-extended
 ;; the byte yields a different classification -> not 42;
 ;; scripts/verify-asm-shape-gates.sh asserts the asm shape.
-(define (classify [bytes : (& bytes (Array u8))] [i : i64] [poke : i64]) : i64
+(define (classify
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [i : i64]
+  [poke : i64]) : i64
   (if (< poke 0)
     (classify bytes i (+ poke 1))
     (let
@@ -40,7 +43,10 @@
 
 ;; Nearest refused neighbour: the element is read at its own width and written
 ;; back, so the load feeds a store rather than a widening cast.
-(define (refused [bytes : (&mut bytes (Array u8))] [i : i64] [poke : i64]) : i64
+(define (refused
+  [bytes : (&mut bytes (__tl_dyn-array u8))]
+  [i : i64]
+  [poke : i64]) : i64
   (if (< poke 0)
     (refused bytes i (+ poke 1))
     (let
@@ -61,7 +67,7 @@
 
 (define (main) : i64
   (let
-    [bytes : (Array u8) (array.make-array u8 8)]
+    [bytes : (__tl_dyn-array u8) (array.make-array u8 8)]
     [i : i64 0]
     [ok : i64 0]
     (begin

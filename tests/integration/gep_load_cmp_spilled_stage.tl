@@ -47,10 +47,10 @@
 ;; reordered or mis-addressed a load fails the runtime test as well as the
 ;; assembly-shape gate in scripts/verify-asm-shape-gates.sh.
 (define (changed?
-  [a : (& a (Array i64))]
-  [b : (&mut b (Array i64))]
-  [c : (& c (Array i64))]
-  [d : (&mut d (Array i64))]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (&mut b (__tl_dyn-array i64))]
+  [c : (& c (__tl_dyn-array i64))]
+  [d : (&mut d (__tl_dyn-array i64))]
   [base : i64]
   [n : i64]
   [poke : i64]) : i64
@@ -82,10 +82,10 @@
 ;; Nearest refused neighbour: the loaded element is read twice, so it is not
 ;; single-use, the fold cannot retire it, and it keeps a home of its own.
 (define (refused
-  [a : (& a (Array i64))]
-  [b : (&mut b (Array i64))]
-  [c : (& c (Array i64))]
-  [d : (&mut d (Array i64))]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (&mut b (__tl_dyn-array i64))]
+  [c : (& c (__tl_dyn-array i64))]
+  [d : (&mut d (__tl_dyn-array i64))]
   [base : i64]
   [n : i64]
   [poke : i64]) : i64
@@ -121,10 +121,10 @@
 
 (define (main) : i64
   (let
-    [a : (Array i64) (array.make-array i64 8)]
-    [b : (Array i64) (array.make-array i64 16)]
-    [c : (Array i64) (array.make-array i64 8)]
-    [d : (Array i64) (array.make-array i64 16)]
+    [a : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [b : (__tl_dyn-array i64) (array.make-array i64 16)]
+    [c : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [d : (__tl_dyn-array i64) (array.make-array i64 16)]
     [ok : i64 0]
     [trial : i64 0]
     (begin

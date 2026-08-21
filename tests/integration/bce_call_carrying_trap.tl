@@ -25,7 +25,7 @@
 ;; Element-clean and above every static inline band, so the call site survives
 ;; to be cloned. Its own `array-ref` is what aborts.
 (define (bump
-  [marks : (&mut marks (Array i64))]
+  [marks : (&mut marks (__tl_dyn-array i64))]
   [start : i64]
   [count : i64]
   [v : i64]) : i64
@@ -56,10 +56,10 @@
       (+ last guard))))
 
 (define (walk-fast
-  [items : (& items (Array i64))]
-  [other : (& other (Array i64))]
-  [extra : (& extra (Array i64))]
-  [marks : (&mut marks (Array i64))]
+  [items : (& items (__tl_dyn-array i64))]
+  [other : (& other (__tl_dyn-array i64))]
+  [extra : (& extra (__tl_dyn-array i64))]
+  [marks : (&mut marks (__tl_dyn-array i64))]
   [n : i64]
   [seed : i64]) : i64
   (let
@@ -77,9 +77,9 @@
       acc)))
 
 (define (walk-slow
-  [items : (& items (Array i64))]
-  [other : (& other (Array i64))]
-  [marks : (&mut marks (Array i64))]
+  [items : (& items (__tl_dyn-array i64))]
+  [other : (& other (__tl_dyn-array i64))]
+  [marks : (&mut marks (__tl_dyn-array i64))]
   [n : i64]
   [seed : i64]) : i64
   (let
@@ -95,7 +95,7 @@
           (set! i (+ i 1))))
       acc)))
 
-(define (fill [a : (&mut a (Array i64))] [n : i64] [v : i64]) : unit
+(define (fill [a : (&mut a (__tl_dyn-array i64))] [n : i64] [v : i64]) : unit
   (let
     [i : i64 0]
     (begin

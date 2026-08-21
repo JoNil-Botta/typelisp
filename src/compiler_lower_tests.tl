@@ -14259,7 +14259,7 @@
       (compiler_ast_types.ast-spmd-param-class-list-push
         (&mut classes)
         compiler_ast_types.AstSpmdParamClass.Varying)]
-    [first : compiler_lower.LowerSpmdPackageStructuralSymbol
+    [first : i64
       (compiler_lower.lower-spmd-package-structural-symbol
         state
         "profile-pkg"
@@ -14272,7 +14272,7 @@
         classes
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
-    [repeat : compiler_lower.LowerSpmdPackageStructuralSymbol
+    [repeat : i64
       (compiler_lower.lower-spmd-package-structural-symbol
         state
         "profile-pkg"
@@ -14300,21 +14300,51 @@
       (and
         (=
           (string.string-length
-            (ci.intern-compat-state-str intern-state first.identity))
+            (ci.intern-compat-state-str
+              intern-state
+              (compiler_lower.lower-spmd-package-structural-identity
+                intern-state
+                first)))
           0)
         (=
           (string.string-length
-            (ci.intern-compat-state-str intern-state first.symbol))
+            (ci.intern-compat-state-str
+              intern-state
+              (compiler_lower.lower-spmd-package-structural-linker-symbol
+                intern-state
+                first)))
           0))]
     (begin
       (compiler_lower.lower-materialize-generated-role-symbols! state)
       (and
         lazy-before
-        (= first.identity repeat.identity)
-        (= first.symbol repeat.symbol)
-        (= first.registration-key repeat.registration-key)
+        (=
+          (compiler_lower.lower-spmd-package-structural-identity
+            intern-state
+            first)
+          (compiler_lower.lower-spmd-package-structural-identity
+            intern-state
+            repeat))
+        (=
+          (compiler_lower.lower-spmd-package-structural-linker-symbol
+            intern-state
+            first)
+          (compiler_lower.lower-spmd-package-structural-linker-symbol
+            intern-state
+            repeat))
+        (=
+          (compiler_lower.lower-spmd-package-structural-registration-key
+            intern-state
+            first)
+          (compiler_lower.lower-spmd-package-structural-registration-key
+            intern-state
+            repeat))
         (string.eq
-          (ci.intern-compat-state-str intern-state first.symbol)
+          (ci.intern-compat-state-str
+            intern-state
+            (compiler_lower.lower-spmd-package-structural-linker-symbol
+              intern-state
+              first))
           expected)
         (=
           (compiler_lower.compiler-lower-profile-spmd-identity-serializations-value

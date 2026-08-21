@@ -296,18 +296,6 @@
   (Existing)
   (Collision String))
 
-(defstruct LowerSpmdPackageStructuralSymbol
-  ;; `identity` is the full structural equality key. `symbol` is the final
-  ;; linker handle after the backend-specific result wrapper has been applied.
-  (identity i64)
-  (symbol i64)
-  ;; Final wrapper role plus stable v1 hash. Deliberately colliding identities
-  ;; share this structural key and reach the compatibility diagnostic without
-  ;; interning or comparing the full serialized identity.
-  (registration-key i64)
-  ;; Retained typed recipe used only by the cached ABI serializer/hash boundary.
-  (identity-components i64))
-
 (define (lower-empty-global-name-cache [owner-address : i64]) : LowerNameCache
   (LowerNameCache
     (lower_i64_i64_map.with-capacity 8)
@@ -58085,7 +58073,7 @@
   [lanes : i64]
   [classes : ast.AstSpmdParamClassList]
   [result : ast.AstSpmdResultClass]
-  [index-param : i64]) : LowerSpmdPackageStructuralSymbol
+  [index-param : i64]) : i64
   (let
     [intern-state : ci.InternCompatState
       (compiler-lower-state-interns lower-state)]
@@ -58174,11 +58162,41 @@
         intern-state
         final-role
         stable-hash)]
-    (LowerSpmdPackageStructuralSymbol
+    ;; One structural transport handle carries the typed identity, final
+    ;; symbol, collision key, and retained serializer recipe without requiring
+    ;; a generated aggregate declaration in the compiler's own source graph.
+    (ci.intern-compat-state-composite-triple-id
+      intern-state
       identity
       symbol
-      registration-key
-      identity-components)))
+      (ci.intern-compat-state-composite-pair-id
+        intern-state
+        registration-key
+        identity-components))))
+
+(define (lower-spmd-package-structural-identity
+  [intern-state : ci.InternCompatState]
+  [record : i64]) : i64
+  (ci.intern-compat-state-composite-left-id-unchecked intern-state record))
+
+(define (lower-spmd-package-structural-linker-symbol
+  [intern-state : ci.InternCompatState]
+  [record : i64]) : i64
+  (ci.intern-compat-state-composite-middle-id-unchecked intern-state record))
+
+(define (lower-spmd-package-structural-registration-key
+  [intern-state : ci.InternCompatState]
+  [record : i64]) : i64
+  (ci.intern-compat-state-composite-left-id-unchecked
+    intern-state
+    (ci.intern-compat-state-composite-right-id-unchecked intern-state record)))
+
+(define (lower-spmd-package-structural-identity-components
+  [intern-state : ci.InternCompatState]
+  [record : i64]) : i64
+  (ci.intern-compat-state-composite-right-id-unchecked
+    intern-state
+    (ci.intern-compat-state-composite-right-id-unchecked intern-state record)))
 
 (define (lower-spmd-package-symbol-register
   [lower-state : CompilerLowerState]
@@ -58979,7 +58997,7 @@
             [(ir.CompilerIrSpmdBackend.Scalar) 1]
             [_ specialization.lanes])]
         [index-param : i64 specialization.index-param]
-        [structural-symbol : LowerSpmdPackageStructuralSymbol
+        [structural-symbol : i64
           (lower-spmd-package-structural-symbol
             lower-state
             package-name
@@ -58992,13 +59010,22 @@
             classes
             specialization.result
             index-param)]
-        [hidden-name : i64 structural-symbol.symbol]
+        [intern-state : ci.InternCompatState
+          (compiler-lower-state-interns lower-state)]
+        [hidden-name : i64
+          (lower-spmd-package-structural-linker-symbol
+            intern-state
+            structural-symbol)]
         [registration : LowerSpmdPackageSymbolRegistration
           (lower-spmd-package-symbol-register
             lower-state
             hidden-name
-            structural-symbol.registration-key
-            structural-symbol.identity)]
+            (lower-spmd-package-structural-registration-key
+              intern-state
+              structural-symbol)
+            (lower-spmd-package-structural-identity
+              intern-state
+              structural-symbol))]
         [call-args : ir.CompilerIrSpmdCallArgList
           (lower-spmd-package-call-args-at ctx (& params) (& classes) 0)]
         [index-name : String

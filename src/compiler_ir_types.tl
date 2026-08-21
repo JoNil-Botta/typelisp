@@ -3719,8 +3719,10 @@
           (set!
             (array-ref slots index)
             (compiler-ir-clone-extern
-              pools
-              (compiler-ir-extern-seq-ref externs index)))
+              (compiler-ir-global-shared-view pools)
+              (compiler-ir-extern-seq-ref
+                (compiler-ir-global-shared-view externs)
+                index)))
           (set! index (+ index 1))))
       (CompilerIrExternSeq slots externs.len))))
 
@@ -5232,7 +5234,9 @@
               out
               (compiler-ir-extern-render
                 type-segment-bases
-                (compiler-ir-extern-seq-ref externs index))))
+                (compiler-ir-extern-seq-ref
+                  (compiler-ir-global-shared-view externs)
+                  index))))
           (set! index (+ index 1))))
       out)))
 
@@ -7009,15 +7013,23 @@
     [(CompilerIrProgram.Program globals functions externs)
       (CompilerIrSummary.Summary
         (compiler-ir-global-seq-count globals)
-        (compiler-ir-function-list-count functions)
+        (compiler-ir-function-list-count
+          (compiler-ir-global-shared-view functions))
         (compiler-ir-extern-seq-count externs)
-        (compiler-ir-function-list-block-count functions)
-        (compiler-ir-function-list-instruction-count functions)
-        (compiler-ir-function-list-var-count functions)
-        (compiler-ir-function-list-empty-block-count functions)
-        (compiler-ir-function-list-max-instruction-count functions)
-        (compiler-ir-function-list-max-block-instruction-count functions)
-        (compiler-ir-function-list-call-arg-count functions)
+        (compiler-ir-function-list-block-count
+          (compiler-ir-global-shared-view functions))
+        (compiler-ir-function-list-instruction-count
+          (compiler-ir-global-shared-view functions))
+        (compiler-ir-function-list-var-count
+          (compiler-ir-global-shared-view functions))
+        (compiler-ir-function-list-empty-block-count
+          (compiler-ir-global-shared-view functions))
+        (compiler-ir-function-list-max-instruction-count
+          (compiler-ir-global-shared-view functions))
+        (compiler-ir-function-list-max-block-instruction-count
+          (compiler-ir-global-shared-view functions))
+        (compiler-ir-function-list-call-arg-count
+          (compiler-ir-global-shared-view functions))
         (compiler-ir-function-list-phi-input-count functions))]))
 
 (define (compiler-ir-type-list-name-at
@@ -9065,12 +9077,14 @@
 
 (define (compiler-ir-representation-collect-one-externs-from
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [externs : CompilerIrExternSeq]
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position externs.len)
     index
-    (match (compiler-ir-extern-seq-ref externs position)
+    (match (compiler-ir-extern-seq-ref
+      (compiler-ir-global-shared-view externs)
+      position)
       [(CompilerIrExtern.Extern _ _ _ ty _ _ _ _)
         (compiler-ir-representation-collect-one-externs-from
           type-segment-bases
@@ -9083,7 +9097,7 @@
 
 (define (compiler-ir-representation-collect-one-externs
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex (:consume)]
+  [index : CompilerIrRepresentationIndex]
   [externs : CompilerIrExternSeq]) : CompilerIrRepresentationIndex
   (compiler-ir-representation-collect-one-externs-from
     type-segment-bases

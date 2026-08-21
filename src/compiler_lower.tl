@@ -63629,15 +63629,23 @@
   [index : i64]) : i64
   (if (>= index (ast.ast-spmd-param-class-list-len classes))
     0
-    (ci.intern-compat-state-composite-triple-id
-      intern-state
-      -6023
-      (lower-spmd-package-param-role-tag
-        (ast.ast-spmd-param-class-list-get
+    (let
+      [owned-intern-state : ci.InternCompatState
+        (lower-global-shared-view intern-state)]
+      [rest : i64
+        (lower-spmd-package-arg-classes-role-at
+          (lower-global-shared-view owned-intern-state)
           classes
-          index
-          ast.AstSpmdParamClass.Uniform))
-      (lower-spmd-package-arg-classes-role-at intern-state classes (+ index 1)))))
+          (+ index 1))]
+      (ci.intern-compat-state-composite-triple-id
+        (&mut owned-intern-state)
+        -6023
+        (lower-spmd-package-param-role-tag
+          (ast.ast-spmd-param-class-list-get
+            classes
+            index
+            ast.AstSpmdParamClass.Uniform))
+        rest))))
 
 (define (lower-spmd-result-wrapper-role
   [result-ty : ast.AstType]
@@ -63707,66 +63715,69 @@
     [intern-state : ci.InternCompatState
       (compiler-lower-state-interns lower-state)]
     [package-atom : i64
-      (ci.intern-compat-state-intern intern-state package-name)]
+      (ci.intern-compat-state-intern (&mut intern-state) package-name)]
     [canonical-text-atom : i64
-      (ci.intern-compat-state-intern intern-state canonical-name)]
+      (ci.intern-compat-state-intern (&mut intern-state) canonical-name)]
     [signature-atom : i64
-      (ci.intern-compat-state-intern intern-state signature)]
+      (ci.intern-compat-state-intern (&mut intern-state) signature)]
     [canonical-components : i64
       (ci.intern-compat-state-composite-pair-id
-        intern-state
+        (&mut intern-state)
         canonical-handle
         canonical-text-atom)]
     [source-components : i64
       (ci.intern-compat-state-composite-pair-id
-        intern-state
+        (&mut intern-state)
         package-atom
         canonical-components)]
     [signature-components : i64
       (ci.intern-compat-state-composite-pair-id
-        intern-state
+        (&mut intern-state)
         signature-atom
         (lower-spmd-package-abi-role-tag))]
     [arg-components : i64
-      (lower-spmd-package-arg-classes-role-at intern-state (& classes) 0)]
+      (lower-spmd-package-arg-classes-role-at
+        (lower-global-shared-view intern-state)
+        (& classes)
+        0)]
     [result-components : i64
       (ci.intern-compat-state-composite-pair-id
-        intern-state
+        (&mut intern-state)
         (lower-spmd-package-result-role-tag result)
-        (lower-spmd-package-type-role-tag result-ty))]
+        (lower-spmd-package-type-role-tag (lower-global-shared-view result-ty)))]
     [call-components : i64
       (ci.intern-compat-state-composite-triple-id
-        intern-state
+        (&mut intern-state)
         arg-components
         result-components
         index-param)]
     [backend-components : i64
       (ci.intern-compat-state-composite-triple-id
-        intern-state
+        (&mut intern-state)
         (lower-spmd-package-backend-role-tag backend)
         lanes
         call-components)]
     [identity-components : i64
       (ci.intern-compat-state-composite-triple-id
-        intern-state
+        (&mut intern-state)
         source-components
         signature-components
         backend-components)]
     [identity : i64
       (ci.intern-compat-state-generated-role-symbol-id
-        intern-state
+        (&mut intern-state)
         (ci.intern-generated-symbol-role-spmd-identity)
         identity-components)]
     [stable-hash : i64
       (lower-spmd-package-stable-hash lower-state identity identity-components)]
     [symbol-components : i64
       (ci.intern-compat-state-composite-pair-id
-        intern-state
+        (&mut intern-state)
         identity-components
         stable-hash)]
     [stable-symbol : i64
       (ci.intern-compat-state-generated-role-symbol-id
-        intern-state
+        (&mut intern-state)
         (ci.intern-generated-symbol-role-spmd-package-symbol)
         symbol-components)]
     [final-role : i64
@@ -63782,26 +63793,28 @@
       (match backend
         [(ir.CompilerIrSpmdBackend.Avx512)
           (ci.intern-compat-state-generated-role-symbol-id
-            intern-state
+            (&mut intern-state)
             final-role
             stable-symbol)]
         [_ stable-symbol])]
     [registration-key : i64
       (ci.intern-compat-state-composite-pair-id
-        intern-state
+        (&mut intern-state)
         final-role
         stable-hash)]
+    [registration-components : i64
+      (ci.intern-compat-state-composite-pair-id
+        (&mut intern-state)
+        registration-key
+        identity-components)]
     ;; One structural transport handle carries the typed identity, final
     ;; symbol, collision key, and retained serializer recipe without requiring
     ;; a generated aggregate declaration in the compiler's own source graph.
     (ci.intern-compat-state-composite-triple-id
-      intern-state
+      (&mut intern-state)
       identity
       symbol
-      (ci.intern-compat-state-composite-pair-id
-        intern-state
-        registration-key
-        identity-components))))
+      registration-components)))
 
 (define (lower-spmd-package-structural-identity
   [intern-state : ci.InternCompatState]
@@ -64114,7 +64127,7 @@
     (if (> (string.string-length cached) 0)
       cached
       (ci.intern-compat-state-generated-role-symbol-materialize!
-        intern-state
+        (&mut intern-state)
         (ci.intern-generated-symbol-role-spmd-private-parameter)
         handle
         (match class
@@ -64147,12 +64160,12 @@
       (compiler-lower-state-interns lower-state)]
     [components : i64
       (ci.intern-compat-state-composite-triple-id
-        intern-state
+        (&mut intern-state)
         name
         (lower-spmd-private-param-class-role-tag class)
         (lower-spmd-private-param-mode-role-tag mode))]
     (ci.intern-compat-state-generated-role-symbol-id
-      intern-state
+      (&mut intern-state)
       (ci.intern-generated-symbol-role-spmd-private-parameter)
       components)))
 
@@ -64238,11 +64251,11 @@
       (compiler-lower-state-interns lower-state)]
     [private-base : i64
       (ci.intern-compat-state-generated-role-symbol-id
-        intern-state
+        (&mut intern-state)
         (ci.intern-generated-symbol-role-spmd-private-helper)
         hidden-name)]
     (ci.intern-compat-state-generated-role-symbol-id
-      intern-state
+      (&mut intern-state)
       (lower-spmd-result-wrapper-role result-ty result-varying)
       private-base)))
 
@@ -64373,7 +64386,7 @@
         (ir.compiler-ir-function-builder-new)
         hidden-name
         (box function-spans)
-        names
+        (lower-global-shared-view names)
         type-cache
         function-state
         mode
@@ -64671,10 +64684,16 @@
       (ResultLowerFunction.Err (box (lower-diagnostic validation-error)))
       (let
         [classes : ast.AstSpmdParamClassList
-          (__tl-box-place specialization.args)]
-        [signature : String (lower-spmd-source-signature params ret)]
+          (lower-box-shared-view specialization.args)]
+        [signature : String
+          (lower-spmd-source-signature
+            (lower-global-shared-view params)
+            (lower-global-shared-view ret))]
         [resolved-ret : ast.AstType
-          (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-resolve-type
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view ret)))]
         [lanes : i64
           (match backend
             [(ir.CompilerIrSpmdBackend.Scalar) 1]
@@ -64690,24 +64709,24 @@
             resolved-ret
             backend
             lanes
-            classes
+            (lower-global-shared-view classes)
             specialization.result
             index-param)]
         [intern-state : ci.InternCompatState
           (compiler-lower-state-interns lower-state)]
         [hidden-name : i64
           (lower-spmd-package-structural-linker-symbol
-            intern-state
+            (lower-global-shared-view intern-state)
             structural-symbol)]
         [registration : LowerSpmdPackageSymbolRegistration
           (lower-spmd-package-symbol-register
             lower-state
             hidden-name
             (lower-spmd-package-structural-registration-key
-              intern-state
+              (lower-global-shared-view intern-state)
               structural-symbol)
             (lower-spmd-package-structural-identity
-              intern-state
+              (lower-global-shared-view intern-state)
               structural-symbol))]
         [call-args : ir.CompilerIrSpmdCallArgList
           (lower-spmd-package-call-args-at
@@ -73695,24 +73714,24 @@
   (if (= components 0)
     ""
     (if (and
-      (ci.intern-compat-state-composite-triple-id? intern-state components)
+      (ci.intern-compat-state-composite-triple-id? (& intern-state) components)
       (=
         (ci.intern-compat-state-composite-left-id-unchecked
-          intern-state
+          (& intern-state)
           components)
         -6023))
       (str_cat.str-cat
         (if (=
           (ci.intern-compat-state-composite-middle-id-unchecked
-            intern-state
+            (& intern-state)
             components)
           1)
           "u"
           "v")
         (lower-spmd-package-arg-classes-render
-          intern-state
+          (lower-global-shared-view intern-state)
           (ci.intern-compat-state-composite-right-id-unchecked
-            intern-state
+            (& intern-state)
             components)))
       "")))
 
@@ -73789,7 +73808,7 @@
               intern-state
               backend-components)
             (lower-spmd-package-arg-classes-render
-              intern-state
+              (lower-global-shared-view intern-state)
               (ci.intern-compat-state-composite-left-id-unchecked
                 intern-state
                 call-components))
@@ -73814,7 +73833,7 @@
                 1))
             unit)
           (ci.intern-compat-state-composite-rendered-name-record!
-            intern-state
+            (&mut intern-state)
             components
             rendered))))))
 
@@ -75149,11 +75168,11 @@
                         (& cur-functions))
                       (ir.compiler-ir-extern-builder-snapshot-seq
                         (& cur-externs))
-                      cur-spans))))
+                      (lower-global-shared-view cur-spans)))))
               (set! done true))]
           [(ast.AstDeclListStep.Cons decl rest)
             (let
-              [rest : ast.AstDeclList rest]
+              [rest : ast.AstDeclList (lower-global-shared-view rest)]
               [decl-path : String
                 (ast.ast-decl-path-list-get
                   (& cur-paths)
@@ -75350,18 +75369,18 @@
                           (ir.CompilerIrExtern.Extern
                             (lower-extern-logical-symbol-id
                               logical-id
-                              logical-name
-                              name
-                              (__tl-box-place metadata))
+                              (lower-global-shared-view logical-name)
+                              (lower-global-shared-view name)
+                              (lower-box-shared-view metadata))
                             name
                             logical-name
                             (tc_core.tc-type-without-regions resolved-ty)
                             (ast.ast-extern-metadata-abi
-                              (__tl-box-place metadata))
+                              (lower-box-shared-view metadata))
                             (ast.ast-extern-metadata-symbol-id
-                              (__tl-box-place metadata))
+                              (lower-box-shared-view metadata))
                             (ast.ast-extern-metadata-link-inputs
-                              (__tl-box-place metadata))
+                              (lower-box-shared-view metadata))
                             false))
                         (set! cur-decls rest))))]
                 [(ast.AstDecl.DefFn decl-meta name params ret body-box metadata)

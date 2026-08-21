@@ -4907,10 +4907,21 @@
     [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
         (compiler-reg-location-any-register?
-          (reg.compiler-reg-assignment-lookup assignments 1))
-        (compiler-reg-same-location? assignments 1 4)
-        (compiler-reg-same-location? assignments 0 3)
-        (compiler-reg-different-location? assignments 1 0))]))
+          (reg.compiler-reg-assignment-lookup
+            (owned_view.compiler-owned-shared-view assignments)
+            1))
+        (compiler-reg-same-location?
+          (owned_view.compiler-owned-shared-view assignments)
+          1
+          4)
+        (compiler-reg-same-location?
+          (owned_view.compiler-owned-shared-view assignments)
+          0
+          3)
+        (compiler-reg-different-location?
+          (owned_view.compiler-owned-shared-view assignments)
+          1
+          0))]))
 
 ;; Negative 1: the counter PHI RESULT is read on the exit edge. One register
 ;; cannot hold both -- the increment would overwrite the value the exit reads --
@@ -4925,12 +4936,14 @@
       (compiler-reg-self-loop-counter-late-read-function)]
     [exit-read-mask : (__tl_dyn-array i64)
       (reg.compiler-reg-function-phi-touched-safe
-        exit-read
-        (live.compiler-live-analyze-function-edge-precise exit-read))]
+        (owned_view.compiler-owned-shared-view exit-read)
+        (live.compiler-live-analyze-function-edge-precise
+          (owned_view.compiler-owned-shared-view exit-read)))]
     [late-read-mask : (__tl_dyn-array i64)
       (reg.compiler-reg-function-phi-touched-safe
-        late-read
-        (live.compiler-live-analyze-function-edge-precise late-read))]
+        (owned_view.compiler-owned-shared-view late-read)
+        (live.compiler-live-analyze-function-edge-precise
+          (owned_view.compiler-owned-shared-view late-read)))]
     (and
       (= (array-ref exit-read-mask 0) 0)
       (= (array-ref exit-read-mask 1) 0)
@@ -17392,7 +17405,7 @@
             (clone func)
             0))
         (reg.compiler-reg-same-value-eligible-vars
-          interval-index
+          (clone interval-index)
           (live.compiler-live-set-empty))
         (reg.compiler-reg-function-var-types func)
         interval-index)]))

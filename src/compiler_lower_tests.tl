@@ -15139,7 +15139,10 @@
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program _ functions externs)
           (and
-            (= (compiler_ir_types.compiler-ir-function-list-count functions) 1)
+            (=
+              (compiler_ir_types.compiler-ir-function-list-count
+                (owned_view.compiler-owned-shared-view functions))
+              1)
             (= (compiler_ir_types.compiler-ir-extern-seq-count externs) 0)
             (lower-test-function-defined? functions "main"))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -16257,14 +16260,14 @@
         [source-id : i64
           (ci.intern-generated-name "lower-function-state-isolation-temp")]
         [symbol : i64 81173]
+        [interns-a : ci.InternCompatState
+          (compiler_lower.compiler-lower-state-interns owner-a)]
+        [interns-b : ci.InternCompatState
+          (compiler_lower.compiler-lower-state-interns owner-b)]
         [identity-a : i64
-          (ci.intern-compat-state-intern
-            (compiler_lower.compiler-lower-state-interns owner-a)
-            "identity-a")]
+          (ci.intern-compat-state-intern (&mut interns-a) "identity-a")]
         [identity-b : i64
-          (ci.intern-compat-state-intern
-            (compiler_lower.compiler-lower-state-interns owner-b)
-            "identity-b")]
+          (ci.intern-compat-state-intern (&mut interns-b) "identity-b")]
         [registered-a : compiler_lower.LowerSpmdPackageSymbolRegistration
           (compiler_lower.lower-spmd-package-symbol-register
             owner-a
@@ -16475,7 +16478,7 @@
     [intern-state : ci.InternCompatState
       (compiler_lower.compiler-lower-state-interns state)]
     [canonical : i64
-      (ci.intern-compat-state-intern intern-state "profile-pkg/helper")]
+      (ci.intern-compat-state-intern (&mut intern-state) "profile-pkg/helper")]
     [classes : compiler_ast_types.AstSpmdParamClassList
       (compiler_ast_types.ast-spmd-param-class-list-new)]
     [_class : unit
@@ -16492,7 +16495,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         8
-        classes
+        (owned_view.compiler-owned-shared-view classes)
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
     [repeat : i64
@@ -16505,7 +16508,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         8
-        classes
+        (owned_view.compiler-owned-shared-view classes)
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
     [expected : String
@@ -16524,17 +16527,17 @@
         (=
           (string.string-length
             (ci.intern-compat-state-str
-              intern-state
+              (owned_view.compiler-owned-shared-view intern-state)
               (compiler_lower.lower-spmd-package-structural-identity
-                intern-state
+                (owned_view.compiler-owned-shared-view intern-state)
                 first)))
           0)
         (=
           (string.string-length
             (ci.intern-compat-state-str
-              intern-state
+              (owned_view.compiler-owned-shared-view intern-state)
               (compiler_lower.lower-spmd-package-structural-linker-symbol
-                intern-state
+                (owned_view.compiler-owned-shared-view intern-state)
                 first)))
           0))]
     (begin
@@ -16543,30 +16546,30 @@
         lazy-before
         (=
           (compiler_lower.lower-spmd-package-structural-identity
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             first)
           (compiler_lower.lower-spmd-package-structural-identity
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             repeat))
         (=
           (compiler_lower.lower-spmd-package-structural-linker-symbol
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             first)
           (compiler_lower.lower-spmd-package-structural-linker-symbol
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             repeat))
         (=
           (compiler_lower.lower-spmd-package-structural-registration-key
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             first)
           (compiler_lower.lower-spmd-package-structural-registration-key
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             repeat))
         (string.eq
           (ci.intern-compat-state-str
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             (compiler_lower.lower-spmd-package-structural-linker-symbol
-              intern-state
+              (owned_view.compiler-owned-shared-view intern-state)
               first))
           expected)
         (=

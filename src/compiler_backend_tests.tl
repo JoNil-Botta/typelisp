@@ -7553,7 +7553,7 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (compiler_ir_types.compiler-ir-label "entry")
-        coalesced
+        (owned_view.compiler-owned-shared-view coalesced)
         2
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
@@ -7578,7 +7578,7 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (compiler_ir_types.compiler-ir-label "entry")
-        coalesced
+        (owned_view.compiler-owned-shared-view coalesced)
         2
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
@@ -7744,7 +7744,7 @@
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
-              asm
+              (owned_view.compiler-owned-shared-view asm)
               "    movq -24(%rbp), %r8\n")
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
@@ -7811,16 +7811,16 @@
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -40))
-        slot-assignments)]
+        (owned_view.compiler-owned-shared-view slot-assignments))]
     (and
       ;; unassigned destination -> its bare slot, one store
       (match (compiler_backend.compiler-backend-emit-mov
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        slot-assignments
+        (owned_view.compiler-owned-shared-view slot-assignments)
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
-        index
+        (owned_view.compiler-owned-shared-view index)
         2
         (cfg scratch-vreg "%r8" "")
         index.backend-state)
@@ -7830,11 +7830,11 @@
       ;; spilled destination -> its frame offset, one store
       (match (compiler_backend.compiler-backend-emit-mov
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        spill-assignments
+        (owned_view.compiler-owned-shared-view spill-assignments)
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I64)
-        index
+        (owned_view.compiler-owned-shared-view index)
         2
         (cfg scratch-vreg "%r8" "")
         index.backend-state)
@@ -7844,11 +7844,11 @@
       ;; a narrow type changes nothing: no narrowing, no scratch
       (match (compiler_backend.compiler-backend-emit-mov
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        spill-assignments
+        (owned_view.compiler-owned-shared-view spill-assignments)
         1
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.I32)
-        index
+        (owned_view.compiler-owned-shared-view index)
         2
         (cfg scratch-vreg "%r8" "")
         index.backend-state)
@@ -8350,7 +8350,7 @@
         dynamic-args
         compiler_ir_types.CompilerIrFunctionList.Nil
         (compiler_ir_types.compiler-ir-extern-seq-empty)
-        index)]
+        (owned_view.compiler-owned-shared-view index))]
     [effective-dynamic-type : compiler_ast_types.AstType
       (compiler_ast_types.ast-type-segment-bases-get
         bases
@@ -9949,12 +9949,12 @@
         (let
           [test-pos : i64
             (compiler_backend.compiler-backend-string-find-from
-              asm
+              (owned_view.compiler-owned-shared-view asm)
               "    testq %r9, %r9\n"
               0)]
           [restore-pos : i64
             (compiler_backend.compiler-backend-string-find-from
-              asm
+              (owned_view.compiler-owned-shared-view asm)
               "    movq -64(%rbp), %r9\n"
               0)]
           [jump-pos : i64
@@ -12209,7 +12209,7 @@
         runtime-plan
         compiler_ir_types.CompilerIrFunctionList.Nil
         (compiler_ir_types.compiler-ir-extern-seq-empty)
-        program-index
+        (owned_view.compiler-owned-shared-view program-index)
         (compiler_ir_types.compiler-source-spans-empty)
         (compiler_backend.compiler-backend-source-span-index-build
           (compiler_ir_types.compiler-source-spans-empty))
@@ -12973,7 +12973,10 @@
     want))
 
 (define (compiler-backend-layout-unchanged? [mode : i64] [input : String]) : bool
-  (compiler-backend-layout-case? mode input input))
+  (compiler-backend-layout-case?
+    mode
+    (owned_view.compiler-owned-shared-view input)
+    input))
 
 ;; TAIL DUPLICATION. The straight-line run at the target -- across the label
 ;; that splits it in two, up to the unconditional jump that ends it -- replaces
@@ -28198,15 +28201,15 @@ g:
         ;; in either cfg -- there is no scratch left to stage it through, so
         ;; neither staging spelling may appear.
         (compiler_backend.compiler-backend-string-contains?
-          asm
+          (owned_view.compiler-owned-shared-view asm)
           "    movq %r9, -32(%rbp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq %r9, %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq %r9, %r8\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -38952,11 +38955,11 @@ g:
       (compiler_ir_types.compiler-ir-extern-seq1
         (compiler-backend-non-direct-tail-call-extern
           name-id
-          name
+          (owned_view.compiler-owned-shared-view name)
           (ci.intern symbol)
-          params
-          ret
-          abi))]
+          (owned_view.compiler-owned-shared-view params)
+          (owned_view.compiler-owned-shared-view ret)
+          (owned_view.compiler-owned-shared-view abi)))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -39346,7 +39349,7 @@ g:
             (compiler_regalloc.compiler-reg-var-types-empty)
             functions
             (compiler_ir_types.compiler-ir-extern-seq-empty)
-            index
+            (owned_view.compiler-owned-shared-view index)
             2
             (compiler_diagnostic.compiler-diagnostic-at-start "" "")
             index.backend-state)]
@@ -39431,7 +39434,7 @@ g:
           (compiler_regalloc.compiler-reg-var-types-empty)
           functions
           (compiler_ir_types.compiler-ir-extern-seq-empty)
-          index
+          (owned_view.compiler-owned-shared-view index)
           2
           (compiler_diagnostic.compiler-diagnostic-at-start "" "")
           index.backend-state)
@@ -41564,7 +41567,7 @@ g:
             (compiler_ir_types.CompilerIrExtern.Extern
               same-name-id
               same-name-id
-              extern-name
+              (owned_view.compiler-owned-shared-view extern-name)
               (compiler_ast_types.ast-ty-func
                 (compiler_ast_types.ast-type-cons
                   (compiler_ast_types.AstType.I64)
@@ -47888,9 +47891,9 @@ g:
       (let
         [masks : (__tl_dyn-array i64)
           (compiler_backend.compiler-backend-scavenge-occupancy-build
-            starts
-            ends
-            assignment-index
+            (owned_view.compiler-owned-shared-view starts)
+            (owned_view.compiler-owned-shared-view ends)
+            (owned_view.compiler-owned-shared-view assignment-index)
             (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
             5)]
         (and
@@ -48087,7 +48090,7 @@ g:
       (compiler_backend.compiler-backend-scavenge-pick-with-mask
         function-state
         busy
-        exclude
+        (owned_view.compiler-owned-shared-view exclude)
         5
         "%r8")]
     [hull-pending? : bool
@@ -49094,7 +49097,7 @@ g:
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -49194,7 +49197,7 @@ g:
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -49295,7 +49298,7 @@ g:
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -49394,7 +49397,7 @@ g:
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
-          compiler_ir_types.CompilerIrExternList.Nil)]
+          (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable

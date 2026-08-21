@@ -185,7 +185,7 @@
     [classes : compiler_ast_types.AstSpmdParamClassList
       (compiler_ast_types.ast-spmd-param-class-list-new)]
     [canonical-handle : i64
-      (ci.intern-compat-state-intern intern-state "collision/helper")]
+      (ci.intern-compat-state-intern (&mut intern-state) "collision/helper")]
     ;; The result type is a typed structural component even though this
     ;; deliberately inconsistent fixture keeps the old serialized signature
     ;; byte-identical. Both recipes therefore produce the same stable hash and
@@ -357,8 +357,10 @@
       (compiler_lower.compiler-lower-state-interns state-a)]
     [intern-b : ci.InternCompatState
       (compiler_lower.compiler-lower-state-interns state-b)]
-    [canonical-a : i64 (ci.intern-compat-state-intern intern-a "pkg-a/helper")]
-    [canonical-b : i64 (ci.intern-compat-state-intern intern-b "pkg-a/helper")]
+    [canonical-a : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "pkg-a/helper")]
+    [canonical-b : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "pkg-a/helper")]
     [varying-uniform : compiler_ast_types.AstSpmdParamClassList
       (compiler-lower-spmd-package-test-classes
         compiler_ast_types.AstSpmdParamClass.Varying
@@ -473,7 +475,7 @@
     [private-helper : i64
       (compiler_lower.lower-spmd-private-helper-symbol
         state-a
-        (ci.intern-compat-state-intern intern-a "__tl_lambda_fixture_0")
+        (ci.intern-compat-state-intern (&mut intern-a) "__tl_lambda_fixture_0")
         (compiler_ast_types.AstType.Bool)
         true)]
     [expected-identity : String

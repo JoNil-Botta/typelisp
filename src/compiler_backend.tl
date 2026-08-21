@@ -31788,7 +31788,12 @@
                 (ResultCompilerBackend.Ok
                   (str_cat.str-cat
                     load
-                    (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
+                    (str_cat.str-cat
+                      "    testq "
+                      (compiler-backend-global-shared-view test-reg)
+                      ", "
+                      (compiler-backend-global-shared-view test-reg)
+                      "\n")
                     ;; Non-scalar conditions can emergency-borrow an occupied
                     ;; register while materializing the value. Flush that
                     ;; restore after `testq` and before either edge, just like
@@ -38541,7 +38546,7 @@
 (define (compiler-backend-program-index-extern-signatures-into
   [type-segment-bases : i64]
   [externs : compiler_ir_types.CompilerIrExternSeq]
-  [signature-ids : backend_i64_i64_map.Map (:consume)]
+  [signature-ids : backend_i64_i64_map.Map]
   [names : (__tl_dyn-array String)]
   [signatures : (__tl_dyn-array CompilerBackendMaybeSignature)]
   [call-infos : (__tl_dyn-array i64)]
@@ -38559,15 +38564,20 @@
 (define (compiler-backend-program-index-extern-signature-seq-into
   [type-segment-bases : i64]
   [externs : compiler_ir_types.CompilerIrExternSeq]
-  [signature-ids : backend_i64_i64_map.Map (:consume)]
+  [signature-ids : backend_i64_i64_map.Map]
   [names : (__tl_dyn-array String)]
   [signatures : (__tl_dyn-array CompilerBackendMaybeSignature)]
   [call-infos : (__tl_dyn-array i64)]
   [out-index : i64]
   [seq-index : i64]) : backend_i64_i64_map.Map
-  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+  (if (>=
+    seq-index
+    (compiler_ir_types.compiler-ir-extern-seq-count
+      (compiler-backend-global-shared-view externs)))
     signature-ids
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref
+      (compiler-backend-global-shared-view externs)
+      seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           extern-name-id
           source-name-id
@@ -38581,7 +38591,7 @@
           [call-info : i64
             (compiler-backend-program-index-extern-call-info
               type-segment-bases
-              ty
+              (compiler-backend-global-shared-view ty)
               abi)]
           (begin
             (set! (array-ref names out-index) extern-name)
@@ -38615,7 +38625,7 @@
 ;; Link symbols have their own intern identity, distinct from source identity.
 (define (compiler-backend-program-index-extern-links-into
   [externs : compiler_ir_types.CompilerIrExternSeq]
-  [link-references : backend_i64_i64_map.Map (:consume)]
+  [link-references : backend_i64_i64_map.Map]
   [link-symbols : (__tl_dyn-array i64)]
   [provideds : (__tl_dyn-array bool)]
   [index : i64]) : backend_i64_i64_map.Map
@@ -38629,14 +38639,19 @@
 
 (define (compiler-backend-program-index-extern-link-seq-into
   [externs : compiler_ir_types.CompilerIrExternSeq]
-  [link-references : backend_i64_i64_map.Map (:consume)]
+  [link-references : backend_i64_i64_map.Map]
   [link-symbols : (__tl_dyn-array i64)]
   [provideds : (__tl_dyn-array bool)]
   [out-index : i64]
   [seq-index : i64]) : backend_i64_i64_map.Map
-  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+  (if (>=
+    seq-index
+    (compiler_ir_types.compiler-ir-extern-seq-count
+      (compiler-backend-global-shared-view externs)))
     link-references
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref
+      (compiler-backend-global-shared-view externs)
+      seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           _
           _
@@ -38664,7 +38679,7 @@
 ;; Logical extern names carry parser/generated identities.
 (define (compiler-backend-program-index-extern-reference-names-into
   [externs : compiler_ir_types.CompilerIrExternSeq]
-  [reference-ids : backend_i64_i64_map.Map (:consume)]
+  [reference-ids : backend_i64_i64_map.Map]
   [index : i64]) : backend_i64_i64_map.Map
   (compiler-backend-program-index-extern-reference-name-seq-into
     externs
@@ -38674,12 +38689,17 @@
 
 (define (compiler-backend-program-index-extern-reference-name-seq-into
   [externs : compiler_ir_types.CompilerIrExternSeq]
-  [reference-ids : backend_i64_i64_map.Map (:consume)]
+  [reference-ids : backend_i64_i64_map.Map]
   [out-index : i64]
   [seq-index : i64]) : backend_i64_i64_map.Map
-  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+  (if (>=
+    seq-index
+    (compiler_ir_types.compiler-ir-extern-seq-count
+      (compiler-backend-global-shared-view externs)))
     reference-ids
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref
+      (compiler-backend-global-shared-view externs)
+      seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           extern-name-id
           source-name-id
@@ -38965,8 +38985,12 @@
   (let
     [_clear-c-memory-calls : unit
       (compiler_regalloc.compiler-reg-clear-c-memory-call-names!)]
-    [function-count : i64 (compiler-backend-function-list-count functions)]
-    [extern-count : i64 (compiler-backend-extern-seq-count externs)]
+    [function-count : i64
+      (compiler-backend-function-list-count
+        (compiler-backend-global-shared-view functions))]
+    [extern-count : i64
+      (compiler-backend-extern-seq-count
+        (compiler-backend-global-shared-view externs))]
     [function-names : (__tl_dyn-array String)
       (array.make-array String function-count)]
     [function-signatures : (__tl_dyn-array CompilerBackendMaybeSignature)
@@ -39889,9 +39913,14 @@
   [plan : CompilerBackendRuntimePlan]
   [seen : backend_string_i64_map.Map]
   [seq-index : i64]) : ResultCompilerBackendSymbolValidation
-  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+  (if (>=
+    seq-index
+    (compiler_ir_types.compiler-ir-extern-seq-count
+      (compiler-backend-global-shared-view externs)))
     (ResultCompilerBackendSymbolValidation.Ok seen)
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref
+      (compiler-backend-global-shared-view externs)
+      seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           name-id
           _
@@ -39906,14 +39935,16 @@
           name-id
           link-symbol-id
           provided
-          plan)
+          (compiler-backend-global-shared-view plan))
           (let
             [symbol : String
               (compiler-backend-link-symbol-id
                 link-symbol-id
-                plan
+                (compiler-backend-global-shared-view plan)
                 backend-state)]
-            (if (backend_string_i64_map.contains? (& seen) symbol)
+            (if (backend_string_i64_map.contains?
+              (& seen)
+              (compiler-backend-global-shared-view symbol))
               (compiler-backend-symbol-validation-error
                 (str_cat.str-cat
                   "backend: extern symbol collides with emitted symbol "
@@ -48223,8 +48254,8 @@
                 [src-home : String
                   (compiler-backend-value-scalar-register
                     backend-state
-                    assignments
-                    src)]
+                    (compiler-backend-global-shared-view assignments)
+                    (compiler-backend-global-shared-view src))]
                 ;; The mirror image of the load above, and the reason it is
                 ;; worth its own arm: a register-homed source moving to a
                 ;; MEMORY-homed destination is a single `movq %src, N(%rsp)`.
@@ -48256,7 +48287,8 @@
                     [exclude : (__tl_dyn-array String)
                       (if (string.eq src-home "")
                         (array.make-array String 0)
-                        (compiler-backend-one-exclude src-home))]
+                        (compiler-backend-one-exclude
+                          (compiler-backend-global-shared-view src-home)))]
                     [exclude-n : i64
                       (if (string.eq src-home "")
                         0
@@ -48271,10 +48303,10 @@
                         backend-state)]
                     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
                       type-segment-bases
-                      assignments
-                      src
-                      ty
-                      reg
+                      (compiler-backend-global-shared-view assignments)
+                      (compiler-backend-global-shared-view src)
+                      (compiler-backend-global-shared-view ty)
+                      (compiler-backend-global-shared-view reg)
                       program-index)
                       [(ResultCompilerBackend.Ok load)
                         (ResultCompilerBackend.Ok
@@ -66937,7 +66969,9 @@
               [ranges : i64
                 (let
                   [count : i64
-                    (compiler-backend-scavenge-var-segment-count segments v)]
+                    (compiler-backend-scavenge-var-segment-count
+                      (compiler-backend-global-shared-view segments)
+                      v)]
                   (if (< count 1)
                     1
                     count))]
@@ -67142,10 +67176,10 @@
               (set!
                 event-used
                 (compiler-backend-scavenge-occupancy-add-range!
-                  heads
-                  event-bits
-                  event-deltas
-                  event-next
+                  (compiler-backend-global-shared-view heads)
+                  (compiler-backend-global-shared-view event-bits)
+                  (compiler-backend-global-shared-view event-deltas)
+                  (compiler-backend-global-shared-view event-next)
                   start-i
                   end-i
                   loc-mask
@@ -67173,11 +67207,11 @@
     [limit : i64 (array-length present)]
     [max-events : i64
       (compiler-backend-scavenge-occupancy-event-capacity
-        starts
-        ends
-        present
-        items
-        segments
+        (compiler-backend-global-shared-view starts)
+        (compiler-backend-global-shared-view ends)
+        (compiler-backend-global-shared-view present)
+        (compiler-backend-global-shared-view items)
+        (compiler-backend-global-shared-view segments)
         limit
         vars
         instr-count)]
@@ -67214,16 +67248,18 @@
                   (- instr-count 1)
                   raw-end-i)]
               [seg-count : i64
-                (compiler-backend-scavenge-var-segment-count segments v)]
+                (compiler-backend-scavenge-var-segment-count
+                  (compiler-backend-global-shared-view segments)
+                  v)]
               (if (and (not (= loc-mask 0)) (<= start-i end-i))
                 (if (< seg-count 1)
                   (set!
                     event-used
                     (compiler-backend-scavenge-occupancy-add-range!
-                      heads
-                      event-bits
-                      event-deltas
-                      event-next
+                      (compiler-backend-global-shared-view heads)
+                      (compiler-backend-global-shared-view event-bits)
+                      (compiler-backend-global-shared-view event-deltas)
+                      (compiler-backend-global-shared-view event-next)
                       start-i
                       end-i
                       loc-mask
@@ -67231,11 +67267,13 @@
                   (set!
                     event-used
                     (compiler-backend-scavenge-occupancy-add-var-segments!
-                      heads
-                      event-bits
-                      event-deltas
-                      event-next
-                      (array-ref segments v)
+                      (compiler-backend-global-shared-view heads)
+                      (compiler-backend-global-shared-view event-bits)
+                      (compiler-backend-global-shared-view event-deltas)
+                      (compiler-backend-global-shared-view event-next)
+                      (compiler-backend-global-array-element-shared-view
+                        segments
+                        v)
                       seg-count
                       instr-count
                       loc-mask
@@ -67506,10 +67544,10 @@
   (let
     [occupied-masks : (__tl_dyn-array i64)
       (compiler-backend-scavenge-occupancy-build
-        starts
-        ends
-        assignment-index
-        segments
+        (compiler-backend-global-shared-view starts)
+        (compiler-backend-global-shared-view ends)
+        (compiler-backend-global-shared-view assignment-index)
+        (compiler-backend-global-shared-view segments)
         vars)]
     (compiler-backend-set-scavenge-ctx-ready!
       function-state
@@ -73466,10 +73504,11 @@
                   (compiler-backend-global-shared-view emit-params)
                   (compiler-backend-global-shared-view ret-ty)
                   scratch-vars
-                  emit-blocks-list)]
+                  (compiler-backend-global-shared-view emit-blocks-list))]
               (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
-                scavenge-func
-                (compiler_liveness.compiler-live-analyze-function scavenge-func)
+                (compiler-backend-global-shared-view scavenge-func)
+                (compiler_liveness.compiler-live-analyze-function
+                  (compiler-backend-global-shared-view scavenge-func))
                 false))
             (compiler_regalloc.CompilerRegIntervalSelection.Selection
               (compiler_regalloc.compiler-reg-interval-seq-empty)
@@ -73477,7 +73516,7 @@
                 (compiler_regalloc.compiler-reg-interval-seq-empty)
                 0)))]
         [scavenge-intervals : compiler_regalloc.CompilerRegIntervalSeq
-          (match scavenge-selection
+          (match (compiler-backend-global-shared-view scavenge-selection)
             [(compiler_regalloc.CompilerRegIntervalSelection.Selection hulls _)
               hulls])]
         [scavenge-segments : (__tl_dyn-array
@@ -77059,9 +77098,14 @@
   [index : CompilerBackendRuntimeIndex]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [seq-index : i64]) : CompilerBackendRuntimeIndex
-  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+  (if (>=
+    seq-index
+    (compiler_ir_types.compiler-ir-extern-seq-count
+      (compiler-backend-global-shared-view externs)))
     index
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref
+      (compiler-backend-global-shared-view externs)
+      seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           name-id
           source-name-id
@@ -77095,17 +77139,22 @@
             (+ seq-index 1)))])))
 
 (define (compiler-backend-runtime-index-arena-debug-call-links
-  [index : CompilerBackendRuntimeIndex (:consume)]
+  [index : CompilerBackendRuntimeIndex]
   [externs : compiler_ir_types.CompilerIrExternSeq]) : CompilerBackendRuntimeIndex
   (compiler-backend-runtime-index-arena-debug-call-link-seq index externs 0))
 
 (define (compiler-backend-runtime-index-arena-debug-call-link-seq
-  [index : CompilerBackendRuntimeIndex (:consume)]
+  [index : CompilerBackendRuntimeIndex]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [seq-index : i64]) : CompilerBackendRuntimeIndex
-  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+  (if (>=
+    seq-index
+    (compiler_ir_types.compiler-ir-extern-seq-count
+      (compiler-backend-global-shared-view externs)))
     index
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref
+      (compiler-backend-global-shared-view externs)
+      seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           name-id
           source-name-id
@@ -77119,9 +77168,15 @@
           (if (and
             (cbi.compiler-builtin-backend-runtime-arena-debug-id? link-symbol)
             (or
-              (compiler-backend-runtime-index-calls? index name-id)
-              (compiler-backend-runtime-index-calls? index source-name-id)))
-            (compiler-backend-runtime-index-add-call index link-symbol)
+              (compiler-backend-runtime-index-calls?
+                (compiler-backend-global-shared-view index)
+                name-id)
+              (compiler-backend-runtime-index-calls?
+                (compiler-backend-global-shared-view index)
+                source-name-id)))
+            (compiler-backend-runtime-index-add-call
+              (compiler-backend-global-shared-view index)
+              link-symbol)
             index)
           externs
           (+ seq-index 1))])))
@@ -77584,9 +77639,14 @@
   [referenced-functions : BackendSymbolSeq]
   [buf : text_buf.TextBuf]
   [seq-index : i64]) : text_buf.TextBuf
-  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+  (if (>=
+    seq-index
+    (compiler_ir_types.compiler-ir-extern-seq-count
+      (compiler-backend-global-shared-view externs)))
     buf
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref
+      (compiler-backend-global-shared-view externs)
+      seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           name-id
           source-name-id
@@ -77599,9 +77659,9 @@
         (compiler-backend-emit-extern-seq-into
           backend-state
           externs
-          plan
-          runtime-index
-          referenced-functions
+          (compiler-backend-global-shared-view plan)
+          (compiler-backend-global-shared-view runtime-index)
+          (compiler-backend-global-shared-view referenced-functions)
           (if (and
             (compiler-backend-emits-extern-symbol?
               backend-state
@@ -81947,9 +82007,14 @@
   [referenced-functions : BackendSymbolSeq]
   [program-index : CompilerBackendProgramIndex]
   [seq-index : i64]) : object_target.CompilerBackendObjectTargetParts
-  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
+  (if (>=
+    seq-index
+    (compiler_ir_types.compiler-ir-extern-seq-count
+      (compiler-backend-global-shared-view externs)))
     parts
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref
+      (compiler-backend-global-shared-view externs)
+      seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           name-id
           source-name-id
@@ -81963,16 +82028,17 @@
           [link-symbol : String
             (compiler-backend-link-symbol-id
               link-symbol-id
-              plan
+              (compiler-backend-global-shared-view plan)
               program-index.backend-state)]
-          [relocations : cobj.CompilerObjectRelocationBuilder parts.relocations]
+          [relocations : cobj.CompilerObjectRelocationBuilder
+            (compiler-backend-global-shared-view parts.relocations)]
           [has-relocation : bool
             (backend-or4
               (cobj.compiler-object-relocation-builder-targets?
-                relocations
-                link-symbol)
+                (compiler-backend-global-shared-view relocations)
+                (compiler-backend-global-shared-view link-symbol))
               (cobj.compiler-object-relocation-builder-targets?
-                relocations
+                (compiler-backend-global-shared-view relocations)
                 (compiler-backend-state-user-symbol-id
                   program-index.backend-state
                   name-id))
@@ -81986,7 +82052,7 @@
             (if (and
               (not
                 (compiler-backend-object-runtime-symbol-provided-id?
-                  plan
+                  (compiler-backend-global-shared-view plan)
                   program-index.backend-state
                   link-symbol-id))
               (compiler-backend-emits-extern-symbol?
@@ -81994,7 +82060,7 @@
                 name-id
                 link-symbol-id
                 provided
-                plan)
+                (compiler-backend-global-shared-view plan))
               ;; Object relocations are the exact reference inventory.
               has-relocation)
               (object_target.compiler-backend-object-symbol-extern
@@ -89624,7 +89690,7 @@
                 (array-data labels))
               (unsafe
                 (array-data flow))
-              counts))))
+              (compiler-backend-global-shared-view counts)))))
       (let
         [jumps : i64
           (if classify?
@@ -89910,7 +89976,11 @@
   (let
     [n : i64 (string.string-length asm)]
     [laid-out : CompilerBackendLayoutPlan
-      (compiler-backend-layout-analyze asm n mode true)]
+      (compiler-backend-layout-analyze
+        (compiler-backend-global-shared-view asm)
+        n
+        mode
+        true)]
     (if (= laid-out.len 0)
       asm
       (in-arena
@@ -90063,7 +90133,7 @@
           ;; rendered and re-parsed.
           [laid-out : CompilerBackendLayoutPlan
             (compiler-backend-layout-analyze
-              asm
+              (compiler-backend-global-shared-view asm)
               n
               compiler-backend-layout-mode
               drop-fallthrough?)]

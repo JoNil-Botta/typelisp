@@ -1574,7 +1574,7 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultLowerSpmdCallArgs
-  (Ok LowerState ir.CompilerIrSpmdCallArgList bool)
+  (Ok LowerState ir.CompilerIrSpmdCallArgSeq bool)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultLowerImportedSpmdSpecialization
@@ -36418,17 +36418,24 @@
   [index : String]
   [args : ast.AstExprList]
   [params : ast.AstParamList]
-  [values : ir.CompilerIrValueList]) : ir.CompilerIrSpmdCallArgList
-  (lower-spmd-call-args-from-values-at
-    ctx
-    function-state
-    env
-    type-env
-    index
-    (& args)
-    (& params)
-    (ir.compiler-ir-value-list-force-cons values)
-    0))
+  [values : ir.CompilerIrValueList]) : ir.CompilerIrSpmdCallArgSeq
+  (let
+    [builder : ir.CompilerIrSpmdCallArgBuilder
+      (ir.compiler-ir-spmd-call-arg-builder-with-capacity
+        (ast.ast-param-list-len (& params)))]
+    (begin
+      (lower-spmd-call-args-from-values-at
+        ctx
+        function-state
+        env
+        type-env
+        index
+        (& args)
+        (& params)
+        (ir.compiler-ir-value-list-force-cons values)
+        0
+        (&mut builder))
+      (ir.compiler-ir-spmd-call-arg-builder-to-seq builder))))
 
 (define (lower-spmd-call-args-from-values-at
   [ctx : tc_core.TcContext]
@@ -36439,11 +36446,12 @@
   [args : (& args ast.AstExprList)]
   [params : (& params ast.AstParamList)]
   [values : ir.CompilerIrValueList]
-  [arg-index : i64]) : ir.CompilerIrSpmdCallArgList
+  [arg-index : i64]
+  [builder : (&mut builder ir.CompilerIrSpmdCallArgBuilder)]) : unit
   (if (or
     (>= arg-index args.len)
     (>= arg-index (ast.ast-param-list-len params)))
-    ir.CompilerIrSpmdCallArgList.Nil
+    unit
     (match values
       [(ir.CompilerIrValueList.Array seq)
         (lower-spmd-call-args-from-values-at
@@ -36455,7 +36463,8 @@
           args
           params
           (ir.compiler-ir-value-seq-to-list seq)
-          arg-index)]
+          arg-index
+          builder)]
       [(ir.CompilerIrValueList.Cons value rest)
         (match (ast.ast-param-list-get
           params
@@ -36478,11 +36487,13 @@
                   type-env
                   index
                   arg)]
-              (ir.ir-spmd-call-arg-cons
-                (ir.CompilerIrSpmdCallArg.Arg
-                  (lower-spmd-ir-value-class resolved-ty varying)
-                  value
-                  resolved-ty)
+              (begin
+                (ir.compiler-ir-spmd-call-arg-builder-push!
+                  builder
+                  (ir.CompilerIrSpmdCallArg.Arg
+                    (lower-spmd-ir-value-class resolved-ty varying)
+                    value
+                    resolved-ty))
                 (lower-spmd-call-args-from-values-at
                   ctx
                   function-state
@@ -36492,8 +36503,9 @@
                   args
                   params
                   (__tl-box-place rest)
-                  (+ arg-index 1))))])]
-      [(ir.CompilerIrValueList.Nil) ir.CompilerIrSpmdCallArgList.Nil])))
+                  (+ arg-index 1)
+                  builder)))])]
+      [(ir.CompilerIrValueList.Nil) unit])))
 
 (define (lower-imported-spmd-scalar-call
   [ctx : tc_core.TcContext]
@@ -36535,7 +36547,7 @@
             [(ResultLowerCallArgs.Err message) (LowerMaybeSpmdCall.Err message)]
             [(ResultLowerCallArgs.Ok args-state values writebacks)
               (let
-                [call-args : ir.CompilerIrSpmdCallArgList
+                [call-args : ir.CompilerIrSpmdCallArgSeq
                   (lower-spmd-call-args-from-values
                     ctx
                     (lower-state-function-state args-state)
@@ -36640,7 +36652,7 @@
                     (match (lower-state-fresh-lambda-name args-state)
                       [(LowerLambdaName.Name named-state hidden-name)
                         (let
-                          [call-args : ir.CompilerIrSpmdCallArgList
+                          [call-args : ir.CompilerIrSpmdCallArgSeq
                             (lower-spmd-call-args-from-values
                               ctx
                               (lower-state-function-state named-state)
@@ -57283,21 +57295,26 @@
   [lanes : i64]
   [params : ast.AstParamList]
   [args : ast.AstExprList]) : ResultLowerSpmdCallArgs
-  (lower-avx512-spmd-call-args-at
-    ctx
-    (lower-state-function-state state)
-    state
-    env
-    type-env
-    lane-locals
-    (lower-masked-vector-lane-locals-from-set lane-locals lanes)
-    index
-    index-var
-    active-mask
-    lanes
-    (& params)
-    (& args)
-    0))
+  (let
+    [builder : ir.CompilerIrSpmdCallArgBuilder
+      (ir.compiler-ir-spmd-call-arg-builder-with-capacity
+        (ast.ast-param-list-len (& params)))]
+    (lower-avx512-spmd-call-args-at
+      ctx
+      (lower-state-function-state state)
+      state
+      env
+      type-env
+      lane-locals
+      (lower-masked-vector-lane-locals-from-set lane-locals lanes)
+      index
+      index-var
+      active-mask
+      lanes
+      (& params)
+      (& args)
+      0
+      (&mut builder))))
 
 (define (lower-avx512-spmd-call-args-at
   [ctx : tc_core.TcContext]
@@ -57313,12 +57330,16 @@
   [lanes : i64]
   [params : (& params ast.AstParamList)]
   [args : (& args ast.AstExprList)]
-  [arg-index : i64]) : ResultLowerSpmdCallArgs
+  [arg-index : i64]
+  [builder : (&mut builder ir.CompilerIrSpmdCallArgBuilder)]) : ResultLowerSpmdCallArgs
   (cond
     [(and
         (>= arg-index (ast.ast-param-list-len params))
         (>= arg-index args.len))
-      (ResultLowerSpmdCallArgs.Ok state ir.CompilerIrSpmdCallArgList.Nil false)]
+      (ResultLowerSpmdCallArgs.Ok
+        state
+        (ir.compiler-ir-spmd-call-arg-builder-snapshot builder)
+        false)]
     [(or (>= arg-index (ast.ast-param-list-len params)) (>= arg-index args.len))
       (ResultLowerSpmdCallArgs.Err
         (box (lower-diagnostic "lower: SPMD helper call arity mismatch")))]
@@ -57367,67 +57388,53 @@
                 [(ResultLowerExpr.Ok lowered)
                   (match lowered
                     [(LowerExpr.Expr arg-state arg-value _)
-                      (match (lower-avx512-spmd-call-args-at
-                        ctx
-                        function-state
-                        arg-state
-                        env
-                        type-env
-                        lane-locals
-                        analysis-locals
-                        index
-                        index-var
-                        active-mask
-                        lanes
-                        params
-                        args
-                        (+ arg-index 1))
-                        [(ResultLowerSpmdCallArgs.Ok
-                            rest-state
-                            rest-args
-                            rest-varying)
-                          (ResultLowerSpmdCallArgs.Ok
-                            rest-state
-                            (ir.ir-spmd-call-arg-cons
-                              (ir.CompilerIrSpmdCallArg.Arg
-                                (lower-spmd-ir-value-class resolved-ty varying)
-                                arg-value
-                                resolved-ty)
-                              rest-args)
-                            (or varying rest-varying))]
-                        [(ResultLowerSpmdCallArgs.Err message)
-                          (ResultLowerSpmdCallArgs.Err message)])])]
+                      (begin
+                        (ir.compiler-ir-spmd-call-arg-builder-push!
+                          builder
+                          (ir.CompilerIrSpmdCallArg.Arg
+                            (lower-spmd-ir-value-class resolved-ty varying)
+                            arg-value
+                            resolved-ty))
+                        (match (lower-avx512-spmd-call-args-at
+                          ctx
+                          function-state
+                          arg-state
+                          env
+                          type-env
+                          lane-locals
+                          analysis-locals
+                          index
+                          index-var
+                          active-mask
+                          lanes
+                          params
+                          args
+                          (+ arg-index 1)
+                          builder)
+                          [(ResultLowerSpmdCallArgs.Ok
+                              rest-state
+                              rest-args
+                              rest-varying)
+                            (ResultLowerSpmdCallArgs.Ok
+                              rest-state
+                              rest-args
+                              (or varying rest-varying))]
+                          [(ResultLowerSpmdCallArgs.Err message)
+                            (ResultLowerSpmdCallArgs.Err message)]))])]
                 [(ResultLowerExpr.Err message)
                   (ResultLowerSpmdCallArgs.Err message)])))])]))
 
 (define (lower-spmd-call-lane-locals
   [params : ast.AstParamList]
-  [args : ir.CompilerIrSpmdCallArgList]) : LowerIdSet
+  [args : ir.CompilerIrSpmdCallArgSeq]) : LowerIdSet
   (lower-spmd-call-lane-locals-at (& params) args 0 (lower-id-set-empty)))
 
 (define (lower-spmd-call-lane-locals-at
   [params : (& params ast.AstParamList)]
-  [args : ir.CompilerIrSpmdCallArgList]
+  [args : ir.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [out : LowerIdSet]) : LowerIdSet
-  (if (>= index (ast.ast-param-list-len params))
-    out
-    (match args
-      [(ir.CompilerIrSpmdCallArgList.Array seq)
-        (lower-spmd-call-lane-locals-seq-at params seq index out)]
-      [(ir.CompilerIrSpmdCallArgList.Cons arg rest)
-        (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-          [(ast.AstParam.Param name _ _ _)
-            (match arg
-              [(ir.CompilerIrSpmdCallArg.Arg class _ _)
-                (lower-spmd-call-lane-locals-at
-                  params
-                  (__tl-box-place rest)
-                  (+ index 1)
-                  (match class
-                    [(ir.CompilerIrSpmdValueClass.Uniform) out]
-                    [_ (lower-id-set-insert out name)]))])])]
-      [(ir.CompilerIrSpmdCallArgList.Nil) out])))
+  (lower-spmd-call-lane-locals-seq-at params args index out))
 
 (define (lower-spmd-call-lane-locals-seq-at
   [params : (& params ast.AstParamList)]
@@ -57525,7 +57532,7 @@
         [_ "v"])]))
 
 (define (lower-imported-spmd-call-args-code-at
-  [args : ir.CompilerIrSpmdCallArgList]
+  [args : ir.CompilerIrSpmdCallArgSeq]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -57535,11 +57542,11 @@
       (lower-imported-spmd-call-args-code-at args (+ index 1) count))))
 
 (define (lower-imported-spmd-call-args-code
-  [args : ir.CompilerIrSpmdCallArgList]) : String
+  [args : ir.CompilerIrSpmdCallArgSeq]) : String
   (lower-imported-spmd-call-args-code-at
     args
     0
-    (ir.compiler-ir-spmd-call-arg-count args)))
+    (ir.compiler-ir-spmd-call-arg-seq-count args)))
 
 ;; TLCI records the final archive/link name, while existing `SpmdCall` IR
 ;; carries a logical TypeLisp name that the backend decorates with `_tl_`.
@@ -58246,31 +58253,45 @@
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
   [classes : (& classes ast.AstSpmdParamClassList)]
-  [index : i64]) : ir.CompilerIrSpmdCallArgList
+  [index : i64]) : ir.CompilerIrSpmdCallArgSeq
   (if (>= index (ast.ast-param-list-len params))
-    ir.CompilerIrSpmdCallArgList.Nil
-    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param _ ty _ _)
-        (let
-          [resolved : ast.AstType
-            (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-          [class : ir.CompilerIrSpmdValueClass
-            (match (ast.ast-spmd-param-class-list-get
-              classes
-              index
-              ast.AstSpmdParamClass.Uniform)
-              [(ast.AstSpmdParamClass.Uniform)
-                ir.CompilerIrSpmdValueClass.Uniform]
-              [(ast.AstSpmdParamClass.Varying)
-                (if (lower-type-bool? resolved)
-                  ir.CompilerIrSpmdValueClass.Mask
-                  ir.CompilerIrSpmdValueClass.Varying)])]
-          (ir.ir-spmd-call-arg-cons
-            (ir.CompilerIrSpmdCallArg.Arg
-              class
-              ir.CompilerIrValue.Unit
-              resolved)
-            (lower-spmd-package-call-args-at ctx params classes (+ index 1))))])))
+    (ir.compiler-ir-spmd-call-arg-seq-empty)
+    (let
+      [count : i64 (- (ast.ast-param-list-len params) index)]
+      [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
+        (array.make-array ir.CompilerIrSpmdCallArg count)]
+      [cursor : i64 index]
+      (begin
+        (while (< cursor (ast.ast-param-list-len params))
+          (begin
+            (match (ast.ast-param-list-get
+              params
+              cursor
+              (ast.ast-param-fallback))
+              [(ast.AstParam.Param _ ty _ _)
+                (let
+                  [resolved : ast.AstType
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-resolve-type ctx ty))]
+                  [class : ir.CompilerIrSpmdValueClass
+                    (match (ast.ast-spmd-param-class-list-get
+                      classes
+                      cursor
+                      ast.AstSpmdParamClass.Uniform)
+                      [(ast.AstSpmdParamClass.Uniform)
+                        ir.CompilerIrSpmdValueClass.Uniform]
+                      [(ast.AstSpmdParamClass.Varying)
+                        (if (lower-type-bool? resolved)
+                          ir.CompilerIrSpmdValueClass.Mask
+                          ir.CompilerIrSpmdValueClass.Varying)])]
+                  (set!
+                    (array-ref slots (- cursor index))
+                    (ir.CompilerIrSpmdCallArg.Arg
+                      class
+                      ir.CompilerIrValue.Unit
+                      resolved)))])
+            (set! cursor (+ cursor 1))))
+        (ir.CompilerIrSpmdCallArgSeq slots count)))))
 
 (define (lower-spmd-package-index-name
   [params : (& params ast.AstParamList)]
@@ -58359,7 +58380,7 @@
   (let
     [classes : ast.AstSpmdParamClassList (__tl-box-place specialization.args)]
     [index-param : i64 specialization.index-param]
-    [call-args : ir.CompilerIrSpmdCallArgList
+    [call-args : ir.CompilerIrSpmdCallArgSeq
       (lower-spmd-package-call-args-at ctx (& params) (& classes) 0)]
     [index-name : String (lower-spmd-package-index-name (& params) index-param)]
     [ret-ty : ast.AstType
@@ -58509,31 +58530,20 @@
       components)))
 
 (define (lower-spmd-call-arg-at
-  [args : ir.CompilerIrSpmdCallArgList]
+  [args : ir.CompilerIrSpmdCallArgSeq]
   [index : i64]) : ir.CompilerIrSpmdCallArg
-  (match args
-    [(ir.CompilerIrSpmdCallArgList.Nil)
-      (ir.CompilerIrSpmdCallArg.Arg
-        (ir.CompilerIrSpmdValueClass.Uniform)
-        ir.CompilerIrValue.Unit
-        (ast.AstType.Unit))]
-    [(ir.CompilerIrSpmdCallArgList.Array seq)
-      (if (and (>= index 0) (< index seq.len))
-        (array-ref seq.slots index)
-        (ir.CompilerIrSpmdCallArg.Arg
-          (ir.CompilerIrSpmdValueClass.Uniform)
-          ir.CompilerIrValue.Unit
-          (ast.AstType.Unit)))]
-    [(ir.CompilerIrSpmdCallArgList.Cons arg rest)
-      (if (= index 0)
-        arg
-        (lower-spmd-call-arg-at (__tl-box-place rest) (- index 1)))]))
+  (if (and (>= index 0) (< index args.len))
+    (array-ref args.slots index)
+    (ir.CompilerIrSpmdCallArg.Arg
+      (ir.CompilerIrSpmdValueClass.Uniform)
+      ir.CompilerIrValue.Unit
+      (ast.AstType.Unit))))
 
 (define (lower-spmd-private-param-list
   [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [params : ast.AstParamList]
-  [args : ir.CompilerIrSpmdCallArgList]
+  [args : ir.CompilerIrSpmdCallArgSeq]
   [mode : CompilerLowerMode]
   [idx : i64]) : ir.CompilerIrParamList
   (lower-spmd-private-param-list-at lower-state ctx (& params) args mode 0 idx))
@@ -58542,7 +58552,7 @@
   [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
-  [args : ir.CompilerIrSpmdCallArgList]
+  [args : ir.CompilerIrSpmdCallArgSeq]
   [mode : CompilerLowerMode]
   [index : i64]
   [idx : i64]) : ir.CompilerIrParamList
@@ -58633,20 +58643,10 @@
   [args : ast.AstExprList]) : String
   (lower-spmd-helper-index-param-at ctx index-name (& params) (& args) 0))
 
-(define (lower-spmd-call-args-copy-from
-  [args : ir.CompilerIrSpmdCallArgList]
-  [index : i64]
-  [extra : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArgList
-  (if (>= index (ir.compiler-ir-spmd-call-arg-count args))
-    (ir.ir-spmd-call-arg-cons extra ir.CompilerIrSpmdCallArgList.Nil)
-    (ir.ir-spmd-call-arg-cons
-      (lower-spmd-call-arg-at args index)
-      (lower-spmd-call-args-copy-from args (+ index 1) extra))))
-
 (define (lower-spmd-call-args-append
-  [args : ir.CompilerIrSpmdCallArgList]
-  [extra : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArgList
-  (lower-spmd-call-args-copy-from args 0 extra))
+  [args : ir.CompilerIrSpmdCallArgSeq]
+  [extra : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArgSeq
+  (ir.compiler-ir-spmd-call-arg-seq-append args extra))
 
 (define (lower-spmd-private-param-list-append-index
   [params : ir.CompilerIrParamList]
@@ -58680,7 +58680,7 @@
   [ret : ast.AstType]
   [result-varying : bool]
   [body : ast.AstExpr]
-  [call-args : ir.CompilerIrSpmdCallArgList]
+  [call-args : ir.CompilerIrSpmdCallArgSeq]
   [lanes : i64]
   [helper-index : String]
   [helper-index-source-param : i64]
@@ -58898,7 +58898,7 @@
   [result-varying : bool]
   [body : ast.AstExpr]
   [backend : ir.CompilerIrSpmdBackend]
-  [call-args : ir.CompilerIrSpmdCallArgList]
+  [call-args : ir.CompilerIrSpmdCallArgSeq]
   [lanes : i64]
   [helper-index : String]
   [helper-index-source-param : i64]
@@ -59026,7 +59026,7 @@
             (lower-spmd-package-structural-identity
               intern-state
               structural-symbol))]
-        [call-args : ir.CompilerIrSpmdCallArgList
+        [call-args : ir.CompilerIrSpmdCallArgSeq
           (lower-spmd-package-call-args-at ctx (& params) (& classes) 0)]
         [index-name : String
           (lower-spmd-package-index-name (& params) index-param)]
@@ -59226,7 +59226,7 @@
   [backend : ir.CompilerIrSpmdBackend]
   [active-mask : ir.CompilerIrValue]
   [lanes : i64]
-  [call-args : ir.CompilerIrSpmdCallArgList]
+  [call-args : ir.CompilerIrSpmdCallArgSeq]
   [result-ty : ast.AstType]
   [result-varying : bool]
   [expr : ast.AstExpr]) : ResultLowerExpr
@@ -59286,7 +59286,7 @@
   [backend : ir.CompilerIrSpmdBackend]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
-  [call-args : ir.CompilerIrSpmdCallArgList]
+  [call-args : ir.CompilerIrSpmdCallArgSeq]
   [result-ty : ast.AstType]
   [result-varying : bool]
   [expr : ast.AstExpr]) : ResultLowerExpr
@@ -59521,7 +59521,7 @@
                                   index
                                   params
                                   args)]
-                              [abi-call-args : ir.CompilerIrSpmdCallArgList
+                              [abi-call-args : ir.CompilerIrSpmdCallArgSeq
                                 (if (= (string.string-length helper-index) 0)
                                   call-args
                                   (lower-spmd-call-args-append

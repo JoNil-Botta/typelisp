@@ -501,10 +501,9 @@
   (slots (__tl_dyn-array CompilerIrSpmdCallArg))
   (len i64))
 
-(defenum CompilerIrSpmdCallArgList
-  (Nil)
-  (Cons CompilerIrSpmdCallArg (Box CompilerIrSpmdCallArgList))
-  (Array CompilerIrSpmdCallArgSeq))
+(defstruct CompilerIrSpmdCallArgBuilder
+  (slots (__tl_dyn-array CompilerIrSpmdCallArg))
+  (len i64))
 
 (defenum CompilerIrSpmdCallResult
   (Unit)
@@ -644,7 +643,7 @@
   (backend CompilerIrSpmdBackend)
   (lanes i64)
   (active-mask CompilerIrValue)
-  (args CompilerIrSpmdCallArgList)
+  (args CompilerIrSpmdCallArgSeq)
   (result CompilerIrSpmdCallResult))
 
 ;; Internal scalarized view of a source descriptor handle. This is deliberately
@@ -902,17 +901,122 @@
     (box
       (CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args slots))))
 
-(define (ir-spmd-call-arg-cons
-  [arg : CompilerIrSpmdCallArg]
-  [rest : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
-  (CompilerIrSpmdCallArgList.Cons arg (box rest)))
+(define (compiler-ir-spmd-call-arg-seq-empty) : CompilerIrSpmdCallArgSeq
+  (CompilerIrSpmdCallArgSeq (array.make-array CompilerIrSpmdCallArg 0) 0))
+
+(define (compiler-ir-spmd-call-arg-seq1 [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArgSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
+      (array.make-array CompilerIrSpmdCallArg 1)]
+    (begin
+      (set! (array-ref slots 0) arg)
+      (CompilerIrSpmdCallArgSeq slots 1))))
+
+(define (compiler-ir-spmd-call-arg-seq2
+  [a : CompilerIrSpmdCallArg]
+  [b : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArgSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
+      (array.make-array CompilerIrSpmdCallArg 2)]
+    (begin
+      (set! (array-ref slots 0) a)
+      (set! (array-ref slots 1) b)
+      (CompilerIrSpmdCallArgSeq slots 2))))
+
+(define (compiler-ir-spmd-call-arg-builder-with-capacity [capacity : i64]) : CompilerIrSpmdCallArgBuilder
+  (CompilerIrSpmdCallArgBuilder
+    (array.make-array
+      CompilerIrSpmdCallArg
+      (compiler-ir-builder-capacity capacity))
+    0))
+
+(define (compiler-ir-spmd-call-arg-builder-copy-range!
+  [dst : (&mut dst (__tl_dyn-array CompilerIrSpmdCallArg))]
+  [src : (& src (__tl_dyn-array CompilerIrSpmdCallArg))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (set! (array-ref dst index) (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-spmd-call-arg-builder-grow!
+  [builder : (&mut builder CompilerIrSpmdCallArgBuilder)]) : unit
+  (let
+    [old-cap : i64 (array-length builder.slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array CompilerIrSpmdCallArg)
+      (array.make-array CompilerIrSpmdCallArg new-cap)]
+    (begin
+      (compiler-ir-spmd-call-arg-builder-copy-range!
+        (&mut bigger)
+        (& builder.slots)
+        builder.len)
+      (set! builder.slots bigger))))
+
+(define (compiler-ir-spmd-call-arg-builder-push!
+  [builder : (&mut builder CompilerIrSpmdCallArgBuilder)]
+  [arg : CompilerIrSpmdCallArg]) : unit
+  (begin
+    (if (< builder.len (array-length builder.slots))
+      unit
+      (compiler-ir-spmd-call-arg-builder-grow! builder))
+    (let
+      [index : i64 builder.len]
+      (begin
+        (set! (array-ref builder.slots index) arg)
+        (set! builder.len (+ index 1))))))
+
+(define (compiler-ir-spmd-call-arg-builder-to-seq
+  [builder : CompilerIrSpmdCallArgBuilder]) : CompilerIrSpmdCallArgSeq
+  (if (= builder.len (array-length builder.slots))
+    (CompilerIrSpmdCallArgSeq builder.slots builder.len)
+    (let
+      [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
+        (array.make-array CompilerIrSpmdCallArg builder.len)]
+      (begin
+        (compiler-ir-spmd-call-arg-builder-copy-range!
+          (&mut slots)
+          (& builder.slots)
+          builder.len)
+        (CompilerIrSpmdCallArgSeq slots builder.len)))))
+
+(define (compiler-ir-spmd-call-arg-builder-snapshot
+  [builder : (& builder CompilerIrSpmdCallArgBuilder)]) : CompilerIrSpmdCallArgSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
+      (array.make-array CompilerIrSpmdCallArg builder.len)]
+    (begin
+      (compiler-ir-spmd-call-arg-builder-copy-range!
+        (&mut slots)
+        (& builder.slots)
+        builder.len)
+      (CompilerIrSpmdCallArgSeq slots builder.len))))
+
+(define (compiler-ir-spmd-call-arg-seq-append
+  [args : CompilerIrSpmdCallArgSeq]
+  [extra : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArgSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
+      (array.make-array CompilerIrSpmdCallArg (+ args.len 1))]
+    (begin
+      (compiler-ir-spmd-call-arg-builder-copy-range!
+        (&mut slots)
+        (& args.slots)
+        args.len)
+      (set! (array-ref slots args.len) extra)
+      (CompilerIrSpmdCallArgSeq slots (+ args.len 1)))))
 
 (define (ir-instr-spmd-call
   [callee : i64]
   [backend : CompilerIrSpmdBackend]
   [lanes : i64]
   [active-mask : CompilerIrValue]
-  [args : CompilerIrSpmdCallArgList]
+  [args : CompilerIrSpmdCallArgSeq]
   [result : CompilerIrSpmdCallResult]) : CompilerIrInstr
   (CompilerIrInstr.SpmdCall
     (box
@@ -921,7 +1025,7 @@
         backend
         lanes
         active-mask
-        (compiler-ir-spmd-call-args-compact args)
+        args
         result))))
 
 (defenum CompilerIrInstrList
@@ -2529,19 +2633,6 @@
       (compiler-ir-clone-spmd-call-arg-seq-fill pools src dst 0 count)
       (CompilerIrSpmdCallArgSeq dst count))))
 
-(define (compiler-ir-clone-spmd-call-args
-  [pools : ast.AstNodePoolContext]
-  [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
-  (match args
-    [(CompilerIrSpmdCallArgList.Nil) (CompilerIrSpmdCallArgList.Nil)]
-    [(CompilerIrSpmdCallArgList.Cons arg rest)
-      (CompilerIrSpmdCallArgList.Cons
-        (compiler-ir-clone-spmd-call-arg pools arg)
-        (box (compiler-ir-clone-spmd-call-args pools (__tl-box-place rest))))]
-    [(CompilerIrSpmdCallArgList.Array seq)
-      (CompilerIrSpmdCallArgList.Array
-        (compiler-ir-clone-spmd-call-arg-seq pools seq))]))
-
 (define (compiler-ir-clone-spmd-call-result
   [pools : ast.AstNodePoolContext]
   [result : CompilerIrSpmdCallResult]) : CompilerIrSpmdCallResult
@@ -3114,7 +3205,7 @@
           (compiler-ir-clone-spmd-backend backend)
           lanes
           (compiler-ir-clone-value active-mask)
-          (compiler-ir-clone-spmd-call-args pools args)
+          (compiler-ir-clone-spmd-call-arg-seq pools args)
           (compiler-ir-clone-spmd-call-result pools result)))]
     [(CompilerIrInstr.TailCall name args ty)
       (CompilerIrInstr.TailCall
@@ -3891,76 +3982,11 @@
 
 (define (compiler-ir-spmd-call-args-render
   [type-segment-bases : i64]
-  [args : CompilerIrSpmdCallArgList]) : String
-  (match args
-    [(CompilerIrSpmdCallArgList.Nil) ""]
-    [(CompilerIrSpmdCallArgList.Cons arg rest)
-      (match (__tl-box-place rest)
-        [(CompilerIrSpmdCallArgList.Nil)
-          (compiler-ir-spmd-call-arg-render type-segment-bases arg)]
-        [_
-          (str_cat.str-cat
-            (compiler-ir-spmd-call-arg-render type-segment-bases arg)
-            ", "
-            (compiler-ir-spmd-call-args-render
-              type-segment-bases
-              (__tl-box-place rest)))])]
-    [(CompilerIrSpmdCallArgList.Array seq)
-      (compiler-ir-spmd-call-arg-seq-render-from type-segment-bases seq 0)]))
+  [args : CompilerIrSpmdCallArgSeq]) : String
+  (compiler-ir-spmd-call-arg-seq-render-from type-segment-bases args 0))
 
-(define (compiler-ir-spmd-call-arg-count [args : CompilerIrSpmdCallArgList]) : i64
-  (match args
-    [(CompilerIrSpmdCallArgList.Nil) 0]
-    [(CompilerIrSpmdCallArgList.Cons _ rest)
-      (+ 1 (compiler-ir-spmd-call-arg-count (__tl-box-place rest)))]
-    [(CompilerIrSpmdCallArgList.Array seq) seq.len]))
-
-(define (compiler-ir-spmd-call-arg-list-fill-array
-  [args : CompilerIrSpmdCallArgList]
-  [slots : (__tl_dyn-array CompilerIrSpmdCallArg)]
-  [index : i64]) : unit
-  (match args
-    [(CompilerIrSpmdCallArgList.Nil) unit]
-    [(CompilerIrSpmdCallArgList.Cons arg rest)
-      (begin
-        (set! (array-ref slots index) arg)
-        (compiler-ir-spmd-call-arg-list-fill-array
-          (__tl-box-place rest)
-          slots
-          (+ index 1)))]
-    [(CompilerIrSpmdCallArgList.Array seq)
-      (compiler-ir-spmd-call-arg-seq-fill-array seq slots 0 index)]))
-
-(define (compiler-ir-spmd-call-arg-seq-fill-array
-  [seq : CompilerIrSpmdCallArgSeq]
-  [slots : (__tl_dyn-array CompilerIrSpmdCallArg)]
-  [src-index : i64]
-  [dst-index : i64]) : unit
-  (if (>= src-index seq.len)
-    unit
-    (begin
-      (set!
-        (array-ref slots (+ dst-index src-index))
-        (array-ref seq.slots src-index))
-      (compiler-ir-spmd-call-arg-seq-fill-array
-        seq
-        slots
-        (+ src-index 1)
-        dst-index))))
-
-(define (compiler-ir-spmd-call-args-compact [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
-  (match args
-    [(CompilerIrSpmdCallArgList.Nil) args]
-    [(CompilerIrSpmdCallArgList.Array _) args]
-    [(CompilerIrSpmdCallArgList.Cons _ _)
-      (let
-        [count : i64 (compiler-ir-spmd-call-arg-count args)]
-        [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
-          (array.make-array CompilerIrSpmdCallArg count)]
-        (begin
-          (compiler-ir-spmd-call-arg-list-fill-array args slots 0)
-          (CompilerIrSpmdCallArgList.Array
-            (CompilerIrSpmdCallArgSeq slots count))))]))
+(define (compiler-ir-spmd-call-arg-seq-count [args : CompilerIrSpmdCallArgSeq]) : i64
+  args.len)
 
 (define (compiler-ir-spmd-result-render
   [type-segment-bases : i64]
@@ -3992,7 +4018,7 @@
   [backend : CompilerIrSpmdBackend]
   [lanes : i64]
   [active-mask : CompilerIrValue]
-  [args : CompilerIrSpmdCallArgList]
+  [args : CompilerIrSpmdCallArgSeq]
   [result : CompilerIrSpmdCallResult]) : String
   (str_cat.str-cat
     "  spmd_call "
@@ -6217,7 +6243,7 @@
     [(CompilerIrInstr.SpmdCall payload-box)
       (let
         [args (__tl-project-field (__tl-box-place payload-box) args)]
-        (compiler-ir-spmd-call-arg-count args))]
+        (compiler-ir-spmd-call-arg-seq-count args))]
     [(CompilerIrInstr.TailCall _ args _) (compiler-ir-call-args-count args)]
     [(CompilerIrInstr.TailCallIndirect _ args _)
       (compiler-ir-call-args-count args)]
@@ -6883,22 +6909,8 @@
 
 (define (compiler-ir-spmd-call-args-describe
   [type-segment-bases : i64]
-  [args : CompilerIrSpmdCallArgList]) : String
-  (match args
-    [(CompilerIrSpmdCallArgList.Nil) ""]
-    [(CompilerIrSpmdCallArgList.Cons arg rest)
-      (match (__tl-box-place rest)
-        [(CompilerIrSpmdCallArgList.Nil)
-          (compiler-ir-spmd-call-arg-describe type-segment-bases arg)]
-        [_
-          (str_cat.str-cat
-            (compiler-ir-spmd-call-arg-describe type-segment-bases arg)
-            ", "
-            (compiler-ir-spmd-call-args-describe
-              type-segment-bases
-              (__tl-box-place rest)))])]
-    [(CompilerIrSpmdCallArgList.Array seq)
-      (compiler-ir-spmd-call-arg-seq-describe-from type-segment-bases seq 0)]))
+  [args : CompilerIrSpmdCallArgSeq]) : String
+  (compiler-ir-spmd-call-arg-seq-describe-from type-segment-bases args 0))
 
 (define (compiler-ir-spmd-call-result-describe
   [type-segment-bases : i64]

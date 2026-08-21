@@ -346,6 +346,28 @@
   ;; lint-allow: unused-unsafe
   (unsafe (+ 1 2)))")
 
+(define (lint-driver-smoke-raw-arena-op-source) : String
+  "(define (exercise [handle : i64]) : unit
+  (begin
+    (arena.tl_arena_set handle)
+    (arena.tl_arena_destroy handle)
+    (arena.tl_region_reset handle)
+    (tl_arena_set handle)
+    (tl_arena_destroy handle)
+    (tl_region_reset handle)
+    (arena.set! handle)
+    (arena.destroy handle)
+    (arena.rewind handle)))")
+
+(define (lint-driver-smoke-raw-arena-text-source) : String
+  "(define emitted : String
+  \"(arena.tl_arena_set x) tl_arena_destroy arena.rewind\")")
+
+(define (lint-driver-smoke-raw-arena-suppressed-source) : String
+  "(define (exercise [handle : i64]) : unit
+  ;; lint-allow: raw-arena-op
+  (arena.tl_arena_set handle))")
+
 (define (lint-driver-smoke-unsafe-surface-dep-source) : String
   "(module dep)
 (unsafe
@@ -1269,6 +1291,52 @@
         179]
       [else 42])))
 
+(define (lint-driver-smoke-raw-arena-op-count [path : String] [source : String]) : i64
+  (lint_driver_core_tests.selfhost-lint-findings-rule-count
+    (lint_driver_core.selfhost-lint-source-with-roots
+      path
+      source
+      (lint_svec.new))
+    (lint_core.lint-rule-raw-arena-op-id)))
+
+(define (lint-driver-smoke-raw-arena-op-self-test) : i64
+  (let
+    [source : String (lint-driver-smoke-raw-arena-op-source)]
+    [ordinary-count : i64
+      (lint-driver-smoke-raw-arena-op-count "src/new_module.tl" source)]
+    [absolute-allowlisted-count : i64
+      (lint-driver-smoke-raw-arena-op-count
+        "C:\\checkout\\src\\compiler_ast_types.tl"
+        source)]
+    [similar-path-count : i64
+      (lint-driver-smoke-raw-arena-op-count
+        "src/not_compiler_ast_types.tl"
+        source)]
+    [text-count : i64
+      (lint-driver-smoke-raw-arena-op-count
+        "src/emitter_text.tl"
+        (lint-driver-smoke-raw-arena-text-source))]
+    [suppressed-count : i64
+      (lint-driver-smoke-raw-arena-op-count
+        "src/new_suppressed_module.tl"
+        (lint-driver-smoke-raw-arena-suppressed-source))]
+    (cond
+      [(not (= ordinary-count 9)) 180]
+      [(not (= absolute-allowlisted-count 0)) 181]
+      [(not (= similar-path-count 9)) 182]
+      [(not (= text-count 0)) 183]
+      [(not (= suppressed-count 0)) 184]
+      [(not
+          (string.eq
+            (lint_core.lint-rule-message (lint_core.lint-rule-raw-arena-op-id))
+            (lint_core.lint-rule-raw-arena-op-message)))
+        185]
+      [(string.eq
+          (lint_core.lint-rule-suggestion (lint_core.lint-rule-raw-arena-op-id))
+          "")
+        186]
+      [else 42])))
+
 (define (lint-driver-smoke-unsafe-surface-paths) : lint_svec.Vec
   (let
     [paths : lint_svec.Vec (lint_svec.new)]
@@ -1992,6 +2060,7 @@
       [unused-variable-result : i64
         (lint-driver-smoke-unused-variable-self-test)]
       [unused-unsafe-result : i64 (lint-driver-smoke-unused-unsafe-self-test)]
+      [raw-arena-result : i64 (lint-driver-smoke-raw-arena-op-self-test)]
       [unsafe-surface-result : i64 (lint-driver-smoke-unsafe-surface-self-test)]
       [copy-result : i64 (lint-driver-smoke-copy-on-update-struct-self-test)]
       [dotted-compat-result : i64
@@ -2013,6 +2082,7 @@
         [(not (= divergence-result 42)) divergence-result]
         [(not (= unused-variable-result 42)) unused-variable-result]
         [(not (= unused-unsafe-result 42)) unused-unsafe-result]
+        [(not (= raw-arena-result 42)) raw-arena-result]
         [(not (= unsafe-surface-result 42)) unsafe-surface-result]
         [(not (= copy-result 42)) copy-result]
         [(not (= dotted-compat-result 42)) dotted-compat-result]

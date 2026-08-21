@@ -32,12 +32,11 @@
 (import stdlib.array)
 
 (define (smoke-cfg-index-test-block [label : i64] [value : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.Return
-        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 value)))
-      ir.CompilerIrInstrList.Nil)))
+        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 value))))))
 
 (define (smoke-cfg-index-block-return [block : opt.OptMaybeBlock]) : i64
   (match block
@@ -224,21 +223,19 @@
   [eq-var : i64]
   [arm-label : i64]
   [next-label : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         eq-var
         ir.CompilerIrBinOp.Eq
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.I64 tag)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var eq-var)
-          arm-label
-          next-label)
-        (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var eq-var)
+        arm-label
+        next-label))))
 
 (define (opt-switch-test-extra-compare-block
   [label : i64]
@@ -246,23 +243,20 @@
   [eq-var : i64]
   [arm-label : i64]
   [next-label : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         eq-var
         ir.CompilerIrBinOp.Eq
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.I64 tag)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Mov 9 (ir.CompilerIrValue.I64 99) (ast.AstType.I64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var eq-var)
-            arm-label
-            next-label)
-          (ir.CompilerIrInstrList.Nil))))))
+      (ir.CompilerIrInstr.Mov 9 (ir.CompilerIrValue.I64 99) (ast.AstType.I64))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var eq-var)
+        arm-label
+        next-label))))
 
 (define (opt-switch-test-total-compare-block
   [label : i64]
@@ -270,29 +264,26 @@
   [eq-var : i64]
   [arm-label : i64]
   [next-label : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         eq-var
         ir.CompilerIrBinOp.Eq
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.I64 tag)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.TotalEnumBranch
-          (ir.CompilerIrValue.Var eq-var)
-          arm-label
-          next-label)
-        (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.TotalEnumBranch
+        (ir.CompilerIrValue.Var eq-var)
+        arm-label
+        next-label))))
 
 (define (opt-switch-test-return-block [label : i64] [value : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.Return
-        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 value)))
-      (ir.CompilerIrInstrList.Nil))))
+        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 value))))))
 
 ;; Head block whose compare+branch trails an unconditional prefix instruction:
 ;; the chain pass must keep the prefix ahead of the emitted Switch.
@@ -302,23 +293,20 @@
   [eq-var : i64]
   [arm-label : i64]
   [next-label : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.Mov 9 (ir.CompilerIrValue.Var 0) (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.BinOp
-          eq-var
-          ir.CompilerIrBinOp.Eq
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.I64 tag)
-          (ast.AstType.I64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var eq-var)
-            arm-label
-            next-label)
-          (ir.CompilerIrInstrList.Nil))))))
+      (ir.CompilerIrInstr.BinOp
+        eq-var
+        ir.CompilerIrBinOp.Eq
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.I64 tag)
+        (ast.AstType.I64))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var eq-var)
+        arm-label
+        next-label))))
 
 (define (opt-switch-test-block-tail-base [block : ir.CompilerIrBlock]) : i64
   (match block
@@ -505,11 +493,9 @@
       (ir.CompilerIrBlockList.Nil))))
 
 (define (opt-switch-test-jump-block [label : i64] [target : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Jump target)
-      (ir.CompilerIrInstrList.Nil))))
+    (compiler_optimize_tests.opt-test-instrs (ir.CompilerIrInstr.Jump target))))
 
 ;; Four compares, an empty forwarding block, then `after` more compares whose
 ;; tags run from `resume`. The forwarding block is what an inlined classifier
@@ -607,9 +593,9 @@
                 (ir.compiler-ir-label "body"))
               (ir.compiler-ir-block-cons
                 (if phi-body?
-                  (ir.compiler-ir-block
+                  (ir.CompilerIrBlock.Block
                     (ir.compiler-ir-label "body")
-                    (ir.compiler-ir-instr-cons
+                    (compiler_optimize_tests.opt-test-instrs
                       (ir.CompilerIrInstr.Phi
                         12
                         (ir.compiler-ir-phi-input-cons
@@ -617,11 +603,9 @@
                           (ir.compiler-ir-label "forward")
                           (ir.CompilerIrPhiInputList.Nil))
                         (ast.AstType.I64))
-                      (ir.compiler-ir-instr-cons
-                        (ir.CompilerIrInstr.Return
-                          (ir.CompilerIrMaybeValue.Some
-                            (ir.CompilerIrValue.Var 12)))
-                        (ir.CompilerIrInstrList.Nil))))
+                      (ir.CompilerIrInstr.Return
+                        (ir.CompilerIrMaybeValue.Some
+                          (ir.CompilerIrValue.Var 12)))))
                   (opt-switch-test-return-block
                     (ir.compiler-ir-label "body")
                     12))
@@ -871,16 +855,14 @@
   [label : i64]
   [arm-label : i64]
   [next-label : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.Mov 9 (ir.CompilerIrValue.Var 0) (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var 0)
-          next-label
-          arm-label)
-        (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var 0)
+        next-label
+        arm-label))))
 
 (define (opt-switch-test-bare-blocks [default-label : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
@@ -931,21 +913,19 @@
   [eq-var : i64]
   [arm-label : i64]
   [next-label : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         eq-var
         ir.CompilerIrBinOp.Eq
         (ir.CompilerIrValue.Var cmp-var)
         (ir.CompilerIrValue.I64 tag)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var eq-var)
-          arm-label
-          next-label)
-        (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var eq-var)
+        arm-label
+        next-label))))
 
 ;; The vm_run dispatch shape: the head compare reads the RAW tag var while the
 ;; middle compares read the match-scrutinee COPY (block-local copy propagation
@@ -953,23 +933,20 @@
 ;; head prefix's Mov to one logical index var.
 (define (opt-switch-test-copy-head-blocks [default-label : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.compiler-ir-block
+    (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "entry")
-      (ir.compiler-ir-instr-cons
+      (compiler_optimize_tests.opt-test-instrs
         (ir.CompilerIrInstr.Mov 9 (ir.CompilerIrValue.Var 0) (ast.AstType.I64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.BinOp
-            1
-            ir.CompilerIrBinOp.Eq
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.I64 0)
-            (ast.AstType.I64))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Var 1)
-              (ir.compiler-ir-label "case0")
-              (ir.compiler-ir-label "cmp1"))
-            (ir.CompilerIrInstrList.Nil)))))
+        (ir.CompilerIrInstr.BinOp
+          1
+          ir.CompilerIrBinOp.Eq
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 0)
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var 1)
+          (ir.compiler-ir-label "case0")
+          (ir.compiler-ir-label "cmp1"))))
     (ir.compiler-ir-block-cons
       (opt-switch-test-return-block (ir.compiler-ir-label "case0") 10)
       (ir.compiler-ir-block-cons
@@ -1929,127 +1906,122 @@
         108]
       [else 42])))
 
-(define (smoke-mov-dst-var-type?
-  [instrs : ir.CompilerIrInstrList]
+(define (smoke-mov-dst-var-type-from?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
   [dst : i64]
   [src : i64]
   [ty : ast.AstType]) : bool
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) false]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(ir.CompilerIrInstr.Mov d (ir.CompilerIrValue.Var s) mov-ty)
-          (if (= d dst)
-            (and
-              (= s src)
-              (opt.opt-type-eq
-                (ast.ast-node-pool-reader-type-segment-bases)
-                mov-ty
-                ty))
-            (smoke-mov-dst-var-type?
-              (ir.compiler-ir-box-shared-view rest)
-              dst
-              src
-              ty))]
-        [_
-          (smoke-mov-dst-var-type?
-            (ir.compiler-ir-box-shared-view rest)
-            dst
-            src
-            ty)])]))
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Mov d (ir.CompilerIrValue.Var s) mov-ty)
+        (if (= d dst)
+          (and
+            (= s src)
+            (opt.opt-type-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              mov-ty
+              ty))
+          (smoke-mov-dst-var-type-from? instrs (+ index 1) dst src ty))]
+      [_ (smoke-mov-dst-var-type-from? instrs (+ index 1) dst src ty)])))
 
-(define (smoke-cast-dst-var-types?
-  [instrs : ir.CompilerIrInstrList]
+(define (smoke-mov-dst-var-type?
+  [instrs : ir.CompilerIrInstrSeq]
+  [dst : i64]
+  [src : i64]
+  [ty : ast.AstType]) : bool
+  (smoke-mov-dst-var-type-from? instrs 0 dst src ty))
+
+(define (smoke-cast-dst-var-types-from?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
   [dst : i64]
   [src : i64]
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : bool
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) false]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(ir.CompilerIrInstr.Cast
-            d
-            (ir.CompilerIrValue.Var s)
-            cast-from
-            cast-to)
-          (if (= d dst)
-            (and
-              (= s src)
-              (opt.opt-type-eq
-                (ast.ast-node-pool-reader-type-segment-bases)
-                cast-from
-                from-ty)
-              (opt.opt-type-eq
-                (ast.ast-node-pool-reader-type-segment-bases)
-                cast-to
-                to-ty))
-            (smoke-cast-dst-var-types?
-              (ir.compiler-ir-box-shared-view rest)
-              dst
-              src
-              from-ty
-              to-ty))]
-        [_
-          (smoke-cast-dst-var-types?
-            (ir.compiler-ir-box-shared-view rest)
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Cast d (ir.CompilerIrValue.Var s) cast-from cast-to)
+        (if (= d dst)
+          (and
+            (= s src)
+            (opt.opt-type-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              cast-from
+              from-ty)
+            (opt.opt-type-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              cast-to
+              to-ty))
+          (smoke-cast-dst-var-types-from?
+            instrs
+            (+ index 1)
             dst
             src
             from-ty
-            to-ty)])]))
+            to-ty))]
+      [_
+        (smoke-cast-dst-var-types-from?
+          instrs
+          (+ index 1)
+          dst
+          src
+          from-ty
+          to-ty)])))
 
-(define (smoke-noop-int-cast-mov-instrs) : ir.CompilerIrInstrList
-  (ir.compiler-ir-instr-cons
+(define (smoke-cast-dst-var-types?
+  [instrs : ir.CompilerIrInstrSeq]
+  [dst : i64]
+  [src : i64]
+  [from-ty : ast.AstType]
+  [to-ty : ast.AstType]) : bool
+  (smoke-cast-dst-var-types-from? instrs 0 dst src from-ty to-ty))
+
+(define (smoke-noop-int-cast-mov-instrs) : ir.CompilerIrInstrSeq
+  (compiler_optimize_tests.opt-test-instrs
     (ir.CompilerIrInstr.Cast
       50
       (ir.CompilerIrValue.Var 10)
       (ast.AstType.U8)
       (ast.AstType.Char))
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Cast
-        51
-        (ir.CompilerIrValue.Var 11)
-        (ast.AstType.U16)
-        (ast.AstType.U8))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Cast
-          52
-          (ir.CompilerIrValue.Var 12)
-          (ast.AstType.U16)
-          (ast.AstType.Char))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Cast
-            53
-            (ir.CompilerIrValue.Var 13)
-            (ast.AstType.U8)
-            (ast.AstType.I64))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Cast
-              54
-              (ir.CompilerIrValue.Var 14)
-              (ast.AstType.I16)
-              (ast.AstType.U32))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Cast
-                55
-                (ir.CompilerIrValue.Var 15)
-                (ast.AstType.I64)
-                (ast.AstType.U64))
-              (ir.CompilerIrInstrList.Nil))))))))
+    (ir.CompilerIrInstr.Cast
+      51
+      (ir.CompilerIrValue.Var 11)
+      (ast.AstType.U16)
+      (ast.AstType.U8))
+    (ir.CompilerIrInstr.Cast
+      52
+      (ir.CompilerIrValue.Var 12)
+      (ast.AstType.U16)
+      (ast.AstType.Char))
+    (ir.CompilerIrInstr.Cast
+      53
+      (ir.CompilerIrValue.Var 13)
+      (ast.AstType.U8)
+      (ast.AstType.I64))
+    (ir.CompilerIrInstr.Cast
+      54
+      (ir.CompilerIrValue.Var 14)
+      (ast.AstType.I16)
+      (ast.AstType.U32))
+    (ir.CompilerIrInstr.Cast
+      55
+      (ir.CompilerIrValue.Var 15)
+      (ast.AstType.I64)
+      (ast.AstType.U64))))
 
 (define (smoke-noop-int-cast-mov-self-test) : i64
   (let
-    [rewritten : ir.CompilerIrInstrList
+    [rewritten : ir.CompilerIrInstrSeq
       (compiler_optimize_tests.opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptConstEnv.Nil)
         (smoke-noop-int-cast-mov-instrs))]
     (begin
       (unless
-        (=
-          (compiler_optimize_tests.opt-count-cast-instrs
-            (opt.compiler-opt-global-shared-view rewritten))
-          3)
+        (= (compiler_optimize_tests.opt-count-cast-instr-seq rewritten) 3)
         (return 1))
       (unless
         (smoke-mov-dst-var-type?
@@ -2091,31 +2063,28 @@
   [slot-ty : ast.AstType]
   [index : ir.CompilerIrValue]
   [label : i64]
-  [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (ir.compiler-ir-instr-cons
+  [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (compiler_optimize_tests.opt-test-instrs-with-tail
+    tail
     (ir.CompilerIrInstr.Gep ptr-var object offset slot-ty)
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Load
-        length-var
-        (ir.CompilerIrValue.Var ptr-var)
-        (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Cast
-          cast-var
-          (ir.CompilerIrValue.Var length-var)
-          (ast.AstType.I64)
-          (ast.AstType.U64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.BoundsCheck
-            index
-            (ir.CompilerIrValue.Var cast-var)
-            label)
-          tail)))))
+    (ir.CompilerIrInstr.Load
+      length-var
+      (ir.CompilerIrValue.Var ptr-var)
+      (ast.AstType.I64))
+    (ir.CompilerIrInstr.Cast
+      cast-var
+      (ir.CompilerIrValue.Var length-var)
+      (ast.AstType.I64)
+      (ast.AstType.U64))
+    (ir.CompilerIrInstr.BoundsCheck
+      index
+      (ir.CompilerIrValue.Var cast-var)
+      label)))
 
 (define (smoke-bounds-object-pair
   [second-object : ir.CompilerIrValue]
   [offset : ir.CompilerIrValue]
-  [slot-ty : ast.AstType]) : ir.CompilerIrInstrList
+  [slot-ty : ast.AstType]) : ir.CompilerIrInstrSeq
   (smoke-bounds-object-length-check-fragment
     10
     11
@@ -2134,9 +2103,9 @@
       slot-ty
       (ir.CompilerIrValue.Var 0)
       (ir.compiler-ir-label "bounds_ok.1")
-      (ir.CompilerIrInstrList.Nil))))
+      (ir.compiler-ir-instr-seq-empty))))
 
-(define (smoke-bounds-object-call-barrier) : ir.CompilerIrInstrList
+(define (smoke-bounds-object-call-barrier) : ir.CompilerIrInstrSeq
   (smoke-bounds-object-length-check-fragment
     10
     11
@@ -2146,12 +2115,7 @@
     (ast.AstType.I64)
     (ir.CompilerIrValue.Var 0)
     (ir.compiler-ir-label "bounds_ok.0")
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Call
-        30
-        (compiler_optimize_tests.opt-test-symbol "touch")
-        (ir.CompilerIrCallArgs.Nil)
-        (ast.AstType.Unit))
+    (compiler_optimize_tests.opt-test-instrs-with-tail
       (smoke-bounds-object-length-check-fragment
         20
         21
@@ -2161,14 +2125,19 @@
         (ast.AstType.I64)
         (ir.CompilerIrValue.Var 0)
         (ir.compiler-ir-label "bounds_ok.1")
-        (ir.CompilerIrInstrList.Nil)))))
+        (ir.compiler-ir-instr-seq-empty))
+      (ir.CompilerIrInstr.Call
+        30
+        (compiler_optimize_tests.opt-test-symbol "touch")
+        (ir.CompilerIrCallArgs.Nil)
+        (ast.AstType.Unit)))))
 
 ;; Element-store survival: a `StorePtr` whose target is the object's tracked
 ;; length-slot pointer (var 10) changes the length and must clear the facts (the
 ;; 2nd check survives -> count 2). A `StorePtr` to any other pointer (var 99, an
 ;; array element) cannot change the length, so the facts survive and the 2nd
 ;; check is removed (-> count 1).
-(define (smoke-bounds-object-store-barrier [store-ptr : ir.CompilerIrValue]) : ir.CompilerIrInstrList
+(define (smoke-bounds-object-store-barrier [store-ptr : ir.CompilerIrValue]) : ir.CompilerIrInstrSeq
   (smoke-bounds-object-length-check-fragment
     10
     11
@@ -2178,11 +2147,7 @@
     (ast.AstType.I64)
     (ir.CompilerIrValue.Var 0)
     (ir.compiler-ir-label "bounds_ok.0")
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.StorePtr
-        store-ptr
-        (ir.CompilerIrValue.I64 7)
-        (ast.AstType.I64))
+    (compiler_optimize_tests.opt-test-instrs-with-tail
       (smoke-bounds-object-length-check-fragment
         20
         21
@@ -2192,11 +2157,15 @@
         (ast.AstType.I64)
         (ir.CompilerIrValue.Var 0)
         (ir.compiler-ir-label "bounds_ok.1")
-        (ir.CompilerIrInstrList.Nil)))))
+        (ir.compiler-ir-instr-seq-empty))
+      (ir.CompilerIrInstr.StorePtr
+        store-ptr
+        (ir.CompilerIrValue.I64 7)
+        (ast.AstType.I64)))))
 
 (define (smoke-object-bounds-self-test) : i64
   (let
-    [object-array : ir.CompilerIrInstrList
+    [object-array : ir.CompilerIrInstrSeq
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
@@ -2205,7 +2174,7 @@
           (ir.CompilerIrValue.Var 1)
           (ir.CompilerIrValue.I64 1)
           (ast.AstType.I64)))]
-    [object-string : ir.CompilerIrInstrList
+    [object-string : ir.CompilerIrInstrSeq
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
@@ -2214,7 +2183,7 @@
           (ir.CompilerIrValue.Var 1)
           (ir.CompilerIrValue.I64 8)
           (ast.AstType.U8)))]
-    [object-mismatch : ir.CompilerIrInstrList
+    [object-mismatch : ir.CompilerIrInstrSeq
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
@@ -2223,19 +2192,19 @@
           (ir.CompilerIrValue.Var 2)
           (ir.CompilerIrValue.I64 1)
           (ast.AstType.I64)))]
-    [object-call : ir.CompilerIrInstrList
+    [object-call : ir.CompilerIrInstrSeq
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Nil)
         (smoke-bounds-object-call-barrier))]
-    [object-store : ir.CompilerIrInstrList
+    [object-store : ir.CompilerIrInstrSeq
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Nil)
         (smoke-bounds-object-store-barrier (ir.CompilerIrValue.Var 10)))]
-    [object-element-store : ir.CompilerIrInstrList
+    [object-element-store : ir.CompilerIrInstrSeq
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
@@ -2267,82 +2236,70 @@
       [else 42])))
 
 (define (smoke-range-bce-entry [with-nonnegative : bool]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "entry")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs-with-tail
+      (if with-nonnegative
+        (compiler_optimize_tests.opt-test-instrs
+          (ir.CompilerIrInstr.BinOp
+            14
+            (ir.CompilerIrBinOp.Ge)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 0)
+            (ast.AstType.Bool))
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var 14)
+            (ir.compiler-ir-label "lt")
+            (ir.compiler-ir-label "exit")))
+        (compiler_optimize_tests.opt-test-instrs
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "lt"))))
       (ir.CompilerIrInstr.Gep
         3
         (ir.CompilerIrValue.Var 2)
         (ir.CompilerIrValue.I64 1)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Load 1 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 0)
-            (ast.AstType.I64))
-          (if with-nonnegative
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                14
-                (ir.CompilerIrBinOp.Ge)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.I64 0)
-                (ast.AstType.Bool))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Var 14)
-                  (ir.compiler-ir-label "lt")
-                  (ir.compiler-ir-label "exit"))
-                (ir.CompilerIrInstrList.Nil)))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "lt"))
-              (ir.CompilerIrInstrList.Nil))))))))
+      (ir.CompilerIrInstr.Load 1 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
+      (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 0) (ast.AstType.I64)))))
 
 (define (smoke-range-bce-lt [op : ir.CompilerIrBinOp] [length-var : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "lt")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         15
         op
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var length-var)
         (ast.AstType.Bool))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var 15)
-          (ir.compiler-ir-label "body")
-          (ir.compiler-ir-label "exit"))
-        (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var 15)
+        (ir.compiler-ir-label "body")
+        (ir.compiler-ir-label "exit")))))
 
 (define (smoke-range-bce-body) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
     (compiler_optimize_tests.opt-loop-bce-string-test-ref-instrs
       2
       30
-      (ir.compiler-ir-instr-cons
+      (compiler_optimize_tests.opt-test-instrs
         (ir.CompilerIrInstr.Return
-          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 37)))
-        (ir.CompilerIrInstrList.Nil)))))
+          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 37)))))))
 
 (define (smoke-range-bce-redefined-body) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Mov
-        0
-        (ir.CompilerIrValue.I64 (- 0 1))
-        (ast.AstType.I64))
+    (compiler_optimize_tests.opt-test-instrs-with-tail
       (compiler_optimize_tests.opt-loop-bce-string-test-ref-instrs
         2
         30
-        (ir.compiler-ir-instr-cons
+        (compiler_optimize_tests.opt-test-instrs
           (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 37)))
-          (ir.CompilerIrInstrList.Nil))))))
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 37)))))
+      (ir.CompilerIrInstr.Mov
+        0
+        (ir.CompilerIrValue.I64 (- 0 1))
+        (ast.AstType.I64)))))
 
 (define (smoke-range-bce-blocks
   [with-nonnegative : bool]
@@ -2427,28 +2384,25 @@
         (ir.CompilerIrParamList.Nil)))))
 
 (define (smoke-ssa-iv-bce-entry) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "entry")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.Gep
         3
         (ir.CompilerIrValue.Var 2)
         (ir.CompilerIrValue.I64 1)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Load 1 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-          (ir.CompilerIrInstrList.Nil))))))
+      (ir.CompilerIrInstr.Load 1 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
+      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header")))))
 
 (define (smoke-ssa-iv-bce-header
   [start : ir.CompilerIrValue]
   [next-var : i64]
   [op : ir.CompilerIrBinOp]
   [upper-var : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "header")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.Phi
         0
         (ir.compiler-ir-phi-input-cons
@@ -2459,19 +2413,16 @@
             (ir.compiler-ir-label "body")
             (ir.CompilerIrPhiInputList.Nil)))
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.BinOp
-          4
-          op
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var upper-var)
-          (ast.AstType.Bool))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var 4)
-            (ir.compiler-ir-label "body")
-            (ir.compiler-ir-label "exit"))
-          (ir.CompilerIrInstrList.Nil))))))
+      (ir.CompilerIrInstr.BinOp
+        4
+        op
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var upper-var)
+        (ast.AstType.Bool))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var 4)
+        (ir.compiler-ir-label "body")
+        (ir.compiler-ir-label "exit")))))
 
 (define (smoke-ssa-iv-bce-body
   [symbols : compiler_optimize_tests.OptLoopBceTestSymbols]
@@ -2480,40 +2431,38 @@
   [next-var : i64]
   [with-call : bool]
   [redefine-index : bool]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
     (let
-      [tail : ir.CompilerIrInstrList
+      [tail : ir.CompilerIrInstrSeq
         (compiler_optimize_tests.opt-loop-bce-string-test-ref-instrs
           object-var
           40
-          (ir.compiler-ir-instr-cons
+          (compiler_optimize_tests.opt-test-instrs
             (ir.CompilerIrInstr.BinOp
               next-var
               (ir.CompilerIrBinOp.Add)
               (ir.CompilerIrValue.Var 0)
               (ir.CompilerIrValue.I64 step)
               (ast.AstType.I64))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-              (ir.CompilerIrInstrList.Nil))))]
-      [after-call : ir.CompilerIrInstrList
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))]
+      [after-call : ir.CompilerIrInstrSeq
         (if with-call
-          (ir.compiler-ir-instr-cons
+          (compiler_optimize_tests.opt-test-instrs-with-tail
+            tail
             (ir.CompilerIrInstr.Call
               80
               symbols.touch
               (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var object-var))
-              (ast.AstType.Unit))
-            tail)
+              (ast.AstType.Unit)))
           tail)]
       (if redefine-index
-        (ir.compiler-ir-instr-cons
+        (compiler_optimize_tests.opt-test-instrs-with-tail
+          after-call
           (ir.CompilerIrInstr.Mov
             0
             (ir.CompilerIrValue.I64 (- 0 1))
-            (ast.AstType.I64))
-          after-call)
+            (ast.AstType.I64)))
         after-call))))
 
 (define (smoke-ssa-iv-bce-blocks
@@ -2682,23 +2631,21 @@
   [start : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [op : ir.CompilerIrBinOp]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "entry")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp 1 op start bound (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var 1)
-          (ir.compiler-ir-label "body")
-          (ir.compiler-ir-label "exit"))
-        (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var 1)
+        (ir.compiler-ir-label "body")
+        (ir.compiler-ir-label "exit")))))
 
 (define (smoke-rotated-bce-body
   [start : ir.CompilerIrValue]
   [check-bound : ir.CompilerIrValue]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.Phi
         0
         (ir.compiler-ir-phi-input-cons
@@ -2709,43 +2656,37 @@
             (ir.compiler-ir-label "latch")
             (ir.CompilerIrPhiInputList.Nil)))
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.BoundsCheck
-          (ir.CompilerIrValue.Var 0)
-          check-bound
-          (ir.compiler-ir-label "bounds_ok"))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-          (ir.CompilerIrInstrList.Nil))))))
+      (ir.CompilerIrInstr.BoundsCheck
+        (ir.CompilerIrValue.Var 0)
+        check-bound
+        (ir.compiler-ir-label "bounds_ok"))
+      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch")))))
 
 (define (smoke-rotated-bce-latch
   [bound : ir.CompilerIrValue]
   [op : ir.CompilerIrBinOp]
   [both-edges-enter : bool]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "latch")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         2
         (ir.CompilerIrBinOp.Add)
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.I64 1)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.BinOp
-          3
-          op
-          (ir.CompilerIrValue.Var 2)
-          bound
-          (ast.AstType.I64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var 3)
-            (ir.compiler-ir-label "body")
-            (if both-edges-enter
-              (ir.compiler-ir-label "body")
-              (ir.compiler-ir-label "exit")))
-          (ir.CompilerIrInstrList.Nil))))))
+      (ir.CompilerIrInstr.BinOp
+        3
+        op
+        (ir.CompilerIrValue.Var 2)
+        bound
+        (ast.AstType.I64))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var 3)
+        (ir.compiler-ir-label "body")
+        (if both-edges-enter
+          (ir.compiler-ir-label "body")
+          (ir.compiler-ir-label "exit"))))))
 
 (define (smoke-rotated-bce-blocks
   [start : ir.CompilerIrValue]
@@ -2854,41 +2795,38 @@
       [else 42])))
 
 (define (smoke-nonlength-guard-header [op : ir.CompilerIrBinOp]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "header")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         43
         op
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 40)
         (ast.AstType.Bool))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var 43)
-          (ir.compiler-ir-label "body")
-          (ir.compiler-ir-label "exit"))
-        (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var 43)
+        (ir.compiler-ir-label "body")
+        (ir.compiler-ir-label "exit")))))
 
 (define (smoke-nonlength-guard-body [object-var : i64] [redefine-bound : bool]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
     (let
-      [tail : ir.CompilerIrInstrList
+      [tail : ir.CompilerIrInstrSeq
         (compiler_optimize_tests.opt-loop-bce-string-test-ref-instrs
           object-var
           50
-          (ir.compiler-ir-instr-cons
+          (compiler_optimize_tests.opt-test-instrs
             (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 57)))
-            (ir.CompilerIrInstrList.Nil)))]
+              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 57)))))]
       (if redefine-bound
-        (ir.compiler-ir-instr-cons
+        (compiler_optimize_tests.opt-test-instrs-with-tail
+          tail
           (ir.CompilerIrInstr.Mov
             40
             (ir.CompilerIrValue.I64 0)
-            (ast.AstType.I64))
-          tail)
+            (ast.AstType.I64)))
         tail))))
 
 (define (smoke-nonlength-guard-blocks
@@ -2945,144 +2883,124 @@
   [object-var : i64]
   [index-var : i64]
   [base : i64]
-  [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (ir.compiler-ir-instr-cons
+  [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (compiler_optimize_tests.opt-test-instrs-with-tail
+    tail
     (ir.CompilerIrInstr.Gep
       base
       (ir.CompilerIrValue.Var object-var)
       (ir.CompilerIrValue.I64 0)
       (ast.AstType.U8))
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Load
-        (+ base 1)
-        (ir.CompilerIrValue.Var base)
-        (ast.AstType.U64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Gep
-          (+ base 2)
-          (ir.CompilerIrValue.Var object-var)
-          (ir.CompilerIrValue.I64 8)
-          (ast.AstType.U8))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Load
-            (+ base 3)
-            (ir.CompilerIrValue.Var (+ base 2))
-            (ast.AstType.I64))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Cast
-              (+ base 4)
-              (ir.CompilerIrValue.Var (+ base 3))
-              (ast.AstType.I64)
-              (ast.AstType.U64))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Cast
-                (+ base 5)
-                (ir.CompilerIrValue.Var index-var)
-                (ast.AstType.I64)
-                (ast.AstType.U64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.BoundsCheck
-                  (ir.CompilerIrValue.Var (+ base 5))
-                  (ir.CompilerIrValue.Var (+ base 4))
-                  (ir.compiler-ir-label "str_bounds_ok"))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Gep
-                    (+ base 6)
-                    (ir.CompilerIrValue.Var (+ base 1))
-                    (ir.CompilerIrValue.Var index-var)
-                    (ast.AstType.Char))
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Load
-                      (+ base 7)
-                      (ir.CompilerIrValue.Var (+ base 6))
-                      (ast.AstType.Char))
-                    tail))))))))))
+    (ir.CompilerIrInstr.Load
+      (+ base 1)
+      (ir.CompilerIrValue.Var base)
+      (ast.AstType.U64))
+    (ir.CompilerIrInstr.Gep
+      (+ base 2)
+      (ir.CompilerIrValue.Var object-var)
+      (ir.CompilerIrValue.I64 8)
+      (ast.AstType.U8))
+    (ir.CompilerIrInstr.Load
+      (+ base 3)
+      (ir.CompilerIrValue.Var (+ base 2))
+      (ast.AstType.I64))
+    (ir.CompilerIrInstr.Cast
+      (+ base 4)
+      (ir.CompilerIrValue.Var (+ base 3))
+      (ast.AstType.I64)
+      (ast.AstType.U64))
+    (ir.CompilerIrInstr.Cast
+      (+ base 5)
+      (ir.CompilerIrValue.Var index-var)
+      (ast.AstType.I64)
+      (ast.AstType.U64))
+    (ir.CompilerIrInstr.BoundsCheck
+      (ir.CompilerIrValue.Var (+ base 5))
+      (ir.CompilerIrValue.Var (+ base 4))
+      (ir.compiler-ir-label "str_bounds_ok"))
+    (ir.CompilerIrInstr.Gep
+      (+ base 6)
+      (ir.CompilerIrValue.Var (+ base 1))
+      (ir.CompilerIrValue.Var index-var)
+      (ast.AstType.Char))
+    (ir.CompilerIrInstr.Load
+      (+ base 7)
+      (ir.CompilerIrValue.Var (+ base 6))
+      (ast.AstType.Char))))
 
 (define (smoke-additive-entry [with-nonnegative : bool] [upper-offset : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "entry")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs-with-tail
+      (if with-nonnegative
+        (compiler_optimize_tests.opt-test-instrs
+          (ir.CompilerIrInstr.BinOp
+            42
+            (ir.CompilerIrBinOp.Ge)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 0)
+            (ast.AstType.Bool))
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var 42)
+            (ir.compiler-ir-label "header")
+            (ir.compiler-ir-label "exit")))
+        (compiler_optimize_tests.opt-test-instrs
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
       (ir.CompilerIrInstr.Gep
         3
         (ir.CompilerIrValue.Var 2)
         (ir.CompilerIrValue.I64 1)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Load 1 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Mov
-            0
-            (ir.CompilerIrValue.I64 0)
-            (ast.AstType.I64))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.BinOp
-              40
-              (ir.CompilerIrBinOp.Sub)
-              (ir.CompilerIrValue.Var 1)
-              (ir.CompilerIrValue.I64 upper-offset)
-              (ast.AstType.I64))
-            (if with-nonnegative
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.BinOp
-                  42
-                  (ir.CompilerIrBinOp.Ge)
-                  (ir.CompilerIrValue.Var 0)
-                  (ir.CompilerIrValue.I64 0)
-                  (ast.AstType.Bool))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var 42)
-                    (ir.compiler-ir-label "header")
-                    (ir.compiler-ir-label "exit"))
-                  (ir.CompilerIrInstrList.Nil)))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-                (ir.CompilerIrInstrList.Nil)))))))))
+      (ir.CompilerIrInstr.Load 1 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
+      (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 0) (ast.AstType.I64))
+      (ir.CompilerIrInstr.BinOp
+        40
+        (ir.CompilerIrBinOp.Sub)
+        (ir.CompilerIrValue.Var 1)
+        (ir.CompilerIrValue.I64 upper-offset)
+        (ast.AstType.I64)))))
 
 (define (smoke-additive-header [op : ir.CompilerIrBinOp] [upper-var : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "header")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         43
         op
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var upper-var)
         (ast.AstType.Bool))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var 43)
-          (ir.compiler-ir-label "body")
-          (ir.compiler-ir-label "exit"))
-        (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var 43)
+        (ir.compiler-ir-label "body")
+        (ir.compiler-ir-label "exit")))))
 
 (define (smoke-additive-body [offset : i64] [redefine-index : bool]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
     (let
-      [tail : ir.CompilerIrInstrList
-        (ir.compiler-ir-instr-cons
+      [tail : ir.CompilerIrInstrSeq
+        (compiler_optimize_tests.opt-test-instrs-with-tail
+          (smoke-additive-ref-index-instrs
+            2
+            50
+            60
+            (compiler_optimize_tests.opt-test-instrs
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 67)))))
           (ir.CompilerIrInstr.BinOp
             50
             (ir.CompilerIrBinOp.Add)
             (ir.CompilerIrValue.Var 0)
             (ir.CompilerIrValue.I64 offset)
-            (ast.AstType.I64))
-          (smoke-additive-ref-index-instrs
-            2
-            50
-            60
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 67)))
-              (ir.CompilerIrInstrList.Nil))))]
+            (ast.AstType.I64)))]
       (if redefine-index
-        (ir.compiler-ir-instr-cons
+        (compiler_optimize_tests.opt-test-instrs-with-tail
+          tail
           (ir.CompilerIrInstr.Mov
             0
             (ir.CompilerIrValue.I64 (- 0 1))
-            (ast.AstType.I64))
-          tail)
+            (ast.AstType.I64)))
         tail))))
 
 (define (smoke-additive-blocks
@@ -3123,73 +3041,63 @@
       (compiler_optimize_tests.opt-loop-bce-test-summaries symbols false false))))
 
 (define (smoke-additive-wrap-risk-entry) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "entry")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.Call
         1
         (compiler_optimize_tests.opt-test-symbol "unknown_len")
         (ir.CompilerIrCallArgs.Nil)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 0) (ast.AstType.I64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.BinOp
-            40
-            (ir.CompilerIrBinOp.Sub)
-            (ir.CompilerIrValue.Var 1)
-            (ir.CompilerIrValue.I64 1)
-            (ast.AstType.I64))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.BinOp
-              42
-              (ir.CompilerIrBinOp.Ge)
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.I64 0)
-              (ast.AstType.Bool))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var 42)
-                (ir.compiler-ir-label "header")
-                (ir.compiler-ir-label "exit"))
-              (ir.CompilerIrInstrList.Nil))))))))
+      (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 0) (ast.AstType.I64))
+      (ir.CompilerIrInstr.BinOp
+        40
+        (ir.CompilerIrBinOp.Sub)
+        (ir.CompilerIrValue.Var 1)
+        (ir.CompilerIrValue.I64 1)
+        (ast.AstType.I64))
+      (ir.CompilerIrInstr.BinOp
+        42
+        (ir.CompilerIrBinOp.Ge)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.I64 0)
+        (ast.AstType.Bool))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var 42)
+        (ir.compiler-ir-label "header")
+        (ir.compiler-ir-label "exit")))))
 
 (define (smoke-additive-wrap-risk-header) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "header")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         43
         (ir.CompilerIrBinOp.Lt)
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 40)
         (ast.AstType.Bool))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var 43)
-          (ir.compiler-ir-label "body")
-          (ir.compiler-ir-label "exit"))
-        (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var 43)
+        (ir.compiler-ir-label "body")
+        (ir.compiler-ir-label "exit")))))
 
 (define (smoke-additive-wrap-risk-body) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "body")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         50
         (ir.CompilerIrBinOp.Add)
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.I64 1)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.BoundsCheck
-          (ir.CompilerIrValue.Var 50)
-          (ir.CompilerIrValue.Var 1)
-          (ir.compiler-ir-label "bounds_ok"))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 50)))
-          (ir.CompilerIrInstrList.Nil))))))
+      (ir.CompilerIrInstr.BoundsCheck
+        (ir.CompilerIrValue.Var 50)
+        (ir.CompilerIrValue.Var 1)
+        (ir.compiler-ir-label "bounds_ok"))
+      (ir.CompilerIrInstr.Return
+        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 50))))))
 
 (define (smoke-additive-wrap-risk-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
@@ -3242,26 +3150,22 @@
   (ir.compiler-ir-label (str_cat.str-cat "b" (string.int->string index))))
 
 (define (smoke-heavy-pass-large-jump-block [index : i64] [next : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (smoke-heavy-pass-large-label index)
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Jump next)
-      (ir.CompilerIrInstrList.Nil))))
+    (compiler_optimize_tests.opt-test-instrs (ir.CompilerIrInstr.Jump next))))
 
 (define (smoke-heavy-pass-large-exit-block) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "exit")
-    (ir.compiler-ir-instr-cons
+    (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.BinOp
         3
         (ir.CompilerIrBinOp.Add)
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Return
-          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-        (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.Return
+        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3))))))
 
 (define (smoke-heavy-pass-large-tail-blocks [index : i64] [last : i64]) : ir.CompilerIrBlockList
   (if (> index last)
@@ -3278,18 +3182,16 @@
 
 (define (smoke-heavy-pass-large-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-block-cons
-    (ir.compiler-ir-block
+    (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "entry")
-      (ir.compiler-ir-instr-cons
+      (compiler_optimize_tests.opt-test-instrs
         (ir.CompilerIrInstr.BinOp
           2
           (ir.CompilerIrBinOp.Add)
           (ir.CompilerIrValue.Var 0)
           (ir.CompilerIrValue.Var 1)
           (ast.AstType.I64))
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Jump (smoke-heavy-pass-large-label 1))
-          (ir.CompilerIrInstrList.Nil))))
+        (ir.CompilerIrInstr.Jump (smoke-heavy-pass-large-label 1))))
     (smoke-heavy-pass-large-tail-blocks 1 1024)))
 
 (define (smoke-heavy-pass-large-function) : ir.CompilerIrFunction
@@ -3337,12 +3239,12 @@
       (opt.opt-function-index-build
         (ir.compiler-ir-function-cons
           (compiler_optimize_tests.opt-test-function-named
-            (opt.compiler-opt-global-shared-view qualified)
-            (ir.CompilerIrInstrList.Nil))
+            qualified
+            (ir.compiler-ir-instr-seq-empty))
           (ir.compiler-ir-function-cons
             (compiler_optimize_tests.opt-test-function-named
-              (opt.compiler-opt-global-shared-view plain)
-              (ir.CompilerIrInstrList.Nil))
+              plain
+              (ir.compiler-ir-instr-seq-empty))
             (ir.CompilerIrFunctionList.Nil))))]
     [starts : (__tl_dyn-array i64) index.leaf-starts]
     (cond
@@ -3629,42 +3531,35 @@
     (ast.AstType.I64)
     3
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-          ir.CompilerIrInstrList.Nil))
+        (compiler_optimize_tests.opt-test-instrs
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
       (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "header")
-          (ir.compiler-ir-instr-cons
+          (compiler_optimize_tests.opt-test-instrs
             (smoke-inline-phi-header (ir.compiler-ir-label "latch"))
-            (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Bool true)
+              (ir.compiler-ir-label "latch")
+              (ir.compiler-ir-label "exit"))))
+        (ir.compiler-ir-block-cons
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "latch")
+            (compiler_optimize_tests.opt-test-instrs
+              call
               (ir.CompilerIrInstr.Branch
                 (ir.CompilerIrValue.Bool true)
-                (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-label "exit"))
-              ir.CompilerIrInstrList.Nil)))
-        (ir.compiler-ir-block-cons
-          (ir.compiler-ir-block
-            (ir.compiler-ir-label "latch")
-            (ir.compiler-ir-instr-cons
-              call
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Bool true)
-                  (ir.compiler-ir-label "header")
-                  (ir.compiler-ir-label "exit"))
-                ir.CompilerIrInstrList.Nil)))
+                (ir.compiler-ir-label "header")
+                (ir.compiler-ir-label "exit"))))
           (ir.compiler-ir-block-cons
-            (ir.compiler-ir-block
+            (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "exit")
-              (ir.compiler-ir-instr-cons
+              (compiler_optimize_tests.opt-test-instrs
                 (smoke-inline-phi-exit (ir.compiler-ir-label "latch"))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                  ir.CompilerIrInstrList.Nil)))
+                (ir.CompilerIrInstr.Return
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))))
             ir.CompilerIrBlockList.Nil))))))
 
 (define (smoke-inline-phi-params) : ir.CompilerIrParamList
@@ -3689,20 +3584,17 @@
     (ast.AstType.I64)
     5
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (compiler_optimize_tests.opt-test-instrs
           (smoke-inline-phi-callee-mov)
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit"))
-            ir.CompilerIrInstrList.Nil)))
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit"))))
       (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "exit")
-          (ir.compiler-ir-instr-cons
+          (compiler_optimize_tests.opt-test-instrs
             (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))
-            ir.CompilerIrInstrList.Nil))
+              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))
         ir.CompilerIrBlockList.Nil))))
 
 (define (smoke-inline-phi-call
@@ -3954,15 +3846,14 @@
     (ast.AstType.I64)
     8
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-          (ir.CompilerIrInstrList.Nil)))
+        (compiler_optimize_tests.opt-test-instrs
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
       (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "header")
-          (ir.compiler-ir-instr-cons
+          (compiler_optimize_tests.opt-test-instrs
             (ir.CompilerIrInstr.Phi
               2
               (ir.compiler-ir-phi-input-cons
@@ -3973,46 +3864,39 @@
                   (ir.compiler-ir-label "merge")
                   (ir.CompilerIrPhiInputList.Nil)))
               (ast.AstType.I64))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                5
-                ir.CompilerIrBinOp.Gt
-                (ir.CompilerIrValue.Var 1)
-                (ir.CompilerIrValue.I64 0)
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Var 5)
-                  (ir.compiler-ir-label "then")
-                  (ir.compiler-ir-label "else"))
-                (ir.CompilerIrInstrList.Nil)))))
+            (ir.CompilerIrInstr.BinOp
+              5
+              ir.CompilerIrBinOp.Gt
+              (ir.CompilerIrValue.Var 1)
+              (ir.CompilerIrValue.I64 0)
+              (ast.AstType.I64))
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var 5)
+              (ir.compiler-ir-label "then")
+              (ir.compiler-ir-label "else"))))
         (ir.compiler-ir-block-cons
-          (ir.compiler-ir-block
+          (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "then")
             (if computed-arm?
-              (ir.compiler-ir-instr-cons
+              (compiler_optimize_tests.opt-test-instrs
                 (ir.CompilerIrInstr.BinOp
                   3
                   ir.CompilerIrBinOp.Add
                   (ir.CompilerIrValue.Var 1)
                   (ir.CompilerIrValue.I64 1)
                   (ast.AstType.I64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))
-                  (ir.CompilerIrInstrList.Nil)))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))
-                (ir.CompilerIrInstrList.Nil))))
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge")))
+              (compiler_optimize_tests.opt-test-instrs
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge")))))
           (ir.compiler-ir-block-cons
-            (ir.compiler-ir-block
+            (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "else")
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))
-                (ir.CompilerIrInstrList.Nil)))
+              (compiler_optimize_tests.opt-test-instrs
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))))
             (ir.compiler-ir-block-cons
-              (ir.compiler-ir-block
+              (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "merge")
-                (ir.compiler-ir-instr-cons
+                (compiler_optimize_tests.opt-test-instrs
                   (ir.CompilerIrInstr.Phi
                     4
                     (ir.compiler-ir-phi-input-cons
@@ -4025,33 +3909,28 @@
                         (ir.compiler-ir-label "else")
                         (ir.CompilerIrPhiInputList.Nil)))
                     (ast.AstType.I64))
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.BinOp
-                      6
-                      ir.CompilerIrBinOp.Add
-                      (ir.CompilerIrValue.Var 2)
-                      (ir.CompilerIrValue.I64 1)
-                      (ast.AstType.I64))
-                    (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.BinOp
-                        7
-                        ir.CompilerIrBinOp.Lt
-                        (ir.CompilerIrValue.Var 6)
-                        (ir.CompilerIrValue.I64 2)
-                        (ast.AstType.I64))
-                      (ir.compiler-ir-instr-cons
-                        (ir.CompilerIrInstr.Branch
-                          (ir.CompilerIrValue.Var 7)
-                          (ir.compiler-ir-label "header")
-                          (ir.compiler-ir-label "exit"))
-                        (ir.CompilerIrInstrList.Nil))))))
+                  (ir.CompilerIrInstr.BinOp
+                    6
+                    ir.CompilerIrBinOp.Add
+                    (ir.CompilerIrValue.Var 2)
+                    (ir.CompilerIrValue.I64 1)
+                    (ast.AstType.I64))
+                  (ir.CompilerIrInstr.BinOp
+                    7
+                    ir.CompilerIrBinOp.Lt
+                    (ir.CompilerIrValue.Var 6)
+                    (ir.CompilerIrValue.I64 2)
+                    (ast.AstType.I64))
+                  (ir.CompilerIrInstr.Branch
+                    (ir.CompilerIrValue.Var 7)
+                    (ir.compiler-ir-label "header")
+                    (ir.compiler-ir-label "exit"))))
               (ir.compiler-ir-block-cons
-                (ir.compiler-ir-block
+                (ir.CompilerIrBlock.Block
                   (ir.compiler-ir-label "exit")
-                  (ir.compiler-ir-instr-cons
+                  (compiler_optimize_tests.opt-test-instrs
                     (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))
-                    (ir.CompilerIrInstrList.Nil)))
+                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))
                 (ir.CompilerIrBlockList.Nil)))))))))
 
 (define (smoke-c27-count-scalar-selects-instrs
@@ -4132,38 +4011,34 @@
     (ast.AstType.I64)
     4
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (compiler_optimize_tests.opt-test-instrs-with-tail
+          (if extra-use?
+            (compiler_optimize_tests.opt-test-instrs
+              (ir.CompilerIrInstr.BinOp
+                3
+                ir.CompilerIrBinOp.Add
+                (ir.CompilerIrValue.Var 1)
+                (ir.CompilerIrValue.Var 2)
+                (ast.AstType.I64))
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3))))
+            (compiler_optimize_tests.opt-test-instrs
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))))
           (ir.CompilerIrInstr.BinOp
             1
             ir.CompilerIrBinOp.BitAnd
             (ir.CompilerIrValue.Var 0)
             (ir.CompilerIrValue.I64 1)
             (ast.AstType.I64))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.BinOp
-              2
-              ir.CompilerIrBinOp.Gt
-              (ir.CompilerIrValue.Var 1)
-              (ir.CompilerIrValue.I64 0)
-              (ast.AstType.I64))
-            (if extra-use?
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.BinOp
-                  3
-                  ir.CompilerIrBinOp.Add
-                  (ir.CompilerIrValue.Var 1)
-                  (ir.CompilerIrValue.Var 2)
-                  (ast.AstType.I64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-                  (ir.CompilerIrInstrList.Nil)))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                (ir.CompilerIrInstrList.Nil))))))
+          (ir.CompilerIrInstr.BinOp
+            2
+            ir.CompilerIrBinOp.Gt
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrValue.I64 0)
+            (ast.AstType.I64))))
       (ir.CompilerIrBlockList.Nil))))
 
 (define (smoke-c27-if-convert-compare-self-test) : i64
@@ -4256,26 +4131,23 @@
     (ast.AstType.I64)
     4
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (compiler_optimize_tests.opt-test-instrs
           (ir.CompilerIrInstr.BinOp
             2
             ir.CompilerIrBinOp.BitAnd
             (ir.CompilerIrValue.Var 0)
             and-mask
             (ast.AstType.I64))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.BinOp
-              3
-              cmp-op
-              (ir.CompilerIrValue.Var 2)
-              (ir.CompilerIrValue.I64 cmp-const)
-              (ast.AstType.I64))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-              (ir.CompilerIrInstrList.Nil)))))
+          (ir.CompilerIrInstr.BinOp
+            3
+            cmp-op
+            (ir.CompilerIrValue.Var 2)
+            (ir.CompilerIrValue.I64 cmp-const)
+            (ast.AstType.I64))
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
       (ir.CompilerIrBlockList.Nil))))
 
 (define (smoke-c27-mask-dce-blocks [fn : ir.CompilerIrFunction]) : ir.CompilerIrBlockList

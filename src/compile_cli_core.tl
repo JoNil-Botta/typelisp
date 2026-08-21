@@ -2039,6 +2039,9 @@
     [backend-state : backend.CompilerBackendState
       (compiler_driver_core.compiler-driver-state-backend
         (owned_view.compiler-owned-shared-view state))]
+    [typecheck-state : tc_core.TcJobState
+      (compiler_driver_core.compiler-driver-state-typecheck
+        (owned_view.compiler-owned-shared-view state))]
     (begin
       (backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
         backend-state
@@ -2052,12 +2055,10 @@
         backend-state)
       (backend.compiler-backend-state-slot-cache-reset! backend-state)
       (tc_core.tc-type-needs-resolution-storage-ensure!)
-      (tc_core.tc-agg-size-cache-storage-ensure!)
-      (tc_core.tc-agg-align-cache-storage-ensure!)
-      (tc_core.tc-agg-regwords-cache-storage-ensure!)
-      (tc_core.tc-lazy-import-stub-storage-ensure-for-job!
-        (compiler_driver_core.compiler-driver-state-typecheck
-          (owned_view.compiler-owned-shared-view state)))
+      (tc_core.tc-agg-size-cache-storage-ensure-for-job! typecheck-state)
+      (tc_core.tc-agg-align-cache-storage-ensure-for-job! typecheck-state)
+      (tc_core.tc-agg-regwords-cache-storage-ensure-for-job! typecheck-state)
+      (tc_core.tc-lazy-import-stub-storage-ensure-for-job! typecheck-state)
       (tc_core.tc-agg-layout-cache-table-storage-ensure!)
       (tc_core.macro-unqualified-import-cache-storage-ensure!
         (tc_core.tc-job-state-macro-state

@@ -5,6 +5,9 @@
 ;; with deterministic width-aware grouping and indentation.
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
+
+;; This fixture is below the source root, so direct and batch compiles must pass
+;; `--stdlib-root src` to resolve this canonical module identity.
 (import format_render_buf as fmt_buf)
 (import compiler_owned_view as owned_view)
 

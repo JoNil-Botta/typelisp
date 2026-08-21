@@ -2387,54 +2387,58 @@
   (cdiag.compiler-diagnostic-at-start "" message))
 
 (cfg
-  compile-profile
-  (define compiler-lower-profile-start-ms : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-start-ms-metric : i64
+    45))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-start-total : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-start-total-metric : i64
+    46))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-start-live : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-start-live-metric : i64
+    47))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-start-intern : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-start-intern-metric : i64
+    48))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-start-intern-slice : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-start-intern-slice-metric : i64
+    49))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-start-intern-generated : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-start-intern-generated-metric : i64
+    50))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-start-intern-render : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-start-intern-render-metric : i64
+    51))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-detail-start-ms : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-detail-start-ms-metric : i64
+    52))
 
 ;; Deep string concat lowering has a deliberately bounded fan-in. Keep these
 ;; counters in the compile-profile build so the regression fixture can prove
 ;; that a wide tree is flattened once and emitted as a small number of runtime
 ;; calls.
 (cfg
-  compile-profile
-  (define compiler-lower-profile-string-concat-trees : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-string-concat-trees-metric : i64
+    53))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-string-concat-leaves : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-string-concat-leaves-metric : i64
+    54))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-string-concat-runtime-calls : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-string-concat-runtime-calls-metric : i64
+    55))
+(cfg
+  (any compile-profile test)
+  (define compiler-lower-profile-metric-end : i64
+    56))
 (cfg
   compile-profile
   (define compiler-lower-profile-name-env-binds : i64
@@ -2514,6 +2518,49 @@
 ;; so analysis can diff stages without perturbing the phase-level peak math.
 ;; Kept out of the shipped compiler: the compile-profile verifier gate rejects
 ;; unexpected detail rows, so these fire only in local measurement builds.
+(define (compiler-lower-profile-reset! [_state : CompilerLowerState]) : unit
+  (cfg
+    (any compile-profile test)
+    (profile_state.compiler-profile-state-metric-reset-range!
+      (compiler-lower-state-profile _state)
+      compiler-lower-profile-start-ms-metric
+      compiler-lower-profile-metric-end)
+    unit))
+
+(define (compiler-lower-profile-value
+  [_state : CompilerLowerState]
+  [_metric : i64]) : i64
+  (cfg
+    (any compile-profile test)
+    (profile_state.compiler-profile-state-metric-value
+      (compiler-lower-state-profile _state)
+      _metric)
+    0))
+
+(define (compiler-lower-profile-set!
+  [_state : CompilerLowerState]
+  [_metric : i64]
+  [_value : i64]) : unit
+  (cfg
+    (any compile-profile test)
+    (profile_state.compiler-profile-state-metric-set!
+      (compiler-lower-state-profile _state)
+      _metric
+      _value)
+    unit))
+
+(define (compiler-lower-profile-add!
+  [_state : CompilerLowerState]
+  [_metric : i64]
+  [_value : i64]) : unit
+  (cfg
+    (any compile-profile test)
+    (profile_state.compiler-profile-state-metric-add!
+      (compiler-lower-state-profile _state)
+      _metric
+      _value)
+    unit))
+
 (cfg
   compile-profile
   (define (compiler-lower-profile-field [value : i64]) : String
@@ -2521,45 +2568,76 @@
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-start) : unit
+  (define (compiler-lower-profile-start [state : CompilerLowerState]) : unit
     (begin
-      (set! compiler-lower-profile-start-ms (profile.now-ms))
-      (set! compiler-lower-profile-start-total (profile.alloc-total))
-      (set! compiler-lower-profile-start-live (profile.alloc-live))
-      (set!
-        compiler-lower-profile-start-intern
+      (compiler-lower-profile-set!
+        state
+        compiler-lower-profile-start-ms-metric
+        (profile.now-ms))
+      (compiler-lower-profile-set!
+        state
+        compiler-lower-profile-start-total-metric
+        (profile.alloc-total))
+      (compiler-lower-profile-set!
+        state
+        compiler-lower-profile-start-live-metric
+        (profile.alloc-live))
+      (compiler-lower-profile-set!
+        state
+        compiler-lower-profile-start-intern-metric
         (ci.intern-profile-intern-value))
-      (set!
-        compiler-lower-profile-start-intern-slice
+      (compiler-lower-profile-set!
+        state
+        compiler-lower-profile-start-intern-slice-metric
         (ci.intern-profile-slice-value))
-      (set!
-        compiler-lower-profile-start-intern-generated
+      (compiler-lower-profile-set!
+        state
+        compiler-lower-profile-start-intern-generated-metric
         (ci.intern-profile-generated-value))
-      (set!
-        compiler-lower-profile-start-intern-render
+      (compiler-lower-profile-set!
+        state
+        compiler-lower-profile-start-intern-render-metric
         (ci.intern-profile-render-value))
       (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-finish [phase : String]) : unit
+  (define (compiler-lower-profile-finish
+    [state : CompilerLowerState]
+    [phase : String]) : unit
     (let
       [end-ms : i64 (profile.now-ms)]
       [end-total : i64 (profile.alloc-total)]
       [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64
-        (- (profile.alloc-peak) compiler-lower-profile-start-live)]
+        (-
+          (profile.alloc-peak)
+          (compiler-lower-profile-value
+            state
+            compiler-lower-profile-start-live-metric))]
       (begin
         (io.print-error
           (str_cat.str-cat
             "compile-profile|lower."
             phase
             (compiler-lower-profile-field
-              (- end-ms compiler-lower-profile-start-ms))
+              (-
+                end-ms
+                (compiler-lower-profile-value
+                  state
+                  compiler-lower-profile-start-ms-metric)))
             (compiler-lower-profile-field
-              (- end-total compiler-lower-profile-start-total))
+              (-
+                end-total
+                (compiler-lower-profile-value
+                  state
+                  compiler-lower-profile-start-total-metric)))
             (compiler-lower-profile-field
-              (- end-live compiler-lower-profile-start-live))
+              (-
+                end-live
+                (compiler-lower-profile-value
+                  state
+                  compiler-lower-profile-start-live-metric)))
             (compiler-lower-profile-field peak-delta)
             "\n"))
         (cfg
@@ -2573,7 +2651,9 @@
               (string.int->string
                 (-
                   (ci.intern-profile-intern-value)
-                  compiler-lower-profile-start-intern))
+                  (compiler-lower-profile-value
+                    state
+                    compiler-lower-profile-start-intern-metric)))
               "\n")))
         (cfg
           compile-profile-summary
@@ -2586,7 +2666,9 @@
               (string.int->string
                 (-
                   (ci.intern-profile-slice-value)
-                  compiler-lower-profile-start-intern-slice))
+                  (compiler-lower-profile-value
+                    state
+                    compiler-lower-profile-start-intern-slice-metric)))
               "\n")))
         (cfg
           compile-profile-summary
@@ -2599,7 +2681,9 @@
               (string.int->string
                 (-
                   (ci.intern-profile-render-value)
-                  compiler-lower-profile-start-intern-render))
+                  (compiler-lower-profile-value
+                    state
+                    compiler-lower-profile-start-intern-render-metric)))
               "\n")))
         (cfg
           compile-profile-summary
@@ -2612,22 +2696,32 @@
               (string.int->string
                 (-
                   (ci.intern-profile-generated-value)
-                  compiler-lower-profile-start-intern-generated))
+                  (compiler-lower-profile-value
+                    state
+                    compiler-lower-profile-start-intern-generated-metric)))
               "\n")))))))
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-detail-start) : unit
-    (set! compiler-lower-profile-detail-start-ms (profile.now-ms))))
+  (define (compiler-lower-profile-detail-start [state : CompilerLowerState]) : unit
+    (compiler-lower-profile-set!
+      state
+      compiler-lower-profile-detail-start-ms-metric
+      (profile.now-ms))))
 
 (cfg
   compile-profile
   (define (compiler-lower-profile-detail-finish
+    [state : CompilerLowerState]
     [phase : String]
     [name : String]) : unit
     (let
       [elapsed : i64
-        (- (profile.now-ms) compiler-lower-profile-detail-start-ms)]
+        (-
+          (profile.now-ms)
+          (compiler-lower-profile-value
+            state
+            compiler-lower-profile-detail-start-ms-metric))]
       (cfg
         compile-profile-summary
         unit
@@ -2728,27 +2822,139 @@
         "nullary_enum_object"
         (ci.intern-generated-symbol-role-nullary-enum-object)))))
 
-(cfg
-  compile-profile
-  (define (compiler-lower-profile-string-concat-reset) : unit
+(define (compiler-lower-profile-string-concat-reset
+  [_state : CompilerLowerState]) : unit
+  (cfg
+    (any compile-profile test)
     (begin
-      (set! compiler-lower-profile-string-concat-trees 0)
-      (set! compiler-lower-profile-string-concat-leaves 0)
-      (set! compiler-lower-profile-string-concat-runtime-calls 0))))
+      (compiler-lower-profile-set!
+        _state
+        compiler-lower-profile-string-concat-trees-metric
+        0)
+      (compiler-lower-profile-set!
+        _state
+        compiler-lower-profile-string-concat-leaves-metric
+        0)
+      (compiler-lower-profile-set!
+        _state
+        compiler-lower-profile-string-concat-runtime-calls-metric
+        0))
+    unit))
+
+(define (compiler-lower-profile-string-concat-note-tree!
+  [_state : CompilerLowerState]
+  [_leaves : i64]) : unit
+  (cfg
+    (any compile-profile test)
+    (begin
+      (compiler-lower-profile-add!
+        _state
+        compiler-lower-profile-string-concat-trees-metric
+        1)
+      (compiler-lower-profile-add!
+        _state
+        compiler-lower-profile-string-concat-leaves-metric
+        _leaves))
+    unit))
+
+(define (compiler-lower-profile-string-concat-note-runtime-call!
+  [_state : CompilerLowerState]) : unit
+  (cfg
+    (any compile-profile test)
+    (compiler-lower-profile-add!
+      _state
+      compiler-lower-profile-string-concat-runtime-calls-metric
+      1)
+    unit))
+
+(cfg
+  test
+  (define (compiler-lower-profile-job-isolation-tests-ok?) : bool
+    (let
+      [left-profile : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [right-profile : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [left : CompilerLowerState
+        (compiler-lower-state-new-with-intern-state-and-profile-state
+          (ci.intern-compat-state-new)
+          left-profile)]
+      [right : CompilerLowerState
+        (compiler-lower-state-new-with-intern-state-and-profile-state
+          (ci.intern-compat-state-new)
+          right-profile)]
+      (begin
+        (compiler-lower-profile-reset! left)
+        (compiler-lower-profile-reset! right)
+        (compiler-lower-profile-set!
+          left
+          compiler-lower-profile-start-ms-metric
+          11)
+        (compiler-lower-profile-set!
+          right
+          compiler-lower-profile-start-ms-metric
+          29)
+        (compiler-lower-profile-string-concat-note-tree! left 7)
+        (compiler-lower-profile-string-concat-note-runtime-call! right)
+        (compiler-lower-profile-string-concat-note-runtime-call! left)
+        (compiler-lower-profile-reset! right)
+        (and
+          (=
+            (compiler-lower-profile-value
+              left
+              compiler-lower-profile-start-ms-metric)
+            11)
+          (=
+            (compiler-lower-profile-value
+              left
+              compiler-lower-profile-string-concat-trees-metric)
+            1)
+          (=
+            (compiler-lower-profile-value
+              left
+              compiler-lower-profile-string-concat-leaves-metric)
+            7)
+          (=
+            (compiler-lower-profile-value
+              left
+              compiler-lower-profile-string-concat-runtime-calls-metric)
+            1)
+          (=
+            (compiler-lower-profile-value
+              right
+              compiler-lower-profile-start-ms-metric)
+            0)
+          (=
+            (compiler-lower-profile-value
+              right
+              compiler-lower-profile-string-concat-trees-metric)
+            0)
+          (=
+            (compiler-lower-profile-value
+              right
+              compiler-lower-profile-string-concat-runtime-calls-metric)
+            0))))))
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-string-concat-finish) : unit
+  (define (compiler-lower-profile-string-concat-finish
+    [state : CompilerLowerState]) : unit
     (begin
       (compiler-lower-profile-counter
         "string_concat.trees"
-        compiler-lower-profile-string-concat-trees)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-string-concat-trees-metric))
       (compiler-lower-profile-counter
         "string_concat.leaves"
-        compiler-lower-profile-string-concat-leaves)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-string-concat-leaves-metric))
       (compiler-lower-profile-counter
         "string_concat.runtime_calls"
-        compiler-lower-profile-string-concat-runtime-calls))))
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-string-concat-runtime-calls-metric)))))
 
 (cfg
   compile-profile
@@ -18989,9 +19195,8 @@
   (begin
     (cfg
       compile-profile
-      (set!
-        compiler-lower-profile-string-concat-runtime-calls
-        (+ compiler-lower-profile-string-concat-runtime-calls 1)))
+      (compiler-lower-profile-string-concat-note-runtime-call!
+        (lower-state-owner state)))
     (match (lower-state-alloc-var state)
       [(LowerAlloc.Alloc allocated var-id)
         (LowerExpr.Expr
@@ -19107,13 +19312,9 @@
   (begin
     (cfg
       compile-profile
-      (begin
-        (set!
-          compiler-lower-profile-string-concat-trees
-          (+ compiler-lower-profile-string-concat-trees 1))
-        (set!
-          compiler-lower-profile-string-concat-leaves
-          (+ compiler-lower-profile-string-concat-leaves exprs.len))))
+      (compiler-lower-profile-string-concat-note-tree!
+        (lower-state-owner state)
+        exprs.len))
     (lower-string-concat-exprs-batched
       ctx
       state
@@ -74590,7 +74791,7 @@
                       (begin
                         (cfg
                           compile-profile
-                          (compiler-lower-profile-detail-start))
+                          (compiler-lower-profile-detail-start lower-state))
                         (match (lower-function-escaping
                           (lower-global-shared-view decl-ctx)
                           cur-local-top-env
@@ -74635,6 +74836,7 @@
                                   (cfg
                                     compile-profile
                                     (compiler-lower-profile-detail-finish
+                                      lower-state
                                       "function"
                                       logical-name))
                                   (set! result (ResultLowerDecls.Err message))
@@ -74671,6 +74873,7 @@
                                     (cfg
                                       compile-profile
                                       (compiler-lower-profile-detail-finish
+                                        lower-state
                                         "function"
                                         logical-name))
                                     (ir.compiler-ir-function-builder-append-list!
@@ -74687,6 +74890,7 @@
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-detail-finish
+                                  lower-state
                                   "function"
                                   logical-name))
                               (set! result (ResultLowerDecls.Err message))
@@ -75066,7 +75270,8 @@
     ;; Clone-root discovery and checked typechecking can probe aggregate layout
     ;; with helper contexts before final lowering. Emitted code must use one
     ;; internally consistent layout view for all functions in this pass.
-    (tc_core.tc-agg-caches-reset!)
+    (tc_core.tc-agg-caches-reset-for-job!
+      (tc_core.tc-context-job-state (lower-global-shared-view ctx)))
     (tc_core.tc-nominal-owner-cache-reset!)
     (match program
       [(ast.AstProgram.Program decls-box)
@@ -75320,14 +75525,18 @@
                       (lower-global-shared-view all-clone-roots)
                       needs-specialization))])]
             (begin
-              (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
-              (cfg compile-profile (compiler-lower-profile-start))
+              (cfg
+                compile-profile
+                (compiler-lower-profile-finish lower-state "typecheck"))
+              (cfg compile-profile (compiler-lower-profile-start lower-state))
               (match checked-context
                 [(ResultLowerCheckedContext.Ok ctx top-env)
                   (begin
                     (cfg
                       compile-profile
-                      (compiler-lower-profile-finish "clone_augment_names"))
+                      (compiler-lower-profile-finish
+                        lower-state
+                        "clone_augment_names"))
                     (cfg
                       compile-profile
                       (compiler-lower-profile-pools "typecheck" pools))
@@ -75339,7 +75548,9 @@
                       (compiler-lower-profile-program-counts
                         "pre_decls"
                         checked-program))
-                    (cfg compile-profile (compiler-lower-profile-start))
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-start lower-state))
                     ;; Whole-program source typecheck is complete. Apply the
                     ;; declaration decisions retained by reachability; clone
                     ;; helpers are appended and marked by add-clone-roots.
@@ -75351,16 +75562,21 @@
                       (begin
                         (cfg
                           compile-profile
-                          (compiler-lower-profile-finish "prune_apply"))
+                          (compiler-lower-profile-finish
+                            lower-state
+                            "prune_apply"))
                         (cfg
                           compile-profile
                           (compiler-lower-profile-program-counts
                             "reachable"
                             pruned-program))
-                        (cfg compile-profile (compiler-lower-profile-start))
                         (cfg
                           compile-profile
-                          (compiler-lower-profile-string-concat-reset))
+                          (compiler-lower-profile-start lower-state))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-string-concat-reset
+                            lower-state))
                         (match (lower-compiler-program-checked-with-names-mode
                           lower-state
                           ctx
@@ -75383,13 +75599,16 @@
                             (begin
                               (cfg
                                 compile-profile
-                                (compiler-lower-profile-string-concat-finish))
+                                (compiler-lower-profile-string-concat-finish
+                                  lower-state))
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-name-finish))
                               (cfg
                                 compile-profile
-                                (compiler-lower-profile-finish "decls"))
+                                (compiler-lower-profile-finish
+                                  lower-state
+                                  "decls"))
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-ir-shape
@@ -75403,13 +75622,16 @@
                             (begin
                               (cfg
                                 compile-profile
-                                (compiler-lower-profile-string-concat-finish))
+                                (compiler-lower-profile-string-concat-finish
+                                  lower-state))
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-name-finish))
                               (cfg
                                 compile-profile
-                                (compiler-lower-profile-finish "decls"))
+                                (compiler-lower-profile-finish
+                                  lower-state
+                                  "decls"))
                               (ResultCompilerLower.Err
                                 (box
                                   (lower-diagnostic-with-fallback-path
@@ -75419,7 +75641,9 @@
                   (begin
                     (cfg
                       compile-profile
-                      (compiler-lower-profile-finish "clone_augment_names"))
+                      (compiler-lower-profile-finish
+                        lower-state
+                        "clone_augment_names"))
                     (ResultCompilerLower.Err (box (lower-diagnostic message))))])))]
         [(tc_core.ResultCompilerTypecheckChecked.Partial diag _ _ _)
           (begin
@@ -75432,7 +75656,9 @@
               (package_surface.package-surface-capture-abort!
                 "package surface: checked compilation was partial")
               unit)
-            (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
+            (cfg
+              compile-profile
+              (compiler-lower-profile-finish lower-state "typecheck"))
             (ResultCompilerLower.Err
               (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
         [(tc_core.ResultCompilerTypecheckChecked.Err diag)
@@ -75446,7 +75672,9 @@
               (package_surface.package-surface-capture-abort!
                 "package surface: checked compilation failed")
               unit)
-            (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
+            (cfg
+              compile-profile
+              (compiler-lower-profile-finish lower-state "typecheck"))
             (ResultCompilerLower.Err
               (box
                 (cdiag.compiler-diagnostic-list-first
@@ -75549,12 +75777,16 @@
           (lower-global-shared-view paths)
           (lower-global-shared-view pools))
         unit)
+      (cfg
+        (any compile-profile test)
+        (compiler-lower-profile-reset! lower-state)
+        unit)
       (cfg compile-profile (compiler-lower-profile-name-reset))
       (cfg
         (any compile-profile test)
         (spec.spec-profile-reset! (compiler-lower-state-profile lower-state))
         unit)
-      (cfg compile-profile (compiler-lower-profile-start))
+      (cfg compile-profile (compiler-lower-profile-start lower-state))
       (let
         [needs-specialization : bool
           (spec.compiler-specialize-needed-with-pools
@@ -75604,12 +75836,12 @@
               (begin
                 (cfg
                   compile-profile
-                  (compiler-lower-profile-finish "specialize"))
+                  (compiler-lower-profile-finish lower-state "specialize"))
                 (cfg
                   compile-profile
                   (compiler-lower-profile-specialization-counters
                     (compiler-lower-state-profile lower-state)))
-                (cfg compile-profile (compiler-lower-profile-start))
+                (cfg compile-profile (compiler-lower-profile-start lower-state))
                 (let
                   [prune-names : LowerNameEnv
                     (if needs-specialization
@@ -75644,8 +75876,10 @@
                       (begin
                         (cfg
                           compile-profile
-                          (compiler-lower-profile-finish "prune"))
-                        (cfg compile-profile (compiler-lower-profile-start))
+                          (compiler-lower-profile-finish lower-state "prune"))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-start lower-state))
                         ;; Capture stable retained declaration keys before optional
                         ;; pool compaction releases the reach-program AST.
                         (tc_core.tc-clone-root-collection-use! reach-program)
@@ -75739,7 +75973,7 @@
                   unit)
                 (cfg
                   compile-profile
-                  (compiler-lower-profile-finish "specialize"))
+                  (compiler-lower-profile-finish lower-state "specialize"))
                 (cfg
                   compile-profile
                   (compiler-lower-profile-specialization-counters
@@ -75770,7 +76004,7 @@
     [prev-module-id : i64 (lower-entry-main-module-id-current lower-state)]
     [selection : LowerMaybeEntryMainModule
       (lower-entry-main-selection-for-program
-        lower-state
+        (lower-global-shared-view lower-state)
         (lower-global-shared-view entry-path)
         (lower-global-shared-view program)
         (lower-global-shared-view paths))]
@@ -75863,8 +76097,12 @@
         lower-state
         (ci.intern-global-shared-view intern-state))
       (lower-comptime-error-ids-ensure! lower-state builtin-state)
-      (cfg compile-profile (compiler-lower-profile-start))
-      (tc_core.tc-agg-caches-reset!)
+      (cfg
+        (any compile-profile test)
+        (compiler-lower-profile-reset! lower-state)
+        unit)
+      (cfg compile-profile (compiler-lower-profile-start lower-state))
+      (tc_core.tc-agg-caches-reset-for-job! job-state)
       ;; Generate declaration families before macro expansion (see
       ;; typecheck-compiler-program-with-paths for why).
       (let
@@ -75956,9 +76194,15 @@
                 [_macro-handoff-profile-finish : unit
                   (cfg
                     compile-profile
-                    (compiler-lower-profile-finish "macro_handoff"))]
+                    (compiler-lower-profile-finish lower-state "macro_handoff"))]
                 (begin
-                  (cfg compile-profile (compiler-lower-profile-start))
+                  (cfg
+                    (any compile-profile test)
+                    (compiler-lower-profile-reset! lower-state)
+                    unit)
+                  (cfg
+                    compile-profile
+                    (compiler-lower-profile-start lower-state))
                   (let
                     [macro-intern-state : ci.InternCompatState
                       (ci.intern-global-shared-view intern-state)]
@@ -75981,7 +76225,9 @@
                           (begin
                             (cfg
                               compile-profile
-                              (compiler-lower-profile-finish "macro_expand"))
+                              (compiler-lower-profile-finish
+                                lower-state
+                                "macro_expand"))
                             (cfg
                               compile-profile
                               (compiler-lower-profile-pools
@@ -76019,7 +76265,7 @@
                                 (if checked-detach?
                                   (cfg
                                     compile-profile
-                                    (compiler-lower-profile-start))
+                                    (compiler-lower-profile-start lower-state))
                                   unit)]
                               [detached-compaction : ast.AstProgramCompaction
                                 (if detach-load-pools?
@@ -76113,7 +76359,9 @@
                           (begin
                             (cfg
                               compile-profile
-                              (compiler-lower-profile-finish "macro_expand"))
+                              (compiler-lower-profile-finish
+                                lower-state
+                                "macro_expand"))
                             (ResultCompilerLower.Err
                               (box
                                 (cdiag.compiler-diagnostic-copy
@@ -76124,7 +76372,7 @@
               (begin
                 (cfg
                   compile-profile
-                  (compiler-lower-profile-finish "macro_handoff"))
+                  (compiler-lower-profile-finish lower-state "macro_handoff"))
                 (ResultCompilerLower.Err
                   (box
                     (lower-diagnostic-with-fallback-path

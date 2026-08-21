@@ -7770,6 +7770,12 @@ explicit files, `fmt` and `lint` default to the nearest `typelisp.pkg`
 upward, and package lint discovers sources from that manifest. Dead-code
 lint keeps all library top-level declarations as API roots and reports
 unreachable binary-package declarations from entry/test/generated roots.
+Default lint reports `raw-arena-op` for call expressions that name
+`tl_arena_set`, `tl_arena_destroy`, `tl_region_reset`, or their unsafe
+`arena.set!`, `arena.destroy`, and `arena.rewind` wrappers outside the
+checked-in audited module allowlist. Identifier text in comments and string
+literals is not a call and does not trigger the rule. Prefer `in-arena`,
+`with-scratch`, `with-arena`, `rewind-safe!`, or `destroy-safe!` in new code.
 Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
 `--redundant-function-name` (redundant module-prefix names), and
 `--prefer-dotted-field` is a deprecated no-op retained for CLI compatibility

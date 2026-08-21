@@ -132,9 +132,10 @@ self-test, and return `42` only when the checks pass. Examples include
 Smoke drivers and their fixtures live under `src/tests/` (a reserved package
 test directory, excluded from the source/closure scan). They are built and run
 as exit-42 integration cases by `tests/integration/native-*.manifest`. Place a
-new smoke beside the others in `src/tests/`; import source modules by their
-direct relative path from that directory, such as `../compiler_parse_core.tl`,
-so the driver also runs from the repository root with `typelisp run`.
+new smoke beside the others in `src/tests/`; import source modules by canonical
+dotted identity, such as `compiler_parse_core`. A direct repository-root run
+must include `--stdlib-root src`, matching the native integration and
+compile-manifest runners.
 
 Use a smoke driver when the module is main-less or when CI needs to compile and
 run the module through the TypeLisp executable boundary.

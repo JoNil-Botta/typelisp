@@ -6758,40 +6758,25 @@
             (ast.ast-extern-link-input-list-eq? alinks blinks)
             (= aprovided bprovided))])]))
 
-(define (opt-extern-list-eq
+(define (opt-extern-seq-eq-at
   [type-segment-bases : i64]
-  [a : ir.CompilerIrExternList]
-  [b : ir.CompilerIrExternList]) : bool
-  (match a
-    [(ir.CompilerIrExternList.Nil)
-      (match b
-        [(ir.CompilerIrExternList.Nil) true]
-        [(ir.CompilerIrExternList.Array bseq)
-          (opt-extern-list-eq
-            type-segment-bases
-            ir.CompilerIrExternList.Nil
-            (ir.compiler-ir-extern-seq-to-list bseq))]
-        [_ false])]
-    [(ir.CompilerIrExternList.Cons ah at)
-      (match b
-        [(ir.CompilerIrExternList.Cons bh bt)
-          (and
-            (opt-extern-eq type-segment-bases ah bh)
-            (opt-extern-list-eq
-              type-segment-bases
-              (__tl-box-place at)
-              (__tl-box-place bt)))]
-        [(ir.CompilerIrExternList.Array bseq)
-          (opt-extern-list-eq
-            type-segment-bases
-            a
-            (ir.compiler-ir-extern-seq-to-list bseq))]
-        [_ false])]
-    [(ir.CompilerIrExternList.Array aseq)
-      (opt-extern-list-eq
+  [a : ir.CompilerIrExternSeq]
+  [b : ir.CompilerIrExternSeq]
+  [index : i64]) : bool
+  (or
+    (>= index a.len)
+    (and
+      (opt-extern-eq
         type-segment-bases
-        (ir.compiler-ir-extern-seq-to-list aseq)
-        b)]))
+        (ir.compiler-ir-extern-seq-ref a index)
+        (ir.compiler-ir-extern-seq-ref b index))
+      (opt-extern-seq-eq-at type-segment-bases a b (+ index 1)))))
+
+(define (opt-extern-seq-eq
+  [type-segment-bases : i64]
+  [a : ir.CompilerIrExternSeq]
+  [b : ir.CompilerIrExternSeq]) : bool
+  (and (= a.len b.len) (opt-extern-seq-eq-at type-segment-bases a b 0)))
 
 (define (opt-program-eq
   [type-segment-bases : i64]
@@ -6804,7 +6789,7 @@
           (and
             (opt-global-seq-eq type-segment-bases aglobals bglobals)
             (opt-function-list-eq type-segment-bases afunctions bfunctions)
-            (opt-extern-list-eq type-segment-bases aexterns bexterns))])]))
+            (opt-extern-seq-eq type-segment-bases aexterns bexterns))])]))
 
 (define (opt-expr-key-eq
   [type-segment-bases : i64]
@@ -88874,24 +88859,9 @@
 ;; runtime-prelude handlers), so seed them as roots for the function-level DCE.
 (define (opt-reach-add-provided-externs
   [index : OptFunctionIndex]
-  [externs : ir.CompilerIrExternList]
+  [externs : ir.CompilerIrExternSeq]
   [state : OptReachState (:consume)]) : OptReachState
-  (match externs
-    [(ir.CompilerIrExternList.Nil) state]
-    [(ir.CompilerIrExternList.Cons ext rest)
-      (match ext
-        [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided)
-          (opt-reach-add-provided-externs
-            index
-            (__tl-box-place rest)
-            (if provided
-              (match (opt-function-index-slot-id index name-id)
-                [(option_i64.Some slot)
-                  (opt-reach-add-function-slot state slot)]
-                [(option_i64.None) (opt-reach-add-function index state name-id)])
-              state))])]
-    [(ir.CompilerIrExternList.Array seq)
-      (opt-reach-add-provided-extern-seq index seq state 0)]))
+  (opt-reach-add-provided-extern-seq index externs state 0))
 
 (define (opt-reach-add-provided-extern-seq
   [index : OptFunctionIndex]
@@ -88985,7 +88955,7 @@
 (define (opt-prune-unreachable-program
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]
-  [externs : ir.CompilerIrExternList]) : OptPrunedProgram
+  [externs : ir.CompilerIrExternSeq]) : OptPrunedProgram
   (if (opt-function-list-defines? functions "main")
     (let
       [index : OptFunctionIndex (opt-function-index-build functions)]

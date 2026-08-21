@@ -4,6 +4,7 @@
 (import compiler_ast_types)
 (import compiler_diagnostic)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -178,10 +179,11 @@
         (ci.intern-compat-state-new))]
     [_package : unit
       (compiler_lower.compiler-lower-state-set-spmd-package!
-        state
+        (owned_view.compiler-owned-shared-view state)
         "collision_fixture")]
     [intern-state : ci.InternCompatState
-      (compiler_lower.compiler-lower-state-interns state)]
+      (compiler_lower.compiler-lower-state-interns
+        (owned_view.compiler-owned-shared-view state))]
     [classes : compiler_ast_types.AstSpmdParamClassList
       (compiler_ast_types.ast-spmd-param-class-list-new)]
     [canonical-handle : i64
@@ -192,7 +194,7 @@
     ;; linker spelling while retaining distinct identity and symbol handles.
     [identity-a : i64
       (compiler_lower.lower-spmd-package-structural-symbol
-        state
+        (owned_view.compiler-owned-shared-view state)
         "collision_fixture"
         "collision/helper"
         canonical-handle
@@ -200,12 +202,12 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
         1
-        classes
+        (owned_view.compiler-owned-shared-view classes)
         (compiler_ast_types.AstSpmdResultClass.Uniform)
         -1)]
     [identity-b : i64
       (compiler_lower.lower-spmd-package-structural-symbol
-        state
+        (owned_view.compiler-owned-shared-view state)
         "collision_fixture"
         "collision/helper"
         canonical-handle
@@ -213,7 +215,7 @@
         (compiler_ast_types.AstType.F64)
         (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
         1
-        classes
+        (owned_view.compiler-owned-shared-view classes)
         (compiler_ast_types.AstSpmdResultClass.Uniform)
         -1)]
     [expected-symbol : String
@@ -229,63 +231,63 @@
         -1)]
     [first : compiler_lower.LowerSpmdPackageSymbolRegistration
       (compiler_lower.lower-spmd-package-symbol-register
-        state
+        (owned_view.compiler-owned-shared-view state)
         (compiler_lower.lower-spmd-package-structural-linker-symbol
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-a)
         (compiler_lower.lower-spmd-package-structural-registration-key
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-a)
         (compiler_lower.lower-spmd-package-structural-identity
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-a))]
     [repeat : compiler_lower.LowerSpmdPackageSymbolRegistration
       (compiler_lower.lower-spmd-package-symbol-register
-        state
+        (owned_view.compiler-owned-shared-view state)
         (compiler_lower.lower-spmd-package-structural-linker-symbol
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-a)
         (compiler_lower.lower-spmd-package-structural-registration-key
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-a)
         (compiler_lower.lower-spmd-package-structural-identity
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-a))]
     [collision : compiler_lower.LowerSpmdPackageSymbolRegistration
       (compiler_lower.lower-spmd-package-symbol-register
-        state
+        (owned_view.compiler-owned-shared-view state)
         (compiler_lower.lower-spmd-package-structural-linker-symbol
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-b)
         (compiler_lower.lower-spmd-package-structural-registration-key
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-b)
         (compiler_lower.lower-spmd-package-structural-identity
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-b))]
     (and
       (not
         (=
           (compiler_lower.lower-spmd-package-structural-identity
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             identity-a)
           (compiler_lower.lower-spmd-package-structural-identity
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             identity-b)))
       (not
         (=
           (compiler_lower.lower-spmd-package-structural-linker-symbol
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             identity-a)
           (compiler_lower.lower-spmd-package-structural-linker-symbol
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             identity-b)))
       (=
         (compiler_lower.lower-spmd-package-structural-registration-key
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-a)
         (compiler_lower.lower-spmd-package-structural-registration-key
-          intern-state
+          (owned_view.compiler-owned-shared-view intern-state)
           identity-b))
       (match first
         [(compiler_lower.LowerSpmdPackageSymbolRegistration.New) true]
@@ -350,13 +352,19 @@
       (compiler_lower.compiler-lower-state-new-with-intern-state
         (ci.intern-compat-state-new))]
     [_package-a : unit
-      (compiler_lower.compiler-lower-state-set-spmd-package! state-a "pkg-a")]
+      (compiler_lower.compiler-lower-state-set-spmd-package!
+        (owned_view.compiler-owned-shared-view state-a)
+        "pkg-a")]
     [_package-b : unit
-      (compiler_lower.compiler-lower-state-set-spmd-package! state-b "pkg-a")]
+      (compiler_lower.compiler-lower-state-set-spmd-package!
+        (owned_view.compiler-owned-shared-view state-b)
+        "pkg-a")]
     [intern-a : ci.InternCompatState
-      (compiler_lower.compiler-lower-state-interns state-a)]
+      (compiler_lower.compiler-lower-state-interns
+        (owned_view.compiler-owned-shared-view state-a))]
     [intern-b : ci.InternCompatState
-      (compiler_lower.compiler-lower-state-interns state-b)]
+      (compiler_lower.compiler-lower-state-interns
+        (owned_view.compiler-owned-shared-view state-b))]
     [canonical-a : i64
       (ci.intern-compat-state-intern (&mut intern-a) "pkg-a/helper")]
     [canonical-b : i64
@@ -371,7 +379,7 @@
         compiler_ast_types.AstSpmdParamClass.Varying)]
     [base : i64
       (compiler_lower.lower-spmd-package-structural-symbol
-        state-a
+        (owned_view.compiler-owned-shared-view state-a)
         "pkg-a"
         "pkg-a/helper"
         canonical-a
@@ -379,12 +387,12 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         8
-        varying-uniform
+        (owned_view.compiler-owned-shared-view varying-uniform)
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
     [repeat : i64
       (compiler_lower.lower-spmd-package-structural-symbol
-        state-a
+        (owned_view.compiler-owned-shared-view state-a)
         "pkg-a"
         "pkg-a/helper"
         canonical-a
@@ -392,12 +400,12 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         8
-        varying-uniform
+        (owned_view.compiler-owned-shared-view varying-uniform)
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
     [different-lanes : i64
       (compiler_lower.lower-spmd-package-structural-symbol
-        state-a
+        (owned_view.compiler-owned-shared-view state-a)
         "pkg-a"
         "pkg-a/helper"
         canonical-a
@@ -405,12 +413,12 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         16
-        varying-uniform
+        (owned_view.compiler-owned-shared-view varying-uniform)
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
     [different-args : i64
       (compiler_lower.lower-spmd-package-structural-symbol
-        state-a
+        (owned_view.compiler-owned-shared-view state-a)
         "pkg-a"
         "pkg-a/helper"
         canonical-a
@@ -423,7 +431,7 @@
         0)]
     [different-result : i64
       (compiler_lower.lower-spmd-package-structural-symbol
-        state-a
+        (owned_view.compiler-owned-shared-view state-a)
         "pkg-a"
         "pkg-a/helper"
         canonical-a
@@ -431,12 +439,12 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         8
-        varying-uniform
+        (owned_view.compiler-owned-shared-view varying-uniform)
         (compiler_ast_types.AstSpmdResultClass.Uniform)
         0)]
     [other-state : i64
       (compiler_lower.lower-spmd-package-structural-symbol
-        state-b
+        (owned_view.compiler-owned-shared-view state-b)
         "pkg-a"
         "pkg-a/helper"
         canonical-b
@@ -444,37 +452,37 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         8
-        varying-uniform
+        (owned_view.compiler-owned-shared-view varying-uniform)
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
     [source-name : i64 (ci.intern-generated-canonical-name "value")]
     [private-param : i64
       (compiler_lower.lower-spmd-private-param-symbol
-        state-a
+        (owned_view.compiler-owned-shared-view state-a)
         source-name
         (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
         (compiler_lower.CompilerLowerMode.Avx2))]
     [private-param-repeat : i64
       (compiler_lower.lower-spmd-private-param-symbol
-        state-a
+        (owned_view.compiler-owned-shared-view state-a)
         source-name
         (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
         (compiler_lower.CompilerLowerMode.Avx2))]
     [private-param-mask : i64
       (compiler_lower.lower-spmd-private-param-symbol
-        state-a
+        (owned_view.compiler-owned-shared-view state-a)
         source-name
         (compiler_ir_types.CompilerIrSpmdValueClass.Mask)
         (compiler_lower.CompilerLowerMode.Avx2))]
     [private-param-text : String
       (compiler_lower.lower-spmd-private-param-name
-        state-a
+        (owned_view.compiler-owned-shared-view state-a)
         source-name
         (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
         (compiler_lower.CompilerLowerMode.Avx2))]
     [private-helper : i64
       (compiler_lower.lower-spmd-private-helper-symbol
-        state-a
+        (owned_view.compiler-owned-shared-view state-a)
         (ci.intern-compat-state-intern (&mut intern-a) "__tl_lambda_fixture_0")
         (compiler_ast_types.AstType.Bool)
         true)]
@@ -504,78 +512,123 @@
         (=
           (string.string-length
             (ci.intern-compat-state-str
-              intern-a
-              (compiler-lower-spmd-test-identity state-a base)))
+              (owned_view.compiler-owned-shared-view intern-a)
+              (compiler-lower-spmd-test-identity
+                (owned_view.compiler-owned-shared-view state-a)
+                base)))
           0)
         (=
           (string.string-length
             (ci.intern-compat-state-str
-              intern-a
-              (compiler-lower-spmd-test-symbol state-a base)))
+              (owned_view.compiler-owned-shared-view intern-a)
+              (compiler-lower-spmd-test-symbol
+                (owned_view.compiler-owned-shared-view state-a)
+                base)))
           0)
         (=
           (string.string-length
-            (ci.intern-compat-state-str intern-a private-helper))
+            (ci.intern-compat-state-str
+              (owned_view.compiler-owned-shared-view intern-a)
+              private-helper))
           0))]
     (begin
-      (compiler_lower.lower-materialize-generated-role-symbols! state-a)
-      (compiler_lower.lower-materialize-generated-role-symbols! state-b)
+      (compiler_lower.lower-materialize-generated-role-symbols!
+        (owned_view.compiler-owned-shared-view state-a))
+      (compiler_lower.lower-materialize-generated-role-symbols!
+        (owned_view.compiler-owned-shared-view state-b))
       (let
         [old-other-symbol : i64
-          (compiler-lower-spmd-test-symbol state-b other-state)]
+          (compiler-lower-spmd-test-symbol
+            (owned_view.compiler-owned-shared-view state-b)
+            other-state)]
         [other-rendered-ok : bool
           (string.eq
             (ci.intern-compat-state-str
-              intern-b
-              (compiler-lower-spmd-test-symbol state-b other-state))
+              (owned_view.compiler-owned-shared-view intern-b)
+              (compiler-lower-spmd-test-symbol
+                (owned_view.compiler-owned-shared-view state-b)
+                other-state))
             expected-symbol)]
         (begin
-          (compiler_lower.compiler-lower-state-reset! state-b)
-          (ci.intern-compat-state-reset! intern-b)
+          (compiler_lower.compiler-lower-state-reset!
+            (owned_view.compiler-owned-shared-view state-b))
+          (ci.intern-compat-state-reset! (&mut intern-b))
           (and
             unrendered
             (=
-              (compiler-lower-spmd-test-identity state-a base)
-              (compiler-lower-spmd-test-identity state-a repeat))
+              (compiler-lower-spmd-test-identity
+                (owned_view.compiler-owned-shared-view state-a)
+                base)
+              (compiler-lower-spmd-test-identity
+                (owned_view.compiler-owned-shared-view state-a)
+                repeat))
             (=
-              (compiler-lower-spmd-test-symbol state-a base)
-              (compiler-lower-spmd-test-symbol state-a repeat))
+              (compiler-lower-spmd-test-symbol
+                (owned_view.compiler-owned-shared-view state-a)
+                base)
+              (compiler-lower-spmd-test-symbol
+                (owned_view.compiler-owned-shared-view state-a)
+                repeat))
             (=
-              (compiler-lower-spmd-test-registration-key state-a base)
-              (compiler-lower-spmd-test-registration-key state-a repeat))
+              (compiler-lower-spmd-test-registration-key
+                (owned_view.compiler-owned-shared-view state-a)
+                base)
+              (compiler-lower-spmd-test-registration-key
+                (owned_view.compiler-owned-shared-view state-a)
+                repeat))
             (not
               (=
-                (compiler-lower-spmd-test-identity state-a base)
-                (compiler-lower-spmd-test-identity state-a different-lanes)))
+                (compiler-lower-spmd-test-identity
+                  (owned_view.compiler-owned-shared-view state-a)
+                  base)
+                (compiler-lower-spmd-test-identity
+                  (owned_view.compiler-owned-shared-view state-a)
+                  different-lanes)))
             (not
               (=
-                (compiler-lower-spmd-test-identity state-a base)
-                (compiler-lower-spmd-test-identity state-a different-args)))
+                (compiler-lower-spmd-test-identity
+                  (owned_view.compiler-owned-shared-view state-a)
+                  base)
+                (compiler-lower-spmd-test-identity
+                  (owned_view.compiler-owned-shared-view state-a)
+                  different-args)))
             (not
               (=
-                (compiler-lower-spmd-test-identity state-a base)
-                (compiler-lower-spmd-test-identity state-a different-result)))
+                (compiler-lower-spmd-test-identity
+                  (owned_view.compiler-owned-shared-view state-a)
+                  base)
+                (compiler-lower-spmd-test-identity
+                  (owned_view.compiler-owned-shared-view state-a)
+                  different-result)))
             (not
               (=
-                (compiler-lower-spmd-test-identity-components state-a base)
                 (compiler-lower-spmd-test-identity-components
-                  state-b
+                  (owned_view.compiler-owned-shared-view state-a)
+                  base)
+                (compiler-lower-spmd-test-identity-components
+                  (owned_view.compiler-owned-shared-view state-b)
                   other-state)))
             (= private-param private-param-repeat)
             (not (= private-param private-param-mask))
             (string.eq private-param-text "__tl_spmd_varying_arg_avx2_value")
             (string.eq
-              (ci.intern-compat-state-str intern-a private-helper)
+              (ci.intern-compat-state-str
+                (owned_view.compiler-owned-shared-view intern-a)
+                private-helper)
               "__tl_spmd_ret_mask___tl_lambda_fixture_0")
             (string.eq
               (ci.intern-compat-state-str
-                intern-a
-                (compiler-lower-spmd-test-identity state-a base))
+                (owned_view.compiler-owned-shared-view intern-a)
+                (compiler-lower-spmd-test-identity
+                  (owned_view.compiler-owned-shared-view state-a)
+                  base))
               expected-identity)
             (string.eq
               (ci.intern-compat-state-str
-                intern-a
-                (compiler-lower-spmd-test-symbol state-a base))
+                (owned_view.compiler-owned-shared-view intern-a)
+                (compiler-lower-spmd-test-symbol
+                  (owned_view.compiler-owned-shared-view state-a)
+                  base))
               expected-symbol)
             other-rendered-ok
             (cfg
@@ -583,19 +636,19 @@
               (and
                 (=
                   (compiler_lower.compiler-lower-profile-spmd-identity-serializations-value
-                    state-a)
+                    (owned_view.compiler-owned-shared-view state-a))
                   4)
                 (=
                   (compiler_lower.compiler-lower-profile-spmd-stable-hash-computations-value
-                    state-a)
+                    (owned_view.compiler-owned-shared-view state-a))
                   4)
                 (=
                   (compiler_lower.compiler-lower-profile-spmd-render-cache-misses-value
-                    state-a)
+                    (owned_view.compiler-owned-shared-view state-a))
                   4)
                 (>=
                   (compiler_lower.compiler-lower-profile-spmd-render-cache-hits-value
-                    state-a)
+                    (owned_view.compiler-owned-shared-view state-a))
                   5))
               true)
             (not

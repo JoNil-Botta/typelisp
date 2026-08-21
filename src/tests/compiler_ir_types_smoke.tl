@@ -391,13 +391,27 @@
         1
         "second-global")
       (compiler-ir-smoke-global-seq-name-at? cloned-globals 0 "first-global")
-      (compiler-ir-smoke-extern-seq-count? compact-externs 2)
-      (compiler-ir-smoke-extern-seq-name-at? compact-externs 0 "first-extern")
+      (compiler-ir-smoke-extern-seq-count?
+        (compiler_ir_types.compiler-ir-global-shared-view compact-externs)
+        2)
+      (compiler-ir-smoke-extern-seq-name-at?
+        (compiler_ir_types.compiler-ir-global-shared-view compact-externs)
+        0
+        "first-extern")
       (compiler-ir-smoke-extern-seq-name-at? compact-externs 1 "second-extern")
-      (compiler-ir-smoke-extern-seq-name-at? cloned-externs 0 "first-extern")
+      (compiler-ir-smoke-extern-seq-name-at?
+        (compiler_ir_types.compiler-ir-global-shared-view cloned-externs)
+        0
+        "first-extern")
       (compiler-ir-smoke-extern-seq-name-at? cloned-externs 1 "second-extern")
-      (= (compiler_ir_types.compiler-ir-summary-globals summary) 2)
-      (= (compiler_ir_types.compiler-ir-summary-functions summary) 0)
+      (=
+        (compiler_ir_types.compiler-ir-summary-globals
+          (compiler_ir_types.compiler-ir-global-shared-view summary))
+        2)
+      (=
+        (compiler_ir_types.compiler-ir-summary-functions
+          (compiler_ir_types.compiler-ir-global-shared-view summary))
+        0)
       (= (compiler_ir_types.compiler-ir-summary-externs summary) 2))))
 
 (define (compiler-ir-smoke-function-seq-roundtrip-ok?) : bool
@@ -450,7 +464,7 @@
       (compiler_ir_types.compiler-ir-program-summary
         (compiler_ir_types.CompilerIrProgram.Program
           (compiler_ir_types.compiler-ir-global-seq-empty)
-          compact
+          (compiler_ir_types.compiler-ir-global-shared-view compact)
           (compiler_ir_types.compiler-ir-extern-seq-empty)))]
     (and
       (compiler-ir-smoke-function-list-compact-kind?
@@ -471,8 +485,14 @@
         (compiler_ir_types.compiler-ir-function-list-instruction-count
           (compiler_ir_types.compiler-ir-global-shared-view compact))
         4)
-      (= (compiler_ir_types.compiler-ir-summary-functions summary) 2)
-      (= (compiler_ir_types.compiler-ir-summary-blocks summary) 2)
+      (=
+        (compiler_ir_types.compiler-ir-summary-functions
+          (compiler_ir_types.compiler-ir-global-shared-view summary))
+        2)
+      (=
+        (compiler_ir_types.compiler-ir-summary-blocks
+          (compiler_ir_types.compiler-ir-global-shared-view summary))
+        2)
       (= (compiler_ir_types.compiler-ir-summary-instructions summary) 4))))
 
 (define (compiler-ir-smoke-reversed-compaction-ok?) : bool
@@ -644,7 +664,10 @@
       (match (compiler_ir_types.compiler-ir-global-shared-view instr)
         [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
           (let
-            [stored-args (__tl-project-field (__tl-box-place payload-box) args)]
+            [stored-args
+              (compiler_ir_types.compiler-ir-box-field-shared-view
+                payload-box
+                args)]
             (and (= stored-args.len 2) (= (array-length stored-args.slots) 2)))]
         [_ false])
       (compiler_ir_types.compiler-ir-effect-is?

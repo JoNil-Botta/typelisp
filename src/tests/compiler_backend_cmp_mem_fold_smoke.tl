@@ -18,7 +18,9 @@
 (define cmp-mem-fold-smoke-n : i64
   257)
 
-(define (cmp-mem-fold-smoke-fill [values : (Array i64)] [seed : i64]) : unit
+(define (cmp-mem-fold-smoke-fill
+  [values : (&mut values (Array i64))]
+  [seed : i64]) : unit
   (let
     [i : i64 0]
     [state : i64 seed]
@@ -31,7 +33,9 @@
 ;; The folded shape: `(= (array-ref flags i) 1)` and `(>= (array-ref marks i) 0)`
 ;; are single-use element loads feeding compares that feed branches, which is
 ;; the M6-B/M6-D shape (`cmpq $1, (base,index,8)`).
-(define (cmp-mem-fold-smoke-folded [flags : (Array i64)] [marks : (Array i64)]) : i64
+(define (cmp-mem-fold-smoke-folded
+  [flags : (& flags (Array i64))]
+  [marks : (& marks (Array i64))]) : i64
   (let
     [i : i64 0]
     [total : i64 0]
@@ -47,8 +51,8 @@
 ;; The refused shape: each element is bound to a local that is read twice, so
 ;; the single-use gate declines and the ordinary load-then-compare is emitted.
 (define (cmp-mem-fold-smoke-unfolded
-  [flags : (Array i64)]
-  [marks : (Array i64)]) : i64
+  [flags : (& flags (Array i64))]
+  [marks : (& marks (Array i64))]) : i64
   (let
     [i : i64 0]
     [total : i64 0]
@@ -67,9 +71,9 @@
 ;; The GAP8/GAP8-B shape: `uses | (live-out & ~defs)` over word arrays, with the
 ;; single-use element loads sitting on BOTH sides of the commutative ops.
 (define (cmp-mem-fold-smoke-words-folded
-  [uses : (Array i64)]
-  [live : (Array i64)]
-  [defs : (Array i64)]) : i64
+  [uses : (& uses (Array i64))]
+  [live : (& live (Array i64))]
+  [defs : (& defs (Array i64))]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -87,9 +91,9 @@
       acc)))
 
 (define (cmp-mem-fold-smoke-words-unfolded
-  [uses : (Array i64)]
-  [live : (Array i64)]
-  [defs : (Array i64)]) : i64
+  [uses : (& uses (Array i64))]
+  [live : (& live (Array i64))]
+  [defs : (& defs (Array i64))]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -118,10 +122,10 @@
 ;; Each op reads a DIFFERENT array so every load stays single use; four reads of
 ;; one element would be CSE'd into a multi-use load, which retires the fold.
 (define (cmp-mem-fold-smoke-acc-folded
-  [a : (Array i64)]
-  [b : (Array i64)]
-  [c : (Array i64)]
-  [d : (Array i64)]
+  [a : (& a (Array i64))]
+  [b : (& b (Array i64))]
+  [c : (& c (Array i64))]
+  [d : (& d (Array i64))]
   [seed : i64]) : i64
   (let
     [i : i64 0]
@@ -137,10 +141,10 @@
       acc)))
 
 (define (cmp-mem-fold-smoke-acc-unfolded
-  [a : (Array i64)]
-  [b : (Array i64)]
-  [c : (Array i64)]
-  [d : (Array i64)]
+  [a : (& a (Array i64))]
+  [b : (& b (Array i64))]
+  [c : (& c (Array i64))]
+  [d : (& d (Array i64))]
   [seed : i64]) : i64
   (let
     [i : i64 0]
@@ -163,8 +167,8 @@
 ;; Indirect indexing: the loaded value becomes the NEXT access's index, so its
 ;; bounds check and the compare behind it must keep reading the same element.
 (define (cmp-mem-fold-smoke-indirect
-  [index : (Array i64)]
-  [table : (Array i64)]) : i64
+  [index : (& index (Array i64))]
+  [table : (& table (Array i64))]) : i64
   (let
     [i : i64 0]
     [total : i64 0]
@@ -187,12 +191,12 @@
     [defs : (Array i64) (make-array i64 cmp-mem-fold-smoke-n)]
     [index : (Array i64) (make-array i64 cmp-mem-fold-smoke-n)]
     (begin
-      (cmp-mem-fold-smoke-fill flags 1)
-      (cmp-mem-fold-smoke-fill marks 2)
-      (cmp-mem-fold-smoke-fill uses 3)
-      (cmp-mem-fold-smoke-fill live 4)
-      (cmp-mem-fold-smoke-fill defs 5)
-      (cmp-mem-fold-smoke-fill index 6)
+      (cmp-mem-fold-smoke-fill (&mut flags) 1)
+      (cmp-mem-fold-smoke-fill (&mut marks) 2)
+      (cmp-mem-fold-smoke-fill (&mut uses) 3)
+      (cmp-mem-fold-smoke-fill (&mut live) 4)
+      (cmp-mem-fold-smoke-fill (&mut defs) 5)
+      (cmp-mem-fold-smoke-fill (&mut index) 6)
       ;; `flags` holds masked pseudorandom values; force a healthy population of
       ;; the literal the compare folds against.
       (let
@@ -203,26 +207,41 @@
             (set! i (+ i 1)))))
       (if (not
         (=
-          (cmp-mem-fold-smoke-folded flags marks)
-          (cmp-mem-fold-smoke-unfolded flags marks)))
+          (cmp-mem-fold-smoke-folded (& flags) (& marks))
+          (cmp-mem-fold-smoke-unfolded (& flags) (& marks))))
         (io.panic "cmp-mem fold: compare parity mismatch")
         unit)
       (if (not
         (=
-          (cmp-mem-fold-smoke-words-folded uses live defs)
-          (cmp-mem-fold-smoke-words-unfolded uses live defs)))
+          (cmp-mem-fold-smoke-words-folded (& uses) (& live) (& defs))
+          (cmp-mem-fold-smoke-words-unfolded (& uses) (& live) (& defs))))
         (io.panic "cmp-mem fold: word ALU parity mismatch")
         unit)
       (if (not
         (=
-          (cmp-mem-fold-smoke-acc-folded uses live defs marks 12345)
-          (cmp-mem-fold-smoke-acc-unfolded uses live defs marks 12345)))
+          (cmp-mem-fold-smoke-acc-folded
+            (& uses)
+            (& live)
+            (& defs)
+            (& marks)
+            12345)
+          (cmp-mem-fold-smoke-acc-unfolded
+            (& uses)
+            (& live)
+            (& defs)
+            (& marks)
+            12345)))
         (io.panic "cmp-mem fold: accumulator ALU parity mismatch")
         unit)
       (io.println
         "cmp-mem fold smoke: compares={} words={} indirect={} acc={}"
-        (cmp-mem-fold-smoke-folded flags marks)
-        (cmp-mem-fold-smoke-words-folded uses live defs)
-        (cmp-mem-fold-smoke-indirect index flags)
-        (cmp-mem-fold-smoke-acc-folded uses live defs marks 12345))
+        (cmp-mem-fold-smoke-folded (& flags) (& marks))
+        (cmp-mem-fold-smoke-words-folded (& uses) (& live) (& defs))
+        (cmp-mem-fold-smoke-indirect (& index) (& flags))
+        (cmp-mem-fold-smoke-acc-folded
+          (& uses)
+          (& live)
+          (& defs)
+          (& marks)
+          12345))
       0)))

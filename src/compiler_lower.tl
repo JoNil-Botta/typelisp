@@ -68829,7 +68829,7 @@
     ;; Clone-root discovery and checked typechecking can probe aggregate layout
     ;; with helper contexts before final lowering. Emitted code must use one
     ;; internally consistent layout view for all functions in this pass.
-    (tc_core.tc-agg-caches-reset!)
+    (tc_core.tc-agg-caches-reset-for-job! (tc_core.tc-context-job-state ctx))
     (tc_core.tc-nominal-owner-cache-reset!)
     (match program
       [(ast.AstProgram.Program decls-box)
@@ -69653,7 +69653,7 @@
       (compiler-lower-profile-reset! lower-state)
       unit)
     (cfg compile-profile (compiler-lower-profile-start lower-state))
-    (tc_core.tc-agg-caches-reset!)
+    (tc_core.tc-agg-caches-reset-for-job! job-state)
     ;; Generate declaration families before macro expansion (see
     ;; typecheck-compiler-program-with-paths for why).
     (let

@@ -4730,10 +4730,15 @@
           (owned_view.compiler-owned-shared-view tests-prefix)
           "safety"))
       (tltest-string-prefix?
+        (owned_view.compiler-owned-shared-view normalized)
+        (tltest-package-tests-subdir-prefix
+          (owned_view.compiler-owned-shared-view tests-prefix)
+          "spmd"))
+      (tltest-string-prefix?
         normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
-          "spmd")))))
+          "tlci")))))
 
 (define (tltest-package-integration-source?
   [source : String]
@@ -4788,6 +4793,10 @@
         (tltest-package-integration-source?
           "repo/tests/spmd/masked_if_i64.tl"
           (owned_view.compiler-owned-shared-view tests-prefix)))
+      (not
+        (tltest-package-integration-source?
+          "repo/tests/tlci/corpus_emit.tl"
+          (owned_view.compiler-owned-shared-view tests-prefix)))
       (tltest-package-integration-source?
         "repo/tests/integration/hello.tl"
         (owned_view.compiler-owned-shared-view tests-prefix))
@@ -4799,6 +4808,9 @@
         (owned_view.compiler-owned-shared-view tests-prefix))
       (tltest-package-integration-source?
         "repo/tests/diagnostics_extra/example.tl"
+        (owned_view.compiler-owned-shared-view tests-prefix))
+      (tltest-package-integration-source?
+        "repo/tests/tlci_extra/example.tl"
         (owned_view.compiler-owned-shared-view tests-prefix)))))
 
 (test

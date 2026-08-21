@@ -21,8 +21,9 @@
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 ;; Importing the typechecker should leave large optional/cache tables empty.
-;; Their first-use storage belongs to a dedicated persistent arena, not to the
-;; transient arena active at the lookup that happened to initialize them. The
+;; Remaining global tables use their dedicated persistent arena; job-owned
+;; tables use their compiler job's lifetime arena. Neither may retain the
+;; transient arena active at the lookup that happened to initialize it. The
 ;; inlay collector is job-owned and is covered by its explicit isolation test.
 (define (compiler-typecheck-lazy-table-storage-ok?) : bool
   (tc_core.tc-lazy-table-storage-ok?))

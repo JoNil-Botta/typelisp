@@ -579,6 +579,27 @@
       handle
       (InternMacroLocalIdentity raw))))
 
+;; Render boundary for mixed source/syntax ids. Arithmetic structural families
+;; remain self-describing through compiler_intern; table-backed macro identities
+;; must prove ownership in the explicit session before exposing their source
+;; spelling. Unknown, stale, and wrong-owner handles remain total.
+(define (intern-structural-session-syntax-source-name-id-or
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]
+  [fallback : i64]) : i64
+  (let
+    [direct : i64 (ci.intern-syntax-source-name-id-or raw -1)]
+    (if (>= direct 0)
+      direct
+      (match (intern-structural-session-macro-global-record-for-raw handle raw)
+        [(InternMaybeMacroGlobalRecord.Some record) record.source-name-id]
+        [(InternMaybeMacroGlobalRecord.No)
+          (match (intern-structural-session-macro-local-record-for-raw
+            handle
+            raw)
+            [(InternMaybeMacroLocalRecord.Some record) record.source-name-id]
+            [(InternMaybeMacroLocalRecord.No) fallback])]))))
+
 (define (intern-structural-session-arena-phase-identity-for-components
   [handle : InternStructuralSessionHandle]
   [role : i64]

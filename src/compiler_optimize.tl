@@ -30,6 +30,7 @@
 (import compiler_profile_state as profile_state)
 (import compiler_builtin_ids as cbi)
 (import compiler_ir_types as ir)
+(import compiler_intern_state as cis)
 (import compiler_ast_types as ast)
 
 ;; The inliner's measured-plan check (opt-inline-checked-*) reads one register
@@ -64,6 +65,7 @@
   ;; Borrowed from the ambient compile job by compiler-opt-debug-configure!.
   ;; That job must outlive every observation and result read for this session.
   (dump-arena arena.Arena)
+  (structural-session cis.InternStructuralSessionHandle)
   (dump-pass String)
   (dump-buf text_buf.TextBuf)
   (verify-error String))
@@ -84,7 +86,12 @@
 (define compiler-opt-owned-state : CompilerOptOwnedState
   (CompilerOptOwnedState
     (OptInlineOwnedState (arena.Arena 0) (array.make-array i64 0))
-    (OptDebugState (arena.Arena 0) "" (text_buf.empty) "")))
+    (OptDebugState
+      (arena.Arena 0)
+      (cis.InternStructuralSessionHandle 0)
+      ""
+      (text_buf.empty)
+      "")))
 
 ;; Serial compatibility reads intentionally take shallow shared views of this
 ;; process-global aggregate. Production optimizer work is not re-entrant.
@@ -116,6 +123,7 @@
   (set! compiler-opt-debug-suppressed? on))
 
 (define (compiler-opt-debug-configure!
+  [structural-session : cis.InternStructuralSessionHandle]
   [trace-passes : bool]
   [dump-pass : String]
   [verify-ir : bool]) : unit
@@ -132,7 +140,12 @@
       compiler-opt-owned-state
       (CompilerOptOwnedState
         (OptInlineOwnedState (arena.Arena 0) (array.make-array i64 0))
-        (OptDebugState (arena.current) dump-pass (text_buf.empty) "")))))
+        (OptDebugState
+          (arena.current)
+          structural-session
+          dump-pass
+          (text_buf.empty)
+          "")))))
 
 (define (compiler-opt-debug-dump-result) : String
   (let
@@ -198,12 +211,16 @@
                       " @"
                       (ir.compiler-ir-symbol-text name)
                       "\n"
-                      (ir.compiler-ir-function-render type-segment-bases func)))]
+                      (ir.compiler-ir-function-render
+                        state.structural-session
+                        type-segment-bases
+                        func)))]
                 (__tl-project-set-field
                   compiler-opt-owned-state
                   debug-state
                   (OptDebugState
                     state.dump-arena
+                    state.structural-session
                     state.dump-pass
                     next-buf
                     state.verify-error))))
@@ -11334,6 +11351,7 @@
           debug-state
           (OptDebugState
             state.dump-arena
+            state.structural-session
             state.dump-pass
             state.dump-buf
             message)))

@@ -23,6 +23,7 @@
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_diagnostic)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_load)
 (cfg embedded-stdlib-tlci (import compiler_build_identity as build_identity))
 (cfg
@@ -740,6 +741,10 @@
     (arena.Arena (compiler-driver-state-surface-arena state))
     (ci.intern-source-name-session-handle-from-state
       (compiler-driver-state-owned-interns state))))
+
+(define (compiler-driver-state-structural-session [state : CompilerDriverState]) : cis.InternStructuralSessionHandle
+  (cis.intern-structural-session-handle-from-source-names
+    (compiler-driver-state-source-name-session state)))
 
 (cfg
   test
@@ -4950,6 +4955,7 @@
     opt-level))
 
 (define (compiler-driver-ir-text-result
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [optimized : compiler_ir_types.CompilerIrProgram]
   [dump-pass : String]) : ResultCompilerDriver
@@ -4967,6 +4973,7 @@
           (if (> (string.string-length dump-pass) 0)
             (compiler_optimize.compiler-opt-debug-dump-result)
             (compiler_ir_types.compiler-ir-program-render
+              structural-session
               type-segment-bases
               optimized))]
         (if (and
@@ -5007,6 +5014,10 @@
               (ResultCompilerDriver.Err
                 (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
               (compiler-driver-ir-text-result
+                (cis.intern-structural-session-handle-from-source-names
+                  (compiler_typecheck_core.tc-macro-state-source-names
+                    (compiler_typecheck_core.tc-job-state-macro-state
+                      typecheck-state)))
                 (compiler_ast_types.ast-node-pool-context-type-segment-bases
                   pools)
                 optimized

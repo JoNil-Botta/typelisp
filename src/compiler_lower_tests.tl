@@ -8,6 +8,7 @@
 (import compiler_ir_types)
 (import compiler_ast_types)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_parse_core)
 (import compiler_typecheck_core)
 (import compiler_symbols)
@@ -13322,12 +13323,14 @@
 ;; hygiene-local ids (post-splice trees), structural-local ids, and
 ;; composite keys, including bound-name shadowing.
 (define (compiler-lower-compat-prescan-id-parity?
+  [session : cis.InternStructuralSessionHandle]
   [expr-bases : i64]
   [tree : compiler_ast_types.AstExpr]
   [when-id : i64]
   [unless-id : i64]) : bool
   (=
     (compiler_typecheck_core.tc-expr-uses-free-source-id?
+      session
       expr-bases
       tree
       when-id
@@ -13372,6 +13375,11 @@
     [when-id : i64 (ci.intern "when")]
     [unless-id : i64 (ci.intern "unless")]
     [x-id : i64 (ci.intern "x")]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-state))]
     [hygiene-ctx : compiler_typecheck_core.MacroHygieneContext
       (compiler_typecheck_core.MacroHygieneContext
         (ci.intern "test-macro")
@@ -13379,9 +13387,17 @@
         1360
         (compiler_symbols.compiler-symbols-empty))]
     [hyg-when-id : i64
-      (compiler_typecheck_core.macro-hygiene-local-id hygiene-ctx 1 when-id)]
+      (compiler_typecheck_core.macro-hygiene-local-id
+        session
+        hygiene-ctx
+        1
+        when-id)]
     [hyg-x-id : i64
-      (compiler_typecheck_core.macro-hygiene-local-id hygiene-ctx 1 x-id)]
+      (compiler_typecheck_core.macro-hygiene-local-id
+        session
+        hygiene-ctx
+        1
+        x-id)]
     [struct-when-id : i64 (ci.intern-structural-local-id 1 when-id)]
     [composite-id : i64
       (compiler_typecheck_core.tc-module-name-id-by-id
@@ -13397,64 +13413,80 @@
     [x-var : i64 (push-var x-id)]
     (and
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var when-id)
         when-id
         unless-id)
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var x-id)
         when-id
         unless-id)
-      (compiler-lower-compat-prescan-id-parity?
+      (compiler_typecheck_core.tc-expr-uses-free-source-id?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var hyg-when-id)
         when-id
-        unless-id)
+        unless-id
+        compiler_typecheck_core.TcNameIdList.Nil)
+      (not
+        (compiler_typecheck_core.tc-expr-uses-free-source-id?
+          session
+          expr-bases
+          (compiler_ast_types.AstExpr.Var hyg-x-id)
+          when-id
+          unless-id
+          compiler_typecheck_core.TcNameIdList.Nil))
       (compiler-lower-compat-prescan-id-parity?
-        expr-bases
-        (compiler_ast_types.AstExpr.Var hyg-x-id)
-        when-id
-        unless-id)
-      (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var struct-when-id)
         when-id
         unless-id)
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var composite-id)
         when-id
         unless-id)
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var unless-id)
         when-id
         unless-id)
       ;; A pool binder named `when` shadows a pool use of `when`.
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler-lower-compat-prescan-test-let when-id x-var when-var)
         when-id
         unless-id)
       ;; A differently-named binder does not shadow the use.
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler-lower-compat-prescan-test-let x-id x-var when-var)
         when-id
         unless-id)
       ;; A pool binder named `when` also shadows a hygiene-id use whose
       ;; source name is `when` (the post-splice re-run shape).
-      (compiler-lower-compat-prescan-id-parity?
-        expr-bases
-        (compiler-lower-compat-prescan-test-let when-id x-var hyg-when-var)
-        when-id
-        unless-id)
+      (not
+        (compiler_typecheck_core.tc-expr-uses-free-source-id?
+          session
+          expr-bases
+          (compiler-lower-compat-prescan-test-let when-id x-var hyg-when-var)
+          when-id
+          unless-id
+          compiler_typecheck_core.TcNameIdList.Nil))
       ;; A hygiene binder whose source name is `when` shadows the hygiene
       ;; use (the string walker cannot see this shape: intern-str traps on
       ;; out-of-pool ids, so check the id walker directly).
       (not
         (compiler_typecheck_core.tc-expr-uses-free-source-id?
+          session
           expr-bases
           (compiler-lower-compat-prescan-test-let
             hyg-when-id
@@ -13469,6 +13501,46 @@
   (test.assert-true
     (compiler-lower-compat-prescan-id-parity-ok?)
     "id-keyed compat prescan matches the string-keyed walks incl. hygiene ids"))
+
+(define (compiler-lower-macro-structural-growth-ok?) : bool
+  (let
+    [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-state))]
+    [definition : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity session 1 2)]
+    [index : i64 0]
+    [last : i64 -1]
+    (begin
+      (while (< index 600)
+        (begin
+          (set!
+            last
+            (cis.intern-macro-local-identity-raw
+              (cis.intern-structural-session-macro-local-identity
+                session
+                definition
+                index
+                3)))
+          (set! index (+ index 1))))
+      (set!
+        last
+        (cis.intern-macro-local-identity-raw
+          (cis.intern-structural-session-macro-local-identity
+            session
+            definition
+            7
+            3)))
+      (and
+        (> last 0)
+        (= (ci.intern-compat-state-structural-count intern-state) 601)))))
+
+(test
+  compiler-lower-macro-structural-growth
+  (test.assert-true
+    (compiler-lower-macro-structural-growth-ok?)
+    "macro structural records grow beyond the first record slab"))
 
 ;; The standalone adapter resets the active intern generation after constructing
 ;; its lower carrier. Cleanup synthesis must use the refreshed post-reset view;
@@ -14404,7 +14476,9 @@
         [(InternLookupMissing) true])]
     (and
       (string.eq
-        (compiler_typecheck_core.tc-env-key-display qualified-id)
+        (compiler_typecheck_core.tc-env-key-display
+          (compiler_lower.compiler-lower-state-structural-session lower-state)
+          qualified-id)
         qualified-name)
       fallback-primary-missing-before
       missing-before

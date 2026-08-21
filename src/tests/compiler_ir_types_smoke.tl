@@ -721,7 +721,7 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [source : i64 (ci.intern "macro-local-life")]
-    [lifetime : i64 (+ (ci.intern-macro-local-structural-base) source)]
+    [lifetime : i64 (ci.intern-structural-local-id 7 source)]
     [borrowed : ast.AstType
       (ast.ast-ty-ref-with-pools pools lifetime ast.AstType.I64)]
     [invalid : ast.AstType

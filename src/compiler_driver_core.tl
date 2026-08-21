@@ -732,6 +732,43 @@
 (define (compiler-driver-state-owned-interns [state : CompilerDriverState]) : ci.InternCompatState
   (array-ref state.intern-state 0))
 
+;; Source-name/structural capabilities outlive the optional frontend arena:
+;; opt1/2 retire that arena before lower reachability and the backend finish.
+(define (compiler-driver-state-source-name-session
+  [state : CompilerDriverState]) : ci.InternSourceNameSessionHandle
+  (in-arena
+    (arena.Arena (compiler-driver-state-surface-arena state))
+    (ci.intern-source-name-session-handle-from-state
+      (compiler-driver-state-owned-interns state))))
+
+(cfg
+  test
+  (test
+    compiler-driver-source-name-session-retained-owner
+    (let
+      [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
+      [return-arena : i64 (arena.tl_arena_current)]
+      [transient-arena : i64 (arena.tl_arena_make)]
+      [source-names : ci.InternSourceNameSessionHandle
+        (begin
+          (unsafe
+            (arena.tl_arena_set transient-arena))
+          (let
+            [session : ci.InternSourceNameSessionHandle
+              (compiler-driver-state-source-name-session state)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set return-arena))
+              session)))]
+      (begin
+        (unsafe
+          (arena.tl_arena_destroy transient-arena))
+        (test.assert-i64-eq
+          (ci.intern-source-name-session-handle-table-id source-names)
+          (ci.intern-compat-state-table-id
+            (compiler-driver-state-owned-interns state))
+          "source-name capability survives retirement of the caller arena")))))
+
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
   (cbi.state-capture-from-globals! (array-ref state.builtin-ids 0)))
@@ -3020,6 +3057,7 @@
 (cfg
   embedded-stdlib-tlci
   (define (compiler-driver-hydrate-prelude-rodata
+    [load-state : compiler_load.CompilerLoadSessionState]
     [outer-build : String]
     [expected-source-hash : String]
     [rodata : (__tl_dyn-array u8)]
@@ -3045,6 +3083,8 @@
               (match (compiler_surface_hydrate.compiler-surface-hydrate
                 rodata
                 key
+                (compiler_load.compiler-load-session-state-structural-session
+                  load-state)
                 pools)
                 [(compiler_surface_hydrate.ResultCompilerSurfaceHydration.Missing)
                   CompilerDriverPreludeSurface.Missing]
@@ -3072,6 +3112,7 @@
 (cfg
   embedded-stdlib-tlci
   (define (compiler-driver-try-hydrate-runtime-prelude
+    [load-state : compiler_load.CompilerLoadSessionState]
     [stdlib-roots : svec.Vec]
     [cfgs : sym_i64_env.SymI64Env]
     [pools : compiler_ast_types.AstNodePoolContext]
@@ -3094,6 +3135,7 @@
                 source-hash
                 rodata)
               (compiler-driver-hydrate-prelude-rodata
+                load-state
                 outer-build
                 source-hash
                 rodata
@@ -3455,6 +3497,7 @@
           unit)]
       [surface : CompilerDriverPreludeSurface
         (compiler-driver-try-hydrate-runtime-prelude
+          load-state
           stdlib-roots
           cfgs
           pools
@@ -3906,9 +3949,7 @@
             [_capture-source-names : unit
               (compiler-driver-state-capture-active-interns! state)]
             [source-names : ci.InternSourceNameSessionHandle
-              (ci.intern-source-name-session-handle
-                (ci.intern-source-name-session-from-state
-                  (compiler-driver-state-owned-interns state)))]
+              (compiler-driver-state-source-name-session state)]
             [dest-pools : compiler_ast_types.AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)

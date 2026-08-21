@@ -16,6 +16,7 @@
 (import compiler_ctfe)
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_parse_core as parse_core)
 (import tlci_core as tlci)
 (import tlci_loader)
@@ -29,6 +30,18 @@
 
 (define producer-test-cookie : i64
   0x2754)
+
+(define (producer-test-macro-global-id [source-name-id : i64]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-capture-active-handle))]
+    (cis.intern-macro-global-identity-raw
+      (cis.intern-structural-session-macro-global-identity
+        session
+        cis.InternMacroGlobalRole.Legacy
+        (ci.intern "producer.test.macro")
+        source-name-id))))
 
 ;; Var ids produced by host templates carry the interpreted quote's
 ;; template-source mark over the lexer's source-name id for the spelling.
@@ -1376,7 +1389,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [source-id : i64 (ci.intern "structural.alias")]
-    [structural-id : i64 (+ (ci.intern-macro-global-structural-base) source-id)]
+    [structural-id : i64 (producer-test-macro-global-id source-id)]
     [operand : i64
       (producer-test-push-spanned pools (ast.AstExpr.Var structural-id))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -2402,7 +2415,7 @@
     [source-module-id : i64 (ci.intern "producer.nominal.module")]
     [module-id : i64
       (if (= mode 0)
-        (+ (ci.intern-macro-global-structural-base) source-module-id)
+        (producer-test-macro-global-id source-module-id)
         source-module-id)]
     [name-id : i64 (ci.intern "Nominal")]
     [canonical-id : i64 (ci.intern-composite-pair-id module-id name-id)]
@@ -2479,8 +2492,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [source-module-id : i64 (ci.intern "producer.nominal.module")]
-    [module-id : i64
-      (+ (ci.intern-macro-global-structural-base) source-module-id)]
+    [module-id : i64 (producer-test-macro-global-id source-module-id)]
     [name-id : i64 (ci.intern "Nominal")]
     [canonical-id : i64 (ci.intern-composite-pair-id module-id name-id)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -2541,8 +2553,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [source-module-id : i64 (ci.intern "producer.nominal.module")]
-    [module-id : i64
-      (+ (ci.intern-macro-global-structural-base) source-module-id)]
+    [module-id : i64 (producer-test-macro-global-id source-module-id)]
     [dot-id : i64 (ci.intern ".")]
     [member-id : i64 (ci.intern "into-iterator")]
     [expected-suffix : compiler_ctfe.CompilerCtfeValue
@@ -2920,8 +2931,7 @@
         pools
         (ast.AstExpr.Var (ci.intern "struct-value")))]
     [source-name-id : i64 (ci.intern "name-field")]
-    [structural-name-id : i64
-      (+ (ci.intern-macro-global-structural-base) source-name-id)]
+    [structural-name-id : i64 (producer-test-macro-global-id source-name-id)]
     [string-value : compiler_ctfe.CompilerCtfeValue
       (compiler_ctfe.ctfe-generated-string-value "string-field")]
     [expected-string-id : i64

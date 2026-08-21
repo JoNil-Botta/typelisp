@@ -4771,9 +4771,7 @@
       (string.eq
         (tc_core.tc-type-render
           (ast.ast-ty-ref
-            (+
-              (ci.intern-macro-local-structural-base)
-              structural-lifetime-source)
+            (ci.intern-structural-local-id 7 structural-lifetime-source)
             (ast.AstType.I64)))
         "(& macro-lifetime i64)")]
     [invalid-lifetime-render-ok : bool
@@ -9730,14 +9728,6 @@
     (if (tc_core.tc-spmd-env-box-smoke?)
       unit
       (io.panic "typecheck: boxed spmd env smoke mismatch"))
-    (if (tc_core.macro-hygiene-id-space-budget-ok?)
-      unit
-      (io.panic
-        "typecheck: hygienic id space overflows the intern capacity budget"))
-    (if (tc_core.macro-hygiene-local-id-declaration-stable?)
-      unit
-      (io.panic
-        "typecheck: hygienic local renaming depends on the dense declaration id"))
     (if (compiler-typecheck-macro-hygiene-env-snapshots-ok?)
       unit
       (io.panic "typecheck: macro hygiene environment snapshot mismatch"))

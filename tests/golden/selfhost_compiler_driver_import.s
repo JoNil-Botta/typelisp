@@ -536,7 +536,9 @@ tl_panic_at:
     cmpq $0, 96(%rsp)
     je .Lf13_if_else.4
 .Lf13_if_then.3:
-    jmp .Lf13_if_merge.5
+    movl $134, %edi
+    addq $248, %rsp
+    jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
 .Lf13_if_else.4:
     leaq .L_tl_str_l1_11_11(%rip), %r8
     movq %r8, %rdi

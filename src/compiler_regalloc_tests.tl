@@ -10481,12 +10481,21 @@
         [(reg.CompilerRegScratchPlanResult.Result out scratch-plan)
           (let
             [index-reg : i64
-              (reg.compiler-reg-scratch-plan-register scratch-plan 0 0)]
+              (reg.compiler-reg-scratch-plan-register
+                (owned_view.compiler-owned-shared-view scratch-plan)
+                0
+                0)]
             [table-reg : i64
-              (reg.compiler-reg-scratch-plan-register scratch-plan 0 1)]
+              (reg.compiler-reg-scratch-plan-register
+                (owned_view.compiler-owned-shared-view scratch-plan)
+                0
+                1)]
             (and
               (= (reg.compiler-reg-plan-var-count out 1) 1)
-              (= (reg.compiler-reg-scratch-plan-count scratch-plan) 2)
+              (=
+                (reg.compiler-reg-scratch-plan-count
+                  (owned_view.compiler-owned-shared-view scratch-plan))
+                2)
               (not (= index-reg cabi.compiler-reg-id-invalid))
               (not (= table-reg cabi.compiler-reg-id-invalid))
               (not (= index-reg table-reg))
@@ -10529,12 +10538,21 @@
         [(reg.CompilerRegScratchPlanResult.Result out scratch-plan)
           (let
             [length-reg : i64
-              (reg.compiler-reg-scratch-plan-register scratch-plan 0 0)]
+              (reg.compiler-reg-scratch-plan-register
+                (owned_view.compiler-owned-shared-view scratch-plan)
+                0
+                0)]
             [index-reg : i64
-              (reg.compiler-reg-scratch-plan-register scratch-plan 0 1)]
+              (reg.compiler-reg-scratch-plan-register
+                (owned_view.compiler-owned-shared-view scratch-plan)
+                0
+                1)]
             (and
               (= (reg.compiler-reg-plan-var-count out 1) 1)
-              (= (reg.compiler-reg-scratch-plan-count scratch-plan) 2)
+              (=
+                (reg.compiler-reg-scratch-plan-count
+                  (owned_view.compiler-owned-shared-view scratch-plan))
+                2)
               (not (= length-reg cabi.compiler-reg-id-invalid))
               (not (= index-reg cabi.compiler-reg-id-invalid))
               (not (= length-reg index-reg))
@@ -10597,12 +10615,26 @@
       2)
       [(reg.CompilerRegScratchPlanResult.Result _ scratch-plan)
         (let
-          [dst : i64 (reg.compiler-reg-scratch-plan-register scratch-plan 0 0)]
-          [src : i64 (reg.compiler-reg-scratch-plan-register scratch-plan 0 1)]
+          [dst : i64
+            (reg.compiler-reg-scratch-plan-register
+              (owned_view.compiler-owned-shared-view scratch-plan)
+              0
+              0)]
+          [src : i64
+            (reg.compiler-reg-scratch-plan-register
+              (owned_view.compiler-owned-shared-view scratch-plan)
+              0
+              1)]
           [value : i64
-            (reg.compiler-reg-scratch-plan-register scratch-plan 0 2)]
+            (reg.compiler-reg-scratch-plan-register
+              (owned_view.compiler-owned-shared-view scratch-plan)
+              0
+              2)]
           (and
-            (= (reg.compiler-reg-scratch-plan-count scratch-plan) 3)
+            (=
+              (reg.compiler-reg-scratch-plan-count
+                (owned_view.compiler-owned-shared-view scratch-plan))
+              3)
             (not (= dst cabi.compiler-reg-id-invalid))
             (not (= src cabi.compiler-reg-id-invalid))
             (not (= value cabi.compiler-reg-id-invalid))

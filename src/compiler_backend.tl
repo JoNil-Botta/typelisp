@@ -20372,6 +20372,89 @@
       dst
       "\n")))
 
+;; A frame-backed PhiCycle is storage for the parallel-move cycle itself, not a
+;; physical register aggregate emission may name.  PhiStage is still a real GP
+;; register.  Use that one register for both aggregate words, ordering a
+;; cross-word alias so every source is read before its home is overwritten.
+;; `movq` bit-copies between GP, XMM, and memory operands; the only otherwise
+;; illegal shape (memory-to-memory) always goes through `scratch` here.
+(define (compiler-backend-emit-group-copy-one-gp-scratch
+  [src0 : String]
+  [src1 : String]
+  [dst0 : String]
+  [dst1 : String]
+  [scratch : String]) : String
+  (if (string.eq dst0 src1)
+    (if (string.eq dst1 src0)
+      ;; A complete word swap needs one value held across the other write.  XMM
+      ;; destinations accept a direct movq from their old source; GP/memory
+      ;; destinations use xchgq so the second old value remains in `scratch`.
+      (if (compiler_abi.compiler-abi-xmm-register-id?
+        (compiler_abi.compiler-abi-register-id-from-spelling
+          (compiler-backend-global-shared-view dst0)))
+        (str_cat.str-cat
+          (compiler-backend-emit-group-word-move
+            (compiler-backend-global-shared-view src0)
+            (compiler-backend-global-shared-view scratch)
+            false)
+          (compiler-backend-emit-group-word-move
+            (compiler-backend-global-shared-view src1)
+            (compiler-backend-global-shared-view dst1)
+            false)
+          (compiler-backend-emit-group-word-move
+            (compiler-backend-global-shared-view scratch)
+            (compiler-backend-global-shared-view dst0)
+            false))
+        (str_cat.str-cat
+          (compiler-backend-emit-group-word-move
+            (compiler-backend-global-shared-view src0)
+            (compiler-backend-global-shared-view scratch)
+            false)
+          "    xchgq "
+          (compiler-backend-global-shared-view scratch)
+          ", "
+          (compiler-backend-global-shared-view dst0)
+          "\n"
+          (compiler-backend-emit-group-word-move
+            (compiler-backend-global-shared-view scratch)
+            (compiler-backend-global-shared-view dst1)
+            false)))
+      ;; dst0 aliases the second source only: finish word1 first, then word0.
+      (str_cat.str-cat
+        (compiler-backend-emit-group-word-move
+          (compiler-backend-global-shared-view src1)
+          (compiler-backend-global-shared-view scratch)
+          false)
+        (compiler-backend-emit-group-word-move
+          (compiler-backend-global-shared-view scratch)
+          (compiler-backend-global-shared-view dst1)
+          false)
+        (compiler-backend-emit-group-word-move
+          (compiler-backend-global-shared-view src0)
+          (compiler-backend-global-shared-view scratch)
+          false)
+        (compiler-backend-emit-group-word-move
+          (compiler-backend-global-shared-view scratch)
+          (compiler-backend-global-shared-view dst0)
+          false)))
+    (str_cat.str-cat
+      (compiler-backend-emit-group-word-move
+        (compiler-backend-global-shared-view src0)
+        (compiler-backend-global-shared-view scratch)
+        false)
+      (compiler-backend-emit-group-word-move
+        (compiler-backend-global-shared-view scratch)
+        (compiler-backend-global-shared-view dst0)
+        false)
+      (compiler-backend-emit-group-word-move
+        (compiler-backend-global-shared-view src1)
+        (compiler-backend-global-shared-view scratch)
+        false)
+      (compiler-backend-emit-group-word-move
+        (compiler-backend-global-shared-view scratch)
+        (compiler-backend-global-shared-view dst1)
+        false))))
+
 (define (compiler-backend-emit-group-word-copy
   [src : String]
   [dst : String]
@@ -21287,90 +21370,110 @@
                             (compiler-backend-global-shared-view program-index)
                             (compiler-backend-global-shared-view ty)
                             1)]
+                        [frame-cycle? : bool (string.eq planned0 "@frame")]
                         [reg0 : String
-                          (if sse0?
-                            (compiler-backend-group-copy-xmm-scratch
-                              dst
-                              (compiler-backend-global-shared-view src0)
-                              (compiler-backend-global-shared-view src1)
-                              (compiler-backend-global-shared-view dst0)
-                              (compiler-backend-global-shared-view dst1)
-                              ""
-                              planned0
-                              "%xmm0"
-                              backend-state)
+                          (if frame-cycle?
                             (compiler-backend-group-copy-gp-scratch
                               (compiler-backend-global-shared-view src0)
                               (compiler-backend-global-shared-view src1)
                               (compiler-backend-global-shared-view dst0)
                               (compiler-backend-global-shared-view dst1)
                               ""
-                              planned0
-                              "%rax"
-                              backend-state))]
+                              (compiler-backend-global-shared-view planned1)
+                              "%r10"
+                              backend-state)
+                            (if sse0?
+                              (compiler-backend-group-copy-xmm-scratch
+                                dst
+                                (compiler-backend-global-shared-view src0)
+                                (compiler-backend-global-shared-view src1)
+                                (compiler-backend-global-shared-view dst0)
+                                (compiler-backend-global-shared-view dst1)
+                                ""
+                                (compiler-backend-global-shared-view planned0)
+                                "%xmm0"
+                                backend-state)
+                              (compiler-backend-group-copy-gp-scratch
+                                (compiler-backend-global-shared-view src0)
+                                (compiler-backend-global-shared-view src1)
+                                (compiler-backend-global-shared-view dst0)
+                                (compiler-backend-global-shared-view dst1)
+                                ""
+                                (compiler-backend-global-shared-view planned0)
+                                "%rax"
+                                backend-state)))]
                         [reg1 : String
-                          (if sse1?
-                            (compiler-backend-group-copy-xmm-scratch
-                              (compiler-backend-global-shared-view dst)
-                              (compiler-backend-global-shared-view src0)
-                              (compiler-backend-global-shared-view src1)
-                              (compiler-backend-global-shared-view dst0)
-                              (compiler-backend-global-shared-view dst1)
-                              (compiler-backend-global-shared-view reg0)
-                              (compiler-backend-global-shared-view planned1)
-                              (if sse0?
-                                "%xmm1"
-                                "%xmm0")
-                              backend-state)
-                            (compiler-backend-group-copy-gp-scratch
-                              (compiler-backend-global-shared-view src0)
-                              (compiler-backend-global-shared-view src1)
-                              (compiler-backend-global-shared-view dst0)
-                              (compiler-backend-global-shared-view dst1)
-                              (compiler-backend-global-shared-view reg0)
-                              (compiler-backend-global-shared-view planned1)
-                              (compiler-backend-group-return-reg
-                                type-segment-bases
-                                program-index
-                                ty
-                                1)
-                              backend-state))]
+                          (if frame-cycle?
+                            (compiler-backend-global-shared-view reg0)
+                            (if sse1?
+                              (compiler-backend-group-copy-xmm-scratch
+                                (compiler-backend-global-shared-view dst)
+                                (compiler-backend-global-shared-view src0)
+                                (compiler-backend-global-shared-view src1)
+                                (compiler-backend-global-shared-view dst0)
+                                (compiler-backend-global-shared-view dst1)
+                                (compiler-backend-global-shared-view reg0)
+                                (compiler-backend-global-shared-view planned1)
+                                (if sse0?
+                                  "%xmm1"
+                                  "%xmm0")
+                                backend-state)
+                              (compiler-backend-group-copy-gp-scratch
+                                (compiler-backend-global-shared-view src0)
+                                (compiler-backend-global-shared-view src1)
+                                (compiler-backend-global-shared-view dst0)
+                                (compiler-backend-global-shared-view dst1)
+                                (compiler-backend-global-shared-view reg0)
+                                (compiler-backend-global-shared-view planned1)
+                                (compiler-backend-group-return-reg
+                                  type-segment-bases
+                                  program-index
+                                  ty
+                                  1)
+                                backend-state)))]
                         (ResultCompilerBackend.Ok
-                          (if (string.eq dst0 src1)
-                            (str_cat.str-cat
-                              (compiler-backend-emit-group-word-move
-                                src0
-                                (compiler-backend-global-shared-view reg0)
-                                sse0?)
-                              (compiler-backend-emit-group-word-move
-                                src1
-                                (compiler-backend-global-shared-view reg1)
-                                sse1?)
-                              (compiler-backend-emit-group-word-move
-                                reg0
-                                dst0
-                                sse0?)
-                              (compiler-backend-emit-group-word-move
-                                reg1
-                                dst1
-                                sse1?))
-                            (str_cat.str-cat
-                              (compiler-backend-emit-group-word-move
-                                src0
-                                (compiler-backend-global-shared-view reg0)
-                                sse0?)
-                              (compiler-backend-emit-group-word-move
-                                reg0
-                                dst0
-                                sse0?)
-                              (compiler-backend-emit-group-word-move
-                                src1
-                                (compiler-backend-global-shared-view reg1)
-                                sse1?)
-                              (compiler-backend-emit-group-word-move
-                                reg1
-                                dst1
-                                sse1?)))))]
+                          (if frame-cycle?
+                            (compiler-backend-emit-group-copy-one-gp-scratch
+                              (compiler-backend-global-shared-view src0)
+                              (compiler-backend-global-shared-view src1)
+                              (compiler-backend-global-shared-view dst0)
+                              (compiler-backend-global-shared-view dst1)
+                              (compiler-backend-global-shared-view reg0))
+                            (if (string.eq dst0 src1)
+                              (str_cat.str-cat
+                                (compiler-backend-emit-group-word-move
+                                  src0
+                                  (compiler-backend-global-shared-view reg0)
+                                  sse0?)
+                                (compiler-backend-emit-group-word-move
+                                  src1
+                                  (compiler-backend-global-shared-view reg1)
+                                  sse1?)
+                                (compiler-backend-emit-group-word-move
+                                  reg0
+                                  dst0
+                                  sse0?)
+                                (compiler-backend-emit-group-word-move
+                                  reg1
+                                  dst1
+                                  sse1?))
+                              (str_cat.str-cat
+                                (compiler-backend-emit-group-word-move
+                                  src0
+                                  (compiler-backend-global-shared-view reg0)
+                                  sse0?)
+                                (compiler-backend-emit-group-word-move
+                                  reg0
+                                  dst0
+                                  sse0?)
+                                (compiler-backend-emit-group-word-move
+                                  src1
+                                  (compiler-backend-global-shared-view reg1)
+                                  sse1?)
+                                (compiler-backend-emit-group-word-move
+                                  reg1
+                                  dst1
+                                  sse1?))))))]
                     [(ResultCompilerBackend.Err message)
                       (ResultCompilerBackend.Err message)])]
                 [(ResultCompilerBackend.Err message)
@@ -26078,7 +26181,7 @@
 ;; (unless M-F supplies the magic) plus one SRC copy because the legacy entry to
 ;; this wrapper has the dividend in fixed %rax.  There is no saved-dividend +
 ;; sign-mask pair.  Unsigned and narrow paths retain their existing lowering.
-(define (compiler-backend-binop-literal-divmod-asm-dst-with-plan
+(define (compiler-backend-binop-literal-divmod-asm-dst-divmod-with-plan
   [type-segment-bases : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -26222,10 +26325,33 @@
           mask
           hoist)))))
 
+(define (compiler-backend-binop-literal-divmod-asm-dst-with-plan
+  [type-segment-bases : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [dst : i64]
+  [planned-magic : String]
+  [planned-dividend : String]
+  [planned-mask : String]
+  [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
+  (if (compiler-backend-divmod-op? (compiler-backend-global-shared-view op))
+    (compiler-backend-binop-literal-divmod-asm-dst-divmod-with-plan
+      type-segment-bases
+      op
+      rhs
+      ty
+      dst
+      planned-magic
+      planned-dividend
+      planned-mask
+      backend-state)
+    (CompilerBackendMaybeAsm.No)))
+
 ;; Same, but at the current emit point (no dst -- tail-return position). The magic
 ;; register is scavenged at the return point, so a pooled %r8 live across the fused
 ;; return is not clobbered by the constant-divmod sequence.
-(define (compiler-backend-binop-literal-divmod-asm-here-with-plan
+(define (compiler-backend-binop-literal-divmod-asm-divmod-with-plan
   [type-segment-bases : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -26313,6 +26439,30 @@
           dividend
           mask
           hoist)))))
+
+(define (compiler-backend-binop-literal-divmod-asm-here-with-plan
+  [type-segment-bases : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [planned-magic : String]
+  [planned-dividend : String]
+  [planned-mask : String]
+  [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
+  ;; Callers probe this helper before the ordinary immediate path. Reject a
+  ;; non-dividing operation before selecting division's three planned scratch
+  ;; homes; under scratch-vreg those slots intentionally do not exist.
+  (if (compiler-backend-divmod-op? (compiler-backend-global-shared-view op))
+    (compiler-backend-binop-literal-divmod-asm-divmod-with-plan
+      type-segment-bases
+      op
+      rhs
+      ty
+      planned-magic
+      planned-dividend
+      planned-mask
+      backend-state)
+    (CompilerBackendMaybeAsm.No)))
 
 (define (compiler-backend-shift-count-width
   [type-segment-bases : i64]
@@ -30697,7 +30847,8 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
-  [planned : String]) : String
+  [planned : String]
+  [planned-fallback : String]) : String
   (let
     [rhs-home : String
       (compiler-backend-value-register-home backend-state assignments rhs)]
@@ -30709,16 +30860,25 @@
           "%rax")
         6
         (compiler-backend-global-shared-view rhs-home))]
-    (if (or
-      (string.eq planned "%rax")
-      (and (not (string.eq rhs-home "")) (string.eq planned rhs-home)))
-      (compiler-backend-scavenge-reg-here exclude 7 "%r8" backend-state)
-      (compiler-backend-planned-or-scavenge-reg-here
-        planned
-        exclude
-        7
-        "%r8"
-        backend-state))))
+    [selected : String
+      (if (or
+        (string.eq planned "")
+        (string.eq planned "%rax")
+        (and (not (string.eq rhs-home "")) (string.eq planned rhs-home)))
+        (if (or
+          (string.eq planned-fallback "%rax")
+          (and
+            (not (string.eq rhs-home ""))
+            (string.eq planned-fallback rhs-home)))
+          ""
+          (compiler-backend-global-shared-view planned-fallback))
+        (compiler-backend-global-shared-view planned))]
+    (compiler-backend-planned-or-scavenge-reg-here
+      selected
+      exclude
+      7
+      "%r8"
+      backend-state)))
 
 (define (compiler-backend-emit-binop-return-with-plan
   [type-segment-bases : i64]
@@ -30858,7 +31018,11 @@
                                 (if (compiler-backend-divmod-op?
                                   (compiler-backend-global-shared-view op))
                                   (compiler-backend-global-shared-view planned2)
-                                  planned0))]
+                                  planned0)
+                                (if (compiler-backend-divmod-op?
+                                  (compiler-backend-global-shared-view op))
+                                  ""
+                                  planned1))]
                             (match (compiler-backend-emit-load-value-with-plan
                               (compiler-backend-global-shared-view assignments)
                               (compiler-backend-global-shared-view rhs)
@@ -30900,7 +31064,11 @@
                             (if (compiler-backend-divmod-op?
                               (compiler-backend-global-shared-view op))
                               (compiler-backend-global-shared-view planned2)
-                              planned0))]
+                              planned0)
+                            (if (compiler-backend-divmod-op?
+                              (compiler-backend-global-shared-view op))
+                              ""
+                              planned1))]
                         (match (compiler-backend-emit-load-value-with-plan
                           (compiler-backend-global-shared-view assignments)
                           (compiler-backend-global-shared-view rhs)
@@ -33234,16 +33402,15 @@
           [result-reg : String
             (if use-dst-home?
               dst-home
-              (if (string.eq planned-address "")
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-two-exclude
-                    (compiler-backend-global-shared-view avoid1)
-                    (compiler-backend-global-shared-view avoid2))
-                  2
-                  "%r10"
-                  backend-state)
-                planned-address))]
+              (compiler-backend-planned-or-scavenge-reg
+                planned-address
+                dst
+                (compiler-backend-two-exclude
+                  (compiler-backend-global-shared-view avoid1)
+                  (compiler-backend-global-shared-view avoid2))
+                2
+                "%r10"
+                backend-state))]
           (match (compiler-backend-emit-load-value-with-plan
             (compiler-backend-global-shared-view assignments)
             base
@@ -33269,17 +33436,16 @@
                 [(CompilerBackendMaybeAsm.No)
                   (let
                     [scav-idx : String
-                      (if (string.eq planned-index "")
-                        (compiler-backend-scavenge-reg
-                          dst
-                          (compiler-backend-three-exclude
-                            (compiler-backend-global-shared-view result-reg)
-                            (compiler-backend-global-shared-view avoid1)
-                            (compiler-backend-global-shared-view avoid2))
-                          3
-                          "%r8"
-                          backend-state)
-                        planned-index)]
+                      (compiler-backend-planned-or-scavenge-reg
+                        planned-index
+                        dst
+                        (compiler-backend-three-exclude
+                          (compiler-backend-global-shared-view result-reg)
+                          (compiler-backend-global-shared-view avoid1)
+                          (compiler-backend-global-shared-view avoid2))
+                        3
+                        "%r8"
+                        backend-state)]
                     (match (compiler-backend-emit-load-value-with-plan
                       (compiler-backend-global-shared-view assignments)
                       (compiler-backend-global-shared-view offset)
@@ -33333,17 +33499,16 @@
           [result-reg : String
             (if use-dst-home?
               dst-home
-              (if (string.eq planned-address "")
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-three-exclude
-                    offset-home
-                    (compiler-backend-global-shared-view avoid1)
-                    (compiler-backend-global-shared-view avoid2))
-                  3
-                  "%r10"
-                  backend-state)
-                planned-address))]
+              (compiler-backend-planned-or-scavenge-reg
+                planned-address
+                dst
+                (compiler-backend-three-exclude
+                  offset-home
+                  (compiler-backend-global-shared-view avoid1)
+                  (compiler-backend-global-shared-view avoid2))
+                3
+                "%r10"
+                backend-state))]
           [scav-idx : String
             (compiler-backend-planned-or-scavenge-reg
               planned-index
@@ -34121,13 +34286,12 @@
             (compiler-backend-global-shared-view dst)))]
       [dst-reg : String
         (if (string.eq dst-home "")
-          (if (string.eq planned-dst "")
-            (compiler-backend-scavenge-reg-here
-              (compiler-backend-global-shared-view protect)
-              protect-n
-              "%r10"
-              backend-state)
-            planned-dst)
+          (compiler-backend-planned-or-scavenge-reg-here
+            planned-dst
+            (compiler-backend-global-shared-view protect)
+            protect-n
+            "%r10"
+            backend-state)
           dst-home)]
       (match (if (string.eq dst-home "")
         (compiler-backend-emit-load-value-with-plan
@@ -34178,13 +34342,12 @@
               (if (compiler-backend-copy-needs-gp-scratch?
                 size
                 (compiler-backend-global-shared-view copy-xmm))
-                (if (string.eq planned-value "")
-                  (compiler-backend-scavenge-reg-here
-                    copy-gp-exclude
-                    (+ 2 protect-n)
-                    "%r8"
-                    backend-state)
-                  planned-value)
+                (compiler-backend-planned-or-scavenge-reg-here
+                  planned-value
+                  copy-gp-exclude
+                  (+ 2 protect-n)
+                  "%r8"
+                  backend-state)
                 "")]
             (match (if (string.eq src-home "")
               (compiler-backend-emit-load-value-with-plan
@@ -34525,18 +34688,17 @@
           (compiler-backend-global-shared-view src)))]
     [dst-reg : String
       (if (string.eq base-home "")
-        (if (string.eq planned-dst "")
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-scavenge-exclude-merge
-              (compiler-backend-one-exclude
-                (compiler-backend-global-shared-view src-home))
-              1
-              (compiler-backend-global-shared-view protect)
-              protect-n)
-            (+ 1 protect-n)
-            "%r10"
-            backend-state)
-          planned-dst)
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-dst
+          (compiler-backend-scavenge-exclude-merge
+            (compiler-backend-one-exclude
+              (compiler-backend-global-shared-view src-home))
+            1
+            (compiler-backend-global-shared-view protect)
+            protect-n)
+          (+ 1 protect-n)
+          "%r10"
+          backend-state)
         base-home)]
     (match (if (string.eq base-home "")
       (match (compiler-backend-emit-load-value-with-plan
@@ -34565,18 +34727,17 @@
         (let
           [src-reg : String
             (if (string.eq (compiler-backend-global-shared-view src-home) "")
-              (if (string.eq planned-src "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-one-exclude
-                      (compiler-backend-global-shared-view dst-reg))
-                    1
-                    (compiler-backend-global-shared-view protect)
-                    protect-n)
-                  (+ 1 protect-n)
-                  "%r9"
-                  backend-state)
-                planned-src)
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-src
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-one-exclude
+                    (compiler-backend-global-shared-view dst-reg))
+                  1
+                  (compiler-backend-global-shared-view protect)
+                  protect-n)
+                (+ 1 protect-n)
+                "%r9"
+                backend-state)
               (compiler-backend-global-shared-view src-home))]
           [copy-xmm : String
             (compiler-backend-copy-xmm-scratch
@@ -34587,21 +34748,18 @@
             (if (compiler-backend-copy-needs-gp-scratch?
               size
               (compiler-backend-global-shared-view copy-xmm))
-              (if (string.eq
+              (compiler-backend-planned-or-scavenge-reg-here
                 (compiler-backend-global-shared-view planned-value)
-                "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-two-exclude
-                      (compiler-backend-global-shared-view dst-reg)
-                      (compiler-backend-global-shared-view src-reg))
-                    2
-                    (compiler-backend-global-shared-view protect)
-                    protect-n)
-                  (+ 2 protect-n)
-                  "%r8"
-                  (compiler-backend-global-shared-view backend-state))
-                (compiler-backend-global-shared-view planned-value))
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-two-exclude
+                    (compiler-backend-global-shared-view dst-reg)
+                    (compiler-backend-global-shared-view src-reg))
+                  2
+                  (compiler-backend-global-shared-view protect)
+                  protect-n)
+                (+ 2 protect-n)
+                "%r8"
+                (compiler-backend-global-shared-view backend-state))
               "")]
           (match (if (string.eq
             (compiler-backend-global-shared-view src-home)
@@ -34717,19 +34875,18 @@
       ;; not taken leaks a stray restore into the surrounding emission.
       (let
         [scav-base : String
-          (if (string.eq planned-dst "")
-            (compiler-backend-scavenge-reg-here
-              (compiler-backend-scavenge-exclude-merge
-                (compiler-backend-two-exclude
-                  (compiler-backend-global-shared-view src-home)
-                  (compiler-backend-global-shared-view offset-home))
-                2
-                (compiler-backend-global-shared-view protect)
-                protect-n)
-              (+ 2 protect-n)
-              "%r10"
-              backend-state)
-            planned-dst)]
+          (compiler-backend-planned-or-scavenge-reg-here
+            planned-dst
+            (compiler-backend-scavenge-exclude-merge
+              (compiler-backend-two-exclude
+                (compiler-backend-global-shared-view src-home)
+                (compiler-backend-global-shared-view offset-home))
+              2
+              (compiler-backend-global-shared-view protect)
+              protect-n)
+            (+ 2 protect-n)
+            "%r10"
+            backend-state)]
         (match (compiler-backend-emit-copy-gep-dyn-address
           (compiler-backend-global-shared-view assignments)
           (compiler-backend-global-shared-view base)
@@ -34750,18 +34907,17 @@
                 (if (string.eq
                   (compiler-backend-global-shared-view src-home)
                   "")
-                  (if (string.eq planned-src "")
-                    (compiler-backend-scavenge-reg-here
-                      (compiler-backend-scavenge-exclude-merge
-                        (compiler-backend-one-exclude
-                          (compiler-backend-global-shared-view scav-base))
-                        1
-                        (compiler-backend-global-shared-view protect)
-                        protect-n)
-                      (+ 1 protect-n)
-                      "%r9"
-                      backend-state)
-                    planned-src)
+                  (compiler-backend-planned-or-scavenge-reg-here
+                    planned-src
+                    (compiler-backend-scavenge-exclude-merge
+                      (compiler-backend-one-exclude
+                        (compiler-backend-global-shared-view scav-base))
+                      1
+                      (compiler-backend-global-shared-view protect)
+                      protect-n)
+                    (+ 1 protect-n)
+                    "%r9"
+                    backend-state)
                   (compiler-backend-global-shared-view src-home))]
               [copy-xmm : String
                 (compiler-backend-copy-xmm-scratch
@@ -34772,19 +34928,18 @@
                 (if (compiler-backend-copy-needs-gp-scratch?
                   size
                   (compiler-backend-global-shared-view copy-xmm))
-                  (if (string.eq planned-value "")
-                    (compiler-backend-scavenge-reg-here
-                      (compiler-backend-scavenge-exclude-merge
-                        (compiler-backend-two-exclude
-                          (compiler-backend-global-shared-view scav-base)
-                          (compiler-backend-global-shared-view src-reg))
-                        2
-                        (compiler-backend-global-shared-view protect)
-                        protect-n)
-                      (+ 2 protect-n)
-                      "%r8"
-                      backend-state)
-                    planned-value)
+                  (compiler-backend-planned-or-scavenge-reg-here
+                    planned-value
+                    (compiler-backend-scavenge-exclude-merge
+                      (compiler-backend-two-exclude
+                        (compiler-backend-global-shared-view scav-base)
+                        (compiler-backend-global-shared-view src-reg))
+                      2
+                      (compiler-backend-global-shared-view protect)
+                      protect-n)
+                    (+ 2 protect-n)
+                    "%r8"
+                    backend-state)
                   "")]
               (match (if (string.eq
                 (compiler-backend-global-shared-view src-home)
@@ -34987,19 +35142,18 @@
           (compiler-backend-global-shared-view dst)))]
     [dst-reg : String
       (if (string.eq dst-home "")
-        (if (string.eq planned-dst "")
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-scavenge-exclude-merge
-              (compiler-backend-two-exclude
-                (compiler-backend-global-shared-view operand-a)
-                (compiler-backend-global-shared-view operand-b))
-              2
-              (compiler-backend-global-shared-view protect)
-              protect-n)
-            (+ 2 protect-n)
-            "%r10"
-            backend-state)
-          planned-dst)
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-dst
+          (compiler-backend-scavenge-exclude-merge
+            (compiler-backend-two-exclude
+              (compiler-backend-global-shared-view operand-a)
+              (compiler-backend-global-shared-view operand-b))
+            2
+            (compiler-backend-global-shared-view protect)
+            protect-n)
+          (+ 2 protect-n)
+          "%r10"
+          backend-state)
         dst-home)]
     (match (if (string.eq dst-home "")
       (compiler-backend-emit-load-value-with-plan
@@ -35016,20 +35170,19 @@
             (if (compiler-backend-copy-needs-gp-scratch?
               size
               (compiler-backend-global-shared-view copy-xmm))
-              (if (string.eq planned-value "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-three-exclude
-                      (compiler-backend-global-shared-view dst-reg)
-                      (compiler-backend-global-shared-view operand-a)
-                      (compiler-backend-global-shared-view operand-b))
-                    3
-                    (compiler-backend-global-shared-view protect)
-                    protect-n)
-                  (+ 3 protect-n)
-                  "%r8"
-                  backend-state)
-                planned-value)
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-value
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-three-exclude
+                    (compiler-backend-global-shared-view dst-reg)
+                    (compiler-backend-global-shared-view operand-a)
+                    (compiler-backend-global-shared-view operand-b))
+                  3
+                  (compiler-backend-global-shared-view protect)
+                  protect-n)
+                (+ 3 protect-n)
+                "%r8"
+                backend-state)
               "")]
           (ResultCompilerBackend.Ok
             (str_cat.str-cat
@@ -35086,19 +35239,18 @@
           (compiler-backend-global-shared-view src)))]
     [src-reg : String
       (if (string.eq src-home "")
-        (if (string.eq planned-src "")
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-scavenge-exclude-merge
-              (compiler-backend-two-exclude
-                (compiler-backend-global-shared-view operand-a)
-                (compiler-backend-global-shared-view operand-b))
-              2
-              (compiler-backend-global-shared-view protect)
-              protect-n)
-            (+ 2 protect-n)
-            "%r9"
-            (compiler-backend-global-shared-view backend-state))
-          (compiler-backend-global-shared-view planned-src))
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-src
+          (compiler-backend-scavenge-exclude-merge
+            (compiler-backend-two-exclude
+              (compiler-backend-global-shared-view operand-a)
+              (compiler-backend-global-shared-view operand-b))
+            2
+            (compiler-backend-global-shared-view protect)
+            protect-n)
+          (+ 2 protect-n)
+          "%r9"
+          (compiler-backend-global-shared-view backend-state))
         (compiler-backend-global-shared-view src-home))]
     (match (if (string.eq (compiler-backend-global-shared-view src-home) "")
       (compiler-backend-emit-load-value-with-plan
@@ -35115,20 +35267,19 @@
             (if (compiler-backend-copy-needs-gp-scratch?
               size
               (compiler-backend-global-shared-view copy-xmm))
-              (if (string.eq planned-value "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-three-exclude
-                      (compiler-backend-global-shared-view src-reg)
-                      (compiler-backend-global-shared-view operand-a)
-                      (compiler-backend-global-shared-view operand-b))
-                    3
-                    (compiler-backend-global-shared-view protect)
-                    protect-n)
-                  (+ 3 protect-n)
-                  "%r8"
-                  backend-state)
-                planned-value)
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-value
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-three-exclude
+                    (compiler-backend-global-shared-view src-reg)
+                    (compiler-backend-global-shared-view operand-a)
+                    (compiler-backend-global-shared-view operand-b))
+                  3
+                  (compiler-backend-global-shared-view protect)
+                  protect-n)
+                (+ 3 protect-n)
+                "%r8"
+                backend-state)
               "")]
           (ResultCompilerBackend.Ok
             (str_cat.str-cat
@@ -35199,19 +35350,18 @@
           ;; triggers an emergency spill.
           (let
             [scav-idx : String
-              (if (string.eq planned-index "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-two-exclude
-                      (compiler-backend-global-shared-view scav-base)
-                      src-home)
-                    2
-                    protect
-                    protect-n)
-                  (+ 2 protect-n)
-                  "%r8"
-                  backend-state)
-                planned-index)]
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-index
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-two-exclude
+                    (compiler-backend-global-shared-view scav-base)
+                    src-home)
+                  2
+                  protect
+                  protect-n)
+                (+ 2 protect-n)
+                "%r8"
+                backend-state)]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
@@ -35253,26 +35403,22 @@
     [dst-offset : i64
       (compiler-backend-outgoing-stack-arg-offset target stack-idx)]
     [src-reg : String
-      (if (string.eq planned-stage "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-c-abi-stage-exclude-with "%r11")
-          compiler-backend-c-abi-stage-exclude-count
-          "%r10"
-          backend-state)
-        planned-stage)]
+      (compiler-backend-planned-or-scavenge-reg-here
+        planned-stage
+        (compiler-backend-c-abi-stage-exclude-with "%r11")
+        compiler-backend-c-abi-stage-exclude-count
+        "%r10"
+        backend-state)]
     [copy-xmm : String
-      (if (string.eq
-        (compiler-backend-current-c-memory-planned-xmm backend-state)
-        "")
-        (let
-          [no-exclude : (__tl_dyn-array String) (array.make-array String 0)]
-          (compiler-backend-scavenge-xmm-reg
-            -1
-            no-exclude
-            0
-            "%xmm2"
-            backend-state))
-        (compiler-backend-current-c-memory-planned-xmm backend-state))]
+      (let
+        [no-exclude : (__tl_dyn-array String) (array.make-array String 0)]
+        (compiler-backend-planned-or-scavenge-xmm-reg
+          (compiler-backend-current-c-memory-planned-xmm backend-state)
+          -1
+          no-exclude
+          0
+          "%xmm2"
+          backend-state))]
     (match (compiler-backend-emit-load-value-with-plan
       assignments
       value
@@ -35337,16 +35483,13 @@
         [base-reg : String
           (if (string.eq (compiler-backend-global-shared-view base-reg-in) "")
             (if (string.eq (compiler-backend-global-shared-view base-home) "")
-              (if (string.eq
+              (compiler-backend-planned-or-scavenge-reg
                 (compiler-backend-global-shared-view planned-address)
-                "")
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-addr-scavenge-exclude)
-                  0
-                  "%r10"
-                  (compiler-backend-global-shared-view backend-state))
-                (compiler-backend-global-shared-view planned-address))
+                dst
+                (compiler-backend-addr-scavenge-exclude)
+                0
+                "%r10"
+                (compiler-backend-global-shared-view backend-state))
               (compiler-backend-global-shared-view base-home))
             (compiler-backend-global-shared-view base-reg-in))]
         [addr : String
@@ -35422,17 +35565,14 @@
           (if (string.eq (compiler-backend-global-shared-view base-reg-in) "")
             (if use-base-home?
               (compiler-backend-global-shared-view base-home)
-              (if (string.eq
+              (compiler-backend-planned-or-scavenge-reg
                 (compiler-backend-global-shared-view planned-address)
-                "")
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-one-exclude
-                    (compiler-backend-global-shared-view offset-home))
-                  1
-                  "%r10"
-                  (compiler-backend-global-shared-view backend-state))
-                (compiler-backend-global-shared-view planned-address)))
+                dst
+                (compiler-backend-one-exclude
+                  (compiler-backend-global-shared-view offset-home))
+                1
+                "%r10"
+                (compiler-backend-global-shared-view backend-state)))
             (compiler-backend-global-shared-view base-reg-in))]
         [use-offset-home? : bool
           (and
@@ -35446,18 +35586,15 @@
         [index-reg : String
           (if use-offset-home?
             (compiler-backend-global-shared-view offset-home)
-            (if (string.eq
+            (compiler-backend-planned-or-scavenge-reg
               (compiler-backend-global-shared-view planned-index)
-              "")
-              (compiler-backend-scavenge-reg
-                dst
-                (compiler-backend-scavenge-exclude-regs2
-                  (compiler-backend-global-shared-view base-reg)
-                  (compiler-backend-global-shared-view offset-home))
-                7
-                "%r8"
-                (compiler-backend-global-shared-view backend-state))
-              (compiler-backend-global-shared-view planned-index)))]
+              dst
+              (compiler-backend-scavenge-exclude-regs2
+                (compiler-backend-global-shared-view base-reg)
+                (compiler-backend-global-shared-view offset-home))
+              7
+              "%r8"
+              (compiler-backend-global-shared-view backend-state)))]
         [addr : String
           (compiler-backend-gep-index-address-disp
             gep-disp
@@ -36241,34 +36378,32 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [scav-idx : String
-      (if (string.eq planned-index "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-scavenge-exclude-ops2
-            backend-state
-            (compiler-backend-global-shared-view assignments)
-            (compiler-backend-global-shared-view base)
-            (compiler-backend-global-shared-view value))
-          7
-          "%r8"
-          backend-state)
-        planned-index)]
+      (compiler-backend-planned-or-scavenge-reg-here
+        planned-index
+        (compiler-backend-scavenge-exclude-ops2
+          backend-state
+          (compiler-backend-global-shared-view assignments)
+          (compiler-backend-global-shared-view base)
+          (compiler-backend-global-shared-view value))
+        7
+        "%r8"
+        backend-state)]
     ;; Fold-base scratch. For non-SIB scales the scaled index is folded into a
     ;; register, which must not clobber the base/value homes; it also serves as
     ;; the load fallback when the base is spilled. If that fallback aliases the
     ;; offset home, the offset copy is emitted before the base reload below.
     [scav-fold : String
-      (if (string.eq planned-address "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-scavenge-exclude-append
-            (compiler-backend-scavenge-exclude-regs2
-              (compiler-backend-global-shared-view scav-idx)
-              base-home)
-            7
-            value-home)
-          8
-          "%r10"
-          backend-state)
-        planned-address)]
+      (compiler-backend-planned-or-scavenge-reg-here
+        planned-address
+        (compiler-backend-scavenge-exclude-append
+          (compiler-backend-scavenge-exclude-regs2
+            (compiler-backend-global-shared-view scav-idx)
+            base-home)
+          7
+          value-home)
+        8
+        "%r10"
+        backend-state)]
     (match (compiler-backend-emit-address-base-with-avoid
       (compiler-backend-global-shared-view assignments)
       (compiler-backend-global-shared-view base)
@@ -58714,7 +58849,7 @@
     (compiler-backend-scratch-plan-register-ahead
       (compiler-backend-runtime-plan-scratch
         (compiler-backend-global-shared-view ctx.plan))
-      1
+      store-instruction-offset
       1
       (compiler-backend-global-shared-view ctx.backend-state))
     (compiler-backend-global-shared-view ctx.backend-state))
@@ -62052,7 +62187,7 @@
                     (compiler-backend-divmod-safe-literal?
                       (compiler-backend-global-shared-view src)
                       (compiler-backend-global-shared-view bin-ty)))
-                    (match (compiler-backend-emit-binop
+                    (match (compiler-backend-emit-binop-with-plan
                       (compiler-backend-global-shared-view
                         ctx.type-segment-bases)
                       (compiler-backend-global-shared-view ctx.types)
@@ -62063,6 +62198,36 @@
                       lhs
                       (compiler-backend-global-shared-view src)
                       (compiler-backend-global-shared-view bin-ty)
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch
+                          (compiler-backend-global-shared-view ctx.plan))
+                        2
+                        0
+                        (compiler-backend-global-shared-view ctx.backend-state))
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch
+                          (compiler-backend-global-shared-view ctx.plan))
+                        2
+                        1
+                        (compiler-backend-global-shared-view ctx.backend-state))
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch
+                          (compiler-backend-global-shared-view ctx.plan))
+                        2
+                        2
+                        (compiler-backend-global-shared-view ctx.backend-state))
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch
+                          (compiler-backend-global-shared-view ctx.plan))
+                        2
+                        3
+                        (compiler-backend-global-shared-view ctx.backend-state))
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch
+                          (compiler-backend-global-shared-view ctx.plan))
+                        2
+                        4
+                        (compiler-backend-global-shared-view ctx.backend-state))
                       (compiler-backend-global-shared-view ctx.backend-state))
                       [(ResultCompilerBackend.Ok binop-asm)
                         (begin
@@ -62124,7 +62289,7 @@
                 ""
                 (compiler-backend-global-shared-view ctx.backend-state)))
               [(ResultCompilerBackend.Ok prefix)
-                (match (compiler-backend-emit-binop
+                (match (compiler-backend-emit-binop-with-plan
                   (compiler-backend-global-shared-view ctx.type-segment-bases)
                   (compiler-backend-global-shared-view ctx.types)
                   (compiler-backend-global-shared-view ctx.global-types)
@@ -62134,6 +62299,36 @@
                   lhs
                   (compiler-backend-global-shared-view src)
                   (compiler-backend-global-shared-view bin-ty)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch
+                      (compiler-backend-global-shared-view ctx.plan))
+                    1
+                    0
+                    (compiler-backend-global-shared-view ctx.backend-state))
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch
+                      (compiler-backend-global-shared-view ctx.plan))
+                    1
+                    1
+                    (compiler-backend-global-shared-view ctx.backend-state))
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch
+                      (compiler-backend-global-shared-view ctx.plan))
+                    1
+                    2
+                    (compiler-backend-global-shared-view ctx.backend-state))
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch
+                      (compiler-backend-global-shared-view ctx.plan))
+                    1
+                    3
+                    (compiler-backend-global-shared-view ctx.backend-state))
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch
+                      (compiler-backend-global-shared-view ctx.plan))
+                    1
+                    4
+                    (compiler-backend-global-shared-view ctx.backend-state))
                   (compiler-backend-global-shared-view ctx.backend-state))
                   [(ResultCompilerBackend.Ok binop-asm)
                     (begin

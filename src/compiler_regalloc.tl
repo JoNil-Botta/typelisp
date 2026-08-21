@@ -40067,30 +40067,15 @@
             (compiler-reg-global-shared-view dst)
             (compiler-reg-global-shared-view src)))
           2
-          (if (and
-            (compiler-reg-float-type? (compiler-reg-global-shared-view ty))
-            (not
-              (compiler-reg-scratch-value-same-home?
-                (compiler-reg-global-shared-view _assignments)
-                (compiler-reg-global-shared-view dst)
-                (compiler-reg-global-shared-view src)))
-            (not
-              (compiler-reg-scratch-var-register-homed?
-                (compiler-reg-global-shared-view _assignments)
-                (compiler-reg-global-shared-view dst))))
-            1
-            (if (or
-              (compiler-reg-scratch-value-same-home?
-                (compiler-reg-global-shared-view _assignments)
-                (compiler-reg-global-shared-view dst)
-                (compiler-reg-global-shared-view src))
-              (compiler-reg-scratch-value-encodable-immediate?
-                (compiler-reg-global-shared-view src))
-              (compiler-reg-scratch-var-register-homed?
-                (compiler-reg-global-shared-view _assignments)
-                (compiler-reg-global-shared-view dst)))
-              0
-              1)))]
+          ;; Emission can replace the ordinary allocation view with a
+          ;; function-local assignment index or home override. It can also
+          ;; forward a same-home AddrOf source. Either change can turn an
+          ;; apparently register/direct copy into a spilled load+store, so every
+          ;; non-literal scalar/float Mov retains one conservative staging slot.
+          (if (compiler-reg-scratch-value-encodable-immediate?
+            (compiler-reg-global-shared-view src))
+            0
+            1))]
       ;; A non-memory splat stages integer lanes through GP+XMM and float lanes
       ;; through XMM. Keep the two fixed ordinals so emission lookup remains
       ;; stable regardless of the source home and selected element type.
@@ -41357,21 +41342,40 @@
   [var : i64]
   [binop-return : bool]) : CompilerRegScratchRequirement
   (match (compiler-reg-global-shared-view instr)
-    [(ir.CompilerIrInstr.Call _ _ _ _)
-      (CompilerRegScratchRequirement
-        point
-        ordinal
-        (if (= ordinal 0)
-          (CompilerRegScratchRole.CallStage)
-          (CompilerRegScratchRole.CallMemoryXmm))
-        (if (= ordinal 0)
-          (compiler-reg-scratch-call-stage-constraint policy)
-          (compiler-reg-scratch-xmm-constraint
-            (compiler-reg-global-shared-view assignments)
-            instr))
-        point
-        (+ point 1)
-        var)]
+    [(ir.CompilerIrInstr.Call _ name args _)
+      (let
+        [fast-alloc? : bool
+          (compiler-reg-inline-fast-alloc-call?
+            (compiler-reg-global-shared-view name)
+            (compiler-reg-global-shared-view args))]
+        (CompilerRegScratchRequirement
+          point
+          ordinal
+          (cond
+            [(and fast-alloc? (= ordinal 0))
+              (CompilerRegScratchRole.ScalarPrimary)]
+            [fast-alloc? (CompilerRegScratchRole.ScalarSecondary)]
+            [(= ordinal 0) (CompilerRegScratchRole.CallStage)]
+            [else (CompilerRegScratchRole.CallMemoryXmm)])
+          (cond
+            [fast-alloc?
+              ;; Inline allocation uses both homes before its slow-path call;
+              ;; they need the ordinary GP pool, must be mutually distinct,
+              ;; and cannot use the %rax cursor/result register.
+              (compiler-reg-scratch-scalar-constraint
+                (compiler-reg-global-shared-view assignments)
+                (compiler-reg-global-shared-view instr)
+                (compiler-reg-id-seq-prepend
+                  cabi.compiler-reg-id-rax
+                  (compiler-reg-id-seq-empty)))]
+            [(= ordinal 0) (compiler-reg-scratch-call-stage-constraint policy)]
+            [else
+              (compiler-reg-scratch-xmm-constraint
+                (compiler-reg-global-shared-view assignments)
+                instr)])
+          point
+          (+ point 1)
+          var))]
     [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
       (CompilerRegScratchRequirement
         point
@@ -41949,16 +41953,27 @@
           (+ point 1)
           var))]
     [(ir.CompilerIrInstr.Mov dst src ty)
-      (CompilerRegScratchRequirement
-        point
-        ordinal
-        (CompilerRegScratchRole.FloatMoveValueXmm)
-        (compiler-reg-scratch-xmm-constraint
-          (compiler-reg-global-shared-view assignments)
-          instr)
-        point
-        (+ point 1)
-        var)]
+      (if (compiler-reg-float-type? (compiler-reg-global-shared-view ty))
+        (CompilerRegScratchRequirement
+          point
+          ordinal
+          (CompilerRegScratchRole.FloatMoveValueXmm)
+          (compiler-reg-scratch-xmm-constraint
+            (compiler-reg-global-shared-view assignments)
+            instr)
+          point
+          (+ point 1)
+          var)
+        (CompilerRegScratchRequirement
+          point
+          ordinal
+          (CompilerRegScratchRole.ScalarPrimary)
+          (compiler-reg-scratch-memory-constraint
+            (compiler-reg-global-shared-view assignments)
+            instr)
+          point
+          (+ point 1)
+          var))]
     [(ir.CompilerIrInstr.Splat _ _ _ _)
       (CompilerRegScratchRequirement
         point
@@ -42178,10 +42193,17 @@
     [local : CompilerRegScratchRequirement
       (match (compiler-reg-global-shared-view instr)
         [(ir.CompilerIrInstr.Mov dst src ty)
-          (if (compiler-reg-scratch-mov-group-in-set?
-            (compiler-reg-global-shared-view group-vars)
-            dst
-            (compiler-reg-global-shared-view src))
+          (if (or
+            (compiler-reg-scratch-mov-group?
+              type-segment-bases
+              (compiler-reg-global-shared-view var-types)
+              dst
+              (compiler-reg-global-shared-view src)
+              (compiler-reg-global-shared-view ty))
+            (compiler-reg-scratch-mov-group-in-set?
+              (compiler-reg-global-shared-view group-vars)
+              dst
+              (compiler-reg-global-shared-view src)))
             (CompilerRegScratchRequirement
               point
               ordinal
@@ -44375,10 +44397,50 @@
               reg)]
           (begin
             (if (and
+              (compiler-reg-scratch-constraint-allows-register?
+                (compiler-reg-global-shared-view constraint)
+                reg)
               (not
                 (compiler-reg-id-seq-contains?
                   (compiler-reg-global-shared-view excluded)
                   reg))
+              (or
+                (= (array-length items) 0)
+                (let
+                  [current-item : CompilerRegScratchAssignment
+                    (compiler-reg-global-array-element-shared-view
+                      items
+                      current)]
+                  (not
+                    (compiler-reg-scratch-sibling-reserves-register-from?
+                      (compiler-reg-global-shared-view items)
+                      current
+                      (compiler-reg-global-shared-view current-item.requirement)
+                      reg
+                      0))))
+              (or
+                (= (array-length items) 0)
+                (let
+                  [current-item : CompilerRegScratchAssignment
+                    (compiler-reg-global-array-element-shared-view
+                      items
+                      current)]
+                  (not
+                    (if (>= reg-index 0)
+                      (compiler-reg-scratch-register-coalesced-hulls-from?
+                        (compiler-reg-global-shared-view coalesced-hulls)
+                        (compiler-reg-global-shared-view
+                          current-item.requirement)
+                        reg-index)
+                      (compiler-reg-scratch-register-coalesced-gap-from?
+                        (compiler-reg-global-shared-view assignments)
+                        (compiler-reg-global-shared-view interval-index)
+                        (compiler-reg-global-shared-view coalesce-parents)
+                        (compiler-reg-global-shared-view
+                          current-item.requirement)
+                        reg
+                        0
+                        (- vars (array-length items)))))))
               (if (>= reg-index 0)
                 (compiler-reg-greedy-reg-free?
                   (compiler-reg-global-shared-view occupancy)

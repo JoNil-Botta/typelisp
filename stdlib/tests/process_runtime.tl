@@ -226,7 +226,7 @@
 
 (define (assert-process-runtime-env-cstring) : unit
   (let
-    [buf : (Array u8) (process_runtime.env-cstring "TL_TEST" "1")]
+    [buf : (__tl_dyn-array u8) (process_runtime.env-cstring "TL_TEST" "1")]
     (begin
       (test.assert-i64-eq (array-length buf) 10 "env cstring length")
       (assert-u8-eq (array-ref buf 0) 84 "env cstring T")

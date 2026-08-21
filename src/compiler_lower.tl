@@ -1681,7 +1681,7 @@
 (defstruct LowerDeclsSuccess
   (globals ir.CompilerIrGlobalSeq)
   (functions ir.CompilerIrFunctionList)
-  (externs ir.CompilerIrExternList)
+  (externs ir.CompilerIrExternSeq)
   (spans ir.CompilerSourceSpans))
 
 (defenum ResultLowerDecls
@@ -67942,7 +67942,7 @@
   [entry-path : String]
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]
-  [externs : ir.CompilerIrExternList]
+  [externs : ir.CompilerIrExternSeq]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameEnv]
   [clone-roots : clone_support.CloneRootEntries]
@@ -68065,7 +68065,7 @@
   [entry-path : String]
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]
-  [externs : ir.CompilerIrExternList]
+  [externs : ir.CompilerIrExternSeq]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
@@ -68084,7 +68084,8 @@
       (ir.compiler-ir-global-builder-from-seq globals)]
     [cur-functions : ir.CompilerIrFunctionBuilder
       (ir.compiler-ir-function-builder-from-list functions)]
-    [cur-externs : ir.CompilerIrExternList externs]
+    [cur-externs : ir.CompilerIrExternBuilder
+      (ir.compiler-ir-extern-builder-from-seq externs)]
     [cur-spans : ir.CompilerSourceSpans spans]
     [cur-name-cache : LowerNameCache name-cache]
     [cur-type-cache : LowerTypeCache type-cache]
@@ -68108,7 +68109,8 @@
                         (& cur-globals))
                       (ir.compiler-ir-function-builder-snapshot-list
                         (& cur-functions))
-                      (ir.compiler-ir-extern-list-compact-reversed cur-externs)
+                      (ir.compiler-ir-extern-builder-snapshot-seq
+                        (& cur-externs))
                       cur-spans))))
               (set! done true))]
           [(ast.AstDeclListStep.Cons decl rest)
@@ -68295,26 +68297,24 @@
                                 (lower-reference-support-message)))))
                         (set! done true))
                       (begin
-                        (set!
-                          cur-externs
-                          (ir.compiler-ir-extern-cons
-                            (ir.CompilerIrExtern.Extern
-                              (lower-extern-logical-symbol-id
-                                logical-id
-                                logical-name
-                                name
-                                (__tl-box-place metadata))
-                              name
+                        (ir.compiler-ir-extern-builder-push!
+                          (&mut cur-externs)
+                          (ir.CompilerIrExtern.Extern
+                            (lower-extern-logical-symbol-id
+                              logical-id
                               logical-name
-                              (tc_core.tc-type-without-regions resolved-ty)
-                              (ast.ast-extern-metadata-abi
-                                (__tl-box-place metadata))
-                              (ast.ast-extern-metadata-symbol-id
-                                (__tl-box-place metadata))
-                              (ast.ast-extern-metadata-link-inputs
-                                (__tl-box-place metadata))
-                              false)
-                            cur-externs))
+                              name
+                              (__tl-box-place metadata))
+                            name
+                            logical-name
+                            (tc_core.tc-type-without-regions resolved-ty)
+                            (ast.ast-extern-metadata-abi
+                              (__tl-box-place metadata))
+                            (ast.ast-extern-metadata-symbol-id
+                              (__tl-box-place metadata))
+                            (ast.ast-extern-metadata-link-inputs
+                              (__tl-box-place metadata))
+                            false))
                         (set! cur-decls rest))))]
                 [(ast.AstDecl.DefFn decl-meta name params ret body-box metadata)
                   (let
@@ -68408,11 +68408,12 @@
                                   callable-functions
                                   next-spans)
                                 (let
-                                  [next-externs : ir.CompilerIrExternList
+                                  [_export : unit
                                     (match (ast.ast-fn-metadata-export metadata)
-                                      [(ast.AstFnExport.No) cur-externs]
+                                      [(ast.AstFnExport.No) unit]
                                       [(ast.AstFnExport.Export symbol)
-                                        (ir.compiler-ir-extern-cons
+                                        (ir.compiler-ir-extern-builder-push!
+                                          (&mut cur-externs)
                                           (ir.CompilerIrExtern.Extern
                                             function-symbol
                                             function-symbol
@@ -68429,8 +68430,7 @@
                                             (ast.AstExternAbi.C)
                                             symbol
                                             (ast.ast-extern-link-input-list-new)
-                                            true)
-                                          cur-externs)])]
+                                            true))])]
                                   (begin
                                     (cfg
                                       compile-profile
@@ -68444,7 +68444,6 @@
                                     (ir.compiler-ir-function-builder-append-list!
                                       (&mut cur-functions)
                                       callable-functions)
-                                    (set! cur-externs next-externs)
                                     (set! cur-spans next-spans)
                                     (set! cur-decls rest)))])]
                           [(ResultLowerFunction.Err message)
@@ -68844,7 +68843,7 @@
             entry-path
             (ir.compiler-ir-global-seq-empty)
             ir.CompilerIrFunctionList.Nil
-            ir.CompilerIrExternList.Nil
+            (ir.compiler-ir-extern-seq-empty)
             (ir.compiler-source-spans-empty)
             names
             clone-roots

@@ -116,7 +116,7 @@
       (ir.compiler-ir-function-cons
         (win-param-preassign-function function-name pa pb pc pd)
         ir.CompilerIrFunctionList.Nil)
-      ir.CompilerIrExternList.Nil)))
+      (ir.compiler-ir-extern-seq-empty))))
 
 (define (win-param-preassign-safe-div-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function

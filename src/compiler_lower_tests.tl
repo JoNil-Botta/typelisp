@@ -6714,12 +6714,10 @@
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ _ externs)
-          (match (match externs
-            [(compiler_ir_types.CompilerIrExternList.Array seq)
-              (compiler_ir_types.compiler-ir-extern-seq-to-list seq)]
-            [_ externs])
-            [(compiler_ir_types.CompilerIrExternList.Cons
-                (compiler_ir_types.CompilerIrExtern.Extern
+          (and
+            (= externs.len 1)
+            (match (compiler_ir_types.compiler-ir-extern-seq-ref externs 0)
+              [(compiler_ir_types.CompilerIrExtern.Extern
                   name-id
                   name-id
                   name
@@ -6728,14 +6726,12 @@
                   symbol-id
                   link-inputs
                   _)
-                compiler_ir_types.CompilerIrExternList.Nil)
-              (and
-                (string.eq (ci.intern-str name-id) "ffi-add")
-                (string.eq name "ffi-add")
-                (string.eq (ci.intern-str symbol-id) "ffi_add")
-                (compiler_ast_types.ast-extern-abi-c? abi)
-                (compiler-lower-extern-link-inputs-ok? link-inputs))]
-            [_ false])])]
+                (and
+                  (string.eq (ci.intern-str name-id) "ffi-add")
+                  (string.eq name "ffi-add")
+                  (string.eq (ci.intern-str symbol-id) "ffi_add")
+                  (compiler_ast_types.ast-extern-abi-c? abi)
+                  (compiler-lower-extern-link-inputs-ok? link-inputs))]))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-extern-value-fnptr-source) : String
@@ -6933,9 +6929,7 @@
               (if (= globals.len 3)
                 unit
                 (set! ok false))
-              (if (match externs
-                [(compiler_ir_types.CompilerIrExternList.Array _) true]
-                [_ false])
+              (if (= externs.len 1)
                 unit
                 (set! ok false))
               (if (lower-test-global-list-has-name? globals "answer")
@@ -6947,9 +6941,7 @@
               (if (lower-test-global-list-has-name? globals "widened")
                 unit
                 (set! ok false))
-              (if (=
-                (compiler_ir_types.compiler-ir-extern-list-count externs)
-                1)
+              (if (= (compiler_ir_types.compiler-ir-extern-seq-count externs) 1)
                 unit
                 (set! ok false))
               (if (>
@@ -13090,7 +13082,7 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions externs)
           (and
             (= (compiler_ir_types.compiler-ir-function-list-count functions) 1)
-            (= (compiler_ir_types.compiler-ir-extern-list-count externs) 0)
+            (= (compiler_ir_types.compiler-ir-extern-seq-count externs) 0)
             (lower-test-function-defined? functions "main"))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 

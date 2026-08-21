@@ -258,13 +258,10 @@
   [want : i64]) : bool
   (= (compiler_ir_types.compiler-ir-global-seq-count globals) want))
 
-(define (compiler-ir-smoke-extern-list-array-count?
-  [externs : compiler_ir_types.CompilerIrExternList]
+(define (compiler-ir-smoke-extern-seq-count?
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [want : i64]) : bool
-  (match externs
-    [(compiler_ir_types.CompilerIrExternList.Array seq)
-      (= (compiler_ir_types.compiler-ir-extern-seq-count seq) want)]
-    [_ false]))
+  (= (compiler_ir_types.compiler-ir-extern-seq-count externs) want))
 
 (define (compiler-ir-smoke-global-seq-name-at?
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
@@ -287,25 +284,15 @@
       (compiler_ir_types.compiler-ir-global-builder-push! (&mut builder) second)
       (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
 
-(define (compiler-ir-smoke-extern-list-name-at?
-  [externs : compiler_ir_types.CompilerIrExternList]
+(define (compiler-ir-smoke-extern-seq-name-at?
+  [externs : compiler_ir_types.CompilerIrExternSeq]
   [index : i64]
   [want : String]) : bool
-  (match (match externs
-    [(compiler_ir_types.CompilerIrExternList.Array seq)
-      (compiler_ir_types.compiler-ir-extern-seq-to-list seq)]
-    [_ externs])
-    [(compiler_ir_types.CompilerIrExternList.Cons extern rest)
-      (if (= index 0)
-        (match extern
-          [(compiler_ir_types.CompilerIrExtern.Extern _ _ name _ _ _ _ _)
-            (string.eq name want)])
-        (compiler-ir-smoke-extern-list-name-at?
-          (__tl-box-place rest)
-          (- index 1)
-          want))]
-    [(compiler_ir_types.CompilerIrExternList.Nil) false]
-    [(compiler_ir_types.CompilerIrExternList.Array _) false]))
+  (if (or (< index 0) (>= index externs.len))
+    false
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs index)
+      [(compiler_ir_types.CompilerIrExtern.Extern _ _ name _ _ _ _ _)
+        (string.eq name want)])))
 
 (define (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) : bool
   (let
@@ -335,20 +322,21 @@
         (compiler-ir-smoke-symbol-id "second-extern")
         "second-extern"
         (ast.AstType.Bool))]
-    [reversed-externs : compiler_ir_types.CompilerIrExternList
-      (compiler_ir_types.compiler-ir-extern-cons
-        second-extern
-        (compiler_ir_types.compiler-ir-extern-cons
-          first-extern
-          compiler_ir_types.CompilerIrExternList.Nil))]
-    [compact-externs : compiler_ir_types.CompilerIrExternList
-      (compiler_ir_types.compiler-ir-extern-list-compact-reversed
-        reversed-externs)]
-    [array-reversed-externs : compiler_ir_types.CompilerIrExternList
-      (compiler_ir_types.compiler-ir-extern-list-compact-reversed
-        compact-externs)]
-    [cloned-externs : compiler_ir_types.CompilerIrExternList
-      (compiler_ir_types.compiler-ir-clone-extern-list
+    [extern-builder : compiler_ir_types.CompilerIrExternBuilder
+      (compiler_ir_types.compiler-ir-extern-builder-with-capacity 1)]
+    [_externs : unit
+      (begin
+        (compiler_ir_types.compiler-ir-extern-builder-push!
+          (&mut extern-builder)
+          first-extern)
+        (compiler_ir_types.compiler-ir-extern-builder-push!
+          (&mut extern-builder)
+          second-extern))]
+    [compact-externs : compiler_ir_types.CompilerIrExternSeq
+      (compiler_ir_types.compiler-ir-extern-builder-snapshot-seq
+        (& extern-builder))]
+    [cloned-externs : compiler_ir_types.CompilerIrExternSeq
+      (compiler_ir_types.compiler-ir-clone-extern-seq
         (ast.ast-node-pool-reader-context-current)
         compact-externs)]
     [summary : compiler_ir_types.CompilerIrSummary
@@ -362,14 +350,11 @@
       (compiler-ir-smoke-global-seq-name-at? compact-globals 0 "first-global")
       (compiler-ir-smoke-global-seq-name-at? compact-globals 1 "second-global")
       (compiler-ir-smoke-global-seq-name-at? cloned-globals 0 "first-global")
-      (compiler-ir-smoke-extern-list-array-count? compact-externs 2)
-      (compiler-ir-smoke-extern-list-name-at? compact-externs 0 "first-extern")
-      (compiler-ir-smoke-extern-list-name-at? compact-externs 1 "second-extern")
-      (compiler-ir-smoke-extern-list-name-at?
-        array-reversed-externs
-        0
-        "second-extern")
-      (compiler-ir-smoke-extern-list-name-at? cloned-externs 0 "first-extern")
+      (compiler-ir-smoke-extern-seq-count? compact-externs 2)
+      (compiler-ir-smoke-extern-seq-name-at? compact-externs 0 "first-extern")
+      (compiler-ir-smoke-extern-seq-name-at? compact-externs 1 "second-extern")
+      (compiler-ir-smoke-extern-seq-name-at? cloned-externs 0 "first-extern")
+      (compiler-ir-smoke-extern-seq-name-at? cloned-externs 1 "second-extern")
       (= (compiler_ir_types.compiler-ir-summary-globals summary) 2)
       (= (compiler_ir_types.compiler-ir-summary-functions summary) 0)
       (= (compiler_ir_types.compiler-ir-summary-externs summary) 2))))
@@ -425,7 +410,7 @@
         (compiler_ir_types.CompilerIrProgram.Program
           (compiler_ir_types.compiler-ir-global-seq-empty)
           compact
-          compiler_ir_types.CompilerIrExternList.Nil))]
+          (compiler_ir_types.compiler-ir-extern-seq-empty)))]
     (and
       (compiler-ir-smoke-function-list-compact-kind? compact)
       (compiler-ir-smoke-function-list-compact-kind? cloned)
@@ -1080,7 +1065,7 @@
                 instrs)
               compiler_ir_types.CompilerIrBlockList.Nil))
           compiler_ir_types.CompilerIrFunctionList.Nil)
-        compiler_ir_types.CompilerIrExternList.Nil)]
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
     [index : compiler_ir_types.CompilerIrRepresentationIndex
       (compiler_ir_types.compiler-ir-representation-index-build bases program)]

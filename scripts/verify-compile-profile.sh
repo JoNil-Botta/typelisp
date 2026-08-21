@@ -1658,8 +1658,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # multi-exit rotation series' classified exit placement adds macro-expanded
     # type structure on top of main: its authoritative tree measured 24,589
     # used nodes, still 25 segments with 1,011 nodes below the 26-segment line.
+    # The instruction-gap bank's optimizer, regalloc, and backend test surface
+    # crosses that line: its authoritative Windows probe measured 25,643 used
+    # nodes, 26 segments, 26,624 capacity, and 638,976 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 25 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 26 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Same series, same probe: 8,527 used nodes against 9,216 capacity, 689
     # nodes of headroom below the 10-segment line.

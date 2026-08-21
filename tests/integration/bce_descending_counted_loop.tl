@@ -20,8 +20,8 @@
 (import stdlib.io)
 
 (define (walk
-  [items : (& items (Array i64))]
-  [other : (& other (Array i64))]
+  [items : (& items (__tl_dyn-array i64))]
+  [other : (& other (__tl_dyn-array i64))]
   [n : i64]
   [seed : i64]) : i64
   (let
@@ -39,7 +39,7 @@
           (set! pos (- pos 1))))
       acc)))
 
-(define (fill-ones [items : (&mut items (Array i64))] [n : i64]) : unit
+(define (fill-ones [items : (&mut items (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (begin

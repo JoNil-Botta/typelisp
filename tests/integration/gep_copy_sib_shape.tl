@@ -45,24 +45,24 @@
   (c i64)
   (d i64))
 
-(define (take [xs : (Array Quad)] [i : i64]) : Quad
+(define (take [xs : (__tl_dyn-array Quad)] [i : i64]) : Quad
   (if (> i 1000000)
     (take xs (- i 1000000))
     (array-ref xs i)))
 
-(define (put [xs : (Array Quad)] [i : i64] [v : Quad]) : unit
+(define (put [xs : (__tl_dyn-array Quad)] [i : i64] [v : Quad]) : unit
   (if (> i 1000000)
     (put xs (- i 1000000) v)
     (set! (array-ref xs i) v)))
 
-(define (take-const [xs : (Array Quad)] [i : i64]) : Quad
+(define (take-const [xs : (__tl_dyn-array Quad)] [i : i64]) : Quad
   (if (> i 1000000)
     (take-const xs (- i 1000000))
     (array-ref xs 3)))
 
 (define (main) : i64
   (let
-    [xs : (Array Quad) (array.make-array Quad 8)]
+    [xs : (__tl_dyn-array Quad) (array.make-array Quad 8)]
     [i : i64 0]
     [acc : i64 0]
     (begin

@@ -16,9 +16,9 @@
 (import stdlib.io)
 
 (define (fold-row
-  [a : (Array i64)]
-  [b : (Array i64)]
-  [c : (Array i64)]
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [c : (__tl_dyn-array i64)]
   [n : i64]) : i64
   (let
     [i : i64 0]
@@ -36,9 +36,9 @@
 
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 8)]
-    [b : (Array i64) (make-array i64 4)]
-    [c : (Array i64) (make-array i64 8)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [c : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [i : i64 0]
     (begin
       (while (< i 8)

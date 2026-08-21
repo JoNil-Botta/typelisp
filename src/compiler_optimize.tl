@@ -19416,7 +19416,77 @@
   ;; global's symbol id. This is the same class of word as a descriptor header
   ;; slot -- element storage is disjoint from it -- so the header-load proofs
   ;; accept it, while a store through it stays a header-or-unknown store.
-  (GlobalSlot i64))
+  (GlobalSlot i64)
+  ;; P16. `LocalObject o` is the ADDRESS of the object `%o = alloc T` created:
+  ;; storage that belongs to THIS activation. It is reached through
+  ;; `addr_of %o`, through an SSA copy of that address, or back out of a call
+  ;; that returns the argument it was handed (opt-licm-return-alias-map).
+  ;; `LocalSlot o` is a FIXED word of that same object, one or more
+  ;; literal-offset Geps away. Both payloads are the `Alloc`'s dst var, so the
+  ;; two kinds name the object rather than the path taken to it.
+  ;;
+  ;; SOUNDNESS -- why these are the same class of word as a descriptor header
+  ;; slot, and what makes the header-load proofs apply to them.
+  ;;
+  ;;  * `Alloc` creates a distinct object. Nothing else in the function names
+  ;;    it: that is the fact opt-licm-root-disjoint-store? already rests on for
+  ;;    `Fresh`, and the reason `Alloc` seeds a Fresh root at all.
+  ;;  * Decisively, a frame object is never the ELEMENT STORAGE of an array.
+  ;;    Element storage is the heap block a descriptor's DATA SLOT names --
+  ;;    reached by loading that slot (OptLicmPtrKind.DataSlot -> DataBuffer)
+  ;;    and indexed from there (DataElement) -- and that block is the result of
+  ;;    a `tl_alloc`, a different allocation from every `Alloc` of this frame.
+  ;;    So an element store cannot write a word of a frame object, and neither
+  ;;    can an element-only CALLEE, whose every write lands in some array's
+  ;;    element storage by construction (opt-direct-call-element-clean?,
+  ;;    opt-call-memory-element-bit).
+  ;;
+  ;; That is exactly the disjointness the descriptor-header proofs already
+  ;; assume between a descriptor and the buffer it names, so these kinds join
+  ;; opt-licm-header-slot-ptr-kind? and a STORE through one stays a
+  ;; header-or-unknown store (opt-licm-store-summary-for-storeptr's `_` arm),
+  ;; which closes the proof for every other load in the same loop.
+  ;;
+  ;; This is the fact a `Vec`-typed handle needs and the one its TYPE cannot
+  ;; give. A `(__tl_dyn-array Struct)` stores its elements inline, so a
+  ;; Vec-typed pointer may perfectly well address element storage that an
+  ;; element-only store writes -- but not one whose provenance is an `Alloc` of
+  ;; this function.
+  (LocalObject i64)
+  (LocalSlot i64)
+  ;; P20. The BOX of a FROZEN memory-class global (opt-global-frozen-build) and
+  ;; the descriptor chain hanging off it. `g` is the global's symbol id.
+  ;;
+  ;;   FrozenBoxSlot g     the address of a fixed word of box(g)
+  ;;                       (`gep @g, <literal>`, and a further literal gep of
+  ;;                       one, which is still a fixed word of the same object)
+  ;;   FrozenObject v g    a POINTER read out of such a word -- the descriptor
+  ;;                       handle a `Vec` global's `slots` field holds. `v` is
+  ;;                       the loading var, so the DataSlot/DataBuffer chain
+  ;;                       below keeps naming one object.
+  ;;   FrozenWord g        the address of a fixed word of a FrozenObject that is
+  ;;                       not its data slot (a descriptor's length word)
+  ;;   FrozenDataSlot v g  the DATA slot of a FrozenObject. It is a frozen word
+  ;;                       like the others, and a load through it also yields
+  ;;                       `DataBuffer v` exactly as `DataSlot v` does, so
+  ;;                       element stores through the loaded buffer keep their
+  ;;                       element-only classification.
+  ;;
+  ;; SOUNDNESS. These four are the words opt-global-frozen-build has proven
+  ;; IMMUTABLE for the whole run: see its header for the provenance proof (the
+  ;; cell holds one fresh, never-escaping `tl_alloc` object written once before
+  ;; `main`) and for the whole-program use check (no instruction anywhere
+  ;; writes through, or leaks, an address of this class). So a load through one
+  ;; reads the same value on every iteration of every loop, with no store
+  ;; summary, no call summary and no per-loop question involved -- which is
+  ;; what opt-licm-frozen-kind-invariant? licenses. A store through one cannot occur
+  ;; at all in an admitted program; if one did the global would not be frozen,
+  ;; and the `_` arm of opt-licm-store-summary-for-storeptr still prices it as a
+  ;; header-or-unknown store, so nothing rests on that impossibility.
+  (FrozenBoxSlot i64)
+  (FrozenObject i64 i64)
+  (FrozenWord i64)
+  (FrozenDataSlot i64 i64))
 
 (defenum OptLicmPtrEnv
   (Nil)
@@ -19433,7 +19503,21 @@
   (Some OptLicmRoot))
 
 (defstruct OptLicmRootEnv
-  (map opt_i64_i64_map.Map))
+  (map opt_i64_i64_map.Map)
+  ;; The whole-program RETURN-ALIAS table: callee symbol id -> 1 + the index of
+  ;; the parameter that callee hands straight back on every returning path
+  ;; (opt-licm-return-alias-map). It rides with the provenance environment
+  ;; because a `Call` is where provenance would otherwise stop for no reason
+  ;; but missing information: the internal ABI returns an inline aggregate
+  ;; through a hidden slot the CALLER allocates and the callee returns
+  ;; unchanged, so `%d = call f(.., %p)` leaves `%d` and `%p` naming one object
+  ;; with no IR edge between them. The table restores that edge from the
+  ;; callee's own IR rather than from an ABI assumption.
+  ;;
+  ;; The map is a per-program fact. Environments built by the per-function
+  ;; summary passes carry an EMPTY one, which simply keeps their older, weaker
+  ;; verdict (a call result stays unrooted).
+  (return-alias opt_i64_i64_map.Map))
 
 (import (vector.vector OptLicmRoot core) as opt_licm_store_root_vec)
 
@@ -19472,10 +19556,22 @@
   ;; `(and (not global-write?) (not mem-clean-call?))` and nothing outside the
   ;; newly priced class moves. See
   ;; opt-licm-direct-call-keeps-globals-clean?.
-  (mem-clean-call? bool))
+  (mem-clean-call? bool)
+  ;; P18. The per-global refinement of `global-write?`: the packed set of
+  ;; global CELLS the body may write, read against the program's
+  ;; OptGlobalModRef index. `global-write?` above answers "some cell"; this
+  ;; answers "which", and the two are contributed by exactly the same terms --
+  ;; a `Store g` names g, a direct call contributes its callee's row, an
+  ;; indirect call and an unknown effect contribute "any cell", and everything
+  ;; that leaves `global-write?` alone contributes nothing. When the program
+  ;; carries no table the loop is seeded with "any cell", so every consumer
+  ;; falls back to the older loop-wide answer and no decision moves.
+  (global-cell-writes i64))
 
-(define (opt-licm-root-env-with-capacity [capacity : i64]) : OptLicmRootEnv
-  (OptLicmRootEnv (opt_i64_i64_map.with-capacity capacity)))
+(define (opt-licm-root-env-with-capacity
+  [capacity : i64]
+  [return-alias : opt_i64_i64_map.Map]) : OptLicmRootEnv
+  (OptLicmRootEnv (opt_i64_i64_map.with-capacity capacity) return-alias))
 
 (define (opt-licm-root-encode [root : OptLicmRoot]) : i64
   (match root
@@ -19707,6 +19803,79 @@
 (define (opt-licm-globals-clean? [global-write? : bool]) : bool
   (not global-write?))
 
+;; P18. What the loop passes know about `Global` operands: the loop-wide answer
+;; the older gate computed, plus the per-global refinement of it.
+;;
+;; `clean?` is unchanged -- `opt-licm-globals-clean?` composed with the
+;; memory-clean-call tier's refusal at the loop site. It stays the answer the
+;; ADDRESS-forming Gep arm asks, for the register-pressure reason recorded at
+;; that arm.
+;;
+;; `mask` / `index` are the per-global answer: the packed set of global CELLS
+;; this loop may write (see OptGlobalModRef). A `Global g` operand is a
+;; rip-relative read of g's OWN cell, so it reads the same value on every
+;; iteration exactly when g is outside that set -- a strictly weaker condition
+;; than `clean?`, and the one the scalar operand arms now ask. When the program
+;; carries no mod-ref table the loop is seeded with "any cell" and the two
+;; conditions coincide, which is what keeps every level below 2 and every
+;; program outside the table's preconditions byte-identical.
+(defstruct OptLicmGlobalFacts
+  (clean? bool)
+  (mask i64)
+  (index opt_i64_i64_map.Map)
+  ;; P20. The program's FROZEN globals (opt-global-frozen-build): those whose
+  ;; box and descriptor words are immutable for the whole run. Carried here
+  ;; because every consumer of this bundle is exactly a consumer of the frozen
+  ;; chain's classification.
+  (frozen opt_i64_i64_map.Map)
+  ;; Whether THIS loop is allowed to take a frozen chain out. The proof is
+  ;; unconditional; this is the pressure gate that prices it. See
+  ;; opt-licm-frozen-chain-hoist?.
+  (frozen-hoist? bool))
+
+(define (opt-licm-global-facts
+  [clean? : bool]
+  [cells : OptGlobalCellSummary]
+  [mask : i64]
+  [frozen-hoist? : bool]) : OptLicmGlobalFacts
+  (let
+    [mod-ref : OptGlobalModRef cells.mod-ref]
+    (OptLicmGlobalFacts clean? mask mod-ref.index cells.frozen frozen-hoist?)))
+
+(define (opt-licm-global-facts-invariant?
+  [facts : OptLicmGlobalFacts]
+  [name : i64]) : bool
+  (or
+    facts.clean?
+    (not (opt-global-mod-ref-mask-may-write? facts.index facts.mask name))))
+
+;; opt-licm-value-invariant? with the per-global answer in place of the
+;; loop-wide bool. The Var and literal arms are identical to it; only a
+;; `Global` operand is decided differently.
+(define (opt-licm-global-value-invariant?
+  [facts : OptLicmGlobalFacts]
+  [loop-defs : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (or
+        (not (opt-used-contains loop-defs var))
+        (opt-used-contains hoisted var))]
+    [(ir.CompilerIrValue.Global name)
+      (opt-licm-global-facts-invariant? facts name)]
+    [_ true]))
+
+(define (opt-licm-global-values-invariant?
+  [facts : OptLicmGlobalFacts]
+  [loop-defs : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map]
+  [a : ir.CompilerIrValue]
+  [b : ir.CompilerIrValue]) : bool
+  (and
+    (opt-licm-global-value-invariant? facts loop-defs hoisted a)
+    (opt-licm-global-value-invariant? facts loop-defs hoisted b)))
+
 (define (opt-licm-store-summary-empty) : OptLicmStoreSummary
   (OptLicmStoreSummary false false false false))
 
@@ -19748,6 +19917,22 @@
 ;; emitted call, not a memory fact, so an element-only direct call counts here
 ;; exactly like any other call -- its memory verdict is softer, its calling
 ;; convention is not.
+;;
+;; P14 re-measured dropping `element-only-call?` from this predicate outright,
+;; on the whole 17-row corpus: gvn_table -344,685 and liveness_scan -31,277
+;; against cfg_domloops +11,853, intern_table +6. It kept the boundary, because
+;; the residual loss was not separable from the win: gvn-scan-ints and
+;; cfg-scan-ints are character-identical sources whose asm diffs are identical
+;; modulo symbol ids, and they moved in OPPOSITE directions, so no static
+;; property of the loop distinguishes them.
+;;
+;; P16 measured it a third time, now that the memory proof it was waiting on
+;; exists (opt-licm-local-slot-kind). Dropping the bit here and excepting only
+;; the fixed-word ADDRESS class at the Gep site
+;; (opt-licm-gep-call-boundary-ok?) give byte-identical counts on all
+;; seventeen rows. The narrow exception is what lands: it keeps this predicate,
+;; and with it R7's and P14's verdict for every address the exception does not
+;; name, at no measured cost.
 (define (opt-licm-store-summary-call-boundary? [summary : OptLicmStoreSummary]) : bool
   (or summary.call-or-unknown? summary.element-only-call?))
 
@@ -19853,11 +20038,14 @@
 ;;
 ;; It gets its own field rather than `element-only-store?` because it is still a
 ;; CALL: the hoist/allocate interlock reads
-;; opt-licm-store-summary-call-boundary? and keeps pricing it as one. Measured,
-;; that separation is the whole difference between a win and a loss -- routing
-;; the bit through `element-only-store?` instead (so the interlock stopped
-;; seeing the call) cost intern_table 602,891,376 -> 611,411,217 (+1.41%) for a
-;; gvn_table gain of 0.34M.
+;; opt-licm-store-summary-call-boundary? and keeps pricing it as one. R7
+;; measured that separation as the whole difference between a win and a loss --
+;; routing the bit through `element-only-store?` instead, so the interlock
+;; stopped seeing the call, cost intern_table 602,891,376 -> 611,411,217
+;; (+1.41%) for a gvn_table gain of 0.34M. The separation still stands, but the
+;; boundary is no longer all-or-nothing: P16 excepts one ADDRESS class from it
+;; by name (opt-licm-gep-call-boundary-ok?) while every other consumer keeps
+;; pricing an element-only call exactly as a call.
 (define (opt-licm-store-summary-for-direct-call
   [direct-call-clean : opt_i64_i64_map.Map]
   [name : i64]) : OptLicmStoreSummary
@@ -20052,12 +20240,158 @@
                   (opt-licm-phi-root env (__tl-box-place rest) found)
                   (OptMaybeLicmRoot.No))])]))]))
 
+;; --- whole-program return-alias table ---------------------------------------
+;;
+;; Which callees hand one of their own arguments straight back to the caller?
+;; The question exists because provenance dies at a `Call` even when the value
+;; that comes out is the very pointer that went in. The internal ABI returns an
+;; inline aggregate through a hidden trailing slot that the CALLER allocates
+;; (lower-prepare-internal-return-value), and the callee's return value is that
+;; slot's pointer, so
+;;
+;;     %36 = alloc Vec ; %37 = addr_of %36 ; %38 = call f(n, %37) : Vec
+;;
+;; leaves `%38` and `%37` naming ONE object with nothing in the IR to say so.
+;; Every later `gep %38, <field>` therefore looks like a fixed word of an
+;; unknown object, and the header-load proofs give up on it.
+;;
+;; This table answers the question from the CALLEE's own IR rather than from
+;; the calling convention: a function qualifies only when EVERY `Return` in it
+;; returns the same parameter var, verbatim -- no phi, no copy chain, no
+;; aggregate rebuild -- and the function contains no tail call (whose result is
+;; the tail callee's, not a parameter of this one). Under that condition the
+;; call's dst is definitionally the value of that argument, whatever the ABI
+;; does to transport it, so the caller may copy the argument's root and pointer
+;; class onto the result. A function with no `Return` at all (every path
+;; aborts) does not qualify: there is no returned value to describe.
+;;
+;; The table is built once per program beside the other call summaries and is
+;; empty at levels that build no summaries, where it costs the older verdict
+;; and nothing else.
+(define (opt-licm-return-alias-instr
+  [params : ir.CompilerIrParamList]
+  [found : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Return maybe-value)
+      (match maybe-value
+        [(ir.CompilerIrMaybeValue.Some value)
+          (match value
+            [(ir.CompilerIrValue.Var var)
+              (let
+                [index : i64 (opt-call-memory-param-index-from params var 0)]
+                (cond
+                  [(< index 0) -1]
+                  [(= found -2) index]
+                  [(= found index) found]
+                  [else -1]))]
+            [_ -1])]
+        [(ir.CompilerIrMaybeValue.No) -1])]
+    [(ir.CompilerIrInstr.TailCall _ _ _) -1]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) -1]
+    [_ found]))
+
+(define (opt-licm-return-alias-instr-seq-from
+  [params : ir.CompilerIrParamList]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [found : i64]) : i64
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    found
+    (opt-licm-return-alias-instr-seq-from
+      params
+      instrs
+      (+ index 1)
+      (opt-licm-return-alias-instr
+        params
+        found
+        (ir.compiler-ir-instr-seq-ref instrs index)))))
+
+(define (opt-licm-return-alias-blocks
+  [params : ir.CompilerIrParamList]
+  [blocks : ir.CompilerIrBlockList]
+  [found : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) found]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-licm-return-alias-blocks
+            params
+            (__tl-box-place rest)
+            (opt-licm-return-alias-instr-seq-from params instrs 0 found))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-licm-return-alias-blocks
+        params
+        (ir.compiler-ir-block-seq-to-list seq)
+        found)]))
+
+;; The parameter index this function returns unchanged, or -1.
+(define (opt-licm-return-alias-function-index [func : ir.CompilerIrFunction]) : i64
+  (match func
+    [(ir.CompilerIrFunction.Function _ params _ _ blocks)
+      (let
+        [found : i64 (opt-licm-return-alias-blocks params blocks -2)]
+        (if (< found 0)
+          -1
+          found))]))
+
+(define (opt-licm-return-alias-add-functions
+  [functions : ir.CompilerIrFunctionList]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) out]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ _)
+          (let
+            [index : i64 (opt-licm-return-alias-function-index func)]
+            [_record : unit
+              (if (< index 0)
+                unit
+                (opt_i64_i64_map.insert-ref!
+                  (&mut out)
+                  (ir.compiler-ir-symbol-id name)
+                  (+ index 1)))]
+            (opt-licm-return-alias-add-functions (__tl-box-place rest) out))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-licm-return-alias-add-functions
+        (ir.compiler-ir-function-seq-to-list seq)
+        out)]))
+
+(define (opt-licm-return-alias-map
+  [functions : ir.CompilerIrFunctionList]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (opt-licm-return-alias-add-functions
+    functions
+    (opt_i64_i64_map.with-capacity capacity)))
+
+;; The argument a direct call returns unchanged, if the table proves it does.
+(define (opt-licm-root-env-return-alias-value
+  [env : (& env OptLicmRootEnv)]
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrMaybeValue
+  (match (opt_i64_i64_map.get
+    (& env.return-alias)
+    (ir.compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound encoded)
+      (opt-call-memory-arg-at args (- encoded 1))]
+    [(opt_i64_i64_map.LookupMissing) (ir.CompilerIrMaybeValue.No)]))
+
 (define (opt-licm-root-env-update-instr!
   [env : (&mut env OptLicmRootEnv)]
   [instr : ir.CompilerIrInstr]) : unit
   (match instr
     [(ir.CompilerIrInstr.Alloc dst _)
       (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))]
+    ;; The address of an allocated object designates that object. Without this
+    ;; arm every address-taken local was unrooted, so a write through one fell
+    ;; into the unrooted store summary (killing every descriptor proof in the
+    ;; loop) and a read through one could never use the disjointness its
+    ;; `Alloc` already establishes. `addr_of` of anything unrooted stays
+    ;; unrooted, exactly as the copy arms below behave.
+    [(ir.CompilerIrInstr.AddrOf dst src)
+      (opt-licm-root-env-copy! env dst (ir.CompilerIrValue.Var src))]
     [(ir.CompilerIrInstr.Gep dst base _ _)
       (opt-licm-root-env-copy! env dst base)]
     [(ir.CompilerIrInstr.Mov dst src _) (opt-licm-root-env-copy! env dst src)]
@@ -20072,10 +20406,18 @@
     ;; A descriptor-data Load may be rebound by
     ;; opt-licm-provenance-state-instr immediately after this update.
     [(ir.CompilerIrInstr.Load dst _ _) (opt-licm-root-env-remove! env dst)]
-    [(ir.CompilerIrInstr.Call dst name _ _)
+    [(ir.CompilerIrInstr.Call dst name args _)
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
-        unit)]
+        ;; A callee that returns one of its arguments returns that object, so
+        ;; the result inherits the argument's root -- most often the caller's
+        ;; own sret buffer, whose root is the `Alloc` two instructions up.
+        ;; Binding a fresh id here instead would be unsound: the result and the
+        ;; argument would then read as two disjoint objects.
+        (match (opt-licm-root-env-return-alias-value env name args)
+          [(ir.CompilerIrMaybeValue.Some value)
+            (opt-licm-root-env-copy! env dst value)]
+          [(ir.CompilerIrMaybeValue.No) unit]))]
     [_ unit]))
 
 (define (opt-licm-array-header-type?
@@ -20136,11 +20478,58 @@
           (opt-licm-data-slot? offset ty)))]
     [_ false]))
 
+;; The pointer classes whose target is a FIXED word of an object that element
+;; storage is disjoint from: a descriptor's own header words, a global cell's
+;; object, and (P16) a word of a frame object this function allocated. Element
+;; stores and element-only callees provably cannot write any of them, which is
+;; what the header-load proofs need; a store THROUGH one is a
+;; header-or-unknown store and closes those proofs for the whole loop.
 (define (opt-licm-header-slot-ptr-kind? [kind : OptLicmPtrKind]) : bool
   (match kind
     [(OptLicmPtrKind.HeaderSlot _) true]
     [(OptLicmPtrKind.DataSlot _) true]
     [(OptLicmPtrKind.GlobalSlot _) true]
+    [(OptLicmPtrKind.LocalObject _) true]
+    [(OptLicmPtrKind.LocalSlot _) true]
+    [(OptLicmPtrKind.FrozenBoxSlot _) true]
+    [(OptLicmPtrKind.FrozenObject _ _) true]
+    [(OptLicmPtrKind.FrozenWord _) true]
+    [(OptLicmPtrKind.FrozenDataSlot _ _) true]
+    [_ false]))
+
+;; P20. The two questions a frozen chain has to answer, together. The class
+;; proves that NOTHING writes the box's or the descriptor's words -- but a
+;; `Store g` replaces the box outright, so the chain is invariant only in a loop
+;; that P18's per-global cell-write set already proves does not write g's cell.
+;; That is `opt-licm-global-facts-invariant?`, the same answer the scalar
+;; operand arms take, and it is strictly weaker than `globals.clean?`: a loop
+;; whose callee stores some OTHER cell still passes it.
+(define (opt-licm-frozen-kind-invariant?
+  [facts : OptLicmGlobalFacts]
+  [kind : OptLicmPtrKind]) : bool
+  (match kind
+    [(OptLicmPtrKind.FrozenBoxSlot global)
+      (opt-licm-global-facts-invariant? facts global)]
+    [(OptLicmPtrKind.FrozenObject _ global)
+      (opt-licm-global-facts-invariant? facts global)]
+    [(OptLicmPtrKind.FrozenWord global)
+      (opt-licm-global-facts-invariant? facts global)]
+    [(OptLicmPtrKind.FrozenDataSlot _ global)
+      (opt-licm-global-facts-invariant? facts global)]
+    [_ false]))
+
+;; A frozen chain's head operand: `gep @g, <literal>` reads g's cell, so the
+;; operand is invariant exactly when that cell is outside the loop's write set.
+(define (opt-licm-frozen-global-value?
+  [facts : OptLicmGlobalFacts]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Global name)
+      (and
+        (opt_i64_i64_map.contains?
+          (& facts.frozen)
+          (ir.compiler-ir-symbol-id name))
+        (opt-licm-global-facts-invariant? facts name))]
     [_ false]))
 
 (define (opt-licm-header-slot-source?
@@ -20163,9 +20552,72 @@
         (opt-licm-header-slot-ptr-kind? (opt-licm-ptr-lookup ptrs ptr-var)))]
     [_ false]))
 
+;; P20. Is this load's address a word opt-global-frozen-build proved immutable,
+;; in a loop that does not replace the box it belongs to? A `Global` source is
+;; NOT one: it is the cell read itself, and the value it produces is the box
+;; POINTER, whose constancy the Gep/Load operand rules already decide
+;; (opt-licm-frozen-global-value?). This predicate answers only for an address
+;; the frozen chain built.
+(define (opt-licm-frozen-source?
+  [facts : OptLicmGlobalFacts]
+  [ptrs : OptLicmPtrEnv]
+  [src : ir.CompilerIrValue]) : bool
+  (match src
+    [(ir.CompilerIrValue.Var ptr-var)
+      (opt-licm-frozen-kind-invariant? facts (opt-licm-ptr-lookup ptrs ptr-var))]
+    [_ false]))
+
+;; `Gep <address of a frame object>, <literal>` addresses a FIXED word of that
+;; object, and so does a further literal Gep off such a word (a field of an
+;; inline field). A VARIABLE offset is indexing: it can leave the word the
+;; caller reasoned about, so it keeps no provenance. The payload stays the
+;; `Alloc`'s dst so every path to the object answers to one id.
+(define (opt-licm-local-slot-kind
+  [base-kind : OptLicmPtrKind]
+  [offset : ir.CompilerIrValue]) : OptLicmPtrKind
+  (match offset
+    [(ir.CompilerIrValue.I64 _)
+      (match base-kind
+        [(OptLicmPtrKind.LocalObject object) (OptLicmPtrKind.LocalSlot object)]
+        [(OptLicmPtrKind.LocalSlot object) (OptLicmPtrKind.LocalSlot object)]
+        [_ (OptLicmPtrKind.Unknown)])]
+    [_ (OptLicmPtrKind.Unknown)]))
+
+;; P20. A LITERAL-offset Gep off a frozen address, or off a frozen object,
+;; addresses another fixed word of the same frozen object, so it stays in the
+;; chain. A VARIABLE offset is indexing and drops the class -- and cannot occur
+;; for an admitted global at all, because opt-global-frozen-uses-instr refuses a
+;; global whose chain is ever indexed. The data slot keeps its own kind so the
+;; load through it still yields `DataBuffer base-var`, which is what leaves
+;; element stores through the loaded buffer classified as element-only.
+(define (opt-licm-frozen-gep-kind
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [base-var : i64]
+  [base-kind : OptLicmPtrKind]
+  [offset : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptLicmPtrKind
+  (match offset
+    [(ir.CompilerIrValue.I64 _)
+      (match base-kind
+        [(OptLicmPtrKind.FrozenBoxSlot global)
+          (OptLicmPtrKind.FrozenBoxSlot global)]
+        [(OptLicmPtrKind.FrozenWord global) (OptLicmPtrKind.FrozenWord global)]
+        [(OptLicmPtrKind.FrozenDataSlot _ global)
+          (OptLicmPtrKind.FrozenWord global)]
+        [(OptLicmPtrKind.FrozenObject _ global)
+          (if (and
+            (opt-licm-array-header-var? type-segment-bases types base-var)
+            (opt-licm-data-slot? offset ty))
+            (OptLicmPtrKind.FrozenDataSlot base-var global)
+            (OptLicmPtrKind.FrozenWord global))]
+        [_ (OptLicmPtrKind.Unknown)])]
+    [_ (OptLicmPtrKind.Unknown)]))
+
 (define (opt-licm-gep-kind
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
+  [frozen : opt_i64_i64_map.Map]
   [ptrs : OptLicmPtrEnv]
   [base : ir.CompilerIrValue]
   [offset : ir.CompilerIrValue]
@@ -20175,6 +20627,38 @@
       (let
         [base-kind : OptLicmPtrKind (opt-licm-ptr-lookup ptrs base-var)]
         (match base-kind
+          [(OptLicmPtrKind.FrozenBoxSlot _)
+            (opt-licm-frozen-gep-kind
+              type-segment-bases
+              types
+              base-var
+              base-kind
+              offset
+              ty)]
+          [(OptLicmPtrKind.FrozenObject _ _)
+            (opt-licm-frozen-gep-kind
+              type-segment-bases
+              types
+              base-var
+              base-kind
+              offset
+              ty)]
+          [(OptLicmPtrKind.FrozenWord _)
+            (opt-licm-frozen-gep-kind
+              type-segment-bases
+              types
+              base-var
+              base-kind
+              offset
+              ty)]
+          [(OptLicmPtrKind.FrozenDataSlot _ _)
+            (opt-licm-frozen-gep-kind
+              type-segment-bases
+              types
+              base-var
+              base-kind
+              offset
+              ty)]
           [(OptLicmPtrKind.DataBuffer object)
             (OptLicmPtrKind.DataElement object)]
           [(OptLicmPtrKind.DataElement object)
@@ -20189,20 +20673,36 @@
                 (if (opt-licm-data-slot? offset ty)
                   (OptLicmPtrKind.DataSlot base-var)
                   (OptLicmPtrKind.Unknown)))
-              (OptLicmPtrKind.Unknown))]))]
+              ;; Not a descriptor handle. It may still be the address of a
+              ;; frame object of this function, in which case a LITERAL offset
+              ;; picks out a fixed word of it. The descriptor classification
+              ;; above wins wherever it applies, so the established
+              ;; HeaderSlot/DataSlot chain is untouched.
+              (opt-licm-local-slot-kind base-kind offset))]))]
     ;; `Gep <global operand>, <literal>` addresses a fixed word of the object
     ;; that global's cell designates -- the descriptor handle a `Vec`/array
     ;; global holds, or the handle's own header words. A variable offset is
     ;; element indexing and stays Unknown.
+    ;;
+    ;; P20: when that global is FROZEN the same address gets the stronger kind,
+    ;; which additionally certifies the word is immutable program-wide. The
+    ;; `GlobalSlot` class is unchanged for every other global and keeps exactly
+    ;; the answers it gave before.
     [(ir.CompilerIrValue.Global name)
       (match offset
-        [(ir.CompilerIrValue.I64 _) (OptLicmPtrKind.GlobalSlot name)]
+        [(ir.CompilerIrValue.I64 _)
+          (if (opt_i64_i64_map.contains?
+            (& frozen)
+            (ir.compiler-ir-symbol-id name))
+            (OptLicmPtrKind.FrozenBoxSlot (ir.compiler-ir-symbol-id name))
+            (OptLicmPtrKind.GlobalSlot name))]
         [_ (OptLicmPtrKind.Unknown)])]
     [_ (OptLicmPtrKind.Unknown)]))
 
 (define (opt-licm-store-state-with-provenance
   [ptrs : OptLicmPtrEnv]
-  [roots : OptLicmRootEnv]) : OptLicmStoreState
+  [roots : OptLicmRootEnv]
+  [cell-writes : i64]) : OptLicmStoreState
   (OptLicmStoreState
     (opt-licm-store-summary-empty)
     (opt-licm-store-summary-empty)
@@ -20211,7 +20711,8 @@
     (opt-licm-store-roots-new)
     false
     false
-    false))
+    false
+    cell-writes))
 
 ;; The part of a store summary that can reach a global cell: an unknown call and
 ;; an unknown-or-header store both can, an element-only store cannot (its
@@ -20231,7 +20732,8 @@
     state.store-roots
     state.any-call?
     state.global-write?
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-add-summary
   [state : OptLicmStoreState]
@@ -20244,7 +20746,8 @@
     state.store-roots
     state.any-call?
     (or state.global-write? (opt-licm-store-summary-global-write? summary))
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-bind-ptr
   [state : OptLicmStoreState]
@@ -20258,7 +20761,8 @@
     state.store-roots
     state.any-call?
     state.global-write?
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-bind-root
   [state : OptLicmStoreState (:consume)]
@@ -20280,7 +20784,8 @@
     (opt-licm-store-roots-add state.store-roots root)
     state.any-call?
     (or state.global-write? (opt-licm-store-summary-global-write? summary))
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-mark-call [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
@@ -20291,7 +20796,28 @@
     state.store-roots
     true
     state.global-write?
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
+
+;; Fold one instruction's cell-write mask into the body state. A zero mask --
+;; the answer for everything that provably writes no cell -- returns the state
+;; untouched, so a loop whose instructions all answer zero keeps the empty set
+;; it was seeded with.
+(define (opt-licm-store-state-add-cell-writes
+  [state : OptLicmStoreState]
+  [mask : i64]) : OptLicmStoreState
+  (if (= mask 0)
+    state
+    (OptLicmStoreState
+      state.summary
+      state.rooted-summary
+      state.ptrs
+      state.roots
+      state.store-roots
+      state.any-call?
+      state.global-write?
+      state.mem-clean-call?
+      (bit-or state.global-cell-writes mask))))
 
 (define (opt-licm-store-state-mark-global-write [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
@@ -20302,7 +20828,8 @@
     state.store-roots
     state.any-call?
     true
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-mark-mem-clean-call [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
@@ -20313,7 +20840,8 @@
     state.store-roots
     state.any-call?
     state.global-write?
-    true))
+    true
+    state.global-cell-writes))
 
 ;; Fold a DIRECT call (`Call` or `TailCall`) into the body state: the call
 ;; boundary plus the callee's store facts. A non-returning trap helper
@@ -20399,7 +20927,15 @@
   (if (opt-direct-call-noreturn? name)
     state
     (let
-      [called : OptLicmStoreState (opt-licm-store-state-mark-call state)]
+      [called
+        : OptLicmStoreState
+        ;; P18: the callee's own cell-write row, whatever the coarse verdict
+        ;; below decides. A callee proven to write no memory at all, or only
+        ;; element storage, contributes an empty row for the same reasons those
+        ;; tiers keep `global-write?` clear.
+        (opt-licm-store-state-add-cell-writes
+          (opt-licm-store-state-mark-call state)
+          (opt-global-mod-ref-call-mask global-cells.mod-ref name))]
       [summary : OptLicmStoreSummary
         (opt-licm-store-summary-for-direct-call direct-call-clean name)]
       (if (opt-licm-direct-call-keeps-globals-clean?
@@ -20429,7 +20965,8 @@
     state.store-roots
     state.any-call?
     state.global-write?
-    state.mem-clean-call?))
+    state.mem-clean-call?
+    state.global-cell-writes))
 
 (define (opt-licm-store-state-invalidate-ptr-instr
   [state : OptLicmStoreState]
@@ -20454,6 +20991,7 @@
 (define (opt-licm-provenance-state-instr
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
+  [frozen : opt_i64_i64_map.Map]
   [state : OptLicmStoreState]
   [instr : ir.CompilerIrInstr]) : OptLicmStoreState
   (let
@@ -20476,14 +21014,38 @@
           (opt-licm-gep-kind
             type-segment-bases
             types
+            frozen
             invalid.ptrs
             base
             offset
             ty))]
-      [(ir.CompilerIrInstr.Load dst src _)
+      [(ir.CompilerIrInstr.Load dst src load-ty)
         (match src
           [(ir.CompilerIrValue.Var ptr-var)
             (match (opt-licm-ptr-lookup invalid.ptrs ptr-var)
+              ;; P20. A pointer read out of a frozen BOX word is the descriptor
+              ;; handle the box holds; the whole-program check proved that
+              ;; handle's own fixed words are never written either, so it heads
+              ;; a frozen object. The ARRAY-HEADER type test is the same one
+              ;; opt-global-frozen-load-level applies: a box word of any other
+              ;; type is a scalar field, whose loaded VALUE heads no chain, and
+              ;; the whole-program check leaves such a var unleveled -- so
+              ;; binding one here would call a var frozen that nothing checked.
+              ;; The data slot of a frozen object behaves exactly like
+              ;; `DataSlot` below: the loaded buffer is element storage, which
+              ;; is NOT frozen and keeps its element-only class.
+              [(OptLicmPtrKind.FrozenBoxSlot global)
+                (if (opt-licm-array-header-type? type-segment-bases load-ty)
+                  (opt-licm-store-state-bind-ptr
+                    invalid
+                    dst
+                    (OptLicmPtrKind.FrozenObject dst global))
+                  invalid)]
+              [(OptLicmPtrKind.FrozenDataSlot object _)
+                (opt-licm-store-state-bind-ptr
+                  invalid
+                  dst
+                  (OptLicmPtrKind.DataBuffer object))]
               [(OptLicmPtrKind.DataSlot object)
                 ;; The loaded buffer is reachable through `object`, but it may
                 ;; also have an independent Fresh root or be reachable through
@@ -20505,7 +21067,45 @@
                     (OptLicmPtrKind.DataBuffer ptr-var))
                   invalid)])]
           [_ invalid])]
+      ;; P16: the frame objects of this function, and the two ways their
+      ;; address travels. `Alloc` names the object; `addr_of` forms the pointer
+      ;; the rest of the function uses (Mov copies it through the arm above);
+      ;; and a callee that returns the argument it was handed -- the internal
+      ;; sret shape -- hands the same pointer back out.
+      [(ir.CompilerIrInstr.Alloc dst _)
+        (opt-licm-store-state-bind-ptr
+          invalid
+          dst
+          (OptLicmPtrKind.LocalObject dst))]
+      [(ir.CompilerIrInstr.AddrOf dst src)
+        (opt-licm-store-state-bind-ptr
+          invalid
+          dst
+          (opt-licm-ptr-lookup invalid.ptrs src))]
+      [(ir.CompilerIrInstr.Call dst name args _)
+        (match (opt-licm-root-env-return-alias-value
+          (& invalid.roots)
+          name
+          args)
+          [(ir.CompilerIrMaybeValue.Some value)
+            (match value
+              [(ir.CompilerIrValue.Var src-var)
+                (opt-licm-store-state-bind-ptr
+                  invalid
+                  dst
+                  (opt-licm-ptr-lookup invalid.ptrs src-var))]
+              [_ invalid])]
+          [(ir.CompilerIrMaybeValue.No) invalid])]
       [_ invalid])))
+
+;; An INDIRECT call may land on any function of the program, so it may reach
+;; any `Store` in it: the one call class the per-global table cannot refine.
+(define (opt-licm-store-state-indirect-call [state : OptLicmStoreState]) : OptLicmStoreState
+  (opt-licm-store-state-add-summary
+    (opt-licm-store-state-add-cell-writes
+      (opt-licm-store-state-mark-call state)
+      (opt-global-mod-ref-any))
+    (opt-licm-store-summary-call-or-unknown)))
 
 (define (opt-licm-store-state-instr
   [type-segment-bases : i64]
@@ -20518,7 +21118,12 @@
   (let
     [provenance : OptLicmStoreState
       (if track-provenance?
-        (opt-licm-provenance-state-instr type-segment-bases types state instr)
+        (opt-licm-provenance-state-instr
+          type-segment-bases
+          types
+          global-cells.frozen
+          state
+          instr)
         state)]
     (match instr
       [(ir.CompilerIrInstr.Call _ name _ _)
@@ -20528,25 +21133,15 @@
           global-cells
           name)]
       [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.CallIndirectC _ _ _ _)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.SpmdCall payload-box)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.TailCall name _ _)
         (opt-licm-store-state-direct-call
           provenance
@@ -20554,9 +21149,7 @@
           global-cells
           name)]
       [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-call-or-unknown))]
+        (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.StorePtr ptr _ _)
         (let
           [root : OptLicmRoot (opt-licm-root-of-value provenance.roots ptr)]
@@ -20632,13 +21225,22 @@
       ;; hoist available, while the global-write flag is raised EXPLICITLY so
       ;; `Global` operand promotion still refuses: that pass reasons about cell
       ;; CONTENTS, which is exactly what this instruction changes.
-      [(ir.CompilerIrInstr.Store _ _ _)
+      [(ir.CompilerIrInstr.Store name _ _)
         (opt-licm-store-state-add-summary-keeping-globals
-          (opt-licm-store-state-mark-global-write provenance)
+          ;; P18: a named cell write names exactly ONE cell, which is the whole
+          ;; reason the per-global set is finer than `global-write?` here.
+          (opt-licm-store-state-add-cell-writes
+            (opt-licm-store-state-mark-global-write provenance)
+            (opt-global-mod-ref-instr-store-mask global-cells.mod-ref name))
           (opt-licm-store-summary-element-only-store))]
       [_
         (opt-licm-store-state-add-summary
-          provenance
+          ;; Everything the arms above do not name: the effect classification
+          ;; decides both the store summary and the cell-write mask, and the
+          ;; two agree by construction (see opt-global-mod-ref-effect-mask).
+          (opt-licm-store-state-add-cell-writes
+            provenance
+            (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr)))
           (opt-licm-store-summary-from-effect
             (ir.compiler-ir-instr-effect instr)))])))
 
@@ -20729,6 +21331,7 @@
 (define (opt-licm-provenance-state-instr-seq-from
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
+  [frozen : opt_i64_i64_map.Map]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [state : OptLicmStoreState]) : OptLicmStoreState
@@ -20737,17 +21340,20 @@
     (opt-licm-provenance-state-instr-seq-from
       type-segment-bases
       types
+      frozen
       instrs
       (+ index 1)
       (opt-licm-provenance-state-instr
         type-segment-bases
         types
+        frozen
         state
         (ir.compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-licm-provenance-state-blocks
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
+  [frozen : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]
   [state : OptLicmStoreState]) : OptLicmStoreState
   (match blocks
@@ -20758,10 +21364,12 @@
           (opt-licm-provenance-state-blocks
             type-segment-bases
             types
+            frozen
             (__tl-box-place rest)
             (opt-licm-provenance-state-instr-seq-from
               type-segment-bases
               types
+              frozen
               instrs
               0
               state))])]
@@ -20769,6 +21377,7 @@
       (opt-licm-provenance-state-blocks
         type-segment-bases
         types
+        frozen
         (ir.compiler-ir-block-seq-to-list seq)
         state)]))
 
@@ -20780,20 +21389,37 @@
   [type-segment-bases : i64]
   [params : ir.CompilerIrParamList]
   [types : OptSsaVarTypes]
+  [return-alias : opt_i64_i64_map.Map]
+  [frozen : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]) : OptLicmStoreState
   (let
     ;; Rooted pointer values are sparse even in functions with large SSA
     ;; frames. Starting this map at the full frame size retained hundreds of
     ;; megabytes across compiler optimization; let the generated hashmap grow
     ;; only when a function actually carries many checked/fresh roots.
-    [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
+    [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17 return-alias)]
     [_params : unit
       (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)]
-    [initial : OptLicmStoreState
-      (opt-licm-store-state-with-provenance (OptLicmPtrEnv.Nil) roots)]
+    [initial
+      : OptLicmStoreState
+      ;; Provenance only; this state's cell-write set is never consulted.
+      (opt-licm-store-state-with-provenance
+        (OptLicmPtrEnv.Nil)
+        roots
+        (opt-global-mod-ref-any))]
     [first : OptLicmStoreState
-      (opt-licm-provenance-state-blocks type-segment-bases types blocks initial)]
-    (opt-licm-provenance-state-blocks type-segment-bases types blocks first)))
+      (opt-licm-provenance-state-blocks
+        type-segment-bases
+        types
+        frozen
+        blocks
+        initial)]
+    (opt-licm-provenance-state-blocks
+      type-segment-bases
+      types
+      frozen
+      blocks
+      first)))
 
 (define (opt-licm-store-summary-blocks
   [type-segment-bases : i64]
@@ -20812,11 +21438,12 @@
           summary
           (opt-licm-store-summary-empty)
           (OptLicmPtrEnv.Nil)
-          (opt-licm-root-env-with-capacity 17)
+          (opt-licm-root-env-with-capacity 17 (opt_i64_i64_map.with-capacity 1))
           (opt-licm-store-roots-new)
           false
           false
-          false))]
+          false
+          (opt-global-mod-ref-any)))]
     (opt-licm-store-summary-merge state.summary state.rooted-summary)))
 
 (define (opt-licm-memory-safe?
@@ -20895,6 +21522,95 @@
 (define (opt-licm-mode-vector? [mode : i64]) : bool
   (= mode 2))
 
+;; The P6/R7 hoist-vs-allocate interlock at an ADDRESS-FORMATION site, plus the
+;; one class P16 excepts from it.
+;;
+;; The rule it enforces: a loop-spanning address that has to survive a CALL
+;; costs more in spill staging than the reloads it saves, so an address is not
+;; hoisted out of a loop that calls anything whose calling convention the
+;; backend must respect. A direct callee proven memory-clean is not a boundary
+;; (it contributes the empty summary); an element-only direct callee IS one,
+;; because it still emits a call.
+;;
+;; THE EXCEPTION, and the arithmetic behind it. The interlock's break-even
+;; assumes reading the word in place costs ONE instruction: a literal-offset
+;; Gep folds into the load's addressing mode, so `mov r,[handle+8]` is no
+;; dearer than the spill reload a hoisted value pays. That holds only while the
+;; handle is already in a register. It fails one level in: when the address is
+;; a fixed word of an object reached through a handle that is ITSELF re-derived
+;; every trip -- a frame object's field, or a descriptor word behind such a
+;; field -- reading it in place costs two instructions, three once the handle
+;; spills, against one reload. That is exactly the class
+;; opt-licm-header-slot-ptr-kind? names: a fixed word of an object element
+;; storage is disjoint from. Its addresses are excepted here, and only while
+;; the boundary is an element-only DIRECT call -- an unknown call still closes
+;; the path, for memory reasons as much as pressure ones.
+;;
+;; MEASURED (P16, one cachegrind run each, base target/wsl/ic-p15.tsv). With
+;; the memory proof in place but this exception absent, the interner's six Vec
+;; header chains still cannot leave the per-symbol loop -- their first link is
+;; an address, and it is this gate that holds it -- and intern_table stops at
+;; 499,720,995. With the exception it reaches 435,013,637 (-15.58% against the
+;; base's 515,307,475), alongside gvn_table -344,685, liveness_scan -649,743,
+;; opt_quicksort -31,992 and cfg_domloops +11,853. Dropping
+;; `element-only-call?` from opt-licm-store-summary-call-boundary? instead --
+;; the general relaxation P14 rejected -- reproduces those seventeen numbers
+;; exactly, so the narrow exception is chosen for costing nothing extra and
+;; leaving the general boundary, and R7's and P14's evidence for it, in force.
+;; The cfg_domloops +11,853 is P14's coalescing artifact, unchanged and
+;; unchanged in cause: three register copies at no-op `cast i64 to u64` sites
+;; in cfg-scan-ints, whose gvn_table twin moves the other way by 30x as much.
+(define (opt-licm-gep-call-boundary-ok?
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [globals : OptLicmGlobalFacts]
+  [ptrs : OptLicmPtrEnv]
+  [store-summary : OptLicmStoreSummary]
+  [legacy-store-summary : OptLicmStoreSummary]
+  [any-call? : bool]
+  [base : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (or
+    (not any-call?)
+    ;; P20. The frozen chain's addresses. The interlock's arithmetic above
+    ;; applies to them with the SAME numbers -- `gep @g, 0` is a rip-relative
+    ;; cell load plus a fold, and every address behind it is re-derived from
+    ;; it -- but they are excepted for a class of call the P16 exception cannot
+    ;; reach: an UNKNOWN direct call. P16 had to stop at the element-only tier
+    ;; for a memory reason (an unknown callee may write any descriptor header),
+    ;; and that reason is absent here: no callee can write a frozen word,
+    ;; whatever it does, because no instruction in the program writes one. What
+    ;; remains is the pressure question alone, and `frozen-hoist?` is the gate
+    ;; that prices it (see opt-licm-frozen-chain-hoist?).
+    (and
+      globals.frozen-hoist?
+      (opt-licm-frozen-kind-invariant?
+        globals
+        (opt-licm-gep-kind
+          type-segment-bases
+          types
+          globals.frozen
+          ptrs
+          base
+          offset
+          ty)))
+    (and
+      (not (opt-licm-store-summary-call-boundary? store-summary))
+      (not (opt-licm-store-summary-call-boundary? legacy-store-summary)))
+    (and
+      (not store-summary.call-or-unknown?)
+      (not legacy-store-summary.call-or-unknown?)
+      (opt-licm-header-slot-ptr-kind?
+        (opt-licm-gep-kind
+          type-segment-bases
+          types
+          globals.frozen
+          ptrs
+          base
+          offset
+          ty)))))
+
 ;; `descriptor-header-hoist?` licenses the descriptor-header exception to the
 ;; return-shaped side-exit suppression (see opt-licm-apply-loop): it is true
 ;; exactly when this is a late (post-BCE) run AND the loop body's raw store
@@ -20902,15 +21618,18 @@
 ;; effect and no header-or-unknown store anywhere in the body (element-only
 ;; stores through a descriptor's loaded data pointer remain, but those write
 ;; element storage, which the memory model keeps disjoint from descriptor
-;; header words). Under that condition a `Load` whose address is a descriptor
-;; header slot -- the data-pointer slot or the length slot of a loop-invariant
-;; array/string handle -- reads the same value on every iteration, so moving
-;; it to the preheader is sound: nothing in the body can write the slot, and
-;; reading the header of a live descriptor is always safe (a dangling handle
-;; is already UB; the bce guard hoist and the unsuppressed loops already
-;; speculate header loads the same way). The exception is late-only for the
-;; established reason: before BCE, moving a descriptor length can hide the
-;; shared bound identity bounds-check elimination still needs.
+;; header words). Under that condition a `Load` whose address is a FIXED WORD
+;; of an object element storage is disjoint from -- the data-pointer or length
+;; slot of a loop-invariant array/string handle, a word of the object a global
+;; cell designates, or (P16) a field of a frame object this function allocated,
+;; the three classes opt-licm-header-slot-ptr-kind? names -- reads the same
+;; value on every iteration, so moving it to the preheader is sound: nothing in
+;; the body can write that word, and reading it is always safe (the object is
+;; live; a dangling handle is already UB; the bce guard hoist and the
+;; unsuppressed loops already speculate such loads the same way). The exception
+;; is late-only for the established reason: before BCE, moving a descriptor
+;; length can hide the shared bound identity bounds-check elimination still
+;; needs.
 (define (opt-licm-candidate?
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
@@ -20925,16 +21644,16 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
-  ;; Whether a `Global` operand -- a hidden rip-relative load of that global's
-  ;; cell -- reads the same value on every iteration of this loop. See
+  ;; What this loop knows about `Global` operands -- each a hidden rip-relative
+  ;; load of that global's cell. See OptLicmGlobalFacts,
   ;; opt-licm-value-invariant? and opt-licm-globals-clean?.
-  [globals-clean? : bool]
+  [globals : OptLicmGlobalFacts]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _)
       (and
         (opt-licm-mode-late? licm-mode)
-        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted src)
         ;; In scalar loops, do not lengthen an arbitrary outside value's live
         ;; range merely to move its copy (the quicksort copy-c-string
         ;; regression). Literal seeds still unlock folding/motion. Vector loops
@@ -20946,7 +21665,7 @@
     [(ir.CompilerIrInstr.Cast _ src _ _)
       (and
         (opt-licm-mode-late? licm-mode)
-        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted src)
         (match src
           [(ir.CompilerIrValue.Var var)
             (or
@@ -20956,7 +21675,7 @@
     [(ir.CompilerIrInstr.Bitcast _ src _ _)
       (and
         (opt-licm-mode-late? licm-mode)
-        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted src)
         (match src
           [(ir.CompilerIrValue.Var var)
             (or
@@ -20969,33 +21688,30 @@
     ;; check on every logical lane. Hoist the projection whenever its packed
     ;; source is invariant; unlike a memory Load this needs no alias proof.
     [(ir.CompilerIrInstr.Word _ src _ _)
-      (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)]
+      (opt-licm-global-value-invariant? globals loop-defs hoisted src)]
     [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
       (and
         (not (opt-binop-traps? op))
-        (opt-licm-values-invariant? globals-clean? loop-defs hoisted lhs rhs))]
+        (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs))]
     [(ir.CompilerIrInstr.UnOp _ _ src _)
-      (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)]
+      (opt-licm-global-value-invariant? globals loop-defs hoisted src)]
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (and
         (opt-gvn-stable-var? sources dst)
-        ;; Keep an address calculation out of an unknown-call-spanning live
-        ;; range. The backend otherwise has to preserve it across the call,
-        ;; which can spill the descriptor base used by every loop iteration.
-        ;; A direct call proven memory-clean retains the established LICM
-        ;; behavior and cannot introduce that borrowed-root regression. An
-        ;; element-only direct call does NOT qualify: it still emits a call, so
-        ;; the address still has to survive one, and admitting it here is a
-        ;; measured LOSS -- intern_table 602,891,376 -> 611,411,217 (+1.41%)
-        ;; against gvn_table -0.34M and liveness_scan -0.09M, with every other
-        ;; row unmoved (one cachegrind run each). The memory fact the element
-        ;; bit carries is real; the register pressure it would buy is not worth
-        ;; it at an address-formation site.
-        (or
-          (not any-call?)
-          (and
-            (not (opt-licm-store-summary-call-boundary? store-summary))
-            (not (opt-licm-store-summary-call-boundary? legacy-store-summary))))
+        ;; Keep an address calculation out of a call-spanning live range,
+        ;; except for the fixed-word class whose in-place read is not one
+        ;; instruction. See opt-licm-gep-call-boundary-ok?.
+        (opt-licm-gep-call-boundary-ok?
+          type-segment-bases
+          types
+          globals
+          ptrs
+          store-summary
+          legacy-store-summary
+          any-call?
+          base
+          offset
+          ty)
         ;; Gep computes an address from SSA values; it does not read through
         ;; that address. A hidden mutable-global read among the operands is
         ;; admitted only when opt-licm-globals-clean? proves the body cannot
@@ -21004,12 +21720,48 @@
         ;; gate: moving a descriptor-length address too early can hide the
         ;; shared bound identity BCE needs. The post-LFTR run can use purity
         ;; after BCE and unrolling have consumed that fact.
-        (opt-licm-values-invariant?
-          globals-clean?
-          loop-defs
-          hoisted
-          base
-          offset)
+        ;;
+        ;; P18 DELIBERATELY LEAVES THIS ARM ON THE LOOP-WIDE ANSWER, and the
+        ;; reason is measured, not conservative bookkeeping. This is the one
+        ;; operand position that starts a CHAIN: `gep @g, <literal>` is a
+        ;; GlobalSlot address, the load through it is the descriptor the cell
+        ;; designates, and that descriptor's length and data words follow it
+        ;; out, so admitting the operand here lets three or four new values per
+        ;; global span the whole loop. On cfg_domloops' `cfg-natural-loops` --
+        ;; whose five read-only globals are already OUTSIDE the loop's
+        ;; per-global cell-write set, so the refinement WOULD admit them --
+        ;; letting the chain out puts fourteen values in the function's
+        ;; preheader, ten of which land in the frame, and costs that one
+        ;; function 108,369,216 -> 118,358,256 Ir (+9,989,040; the whole row
+        ;; +1.42%) with every other function in the benchmark byte-identical:
+        ;; the loop-carried hash accumulator loses its register, and the
+        ;; versioned inner loop grows an eight-compare guard on a path that
+        ;; averages 1.06 trips. That is P8's "WHY INVARIANCE LOSES" verdict
+        ;; reproduced with a per-global proof in hand, so the proof changes
+        ;; nothing here. The scalar arms above carry no such chain -- each
+        ;; admits exactly one instruction and at most one new loop-spanning
+        ;; value -- which is why they take the refinement and this arm does not.
+        ;;
+        ;; P20 opens ONE named exception to that verdict, and prices it where
+        ;; P18 said the price had to be paid. A FROZEN global's cell is written
+        ;; once, before `main`, by the startup initializer and by nothing else
+        ;; (opt-global-frozen-build), so `@g` here is not a mutable-global read
+        ;; at all -- no cell-write set, no loop-wide gate and no call can
+        ;; change what it reads. The chain it starts is still the same chain
+        ;; P18 measured, so it is admitted only under `frozen-hoist?`, the
+        ;; loop's pressure gate, which is what keeps cfg-natural-loops refusing
+        ;; it.
+        (or
+          (and
+            globals.frozen-hoist?
+            (opt-licm-frozen-global-value? globals base)
+            (opt-licm-value-invariant? globals.clean? loop-defs hoisted offset))
+          (opt-licm-values-invariant?
+            globals.clean?
+            loop-defs
+            hoisted
+            base
+            offset))
         (or
           (opt-licm-mode-late? licm-mode)
           (opt-licm-memory-safe?
@@ -21030,8 +21782,24 @@
       (and
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources src)
-        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
+        ;; A `Global` SOURCE here is a load THROUGH the pointer that cell holds
+        ;; -- the head of the very chain the Gep arm above prices -- so it keeps
+        ;; the loop-wide answer for the same measured reason. A FROZEN global's
+        ;; cell is constant, so that source is invariant outright (P20).
         (or
+          (and
+            globals.frozen-hoist?
+            (opt-licm-frozen-global-value? globals src))
+          (opt-licm-value-invariant? globals.clean? loop-defs hoisted src))
+        (or
+          ;; P20. A load whose ADDRESS is a frozen word reads the same value on
+          ;; every iteration of every loop: opt-global-frozen-build proved no
+          ;; instruction in the program writes that word, so no store summary,
+          ;; no call summary and no side-exit poison bears on it. The load is
+          ;; also always safe to speculate into the preheader -- the object is
+          ;; a startup allocation that lives for the whole run. What is left is
+          ;; register pressure, which `frozen-hoist?` prices.
+          (and globals.frozen-hoist? (opt-licm-frozen-source? globals ptrs src))
           (opt-licm-memory-safe?
             store-summary
             legacy-store-summary
@@ -21108,7 +21876,7 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
-  [globals-clean? : bool]
+  [globals : OptLicmGlobalFacts]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -21139,7 +21907,7 @@
               any-call?
               licm-mode
               descriptor-header-hoist?
-              globals-clean?
+              globals
               instr)
               (begin
                 (ir.compiler-ir-instr-builder-push! (&mut moved) instr)
@@ -21169,7 +21937,7 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
-  [globals-clean? : bool]
+  [globals : OptLicmGlobalFacts]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     type-segment-bases
@@ -21186,7 +21954,7 @@
     any-call?
     licm-mode
     descriptor-header-hoist?
-    globals-clean?
+    globals
     hoisted))
 
 (define (opt-licm-filter-body-blocks
@@ -21203,7 +21971,7 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
-  [globals-clean? : bool]
+  [globals : OptLicmGlobalFacts]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmBlocksResult
   (match blocks
     [(ir.CompilerIrBlockList.Nil)
@@ -21229,7 +21997,7 @@
             any-call?
             licm-mode
             descriptor-header-hoist?
-            globals-clean?
+            globals
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
@@ -21246,7 +22014,7 @@
                 any-call?
                 licm-mode
                 descriptor-header-hoist?
-                globals-clean?
+                globals
                 next-hoisted)
                 [(OptLicmBlocksResult.Result
                     rest-blocks
@@ -21275,7 +22043,7 @@
         any-call?
         licm-mode
         descriptor-header-hoist?
-        globals-clean?
+        globals
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -21756,10 +22524,10 @@
 ;; standalone load to relocate -- `globals-clean?` only lets an instruction
 ;; whose OTHER operands are invariant leave the loop, which a `mul %varying,
 ;; @g` or `lt %counter, @g` never is. The function-scope global_cell pass does
-;; materialize the load, but it refuses any function containing a returning
-;; call (a callee could `set!` the cell, so a function-ENTRY load would be
-;; stale) and any function that stores the cell itself, which is exactly why
-;; the hot loops that carry these operands are the ones it declines.
+;; materialize the load, but only for a cell no returning call in the function
+;; may write (P21, its condition (c)) and no store in the function can make
+;; observable, and only where the entry copy's cost is repaid -- so the hot
+;; loops that carry these operands still include ones it declines.
 ;;
 ;; A LOOP is the smaller scope where the same fact holds far more often. When
 ;; `opt-licm-globals-clean?` holds, the body contains no call that may write
@@ -21769,9 +22537,9 @@
 ;; value-identical: the preheader load runs on every loop ENTRY, so a `set!`
 ;; made elsewhere in the same function -- before the loop, or between two
 ;; entries of it -- is observed exactly as the per-use loads observed it. That
-;; is the difference from the function-scope pass, whose entry load would go
-;; stale, and it is why this promotion is loop-scoped rather than a relaxation
-;; of that pass's condition.
+;; is the difference from the function-scope pass, whose entry load has to
+;; prove the cell survives every call in the whole function, and it is why this
+;; promotion stays loop-scoped rather than folding into that pass's condition.
 ;;
 ;; The preheader load is speculation-free even for a zero-trip loop: a global
 ;; cell is statically allocated and always exists, so the load reads valid
@@ -21779,11 +22547,23 @@
 ;; loads THROUGH pointers, where a zero-trip loop can leave the pointer
 ;; unallocated -- LICM keeps its memory gates for those.
 ;;
-;; The gate is the loop-wide `globals-promote-clean?`, which is the same
-;; `globals-clean?` the Load and Gep arms of opt-licm-candidate? ask plus the
-;; memory-clean call tier those arms still refuse, admitted under a live-in
-;; budget (opt-licm-global-promote-live-in-budget). A body that writes any cell
-;; promotes nothing either way. Only single-word cells qualify, for the reason the
+;; The gate has two tiers. The LOOP-WIDE one is `globals-promote-clean?`: the
+;; same `globals-clean?` the Load and Gep arms of opt-licm-candidate? ask, plus
+;; the memory-clean call tier those arms still refuse, admitted under a live-in
+;; budget (opt-licm-global-promote-live-in-budget). It answers for every cell at
+;; once, so before P18 a body that wrote ANY cell promoted none of them.
+;;
+;; P18 adds the PER-GLOBAL tier for exactly that body. The loop's cell-write set
+;; (OptGlobalModRef, accumulated on OptLicmStoreState.global-cell-writes) names
+;; the cells this body may write; a referenced cell OUTSIDE that set reads the
+;; same value on every iteration whatever the body does to other cells, because
+;; a global's cell is its own storage and is named by its symbol alone -- two
+;; distinct symbols are two distinct cells, with no aliasing question to answer.
+;; That tier pays the same live-in budget for the same register-file reason (a
+;; loop it admits contains a call, or the loop-wide tier would have taken it),
+;; and it is withdrawn entirely for a program that carries no mod-ref table
+;; (opt-licm-global-cell-writes-seed), which is what keeps every level below 2
+;; byte-identical. Only single-word cells qualify, for the reason the
 ;; function-scope pass gives (opt-global-cell-word-type?): the Mov's declared
 ;; type drives the backend's load width, so a wider cell would silently load
 ;; only its first word. Declared types come from the program-wide
@@ -21852,17 +22632,50 @@
 (define (opt-licm-global-promote-live-in-budget) : i64
   6)
 
+;; The cell-write set a loop starts from: empty when the program carries a
+;; mod-ref table, "any cell" when it does not, so a table-less program answers
+;; every per-global question exactly as the loop-wide gate does.
+(define (opt-licm-global-cell-writes-seed [cells : OptGlobalCellSummary]) : i64
+  (let
+    [mod-ref : OptGlobalModRef cells.mod-ref]
+    (if mod-ref.built?
+      0
+      (opt-global-mod-ref-any))))
+
+;; Does a per-global cell-write set forbid promoting `name`? A zero set forbids
+;; nothing, which is what the loop-wide path passes. Both promotions ask it:
+;; the loop-scope one with the loop's write set (OptLicmStoreState.global-cell-
+;; writes) and the function-scope global_cell pass with the union of its
+;; returning calls' rows (opt-global-cell-call-writes), condition (c).
+(define (opt-global-cell-writes-refused?
+  [cells : OptGlobalCellSummary]
+  [cell-writes : i64]
+  [name : i64]) : bool
+  (let
+    [mod-ref : OptGlobalModRef cells.mod-ref]
+    (opt-global-mod-ref-mask-may-write? mod-ref.index cell-writes name)))
+
 ;; Allocate one fresh var per promotable cell referenced by the body. Unlike
 ;; the function-scope plan (opt-global-cell-plan-build) this filters on neither
-;; the program's address-taken set nor a store set: `globals-clean?` has
-;; already proven the body performs no store, no store through any pointer, and
-;; no call that may write, which covers every way a cell could be reached --
-;; including through a pointer derived from `GlobalAddr`, which the store
-;; summaries never classify as element-only.
+;; the program's address-taken set nor a store set: the loop-wide
+;; `globals-promote-clean?` gate has already proven the body performs no store,
+;; no store through any pointer, and no call that may write, which covers every
+;; way a cell could be reached -- including through a pointer derived from
+;; `GlobalAddr`, which the store summaries never classify as element-only.
+;;
+;; P18 adds a SECOND way in, for a body that gate refuses: `cell-writes` is the
+;; loop's per-global cell-write set (OptGlobalModRef), and a global outside it
+;; is invariant across this body whatever the rest of the body does to other
+;; cells. `cell-writes` is 0 -- accepting every name -- on the loop-wide path,
+;; which keeps that path byte-identical; the caller passes the real set only on
+;; the per-global path (opt-licm-apply-loop). A body that writes g promotes
+;; every other cell it references and refuses g alone, where before it refused
+;; all of them.
 (define (opt-licm-global-promote-plan
   [cells : OptGlobalCellSummary]
   [refs : OptI64List]
   [frame-cell : (__tl_dyn-array i64)]
+  [cell-writes : i64]
   [plan : opt_i64_i64_map.Map (:consume)]
   [count : i64]) : OptGlobalCellPlan
   (match refs
@@ -21874,10 +22687,13 @@
             cells
             (__tl-box-place rest)
             frame-cell
+            cell-writes
             plan
             count)]
         [(OptMaybeAstType.Some ty)
-          (if (opt-global-cell-word-type? ty)
+          (if (and
+            (opt-global-cell-word-type? ty)
+            (not (opt-global-cell-writes-refused? cells cell-writes name)))
             (let
               [fresh : i64 (array-ref frame-cell 0)]
               [next : opt_i64_i64_map.Map plan]
@@ -21888,12 +22704,14 @@
                   cells
                   (__tl-box-place rest)
                   frame-cell
+                  cell-writes
                   next
                   (+ count 1))))
             (opt-licm-global-promote-plan
               cells
               (__tl-box-place rest)
               frame-cell
+              cell-writes
               plan
               count))])]))
 
@@ -21953,6 +22771,7 @@
 (define (opt-licm-global-promote
   [cells : OptGlobalCellSummary]
   [frame-cell : (__tl_dyn-array i64)]
+  [cell-writes : i64]
   [blocks : ir.CompilerIrBlockList]) : OptLicmGlobalPromotion
   (if (= cells.word-cell 0)
     (OptLicmGlobalPromotion blocks (ir.compiler-ir-instr-seq-empty) false)
@@ -21970,6 +22789,7 @@
                 cells
                 refs
                 frame-cell
+                cell-writes
                 (opt_i64_i64_map.with-capacity 8)
                 0)]
             (if (= planned.count 0)
@@ -21981,6 +22801,101 @@
                 (opt-global-cell-rewrite-nonentry-blocks planned.map blocks)
                 (opt-licm-global-promote-loads planned.map cells refs)
                 true)))]))))
+
+;; P20 PRESSURE GATE. The frozen-chain proof is unconditional -- the words are
+;; immutable for the whole run -- so nothing about SOUNDNESS varies per loop.
+;; Profitability does, and P18 measured exactly how: letting a global's
+;; descriptor chain out of a loop puts three new values in the preheader per
+;; global (the box word, and the descriptor's length and data words behind it),
+;; each of which must then live across the whole loop and, because such a loop
+;; contains a call, can only live in the callee-saved file. On cfg_domloops'
+;; `cfg-natural-loops` -- five read-only globals, all of them frozen -- that is
+;; fifteen words against a six-register budget, and P18 measured the result:
+;; fourteen values in the preheader, ten spilled, the loop-carried hash
+;; accumulator out of a register, an eight-compare bce guard on a path that
+;; averages 1.06 trips, and the row +1.42%.
+;;
+;; So the chain is priced with the same live-in budget the loop-scoped cell
+;; promotion uses (opt-licm-global-promote-live-in-budget, and its rationale:
+;; values live across a call must fit the callee-saved file), charged the words
+;; the chain actually adds. `opt-licm-frozen-chain-words` is 3 because that is
+;; the depth the classification reaches: `gep @g, k` -> the box word's load ->
+;; that descriptor's length and data words, of which the ADDRESSES fold into
+;; their loads, so three loaded values survive per global.
+;;
+;; Two further conditions come from the classes this hoist joins rather than
+;; from the budget. `late?` is the same pre-BCE restriction the descriptor
+;; header hoist takes: moving a descriptor length before bounds-check
+;; elimination can hide the shared bound identity it still needs. The
+;; return-shaped side-exit poison (side-exit kind 1) is respected rather than
+;; excepted: that gate exists because probe-shaped loops average one or two
+;; trips, where a preheader value is paid for in full and saved almost never.
+;;
+;; MEASURED (P20, one cachegrind run each on the 17-row corpus, base
+;; target/wsl/ic-p17c.tsv). Three shapes of this gate were built and measured:
+;;
+;;   A. this one -- live-in + 3 words per referenced frozen global vs the
+;;      budget: gvn_table 971,122,210 -> 964,017,000 (-7,105,210, -0.732%),
+;;      the other SIXTEEN rows byte-identical.
+;;   B. the packet's fallback, hoisting the BOX WORD only and leaving the
+;;      descriptor's length and data words in the loop: gvn_table +329,098
+;;      (+0.034%), every other row byte-identical. The half chain is a LOSS,
+;;      not a smaller win: the descriptor handle still has to live across the
+;;      call in a callee-saved register (two more pushes in the prologue) while
+;;      the two loads it feeds stay in the body, so the loop pays the register
+;;      and keeps the work.
+;;   C. dropping the per-chain word term, gating on the live-in count alone:
+;;      cfg_domloops 693,082,377 -> 701,201,926 (+8,119,549, +1.17%) --
+;;      P18's probeA regression reproduced, cfg-natural-loops' five chains
+;;      going out together -- and gvn_table only -1,324,773, because the extra
+;;      chains this admits there cost more than they save. peephole_lines
+;;      -73,283 does not pay for either.
+;;
+;; So the word count is the term that both earns the gvn_table win and keeps
+;; cfg_domloops byte-identical, and the full chain is what makes the win a win.
+(define (opt-licm-frozen-chain-words) : i64
+  3)
+
+(define (opt-licm-frozen-ref-count
+  [frozen : opt_i64_i64_map.Map]
+  [refs : OptI64List]
+  [count : i64]) : i64
+  (match refs
+    [(OptI64List.Nil) count]
+    [(OptI64List.Cons name rest)
+      (opt-licm-frozen-ref-count
+        frozen
+        (__tl-box-place rest)
+        (if (opt_i64_i64_map.contains? (& frozen) name)
+          (+ count 1)
+          count))]))
+
+(define (opt-licm-frozen-chain-hoist?
+  [cells : OptGlobalCellSummary]
+  [late? : bool]
+  [side-exit-kind : i64]
+  [body-blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    late?
+    (not (= side-exit-kind 1))
+    ;; No frozen global in the program: skip the body scan entirely, which is
+    ;; what keeps every level below 2 and every program without one byte- and
+    ;; allocation-identical.
+    (> (opt_i64_i64_map.len (& cells.frozen)) 0)
+    (let
+      [scan : OptGlobalCellScan
+        (opt-global-cell-scan-blocks
+          (opt-global-cell-scan-new)
+          body-blocks
+          false)]
+      [count : i64 (opt-licm-frozen-ref-count cells.frozen scan.ref-list 0)]
+      (and
+        (> count 0)
+        (<=
+          (+
+            (opt-unroll-mb-live-in-count body-blocks)
+            (* count (opt-licm-frozen-chain-words)))
+          (opt-licm-global-promote-live-in-budget))))))
 
 ;; Preheader instruction list: the hoisted instructions followed by the
 ;; promotion's cell loads. No promotion means the hoisted list is handed back
@@ -22022,7 +22937,10 @@
             false
             (opt-licm-store-state-with-provenance
               provenance.ptrs
-              provenance.roots))]
+              provenance.roots
+              ;; No mod-ref table: seed the loop at "may write any cell" so
+              ;; every per-global question falls back to the loop-wide answer.
+              (opt-licm-global-cell-writes-seed global-cells)))]
         [raw-summary : OptLicmStoreSummary store-state.summary]
         [raw-rooted-summary : OptLicmStoreSummary store-state.rooted-summary]
         [raw-legacy-summary : OptLicmStoreSummary
@@ -22096,6 +23014,19 @@
         [globals-clean-strict? : bool
           (and globals-clean-relaxed? (not store-state.mem-clean-call?))]
         [globals-clean? : bool globals-clean-strict?]
+        ;; P18: the per-global refinement of `global-write?`, and the facts
+        ;; bundle the hoist filter reads it through.
+        [cell-writes : i64 store-state.global-cell-writes]
+        [globals : OptLicmGlobalFacts
+          (opt-licm-global-facts
+            globals-clean?
+            global-cells
+            cell-writes
+            (opt-licm-frozen-chain-hoist?
+              global-cells
+              late?
+              side-exit-kind
+              body-blocks))]
         [globals-promote-clean? : bool
           (and
             globals-clean-relaxed?
@@ -22104,6 +23035,24 @@
               (<=
                 (opt-unroll-mb-live-in-count body-blocks)
                 (opt-licm-global-promote-live-in-budget))))]
+        ;; The per-global promotion path, for a body the loop-wide gate above
+        ;; refuses. It promotes exactly the referenced cells that are outside
+        ;; `cell-writes`, and pays the same live-in budget the memory-clean
+        ;; tier pays, for the same reason: every cell it promotes is one more
+        ;; value that has to stay live across the whole loop, and a loop this
+        ;; path admits contains a call (that is why the loop-wide gate refused
+        ;; it), so the only registers such a value can occupy are the
+        ;; callee-saved file. The `any?` test is what makes a program without a
+        ;; mod-ref table -- every level below 2, and every program outside the
+        ;; table's preconditions -- take neither this path nor its live-in
+        ;; count, so nothing there moves and nothing there is recomputed.
+        [globals-promote-filtered? : bool
+          (and
+            (not globals-promote-clean?)
+            (not (opt-global-mod-ref-any? cell-writes))
+            (<=
+              (opt-unroll-mb-live-in-count body-blocks)
+              (opt-licm-global-promote-live-in-budget)))]
         (match (opt-licm-filter-body-blocks
           type-segment-bases
           loop-defs
@@ -22122,7 +23071,7 @@
               1)
             0)
           descriptor-header-hoist?
-          globals-clean?
+          globals
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             ;; Loop-scope global operand promotion runs on what the hoist
@@ -22132,10 +23081,13 @@
             ;; the gate is closed, which keeps this byte-identical there).
             (let
               [promotion : OptLicmGlobalPromotion
-                (if globals-promote-clean?
+                (if (or globals-promote-clean? globals-promote-filtered?)
                   (opt-licm-global-promote
                     global-cells
                     frame-cell
+                    (if globals-promote-clean?
+                      0
+                      cell-writes)
                     filtered-body)
                   (OptLicmGlobalPromotion
                     filtered-body
@@ -22341,6 +23293,7 @@
   [context : OptCfgContext]
   [verified? : bool]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [return-alias : opt_i64_i64_map.Map]
   [global-cells : OptGlobalCellSummary]
   [late? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
@@ -22372,6 +23325,8 @@
                     type-segment-bases
                     params
                     types
+                    return-alias
+                    global-cells.frozen
                     blocks)]
                 ;; Loop-scope global promotion mints fresh vars, so the pass
                 ;; carries the frame counter in a cell and writes the final
@@ -22431,6 +23386,7 @@
         (opt-cfg-context-build blocks)
         false
         direct-call-clean
+        (opt_i64_i64_map.with-capacity 1)
         (opt-global-cell-summary-empty)
         false
         func)
@@ -22445,6 +23401,7 @@
         type-segment-bases
         (opt-cfg-context-build blocks)
         false
+        (opt_i64_i64_map.with-capacity 1)
         (opt_i64_i64_map.with-capacity 1)
         (opt-global-cell-summary-empty)
         false
@@ -22465,6 +23422,7 @@
         type-segment-bases
         (opt-cfg-context-build blocks)
         false
+        (opt_i64_i64_map.with-capacity 1)
         (opt_i64_i64_map.with-capacity 1)
         global-cells
         late?
@@ -25907,6 +26865,14 @@
 ;; which is the value the loop was computing, so the phi replaces a stack slot
 ;; the flag was keeping alive rather than adding to one.
 ;;
+;; Round 1, not round 2. Everything that could use a converted loop -- `dead_phi`
+;; and `licm` collapsing the phis the redirect trivialises, `bce_version`
+;; deriving a probe loop's invariant mask off the hoisted `cap - 1` -- sits ABOVE
+;; this pass in the round, so a conversion that waits for round 2 is a conversion
+;; nobody sees: the pipeline runs at most two rounds. That is why C7's spacer
+;; walk looks through the dead `mov` a lowered `and` leaves on the gate's exit
+;; arm rather than waiting for the round's tail DCE to retire it.
+;;
 ;; Placed between `induction` and `bce_version`. Conversion only shrinks what
 ;; the versioner has to fit: the clearing arm leaves the loop, so a converted
 ;; body loses a block and everything in it (seven labels to six on
@@ -25914,10 +26880,11 @@
 ;; versioner's `opt-bce-mb-instr-max` growth budget), and the top-tested
 ;; shape the versioner
 ;; matches survives untouched -- the header still ends `Branch c, body, exit`
-;; with the body target inside the loop. In practice a lowered `while` spends
-;; pipeline iteration 1 with its flag still live at a non-phi reader (C4), so
-;; versioning usually happens first and this pass converts both clones on
-;; iteration 2; the ordering is what keeps the two cases from fighting.
+;; with the body target inside the loop. Converting first is also what lets the
+;; versioner see a probe loop's real index expression: the redirect trivialises
+;; the loop's carried phis, and only once the next round's `gvn`/`dead_phi` have
+;; folded them does a capacity read like `cap - 1` become loop-invariant enough
+;; for the masked-index derivation to name it.
 ;;
 ;; Conditions, all required:
 ;;   C1 monotone seed: a header phi `f = phi [K, preheader], [v, latch]` with
@@ -25947,13 +26914,16 @@
 ;;      carries only pure instructions, and G itself holds nothing but phis, the
 ;;      gate's helper and its branch. Those are what the redirect skips.
 ;;   C7 exit shape: X is the gate's arm, or -- when adopting the arm itself was
-;;      refused -- the block that arm reaches through jump-only spacers it is
-;;      the sole predecessor of. That collapse is what a lowered `while` needs:
-;;      its gate arm is an empty block and the join carrying the loop's exit
-;;      phis and the reads after the loop is a hop further on, and the CFG pass
-;;      that would merge the pair runs before this one, not after. The spacers
-;;      go with the branch that reached them. X may have phis and predecessors
-;;      besides G. Adopting X costs
+;;      refused -- the block that arm reaches through spacers it is the sole
+;;      predecessor of. A spacer ends in a Jump and holds nothing else but pure
+;;      instructions whose destinations the function never reads, so deleting it
+;;      with the collapse changes no value and no effect. That collapse is what a
+;;      lowered `while` needs: its gate arm holds the `and`'s dead answer and
+;;      then jumps, the join carrying the loop's exit phis and the reads after
+;;      the loop is a hop further on, and the CFG and DCE passes that would tidy
+;;      the pair up run a full pipeline round below this one, not above. The
+;;      spacers go with the branch that reached them. X may have phis and
+;;      predecessors besides G. Adopting X costs
 ;;      each of its phis one input per redirected predecessor, and the value on
 ;;      that input is what the skipped run would have delivered -- see the
 ;;      "what the redirected edge has to deliver" section below. X keeps other
@@ -26896,6 +27866,70 @@
                 (OptFlagExitMaybeLabel.Some target)]
               [_ (OptFlagExitMaybeLabel.No)]))])]))
 
+;; One instruction a spacer may hold ahead of its jump: side-effect free, and
+;; with a destination NOTHING in the function reads.
+;;
+;; `raw-uses` is the plain use count, deliberately not the effective one C4 and
+;; C8 use. Effective counting discounts readers that are themselves dead, and
+;; those readers are still present in the IR the collapse hands to the verifier:
+;; deleting a definition they name would strand them. Zero RAW uses is what makes
+;; deleting the instruction with its block a no-op on every value in the
+;; function, and purity is what makes it a no-op on every effect.
+(define (opt-flag-exit-spacer-dead-instr?
+  [instr : ir.CompilerIrInstr]
+  [raw-uses : (__tl_dyn-array i64)]) : bool
+  (and
+    (opt-flag-exit-pure-instr? instr)
+    (match (opt-instr-def-var instr)
+      [(option_i64.Some dst)
+        (and
+          (>= dst 0)
+          (< dst (array-length raw-uses))
+          (= (array-ref raw-uses dst) 0))]
+      [(option_i64.None) false])))
+
+(define (opt-flag-exit-spacer-target-scan
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [raw-uses : (__tl_dyn-array i64)]) : OptFlagExitMaybeLabel
+  (let
+    [last : i64 (- (ir.compiler-ir-instr-seq-count instrs) 1)]
+    (if (>= index last)
+      (match (ir.compiler-ir-instr-seq-ref instrs last)
+        [(ir.CompilerIrInstr.Jump target) (OptFlagExitMaybeLabel.Some target)]
+        [_ (OptFlagExitMaybeLabel.No)])
+      (if (opt-flag-exit-spacer-dead-instr?
+        (ir.compiler-ir-instr-seq-ref instrs index)
+        raw-uses)
+        (opt-flag-exit-spacer-target-scan instrs (+ index 1) raw-uses)
+        (OptFlagExitMaybeLabel.No)))))
+
+;; A block the collapse below may walk THROUGH: it ends in a Jump and everything
+;; ahead of that jump is dead and pure.
+;;
+;; Why the leniency is needed at all: a lowered `while (and c f)` reaches this
+;; pass with the `and`'s answer still materialised on each arm, so the gate's
+;; exit arm is `%k = mov <literal>` + `jump join` rather than the bare `jump`
+;; the strict reading wants. That `mov` is dead the moment the branch on the
+;; `and` is threaded, but the DCE that retires it sits at the tail of the
+;; pipeline round, a full round below this pass -- so under the strict reading
+;; every such loop spends round 1 refused and converts only on round 2, after
+;; the round that could have used the result (`licm`, `gvn`, `dead_phi` and
+;; `bce_version` all run above this pass, so a round-2 conversion is seen by
+;; nobody). Accepting a dead pure prefix converts on round 1 instead.
+(define (opt-flag-exit-spacer-target
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]
+  [raw-uses : (__tl_dyn-array i64)]) : OptFlagExitMaybeLabel
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (OptFlagExitMaybeLabel.No)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (< (ir.compiler-ir-instr-seq-count instrs) 1)
+            (OptFlagExitMaybeLabel.No)
+            (opt-flag-exit-spacer-target-scan instrs 0 raw-uses))])]))
+
 ;; A gate arm that is a jump-only block reached only from the gate is part of
 ;; the same edge, so the redirect may adopt what it jumps to instead. Following
 ;; that chain is what puts the loop's real exit block -- the one with the phis,
@@ -26920,13 +27954,14 @@
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [pred-map : OptPredMap]
+  [raw-uses : (__tl_dyn-array i64)]
   [prev : i64]
   [label : i64]
   [dropped : OptLabelSet]
   [fuel : i64]) : OptFlagExitArm
   (if (<= fuel 0)
     (OptFlagExitArm.Arm label prev dropped)
-    (match (opt-flag-exit-jump-only-target blocks label)
+    (match (opt-flag-exit-spacer-target blocks label raw-uses)
       [(OptFlagExitMaybeLabel.No) (OptFlagExitArm.Arm label prev dropped)]
       [(OptFlagExitMaybeLabel.Some target)
         (if (or
@@ -26940,6 +27975,7 @@
             body
             index
             pred-map
+            raw-uses
             label
             target
             (opt-label-add dropped label)
@@ -29257,6 +30293,7 @@
   [context : OptCfgContext]
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
+  [raw-uses : (__tl_dyn-array i64)]
   [def-label : (__tl_dyn-array i64)]
   [loop : OptNaturalLoop]
   [flag : i64]
@@ -29297,6 +30334,7 @@
               context
               frame
               uses
+              raw-uses
               def-label
               body
               (opt-natural-loop-latch loop)
@@ -29317,6 +30355,7 @@
   [context : OptCfgContext]
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
+  [raw-uses : (__tl_dyn-array i64)]
   [def-label : (__tl_dyn-array i64)]
   [body : OptLoopBody]
   [latch : i64]
@@ -29351,6 +30390,7 @@
         body
         context.index
         context.pred-map
+        raw-uses
         gate
         arm
         (OptLabelSet.Nil)
@@ -29431,6 +30471,7 @@
   [context : OptCfgContext]
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
+  [raw-uses : (__tl_dyn-array i64)]
   [def-label : (__tl_dyn-array i64)]
   [loop : OptNaturalLoop]
   [instrs : ir.CompilerIrInstrSeq]
@@ -29456,6 +30497,7 @@
                   context
                   frame
                   uses
+                  raw-uses
                   def-label
                   loop
                   dst
@@ -29470,6 +30512,7 @@
             context
             frame
             uses
+            raw-uses
             def-label
             loop
             instrs
@@ -29480,6 +30523,7 @@
   [context : OptCfgContext]
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
+  [raw-uses : (__tl_dyn-array i64)]
   [def-label : (__tl_dyn-array i64)]
   [loop : OptNaturalLoop]) : OptFlagExitMaybePlan
   (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
@@ -29492,6 +30536,7 @@
             context
             frame
             uses
+            raw-uses
             def-label
             loop
             instrs
@@ -29505,12 +30550,20 @@
   [context : OptCfgContext]
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
+  [raw-uses : (__tl_dyn-array i64)]
   [def-label : (__tl_dyn-array i64)]
   [loops : OptNaturalLoopList]) : OptFlagExitPassResult
   (match loops
     [(OptNaturalLoopList.Nil) (OptFlagExitPassResult.Result blocks frame false)]
     [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-flag-exit-plan-loop blocks context frame uses def-label loop)
+      (match (opt-flag-exit-plan-loop
+        blocks
+        context
+        frame
+        uses
+        raw-uses
+        def-label
+        loop)
         [(OptFlagExitMaybePlan.Some plan)
           (OptFlagExitPassResult.Result
             (opt-flag-exit-rewrite-blocks
@@ -29526,6 +30579,7 @@
             context
             frame
             uses
+            raw-uses
             def-label
             (__tl-box-place rest))])]))
 
@@ -29546,6 +30600,8 @@
           (let
             [uses : (__tl_dyn-array i64)
               (opt-gep-offset-effective-uses blocks frame)]
+            [raw-uses : (__tl_dyn-array i64)
+              (opt-collect-blocks-uses-array frame blocks)]
             [def-label : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [_fill : unit (opt-cfg-fill-i64! def-label frame (- 0 1))]
             [_defs : unit (opt-flag-exit-def-labels! blocks def-label)]
@@ -29554,6 +30610,7 @@
               context
               frame
               uses
+              raw-uses
               def-label
               loops))]))))
 
@@ -40418,6 +41475,699 @@
       (opt-bounds-dom-len-positive? type-segment-bases cmp-facts len)
       (opt-bounds-dom-masked-or-phi? defs phi-defs copies len idx 4))))
 
+;; --- constant-offset runs against one length ----------------------------------
+;;
+;; A straight-line access run -- `xs[i]`, `xs[i+1]` ... `xs[i+k]` in one block or
+;; one dominator chain -- lowers to k+1 checks of the SAME length whose indexes
+;; differ by a literal. `opt-bounds-contains` above retires only the EXACT pair,
+;; so every offset paid its own cmp+jb: `gvn-run-block`'s instruction fetch reads
+;; six token slots per iteration and checked all six (24.1M Ir in the running
+;; benchmark), and `it-hash-words`' word loader checks eight.
+;;
+;; TWO of them imply the rest. Write the run's indexes as `base + j`; the adds
+;; WRAP like all TypeLisp integer arithmetic, so `base + j` denotes
+;; `(base + j) mod 2^64`. Suppose checks of `base + a` and `base + b` with
+;; a <= j <= b have passed at dominating points. A passed check is an unsigned
+;; `v <u len` whose length operand is a runtime container length, so it proves
+;; `0 <= v < len <= i64 MAX` in the SIGNED domain -- the premise
+;; `opt-bounds-index-checked?` already states and the fact recording below
+;; already relies on. Write A and B for the two values those checks compared,
+;; both in [0, len).
+;;
+;;   B = (A + (b - a)) mod 2^64, and both offsets are literals bounded by
+;;   `opt-bounds-dom-offset-max`, so the mathematical sum A + (b - a) is below
+;;   2^63 + 2^31 < 2^64 and the unsigned addition cannot wrap: B IS
+;;   A + (b - a) as an integer. `B >= 0` then says A + (b - a) <= i64 MAX, so
+;;   the intermediate A + (j - a) neither wraps nor leaves [A, B]:
+;;
+;;       0 <= A <= A + (j - a) <= B < len
+;;
+;;   and `base + j` -- which IS A + (j - a) -- passes its check. No power of two,
+;;   no monotonicity, no trip range: two facts and literal offsets.
+;;
+;; The LOWER bracket may also come from `base >= 0` together with `j >= 0`: the
+;; same argument reads with A = base and a = 0, and `opt-bounds-dom-nonneg?` is
+;; what proves the premise (a dominating `>= 0` guard, a zero extension, a
+;; counter induction).
+;;
+;; Facts flow down the dominator tree, so a run spread over a dominator chain
+;; (each access behind its own `if`) is covered exactly like a run inside one
+;; block. Nothing here cares whether the accesses read or write: a check
+;; constrains its index.
+(define (opt-bounds-dom-offset-max) : i64
+  1073741824)
+
+;; An index read as `base + offset` with a literal offset.
+(defstruct OptBoundsDomTerm
+  (base ir.CompilerIrValue)
+  (offset i64))
+
+(defenum OptBoundsDomOffset
+  (No)
+  (Some ir.CompilerIrValue i64))
+
+;; The literal-offset split of one Add/Sub, in either operand order for Add.
+;; `Sub base, MIN` is refused because negating the literal would overflow.
+(define (opt-bounds-dom-affine-parts
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : OptBoundsDomOffset
+  (cond
+    [(opt-binop-eq op (ir.CompilerIrBinOp.Add))
+      (match (opt-affine-var-const lhs rhs)
+        [(OptAffineOperands.Some base offset)
+          (OptBoundsDomOffset.Some (ir.CompilerIrValue.Var base) offset)]
+        [(OptAffineOperands.No) (OptBoundsDomOffset.No)])]
+    [(opt-binop-eq op (ir.CompilerIrBinOp.Sub))
+      (match lhs
+        [(ir.CompilerIrValue.Var base)
+          (match rhs
+            [(ir.CompilerIrValue.I64 k)
+              (if (= k (- (- 0 9223372036854775807) 1))
+                (OptBoundsDomOffset.No)
+                (OptBoundsDomOffset.Some (ir.CompilerIrValue.Var base) (- 0 k)))]
+            [_ (OptBoundsDomOffset.No)])]
+        [_ (OptBoundsDomOffset.No)])]
+    [else (OptBoundsDomOffset.No)]))
+
+;; Copy resolution plus the same-width reinterpret strip every value identity in
+;; this pass goes through, so a check operand and a dominating fact speak one
+;; spelling.
+(define (opt-bounds-dom-canon
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-bounds-dom-strip-int-cast
+    type-segment-bases
+    phi-defs
+    copies
+    (opt-bounds-dom-resolve copies value)))
+
+(define (opt-bounds-dom-term-ok?
+  [sources : opt_i64_i64_map.Map]
+  [base : ir.CompilerIrValue]
+  [offset : i64]) : bool
+  (and
+    (<= offset (opt-bounds-dom-offset-max))
+    (>= offset (- 0 (opt-bounds-dom-offset-max)))
+    (opt-gvn-value-stable? sources base)))
+
+;; `value` split as `base + offset`. Falls back to `(value, 0)` -- always a
+;; correct reading, just a weaker one -- for anything that is not a 64-bit
+;; literal-offset Add/Sub over a STABLE base within the offset cap. Stability is
+;; the pass-wide requirement that a var names one runtime value; the cap is what
+;; keeps the wrap argument above exact.
+(define (opt-bounds-dom-term
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : OptBoundsDomTerm
+  (let
+    [self : OptBoundsDomTerm (OptBoundsDomTerm value 0)]
+    (match value
+      [(ir.CompilerIrValue.Var var)
+        (match (opt-bool-branch-def defs var)
+          [(OptBoolBranchDef.No) self]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                (if (not (opt-affine-64bit-type? ty))
+                  self
+                  (match (opt-bounds-dom-affine-parts op lhs rhs)
+                    [(OptBoundsDomOffset.No) self]
+                    [(OptBoundsDomOffset.Some raw-base offset)
+                      (let
+                        [base : ir.CompilerIrValue
+                          (opt-bounds-dom-canon
+                            type-segment-bases
+                            phi-defs
+                            copies
+                            raw-base)]
+                        (if (opt-bounds-dom-term-ok? sources base offset)
+                          (OptBoundsDomTerm base offset)
+                          self))]))]
+              [_ self])])]
+      [_ self])))
+
+(define (opt-bounds-dom-bracket-bits
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [fact : OptBoundsFact]
+  [base : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]
+  [offset : i64]
+  [acc : i64]) : i64
+  (match fact
+    [(OptBoundsFact.Fact fact-index fact-length)
+      (if (not
+        (opt-value-eq
+          (opt-bounds-dom-canon type-segment-bases phi-defs copies fact-length)
+          len))
+        acc
+        (let
+          [term : OptBoundsDomTerm
+            (opt-bounds-dom-term
+              type-segment-bases
+              defs
+              phi-defs
+              copies
+              sources
+              (opt-bounds-dom-canon
+                type-segment-bases
+                phi-defs
+                copies
+                fact-index))]
+          (if (not (opt-value-eq term.base base))
+            acc
+            (bit-or
+              acc
+              (bit-or
+                (if (<= term.offset offset)
+                  1
+                  0)
+                (if (>= term.offset offset)
+                  2
+                  0))))))]))
+
+;; The bracket bits the facts in scope supply for `base + offset`: 1 for a passed
+;; check at or below this offset, 2 for one at or above it.
+(define (opt-bounds-dom-bracket-mask
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [facts : OptBoundsFacts]
+  [base : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]
+  [offset : i64]
+  [acc : i64]) : i64
+  (cond
+    [(= acc 3) 3]
+    [else
+      (match facts
+        [(OptBoundsFacts.Nil) acc]
+        [(OptBoundsFacts.Cons fact rest)
+          (opt-bounds-dom-bracket-mask
+            type-segment-bases
+            defs
+            phi-defs
+            copies
+            sources
+            (deref rest)
+            base
+            len
+            offset
+            (opt-bounds-dom-bracket-bits
+              type-segment-bases
+              defs
+              phi-defs
+              copies
+              sources
+              fact
+              base
+              len
+              offset
+              acc))])]))
+
+;; The lower bracket: a passed check at or below this offset, or a nonnegative
+;; base under a nonnegative offset.
+(define (opt-bounds-dom-run-lower-ok?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [mask : i64]
+  [base : ir.CompilerIrValue]
+  [offset : i64]) : bool
+  (cond
+    [(not (= (bit-and mask 1) 0)) true]
+    [(< offset 0) false]
+    [else
+      (opt-bounds-dom-nonneg?
+        type-segment-bases
+        index
+        doms
+        defs
+        phi-defs
+        copies
+        cmp-facts
+        base)]))
+
+;; Is this check implied by dominating checks of the same base and length
+;; bracketing its offset?
+(define (opt-bounds-dom-run-in-range?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [facts : OptBoundsFacts]
+  [idx : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]) : bool
+  (let
+    [term : OptBoundsDomTerm
+      (opt-bounds-dom-term type-segment-bases defs phi-defs copies sources idx)]
+    [mask : i64
+      (opt-bounds-dom-bracket-mask
+        type-segment-bases
+        defs
+        phi-defs
+        copies
+        sources
+        facts
+        term.base
+        len
+        term.offset
+        0)]
+    (and
+      (not (= (bit-and mask 2) 0))
+      (opt-bounds-dom-run-lower-ok?
+        type-segment-bases
+        index
+        doms
+        defs
+        phi-defs
+        copies
+        cmp-facts
+        mask
+        term.base
+        term.offset))))
+
+;; --- run widening: bringing the brackets to the front -------------------------
+;;
+;; Subsumption needs the two bracketing checks to DOMINATE the ones it retires,
+;; and a source-order run does not deliver that: `gvn-run-block` checks offsets
+;; 0,1,2,3,4,5 in that order, so only the widest one is ever implied (by
+;; itself), while `it-hash-words` checks 7,6,...,0 and only the narrowest one is.
+;; This peephole reorders each block before the fact walk: the run's
+;; minimum-offset and maximum-offset checks move to the run's FIRST check
+;; position, together with the index arithmetic they read. Nothing is deleted
+;; here and no instruction, var, or label is created -- the two checks are the
+;; run's own instructions with their own ok-labels -- and the fact walk then
+;; retires the rest.
+;;
+;; THE SEMANTIC RULE, exactly. Reordering can only move a trap EARLIER, so it
+;; must preserve (1) which runs trap at all and (2) every observable effect a
+;; trapping run performed before it trapped.
+;;
+;; (1) The moved checks are members of the run, so they are checks the original
+;; performed too: no new trap. And if `base + j` fails for a retired j, the
+;; implication above read in contrapositive says one of the two brackets fails as
+;; well, so the widened program still traps.
+;;
+;; (2) is what the barrier rule buys. A run ends at the first instruction between
+;; its checks that is not side-effect-free and non-trapping
+;; (`opt-bce-mb-pair-barrier?`: `compiler-ir-instr-effect` plus the Div/Mod/shift
+;; BinOps that are classed Pure but carry a language-level abort), and a
+;; BoundsCheck of a DIFFERENT (base, length) pair ends it too -- that check is
+;; itself a trap site, and an abort must not move across it. So everything the
+;; reorder can skip on a trapping run is a register computation or a load, and a
+;; load in the skipped region is one of the run's own guarded reads: its check is
+;; retired only where the brackets prove exactly what it proved. No store, no
+;; call, no print, and no second trap site ever moves.
+;;
+;; What is NOT preserved is WHICH failing index the abort reports: a run that
+;; would have aborted at `base + 2` now aborts at whichever bracket fails. The
+;; abort is the same runtime call at the same point in the observable-effect
+;; sequence; only the located variant's (index, length) pair and source span
+;; differ, and no execution can observe those without aborting.
+(defenum OptBoundsDomRun
+  (No)
+  ;; first check position, minimum-offset position, maximum-offset position
+  (Some i64 i64 i64))
+
+;; Positions in this block that must move ahead of the run for a check to be
+;; evaluated there: the index's defining Add/Sub/Cast/Mov chain, ascending, -1
+;; for an unused slot. `No` when the chain is longer than two links or reads a
+;; value the run itself defines.
+(defenum OptBoundsDomChain
+  (No)
+  (Some i64 i64))
+
+(define (opt-bounds-dom-def-pos
+  [instrs : ir.CompilerIrInstrSeq]
+  [var : i64]
+  [pos : i64]) : i64
+  (cond
+    [(>= pos (ir.compiler-ir-instr-seq-count instrs)) -1]
+    [(= (opt-gvn-instr-dst (ir.compiler-ir-instr-seq-ref instrs pos)) var) pos]
+    [else (opt-bounds-dom-def-pos instrs var (+ pos 1))]))
+
+(define (opt-bounds-dom-chain-add [chain : OptBoundsDomChain] [pos : i64]) : OptBoundsDomChain
+  (match chain
+    [(OptBoundsDomChain.No) (OptBoundsDomChain.No)]
+    [(OptBoundsDomChain.Some a b)
+      (cond
+        [(>= b 0) (OptBoundsDomChain.No)]
+        ;; `a` defines an operand of `pos`, so a < pos and the pair stays
+        ;; ascending.
+        [(>= a 0) (OptBoundsDomChain.Some a pos)]
+        [else (OptBoundsDomChain.Some pos -1)])]))
+
+(define (opt-bounds-dom-move-chain-def
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [instr : ir.CompilerIrInstr]
+  [def-pos : i64]
+  [depth : i64]) : OptBoundsDomChain
+  (match instr
+    [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+      (if (not (opt-affine-64bit-type? ty))
+        (OptBoundsDomChain.No)
+        (match (opt-bounds-dom-affine-parts op lhs rhs)
+          [(OptBoundsDomOffset.No) (OptBoundsDomChain.No)]
+          [(OptBoundsDomOffset.Some base _)
+            (opt-bounds-dom-chain-add
+              (opt-bounds-dom-move-chain instrs first base (- depth 1))
+              def-pos)]))]
+    [(ir.CompilerIrInstr.Cast _ src from-ty to-ty)
+      (if (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+        (opt-bounds-dom-chain-add
+          (opt-bounds-dom-move-chain instrs first src (- depth 1))
+          def-pos)
+        (OptBoundsDomChain.No))]
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (opt-bounds-dom-chain-add
+        (opt-bounds-dom-move-chain instrs first src (- depth 1))
+        def-pos)]
+    [_ (OptBoundsDomChain.No)]))
+
+(define (opt-bounds-dom-move-chain
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [value : ir.CompilerIrValue]
+  [depth : i64]) : OptBoundsDomChain
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (let
+        [def-pos : i64 (opt-bounds-dom-def-pos instrs var 0)]
+        (cond
+          ;; -1 (defined in another block) or already ahead of the run.
+          [(< def-pos first) (OptBoundsDomChain.Some -1 -1)]
+          [(<= depth 0) (OptBoundsDomChain.No)]
+          [else
+            (opt-bounds-dom-move-chain-def
+              instrs
+              first
+              (ir.compiler-ir-instr-seq-ref instrs def-pos)
+              def-pos
+              depth)]))]
+    [_ (OptBoundsDomChain.Some -1 -1)]))
+
+(define (opt-bounds-dom-chain-ok? [chain : OptBoundsDomChain]) : bool
+  (match chain
+    [(OptBoundsDomChain.No) false]
+    [(OptBoundsDomChain.Some _ _) true]))
+
+(define (opt-bounds-dom-check-index
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]) : ir.CompilerIrValue
+  (match (ir.compiler-ir-instr-seq-ref instrs pos)
+    [(ir.CompilerIrInstr.BoundsCheck idx _ _) idx]
+    [_ (ir.CompilerIrValue.Unit)]))
+
+(define (opt-bounds-dom-check-movable?
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [pos : i64]) : bool
+  (opt-bounds-dom-chain-ok?
+    (opt-bounds-dom-move-chain
+      instrs
+      first
+      (opt-bounds-dom-check-index instrs pos)
+      3)))
+
+;; The run headed by the check at `start`: its members are the later checks of
+;; the same (base, length) reached without crossing a barrier. Answers `Some`
+;; only for a run of three or more whose brackets are not already its first two
+;; checks and whose index arithmetic can move.
+(define (opt-bounds-dom-run-from
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [start : i64]) : OptBoundsDomRun
+  (match (ir.compiler-ir-instr-seq-ref instrs start)
+    [(ir.CompilerIrInstr.BoundsCheck raw-index raw-length _)
+      (let
+        [len : ir.CompilerIrValue
+          (opt-bounds-dom-canon type-segment-bases phi-defs copies raw-length)]
+        [head : OptBoundsDomTerm
+          (opt-bounds-dom-term
+            type-segment-bases
+            defs
+            phi-defs
+            copies
+            sources
+            (opt-bounds-dom-canon type-segment-bases phi-defs copies raw-index))]
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [members : i64 1]
+        [second-pos : i64 -1]
+        [min-pos : i64 start]
+        [min-offset : i64 head.offset]
+        [max-pos : i64 start]
+        [max-offset : i64 head.offset]
+        [pos : i64 (+ start 1)]
+        [open? : bool true]
+        (begin
+          (while (and open? (< pos count))
+            (let
+              [instr : ir.CompilerIrInstr
+                (ir.compiler-ir-instr-seq-ref instrs pos)]
+              (match instr
+                [(ir.CompilerIrInstr.BoundsCheck other-index other-length _)
+                  (let
+                    [other-len : ir.CompilerIrValue
+                      (opt-bounds-dom-canon
+                        type-segment-bases
+                        phi-defs
+                        copies
+                        other-length)]
+                    [other : OptBoundsDomTerm
+                      (opt-bounds-dom-term
+                        type-segment-bases
+                        defs
+                        phi-defs
+                        copies
+                        sources
+                        (opt-bounds-dom-canon
+                          type-segment-bases
+                          phi-defs
+                          copies
+                          other-index))]
+                    (if (and
+                      (opt-value-eq other-len len)
+                      (opt-value-eq other.base head.base))
+                      (begin
+                        (set! members (+ members 1))
+                        (if (< second-pos 0)
+                          (set! second-pos pos)
+                          unit)
+                        (if (< other.offset min-offset)
+                          (begin
+                            (set! min-offset other.offset)
+                            (set! min-pos pos))
+                          unit)
+                        (if (> other.offset max-offset)
+                          (begin
+                            (set! max-offset other.offset)
+                            (set! max-pos pos))
+                          unit)
+                        (set! pos (+ pos 1)))
+                      (set! open? false)))]
+                [_
+                  (if (opt-bce-mb-pair-barrier? instr)
+                    (set! open? false)
+                    (set! pos (+ pos 1)))])))
+          (cond
+            [(< members 3) (OptBoundsDomRun.No)]
+            [(= min-pos max-pos) (OptBoundsDomRun.No)]
+            ;; Already bracketed by its first two checks: nothing to reorder,
+            ;; which is also what makes the rewrite idempotent.
+            [(and (= min-pos start) (= max-pos second-pos))
+              (OptBoundsDomRun.No)]
+            [(and (= max-pos start) (= min-pos second-pos))
+              (OptBoundsDomRun.No)]
+            [(not (opt-bounds-dom-check-movable? instrs start min-pos))
+              (OptBoundsDomRun.No)]
+            [(not (opt-bounds-dom-check-movable? instrs start max-pos))
+              (OptBoundsDomRun.No)]
+            [else (OptBoundsDomRun.Some start min-pos max-pos)])))]
+    [_ (OptBoundsDomRun.No)]))
+
+(define (opt-bounds-dom-run-scan
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]) : OptBoundsDomRun
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    (OptBoundsDomRun.No)
+    (match (opt-bounds-dom-run-from
+      type-segment-bases
+      defs
+      phi-defs
+      copies
+      sources
+      instrs
+      pos)
+      [(OptBoundsDomRun.Some first min-pos max-pos)
+        (OptBoundsDomRun.Some first min-pos max-pos)]
+      [(OptBoundsDomRun.No)
+        (opt-bounds-dom-run-scan
+          type-segment-bases
+          defs
+          phi-defs
+          copies
+          sources
+          instrs
+          (+ pos 1))])))
+
+(define (opt-bounds-dom-widen-mark!
+  [moved : (__tl_dyn-array bool)]
+  [chain : OptBoundsDomChain]) : unit
+  (match chain
+    [(OptBoundsDomChain.No) unit]
+    [(OptBoundsDomChain.Some a b)
+      (begin
+        (if (>= a 0)
+          (set! (array-ref moved a) true)
+          unit)
+        (if (>= b 0)
+          (set! (array-ref moved b) true)
+          unit))]))
+
+;; Rebuild the block with the two bracket checks (and the marked index
+;; arithmetic) hoisted to the run's first check position. Marked defs keep their
+;; relative order, so an operand defined by another marked def still precedes it;
+;; every other marked-def operand was proven to live ahead of the run.
+(define (opt-bounds-dom-widen-rebuild
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [min-pos : i64]
+  [max-pos : i64]
+  [moved : (__tl_dyn-array bool)]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [pos : i64 0]
+    (begin
+      (while (< pos first)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.compiler-ir-instr-seq-ref instrs pos))
+          (set! pos (+ pos 1))))
+      (set! pos first)
+      (while (< pos count)
+        (begin
+          (if (array-ref moved pos)
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.compiler-ir-instr-seq-ref instrs pos))
+            unit)
+          (set! pos (+ pos 1))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.compiler-ir-instr-seq-ref
+          instrs
+          (if (< min-pos max-pos)
+            min-pos
+            max-pos)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.compiler-ir-instr-seq-ref
+          instrs
+          (if (< min-pos max-pos)
+            max-pos
+            min-pos)))
+      (set! pos first)
+      (while (< pos count)
+        (begin
+          (if (or (array-ref moved pos) (= pos min-pos) (= pos max-pos))
+            unit
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.compiler-ir-instr-seq-ref instrs pos)))
+          (set! pos (+ pos 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-bounds-dom-widen-run
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [min-pos : i64]
+  [max-pos : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [moved : (__tl_dyn-array bool)
+      (array.make-array bool (ir.compiler-ir-instr-seq-count instrs))]
+    [_mark-min : unit
+      (opt-bounds-dom-widen-mark!
+        moved
+        (opt-bounds-dom-move-chain
+          instrs
+          first
+          (opt-bounds-dom-check-index instrs min-pos)
+          3))]
+    [_mark-max : unit
+      (opt-bounds-dom-widen-mark!
+        moved
+        (opt-bounds-dom-move-chain
+          instrs
+          first
+          (opt-bounds-dom-check-index instrs max-pos)
+          3))]
+    (opt-bounds-dom-widen-rebuild instrs first min-pos max-pos moved)))
+
+;; Widen every run of this block, one rewrite at a time. `fuel` bounds the
+;; rewrites; each one leaves its run bracketed at the front, which the scan then
+;; skips, so the loop makes progress and a block with no run pays one walk.
+(define (opt-bounds-dom-widen-instrs
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [fuel : i64]) : ir.CompilerIrInstrSeq
+  (if (<= fuel 0)
+    instrs
+    (match (opt-bounds-dom-run-scan
+      type-segment-bases
+      defs
+      phi-defs
+      copies
+      sources
+      instrs
+      0)
+      [(OptBoundsDomRun.No) instrs]
+      [(OptBoundsDomRun.Some first min-pos max-pos)
+        (opt-bounds-dom-widen-instrs
+          type-segment-bases
+          defs
+          phi-defs
+          copies
+          sources
+          (opt-bounds-dom-widen-run instrs first min-pos max-pos)
+          (- fuel 1))])))
+
 (define (opt-bounds-dom-instrs-from
   [type-segment-bases : i64]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
@@ -40487,6 +42237,18 @@
                       clen)]
                   (if (or
                     (opt-bounds-contains cur-facts cidx fact-len)
+                    (opt-bounds-dom-run-in-range?
+                      type-segment-bases
+                      cfg-index
+                      doms
+                      defs
+                      phi-defs
+                      copies
+                      sources
+                      cur-cmp-facts
+                      cur-facts
+                      sidx
+                      (opt-bounds-dom-slice-length-key slice-lengths slen))
                     (opt-bounds-dom-mask-in-range?
                       type-segment-bases
                       defs
@@ -41053,45 +42815,59 @@
           [(OptMaybeBlock.No) unit]
           [(OptMaybeBlock.Some block)
             (match block
-              [(ir.CompilerIrBlock.Block _ instrs)
-                (match (opt-bounds-dom-instrs-from
-                  type-segment-bases
-                  defs
-                  phi-defs
-                  terms
-                  index
-                  context.doms
-                  label
-                  id
-                  cmp-facts
-                  facts
-                  sources
-                  copies
-                  slice-lengths
-                  instrs
-                  0)
-                  [(OptBoundsDomWalk.Walk rewritten out-facts out-cmp-facts)
-                    (begin
-                      (set!
-                        (array-ref out id)
-                        (OptGvnBlockResult.SomeBlock
-                          (ir.CompilerIrBlock.Block label rewritten)))
-                      (opt-bounds-dom-rewrite-children
-                        type-segment-bases
-                        context
-                        children
-                        defs
-                        phi-defs
-                        terms
-                        sources
-                        copies
-                        slice-lengths
-                        out-cmp-facts
-                        out-facts
-                        blocks
-                        out
-                        id
-                        instrs))])])]))
+              [(ir.CompilerIrBlock.Block _ raw-instrs)
+                ;; Bring each constant-offset run's brackets to its front before
+                ;; the fact walk, so the walk's subsumption can retire the rest
+                ;; (see the widening rule above). Reordering only; the walk is
+                ;; what deletes.
+                (let
+                  [instrs : ir.CompilerIrInstrSeq
+                    (opt-bounds-dom-widen-instrs
+                      type-segment-bases
+                      defs
+                      phi-defs
+                      copies
+                      sources
+                      raw-instrs
+                      4)]
+                  (match (opt-bounds-dom-instrs-from
+                    type-segment-bases
+                    defs
+                    phi-defs
+                    terms
+                    index
+                    context.doms
+                    label
+                    id
+                    cmp-facts
+                    facts
+                    sources
+                    copies
+                    slice-lengths
+                    instrs
+                    0)
+                    [(OptBoundsDomWalk.Walk rewritten out-facts out-cmp-facts)
+                      (begin
+                        (set!
+                          (array-ref out id)
+                          (OptGvnBlockResult.SomeBlock
+                            (ir.CompilerIrBlock.Block label rewritten)))
+                        (opt-bounds-dom-rewrite-children
+                          type-segment-bases
+                          context
+                          children
+                          defs
+                          phi-defs
+                          terms
+                          sources
+                          copies
+                          slice-lengths
+                          out-cmp-facts
+                          out-facts
+                          blocks
+                          out
+                          id
+                          instrs))]))])]))
       unit)))
 
 ;; The number of predecessors a block has, straight off the CFG index rows.
@@ -42259,14 +44035,28 @@
   (addr-taken opt_i64_i64_map.Map)
   (type-index opt_i64_i64_map.Map)
   (types (__tl_dyn-array ast.AstType))
-  (word-cell i64))
+  (word-cell i64)
+  ;; P18's per-global call mod-ref table over global CELLS. See
+  ;; opt-global-mod-ref-build for what it proves and the whole-program
+  ;; preconditions it rests on. A summary built without it (every level below
+  ;; 2, and every program outside those preconditions) carries
+  ;; opt-global-mod-ref-none, which answers "may write any cell" to every
+  ;; question and so leaves the loop-wide gates exactly as they were.
+  (mod-ref OptGlobalModRef)
+  ;; P20's FROZEN globals: those whose box and descriptor words are immutable
+  ;; for the whole run (opt-global-frozen-build). Empty at every level below 2
+  ;; and in every program without one, where LICM's frozen arms are dead and
+  ;; nothing is recomputed.
+  (frozen opt_i64_i64_map.Map))
 
 (define (opt-global-cell-summary-empty) : OptGlobalCellSummary
   (OptGlobalCellSummary
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
     (array.make-array ast.AstType 0)
-    0))
+    0
+    (opt-global-mod-ref-none)
+    (opt_i64_i64_map.with-capacity 1)))
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
@@ -42284,6 +44074,12 @@
   ;; memory barrier.
   (call-memory opt_i64_i64_map.Map)
   (argc-return opt_i64_i64_map.Map)
+  ;; Whole-program RETURN-ALIAS table for LICM provenance: callee symbol id ->
+  ;; 1 + the index of the parameter that callee returns unchanged. See
+  ;; opt-licm-return-alias-map; it lives here because it is built once per
+  ;; program from the same reachable-function list as the call summaries and
+  ;; consumed in the same per-function level-2 pass.
+  (return-alias opt_i64_i64_map.Map)
   ;; Whole-program table of never-written literal-i64 globals, mapping
   ;; global name -> constant value. Carried alongside the BCE summaries (rather
   ;; than threaded as a separate parameter) because both are built once per
@@ -42337,6 +44133,7 @@
   (OptLoopBceSummaries
     false
     (profile_state.compiler-profile-state-new)
+    (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -56733,6 +58530,278 @@
                   [_ (OptBceVersionGuardAcc.No)]))]
             [_ (OptBceVersionGuardAcc.No)])))]))
 
+;; --- masked index with a loop-invariant mask ----------------------------------
+;;
+;; `idx = x & M` with a loop-invariant M -- every open-addressing probe in the
+;; corpus indexes with `key & (cap - 1)` or `(cursor + 1) & (cap - 1)` -- needs
+;; ONE guard conjunct and no trip-range argument at all:
+;;
+;;     M <u len          (UNSIGNED)
+;;
+;; because `x & M <=u M` for EVERY pair of bit patterns: bit-and only clears
+;; bits, so the result's unsigned value cannot exceed the mask's. Chaining the
+;; two gives `idx <u len`, which IS the comparison `BoundsCheck` performs. Read
+;; unsigned, the conjunct needs no companion sign condition either: a mask with
+;; its sign bit set is >=u 2^63, above every container length, so the conjunct is
+;; simply false there and the fast path is not selected. That is cheaper than the
+;; signed pair `M >= 0 && M < len` the pass used to document for a LITERAL mask,
+;; and it assumes nothing about the length's sign.
+;;
+;; The same reading covers a loop-INVARIANT index reaching a phi: its own value
+;; is the bound, and `v <u len` is then literally the check the loop would have
+;; performed. So one notion serves both -- an invariant value B with
+;; `idx <=u B` on the iterations that input is selected -- and the guard states
+;; `B <u len` once per distinct B.
+;;
+;; A NEGATIVE literal bound is refused rather than emitted: `k <u len` is false
+;; for every length, so the clone could never be entered and the guard would be
+;; pure loss.
+;;
+;; The conjunct is counter-INDEPENDENT: it says nothing about a trip range, so a
+;; probe loop whose counter advances only on some arms -- not a canonical counted
+;; loop at all -- qualifies (see the counter-free shape at
+;; `opt-bce-mb-loop-shape-with-preheader`). The mask must be invariant because
+;; the guard block evaluates it once, ahead of the loop.
+(define (opt-bce-version-mask-cond
+  [cell : (__tl_dyn-array i64)]
+  [mask : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [acc : OptBceVersionGuardAcc (:consume)]) : OptBceVersionGuardAcc
+  (opt-bce-version-cond-typed
+    cell
+    (ir.CompilerIrBinOp.Lt)
+    mask
+    length-value
+    (ast.AstType.U64)
+    acc))
+
+;; The distinct invariant bounds collected off one index expression. A phi merges
+;; several, so the set is what the guard states, once per member.
+(defenum OptBceMaskList
+  (Nil)
+  (Cons ir.CompilerIrValue (Box OptBceMaskList)))
+
+(defenum OptBceMaskSet
+  (No)
+  (Some OptBceMaskList i64))
+
+;; A cursor merged through the arms of a `cond` carries one bound per arm; more
+;; than a handful would be a guard nobody can pay for.
+(define (opt-bce-mask-set-max) : i64
+  4)
+
+(define (opt-bce-mask-list-contains?
+  [masks : OptBceMaskList]
+  [value : ir.CompilerIrValue]) : bool
+  (match masks
+    [(OptBceMaskList.Nil) false]
+    [(OptBceMaskList.Cons mask rest)
+      (if (opt-value-eq mask value)
+        true
+        (opt-bce-mask-list-contains? (deref rest) value))]))
+
+(define (opt-bce-mask-set-add
+  [set : OptBceMaskSet]
+  [value : ir.CompilerIrValue]) : OptBceMaskSet
+  (match set
+    [(OptBceMaskSet.No) (OptBceMaskSet.No)]
+    [(OptBceMaskSet.Some masks count)
+      (cond
+        [(opt-bce-mask-list-contains? masks value)
+          (OptBceMaskSet.Some masks count)]
+        [(>= count (opt-bce-mask-set-max)) (OptBceMaskSet.No)]
+        [else
+          (OptBceMaskSet.Some
+            (OptBceMaskList.Cons value (box masks))
+            (+ count 1))])]))
+
+;; An invariant bound is usable only when it can pass: a negative literal never
+;; can (see the head comment).
+(define (opt-bce-mask-bound-ok? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 k) (>= k 0)]
+    [(ir.CompilerIrValue.Var _) true]
+    [_ false]))
+
+(define (opt-bce-mask-conds
+  [cell : (__tl_dyn-array i64)]
+  [masks : OptBceMaskList]
+  [length-value : ir.CompilerIrValue]
+  [acc : OptBceVersionGuardAcc (:consume)]) : OptBceVersionGuardAcc
+  (match masks
+    [(OptBceMaskList.Nil) acc]
+    [(OptBceMaskList.Cons mask rest)
+      (opt-bce-mask-conds
+        cell
+        (deref rest)
+        length-value
+        (opt-bce-version-mask-cond cell mask length-value acc))]))
+
+;; Either operand of a `bit-and`, whichever is loop-invariant. The operation is
+;; commutative, so the sides are tried in order and the first invariant one wins.
+(define (opt-bce-version-mask-operand
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (match (opt-bce-version-invariant-operand instrs phi-count last defs rhs)
+    [(ir.CompilerIrMaybeValue.Some mask) (ir.CompilerIrMaybeValue.Some mask)]
+    [(ir.CompilerIrMaybeValue.No)
+      (opt-bce-version-invariant-operand instrs phi-count last defs lhs)]))
+
+;; The invariant bounds of one value: itself when it is loop-invariant, its mask
+;; when it is a `bit-and` by an invariant operand, the union over the inputs when
+;; it is a phi. `depth` bounds the phi recursion -- phis may reference each other
+;; cyclically, so the counter is what guarantees termination.
+(define (opt-bce-version-mask-collect
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match set
+    [(OptBceMaskSet.No) (OptBceMaskSet.No)]
+    [(OptBceMaskSet.Some _ _)
+      (match (opt-bce-version-invariant-operand
+        instrs
+        phi-count
+        last
+        defs
+        value)
+        [(ir.CompilerIrMaybeValue.Some bound)
+          (if (opt-bce-mask-bound-ok? bound)
+            (opt-bce-mask-set-add set bound)
+            (OptBceMaskSet.No))]
+        [(ir.CompilerIrMaybeValue.No)
+          (opt-bce-version-mask-collect-def
+            instrs
+            phi-count
+            last
+            defs
+            value
+            depth
+            set)])]))
+
+(define (opt-bce-version-mask-collect-def
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match value
+    [(ir.CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+        [def-index : i64 (opt-unroll-def-index slots 0 last id)]
+        (if (< def-index 0)
+          (OptBceMaskSet.No)
+          (match (array-ref slots def-index)
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not
+                (and
+                  (opt-binop-eq op (ir.CompilerIrBinOp.BitAnd))
+                  (opt-affine-64bit-type? ty)))
+                (OptBceMaskSet.No)
+                (match (opt-bce-version-mask-operand
+                  instrs
+                  phi-count
+                  last
+                  defs
+                  lhs
+                  rhs)
+                  [(ir.CompilerIrMaybeValue.No) (OptBceMaskSet.No)]
+                  [(ir.CompilerIrMaybeValue.Some mask)
+                    (if (opt-bce-mask-bound-ok? mask)
+                      (opt-bce-mask-set-add set mask)
+                      (OptBceMaskSet.No))]))]
+            [(ir.CompilerIrInstr.Phi _ inputs pty)
+              (if (or (<= depth 0) (not (opt-affine-64bit-type? pty)))
+                (OptBceMaskSet.No)
+                (opt-bce-version-mask-collect-inputs
+                  instrs
+                  phi-count
+                  last
+                  defs
+                  inputs
+                  (- depth 1)
+                  set))]
+            [_ (OptBceMaskSet.No)])))]
+    [_ (OptBceMaskSet.No)]))
+
+(define (opt-bce-version-mask-collect-inputs
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [inputs : ir.CompilerIrPhiInputList]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match inputs
+    [(ir.CompilerIrPhiInputList.Nil) (OptBceMaskSet.No)]
+    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+      (let
+        [next : OptBceMaskSet
+          (opt-bce-version-mask-collect
+            instrs
+            phi-count
+            last
+            defs
+            value
+            depth
+            set)]
+        (match (__tl-box-place rest)
+          [(ir.CompilerIrPhiInputList.Nil) next]
+          [_
+            (opt-bce-version-mask-collect-inputs
+              instrs
+              phi-count
+              last
+              defs
+              (__tl-box-place rest)
+              depth
+              next)]))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bce-version-mask-collect-inputs
+        instrs
+        phi-count
+        last
+        defs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        depth
+        set)]))
+
+;; The masked-index derivation for one check: collect the index's invariant
+;; bounds and state each one against this length.
+(define (opt-bce-version-masked-guard
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc (:consume)]) : OptBceVersionGuardAcc
+  (match (opt-bce-version-mask-collect
+    instrs
+    phi-count
+    last
+    defs
+    value
+    4
+    (OptBceMaskSet.Some (OptBceMaskList.Nil) 0))
+    [(OptBceMaskSet.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceMaskSet.Some masks count)
+      (if (< count 1)
+        (OptBceVersionGuardAcc.No)
+        (opt-bce-mask-conds cell masks length-value acc))]))
+
 ;; Derive the sufficient invariant condition for one check's index operand.
 (define (opt-bce-version-derive-index
   [instrs : ir.CompilerIrInstrSeq]
@@ -56814,7 +58883,18 @@
                                 length-value
                                 acc)
                               (OptBceVersionGuardAcc.No))]
-                          [(OptAffineOperands.No) (OptBceVersionGuardAcc.No)])]
+                          ;; A VARIABLE mask: the loop-invariant one bounds the
+                          ;; index unsigned, whichever side it is on.
+                          [(OptAffineOperands.No)
+                            (opt-bce-version-masked-guard
+                              instrs
+                              phi-count
+                              last
+                              defs
+                              (ir.CompilerIrValue.Var id)
+                              length-value
+                              cell
+                              acc)])]
                       [_
                         (match (opt-bce-version-counter-affine
                           instrs
@@ -56877,8 +58957,19 @@
                           pred-label
                           id
                           inputs)
+                          ;; Not an induction: a loop-carried MASKED cursor is
+                          ;; the other phi this loop family indexes with, and
+                          ;; its bounds need no trip range.
                           [(OptBceDerivedInduction.No)
-                            (OptBceVersionGuardAcc.No)]
+                            (opt-bce-version-masked-guard
+                              instrs
+                              phi-count
+                              last
+                              defs
+                              (ir.CompilerIrValue.Var id)
+                              length-value
+                              cell
+                              acc)]
                           [(OptBceDerivedInduction.Some derived-seed step)
                             (opt-bce-version-derived-guard
                               seed
@@ -58429,7 +60520,12 @@
   ;; This candidate was admitted on the REGION budget -- an outermost nest
   ;; bigger than an ordinary nest may be -- so the derivation must show an
   ;; inner-loop check among the ones it removes before the clone is emitted.
-  (region? bool))
+  (region? bool)
+  ;; Does this shape carry a canonical counter? A COUNTER-FREE shape (see
+  ;; `opt-bce-mb-loop-shape-free`) has none: `iphi` is -1, the seed/bound/step
+  ;; fields are inert placeholders, and only the counter-INDEPENDENT
+  ;; derivations may fire. Everything that reads the trip range tests this.
+  (counted? bool))
 
 (defenum OptBceMbMaybeShape
   (No)
@@ -59660,8 +61756,77 @@
                     wrap-step
                     uncovered
                     inner
-                    region?))
+                    region?
+                    true))
                 (OptBceMbMaybeShape.No))])])]))
+
+;; --- the counter-free shape ---------------------------------------------------
+;;
+;; Not every eliminable check needs a trip range. A masked index with a
+;; loop-invariant mask is bounded by ONE unsigned conjunct
+;; (`opt-bce-version-mask-cond`) that mentions no counter at all, and so is a
+;; loop-invariant index; the cross-array fusion likewise transfers a dominating
+;; check's own fact. Every open-addressing probe in the corpus is exactly that
+;; shape AND has no canonical counter: `walked` advances only on the arms that
+;; keep probing, so the back-edge value is a merge phi rather than `iphi + k`
+;; and the counter recovery refuses the loop -- taking the mask derivation down
+;; with it, for no reason the derivation itself needs.
+;;
+;; So a loop whose counter recovery failed is still offered, with a shape that
+;; states plainly that it has no counter: `iphi = -1` (no var id can equal it, so
+;; every counter-keyed test simply misses), inert seed/bound/step placeholders
+;; that `opt-bce-mb-counter-range` passes through without emitting anything, an
+;; EMPTY uncovered set (there is no counter compare whose dominance would divide
+;; the body, and the surviving derivations hold at every point of the loop), and
+;; `counted? = false`, which is what the guard assembly and the exit-check sink
+;; read to stay out. `opt-bce-version-guard-finish` emits its once-only seed
+;; conditions only when a counter-cased derivation set `counter-seen`, and none
+;; can here, so the guard is exactly the conjuncts the surviving derivations
+;; asked for.
+;;
+;; Everything else is the counted shape's requirement, unchanged: a natural loop
+;; with a single dedicated preheader, header phis split as (preheader, latch),
+;; the clonable whitelist, the budgets, and at least one check to remove.
+(define (opt-bce-mb-loop-shape-free
+  [blocks : ir.CompilerIrBlockList]
+  [header : i64]
+  [latch : i64]
+  [pred : i64]
+  [body-labels : OptLabelSet]
+  [body-blocks : ir.CompilerIrBlockList]
+  [inner : OptLabelSet]
+  [region? : bool]) : OptBceMbMaybeShape
+  (match (opt-cfg-find-block blocks header)
+    [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
+    [(OptMaybeBlock.Some header-block)
+      (match header-block
+        [(ir.CompilerIrBlock.Block _ header-instrs)
+          (if (and
+            (opt-bce-mb-header-phis-ok?
+              header-instrs
+              0
+              (opt-unroll-phi-prefix-count header-instrs 0)
+              latch
+              pred)
+            (>= (opt-bce-mb-body-checks body-blocks 0) 1))
+            (OptBceMbMaybeShape.Some
+              (OptBceMbShape
+                header
+                latch
+                pred
+                body-labels
+                body-blocks
+                -1
+                (ir.CompilerIrValue.I64 0)
+                (ir.CompilerIrValue.I64 0)
+                1
+                0
+                1
+                (OptLabelSet.Nil)
+                inner
+                region?
+                false))
+            (OptBceMbMaybeShape.No))])]))
 
 ;; Does another natural loop's header sit inside this candidate's body? A
 ;; nest is admitted (the clone is just more blocks -- see the nest note on
@@ -59728,6 +61893,7 @@
   [blocks : ir.CompilerIrBlockList]
   [loops : OptNaturalLoopList]
   [nested? : bool]
+  [free? : bool]
   [header : i64]
   [latch : i64]
   [body : OptLoopBody]
@@ -59766,58 +61932,91 @@
       (not (opt-bce-mb-fast-labels-fresh? blocks body-labels))
       (not (opt-bce-mb-fallthroughs-ok? blocks body-labels)))
       (OptBceMbMaybeShape.No)
-      (match (opt-cfg-find-block blocks latch)
-        [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
-        [(OptMaybeBlock.Some latch-block)
-          (let
-            [defs : opt_i64_i64_map.Map
-              (opt-bce-mb-collect-defs
-                body-blocks
-                (opt_i64_i64_map.with-capacity 64))]
-            (match (opt-bce-mb-latch-branch latch-block header body-labels)
-              [(OptBceMbMaybeLatch.No)
-                (opt-bce-mb-loop-shape-top
-                  blocks
+      (if free?
+        ;; The COUNTER-FREE phase (see opt-bce-mb-loops-scan-phased): every
+        ;; candidate is offered the counter-free shape, whatever its counter
+        ;; recovery would have said. The counted phases already had their turn,
+        ;; and the counter-free derivation set is a subset of the counted one, so
+        ;; this can only add loops a trip-range condition refused -- never take a
+        ;; slot a counted shape would have used better.
+        ;;
+        ;; OUTERMOST ONLY, the same clause `region?` uses. A counter-free guard
+        ;; carries no trip-range clause, so its whole price is per ENTRY, and an
+        ;; entry inside another loop is paid once per enclosing iteration against
+        ;; derivations that are the weakest set the pass has. gvn_table's
+        ;; `gvn-facts-grow` rehash is the measured case: its insert probe sits
+        ;; inside the walk over the old table, so a two-conjunct guard ran once
+        ;; per rehashed key to remove one check from a probe that averages about
+        ;; one iteration -- +2,614,752 on that benchmark. Outside every loop the
+        ;; guard is paid once per call instead.
+        (if (opt-bce-mb-preheader-outside-loops? loops pred)
+          (opt-bce-mb-loop-shape-free
+            blocks
+            header
+            latch
+            pred
+            body-labels
+            body-blocks
+            inner
+            region?)
+          (OptBceMbMaybeShape.No))
+        (match (opt-cfg-find-block blocks latch)
+          [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
+          [(OptMaybeBlock.Some latch-block)
+            (let
+              [defs : opt_i64_i64_map.Map
+                (opt-bce-mb-collect-defs
                   body-blocks
-                  defs
-                  latch-block
-                  header
-                  latch
-                  pred
-                  body-labels
-                  inner
-                  region?)]
-              [(OptBceMbMaybeLatch.Some cond-var _)
-                (match (opt-bce-mb-loop-shape-finish
-                  blocks
-                  header
-                  latch
-                  pred
-                  body-labels
-                  body-blocks
-                  inner
-                  region?
-                  ;; the latch compare covers the whole body: it bounds the
-                  ;; NEXT iteration's counter and the guard bounds the first
-                  (OptLabelSet.Nil)
-                  (opt-bce-mb-counter-step body-blocks defs latch pred cond-var))
-                  [(OptBceMbMaybeShape.Some shape)
-                    (OptBceMbMaybeShape.Some shape)]
-                  ;; a latch branch that closes the back edge but does NOT
-                  ;; carry the counter compare (a bottom-tested flag test) is
-                  ;; still a top-tested loop for the chain walk
-                  [(OptBceMbMaybeShape.No)
-                    (opt-bce-mb-loop-shape-top
-                      blocks
+                  (opt_i64_i64_map.with-capacity 64))]
+              (match (opt-bce-mb-latch-branch latch-block header body-labels)
+                [(OptBceMbMaybeLatch.No)
+                  (opt-bce-mb-loop-shape-top
+                    blocks
+                    body-blocks
+                    defs
+                    latch-block
+                    header
+                    latch
+                    pred
+                    body-labels
+                    inner
+                    region?)]
+                [(OptBceMbMaybeLatch.Some cond-var _)
+                  (match (opt-bce-mb-loop-shape-finish
+                    blocks
+                    header
+                    latch
+                    pred
+                    body-labels
+                    body-blocks
+                    inner
+                    region?
+                    ;; the latch compare covers the whole body: it bounds the
+                    ;; NEXT iteration's counter and the guard bounds the first
+                    (OptLabelSet.Nil)
+                    (opt-bce-mb-counter-step
                       body-blocks
                       defs
-                      latch-block
-                      header
                       latch
                       pred
-                      body-labels
-                      inner
-                      region?)])]))]))))
+                      cond-var))
+                    [(OptBceMbMaybeShape.Some shape)
+                      (OptBceMbMaybeShape.Some shape)]
+                    ;; a latch branch that closes the back edge but does NOT
+                    ;; carry the counter compare (a bottom-tested flag test) is
+                    ;; still a top-tested loop for the chain walk
+                    [(OptBceMbMaybeShape.No)
+                      (opt-bce-mb-loop-shape-top
+                        blocks
+                        body-blocks
+                        defs
+                        latch-block
+                        header
+                        latch
+                        pred
+                        body-labels
+                        inner
+                        region?)])]))])))))
 
 (define (opt-bce-mb-loop-shape-top
   [blocks : ir.CompilerIrBlockList]
@@ -59839,6 +62038,9 @@
     latch
     pred
     body-labels)
+    ;; No canonical counter anywhere. The counter-FREE shape is what admits such
+    ;; a loop, and it is offered from its own scan phase rather than here, so a
+    ;; counted candidate always gets the slot first.
     [(OptBceMbMaybeChain.No) (OptBceMbMaybeShape.No)]
     [(OptBceMbMaybeChain.Some counter chain)
       (opt-bce-mb-loop-shape-finish
@@ -59862,6 +62064,7 @@
   [loops : OptNaturalLoopList]
   [entry-label : i64]
   [nested? : bool]
+  [free? : bool]
   [loop : OptNaturalLoop]) : OptBceMbMaybeShape
   (match loop
     [(OptNaturalLoop.Loop header latch body preheader)
@@ -59883,6 +62086,7 @@
                 blocks
                 loops
                 nested?
+                free?
                 header
                 latch
                 body
@@ -63075,6 +65279,177 @@
     (opt-bce-mb-seeds-match? all-blocks seed init)
     (opt-bce-mb-bounded-value? body-blocks phi-var back 8)))
 
+;; Either operand of a `bit-and`, whichever is loop-invariant across the whole
+;; multi-block body (see the single-block twin at
+;; `opt-bce-version-mask-operand`).
+(define (opt-bce-mb-mask-operand
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (match (opt-bce-mb-invariant-operand body-blocks defs rhs)
+    [(ir.CompilerIrMaybeValue.Some mask) (ir.CompilerIrMaybeValue.Some mask)]
+    [(ir.CompilerIrMaybeValue.No)
+      (opt-bce-mb-invariant-operand body-blocks defs lhs)]))
+
+;; An invariant value that is ITSELF masked by an invariant mask contributes the
+;; MASK as its bound rather than itself. The probe seed is exactly that --
+;; `hash & M` computed in the preheader -- and reading it as `M` collapses the
+;; cursor phi bound set to the ONE conjunct its loop-carried inputs already
+;; need, which is what the economics gate at `opt-bce-mb-guard-conds-ranged`
+;; then measures. The def is searched over the WHOLE function because an
+;; invariant value is by definition defined outside the loop; the mask it reads
+;; is an operand of that definition, so it dominates the guard block for the
+;; same reason the definition itself does.
+(define (opt-bce-mb-mask-tighten
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (opt-bce-mb-find-def all-blocks var)
+        [(OptBceMbMaybeInstr.No) value]
+        [(OptBceMbMaybeInstr.Some instr)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not
+                (and
+                  (opt-binop-eq op (ir.CompilerIrBinOp.BitAnd))
+                  (opt-affine-64bit-type? ty)))
+                value
+                (match (opt-bce-mb-mask-operand body-blocks defs lhs rhs)
+                  [(ir.CompilerIrMaybeValue.No) value]
+                  [(ir.CompilerIrMaybeValue.Some mask) mask]))]
+            [_ value])])]
+    [_ value]))
+
+;; The invariant bounds of one value, multi-block: itself when loop-invariant,
+;; its mask when it is a `bit-and` by an invariant operand, the union over the
+;; inputs when it is a phi. The probe cursor is the phi case -- the preheader
+;; seeds `hash & M` and each continuing arm feeds `(cursor + 1) & M`, so the
+;; index is a header phi whose every input carries its own invariant bound, and
+;; the phi selects an input only on an iteration that arrived by that edge.
+(define (opt-bce-mb-mask-collect
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match set
+    [(OptBceMaskSet.No) (OptBceMaskSet.No)]
+    [(OptBceMaskSet.Some _ _)
+      (match (opt-bce-mb-invariant-operand body-blocks defs value)
+        [(ir.CompilerIrMaybeValue.Some raw-bound)
+          (let
+            [bound : ir.CompilerIrValue
+              (opt-bce-mb-mask-tighten all-blocks body-blocks defs raw-bound)]
+            (if (opt-bce-mask-bound-ok? bound)
+              (opt-bce-mask-set-add set bound)
+              (OptBceMaskSet.No)))]
+        [(ir.CompilerIrMaybeValue.No)
+          (opt-bce-mb-mask-collect-def
+            all-blocks
+            body-blocks
+            defs
+            value
+            depth
+            set)])]))
+
+(define (opt-bce-mb-mask-collect-def
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match value
+    [(ir.CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+        (match (opt-bce-mb-find-def body-blocks id)
+          [(OptBceMbMaybeInstr.No) (OptBceMaskSet.No)]
+          [(OptBceMbMaybeInstr.Some instr)
+            (match instr
+              [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                (if (not
+                  (and
+                    (opt-binop-eq op (ir.CompilerIrBinOp.BitAnd))
+                    (opt-affine-64bit-type? ty)))
+                  (OptBceMaskSet.No)
+                  (match (opt-bce-mb-mask-operand body-blocks defs lhs rhs)
+                    [(ir.CompilerIrMaybeValue.No) (OptBceMaskSet.No)]
+                    [(ir.CompilerIrMaybeValue.Some mask)
+                      (if (opt-bce-mask-bound-ok? mask)
+                        (opt-bce-mask-set-add set mask)
+                        (OptBceMaskSet.No))]))]
+              [(ir.CompilerIrInstr.Phi _ inputs pty)
+                (if (or (<= depth 0) (not (opt-affine-64bit-type? pty)))
+                  (OptBceMaskSet.No)
+                  (opt-bce-mb-mask-collect-inputs
+                    all-blocks
+                    body-blocks
+                    defs
+                    inputs
+                    (- depth 1)
+                    set))]
+              [_ (OptBceMaskSet.No)])]))]
+    [_ (OptBceMaskSet.No)]))
+
+(define (opt-bce-mb-mask-collect-inputs
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [inputs : ir.CompilerIrPhiInputList]
+  [depth : i64]
+  [set : OptBceMaskSet]) : OptBceMaskSet
+  (match inputs
+    [(ir.CompilerIrPhiInputList.Nil) (OptBceMaskSet.No)]
+    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+      (let
+        [next : OptBceMaskSet
+          (opt-bce-mb-mask-collect all-blocks body-blocks defs value depth set)]
+        (match (__tl-box-place rest)
+          [(ir.CompilerIrPhiInputList.Nil) next]
+          [_
+            (opt-bce-mb-mask-collect-inputs
+              all-blocks
+              body-blocks
+              defs
+              (__tl-box-place rest)
+              depth
+              next)]))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-mask-collect-inputs
+        all-blocks
+        body-blocks
+        defs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        depth
+        set)]))
+
+(define (opt-bce-mb-masked-guard
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc (:consume)]) : OptBceVersionGuardAcc
+  (match (opt-bce-mb-mask-collect
+    all-blocks
+    body-blocks
+    defs
+    value
+    4
+    (OptBceMaskSet.Some (OptBceMaskList.Nil) 0))
+    [(OptBceMaskSet.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceMaskSet.Some masks count)
+      (if (< count 1)
+        (OptBceVersionGuardAcc.No)
+        (opt-bce-mask-conds cell masks length-value acc))]))
+
 (define (opt-bce-mb-derive-index
   [all-blocks : ir.CompilerIrBlockList]
   [body-blocks : ir.CompilerIrBlockList]
@@ -63119,8 +65494,11 @@
               length-value
               cell
               acc)]
-          [(not (opt-used-contains defs id))
-            ;; loop-invariant index: exactly its own range check, hoisted.
+          ;; loop-invariant index: exactly its own range check, hoisted. TWO
+          ;; conjuncts, so like the fusion above it stays a counted-shape rule --
+          ;; the counter-free relaxation is scoped to the one-conjunct masked
+          ;; family (see opt-bce-mb-derive-check).
+          [(and (>= iphi 0) (not (opt-used-contains defs id)))
             (opt-bce-version-cond
               cell
               (ir.CompilerIrBinOp.Lt)
@@ -63151,7 +65529,17 @@
                                 length-value
                                 acc)
                               (OptBceVersionGuardAcc.No))]
-                          [(OptAffineOperands.No) (OptBceVersionGuardAcc.No)])]
+                          ;; A VARIABLE mask: the loop-invariant one bounds the
+                          ;; index unsigned, whichever side it is on.
+                          [(OptAffineOperands.No)
+                            (opt-bce-mb-masked-guard
+                              all-blocks
+                              body-blocks
+                              defs
+                              (ir.CompilerIrValue.Var id)
+                              length-value
+                              cell
+                              acc)])]
                       [_
                         (match (opt-bce-mb-counter-affine
                           body-blocks
@@ -63254,15 +65642,21 @@
                                                   init
                                                   back
                                                   pred-label)
-                                                (if (opt-bce-mb-bounded-phi?
-                                                  all-blocks
-                                                  body-blocks
-                                                  preheader
-                                                  pred-label
-                                                  seed
-                                                  init
-                                                  core
-                                                  back)
+                                                ;; The bounded-phi rule reads the
+                                                ;; counter's range, so a
+                                                ;; counter-free shape (iphi < 0,
+                                                ;; inert seed) must not enter it.
+                                                (if (and
+                                                  (>= iphi 0)
+                                                  (opt-bce-mb-bounded-phi?
+                                                    all-blocks
+                                                    body-blocks
+                                                    preheader
+                                                    pred-label
+                                                    seed
+                                                    init
+                                                    core
+                                                    back))
                                                   (opt-bce-version-fan-admit
                                                     fan
                                                     seed
@@ -63304,48 +65698,78 @@
                     ;; inputs): same seed as the counter, back-edge value within
                     ;; {sphi, sphi+1} through any merge. The counter's conditions
                     ;; then cover its whole range, recorded as the literal-base
-                    ;; fan's offset 0 like the counter itself.
+                    ;; fan's offset 0 like the counter itself. A phi that is
+                    ;; neither -- the loop-carried MASKED probe cursor -- falls
+                    ;; through to the counter-independent mask rule, which is
+                    ;; also the ONLY rule a counter-free shape (iphi < 0) may
+                    ;; use: every other one reads the trip range.
                     (match pty
                       [(ast.AstType.I64)
-                        (match (opt-unroll-split-phi-inputs inputs latch)
-                          [(OptUnrollPhiSplit.Split init back pred-label)
-                            (if (opt-bce-mb-bounded-phi?
-                              all-blocks
-                              body-blocks
-                              preheader
-                              pred-label
-                              seed
-                              init
-                              id
-                              back)
-                              (opt-bce-version-fan-admit
-                                fan
+                        (if (< iphi 0)
+                          (opt-bce-mb-masked-guard
+                            all-blocks
+                            body-blocks
+                            defs
+                            (ir.CompilerIrValue.Var id)
+                            length-value
+                            cell
+                            acc)
+                          (match (opt-unroll-split-phi-inputs inputs latch)
+                            [(OptUnrollPhiSplit.Split init back pred-label)
+                              (if (opt-bce-mb-bounded-phi?
+                                all-blocks
+                                body-blocks
+                                preheader
+                                pred-label
                                 seed
-                                bound
-                                (ir.CompilerIrValue.I64 0)
-                                0
-                                length-value
-                                cell
-                                acc)
-                              (match (opt-bce-mb-derived-induction
+                                init
+                                id
+                                back)
+                                (opt-bce-version-fan-admit
+                                  fan
+                                  seed
+                                  bound
+                                  (ir.CompilerIrValue.I64 0)
+                                  0
+                                  length-value
+                                  cell
+                                  acc)
+                                (match (opt-bce-mb-derived-induction
+                                  body-blocks
+                                  defs
+                                  latch
+                                  preheader
+                                  id
+                                  inputs)
+                                  [(OptBceDerivedInduction.No)
+                                    (opt-bce-mb-masked-guard
+                                      all-blocks
+                                      body-blocks
+                                      defs
+                                      (ir.CompilerIrValue.Var id)
+                                      length-value
+                                      cell
+                                      acc)]
+                                  [(OptBceDerivedInduction.Some
+                                      derived-seed
+                                      step)
+                                    (opt-bce-version-derived-guard
+                                      seed
+                                      bound
+                                      derived-seed
+                                      step
+                                      length-value
+                                      cell
+                                      acc)]))]
+                            [(OptUnrollPhiSplit.No)
+                              (opt-bce-mb-masked-guard
+                                all-blocks
                                 body-blocks
                                 defs
-                                latch
-                                preheader
-                                id
-                                inputs)
-                                [(OptBceDerivedInduction.No)
-                                  (OptBceVersionGuardAcc.No)]
-                                [(OptBceDerivedInduction.Some derived-seed step)
-                                  (opt-bce-version-derived-guard
-                                    seed
-                                    bound
-                                    derived-seed
-                                    step
-                                    length-value
-                                    cell
-                                    acc)]))]
-                          [(OptUnrollPhiSplit.No) (OptBceVersionGuardAcc.No)])]
+                                (ir.CompilerIrValue.Var id)
+                                length-value
+                                cell
+                                acc)]))]
                       [_ (OptBceVersionGuardAcc.No)])]
                   [_ (OptBceVersionGuardAcc.No)])])]))]
     [_ (OptBceVersionGuardAcc.No)]))
@@ -63768,16 +66192,34 @@
       [(OptBceVersionGuardAcc.No)
         ;; No single-array derivation: try the cross-array fusion fallback,
         ;; which keeps the check when it finds no dominating anchor either.
-        (opt-bce-mb-derive-fused
-          doms
-          body-blocks
-          defs
-          cell
-          label
-          index
-          index-value
-          length-invariant
-          state)]
+        ;;
+        ;; COUNTED SHAPES ONLY. Fusion states one conjunct per pair of arrays the
+        ;; walk touches, and the checks it removes fire only on the iterations
+        ;; that reach them, so it needs the trip-count evidence a counted shape
+        ;; carries. Offered to a counter-free bucket walk it inverts: measured on
+        ;; gvn_table, `gvn-table-lookup`'s chain walk took a SIX-conjunct guard
+        ;; (12 instructions per call, one per node array) to remove checks that
+        ;; only the matching-key iterations execute, +18.6M on the benchmark. The
+        ;; counter-free relaxation exists for the masked-index family, whose
+        ;; guard is one unsigned conjunct per (mask, length) pair and whose
+        ;; removal fires on EVERY iteration; nothing else rides along.
+        (if (< iphi 0)
+          (OptBceMbDerive
+            state.guard
+            (opt-bce-mb-keep-cons label index state.keep)
+            state.derived
+            state.hoists
+            state.fused)
+          (opt-bce-mb-derive-fused
+            doms
+            body-blocks
+            defs
+            cell
+            label
+            index
+            index-value
+            length-invariant
+            state))]
       [(OptBceVersionGuardAcc.Some _ _ _)
         (OptBceMbDerive
           derived-guard
@@ -63847,16 +66289,22 @@
                 state.guard
                 state)]
             [(ir.CompilerIrMaybeValue.No)
-              (match (opt-bce-mb-descriptor-length
-                descriptor
-                stable?
-                all-blocks
-                body-blocks
-                defs
-                length-value
-                state.hoists
-                cell
-                state.guard)
+              ;; A hoisted descriptor length costs a gep+load in the guard for
+              ;; the whole loop, which is priced against a trip range; a
+              ;; counter-free shape has none, so it keeps such a check (the same
+              ;; scoping the fusion and invariant-index rules take).
+              (match (if (< iphi 0)
+                (OptBceMbMaybeLength.No)
+                (opt-bce-mb-descriptor-length
+                  descriptor
+                  stable?
+                  all-blocks
+                  body-blocks
+                  defs
+                  length-value
+                  state.hoists
+                  cell
+                  state.guard))
                 [(OptBceMbMaybeLength.No)
                   (OptBceMbDerive
                     state.guard
@@ -64706,7 +67154,10 @@
   [step : i64]
   [seeded : OptBceVersionGuardAcc]) : OptBceMbGuardOut
   (let
-    [ascending-exact? : bool (and (> shape.step 0) (= shape.delta 0))]
+    ;; A counter-free shape has no seed/bound pair a dominating branch could
+    ;; have decided, so the once-only lookups below are not even asked.
+    [ascending-exact? : bool
+      (and shape.counted? (> shape.step 0) (= shape.delta 0))]
     [fan : OptBceVersionFan (opt-bce-version-fan-new)]
     [dr : OptBceMbDerive
       (opt-bce-mb-derive-blocks
@@ -64796,20 +67247,44 @@
             dr.guard)))
         [(OptBceVersionGuardResult.No) (OptBceMbGuardOut.No)]
         [(OptBceVersionGuardResult.Some guard-instrs guard-value)
-          (OptBceMbGuardOut.Some
-            guard-instrs
-            guard-value
-            dr.keep
-            (OptBceFoldFacts
-              (opt-bce-fold-collect
-                guard-instrs
-                guard-value
-                (opt-bce-fold-conjunct-fuel)
-                (opt-bce-fold-cond-list-new))
-              all-blocks
-              shape.body-blocks
-              shape.iphi
-              counter-seen))]))))
+          ;; COUNTER-FREE ECONOMICS: one conjunct per removed check, at most.
+          ;;
+          ;; A conjunct costs a compare and a branch ONCE per loop entry; a
+          ;; removed check saves a compare and a branch once per iteration that
+          ;; reaches it. A counter-free clone therefore repays its guard as soon
+          ;; as the loop runs more than `conjuncts / removed` iterations, and the
+          ;; only static statement worth making is that the ratio is at most one
+          ;; -- break-even at a single trip. A counted shape needs no such gate:
+          ;; its trip-range clauses are themselves the evidence that the loop
+          ;; iterates, and its own floors (opt-bce-mb-call-clone-min-derived, the
+          ;; scale-1 census) price the rest.
+          ;;
+          ;; The corpus pins it from the losing side. intern_table's
+          ;; `it-map-insert-from` probe takes TWO conjuncts -- the invariant seed
+          ;; cursor and the mask -- to remove ONE check from a loop that averages
+          ;; ~1.15 iterations per call: measured +281,442 on that benchmark, with
+          ;; the same shape again inside `it-grow!`. The masked micro this
+          ;; relaxation exists for (target/wsl/research/gvn_table/micro/m3.tl)
+          ;; sits on the other side at one conjunct for one check, and its
+          ;; check-free clone then unrolls x16.
+          (if (and
+            (not shape.counted?)
+            (> (opt-bce-mb-guard-compare-count guard-instrs 0 0) dr.derived))
+            (OptBceMbGuardOut.No)
+            (OptBceMbGuardOut.Some
+              guard-instrs
+              guard-value
+              dr.keep
+              (OptBceFoldFacts
+                (opt-bce-fold-collect
+                  guard-instrs
+                  guard-value
+                  (opt-bce-fold-conjunct-fuel)
+                  (opt-bce-fold-cond-list-new))
+                all-blocks
+                shape.body-blocks
+                shape.iphi
+                counter-seen)))]))))
 
 ;; --- guard-dominated compare folding --------------------------------------------
 ;;
@@ -65040,6 +67515,28 @@
   (match acc
     [(OptBceVersionGuardAcc.No) false]
     [(OptBceVersionGuardAcc.Some _ _ counter-seen) (deref counter-seen)]))
+
+;; How many conjuncts a finished guard states: its comparisons, each of which
+;; lowers to a compare plus a branch. That is what the counter-free economics
+;; gate at `opt-bce-mb-guard-conds-ranged` prices against the checks the clone
+;; removes. Counted over the emitted stream rather than the accumulator, because
+;; a counter-free guard emits nothing else -- no range shift, no fan extremes,
+;; no descriptor hoist -- so the comparison count IS the conjunct count.
+(define (opt-bce-mb-guard-compare-count
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-bce-mb-guard-compare-count
+      instrs
+      (+ index 1)
+      (match (ir.compiler-ir-instr-seq-ref instrs index)
+        [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+          (if (ir.compiler-ir-binop-compare? op)
+            (+ acc 1)
+            acc)]
+        [_ acc]))))
 
 ;; The comparisons the fold reasons about. BitTest* forms are deliberately out:
 ;; the guard never emits one, and R1 is about ordered i64 compares.
@@ -66915,9 +69412,11 @@
               ;; crossing (opt-bce-mb-bounded-value?). That relation is written
               ;; for an ascending counter and says nothing about a descending
               ;; one, whose seed is the range's top; a descending shape skips
-              ;; the sink rather than reinterpret it.
+              ;; the sink rather than reinterpret it. A COUNTER-FREE shape has
+              ;; no counter for a phi to track and no real seed to match, so it
+              ;; skips the sink for the same reason.
               [bounded : i64
-                (if (< shape.step 0)
+                (if (or (not shape.counted?) (< shape.step 0))
                   -1
                   (opt-bce-mb-find-bounded-phi
                     shape.body-blocks
@@ -66976,7 +69475,8 @@
       shape.wrap-step
       shape.uncovered
       shape.inner
-      shape.region?)
+      shape.region?
+      shape.counted?)
     (opt-bce-mb-collect-defs clone-blocks (opt_i64_i64_map.with-capacity 64))
     cell
     frame))
@@ -67148,6 +69648,7 @@
   [entry-label : i64]
   [nested? : bool]
   [regions-only? : bool]
+  [free? : bool]
   [rejected : OptLabelSet]
   [frame : i64]) : OptBceVersionScan
   (match loops
@@ -67165,9 +69666,16 @@
           entry-label
           nested?
           regions-only?
+          free?
           rejected
           frame)
-        (match (opt-bce-mb-loop-shape blocks all-loops entry-label nested? loop)
+        (match (opt-bce-mb-loop-shape
+          blocks
+          all-loops
+          entry-label
+          nested?
+          free?
+          loop)
           [(OptBceMbMaybeShape.Some shape)
             (match (if (and regions-only? (not shape.region?))
               (OptUnrollResult.Result blocks frame false)
@@ -67189,6 +69697,7 @@
                     entry-label
                     nested?
                     regions-only?
+                    free?
                     rejected
                     frame))])]
           [(OptBceMbMaybeShape.No)
@@ -67202,6 +69711,7 @@
               entry-label
               nested?
               regions-only?
+              free?
               rejected
               frame)]))]))
 
@@ -67229,6 +69739,68 @@
 ;; the edge loop instead of the region costs +24.8M -- 3.5% of the benchmark.
 ;; Ordering it explicitly is what makes that a decision rather than a side
 ;; effect of whichever cap happened to refuse the inner nest first.
+;;
+;; COUNTED SHAPES BEFORE COUNTER-FREE ONES -- phases 0-2, then the same three
+;; for `opt-bce-mb-loop-shape-free`. A counter-free candidate can only derive
+;; the counter-INDEPENDENT rules (a masked index, an invariant index, the
+;; cross-array fusion), which is a SUBSET of what the same loop's counted shape
+;; derives, so it must never take a slot a counted candidate could use. Offering
+;; both in one phase does exactly that, and it is measurable: a counter-free
+;; list walk in cfg_domloops' `cfg-idom-iterate` displaced the 12-check region
+;; the ordering above exists to protect, +56.0M on that benchmark (+8.0%), and
+;; lex_source lost 19.0M the same way. The separation costs one extra scan per
+;; round, and only in the rounds where no counted candidate applied at all.
+(define (opt-bce-mb-scan-phase-count) : i64
+  6)
+
+(define (opt-bce-mb-scan-phase-nested? [phase : i64]) : bool
+  (cond [(= phase 0) false] [(= phase 3) false] [else true]))
+
+(define (opt-bce-mb-scan-phase-regions-only? [phase : i64]) : bool
+  (or (= phase 1) (= phase 4)))
+
+(define (opt-bce-mb-scan-phase-free? [phase : i64]) : bool
+  (>= phase 3))
+
+(define (opt-bce-mb-loops-scan-phased-from
+  [descriptor : OptBceMbDescriptor]
+  [pred-map : OptPredMap]
+  [doms : OptDomInfo]
+  [blocks : ir.CompilerIrBlockList]
+  [all-loops : OptNaturalLoopList]
+  [entry-label : i64]
+  [rejected : OptLabelSet]
+  [frame : i64]
+  [phase : i64]) : OptBceVersionScan
+  (if (>= phase (opt-bce-mb-scan-phase-count))
+    (OptBceVersionScan.Scan blocks frame false (ir.compiler-ir-label-none))
+    (match (opt-bce-mb-loops-scan
+      descriptor
+      pred-map
+      doms
+      blocks
+      all-loops
+      all-loops
+      entry-label
+      (opt-bce-mb-scan-phase-nested? phase)
+      (opt-bce-mb-scan-phase-regions-only? phase)
+      (opt-bce-mb-scan-phase-free? phase)
+      rejected
+      frame)
+      [(OptBceVersionScan.Scan next-blocks next-frame changed applied)
+        (if changed
+          (OptBceVersionScan.Scan next-blocks next-frame true applied)
+          (opt-bce-mb-loops-scan-phased-from
+            descriptor
+            pred-map
+            doms
+            blocks
+            all-loops
+            entry-label
+            rejected
+            frame
+            (+ phase 1)))])))
+
 (define (opt-bce-mb-loops-scan-phased
   [descriptor : OptBceMbDescriptor]
   [pred-map : OptPredMap]
@@ -67238,56 +69810,16 @@
   [entry-label : i64]
   [rejected : OptLabelSet]
   [frame : i64]) : OptBceVersionScan
-  (match (opt-bce-mb-loops-scan
+  (opt-bce-mb-loops-scan-phased-from
     descriptor
     pred-map
     doms
     blocks
     all-loops
-    all-loops
     entry-label
-    false
-    false
     rejected
-    frame)
-    [(OptBceVersionScan.Scan flat-blocks flat-frame flat-changed flat-applied)
-      (if flat-changed
-        (OptBceVersionScan.Scan flat-blocks flat-frame true flat-applied)
-        (match (opt-bce-mb-loops-scan
-          descriptor
-          pred-map
-          doms
-          blocks
-          all-loops
-          all-loops
-          entry-label
-          true
-          true
-          rejected
-          frame)
-          [(OptBceVersionScan.Scan
-              region-blocks
-              region-frame
-              region-changed
-              region-applied)
-            (if region-changed
-              (OptBceVersionScan.Scan
-                region-blocks
-                region-frame
-                true
-                region-applied)
-              (opt-bce-mb-loops-scan
-                descriptor
-                pred-map
-                doms
-                blocks
-                all-loops
-                all-loops
-                entry-label
-                true
-                false
-                rejected
-                frame))]))]))
+    frame
+    0))
 
 ;; --- prescan ---------------------------------------------------------------------
 (define (opt-bce-mb-blocks-have-check? [blocks : ir.CompilerIrBlockList]) : bool
@@ -68735,8 +71267,14 @@
 ;; addend dies with the Adds, level when it does not. It is only additive when
 ;; a base outlives the Geps rewritten here, so a base with any other in-loop use
 ;; disqualifies the whole Add. The addend gate is the same rule from the other
-;; side: a surviving addend is admitted only when k >= 2, where the removed Add
-;; still pays for the one extra live value.
+;; side: a surviving addend is admitted only when k >= 2, where the removed Adds
+;; still pay for the one extra live value. `k` counts the rewritten ACCESSES of
+;; the family sharing that addend, not the distinct bases one Add feeds: an
+;; unrolled body reads `base[I + i]`, `base[I + i + 1]`, ... through four Adds
+;; that each feed ONE Gep on ONE base, and those four accesses share the single
+;; derived base `T` exactly as two bases would share the addend. Counting bases
+;; alone vetoed the whole unrolled shape whenever `I` also fed the version
+;; guard.
 ;;
 ;; The pressure gates read use counts collected over the PROVISIONALLY accepted
 ;; Adds. Rejecting one Add can leave those counts high for another Add sharing a
@@ -68747,7 +71285,9 @@
 ;; no dedicated preheader (`opt-natural-loop-safe-preheader-block?` wants a sole
 ;; successor). Loops that carry a candidate get one synthesized first, reusing
 ;; `opt-loop-preheaders-synthesize-loop` a loop at a time so that only the loops
-;; this pass actually rewrites pay for a block.
+;; this pass actually rewrites pay for a block. Synthesis can also DECLINE, and a
+;; declined loop only skips itself: see
+;; `opt-gep-offset-synthesize-first-candidate`.
 ;; preheader-label, derived dst, base, invariant index, element type.
 (defenum OptGepOffsetDerived
   (Derived i64 i64 ir.CompilerIrValue ir.CompilerIrValue ast.AstType))
@@ -69282,22 +71822,37 @@
     def-block
     (opt-natural-loop-body-info loop)))
 
-;; The first loop that carries a candidate but has no dedicated preheader.
-(define (opt-gep-offset-first-preheaderless
+;; The first loop that carries a candidate, has no dedicated preheader, and
+;; ACCEPTS a synthesized one. The attempt is part of the scan: a loop whose
+;; synthesis DECLINES is skipped, and the scan continues down the list.
+;;
+;; That skip is load-bearing. `opt-loop-preheaders-header-compatible?` refuses a
+;; header whose phis take different values from two different outside
+;; predecessors, because one preheader cannot carry two incoming values -- and
+;; that is exactly an unrolled loop's REMAINDER header (its counter phi reads 0
+;; from the unroll guard and the unrolled counter from the unroll body). Ending
+;; the round at the first refusal left every LATER loop in the list without a
+;; preheader, and `opt-gep-offset-plan-loop` bails on a preheaderless loop, so
+;; one refused remainder loop early in the block order silently disabled the
+;; pass for the unrolled bodies behind it -- the `base[row + i]` scans this pass
+;; exists to split.
+(define (opt-gep-offset-synthesize-first-candidate
   [loops : OptNaturalLoopList]
   [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
   [uses : (__tl_dyn-array i64)]
   [gep-uses : (__tl_dyn-array i64)]
   [poison : (__tl_dyn-array i64)]
-  [def-block : (__tl_dyn-array i64)]) : OptMaybeNaturalLoop
+  [def-block : (__tl_dyn-array i64)]) : OptBlockListPassResult
   (match loops
-    [(OptNaturalLoopList.Nil) (OptMaybeNaturalLoop.No)]
+    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
       (match (opt-natural-loop-preheader loop)
         [(OptLoopPreheader.Some _)
-          (opt-gep-offset-first-preheaderless
+          (opt-gep-offset-synthesize-first-candidate
             (__tl-box-place rest)
             blocks
+            context
             uses
             gep-uses
             poison
@@ -69310,10 +71865,22 @@
             gep-uses
             poison
             def-block)
-            (OptMaybeNaturalLoop.Some loop)
-            (opt-gep-offset-first-preheaderless
+            (match (opt-loop-preheaders-synthesize-loop blocks context loop)
+              [(OptBlockListPassResult.Result next synthesized)
+                (if synthesized
+                  (OptBlockListPassResult.Result next true)
+                  (opt-gep-offset-synthesize-first-candidate
+                    (__tl-box-place rest)
+                    blocks
+                    context
+                    uses
+                    gep-uses
+                    poison
+                    def-block))])
+            (opt-gep-offset-synthesize-first-candidate
               (__tl-box-place rest)
               blocks
+              context
               uses
               gep-uses
               poison
@@ -69321,6 +71888,8 @@
 
 ;; One synthesis per round: the CFG (and therefore `context`) is stale straight
 ;; afterwards, exactly as `opt-loop-preheaders-blocks-fixed-result` handles it.
+;; Rounds end when a whole pass over the loop list synthesizes nothing, not at
+;; the first loop that refuses one.
 (define (opt-gep-offset-prepare-preheaders
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -69350,27 +71919,24 @@
           poison
           base0
           multi-base)]
-      (match (opt-gep-offset-first-preheaderless
+      (match (opt-gep-offset-synthesize-first-candidate
         (opt-cfg-natural-loops-with-context blocks context)
         blocks
+        context
         uses
         gep-uses
         poison
         def-block)
-        [(OptMaybeNaturalLoop.No)
-          (OptGepOffsetPreheaderResult.Result blocks context changed)]
-        [(OptMaybeNaturalLoop.Some loop)
-          (match (opt-loop-preheaders-synthesize-loop blocks context loop)
-            [(OptBlockListPassResult.Result next synthesized)
-              (if synthesized
-                (opt-gep-offset-prepare-preheaders
-                  type-segment-bases
-                  next
-                  (opt-cfg-context-build next)
-                  frame
-                  (- remaining 1)
-                  true)
-                (OptGepOffsetPreheaderResult.Result blocks context changed))])]))))
+        [(OptBlockListPassResult.Result next synthesized)
+          (if synthesized
+            (opt-gep-offset-prepare-preheaders
+              type-segment-bases
+              next
+              (opt-cfg-context-build next)
+              frame
+              (- remaining 1)
+              true)
+            (OptGepOffsetPreheaderResult.Result blocks context changed))]))))
 
 ;; --- per-loop plan ------------------------------------------------------------
 ;; Provisional acceptance: shape plus the all-uses-are-Gep-indices gate.
@@ -69515,12 +72081,16 @@
 
 ;; In-loop uses that the rewrite removes: a base named by a surviving
 ;; candidate's Gep, and the invariant operand of a surviving candidate Add.
+;; `addend-geps` is the same Gep walk keyed by the ADDEND instead of the base:
+;; the number of accesses the addend's derived bases serve in this loop, which is
+;; the `k` the surviving-addend gate needs.
 (define (opt-gep-offset-count-split-uses-instrs!
   [instrs : ir.CompilerIrInstrSeq]
   [cand : (__tl_dyn-array i64)]
   [cand-inv : (__tl_dyn-array i64)]
   [base-split : (__tl_dyn-array i64)]
-  [addend-split : (__tl_dyn-array i64)]) : unit
+  [addend-split : (__tl_dyn-array i64)]
+  [addend-geps : (__tl_dyn-array i64)]) : unit
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [cursor : i64 0]
@@ -69538,14 +72108,24 @@
                       (>= idx 0)
                       (< idx (array-length cand))
                       (= (array-ref cand idx) 1))
-                      (match base
-                        [(ir.CompilerIrValue.Var b)
-                          (if (and (>= b 0) (< b (array-length base-split)))
+                      (begin
+                        (match base
+                          [(ir.CompilerIrValue.Var b)
+                            (if (and (>= b 0) (< b (array-length base-split)))
+                              (set!
+                                (array-ref base-split b)
+                                (+ (array-ref base-split b) 1))
+                              unit)]
+                          [_ unit])
+                        (let
+                          [inv : i64 (array-ref cand-inv idx)]
+                          (if (and
+                            (>= inv 0)
+                            (< inv (array-length addend-geps)))
                             (set!
-                              (array-ref base-split b)
-                              (+ (array-ref base-split b) 1))
-                            unit)]
-                        [_ unit])
+                              (array-ref addend-geps inv)
+                              (+ (array-ref addend-geps inv) 1))
+                            unit)))
                       unit)]
                   [_ unit])]
               [_ unit])
@@ -69571,7 +72151,8 @@
   [cand : (__tl_dyn-array i64)]
   [cand-inv : (__tl_dyn-array i64)]
   [base-split : (__tl_dyn-array i64)]
-  [addend-split : (__tl_dyn-array i64)]) : unit
+  [addend-split : (__tl_dyn-array i64)]
+  [addend-geps : (__tl_dyn-array i64)]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -69583,29 +72164,36 @@
               cand
               cand-inv
               base-split
-              addend-split)
+              addend-split
+              addend-geps)
             (opt-gep-offset-count-split-uses-blocks!
               (__tl-box-place rest)
               cand
               cand-inv
               base-split
-              addend-split))])]
+              addend-split
+              addend-geps))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-gep-offset-count-split-uses-blocks!
         (ir.compiler-ir-block-seq-to-list seq)
         cand
         cand-inv
         base-split
-        addend-split)]))
+        addend-split
+        addend-geps)]))
 
 ;; Pressure gates. A base that outlives the rewritten Geps would add a live
 ;; value outright, so it rejects its Add; a surviving addend is admitted only
-;; when the Add feeds two or more distinct bases.
+;; when the split rewrites two or more accesses (`k >= 2`), counted over the
+;; whole family that shares the addend -- one Add feeding two distinct bases and
+;; four unrolled Adds feeding one base are both k >= 2, and the loop trades
+;; `{addend, base}` for `{addend, derived}` either way.
 (define (opt-gep-offset-apply-pressure-gates-instrs!
   [instrs : ir.CompilerIrInstrSeq]
   [loop-uses : (__tl_dyn-array i64)]
   [base-split : (__tl_dyn-array i64)]
   [addend-split : (__tl_dyn-array i64)]
+  [addend-geps : (__tl_dyn-array i64)]
   [multi-base : (__tl_dyn-array i64)]
   [cand : (__tl_dyn-array i64)]
   [cand-inv : (__tl_dyn-array i64)]) : unit
@@ -69650,6 +72238,10 @@
                       (= (array-ref multi-base dst) 1)
                       (and
                         (>= inv 0)
+                        (< inv (array-length addend-geps))
+                        (>= (array-ref addend-geps inv) 2))
+                      (and
+                        (>= inv 0)
                         (< inv (array-length loop-uses))
                         (=
                           (array-ref loop-uses inv)
@@ -69665,6 +72257,7 @@
   [loop-uses : (__tl_dyn-array i64)]
   [base-split : (__tl_dyn-array i64)]
   [addend-split : (__tl_dyn-array i64)]
+  [addend-geps : (__tl_dyn-array i64)]
   [multi-base : (__tl_dyn-array i64)]
   [cand : (__tl_dyn-array i64)]
   [cand-inv : (__tl_dyn-array i64)]) : unit
@@ -69679,6 +72272,7 @@
               loop-uses
               base-split
               addend-split
+              addend-geps
               multi-base
               cand
               cand-inv)
@@ -69687,6 +72281,7 @@
               loop-uses
               base-split
               addend-split
+              addend-geps
               multi-base
               cand
               cand-inv))])]
@@ -69696,6 +72291,7 @@
         loop-uses
         base-split
         addend-split
+        addend-geps
         multi-base
         cand
         cand-inv)]))
@@ -69902,6 +72498,7 @@
             [cand-var : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [base-split : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [addend-split : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [addend-geps : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [derived-var : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [derived-inv : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [derived-ty : (__tl_dyn-array ast.AstType)
@@ -69932,13 +72529,15 @@
                 cand
                 cand-inv
                 base-split
-                addend-split)]
+                addend-split
+                addend-geps)]
             [_gates : unit
               (opt-gep-offset-apply-pressure-gates-blocks!
                 body-blocks
                 loop-uses
                 base-split
                 addend-split
+                addend-geps
                 multi-base
                 cand
                 cand-inv)]
@@ -76415,8 +79014,11 @@
                             _t-gvn)
                           unit)]
                       ;; Dominated bounds-check dedup rides the same context:
-                      ;; it only deletes mid-block BoundsCheck instructions, so
-                      ;; the CFG (and ssa-context) stay valid for sccp below.
+                      ;; it only deletes mid-block BoundsCheck instructions and
+                      ;; REORDERS a constant-offset run's checks (plus the index
+                      ;; arithmetic they read) inside one block, so the block set,
+                      ;; every terminator, and therefore the CFG (and
+                      ;; ssa-context) stay valid for sccp below.
                       ;; VERIFIER-GATED like GVN: in a fallback (non-SSA)
                       ;; function a textually-single-def var inside a loop
                       ;; still changes value across iterations (loop-carried
@@ -76858,6 +79460,7 @@
                           dead-phi-context
                           loop-cluster-verified?
                           summaries.direct-call-clean
+                          summaries.return-alias
                           summaries.global-cell
                           false
                           dead-phi)]
@@ -77161,6 +79764,7 @@
                           lftr-context
                           loop-cluster-verified?
                           summaries.direct-call-clean
+                          summaries.return-alias
                           summaries.global-cell
                           true
                           lftr)]
@@ -80796,6 +83400,13 @@
 ;; The measured-plan tier (opt-inline-checked-ok?) does not carry this clause,
 ;; because it does not have to guess: it re-plans the merged caller through a
 ;; real allocation and reverts whatever does not repay.
+;;
+;; The single-site absorb band carries it at a STRAIGHT-LINE site only. The cost
+;; the clause stands in for -- a wider callee-saved set at the merged entry, the
+;; caller's values surviving a clobber it did not have -- is paid once per
+;; caller invocation, so it only outweighs the retired boundary where that
+;; boundary is also retired once per caller invocation. See clause 5 of the
+;; header at opt-inline-single-site-absorb-ok? for the measurement on each side.
 (define (opt-inline-instr-call? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Call _ _ _ _) true]
@@ -82788,6 +85399,17 @@
 ;; bounds check is refused. A caller that already carries one is already
 ;; subject to this gate at its own site and has nothing further to lose, and a
 ;; caller with more than one reference was never going to be absorbed anyway.
+;;
+;; The tier above asks this unconditionally. The single-site absorb band asks it
+;; only at a STRAIGHT-LINE site (opt-inline-single-site-frame-tax-ok?), and the
+;; difference is the size of the import being weighed against the caller's lost
+;; inline. Here the import is capped at 32 instructions and its boundary may be
+;; as narrow as the 3-parameter `qs-fill` above -- worth little even once per
+;; iteration, which is why the measured answer at an in-loop site is still to
+;; refuse. That band's arity floor admits only boundaries of eight parameters or
+;; more, where the marshalling alone is real, so its in-loop imports outweigh a
+;; caller inline that retires once per caller invocation. Same clause, two
+;; populations.
 (define (opt-inline-bounds-loop-cascade-safe?) : bool
   (begin
     (opt-inline-caller-facts-ensure!)
@@ -82977,16 +85599,20 @@
 ;; this band asked the reference count and nothing else, and it LOST:
 ;; liveness_scan 620,776,020 -> 726,936,390, +17.10%, with both target callees
 ;; confirmed absorbed. The prologue arithmetic that motivated the band is real
-;; and it is not the whole account. What it leaves out is that a body absorbed
-;; into a LOOP puts its entire working set inside that loop, where the
-;; allocator must now keep the loop's own live values across it. Absorbing
-;; `ln-recompute!` into the fixpoint worklist loop cost far more in spills
-;; inside that loop than the 14-argument boundary ever cost in marshalling.
+;; and it is not the whole account. What it left out is that a body absorbed
+;; into a LOOP put its entire working set inside that loop, where the allocator
+;; then had to keep the loop's own live values across it: absorbing the
+;; benchmark's `ln-recompute!` into its fixpoint worklist loop cost far more in
+;; spills inside that loop than the 14-argument boundary ever cost in
+;; marshalling. That was an ALLOCATOR fact carried by an INLINER clause, and the
+;; allocator has since been taught it. Clause 3 below carries what is left of
+;; the argument, and what the same absorption measures now.
 ;;
 ;; That is the trade this band makes explicit. The loop tier bounds the body
 ;; and demands an in-loop site: a small body is safe inside a loop, and only an
-;; in-loop site repays a boundary worth little. This tier is its exact
-;; complement -- it lifts the size bound and demands the opposite site:
+;; in-loop site repays a boundary worth little. This tier lifts the size bound
+;; instead and prices the SITE: a straight-line site buys its import with three
+;; clauses, an in-loop site with none of them.
 ;;
 ;;   1. absorb-class 1 -- exactly one static reference, not address-taken, not
 ;;      `main`, not a self-call from this caller. This is what makes the move
@@ -82996,35 +85622,82 @@
 ;;      caller and one self-call counts 2 and lands in the duplication class.
 ;;      Mutual recursion is excluded one level up, where a callee in the
 ;;      caller's own SCC is refused before any of these predicates run;
-;;   2. the boundary is WIDE -- opt-inline-single-site-min-params or more.
-;;      Arity is the band's subject. What no size budget prices, and what
-;;      absorption retires outright, is argument marshalling, and marshalling
-;;      cost scales with ARITY, not with body size. Below the arity where the
-;;      ABI runs out of argument registers there is no marshalling to retire
-;;      and the boundary is a call and a cheap prologue, so the narrow class is
-;;      left to the site-conditioned tiers (see the note at
-;;      opt-inline-single-site-min-params for the two measured variants);
-;;   3. the site is NOT in a natural loop of the caller. An unbounded body may
-;;      be moved next to a loop; it may not be moved inside one. This is the
-;;      clause the first version lacked, and the 17.10% above is what it costs
-;;      to lack it. RE-MEASURED ON THIS TREE, on top of the regallocator's
-;;      call-hole live-range splitting (compiler-reg-call-hole-* in
-;;      src/compiler_regalloc.tl) that was expected to retire it: dropping the
-;;      clause still loses, and loses the same way. liveness_scan 425,431,987
-;;      -> 481,949,045 (+13.3%) as `ln-recompute!` (104 blocks) joins
-;;      `ln-fixpoint!` (54 blocks) inside the worklist loop -- callgrind puts
-;;      the merged pair at 374.3M against 317.8M for the two separate
-;;      functions, +56.5M, in a function that now spills 165 times and reloads
-;;      111 times out of a 584-byte frame; cfg_domloops 714,576,600 ->
-;;      753,171,819 (+5.4%) as `cfg-build-csr`, `cfg-idom-iterate`,
-;;      `cfg-build-euler-tree` and `cfg-stamp-euler` merge into `cfg-function`
-;;      (36 -> 179 blocks); lex_source 540,592,721 -> 572,296,609 (+5.9%) as
-;;      four scan helpers merge into `ls-tokenize` (84 -> 144). Call-hole
-;;      splitting does not reach this shape: the import REMOVES the call, so
-;;      there is no call hole to split, and the caller's loop-carried values
-;;      are live across straight-line code instead. What prices this correctly
-;;      is not a cheap clause but the measured tier below, which rebuilds the
-;;      caller both ways and allocates each;
+;;   2. the boundary is WIDE -- opt-inline-single-site-min-params or more --
+;;      or, at an IN-LOOP site, the body is small by the loop tier's own size
+;;      class (opt-inline-bounds-loop-small?) and call-free. Arity is the
+;;      band's subject. What no size budget prices, and what absorption retires
+;;      outright, is argument marshalling, and marshalling cost scales with
+;;      ARITY, not with body size. Below the arity where the ABI runs out of
+;;      argument registers there is no marshalling to retire: the boundary is a
+;;      call and a cheap prologue, worth little even once per iteration, so it
+;;      can only be bought with an import that costs little. That is the loop
+;;      tier's shape, which at a single-reference site that tier already moves;
+;;      what it asks on top is the cascade clause, and clause 6 below retires
+;;      that at an in-loop site. Call-freedom is clause 5 KEPT rather than
+;;      waived: clause 5 comes off at an in-loop site because a wide boundary
+;;      pays for the wider callee-saved prologue the imported calls force at
+;;      the merged entry, and a narrow one does not. So the narrow class enters
+;;      this band at exactly the loop tier's size, call-free, at an in-loop
+;;      site, and nowhere else; see the note at
+;;      opt-inline-single-site-min-params for the measured variants of the
+;;      split;
+;;   3. the site is NOT in a natural loop of the caller -- and where it IS,
+;;      this clause and clauses 5 and 6 all come off together, because all
+;;      three are settled by the same comparison. Every cost they stand for is
+;;      paid once per CALLER INVOCATION: the frame tax the merged function pays
+;;      at its own entry (a wider callee-saved set, a bigger frame, the
+;;      caller's own values pushed out of registers by the imported working
+;;      set) for clauses 3 and 5, and the caller's own lost inline for clause
+;;      6. What all three buy is one retired boundary, and the SITE is what
+;;      decides how often that boundary would have been retired.
+;;
+;;      At a STRAIGHT-LINE site the boundary also retires once per caller
+;;      invocation. A per-invocation cost is set against a per-invocation
+;;      saving, so the tax can outweigh it -- and the imported body's own calls
+;;      and loops are moved next to the CALLER's loops, which now pay for them.
+;;      At an IN-LOOP site the boundary retires once per ITERATION while the
+;;      tax is still paid once per invocation, and the imported calls and loops
+;;      already ran once per iteration before the move. Nothing inside the
+;;      iteration changes except that the call sequence, the argument
+;;      marshalling and the callee's prologue stop running in it. No ratio
+;;      makes a per-invocation tax outrun a per-iteration saving, so the
+;;      clauses that exist for the straight-line case do not gate this one.
+;;
+;;      MEASURED on this tree, waiving all three at in-loop sites only:
+;;      intern_table 570,249,745 -> 522,058,963 (-8.451%), `it-intern-slice`
+;;      (9 parameters, 332 instructions in 41 blocks, 1.72M calls) absorbed
+;;      into `it-bench`'s per-line loop -- the shape clang's `it_pass` has had
+;;      all along; liveness_scan 408,504,323 -> 403,959,683 (-1.113%),
+;;      `recompute!` (14 parameters, 384 instructions in 45 blocks) absorbed
+;;      into `fixpoint!`'s worklist loop. Every other row byte-identical.
+;;
+;;      This clause's own history is that same merge measured before the
+;;      allocator could hold it: liveness_scan +17.10% with no site clause at
+;;      all, and +13.3% re-measured over the regallocator's call-hole
+;;      live-range splitting (compiler-reg-call-hole-* in
+;;      src/compiler_regalloc.tl), which does not reach this shape because the
+;;      import REMOVES the call and leaves no hole to split. Both were real,
+;;      and what retired them is not an inliner clause but the two allocator
+;;      packets under this one -- the flag-exit rounding and the loop-depth
+;;      ladders in src/compiler_regalloc.tl. Before the ladders the same waiver
+;;      still lost on intern_table (+2.1%): the merged kernel's byte loop
+;;      spilled its bases, and the ladders alone moved that experiment from
+;;      581.8M to 532.4M. (The old liveness numbers name `ln-recompute!` /
+;;      `ln-fixpoint!`; the benchmark's live pair is now `recompute!` /
+;;      `fixpoint!` in liveness_storage.tl, the same shape.)
+;;
+;;      The rest of the old evidence was never about in-loop sites: cfg_domloops
+;;      +5.4% and lex_source +5.9% are STRAIGHT-LINE merges into `cfg-function`
+;;      and `ls-tokenize`, which this clause still refuses -- and on this tree
+;;      those bodies no longer even reach it, since clause 2's arity floor
+;;      stops them first (lex_source presents no candidate to this band at
+;;      all). The straight-line half is not theory either. Waiving these three
+;;      clauses for EVERY site, on this tree, absorbs `cfg-stamp-euler` (8
+;;      parameters, 207 instructions in 16 blocks) into `cfg-function` at its
+;;      straight-line site and costs cfg_domloops 701,851,308 -> 702,906,528
+;;      (+0.150%), callgrind putting the merged function at 113.3M against
+;;      95.3M for the pair. That single row is the whole difference between the
+;;      rule this band carries and the rule it refuses;
 ;;   4. the heavy gate is kept. It is not a growth budget -- it is the block
 ;;      count past which the whole-function passes downstream stop running --
 ;;      so a merged function that would cross it is refused here for the same
@@ -83033,27 +85706,73 @@
 ;;      band makes no copies. Its blocks are not charged to the shared
 ;;      accumulator either -- see opt-inline-caller-absorb-blocks, which is
 ;;      what makes that statement true rather than merely intended;
-;;   5. the body is call-free, the same clause the duplication and
-;;      recursive-site tiers carry, for the same reason: this band's model
-;;      cannot price a callee's own calls (see opt-inline-blocks-call-free?).
-;;      RE-MEASURED ON THIS TREE with call-hole splitting in place: dropping it
-;;      still loses, and the mechanism is not spilling at all. It is the
-;;      PROLOGUE. hashmap_insert 28,941,253 -> 36,161,477 (+24.9%): `grow!`
-;;      (18 blocks, calls tl_alloc/tl_array_zero) is absorbed into
-;;      `insert-ref!`, whose callee-saved prologue goes from two pushes and two
-;;      pops to six and six -- eight extra instructions on EVERY insert, about
-;;      900k of them, for a body that runs on the rare rehash. 8 * 900k is the
-;;      +7.2M the row moves. hashmap_grow +18.8% and hashmap_churn +9.6% are
-;;      the same absorption on the same shape. A callee's own calls raise the
-;;      merged function's callee-saved demand at its entry, which is paid per
-;;      CALLER entry while the imported body runs on a colder path, and no
-;;      live-range mechanism can refund that;
-;;   6. the cascade clause, asked only when the callee actually carries bounds
-;;      checks, because that is the only thing it protects against: handing a
-;;      bounds-free single-reference CALLER its first bounds check used to cost
-;;      that caller its own inline at the loop tier. RE-MEASURED: dropping it
-;;      costs opt_crc32 324,500,336 -> 324,560,322 (+59,986) with no row
-;;      improving, so it stays;
+;;   5. AT A STRAIGHT-LINE SITE the body is call-free, the same clause the
+;;      duplication and recursive-site tiers carry, for the same reason: this
+;;      band's model cannot price a callee's own calls (see
+;;      opt-inline-blocks-call-free?). RE-MEASURED with call-hole splitting in
+;;      place: dropping it at a straight-line site still loses, and the
+;;      mechanism is not spilling at all. It is the PROLOGUE. hashmap_insert
+;;      28,941,253 -> 36,161,477 (+24.9%): `grow!` (18 blocks, calls
+;;      tl_alloc/tl_array_zero) is absorbed into `insert-ref!` at the
+;;      straight-line `(if (needs-grow? map) (grow! map) unit)` that opens
+;;      every insert, and `insert-ref!`'s callee-saved prologue goes from two
+;;      pushes and two pops to six and six -- eight extra instructions on EVERY
+;;      insert, about 900k of them, for a body that runs on the rare rehash.
+;;      8 * 900k is the +7.2M the row moves. hashmap_grow +18.8% and
+;;      hashmap_churn +9.6% are the same absorption on the same shape. A
+;;      callee's own calls raise the merged function's callee-saved demand at
+;;      its entry, which is paid per CALLER entry while the imported body runs
+;;      on a colder path, and no live-range mechanism can refund that.
+;;
+;;      That accounting is clause 3's frequency argument stated in prologue
+;;      instructions, and it is also why the clause cannot survive an in-loop
+;;      site: there the imported body and its calls run once per iteration, the
+;;      same rate as the boundary being retired, while the wider prologue is
+;;      still paid once per invocation. The measured in-loop case is
+;;      `it-intern-slice`, which calls `it-hash-words`, `it-grow!` and
+;;      `it-map-insert-from` and is the -8.451% in clause 3. (The hashmap
+;;      numbers also predate clause 2: `grow!` takes ONE parameter, so the
+;;      arity floor now refuses it before this clause is ever reached, which is
+;;      why hashmap_insert, hashmap_grow and hashmap_churn stay byte-identical
+;;      even under the widest experiment -- none of them presents a candidate
+;;      to this band at all.);
+;;   6. AT A STRAIGHT-LINE SITE the cascade clause, asked only when the callee
+;;      actually carries bounds checks, because that is the only thing it
+;;      protects against: handing a bounds-free single-reference CALLER its
+;;      first bounds check costs that caller its own inline at the loop tier.
+;;      This one is not the frame tax. What it weighs is one boundary against
+;;      another -- the import here against the CALLER's own absorption at the
+;;      caller's site -- so clause 3's frequencies apply to it just as
+;;      literally. The caller's own boundary retires once per caller
+;;      invocation; at a straight-line site so does the import, and the two are
+;;      then close enough that the measured answer decides. `cfg-stamp-euler`
+;;      is refused by exactly this clause (`cfg-function` is itself a
+;;      bounds-free single-reference caller) and admitting it is the +0.150%
+;;      above. At an in-loop site the import retires per ITERATION against a
+;;      caller inline worth one boundary per invocation, and clause 2
+;;      guarantees the import is a WIDE boundary rather than a token one:
+;;      `it-intern-slice` is refused by this clause as well -- `it-bench` being
+;;      bounds-free and single-reference in the same way -- and absorbing it is
+;;      the -8.451%.
+;;
+;;      The loop tier keeps the clause at BOTH sites, and its own measured
+;;      case (`qs-fill` into `qs-bench`, at opt-inline-bounds-loop-cascade-safe?
+;;      below) is an in-loop site where refusing won when it was measured.
+;;      Clause 2 now reaches that size class at in-loop sites, so the same
+;;      question is put again on this tree and comes back the other way:
+;;      absorbing `qs-checksum` (2 parameters, 28 instructions in 4 blocks)
+;;      into `qs-bench` past the cascade clause is -128,009 on opt_quicksort,
+;;      and the same waiver on the generated `set-ref!` accessor is -0.590% on
+;;      cfg_domloops and -1.291% on gvn_table. The two verdicts differ in what
+;;      the clause is asked ABOUT: here the callee has exactly one reference
+;;      and the import is a MOVE, while the loop tier's copy of the clause
+;;      also governs its two-reference sites, where the caller's lost inline
+;;      buys a duplicate. This band's own re-measurement of the clause was
+;;      opt_crc32 324,500,336 -> 324,560,322 (+59,986) with no row improving;
+;;      the candidate opt_crc32 presents today, `crc-update` at 3 parameters
+;;      and 44 instructions, is refused by clause 2's size class rather than
+;;      by this one, so the straight-line half of the clause now rests on
+;;      `cfg-stamp-euler` rather than on that number;
 ;;   7. a pathological-case backstop on the callee's size,
 ;;      opt-inline-single-site-max-body and -max-blocks. This is NOT a growth
 ;;      budget -- absorption does not grow the program and no measured callee
@@ -83061,8 +85780,12 @@
 ;;      per-function pipeline at once, so a generated body of unbounded size
 ;;      cannot turn a linear compile into a quadratic one.
 ;;
-;; Ordered cheapest-first: two integer compares, then arithmetic, then the
-;; memoized caller facts, and the scan over the callee's blocks last.
+;; Ordered cheapest-first: the reference class, then clause 2 -- one integer
+;; compare for a wide boundary; for a narrow one the loop tier's two size
+;; compares, the memoized site question, and a call scan over the callee's
+;; blocks -- then the size backstops, then arithmetic, then clauses 3, 5 and 6,
+;; whose own scan over the callee's blocks an in-loop site never reaches, since
+;; clause 3 answers for 5 and 6 as well.
 ;;
 ;; On the arity floor below: x86-64 SysV passes six integer arguments in
 ;; registers and Windows x64 passes four, so at eight parameters BOTH ABIs store
@@ -83075,20 +85798,60 @@
 (define (opt-inline-single-site-min-params) : i64
   8)
 
-;; Below the arity floor the boundary has no marshalling to retire, and the
-;; narrow class stays with the site-conditioned tiers. Two variants were
-;; measured and refused. Removing the floor outright admits the whole narrow
-;; class and costs peephole_lines 602,719,795 -> 610,515,468 (+1.29%), with no
-;; row improving: `pl-token-len` (27 blocks), `pl-movq-prefix?` (66) and
-;; `pl-mnemonic-call?` (40) merge into `pl-parse-line`, taking it from 127
-;; blocks to 249; `pl-stack-parens` (54) into `pl-operand-flags` (66 -> 120);
-;; `pl-indexed-rsp?` (51) into `pl-record-sweep` (197 -> 249). Admitting the
-;; narrow class only into a SMALL caller (<= 64 blocks) left every
-;; instruction-count row byte-identical -- it bought nothing in the corpus --
-;; while merging the single-site functions of every small program into `main`,
-;; which is the shape the codegen fixtures under tests/integration inspect by
-;; name (switch_dispatch_scavenge, const_global_mask_unroll, ...). A relief that
-;; measures nothing and reshapes small programs is not kept.
+;; Below the arity floor the boundary has no marshalling to retire. At a
+;; STRAIGHT-LINE site the narrow class stays out of this band entirely; at an
+;; IN-LOOP site it enters at the loop tier's size class and no wider
+;; (opt-inline-bounds-loop-small?, 32 instructions in 6 blocks), and call-free.
+;; Four variants of that split were measured against this tree.
+;;
+;; Removing the floor at EVERY site admits the whole narrow class and costs
+;; peephole_lines 602,719,795 -> 610,515,468 (+1.29%), with no row improving:
+;; `pl-token-len` (27 blocks), `pl-movq-prefix?` (66) and `pl-mnemonic-call?`
+;; (40) merge into `pl-parse-line`, taking it from 127 blocks to 249;
+;; `pl-stack-parens` (54) into `pl-operand-flags` (66 -> 120);
+;; `pl-indexed-rsp?` (51) into `pl-record-sweep` (197 -> 249). All five of
+;; those sites are straight-line, which is why the in-loop half of the clause
+;; leaves them refused. Admitting the narrow class only into a SMALL caller
+;; (<= 64 blocks) left every instruction-count row byte-identical -- it bought
+;; nothing in the corpus -- while merging the single-site functions of every
+;; small program into `main`, which is the shape the codegen fixtures under
+;; tests/integration inspect by name (switch_dispatch_scavenge,
+;; const_global_mask_unroll, ...). A relief that measures nothing and reshapes
+;; small programs is not kept.
+;;
+;; Waiving the floor at IN-LOOP sites with no size class at all loses on the
+;; two rows whose hot loop belongs to the caller: cfg_domloops 701,677,745 ->
+;; 748,383,265 (+6.656%) and lex_source 540,540,835 -> 562,870,483 (+4.131%),
+;; against gvn_table -1.272%, peephole_lines -0.954%, intern_table -0.476%,
+;; opt_crc32 -0.203% and opt_quicksort -0.032%. Callgrind splits both losers
+;; the same way. cfg_domloops: `cfg-idom-iterate` (7 parameters, 236
+;; instructions in 40 blocks) moves into `cfg-function` and the pair's 169.9M
+;; becomes 198.0M; `cfg-loop-body` (7, 201, 22) and `cfg-loop-preheader`
+;; (7, 177, 30) move into `cfg-natural-loops` and its 119.1M becomes 145.5M.
+;; lex_source: six callees move into `ls-tokenize`, whose 224.0M becomes
+;; 258.3M. This is P18's register-pressure reading of `cfg-natural-loops`
+;; arriving as an instruction count -- the caller's loop already holds more
+;; live values than the callee-saved set, and an import lands its whole
+;; working set inside that loop. A wide boundary can still pay for that; a
+;; narrow one cannot, which is the entire content of clause 2.
+;;
+;; Widening the in-loop class to 64 instructions in 16 blocks buys
+;; intern_table -0.148% (`it-slice-eq?` into `it-intern-slice`) and opt_crc32
+;; -0.203% (`crc-update` into `crc-bench`) and costs lex_source 540,540,835 ->
+;; 549,226,451 (+1.607%): `ls-scan-comment-end` (37 instructions in 10 blocks)
+;; and `ls-scan-str-end` (56 in 16) move into `ls-tokenize`, whose 224.0M
+;; becomes 244.6M. The loop tier's own class is where the corpus stops paying,
+;; so it is where the waiver stops.
+;;
+;; What the class as landed admits is three imports in the whole corpus, and
+;; they are what the two rows below measure: the generated
+;; `stdlib.vector.generated.i64/set-ref!` (3 parameters, 22 instructions in 6
+;; blocks) into `cfg-scan-ints` for cfg_domloops 701,677,745 -> 697,540,921
+;; (-0.590%) and into `gvn-scan-ints` for gvn_table 986,691,676 -> 973,957,482
+;; (-1.291%), and `qs-checksum` (2, 28, 4) into `qs-bench` for opt_quicksort
+;; -128,009 (-0.032%). All three are refused today by the loop tier's cascade
+;; clause and by nothing else. The other fourteen rows are byte-identical in
+;; the emitted assembly, not merely in the count.
 ;; The pathological-case backstop of clause 7. 1024 instructions is nearly
 ;; three times the largest measured absorption (`ln-recompute!`, 368) and eight
 ;; times the largest band ceiling anywhere else in this file; 128 blocks is
@@ -83101,6 +85864,55 @@
 (define (opt-inline-single-site-max-blocks) : i64
   128)
 
+;; Clause 2: the one place the site question is asked about ARITY rather than
+;; about the frame tax. A wide boundary is admitted at any site; a narrow one
+;; only inside a natural loop of the caller, only at the loop tier's size, and
+;; only call-free. Below the floor the retired boundary is a call and a cheap
+;; prologue, and only an import that costs little can be bought with it.
+;;
+;; What the narrow half does NOT keep is the loop phi-predecessor suppression
+;; (#5193, opt-inline-current-phi-predecessor?), and that is load-bearing:
+;; both corpus imports this clause admits sit in a loop latch that feeds a
+;; header phi, and adding the suppression here puts cfg_domloops and gvn_table
+;; straight back on their base numbers. What the suppression stops is the cost
+;; model's single-reference absorb BONUS buying an admission whose live ranges
+;; the split then lengthens; the body this band takes is not bought with that
+;; bonus and is not copied.
+;;
+;; Ordered so a wide callee answers on one integer compare, and a narrow one on
+;; the loop tier's two size compares and the memoized site question before any
+;; scan over its blocks.
+(define (opt-inline-single-site-arity-ok?
+  [param-count : i64]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (or
+    (>= param-count (opt-inline-single-site-min-params))
+    (and
+      (opt-inline-bounds-loop-small? blocks callee-instrs)
+      (opt-inline-bounds-loop-site-in-loop?)
+      (opt-inline-blocks-call-free? blocks))))
+
+;; Clauses 3, 5 and 6 in one place, because between them they are one decision.
+;; Each stands for a cost the merged function pays once per CALLER INVOCATION --
+;; the frame tax at its own entry for 3 and 5, the caller's own lost inline for
+;; 6 -- and such a cost is only worth pricing where the boundary it buys is also
+;; retired once per caller invocation. That is a straight-line site. At an
+;; in-loop site the boundary retires per iteration and all three come off; the
+;; numbered list above carries the argument and the measurements.
+;;
+;; Ordered so the site question runs first. It forces the memoized caller facts
+;; the cascade clause needs anyway, and an in-loop answer retires the scan over
+;; the callee's blocks outright.
+(define (opt-inline-single-site-frame-tax-ok?
+  [has-bounds? : bool]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (or
+    (opt-inline-bounds-loop-site-in-loop?)
+    (and
+      (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))
+      (opt-inline-blocks-call-free? blocks))))
+
 (define (opt-inline-single-site-absorb-ok?
   [absorb-class : i64]
   [has-bounds? : bool]
@@ -83112,7 +85924,7 @@
   [added-so-far : i64]) : bool
   (and
     (= absorb-class 1)
-    (>= param-count (opt-inline-single-site-min-params))
+    (opt-inline-single-site-arity-ok? param-count callee-instrs blocks)
     (<= callee-instrs (opt-inline-single-site-max-body))
     (<=
       (ir.compiler-ir-block-list-count blocks)
@@ -83125,9 +85937,7 @@
         caller-blocks
         (+ added-so-far opt-inline-caller-absorb-blocks)
         added-blocks))
-    (not (opt-inline-bounds-loop-site-in-loop?))
-    (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))
-    (opt-inline-blocks-call-free? blocks)))
+    (opt-inline-single-site-frame-tax-ok? has-bounds? blocks)))
 
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]
@@ -89816,7 +92626,8 @@
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : OptLicmRootEnv
   (let
-    [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
+    [roots : OptLicmRootEnv
+      (opt-licm-root-env-with-capacity 17 (opt_i64_i64_map.with-capacity 1))]
     (begin
       (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)
       (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
@@ -90368,7 +93179,7 @@
           summaries
           function-set
           params
-          (opt-licm-root-env-with-capacity 1)
+          (opt-licm-root-env-with-capacity 1 (opt_i64_i64_map.with-capacity 1))
           (opt_i64_i64_map.with-capacity 1)
           blocks)
         (let
@@ -91409,6 +94220,13 @@
           call-memory
           (opt-loop-bce-direct-call-clean-map functions capacity))
         (opt_i64_i64_map.with-capacity 1))]
+    ;; The return-alias table rides the same level>=2 gate as
+    ;; `direct-call-clean`: it feeds LICM provenance only, and leaving it empty
+    ;; below that level keeps opt0/opt1 byte-identical.
+    [return-alias : opt_i64_i64_map.Map
+      (if build-direct-call-clean
+        (opt-licm-return-alias-map functions capacity)
+        (opt_i64_i64_map.with-capacity 1))]
     (OptLoopBceSummaries
       true
       (profile_state.compiler-profile-state-new)
@@ -91416,6 +94234,7 @@
       direct-call-clean
       call-memory
       argc-return
+      return-alias
       (opt_i64_i64_map.with-capacity 1)
       (opt-global-cell-summary-empty)
       (ir.compiler-ir-representation-index-empty))))
@@ -91430,6 +94249,7 @@
     summaries.direct-call-clean
     summaries.call-memory
     summaries.argc-return
+    summaries.return-alias
     const-divisors
     summaries.global-cell
     summaries.representations))
@@ -91444,6 +94264,7 @@
     summaries.direct-call-clean
     summaries.call-memory
     summaries.argc-return
+    summaries.return-alias
     summaries.const-divisors
     global-cell
     summaries.representations))
@@ -91458,6 +94279,7 @@
     summaries.direct-call-clean
     summaries.call-memory
     summaries.argc-return
+    summaries.return-alias
     summaries.const-divisors
     summaries.global-cell
     summaries.representations))
@@ -91472,6 +94294,7 @@
     summaries.direct-call-clean
     summaries.call-memory
     summaries.argc-return
+    summaries.return-alias
     summaries.const-divisors
     summaries.global-cell
     representations))
@@ -91502,7 +94325,10 @@
         (opt-const-divisors-build globals reachable-functions)
         (opt_i64_i64_map.with-capacity 1)))
     (if (>= level 2)
-      (opt-global-cell-summary-build globals reachable-functions)
+      (opt-global-cell-summary-build
+        type-segment-bases
+        globals
+        reachable-functions)
       (opt-global-cell-summary-empty))))
 
 ;; Substitute a proven constant global with its literal value in
@@ -91815,20 +94641,38 @@
 ;;       exactly Store targets and GlobalAddr operands, arm-for-arm so a new IR
 ;;       instruction fails to compile until handled -- minus this program's
 ;;       Store targets, so it is exactly the address-taken globals;
-;;   (c) the function contains no Call/TailCall/indirect-call/SpmdCall that can
-;;       RETURN: any such callee could set! G. v1 deliberately treats the whole
-;;       returning call family as opaque; a callgraph refinement (block only
-;;       callees that may set! G) is a later packet. Passes after this one only
-;;       rewrite or clone existing instructions -- the inliner, the pipeline's
-;;       only call producer, has already run -- so the no-call fact cannot be
-;;       invalidated downstream. Trapping operations like BoundsCheck are not
-;;       calls, and explicit panic paths diverge before any write could
-;;       interleave -- which is exactly why a direct call to a non-returning
-;;       trap helper is excluded from (c) as well: control never returns from
-;;       it, so no use of `%g` runs after it and nothing it could write is ever
-;;       read (opt-global-cell-scan-direct-call, opt-direct-call-noreturn?).
+;;   (c) no Call/TailCall/indirect-call/SpmdCall that can RETURN may write G's
+;;       cell. This is a per-CELL question, answered by P18's per-global call
+;;       mod-ref table (OptGlobalModRef): a DIRECT callee's row names every
+;;       cell it and everything it transitively calls may `set!`
+;;       (opt-global-mod-ref-call-mask), and the union of those rows over the
+;;       function's returning calls -- opt-global-cell-call-writes -- is
+;;       exactly the set of cells this condition refuses. A callee outside the
+;;       program's function list is an EXTERN: no IR body, hence no `Store`,
+;;       and under (b) no pointer it holds can name a cell, so it writes none.
+;;       An INDIRECT call (CallIndirect, either C-ABI store-result form,
+;;       SpmdCall, TailCallIndirect) may land on any function of the program,
+;;       so it contributes "any cell" and refuses every G -- and so does every
+;;       direct call when the program carries no table at all
+;;       (opt-global-mod-ref-build declines above the summary function limit,
+;;       and when the address-taken set is non-empty, which is (b) again).
+;;       Passes after this one only rewrite or clone existing instructions --
+;;       the inliner, the pipeline's only call producer, has already run -- so
+;;       the call set this reads cannot grow downstream. Trapping operations
+;;       like BoundsCheck are not calls, and explicit panic paths diverge
+;;       before any write could interleave -- which is exactly why a direct
+;;       call to a non-returning trap helper is not a returning call at all:
+;;       control never returns from it, so no use of `%g` runs after it and
+;;       nothing it could write is ever read
+;;       (opt-global-cell-scan-direct-call, opt-direct-call-noreturn?).
+;;       HISTORY. v1 read: "the function contains no
+;;       Call/TailCall/indirect-call/SpmdCall that can RETURN: any such callee
+;;       could set! G. v1 deliberately treats the whole returning call family
+;;       as opaque; a callgraph refinement (block only callees that may set! G)
+;;       is a later packet." That refinement is this condition, and a program
+;;       without a mod-ref table still answers every query the v1 way.
 ;; A set! in ANOTHER function (the loader pattern) cannot interleave with this
-;; activation because (c) rules out the call that would reach it, and the
+;; activation unless (c) admits a call that reaches it, and the
 ;; entry load observes any set! made before this activation -- exactly what a
 ;; per-use load would observe. Recursion needs no special case: today's
 ;; semantics already reload the cell at least once per activation (every use
@@ -91850,7 +94694,16 @@
   (refs opt_i64_i64_map.Map)
   (ref-list OptI64List)
   (stores opt_i64_i64_map.Map)
-  (calls bool))
+  ;; Condition (c), the half that needs no table: a RETURNING call whose target
+  ;; this walk cannot name -- indirect, C-ABI, SpmdCall, TailCallIndirect. Such
+  ;; a call may land on any function of the program, so it may write ANY cell.
+  (call-any bool)
+  ;; Condition (c), the half a table resolves: the DIRECT returning callees,
+  ;; deduped through `callees` so a repeated call site conses once and the list
+  ;; is bounded by the program's function count. `opt-global-cell-call-writes`
+  ;; turns it into the union of their mod-ref rows.
+  (callees opt_i64_i64_map.Map)
+  (callee-list OptI64List))
 
 ;; Reference counts saturate: the only question the plan asks is "more than
 ;; one?", so the map value stops growing at two and a hot cell cannot make the
@@ -91863,13 +94716,18 @@
     (opt_i64_i64_map.with-capacity 8)
     OptI64List.Nil
     (opt_i64_i64_map.with-capacity 8)
-    false))
+    false
+    ;; Most scanned blocks call nothing, and the per-block scans
+    ;; (opt-global-cell-scan-block-by-id) run once per block, so this set
+    ;; starts at one slot and grows only where calls actually appear.
+    (opt_i64_i64_map.with-capacity 1)
+    OptI64List.Nil))
 
 (define (opt-global-cell-scan-ref
   [scan : OptGlobalCellScan (:consume)]
   [name : i64]) : OptGlobalCellScan
   (match scan
-    [(OptGlobalCellScan refs ref-list stores calls)
+    [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
       (match (opt_i64_i64_map.get (& refs) name)
         [(opt_i64_i64_map.LookupFound seen)
           (begin
@@ -91879,7 +94737,13 @@
               (if (< seen (opt-global-cell-ref-count-cap))
                 (+ seen 1)
                 seen))
-            (OptGlobalCellScan refs ref-list stores calls))]
+            (OptGlobalCellScan
+              refs
+              ref-list
+              stores
+              call-any
+              callees
+              callee-list))]
         [(opt_i64_i64_map.LookupMissing)
           (begin
             (opt_i64_i64_map.insert-ref! (&mut refs) name 1)
@@ -91887,38 +94751,97 @@
               refs
               (OptI64List.Cons name (box ref-list))
               stores
-              calls))])]))
+              call-any
+              callees
+              callee-list))])]))
 
 (define (opt-global-cell-scan-store
   [scan : OptGlobalCellScan (:consume)]
   [name : i64]) : OptGlobalCellScan
   (match scan
-    [(OptGlobalCellScan refs ref-list stores calls)
+    [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
       (begin
         (opt_i64_i64_map.insert-ref! (&mut stores) name 1)
-        (OptGlobalCellScan refs ref-list stores calls))]))
+        (OptGlobalCellScan refs ref-list stores call-any callees callee-list))]))
 
+;; A returning call whose target this walk cannot name. It may land on any
+;; function of the program, so it may write any cell and condition (c) then
+;; refuses every global in the function -- the v1 verdict, unchanged.
 (define (opt-global-cell-scan-call [scan : OptGlobalCellScan]) : OptGlobalCellScan
-  (if scan.calls
+  (if scan.call-any
     scan
-    (OptGlobalCellScan scan.refs scan.ref-list scan.stores true)))
+    (OptGlobalCellScan
+      scan.refs
+      scan.ref-list
+      scan.stores
+      true
+      scan.callees
+      scan.callee-list)))
 
-;; Condition (c) rejects a function that may transfer control to a callee that
-;; could `set! G` between the entry load and a use of `%g`. A non-returning
-;; trap helper cannot: control never comes back from it, so NO use of `%g`
-;; executes after it on any path, and no value it could write is ever read.
-;; That is the same argument opt-direct-call-noreturn? states in full, and the
-;; same one the pass header already makes for BoundsCheck and explicit panic
-;; paths ("diverge before any write could interleave") -- a `call tl_oob_abort`
-;; is exactly that panic path after the backend has expanded a check, or after
-;; a stdlib range guard has been inlined here. Counting it would disqualify
-;; every otherwise call-free function that inlines one.
+;; A returning call to a NAMED callee. Recorded here and resolved later: the
+;; per-program mod-ref table is not an input to this walk -- the whole-program
+;; pass of it (opt-global-cell-summary-build) is what the table is built FROM --
+;; so opt-global-cell-call-writes reads the rows once per function instead.
+(define (opt-global-cell-scan-callee
+  [scan : OptGlobalCellScan (:consume)]
+  [name : i64]) : OptGlobalCellScan
+  (match scan
+    [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
+      (if (opt_i64_i64_map.contains? (& callees) name)
+        (OptGlobalCellScan refs ref-list stores call-any callees callee-list)
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut callees) name 1)
+          (OptGlobalCellScan
+            refs
+            ref-list
+            stores
+            call-any
+            callees
+            (OptI64List.Cons name (box callee-list)))))]))
+
+;; Condition (c) refuses a cell that a callee could `set!` between the entry
+;; load and a use of `%g`. A non-returning trap helper could not: control never
+;; comes back from it, so NO use of `%g` executes after it on any path, and no
+;; value it could write is ever read. That is the same argument
+;; opt-direct-call-noreturn? states in full, and the same one the pass header
+;; already makes for BoundsCheck and explicit panic paths ("diverge before any
+;; write could interleave") -- a `call tl_oob_abort` is exactly that panic path
+;; after the backend has expanded a check, or after a stdlib range guard has
+;; been inlined here. Recording it would charge every otherwise call-free
+;; function that inlines one with its callee's row.
 (define (opt-global-cell-scan-direct-call
   [scan : OptGlobalCellScan]
   [name : i64]) : OptGlobalCellScan
   (if (opt-direct-call-noreturn? name)
     scan
-    (opt-global-cell-scan-call scan)))
+    (opt-global-cell-scan-callee scan (ir.compiler-ir-symbol-id name))))
+
+;; Condition (c) as a MASK over global cells: what the RETURNING calls this
+;; scan saw may write, in the packed OptGlobalModRef encoding. An unresolved
+;; call form contributes "any cell"; a named callee contributes its row, which
+;; is 0 for an extern (no IR body, hence no `Store`) and "any cell" whenever
+;; the program carries no table -- so a table-less program refuses exactly the
+;; functions v1 refused. The walk stops as soon as the union saturates.
+(define (opt-global-cell-call-writes-list
+  [mod-ref : OptGlobalModRef]
+  [names : OptI64List]
+  [mask : i64]) : i64
+  (match names
+    [(OptI64List.Nil) mask]
+    [(OptI64List.Cons name rest)
+      (if (opt-global-mod-ref-any? mask)
+        mask
+        (opt-global-cell-call-writes-list
+          mod-ref
+          (__tl-box-place rest)
+          (bit-or mask (opt-global-mod-ref-call-mask mod-ref name))))]))
+
+(define (opt-global-cell-call-writes
+  [cell : OptGlobalCellSummary]
+  [scan : OptGlobalCellScan]) : i64
+  (if scan.call-any
+    (opt-global-mod-ref-any)
+    (opt-global-cell-call-writes-list cell.mod-ref scan.callee-list 0)))
 
 (define (opt-global-cell-scan-value
   [scan : OptGlobalCellScan]
@@ -91997,8 +94920,9 @@
         (__tl-box-place rest))]))
 
 ;; Per-function fact scan: global-ref operand uses (refs), direct set! targets
-;; (stores), and whether any RETURNING call-family instruction remains (calls;
-;; a direct call to a non-returning trap helper is not one -- see
+;; (stores), and the RETURNING call-family instructions that remain -- named
+;; callees in `callees`/`callee-list`, unresolvable ones in `call-any` (a
+;; direct call to a non-returning trap helper is neither -- see
 ;; opt-global-cell-scan-direct-call). Mirrors
 ;; opt-const-globals-disq-instr arm-for-arm (no wildcard): a new IR instruction
 ;; fails to compile until classified here, so a new call-like or store-like
@@ -92400,7 +95324,1980 @@
 ;; Build the per-program global-cell summary: the declared-type table, the
 ;; address-taken set, and the count of globals that survive both filters (the
 ;; per-function pass skips its scan when that count is zero).
+;; --- P18: per-global call mod-ref over global CELLS ---------------------------
+;;
+;; THE QUESTION IT REPLACES. `opt-licm-globals-clean?` answers "can ANYTHING in
+;; this loop write ANY global cell?" -- one bit for the whole loop and the
+;; whole program's globals. Both of its consumers actually want a narrower
+;; answer, because both have a NAME in hand: a `CompilerIrValue.Global g`
+;; operand is a rip-relative read of g's own cell (opt-licm-value-invariant?),
+;; and the loop-scope promotion rewrites the operands of one named cell at a
+;; time (opt-licm-global-promote). A helper that writes cfg-marks through a
+;; `&mut` parameter says nothing about cfg-reachable, and today both refuse it
+;; and every other global with it.
+;;
+;; WHY THE QUESTION IS ABOUT CELLS, AND WHY IT STOPS THERE. A global's CELL is
+;; its own statically allocated storage (`.comm <symbol>`), named by that
+;; symbol and by nothing else, so "does this write g's cell" is decided by
+;; NAMES alone: two distinct global symbols are two distinct cells, always,
+;; with no aliasing question to answer. The word a cell POINTS AT is a
+;; different matter -- for a memory-class global the cell holds a pointer to a
+;; heap object, and nothing in the IR proves that two cells hold different
+;; pointers (one `Store h, <a value read from g>` makes them equal). So this
+;; table refines exactly the cell question, which is the one a `Global` operand's
+;; invariance and the cell promotion ask, and deliberately does NOT refine the
+;; object/descriptor question the header-load proofs ask; those keep the
+;; loop-wide opt-licm-store-summary-header-load-safe? gate, whose argument
+;; (element storage is disjoint from every descriptor header word) needs no
+;; per-global distinctness.
+;;
+;; WHAT CAN WRITE A CELL, exhaustively.
+;;   * `CompilerIrInstr.Store g` -- the lowering of `(set! g ...)`, and the only
+;;     IR instruction whose write target is a SYMBOL rather than a pointer. It
+;;     writes g's cell and no other cell.
+;;   * a write through a pointer that names a cell. `CompilerIrValue.GlobalAddr`
+;;     is the only IR value form that produces a cell address, so when the
+;;     program's address-taken set is EMPTY no pointer in the program can name a
+;;     cell, and no `StorePtr`, `CopyBytes`, vector store, syscall or extern
+;;     callee can reach one. That is the same whole-program argument
+;;     opt-licm-direct-call-keeps-globals-clean? already rests on; this table
+;;     requires it as a precondition and is not built at all when it fails, so
+;;     the argument is never stretched.
+;;   * a call that reaches either of the above. A DIRECT callee is resolved
+;;     through this table. An INDIRECT one (`CallIndirect`, the two C-ABI
+;;     store-result forms, `SpmdCall`, `TailCallIndirect`) may land on any
+;;     function of the program and so contributes "any cell", as does any
+;;     instruction whose effect is `Unknown` or `CpuProbe`. An EXTERN callee has
+;;     no IR body, hence performs no `Store`, and under the empty address-taken
+;;     precondition cannot reach a cell through a pointer either, so it
+;;     contributes nothing -- the same verdict opt-call-memory-apply-direct-call
+;;     gives a name outside the program's function set.
+;;
+;; THE LATTICE AND THE FIXPOINT. A row is a bit set: one bit per global that is
+;; a direct `Store` target somewhere in the program (bits 0..61), plus bit 62
+;; for "may write any cell". Order by inclusion, join is `bit-or`, bottom is 0,
+;; height 63, so ascending Kleene iteration terminates. The transfer is
+;; monotone: a round ORs a function's previous row into the union of its own
+;; instructions' masks, and a callee's row only ever ADDS bits to its callers'.
+;; Bits originate at a `Store` and travel one call-graph edge per round, so the
+;; longest path bounds the round count at the function count; the loop commits
+;; only a map the transfer REPRODUCES (`changed` false), and DISCARDS the whole
+;; table if the budget runs out -- an over-budget program falls back to the
+;; loop-wide gate rather than shipping a non-fixed-point.
+(defstruct OptGlobalModRef
+  ;; False = no table. Every query then answers "may write any cell", which is
+  ;; exactly the loop-wide verdict, so an absent table changes no decision.
+  (built? bool)
+  ;; global symbol id -> bit index. Only globals that are a direct `Store`
+  ;; target ANYWHERE in the program get one; a global absent from this map is
+  ;; never stored, so no execution writes its cell at all and every query for
+  ;; it is false.
+  (index opt_i64_i64_map.Map)
+  ;; function symbol id -> that function's packed cell-write set. Every
+  ;; function of the program has a row; an absent name is an extern.
+  (writes opt_i64_i64_map.Map))
+
+;; One bit per directly-stored global; bit 62 is the "any cell" marker, so a
+;; program with more `Store` targets than this gets no table.
+(define (opt-global-mod-ref-limit) : i64
+  62)
+
+(define (opt-global-mod-ref-any) : i64
+  (shl 1 62))
+
+(define (opt-global-mod-ref-any? [mask : i64]) : bool
+  (not (= (bit-and mask (opt-global-mod-ref-any)) 0)))
+
+(define (opt-global-mod-ref-none) : OptGlobalModRef
+  (OptGlobalModRef
+    false
+    (opt_i64_i64_map.with-capacity 1)
+    (opt_i64_i64_map.with-capacity 1)))
+
+;; The bit that stands for g's cell, or 0 when the program never stores g.
+(define (opt-global-mod-ref-cell-bit [index : opt_i64_i64_map.Map] [name : i64]) : i64
+  (match (opt_i64_i64_map.get (& index) (ir.compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound bit) (shl 1 bit)]
+    [(opt_i64_i64_map.LookupMissing) 0]))
+
+;; The mask a `Store g` contributes. The index is built from the program's whole
+;; `Store`-target set, so every store reaching this has a bit; a miss can only
+;; mean the two walks disagree about which globals exist, and the safe answer to
+;; that is "any cell", never "no cell".
+(define (opt-global-mod-ref-store-mask
+  [index : opt_i64_i64_map.Map]
+  [name : i64]) : i64
+  (let
+    [bit : i64 (opt-global-mod-ref-cell-bit index name)]
+    (if (= bit 0)
+      (opt-global-mod-ref-any)
+      bit)))
+
+(define (opt-global-mod-ref-mask-may-write?
+  [index : opt_i64_i64_map.Map]
+  [mask : i64]
+  [name : i64]) : bool
+  (or
+    (opt-global-mod-ref-any? mask)
+    (not (= (bit-and mask (opt-global-mod-ref-cell-bit index name)) 0))))
+
+;; The cells a DIRECT callee may write. No table, or a resolved row; an absent
+;; name is an extern and writes none (see the header's exhaustive list).
+(define (opt-global-mod-ref-call-mask [mod-ref : OptGlobalModRef] [name : i64]) : i64
+  (if (not mod-ref.built?)
+    (opt-global-mod-ref-any)
+    (match (opt_i64_i64_map.get
+      (& mod-ref.writes)
+      (ir.compiler-ir-symbol-id name))
+      [(opt_i64_i64_map.LookupFound mask) mask]
+      [(opt_i64_i64_map.LookupMissing) 0])))
+
+;; The cells a `Store name` writes: exactly name's, when there is a table.
+(define (opt-global-mod-ref-instr-store-mask
+  [mod-ref : OptGlobalModRef]
+  [name : i64]) : i64
+  (if (not mod-ref.built?)
+    (opt-global-mod-ref-any)
+    (opt-global-mod-ref-store-mask mod-ref.index name)))
+
+(defenum OptGlobalModRefIndex
+  (No)
+  (Some opt_i64_i64_map.Map i64))
+
+(define (opt-global-mod-ref-index-fill
+  [globals : ir.CompilerIrGlobalSeq]
+  [stores : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [at : i64]
+  [next : i64]) : OptGlobalModRefIndex
+  (if (>= at globals.len)
+    (OptGlobalModRefIndex.Some out next)
+    (match (ir.compiler-ir-global-seq-ref globals at)
+      [(ir.CompilerIrGlobal.Global name _ _)
+        (if (not
+          (opt_i64_i64_map.contains? (& stores) (ir.compiler-ir-symbol-id name)))
+          (opt-global-mod-ref-index-fill globals stores out (+ at 1) next)
+          (if (>= next (opt-global-mod-ref-limit))
+            (OptGlobalModRefIndex.No)
+            (let
+              [assigned : opt_i64_i64_map.Map out]
+              (begin
+                (opt_i64_i64_map.insert-ref!
+                  (&mut assigned)
+                  (ir.compiler-ir-symbol-id name)
+                  next)
+                (opt-global-mod-ref-index-fill
+                  globals
+                  stores
+                  assigned
+                  (+ at 1)
+                  (+ next 1))))))])))
+
+(define (opt-global-mod-ref-callee-mask
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [name : i64]) : i64
+  (if (not
+    (opt_i64_i64_map.contains? (& function-set) (ir.compiler-ir-symbol-id name)))
+    0
+    (match (opt_i64_i64_map.get (& current) (ir.compiler-ir-symbol-id name))
+      [(opt_i64_i64_map.LookupFound mask) mask]
+      [(opt_i64_i64_map.LookupMissing) 0])))
+
+;; The classification for every instruction the arms below do not name. It is
+;; read off the closed `CompilerIrEffect` enum rather than a second total match
+;; over the instruction set, so a new IR instruction has to be given an effect
+;; before it can reach here at all. `MemoryWrite` is a write THROUGH A POINTER
+;; for every instruction except `Store`, which is matched first, and the empty
+;; address-taken precondition denies every pointer a cell; `ControlFlow` covers
+;; branches, returns, bounds checks and `TailCall`, of which only the last can
+;; reach program code and is likewise matched first.
+(define (opt-global-mod-ref-effect-mask [effect : ir.CompilerIrEffect]) : i64
+  (match effect
+    [(ir.CompilerIrEffect.Pure) 0]
+    [(ir.CompilerIrEffect.MemoryRead) 0]
+    [(ir.CompilerIrEffect.ControlFlow) 0]
+    [(ir.CompilerIrEffect.MemoryWrite) 0]
+    [(ir.CompilerIrEffect.CpuProbe) (opt-global-mod-ref-any)]
+    [(ir.CompilerIrEffect.Unknown) (opt-global-mod-ref-any)]))
+
+(define (opt-global-mod-ref-instr-mask
+  [index : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Store name _ _)
+      (opt-global-mod-ref-store-mask index name)]
+    [(ir.CompilerIrInstr.Call _ name _ _)
+      (opt-global-mod-ref-callee-mask current function-set name)]
+    [(ir.CompilerIrInstr.TailCall name _ _)
+      (opt-global-mod-ref-callee-mask current function-set name)]
+    ;; The one call form the effect table classifies `ControlFlow` rather than
+    ;; `Unknown`; its target is a function of this program, so name it here.
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
+    [_ (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr))]))
+
+(define (opt-global-mod-ref-instrs-mask
+  [index : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [at : i64]
+  [mask : i64]) : i64
+  (if (>= at (ir.compiler-ir-instr-seq-count instrs))
+    mask
+    (opt-global-mod-ref-instrs-mask
+      index
+      current
+      function-set
+      instrs
+      (+ at 1)
+      (bit-or
+        mask
+        (opt-global-mod-ref-instr-mask
+          index
+          current
+          function-set
+          (ir.compiler-ir-instr-seq-ref instrs at))))))
+
+(define (opt-global-mod-ref-blocks-mask
+  [index : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]
+  [mask : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) mask]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-mod-ref-blocks-mask
+            index
+            current
+            function-set
+            (__tl-box-place rest)
+            (opt-global-mod-ref-instrs-mask
+              index
+              current
+              function-set
+              instrs
+              0
+              mask))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-mod-ref-blocks-mask
+        index
+        current
+        function-set
+        (ir.compiler-ir-block-seq-to-list seq)
+        mask)]))
+
+(defenum OptGlobalModRefPass
+  (Pass opt_i64_i64_map.Map bool))
+
+(define (opt-global-mod-ref-pass
+  [functions : ir.CompilerIrFunctionList]
+  [index : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [changed : bool]) : OptGlobalModRefPass
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) (OptGlobalModRefPass.Pass out changed)]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ blocks)
+          (let
+            [name-id : i64 (ir.compiler-ir-symbol-id name)]
+            [previous : i64
+              (match (opt_i64_i64_map.get (& current) name-id)
+                [(opt_i64_i64_map.LookupFound mask) mask]
+                [(opt_i64_i64_map.LookupMissing) 0])]
+            [mask : i64
+              (opt-global-mod-ref-blocks-mask
+                index
+                current
+                function-set
+                blocks
+                previous)]
+            [next : opt_i64_i64_map.Map out]
+            (begin
+              (opt_i64_i64_map.insert-ref! (&mut next) name-id mask)
+              (opt-global-mod-ref-pass
+                (__tl-box-place rest)
+                index
+                current
+                function-set
+                next
+                (or changed (not (= mask previous))))))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-global-mod-ref-pass
+        (ir.compiler-ir-function-seq-to-list seq)
+        index
+        current
+        function-set
+        out
+        changed)]))
+
+(defenum OptGlobalModRefWrites
+  (No)
+  (Some opt_i64_i64_map.Map))
+
+(define (opt-global-mod-ref-fixed
+  [functions : ir.CompilerIrFunctionList]
+  [index : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [capacity : i64]
+  [remaining : i64]) : OptGlobalModRefWrites
+  (if (<= remaining 0)
+    (OptGlobalModRefWrites.No)
+    (match (opt-global-mod-ref-pass
+      functions
+      index
+      current
+      function-set
+      (opt_i64_i64_map.with-capacity capacity)
+      false)
+      [(OptGlobalModRefPass.Pass next changed)
+        (if changed
+          (opt-global-mod-ref-fixed
+            functions
+            index
+            function-set
+            next
+            capacity
+            (- remaining 1))
+          (OptGlobalModRefWrites.Some next))])))
+
+;; Build the table, or decline. The three preconditions are stated in the
+;; header: no global cell ADDRESS exists in the program (otherwise a pointer
+;; write could reach a cell and the per-instruction classification above would
+;; be wrong), the program is small enough that the summary passes run at all
+;; (the same gate opt-build-program-summaries applies, so a big program pays
+;; nothing for a table its LICM would not consult), and the directly-stored
+;; globals fit the packed row.
+(define (opt-global-mod-ref-build
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : ir.CompilerIrFunctionList]
+  [stores : opt_i64_i64_map.Map]
+  [addr-taken : opt_i64_i64_map.Map]
+  [capacity : i64]) : OptGlobalModRef
+  (let
+    [count : i64 (opt-function-list-count functions)]
+    (if (or
+      (> (opt_i64_i64_map.len (& addr-taken)) 0)
+      (> count (opt-loop-bce-summary-function-limit)))
+      (opt-global-mod-ref-none)
+      (match (opt-global-mod-ref-index-fill
+        globals
+        stores
+        (opt_i64_i64_map.with-capacity capacity)
+        0
+        0)
+        [(OptGlobalModRefIndex.No) (opt-global-mod-ref-none)]
+        [(OptGlobalModRefIndex.Some index _)
+          (match (opt-global-mod-ref-fixed
+            functions
+            index
+            (opt-call-memory-function-set
+              functions
+              (opt_i64_i64_map.with-capacity capacity))
+            (opt_i64_i64_map.with-capacity capacity)
+            capacity
+            (+ count 1))
+            [(OptGlobalModRefWrites.No) (opt-global-mod-ref-none)]
+            [(OptGlobalModRefWrites.Some writes)
+              (OptGlobalModRef true index writes)])]))))
+
+;; --- P20: FROZEN memory-class globals ----------------------------------------
+;;
+;; WHAT IT PROVES. For a global `g` in this set, every word of the object its
+;; cell designates -- the BOX -- and every fixed word of the descriptor a box
+;; word points at, holds the same value for as long as cell(g) itself is not
+;; written. Not "this loop's callees do not write it": nothing anywhere in the
+;; program writes any of those words. So a loop that P18's per-global cell-write
+;; set already proves does not write cell(g) sees one fixed box, and every load
+;; down the chain is loop-invariant with no store summary, no call summary and
+;; no per-loop memory question (opt-licm-frozen-kind-invariant?). That is what lets a
+;; `gep @g, 0` / `load` / `gep, 1` / `load` chain leave a loop whose body calls
+;; an ordinary unknown callee every trip.
+;;
+;; THE LOWERING FACTS IT RESTS ON (verified in src/compiler_lower.tl and
+;; src/compiler_backend.tl, read-only for this packet).
+;;
+;;  L1. A memory-class global's cell holds a POINTER to its aggregate payload.
+;;      `lower-ptr-addr-of-global-value-reference?` (compiler_lower.tl ~17269)
+;;      states it: "A memory-class global's symbol stores a pointer to its
+;;      aggregate payload, so the address of the value is the loaded symbol",
+;;      and it is what makes `(& g)` / `(&mut g)` lower to the VALUE form
+;;      `CompilerIrValue.Global g` rather than to `GlobalAddr g`
+;;      (lower-ptr-addr-of-local-address ~27089). A dynamic-array or string
+;;      global takes the `GlobalAddr` arm instead, which is why the
+;;      address-taken exclusion below is not vacuous.
+;;
+;;  L2. The startup initializer stores the init function's RETURN VALUE into the
+;;      cell, from outside the IR: `compiler-backend-global-init-call`
+;;      (compiler_backend.tl ~70700) emits `call __global_init_<g>` followed by
+;;      `movq %rax, <g>(%rip)`, once, before `main`. That is the only cell write
+;;      the IR does not carry as an instruction, so it is checked here directly
+;;      on the initializer's returned value.
+;;
+;;  L3. Every IR cell write is `CompilerIrInstr.Store g, v` -- the lowering of
+;;      `(set! g ...)` (compiler_lower.tl ~27851), whose value operand goes
+;;      through `lower-return-abi-value` ("store-copy") and is therefore a fresh
+;;      `tl_alloc` copy (lower-copy-inline-aggregate-to-heap ~16493,
+;;      lower-reserve-heap-storage ~15116). That freshness is CHECKED at every
+;;      site rather than assumed (opt-global-frozen-writer-check-function).
+;;
+;;  L4. No pointer can name a cell unless `CompilerIrValue.GlobalAddr` exists
+;;      for it -- the same whole-program argument P18's mod-ref table rests on
+;;      (see opt-global-mod-ref-build's header, which lists the cell writers
+;;      exhaustively). `addr-taken` below is exactly the set of globals with a
+;;      `GlobalAddr` occurrence.
+;;
+;; THE PROOF, for `g` admitted below.
+;;
+;;  (1) CELL WRITERS. By L2/L3/L4 the writers of cell(g) are exactly: the
+;;      startup initializer, once, before `main`; and the `Store g, v`
+;;      instructions of the program. The first is checked here; the second are
+;;      checked here AND are exactly what P18's per-global cell-write set
+;;      tracks, so a loop that set proves does not write cell(g) sees one fixed
+;;      box for its whole execution. Every consumer of this set asks that
+;;      question first (opt-licm-frozen-kind-invariant?).
+;;
+;;  (2) BOX IDENTITY. `opt-global-frozen-writer-check-function` checks every
+;;      writer's own IR: the value it puts in the cell is a var defined by
+;;      `call tl_alloc(n)`, and that var (and everything a Gep or Mov derives
+;;      from it) is used ONLY as a Gep base, a Mov source, a Load source, the
+;;      DESTINATION of the initializing `copy_bytes`, or that one stored or
+;;      returned value. So the pointer is written through to initialize the
+;;      object and is handed to nothing else: not to a call, not into memory,
+;;      not into another cell. box(g) is therefore, at every moment, an object
+;;      no other cell, local, or element storage names -- the packet's
+;;      provenance claim, established rather than assumed. It is a `tl_alloc`
+;;      heap object, so it is also distinct from every frame `Alloc` (P16's
+;;      argument) and, being named by nothing but cell(g), from every
+;;      descriptor's element buffer.
+;;
+;;  (3) DESCRIPTOR PRIVACY. A box word may hold a pointer -- for a `Vec` global,
+;;      `slots` points at the array descriptor. The `copy_bytes` that fills each
+;;      fresh box must take its source from a direct call to an INERT function
+;;      (opt-global-frozen-inert-closure?: a closure that mentions no global,
+;;      performs no `Store` and makes no indirect call), so everything that
+;;      closure built it allocated itself and it could neither have read another
+;;      global's box nor have published its own. A `set!` of one global from
+;;      another fails this at once -- its copy source is a `Global` operand, not
+;;      a call result -- which is the aliasing case this level has to exclude.
+;;
+;;  (4) NO WRITER. `opt-global-frozen-round` then checks the WHOLE program. It
+;;      tracks, in every function, the values that may name a frozen object:
+;;
+;;        level 4  the BOX POINTER itself: a `CompilerIrValue.Global g`, a
+;;                 `Mov` copy of one, or a PARAMETER some call site passes one to
+;;        level 1  a fixed-word ADDRESS of the box: `gep <level 4>, <literal>`,
+;;                 and a further literal gep of one
+;;        level 2  a DESCRIPTOR HANDLE read out of a box word: `load <level 1>`
+;;                 whose loaded type is an array/string header. A load of any
+;;                 other type is a scalar field (a length, a capacity) and
+;;                 carries no level, which is what keeps arithmetic on such a
+;;                 field from refusing the global
+;;        level 3  a fixed-word ADDRESS of that descriptor: `gep <level 2>,
+;;                 <literal>`, and a further literal gep of one
+;;
+;;      and REFUSES `g` unless every occurrence of such a value in the program
+;;      is one of: a `Load` source, a `Mov` source, the base of a
+;;      literal-offset `Gep`, or an argument of a DIRECT call to a function of
+;;      this program -- which is not an escape but a hand-off, propagated to the
+;;      callee's parameter and checked there by the same rules, to a fixpoint.
+;;      Everything else refuses: a `StorePtr` through such an address, storing
+;;      one into memory, an indexed gep off one, a cast, a phi, a return, an
+;;      argument to an extern or an indirect call. So no instruction in the
+;;      program can write any of these words, and with (2) and (3) -- the only
+;;      pointers to these objects are the ones this chain forms -- no execution
+;;      can either.
+;;
+;;  (5) LIFETIME. A box and its descriptor are `tl_alloc` objects a cell writer
+;;      created, so a speculative preheader load of one of their words is always
+;;      safe wherever (1) holds: the loop's box was allocated before the loop
+;;      was entered and nothing in the loop replaces it (a region reset reclaims
+;;      only allocations made after its mark, and a cell writer's allocation
+;;      outlives its write by construction -- it IS the cell's value).
+;;
+;; WHAT IT DELIBERATELY DOES NOT DO. The packet also describes carrying the
+;; refinement through the per-callee mod-ref table, extending its rows from
+;; cells to "cell or box of g", so a loop could hoist across a call that writes
+;; SOME box as long as it is not g's. That form needs a per-call-site
+;; classification of which arguments carry a box pointer, and the LICM pointer
+;; environment cannot supply it soundly: an argument whose provenance the
+;; environment lost is indistinguishable from a box pointer, so every such site
+;; would have to contribute "any box" and the refinement would buy nothing. This
+;; form needs no argument classification at LICM time at all, because (4) has
+;; already followed every box pointer to every place it can reach, and it is
+;; strictly stronger wherever it applies: a callee that writes a frozen box does
+;; not exist. What it gives up is a global whose box words ARE written through a
+;; pointer somewhere; no row of the benchmark corpus has one on a hot chain.
+;;
+;; STALENESS. Like P18's mod-ref table and the call-memory summaries, this is a
+;; whole-program fact about the IR the summary bundle is built from. The passes
+;; that run afterwards rewrite and clone existing instructions; none of them
+;; MINTS a store through a newly formed global-rooted address (the inliner, the
+;; only pass that imports foreign instructions, has already run when the
+;; summaries are built), and a pass that clones such a store can only clone one
+;; that already existed -- which would have refused the global here.
+;; Level encoding: `((global + 1) * 8) + level`, so 0 means "no level" even for
+;; a symbol id of 0.
+(define (opt-global-frozen-encode [global : i64] [level : i64]) : i64
+  (+ (* (+ global 1) 8) level))
+
+(define (opt-global-frozen-encoded-global [encoded : i64]) : i64
+  (- (/ encoded 8) 1))
+
+(define (opt-global-frozen-encoded-level [encoded : i64]) : i64
+  (% encoded 8))
+
+(define (opt-global-frozen-with-level [encoded : i64] [level : i64]) : i64
+  (opt-global-frozen-encode (opt-global-frozen-encoded-global encoded) level))
+
+(define (opt-global-frozen-var-level [levels : opt_i64_i64_map.Map] [var : i64]) : i64
+  (match (opt_i64_i64_map.get (& levels) var)
+    [(opt_i64_i64_map.LookupFound encoded) encoded]
+    [(opt_i64_i64_map.LookupMissing) 0]))
+
+;; The code a VALUE carries: a leveled var, or the box pointer a candidate
+;; global's own operand is.
+(define (opt-global-frozen-value-level
+  [cand : opt_i64_i64_map.Map]
+  [levels : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var var) (opt-global-frozen-var-level levels var)]
+    [(ir.CompilerIrValue.Global name)
+      (if (opt_i64_i64_map.contains? (& cand) (ir.compiler-ir-symbol-id name))
+        (opt-global-frozen-encode (ir.compiler-ir-symbol-id name) 4)
+        0)]
+    [_ 0]))
+
+(defstruct OptGlobalFrozenLevels
+  (map opt_i64_i64_map.Map)
+  (vars OptI64List))
+
+(define (opt-global-frozen-levels-new [capacity : i64]) : OptGlobalFrozenLevels
+  (OptGlobalFrozenLevels
+    (opt_i64_i64_map.with-capacity capacity)
+    (OptI64List.Nil)))
+
+(define (opt-global-frozen-levels-bind
+  [levels : OptGlobalFrozenLevels (:consume)]
+  [var : i64]
+  [encoded : i64]) : OptGlobalFrozenLevels
+  (match levels
+    [(OptGlobalFrozenLevels map vars)
+      (if (= (opt-global-frozen-var-level map var) encoded)
+        (OptGlobalFrozenLevels map vars)
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut map) var encoded)
+          (OptGlobalFrozenLevels map (OptI64List.Cons var (box vars)))))]))
+
+;; The level a literal-offset `Gep` produces off a base carrying `encoded`: a
+;; box-word address stays one, a descriptor handle yields a descriptor-word
+;; address, and a descriptor-word address stays one.
+(define (opt-global-frozen-gep-level [encoded : i64]) : i64
+  (let
+    [level : i64 (opt-global-frozen-encoded-level encoded)]
+    (cond
+      [(= level 4) (opt-global-frozen-with-level encoded 1)]
+      [(= level 1) encoded]
+      [(= level 2) (opt-global-frozen-with-level encoded 3)]
+      [(= level 3) encoded]
+      [else 0])))
+
+;; A load through a box-word address yields the DESCRIPTOR HANDLE the box holds
+;; -- but only when the loaded type is an array/string header. Any other type is
+;; a scalar field of the box (a length, a capacity, an inline word), whose VALUE
+;; nothing can write through, so it carries no level and its arithmetic uses
+;; refuse nothing. This is the same type test opt-licm-gep-kind applies before
+;; it will call a handle a descriptor (opt-licm-array-header-type?), so LICM can
+;; never call a var frozen that this pass has not leveled.
+(define (opt-global-frozen-load-level
+  [type-segment-bases : i64]
+  [encoded : i64]
+  [ty : ast.AstType]) : i64
+  (let
+    [level : i64 (opt-global-frozen-encoded-level encoded)]
+    (if (and
+      (or (= level 1) (= level 4))
+      (opt-licm-array-header-type? type-segment-bases ty))
+      (opt-global-frozen-with-level encoded 2)
+      0)))
+
+;; One propagation step. The rules are exactly the ones opt-licm-gep-kind and
+;; opt-licm-provenance-state-instr apply at LICM time, so every var LICM later
+;; calls frozen is a var this pass has leveled and checked.
+(define (opt-global-frozen-levels-instr
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels (:consume)]
+  [instr : ir.CompilerIrInstr]) : OptGlobalFrozenLevels
+  (match instr
+    [(ir.CompilerIrInstr.Gep dst base offset _)
+      (match offset
+        [(ir.CompilerIrValue.I64 _)
+          (let
+            [next : i64
+              (opt-global-frozen-gep-level
+                (opt-global-frozen-value-level cand levels.map base))]
+            (if (= next 0)
+              levels
+              (opt-global-frozen-levels-bind levels dst next)))]
+        [_ levels])]
+    [(ir.CompilerIrInstr.Load dst src ty)
+      (let
+        [next : i64
+          (opt-global-frozen-load-level
+            type-segment-bases
+            (opt-global-frozen-value-level cand levels.map src)
+            ty)]
+        (if (= next 0)
+          levels
+          (opt-global-frozen-levels-bind levels dst next)))]
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (let
+        [next : i64 (opt-global-frozen-value-level cand levels.map src)]
+        (if (= next 0)
+          levels
+          (opt-global-frozen-levels-bind levels dst next)))]
+    [_ levels]))
+
+(define (opt-global-frozen-levels-seq-from
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels (:consume)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptGlobalFrozenLevels
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    levels
+    (opt-global-frozen-levels-seq-from
+      type-segment-bases
+      cand
+      (opt-global-frozen-levels-instr
+        type-segment-bases
+        cand
+        levels
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-global-frozen-levels-blocks
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels (:consume)]
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalFrozenLevels
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) levels]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-frozen-levels-blocks
+            type-segment-bases
+            cand
+            (opt-global-frozen-levels-seq-from
+              type-segment-bases
+              cand
+              levels
+              instrs
+              0)
+            (__tl-box-place rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-levels-blocks
+        type-segment-bases
+        cand
+        levels
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; --- the whole-program use check --------------------------------------------
+;; The one var this instruction may legally use at a leveled value: a Load's
+;; source, a Mov's source, or the base of a literal-offset Gep. A DIRECT call's
+;; arguments are handled separately (every var operand of a `Call`/`TailCall` IS
+;; an argument, so the whole instruction is allowed and the codes propagate to
+;; the callee's parameters).
+(define (opt-global-frozen-allowed-use [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Load _ src _)
+      (match src
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (match src
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (match offset
+        [(ir.CompilerIrValue.I64 _)
+          (match base
+            [(ir.CompilerIrValue.Var var) var]
+            [_ -1])]
+        [_ -1])]
+    [_ -1]))
+
+(define (opt-global-frozen-hand-off? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Call _ _ _ _) true]
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
+    [_ false]))
+
+(define (opt-global-frozen-refuse
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [encoded : i64]) : unit
+  (if (= encoded 0)
+    unit
+    (opt_i64_i64_map.insert-ref!
+      bad
+      (opt-global-frozen-encoded-global encoded)
+      1)))
+
+(define (opt-global-frozen-refuse-vars
+  [levels : opt_i64_i64_map.Map]
+  [vars : OptI64List]
+  [uses : opt_i64_i64_map.Map]
+  [allowed : i64]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match vars
+    [(OptI64List.Nil) unit]
+    [(OptI64List.Cons var rest)
+      (begin
+        (if (and (not (= var allowed)) (opt_i64_i64_map.contains? (& uses) var))
+          (opt-global-frozen-refuse
+            bad
+            (opt-global-frozen-var-level levels var))
+          unit)
+        (opt-global-frozen-refuse-vars
+          levels
+          (__tl-box-place rest)
+          uses
+          allowed
+          bad))]))
+
+;; Every `Global` this instruction mentions in a position that is NOT an
+;; allowed one. The existing whole-instruction global walk
+;; (opt-global-cell-scan-instr) is total over the IR instruction set, so a new
+;; form cannot slip a `Global` operand past this; the four forms with an allowed
+;; position are the ones handled here instead.
+(define (opt-global-frozen-escaped-refs
+  [scan : OptGlobalCellScan]
+  [instr : ir.CompilerIrInstr]) : OptGlobalCellScan
+  (match instr
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (match offset
+        [(ir.CompilerIrValue.I64 _) scan]
+        [_
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value scan base)
+            offset)])]
+    [(ir.CompilerIrInstr.Load _ _ _) scan]
+    [(ir.CompilerIrInstr.Mov _ _ _) scan]
+    [(ir.CompilerIrInstr.Call _ _ _ _) scan]
+    [(ir.CompilerIrInstr.TailCall _ _ _) scan]
+    [_ (opt-global-cell-scan-instr scan false instr)]))
+
+(define (opt-global-frozen-refuse-list
+  [names : OptI64List]
+  [cand : opt_i64_i64_map.Map]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match names
+    [(OptI64List.Nil) unit]
+    [(OptI64List.Cons name rest)
+      (begin
+        (if (opt_i64_i64_map.contains? (& cand) name)
+          (opt_i64_i64_map.insert-ref! bad name 1)
+          unit)
+        (opt-global-frozen-refuse-list (__tl-box-place rest) cand bad))]))
+
+;; --- the hand-off: a box pointer passed to a direct callee -------------------
+;; Parameter slot key. The index limit is the call-memory summary's, so the two
+;; whole-program analyses describe the same parameter positions.
+(define (opt-global-frozen-param-key [name : i64] [index : i64]) : i64
+  (+ (* (ir.compiler-ir-symbol-id name) (opt-call-memory-param-limit)) index))
+
+(define (opt-global-frozen-param-level
+  [params : (& params opt_i64_i64_map.Map)]
+  [name : i64]
+  [index : i64]) : i64
+  (match (opt_i64_i64_map.get params (opt-global-frozen-param-key name index))
+    [(opt_i64_i64_map.LookupFound encoded) encoded]
+    [(opt_i64_i64_map.LookupMissing) 0]))
+
+;; Propose that `name`'s parameter `index` may carry `encoded`. A slot that
+;; already carries a DIFFERENT code sees two different frozen objects, which
+;; this pass does not model, so both globals are refused; the slot keeps its
+;; first code, which only ever attributes a later violation to an
+;; already-refused global.
+(define (opt-global-frozen-param-propose
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [name : i64]
+  [index : i64]
+  [encoded : i64]) : bool
+  (let
+    [key : i64 (opt-global-frozen-param-key name index)]
+    (match (opt_i64_i64_map.get (& params) key)
+      [(opt_i64_i64_map.LookupFound existing)
+        (begin
+          (if (= existing encoded)
+            unit
+            (begin
+              (opt-global-frozen-refuse bad existing)
+              (opt-global-frozen-refuse bad encoded)))
+          false)]
+      [(opt_i64_i64_map.LookupMissing)
+        (begin
+          (opt_i64_i64_map.insert-ref! params key encoded)
+          true)])))
+
+(define (opt-global-frozen-args-propagate
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [levels : opt_i64_i64_map.Map]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]
+  [index : i64]
+  [changed : bool]) : bool
+  (if (>= index (opt-call-memory-param-limit))
+    changed
+    (match (opt-call-memory-arg-at args index)
+      [(ir.CompilerIrMaybeValue.No) changed]
+      [(ir.CompilerIrMaybeValue.Some value)
+        (let
+          [encoded : i64 (opt-global-frozen-value-level cand levels value)]
+          [next : bool
+            (if (= encoded 0)
+              changed
+              (if (not
+                (opt_i64_i64_map.contains?
+                  (& fnset)
+                  (ir.compiler-ir-symbol-id name)))
+                ;; An extern has no IR body for this walk to check, so a box
+                ;; pointer handed to one is out of reach and the global is
+                ;; refused.
+                (begin
+                  (opt-global-frozen-refuse bad encoded)
+                  changed)
+                (or
+                  (opt-global-frozen-param-propose
+                    params
+                    bad
+                    name
+                    index
+                    encoded)
+                  changed)))]
+          (opt-global-frozen-args-propagate
+            cand
+            fnset
+            levels
+            params
+            bad
+            name
+            args
+            (+ index 1)
+            next))])))
+
+(define (opt-global-frozen-check-instr
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]
+  [changed : bool]) : bool
+  (begin
+    ;; A DIRECT call needs no use check -- every var operand of one is an
+    ;; argument, which is an allowed position -- and neither does a function
+    ;; with no leveled var of its own.
+    (match levels.vars
+      [(OptI64List.Nil) unit]
+      [_
+        (if (opt-global-frozen-hand-off? instr)
+          unit
+          (let
+            [uses : opt_i64_i64_map.Map
+              (opt-collect-instr-uses (opt_i64_i64_map.with-capacity 4) instr)]
+            (opt-global-frozen-refuse-vars
+              levels.map
+              levels.vars
+              uses
+              (opt-global-frozen-allowed-use instr)
+              bad)))])
+    (match instr
+      [(ir.CompilerIrInstr.Call _ name args _)
+        (opt-global-frozen-args-propagate
+          cand
+          fnset
+          levels.map
+          params
+          bad
+          name
+          args
+          0
+          changed)]
+      [(ir.CompilerIrInstr.TailCall name args _)
+        (opt-global-frozen-args-propagate
+          cand
+          fnset
+          levels.map
+          params
+          bad
+          name
+          args
+          0
+          changed)]
+      [_ changed])))
+
+(define (opt-global-frozen-check-seq-from
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [changed : bool]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    changed
+    (opt-global-frozen-check-seq-from
+      cand
+      fnset
+      levels
+      params
+      bad
+      instrs
+      (+ index 1)
+      (opt-global-frozen-check-instr
+        cand
+        fnset
+        levels
+        params
+        bad
+        (ir.compiler-ir-instr-seq-ref instrs index)
+        changed))))
+
+(define (opt-global-frozen-check-blocks
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [levels : OptGlobalFrozenLevels]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [blocks : ir.CompilerIrBlockList]
+  [changed : bool]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) changed]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (opt-global-frozen-check-blocks
+        cand
+        fnset
+        levels
+        params
+        bad
+        (__tl-box-place rest)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-global-frozen-check-seq-from
+              cand
+              fnset
+              levels
+              params
+              bad
+              instrs
+              0
+              changed)]))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-check-blocks
+        cand
+        fnset
+        levels
+        params
+        bad
+        (ir.compiler-ir-block-seq-to-list seq)
+        changed)]))
+
+(define (opt-global-frozen-escape-seq-from
+  [scan : OptGlobalCellScan]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptGlobalCellScan
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    scan
+    (opt-global-frozen-escape-seq-from
+      (opt-global-frozen-escaped-refs
+        scan
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-global-frozen-escape-blocks
+  [scan : OptGlobalCellScan]
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalCellScan
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) scan]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-frozen-escape-blocks
+            (opt-global-frozen-escape-seq-from scan instrs 0)
+            (__tl-box-place rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-escape-blocks
+        scan
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The parameter vars a caller's argument codes seed.
+(define (opt-global-frozen-seed-params
+  [params : (& params opt_i64_i64_map.Map)]
+  [name : i64]
+  [list : ir.CompilerIrParamList]
+  [index : i64]
+  [levels : OptGlobalFrozenLevels (:consume)]) : OptGlobalFrozenLevels
+  (match (ir.compiler-ir-param-list-force-cons list)
+    [(ir.CompilerIrParamList.Nil) levels]
+    [(ir.CompilerIrParamList.Array seq)
+      (opt-global-frozen-seed-params
+        params
+        name
+        (ir.compiler-ir-param-seq-to-list seq)
+        index
+        levels)]
+    [(ir.CompilerIrParamList.Cons param rest)
+      (match param
+        [(ir.CompilerIrParam.Param _ _ var)
+          (let
+            [encoded : i64 (opt-global-frozen-param-level params name index)]
+            (opt-global-frozen-seed-params
+              params
+              name
+              (__tl-box-place rest)
+              (+ index 1)
+              (if (= encoded 0)
+                levels
+                (opt-global-frozen-levels-bind levels var encoded))))])]))
+
+;; One function, one round: seed its parameters from what callers pass, rebuild
+;; its level map (twice, so a definition listed after a use in block order is
+;; not missed -- a missed level is a missed CHECK, not a missed optimization),
+;; then check every use and hand the codes on to its own callees.
+(define (opt-global-frozen-round-function
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [func : ir.CompilerIrFunction]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [changed : bool]) : bool
+  (match func
+    [(ir.CompilerIrFunction.Function name param-list _ _ blocks)
+      (let
+        [escaped : OptGlobalCellScan
+          (opt-global-frozen-escape-blocks (opt-global-cell-scan-new) blocks)]
+        [seeded : OptGlobalFrozenLevels
+          (opt-global-frozen-seed-params
+            (& params)
+            name
+            param-list
+            0
+            (opt-global-frozen-levels-new 8))]
+        [levels : OptGlobalFrozenLevels
+          (opt-global-frozen-levels-blocks
+            type-segment-bases
+            cand
+            (opt-global-frozen-levels-blocks
+              type-segment-bases
+              cand
+              seeded
+              blocks)
+            blocks)]
+        (begin
+          (opt-global-frozen-refuse-list escaped.ref-list cand bad)
+          (opt-global-frozen-check-blocks
+            cand
+            fnset
+            levels
+            params
+            bad
+            blocks
+            changed)))]))
+
+(define (opt-global-frozen-round
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [functions : ir.CompilerIrFunctionList]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [changed : bool]) : bool
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) changed]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (opt-global-frozen-round
+        type-segment-bases
+        cand
+        fnset
+        (__tl-box-place rest)
+        params
+        bad
+        (opt-global-frozen-round-function
+          type-segment-bases
+          cand
+          fnset
+          func
+          params
+          bad
+          changed))]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-global-frozen-round
+        type-segment-bases
+        cand
+        fnset
+        (ir.compiler-ir-function-seq-to-list seq)
+        params
+        bad
+        changed)]))
+
+;; Rounds needed: one per call-graph edge a box pointer travels. The cap is a
+;; compile-time bound, and exhausting it DISCARDS the whole set rather than
+;; shipping a half-propagated one -- an unpropagated parameter is an unchecked
+;; use, so there is no safe partial answer.
+(define (opt-global-frozen-round-cap) : i64
+  8)
+
+(define (opt-global-frozen-fixpoint
+  [type-segment-bases : i64]
+  [cand : opt_i64_i64_map.Map]
+  [fnset : opt_i64_i64_map.Map]
+  [functions : ir.CompilerIrFunctionList]
+  [params : (&mut params opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [remaining : i64]) : bool
+  (if (<= remaining 0)
+    false
+    (if (opt-global-frozen-round
+      type-segment-bases
+      cand
+      fnset
+      functions
+      params
+      bad
+      false)
+      (opt-global-frozen-fixpoint
+        type-segment-bases
+        cand
+        fnset
+        functions
+        params
+        bad
+        (- remaining 1))
+      true)))
+
+;; --- P20: every writer of the cell stores a fresh, private box ---------------
+;;
+;; Proof obligations (2) and (3), checked at every site that can put a pointer
+;; in cell(g): the startup initializer's returned value (L2) and every
+;; `Store g, v` (L3). Both are walked in the IR rather than trusted from the
+;; lowering, so a future change to `lower-return-abi-value` cannot silently
+;; widen this class.
+;;
+;; The admitted shape is the one the lowering emits, and nothing else:
+;;
+;;     %r = call <builder>(..)      ; the value being assigned
+;;     %c = call tl_alloc(N)        ; lower-reserve-heap-storage
+;;     copy_bytes %c, %r, N         ; lower-copy-inline-aggregate-to-heap
+;;     store g, %c                  ; (or `return %c` in an initializer)
+;;
+;; (2) BOX IDENTITY. `%c` is a fresh `tl_alloc`, and every var a Gep or Mov
+;;     derives from it is used only to READ it, to be the DESTINATION of the
+;;     initializing `copy_bytes`, or as that one stored/returned value. So the
+;;     pointer reaches no call, no memory and no other cell: at the moment
+;;     cell(g) receives it, box(g) is an object nothing else names.
+;;
+;; (3) DESCRIPTOR PRIVACY. What the copy puts INSIDE the box may be a pointer --
+;;     for a `Vec` global, the `slots` descriptor. The copy's source must
+;;     therefore be the result of a direct call to an INERT function
+;;     (opt-global-frozen-inert-closure?: its whole closure mentions no global,
+;;     performs no `Store` and makes no indirect call), so everything that
+;;     closure built it allocated itself and it could neither have read another
+;;     global's box nor have published its own. `(set! g @h)` fails this at
+;;     once -- its copy source is `@h`, not a call result -- which is the
+;;     aliasing case the descriptor level has to exclude.
+(define (opt-global-frozen-tl-alloc-dst [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Call dst name _ _)
+      (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
+        dst
+        -1)]
+    [_ -1]))
+
+(defstruct OptGlobalFrozenWriterScan
+  ;; Vars written into some candidate cell, leveled with the global they feed.
+  (writes OptGlobalFrozenLevels)
+  ;; Vars defined by `call tl_alloc(...)`.
+  (allocs opt_i64_i64_map.Map)
+  ;; var -> 1 + the symbol id of the direct callee that produced it.
+  (call-dsts opt_i64_i64_map.Map))
+
+;; Bind a cell-write var, refusing both globals if the var already feeds a
+;; different cell: one allocation stored into two cells makes those two globals
+;; share a box, and a refusal earned by one would then not protect the other.
+(define (opt-global-frozen-write-bind
+  [writes : OptGlobalFrozenLevels (:consume)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [var : i64]
+  [encoded : i64]) : OptGlobalFrozenLevels
+  (let
+    [existing : i64 (opt-global-frozen-var-level writes.map var)]
+    (begin
+      (if (or (= existing 0) (= existing encoded))
+        unit
+        (begin
+          (opt-global-frozen-refuse bad existing)
+          (opt-global-frozen-refuse bad encoded)))
+      (opt-global-frozen-levels-bind writes var encoded))))
+
+(define (opt-global-frozen-writer-scan-new) : OptGlobalFrozenWriterScan
+  (OptGlobalFrozenWriterScan
+    (opt-global-frozen-levels-new 4)
+    (opt_i64_i64_map.with-capacity 8)
+    (opt_i64_i64_map.with-capacity 8)))
+
+;; `owner` is the global this function initializes, or -1: an initializer's
+;; RETURN is a cell write (L2), an ordinary function's `Store g` is (L3).
+(define (opt-global-frozen-writer-scan-instr
+  [cand : opt_i64_i64_map.Map]
+  [owner : i64]
+  [scan : OptGlobalFrozenWriterScan (:consume)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]) : OptGlobalFrozenWriterScan
+  (match scan
+    [(OptGlobalFrozenWriterScan writes allocs call-dsts)
+      (let
+        [alloc-dst : i64 (opt-global-frozen-tl-alloc-dst instr)]
+        [_alloc : unit
+          (if (< alloc-dst 0)
+            unit
+            (opt_i64_i64_map.insert-ref! (&mut allocs) alloc-dst 1))]
+        [_call : unit
+          (match instr
+            [(ir.CompilerIrInstr.Call dst name _ _)
+              (opt_i64_i64_map.insert-ref!
+                (&mut call-dsts)
+                dst
+                (+ (ir.compiler-ir-symbol-id name) 1))]
+            [_ unit])]
+        (match instr
+          [(ir.CompilerIrInstr.Store name value _)
+            (let
+              [id : i64 (ir.compiler-ir-symbol-id name)]
+              (if (not (opt_i64_i64_map.contains? (& cand) id))
+                (OptGlobalFrozenWriterScan writes allocs call-dsts)
+                (match value
+                  [(ir.CompilerIrValue.Var var)
+                    (OptGlobalFrozenWriterScan
+                      (opt-global-frozen-write-bind
+                        writes
+                        bad
+                        var
+                        (opt-global-frozen-encode id 1))
+                      allocs
+                      call-dsts)]
+                  [_
+                    (begin
+                      (opt_i64_i64_map.insert-ref! bad id 1)
+                      (OptGlobalFrozenWriterScan writes allocs call-dsts))])))]
+          [(ir.CompilerIrInstr.Return maybe)
+            (if (< owner 0)
+              (OptGlobalFrozenWriterScan writes allocs call-dsts)
+              (match maybe
+                [(ir.CompilerIrMaybeValue.Some value)
+                  (match value
+                    [(ir.CompilerIrValue.Var var)
+                      (OptGlobalFrozenWriterScan
+                        (opt-global-frozen-write-bind
+                          writes
+                          bad
+                          var
+                          (opt-global-frozen-encode owner 1))
+                        allocs
+                        call-dsts)]
+                    [_
+                      (begin
+                        (opt_i64_i64_map.insert-ref! bad owner 1)
+                        (OptGlobalFrozenWriterScan writes allocs call-dsts))])]
+                [(ir.CompilerIrMaybeValue.No)
+                  (begin
+                    (opt_i64_i64_map.insert-ref! bad owner 1)
+                    (OptGlobalFrozenWriterScan writes allocs call-dsts))]))]
+          ;; An initializer whose result is a tail callee's is not an
+          ;; allocation this pass can describe.
+          [(ir.CompilerIrInstr.TailCall _ _ _)
+            (begin
+              (if (< owner 0)
+                unit
+                (opt_i64_i64_map.insert-ref! bad owner 1))
+              (OptGlobalFrozenWriterScan writes allocs call-dsts))]
+          [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
+            (begin
+              (if (< owner 0)
+                unit
+                (opt_i64_i64_map.insert-ref! bad owner 1))
+              (OptGlobalFrozenWriterScan writes allocs call-dsts))]
+          [_ (OptGlobalFrozenWriterScan writes allocs call-dsts)]))]))
+
+(define (opt-global-frozen-writer-scan-seq-from
+  [cand : opt_i64_i64_map.Map]
+  [owner : i64]
+  [scan : OptGlobalFrozenWriterScan (:consume)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptGlobalFrozenWriterScan
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    scan
+    (opt-global-frozen-writer-scan-seq-from
+      cand
+      owner
+      (opt-global-frozen-writer-scan-instr
+        cand
+        owner
+        scan
+        bad
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      bad
+      instrs
+      (+ index 1))))
+
+(define (opt-global-frozen-writer-scan-blocks
+  [cand : opt_i64_i64_map.Map]
+  [owner : i64]
+  [scan : OptGlobalFrozenWriterScan (:consume)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalFrozenWriterScan
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) scan]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-frozen-writer-scan-blocks
+            cand
+            owner
+            (opt-global-frozen-writer-scan-seq-from
+              cand
+              owner
+              scan
+              bad
+              instrs
+              0)
+            bad
+            (__tl-box-place rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-writer-scan-blocks
+        cand
+        owner
+        scan
+        bad
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The closure of the written allocations under address-forming copies.
+(define (opt-global-frozen-derived-instr
+  [derived : OptGlobalFrozenLevels (:consume)]
+  [instr : ir.CompilerIrInstr]) : OptGlobalFrozenLevels
+  (match instr
+    [(ir.CompilerIrInstr.Gep dst base _ _)
+      (let
+        [encoded : i64
+          (match base
+            [(ir.CompilerIrValue.Var var)
+              (opt-global-frozen-var-level derived.map var)]
+            [_ 0])]
+        (if (= encoded 0)
+          derived
+          (opt-global-frozen-levels-bind derived dst encoded)))]
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (let
+        [encoded : i64
+          (match src
+            [(ir.CompilerIrValue.Var var)
+              (opt-global-frozen-var-level derived.map var)]
+            [_ 0])]
+        (if (= encoded 0)
+          derived
+          (opt-global-frozen-levels-bind derived dst encoded)))]
+    [_ derived]))
+
+(define (opt-global-frozen-derived-seq-from
+  [derived : OptGlobalFrozenLevels (:consume)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptGlobalFrozenLevels
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    derived
+    (opt-global-frozen-derived-seq-from
+      (opt-global-frozen-derived-instr
+        derived
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-global-frozen-derived-blocks
+  [derived : OptGlobalFrozenLevels (:consume)]
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalFrozenLevels
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) derived]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-frozen-derived-blocks
+            (opt-global-frozen-derived-seq-from derived instrs 0)
+            (__tl-box-place rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-derived-blocks
+        derived
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The one var this instruction may legally use at the fresh box: a Gep base, a
+;; Mov/Load source, a `CopyBytes` DESTINATION, or the stored/returned value.
+;; Those are the READS of the box plus the copy that fills it and the hand-off
+;; to the cell; anything else -- a call argument, a `StorePtr` through it, a
+;; stored VALUE, a `CopyBytes` source, a cast, a phi -- would let the pointer
+;; escape and is refused.
+(define (opt-global-frozen-writer-allowed-use [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Gep _ base _ _)
+      (match base
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (match src
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Load _ src _)
+      (match src
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.CopyBytes dst _ _)
+      (match dst
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Store _ value _)
+      (match value
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -1])]
+    [(ir.CompilerIrInstr.Return maybe)
+      (match maybe
+        [(ir.CompilerIrMaybeValue.Some value)
+          (match value
+            [(ir.CompilerIrValue.Var var) var]
+            [_ -1])]
+        [(ir.CompilerIrMaybeValue.No) -1])]
+    [_ -1]))
+
+;; The copy that fills a fresh box: its SOURCE decides whether what lands
+;; inside is private (obligation 3).
+(define (opt-global-frozen-writer-copy-ok
+  [functions : ir.CompilerIrFunctionList]
+  [derived : OptGlobalFrozenLevels]
+  [call-dsts : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.CopyBytes dst src _)
+      (let
+        [encoded : i64
+          (match dst
+            [(ir.CompilerIrValue.Var var)
+              (opt-global-frozen-var-level derived.map var)]
+            [_ 0])]
+        (if (= encoded 0)
+          unit
+          (let
+            [callee : i64
+              (match src
+                [(ir.CompilerIrValue.Var var)
+                  (match (opt_i64_i64_map.get (& call-dsts) var)
+                    [(opt_i64_i64_map.LookupFound encoded-callee)
+                      (- encoded-callee 1)]
+                    [(opt_i64_i64_map.LookupMissing) -1])]
+                [_ -1])]
+            (if (and
+              (>= callee 0)
+              (opt-global-frozen-inert-closure? functions callee))
+              unit
+              (opt-global-frozen-refuse bad encoded)))))]
+    [_ unit]))
+
+(define (opt-global-frozen-writer-uses-seq-from
+  [functions : ir.CompilerIrFunctionList]
+  [derived : OptGlobalFrozenLevels]
+  [call-dsts : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      [uses : opt_i64_i64_map.Map
+        (opt-collect-instr-uses (opt_i64_i64_map.with-capacity 4) instr)]
+      (begin
+        (opt-global-frozen-refuse-vars
+          derived.map
+          derived.vars
+          uses
+          (opt-global-frozen-writer-allowed-use instr)
+          bad)
+        (opt-global-frozen-writer-copy-ok functions derived call-dsts instr bad)
+        (opt-global-frozen-writer-uses-seq-from
+          functions
+          derived
+          call-dsts
+          instrs
+          (+ index 1)
+          bad)))))
+
+(define (opt-global-frozen-writer-uses-blocks
+  [functions : ir.CompilerIrFunctionList]
+  [derived : OptGlobalFrozenLevels]
+  [call-dsts : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-global-frozen-writer-uses-seq-from
+              functions
+              derived
+              call-dsts
+              instrs
+              0
+              bad)])
+        (opt-global-frozen-writer-uses-blocks
+          functions
+          derived
+          call-dsts
+          (__tl-box-place rest)
+          bad))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-frozen-writer-uses-blocks
+        functions
+        derived
+        call-dsts
+        (ir.compiler-ir-block-seq-to-list seq)
+        bad)]))
+
+;; Every write var must be a `tl_alloc` result; anything else is not provably a
+;; fresh object.
+(define (opt-global-frozen-writes-are-allocs
+  [writes : opt_i64_i64_map.Map]
+  [vars : OptI64List]
+  [allocs : opt_i64_i64_map.Map]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match vars
+    [(OptI64List.Nil) unit]
+    [(OptI64List.Cons var rest)
+      (begin
+        (if (opt_i64_i64_map.contains? (& allocs) var)
+          unit
+          (opt-global-frozen-refuse
+            bad
+            (opt-global-frozen-var-level writes var)))
+        (opt-global-frozen-writes-are-allocs
+          writes
+          (__tl-box-place rest)
+          allocs
+          bad))]))
+
+(define (opt-global-frozen-writer-check-function
+  [functions : ir.CompilerIrFunctionList]
+  [cand : opt_i64_i64_map.Map]
+  [owner : i64]
+  [func : ir.CompilerIrFunction]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (let
+        [scan : OptGlobalFrozenWriterScan
+          (opt-global-frozen-writer-scan-blocks
+            cand
+            owner
+            (opt-global-frozen-writer-scan-new)
+            bad
+            blocks)]
+        (match scan.writes.vars
+          [(OptI64List.Nil) unit]
+          [_
+            (begin
+              (opt-global-frozen-writes-are-allocs
+                scan.writes.map
+                scan.writes.vars
+                scan.allocs
+                bad)
+              (opt-global-frozen-writer-uses-blocks
+                functions
+                (opt-global-frozen-derived-blocks
+                  (opt-global-frozen-derived-blocks scan.writes blocks)
+                  blocks)
+                scan.call-dsts
+                blocks
+                bad))]))]))
+
+;; --- P20: the initializer's call closure -------------------------------------
+;;
+;; "Inert" is what obligation (3) asks of whatever built the value a fresh box
+;; is copied from: a closure that mentions no global at all cannot have read
+;; another global's box; one that performs no `Store` cannot have published a
+;; pointer into a cell; one that makes no indirect call cannot reach code this
+;; walk has not seen. An EXTERN callee has no IR body, so it can neither name a
+;; global nor call back into the program; the allocator it usually is returns
+;; fresh storage by definition.
+(defstruct OptGlobalFrozenInert
+  (ok? bool)
+  (budget i64))
+
+(define (opt-global-frozen-inert-budget) : i64
+  256)
+
+(define (opt-global-frozen-find-function
+  [functions : ir.CompilerIrFunctionList]
+  [name : i64]) : OptMaybeFunction
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) (OptMaybeFunction.No)]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function func-name _ _ _ _)
+          (if (=
+            (ir.compiler-ir-symbol-id func-name)
+            (ir.compiler-ir-symbol-id name))
+            (OptMaybeFunction.Some func)
+            (opt-global-frozen-find-function (__tl-box-place rest) name))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-global-frozen-find-function
+        (ir.compiler-ir-function-seq-to-list seq)
+        name)]))
+
+;; Instruction forms that transfer control somewhere this walk cannot resolve.
+(define (opt-global-frozen-opaque-call? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult _) true]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
+    [(ir.CompilerIrInstr.SpmdCall _) true]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) true]
+    [(ir.CompilerIrInstr.Syscall _ _) true]
+    [_ false]))
+
+(define (opt-global-frozen-inert-instr
+  [functions : ir.CompilerIrFunctionList]
+  [visited : (&mut visited opt_i64_i64_map.Map)]
+  [state : OptGlobalFrozenInert]
+  [instr : ir.CompilerIrInstr]) : OptGlobalFrozenInert
+  (if (not state.ok?)
+    state
+    (if (opt-global-frozen-opaque-call? instr)
+      (OptGlobalFrozenInert false state.budget)
+      (match instr
+        [(ir.CompilerIrInstr.Store _ _ _)
+          (OptGlobalFrozenInert false state.budget)]
+        [(ir.CompilerIrInstr.Call _ name _ _)
+          (opt-global-frozen-inert-function functions visited state name)]
+        [(ir.CompilerIrInstr.TailCall name _ _)
+          (opt-global-frozen-inert-function functions visited state name)]
+        [_ state]))))
+
+(define (opt-global-frozen-inert-seq-from
+  [functions : ir.CompilerIrFunctionList]
+  [visited : (&mut visited opt_i64_i64_map.Map)]
+  [state : OptGlobalFrozenInert]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptGlobalFrozenInert
+  (if (or (not state.ok?) (>= index (ir.compiler-ir-instr-seq-count instrs)))
+    state
+    (opt-global-frozen-inert-seq-from
+      functions
+      visited
+      (opt-global-frozen-inert-instr
+        functions
+        visited
+        state
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-global-frozen-inert-blocks
+  [functions : ir.CompilerIrFunctionList]
+  [visited : (&mut visited opt_i64_i64_map.Map)]
+  [state : OptGlobalFrozenInert]
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalFrozenInert
+  (if (not state.ok?)
+    state
+    (match blocks
+      [(ir.CompilerIrBlockList.Nil) state]
+      [(ir.CompilerIrBlockList.Cons block rest)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-global-frozen-inert-blocks
+              functions
+              visited
+              (opt-global-frozen-inert-seq-from
+                functions
+                visited
+                state
+                instrs
+                0)
+              (__tl-box-place rest))])]
+      [(ir.CompilerIrBlockList.Array seq)
+        (opt-global-frozen-inert-blocks
+          functions
+          visited
+          state
+          (ir.compiler-ir-block-seq-to-list seq))])))
+
+(define (opt-global-frozen-inert-function
+  [functions : ir.CompilerIrFunctionList]
+  [visited : (&mut visited opt_i64_i64_map.Map)]
+  [state : OptGlobalFrozenInert]
+  [name : i64]) : OptGlobalFrozenInert
+  (cond
+    [(not state.ok?) state]
+    [(opt_i64_i64_map.contains? (& visited) (ir.compiler-ir-symbol-id name))
+      state]
+    [(<= state.budget 0) (OptGlobalFrozenInert false 0)]
+    [else
+      (begin
+        (opt_i64_i64_map.insert-ref! visited (ir.compiler-ir-symbol-id name) 1)
+        (match (opt-global-frozen-find-function functions name)
+          ;; Not in the program's function list: an extern. No IR body, so it
+          ;; names no global, performs no `Store`, and calls nothing back.
+          [(OptMaybeFunction.No) state]
+          [(OptMaybeFunction.Some func)
+            (match func
+              [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+                (let
+                  [refs : OptGlobalCellScan
+                    (opt-global-cell-scan-blocks
+                      (opt-global-cell-scan-new)
+                      blocks
+                      false)]
+                  [addrs : opt_i64_i64_map.Map
+                    (opt-const-globals-disq-blocks
+                      (opt_i64_i64_map.with-capacity 4)
+                      blocks)]
+                  (if (or
+                    (> (opt_i64_i64_map.len (& refs.refs)) 0)
+                    (> (opt_i64_i64_map.len (& addrs)) 0))
+                    (OptGlobalFrozenInert false state.budget)
+                    (opt-global-frozen-inert-blocks
+                      functions
+                      visited
+                      (OptGlobalFrozenInert true (- state.budget 1))
+                      blocks)))])]))]))
+
+(define (opt-global-frozen-inert-closure?
+  [functions : ir.CompilerIrFunctionList]
+  [name : i64]) : bool
+  (let
+    [visited : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 16)]
+    [state : OptGlobalFrozenInert
+      (opt-global-frozen-inert-function
+        functions
+        (&mut visited)
+        (OptGlobalFrozenInert true (opt-global-frozen-inert-budget))
+        name)]
+    state.ok?))
+
+;; --- P20: candidate selection and the finished set ---------------------------
+(defstruct OptGlobalFrozenCandidates
+  ;; global symbol id -> 1 + the symbol id of its `RuntimeGlobal` initializer.
+  (map opt_i64_i64_map.Map)
+  (names OptI64List)
+  ;; initializer symbol id -> 1 + the global it initializes. A collision means
+  ;; two globals share an initializer, which this pass does not model.
+  (inits opt_i64_i64_map.Map))
+
+(define (opt-global-frozen-candidates-fill
+  [globals : ir.CompilerIrGlobalSeq]
+  [disq : opt_i64_i64_map.Map]
+  [cand : OptGlobalFrozenCandidates (:consume)]
+  [index : i64]) : OptGlobalFrozenCandidates
+  (if (>= index globals.len)
+    cand
+    (match (ir.compiler-ir-global-seq-ref globals index)
+      [(ir.CompilerIrGlobal.Global name _ value)
+        (match value
+          [(ir.CompilerIrValue.RuntimeGlobal init)
+            (let
+              [id : i64 (ir.compiler-ir-symbol-id name)]
+              [init-id : i64 (ir.compiler-ir-symbol-id init)]
+              (if (opt_i64_i64_map.contains? (& disq) id)
+                (opt-global-frozen-candidates-fill
+                  globals
+                  disq
+                  cand
+                  (+ index 1))
+                (match cand
+                  [(OptGlobalFrozenCandidates map names inits)
+                    (if (opt_i64_i64_map.contains? (& inits) init-id)
+                      (opt-global-frozen-candidates-fill
+                        globals
+                        disq
+                        (OptGlobalFrozenCandidates map names inits)
+                        (+ index 1))
+                      (begin
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut map)
+                          id
+                          (+ init-id 1))
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut inits)
+                          init-id
+                          (+ id 1))
+                        (opt-global-frozen-candidates-fill
+                          globals
+                          disq
+                          (OptGlobalFrozenCandidates
+                            map
+                            (OptI64List.Cons id (box names))
+                            inits)
+                          (+ index 1))))])))]
+          [_ (opt-global-frozen-candidates-fill globals disq cand (+ index 1))])])))
+
+;; One walk over the program: every function's cell writes, plus the
+;; initializer return of the function that is some candidate's initializer.
+(define (opt-global-frozen-writer-scan-functions
+  [functions : ir.CompilerIrFunctionList]
+  [all : ir.CompilerIrFunctionList]
+  [cand : OptGlobalFrozenCandidates]
+  [seen : (&mut seen opt_i64_i64_map.Map)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) unit]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (begin
+        (match func
+          [(ir.CompilerIrFunction.Function name _ _ _ _)
+            (let
+              [owner : i64
+                (match (opt_i64_i64_map.get
+                  (& cand.inits)
+                  (ir.compiler-ir-symbol-id name))
+                  [(opt_i64_i64_map.LookupFound encoded) (- encoded 1)]
+                  [(opt_i64_i64_map.LookupMissing) -1])]
+              (begin
+                (if (< owner 0)
+                  unit
+                  (opt_i64_i64_map.insert-ref! seen owner 1))
+                (opt-global-frozen-writer-check-function
+                  all
+                  cand.map
+                  owner
+                  func
+                  bad)))])
+        (opt-global-frozen-writer-scan-functions
+          (__tl-box-place rest)
+          all
+          cand
+          seen
+          bad))]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-global-frozen-writer-scan-functions
+        (ir.compiler-ir-function-seq-to-list seq)
+        all
+        cand
+        seen
+        bad)]))
+
+(define (opt-global-frozen-admit
+  [cand : OptGlobalFrozenCandidates]
+  [bad : opt_i64_i64_map.Map]
+  [seen : opt_i64_i64_map.Map]
+  [names : OptI64List]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match names
+    [(OptI64List.Nil) out]
+    [(OptI64List.Cons id rest)
+      (let
+        [next : opt_i64_i64_map.Map out]
+        (begin
+          ;; `seen` is what makes a missing initializer a refusal rather than a
+          ;; silent pass: the backend's startup store is the one cell write the
+          ;; IR does not carry, so an initializer this walk never saw is a
+          ;; writer it never checked.
+          (if (and
+            (not (opt_i64_i64_map.contains? (& bad) id))
+            (opt_i64_i64_map.contains? (& seen) id))
+            (opt_i64_i64_map.insert-ref! (&mut next) id 1)
+            unit)
+          (opt-global-frozen-admit cand bad seen (__tl-box-place rest) next)))]))
+
+;; Build the frozen set, or decline. `disq` is the program's `GlobalAddr` set
+;; unioned with its `Store` targets, both already computed for the global cell
+;; summary; only the `GlobalAddr` part is a refusal here, so the set is
+;; intersected back with the store targets that pass the writer check. The
+;; function-count gate is the same one every other whole-program summary
+;; applies, so a big program pays nothing for a set its LICM would not consult.
+(define (opt-global-frozen-build
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : ir.CompilerIrFunctionList]
+  [addr-taken : opt_i64_i64_map.Map]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (if (>
+    (opt-function-list-count functions)
+    (opt-loop-bce-summary-function-limit))
+    (opt_i64_i64_map.with-capacity 1)
+    (let
+      [cand : OptGlobalFrozenCandidates
+        (opt-global-frozen-candidates-fill
+          globals
+          addr-taken
+          (OptGlobalFrozenCandidates
+            (opt_i64_i64_map.with-capacity capacity)
+            (OptI64List.Nil)
+            (opt_i64_i64_map.with-capacity capacity))
+          0)]
+      (if (= (opt_i64_i64_map.len (& cand.map)) 0)
+        (opt_i64_i64_map.with-capacity 1)
+        (let
+          [bad : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+          [seen : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+          [param-levels : opt_i64_i64_map.Map
+            (opt_i64_i64_map.with-capacity capacity)]
+          [fixed? : bool
+            (opt-global-frozen-fixpoint
+              type-segment-bases
+              cand.map
+              (opt-call-memory-function-set
+                functions
+                (opt_i64_i64_map.with-capacity capacity))
+              functions
+              (&mut param-levels)
+              (&mut bad)
+              (opt-global-frozen-round-cap))]
+          [_writers : unit
+            (opt-global-frozen-writer-scan-functions
+              functions
+              functions
+              cand
+              (&mut seen)
+              (&mut bad))]
+          (if (not fixed?)
+            (opt_i64_i64_map.with-capacity 1)
+            (opt-global-frozen-admit
+              cand
+              bad
+              seen
+              cand.names
+              (opt_i64_i64_map.with-capacity capacity))))))))
+
 (define (opt-global-cell-summary-build
+  [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionList]) : OptGlobalCellSummary
   (let
@@ -92434,18 +97331,34 @@
           addr-taken
           type-index
           types
-          (opt-global-cell-word-count globals addr-taken 0 0))))))
+          (opt-global-cell-word-count globals addr-taken 0 0)
+          (opt-global-mod-ref-build
+            globals
+            functions
+            scan.stores
+            addr-taken
+            capacity)
+          (opt-global-frozen-build
+            type-segment-bases
+            globals
+            functions
+            addr-taken
+            capacity))))))
 
 ;; --- condition (a): stores a later read can OBSERVE ---------------------------
 ;;
 ;; The pass hoists ONE entry-block load of `@G` and rewrites every in-function
 ;; `@G` read to it, so it is correct exactly when no `set! G` this function
 ;; performs can be observed by one of those reads. Conditions (b) and (c)
-;; already exclude every OTHER writer -- no address-taken cell can be reached
-;; through a pointer, and a function containing any RETURNING call is rejected
-;; outright, while the non-returning trap calls (c) still admits can make no
-;; store observable at all (nothing runs after them) --
-;; so only this function's own `Store G` instructions matter. A `Store G` at
+;; already exclude every OTHER writer of G -- no address-taken cell can be
+;; reached through a pointer, and every returning call whose mod-ref row names
+;; G's cell refuses G outright, while the non-returning trap calls (c) still
+;; ignores can make no store observable at all (nothing runs after them) --
+;; so only this function's own `Store G` instructions matter. A returning call
+;; that (c) ADMITS for G writes no cell of G's, so it cannot make one of this
+;; function's stores observable either; a callee is free to READ G, but this
+;; pass rewrites only THIS function's operands, so what a callee reads out of
+;; the cell is exactly what it read before. A `Store G` at
 ;; block B, instruction index k, is observable exactly when some `@G` read runs
 ;; after it on some execution path, i.e. when either
 ;;   (i)  B reads `@G` at an index > k, or
@@ -92919,8 +97832,37 @@
 ;; unsound; the legality conditions (a)/(b)/(c) are unchanged and this filter
 ;; only ever declines one.
 ;;
-;; The index build is paid only when some referenced cell has exactly one
-;; reference, which is the only question the loop set can change.
+;; A function that CONTAINS A RETURNING CALL pays more, and pays it at every N.
+;; Its promoted copy does not merely span the function, it spans a CALL, so the
+;; only registers that can hold it are the callee-saved GP file -- the same
+;; register-file argument opt-licm-global-promote-live-in-budget prices at loop
+;; scope. The push/pop pair, and the stack realignment that can come with it,
+;; is then paid on EVERY activation, while the reads it replaces are paid only
+;; on the paths actually taken; N static reads on straight-line or conditional
+;; paths are at most N dynamic loads and usually fewer. A read inside a loop is
+;; the one shape that repays it, because there the static read is many dynamic
+;; loads per activation. So a call-bearing function promotes exactly the cells
+;; the loop set names, whatever N is.
+;;
+;; MEASURED, benchmarks/gvn_table with condition (c) per cell and this rule
+;; withdrawn (`calls?` forced false), against target/wsl/ic-p20.tsv:
+;;   gvn-table-invalidate-var  +7,782,390 Ir. Two straight-line reads of
+;;     `gvn_table` (blocks if_then.12 and while_exit.16, neither in a loop)
+;;     become one entry load; the entry block already held a preheader load of
+;;     the same cell, so the activation pays a second load, one more push/pop
+;;     (%rbp) and an 8-byte realignment -- five instructions x 1,556,478 calls,
+;;     to the instruction.
+;;   gvn-step-load +779,100 Ir (three reads of `gvn_epoch`, all behind
+;;     branches), gvn-run-block +563,444 Ir (three reads of `gvn_hash_prime`,
+;;     all in the loop's EXIT block, which runs once per activation).
+;;   gvn-root-of-var -318,122 Ir and gvn-table-clear -116,186 Ir are the two
+;;     that win, and gvn-root-of-var is exactly the loop shape: its second
+;;     `gvn_fact_cap` read sits in `while_header.0`.
+;; Whole benchmark: 964,017,000 -> 972,707,626 (+0.90%) without the rule.
+;;
+;; The index build is paid when some referenced cell has exactly one reference
+;; or the function contains a returning call, which are the two questions the
+;; loop set can change.
 ;; Mark every block covered by a back edge's [target, source] span. One
 ;; difference-array pass plus a prefix sum, linear in blocks plus edges.
 (define (opt-global-cell-loop-marks!
@@ -93014,14 +97956,52 @@
 (define (opt-global-cell-promotion-pays?
   [counts : opt_i64_i64_map.Map]
   [loop-refs : opt_i64_i64_map.Map]
+  [calls? : bool]
   [name : i64]) : bool
-  (if (not (opt-global-cell-single-ref? counts name))
-    true
-    (opt_i64_i64_map.contains? (& loop-refs) name)))
+  (if (or calls? (opt-global-cell-single-ref? counts name))
+    (opt_i64_i64_map.contains? (& loop-refs) name)
+    true))
 
+;; PRESSURE, asked only of a call-bearing function. Its entry copy is live from
+;; entry across every call the function makes, so the only registers it can
+;; occupy are the callee-saved GP file -- and it competes there with the values
+;; that also enter from outside, which for a FUNCTION are exactly its used
+;; parameters. That is the same quantity, the same proxy and the same budget the
+;; loop-scope promotion prices its own copies with: opt-unroll-mb-live-in-count
+;; over the region's blocks (uses minus defs, so a parameter counts and a local
+;; def does not) against opt-licm-global-promote-live-in-budget, whose "WHY SIX"
+;; note is the register-file argument in full. Over the budget the copy is a
+;; frame slot rather than a register, which costs a store at entry and makes
+;; every use a frame load instead of a rip-relative one, for no instruction
+;; saved. tests/integration/licm_memclean_global_promote.tl's `pressured-scan`
+;; is the pinned refusal -- twelve live-in parameters around a memory-clean
+;; call, the same loop the loop-scope tier refuses on this same budget, which
+;; the asm-shape gate reads as two surviving cell reads.
+(define (opt-global-cell-entry-fits? [blocks : ir.CompilerIrBlockList]) : bool
+  (<=
+    (opt-unroll-mb-live-in-count blocks)
+    (opt-licm-global-promote-live-in-budget)))
+
+;; Does this function contain a RETURNING call at all? Condition (c) asks which
+;; CELLS those calls write; profitability asks only whether one exists, because
+;; that is what makes the promoted copy callee-saved.
+(define (opt-global-cell-any-call? [scan : OptGlobalCellScan]) : bool
+  (or
+    scan.call-any
+    (match scan.callee-list
+      [(OptI64List.Nil) false]
+      [(OptI64List.Cons _ _) true])))
+
+;; `call-writes` is condition (c): the cells this function's returning calls
+;; may write (opt-global-cell-call-writes). A cell inside that set keeps
+;; per-use semantics exactly as a stored (a) or address-taken (b) one does.
+;; `calls?` is the same calls' PRICE rather than their legality -- see
+;; opt-global-cell-promotion-pays?.
 (define (opt-global-cell-plan-build
   [cell : OptGlobalCellSummary]
   [stores : opt_i64_i64_map.Map]
+  [call-writes : i64]
+  [calls? : bool]
   [counts : opt_i64_i64_map.Map]
   [loop-refs : opt_i64_i64_map.Map]
   [refs : OptI64List]
@@ -93034,10 +98014,13 @@
       (if (or
         (opt_i64_i64_map.contains? (& stores) name)
         (opt_i64_i64_map.contains? (& cell.addr-taken) name)
-        (not (opt-global-cell-promotion-pays? counts loop-refs name)))
+        (opt-global-cell-writes-refused? cell call-writes name)
+        (not (opt-global-cell-promotion-pays? counts loop-refs calls? name)))
         (opt-global-cell-plan-build
           cell
           stores
+          call-writes
+          calls?
           counts
           loop-refs
           (__tl-box-place rest)
@@ -93049,6 +98032,8 @@
             (opt-global-cell-plan-build
               cell
               stores
+              call-writes
+              calls?
               counts
               loop-refs
               (__tl-box-place rest)
@@ -93066,6 +98051,8 @@
                   (opt-global-cell-plan-build
                     cell
                     stores
+                    call-writes
+                    calls?
                     counts
                     loop-refs
                     (__tl-box-place rest)
@@ -93075,6 +98062,8 @@
               (opt-global-cell-plan-build
                 cell
                 stores
+                call-writes
+                calls?
                 counts
                 loop-refs
                 (__tl-box-place rest)
@@ -93624,9 +98613,12 @@
 
 ;; Load each hoistable global's cell once at entry and rewrite its uses. The
 ;; pass is a no-op (returning the function by reference) when the program has
-;; no word-cell candidates, when a call-family instruction remains (c), when
-;; no global is referenced, or when every referenced global is excluded by
-;; (a)/(b)/cell-width.
+;; no word-cell candidates, when no global is referenced, when a returning call
+;; may write ANY cell (c) -- the whole-function refusal, which is also every
+;; call's verdict in a program with no mod-ref table -- when a call-bearing
+;; function is already over the live-in budget (opt-global-cell-entry-fits?),
+;; or when every referenced global is excluded by (a)/(b)/(c)/cell-width or
+;; price.
 (define (opt-global-cell-function
   [summaries : OptLoopBceSummaries]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
@@ -93643,53 +98635,64 @@
                 blocks
                 true)]
             (cond
-              [scan.calls func]
               [(match scan.ref-list
                   [(OptI64List.Nil) true]
                   [(OptI64List.Cons _ _) false])
                 func]
               [else
                 (let
-                  [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-                  [_seed : unit (set! (array-ref frame-cell 0) frame)]
-                  [planned : OptGlobalCellPlan
-                    (opt-global-cell-plan-build
-                      cell
-                      (opt-global-cell-observable-stores blocks)
-                      scan.refs
-                      (if (opt-global-cell-any-single-ref?
-                        scan.refs
-                        scan.ref-list)
-                        (opt-global-cell-loop-refs
-                          blocks
-                          (opt_i64_i64_map.with-capacity 8))
-                        (opt_i64_i64_map.with-capacity 1))
-                      scan.ref-list
-                      frame-cell
-                      (opt_i64_i64_map.with-capacity 8)
-                      0)]
-                  (if (= planned.count 0)
+                  [call-writes : i64 (opt-global-cell-call-writes cell scan)]
+                  [calls? : bool (opt-global-cell-any-call? scan)]
+                  (if (or
+                    (opt-global-mod-ref-any? call-writes)
+                    (and calls? (not (opt-global-cell-entry-fits? blocks))))
                     func
                     (let
-                      [hoists : (__tl_dyn-array ir.CompilerIrInstr)
-                        (array.make-array ir.CompilerIrInstr planned.count)]
-                      [_filled : i64
-                        (opt-global-cell-hoists-fill!
-                          planned.map
+                      [frame-cell : (__tl_dyn-array i64)
+                        (array.make-array i64 1)]
+                      [_seed : unit (set! (array-ref frame-cell 0) frame)]
+                      [planned : OptGlobalCellPlan
+                        (opt-global-cell-plan-build
                           cell
+                          (opt-global-cell-observable-stores blocks)
+                          call-writes
+                          calls?
+                          scan.refs
+                          (if (or
+                            calls?
+                            (opt-global-cell-any-single-ref?
+                              scan.refs
+                              scan.ref-list))
+                            (opt-global-cell-loop-refs
+                              blocks
+                              (opt_i64_i64_map.with-capacity 8))
+                            (opt_i64_i64_map.with-capacity 1))
                           scan.ref-list
-                          hoists
+                          frame-cell
+                          (opt_i64_i64_map.with-capacity 8)
                           0)]
-                      (ir.CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        (array-ref frame-cell 0)
-                        (opt-global-cell-rewrite-blocks
-                          planned.map
-                          hoists
-                          planned.count
-                          blocks)))))]))))]))
+                      (if (= planned.count 0)
+                        func
+                        (let
+                          [hoists : (__tl_dyn-array ir.CompilerIrInstr)
+                            (array.make-array ir.CompilerIrInstr planned.count)]
+                          [_filled : i64
+                            (opt-global-cell-hoists-fill!
+                              planned.map
+                              cell
+                              scan.ref-list
+                              hoists
+                              0)]
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            (array-ref frame-cell 0)
+                            (opt-global-cell-rewrite-blocks
+                              planned.map
+                              hoists
+                              planned.count
+                              blocks)))))))]))))]))
 
 (define (optimize-program [program : ir.CompilerIrProgram]) : ir.CompilerIrProgram
   (optimize-program-with-level program (compiler-optimize-default-level)))

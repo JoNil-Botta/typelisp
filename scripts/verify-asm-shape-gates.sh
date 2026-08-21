@@ -488,6 +488,49 @@ check_fallthrough_jmp_chain() {
     done
 }
 
+# Backend block layout (#block-layout). Two rewrites over an emitted function's
+# assembly, and the refusal that keeps everything else in IR order.
+check_block_layout() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "block_layout_$_suffix"             tests/integration/block_layout.tl "$_target")
+
+        _sink=$(function_body "$_asm" _tl_block_layout_sink_probe)
+        _dup=$(function_body "$_asm" _tl_block_layout_dup_probe)
+        _keep=$(function_body "$_asm" _tl_block_layout_keep_probe)
+
+        for _body in "$_sink" "$_dup" "$_keep"; do
+            assert_no_fallthrough_jmp "$_body" "block-layout-$_target"
+        done
+
+        # SINK. The checked read's `-1` arm is predicted cold -- `i < 0` false,
+        # and `i >= n` bailing to the same arm inherits that -- so it is laid
+        # out behind the body: the load falls straight into the join and the
+        # arm is the side that pays a jump back.
+        # (assert_next_line_matches hands its patterns to awk -v, which eats a
+        # single backslash: bracket the metacharacters instead of escaping.)
+        assert_next_line_matches "$_sink"             '^[[:space:]]+movzbq .*, %r[a-z0-9]+$'             '^[.]L.*_if_merge[.][0-9.]+' "block-layout-sink-$_target"
+        assert_next_line_matches "$_sink"             '^[[:space:]]+movq [$]-1, %r[a-z0-9]+$'             '^[[:space:]]+jmp [.]L.*_if_merge[.][0-9]'             "block-layout-sink-$_target"
+        # Not vacuous: the arm is still a real block reached by real branches.
+        assert_regex_count_at_least "$_sink"             '^[[:space:]]+j[a-z]+ \.L[^ ]*_if_else\.[0-9.]+$' 2             "block-layout-sink-$_target"
+
+        # DUP. The loop's exit block is three instructions ending in an
+        # unconditional jump, so the arm that skipped the loop absorbs it
+        # instead of jumping to it -- and the block stays where it is for the
+        # loop's own edge.
+        assert_regex_count_eq "$_dup"             '^[[:space:]]+jmp \.L[^ ]*_while_exit\.[0-9.]+$' 0             "block-layout-dup-$_target"
+        assert_matches "$_dup" '^\.L[^ ]*_while_exit\.[0-9.]+:$'             "block-layout-dup-$_target"
+        assert_regex_count_eq "$_dup"             '^[[:space:]]+leaq \(,%r[a-z0-9]+,2\), %r[a-z0-9]+$' 2             "block-layout-dup-$_target"
+
+        # REFUSED. Both arms carry work and the branch compares two registers,
+        # which the opcode heuristics say nothing about: the else arm keeps its
+        # place between the then arm and the merge, and the then arm keeps the
+        # jump across it.
+        assert_regex_count_eq "$_keep"             '^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$' 1             "block-layout-keep-$_target"
+        assert_matches "$_keep" '^\.L[^ ]*_if_else\.[0-9.]+:$'             "block-layout-keep-$_target"
+    done
+}
+
 check_wide_const_hoist() {
     _asm=$(compile_gate wide_const_hoist tests/integration/wide_const_hoist.tl)
     _leaf=$(function_body "$_asm" _tl_wide_const_hoist_wide_leaf)
@@ -1294,6 +1337,7 @@ check_hoist_priority
 check_lftr_counter_retire
 check_fallthrough_jmp_chain
 check_jump_only_forward
+check_block_layout
 check_wide_const_hoist
 check_group_pair_home
 check_group_pair_phi_home

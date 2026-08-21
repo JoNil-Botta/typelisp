@@ -86301,7 +86301,7 @@
     0
     0
     0
-    4
+    2
     0
     0
     0
@@ -87568,8 +87568,17 @@
 ;; global batch four cadence; the current-source Windows rerun retained
 ;; 73,601,960 / 405,151,936 bytes (18.17%) with the same 3,574 rotations. This
 ;; leaves ordinary source growth room instead of silently retuning the ring
-;; across the 25% gate. Retention is bounded by 2 batches, not by the walk. Make
-;; `next` the live generation and destroy the one retired a batch ago.
+;; across the 25% gate. #6470 then added 39 firing declarations and exposed
+;; the remaining count-alignment hazard: batch four retained 146,458,816 /
+;; 438,276,576 bytes (33.41%), and batch three retained 173,114,304 /
+;; 438,278,064 bytes (39.50%). The full batch-two gate retained 64,818,672 /
+;; 438,276,424 bytes (14.79%) with no measured macro-walk regression (2,312 ms
+;; versus 2,718 ms in the same Windows profile probe).
+;; Use that cadence for enough source-growth headroom that declaration ordering
+;; cannot immediately move a large batch back across the proportional gate.
+;;
+;; Retention is bounded by 2 batches, not by the walk. Make `next` the live
+;; generation and destroy the one retired a batch ago.
 ;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
 ;; flag that disables the virgin-arena zero-fill elision permanently for
 ;; everything later allocated in it (#5599). `macro-decl-generation-arena`
@@ -87770,27 +87779,23 @@
 (cfg
   test
   (test
-    macro-decl-generation-global-batch-four
+    macro-decl-generation-global-batch-two
     (let
       [job : TcJobState (tc-job-state-new)]
       [state : TcMacroState (tc-job-state-macro-state job)]
       [first : i64 (macro-decl-generation-enter! state)]
       [second : i64 (macro-decl-generation-enter! state)]
       [third : i64 (macro-decl-generation-enter! state)]
-      [fourth : i64 (macro-decl-generation-enter! state)]
-      [fifth : i64 (macro-decl-generation-enter! state)]
       (begin
         (macro-decl-generations-release! state)
         (test.assert-i64-eq
           (tc-macro-walk-field state macro-decl-generation-batch-size)
-          4
-          "declaration generations use the global batch-four cadence")
+          2
+          "declaration generations use the global batch-two cadence")
         (test.assert-i64-eq second first "second declaration stays in batch")
-        (test.assert-i64-eq third first "third declaration stays in batch")
-        (test.assert-i64-eq fourth first "fourth declaration stays in batch")
         (test.assert-true
-          (!= fifth first)
-          "fifth declaration rotates without a source-specific first batch")))))
+          (!= third first)
+          "third declaration rotates without a source-specific first batch")))))
 
 ;; The checked-lowering pipeline compacts its parsed program before macro
 ;; expansion.  Keep an explicit proof of whether expansion changed the program

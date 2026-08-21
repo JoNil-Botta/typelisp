@@ -83984,9 +83984,6 @@
             unit)))
       out)))
 
-(define (compiler-backend-layout-asm [asm : String]) : String
-  (compiler-backend-layout-asm-with-mode asm compiler-backend-layout-mode))
-
 ;; Streaming peephole over line RECORDS: identical rule set, pair state and
 ;; owner-map handling to the text pass it replaces, except that each surviving
 ;; emit step pushes its record into a dense arena-backed array instead of

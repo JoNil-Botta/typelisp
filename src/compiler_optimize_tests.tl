@@ -75,13 +75,16 @@
         (opt-test-instrs-push! (&mut builder) (__opt-test-instrs ,@instrs) 0)
         (let
           [suffix : compiler_ir_types.CompilerIrInstrSeq ,tail]
+          [suffix-count : i64
+            (compiler_ir_types.compiler-ir-instr-seq-count suffix)]
           (begin
             (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
               (&mut builder)
               suffix
               0
-              (compiler_ir_types.compiler-ir-instr-seq-count suffix))
-            (compiler_ir_types.compiler-ir-instr-builder-to-seq builder)))))))
+              suffix-count)
+            (compiler_ir_types.compiler-ir-instr-builder-to-seq
+              (compiler_ir_types.compiler-ir-global-shared-view builder))))))))
 
 (define (opt-test-instr-seq-copy
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
@@ -95,7 +98,8 @@
         instrs
         0
         count)
-      (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))
+      (compiler_ir_types.compiler-ir-instr-builder-to-seq
+        (compiler_ir_types.compiler-ir-global-shared-view builder)))))
 
 (define (opt-test-fold-instrs
   [type-segment-bases : i64]
@@ -183,11 +187,15 @@
       (compiler_optimize.OptSwitchCopyEnv.Empty)]
     (begin
       (test.assert-i64-eq
-        (compiler_optimize.opt-switch-copy-env-resolve env 12)
+        (compiler_optimize.opt-switch-copy-env-resolve
+          (compiler_optimize.compiler-opt-global-shared-view env)
+          12)
         12
         "a missing destination resolves to itself")
       (test.assert-i64-eq
-        (compiler_optimize.opt-switch-copy-env-resolve env (- 0 1))
+        (compiler_optimize.opt-switch-copy-env-resolve
+          (compiler_optimize.compiler-opt-global-shared-view env)
+          (- 0 1))
         (- 0 1)
         "a negative sentinel stays out of the dense table")
       (set!
@@ -199,7 +207,9 @@
             (compiler_ir_types.CompilerIrValue.Var 7)
             (compiler_ast_types.AstType.I64))))
       (test.assert-i64-eq
-        (compiler_optimize.opt-switch-copy-env-resolve env 64)
+        (compiler_optimize.opt-switch-copy-env-resolve
+          (compiler_optimize.compiler-opt-global-shared-view env)
+          64)
         7
         "a high destination grows the direct table")
       (set!
@@ -211,7 +221,9 @@
             (compiler_ir_types.CompilerIrValue.Var 8)
             (compiler_ast_types.AstType.I64))))
       (test.assert-i64-eq
-        (compiler_optimize.opt-switch-copy-env-resolve env 64)
+        (compiler_optimize.opt-switch-copy-env-resolve
+          (compiler_optimize.compiler-opt-global-shared-view env)
+          64)
         8
         "the newest destination binding replaces the old source")
       (set!
@@ -239,15 +251,21 @@
             (compiler_ir_types.CompilerIrValue.I64 0)
             (compiler_ast_types.AstType.I64))))
       (test.assert-i64-eq
-        (compiler_optimize.opt-switch-copy-env-resolve env 64)
+        (compiler_optimize.opt-switch-copy-env-resolve
+          (compiler_optimize.compiler-opt-global-shared-view env)
+          64)
         64
         "redefining a source drops the first dependent destination")
       (test.assert-i64-eq
-        (compiler_optimize.opt-switch-copy-env-resolve env 65)
+        (compiler_optimize.opt-switch-copy-env-resolve
+          (compiler_optimize.compiler-opt-global-shared-view env)
+          65)
         65
         "source invalidation drops every dependent destination")
       (test.assert-i64-eq
-        (compiler_optimize.opt-switch-copy-env-resolve env 70)
+        (compiler_optimize.opt-switch-copy-env-resolve
+          (compiler_optimize.compiler-opt-global-shared-view env)
+          70)
         9
         "source invalidation preserves unrelated destinations")
       (set!
@@ -259,7 +277,9 @@
             (compiler_ir_types.CompilerIrValue.I64 0)
             (compiler_ast_types.AstType.I64))))
       (test.assert-i64-eq
-        (compiler_optimize.opt-switch-copy-env-resolve env 70)
+        (compiler_optimize.opt-switch-copy-env-resolve
+          (compiler_optimize.compiler-opt-global-shared-view env)
+          70)
         70
         "a non-copy destination redefinition drops its stale fact"))))
 
@@ -4909,17 +4929,14 @@
         (compiler_optimize.OptConstEnv.Nil)
         (opt-finite-cast-no-fold-instrs))]
     (and
-      (= (opt-count-arith-instr-seq pos) 0)
-      (= (opt-count-cast-instr-seq pos) 0)
-      (opt-mov-dst-f64-bits? pos 41 (opt-test-f64-bits "3.75"))
-      (opt-mov-dst-bool-value? pos 42 true)
-      (opt-mov-dst-f64-bits? pos 43 (opt-test-f64-bits "-3.75"))
-      (opt-mov-dst-f64-bits? pos 44 (opt-test-f32-bits "1.00000001"))
-      (opt-mov-dst-f64-bits? pos 56 (opt-test-f64-bits "-0.0"))
-      (= (opt-count-arith-instr-seq neg) 3)
-      (= (opt-count-cast-instr-seq neg) 1)
-      (= (opt-count-cast-instr-seq finite-casts) 0)
-      (opt-mov-dst-f64-bits? finite-casts 46 (opt-test-f64-bits "-42.0"))
+      (=
+        (opt-count-arith-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view pos))
+        0)
+      (=
+        (opt-count-cast-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view pos))
+        0)
       (opt-mov-dst-f64-bits?
         (compiler_ir_types.compiler-ir-global-shared-view pos)
         41
@@ -4941,15 +4958,15 @@
         56
         (opt-test-f64-bits "-0.0"))
       (=
-        (opt-count-arith-instrs
+        (opt-count-arith-instr-seq
           (compiler_ir_types.compiler-ir-global-shared-view neg))
         3)
       (=
-        (opt-count-cast-instrs
+        (opt-count-cast-instr-seq
           (compiler_ir_types.compiler-ir-global-shared-view neg))
         1)
       (=
-        (opt-count-cast-instrs
+        (opt-count-cast-instr-seq
           (compiler_ir_types.compiler-ir-global-shared-view finite-casts))
         0)
       (opt-mov-dst-f64-bits?
@@ -4964,14 +4981,48 @@
         (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
         48
         (opt-test-f32-bits "18446744073709551616.0"))
-      (opt-mov-dst-f64-bits? finite-casts 49 (opt-test-f64-bits "65.0"))
-      (= (opt-mov-dst-i64-value-instr-seq finite-casts 50 999) 3)
-      (= (opt-mov-dst-i64-value-instr-seq finite-casts 51 999) (- 0 3))
-      (= (opt-mov-dst-char-code finite-casts 52 0) 65)
-      (= (opt-mov-dst-i64-value-instr-seq finite-casts 53 999) 3)
-      (opt-mov-dst-f64-bits? finite-casts 54 (opt-test-f32-bits "16777217.0"))
-      (= (opt-mov-dst-i64-value-instr-seq finite-casts 55 999) (- 0 3))
-      (= (opt-count-cast-instr-seq deferred-casts) 4))))
+      (opt-mov-dst-f64-bits?
+        (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+        49
+        (opt-test-f64-bits "65.0"))
+      (=
+        (opt-mov-dst-i64-value-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+          50
+          999)
+        3)
+      (=
+        (opt-mov-dst-i64-value-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+          51
+          999)
+        (- 0 3))
+      (=
+        (opt-mov-dst-char-code
+          (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+          52
+          0)
+        65)
+      (=
+        (opt-mov-dst-i64-value-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+          53
+          999)
+        3)
+      (opt-mov-dst-f64-bits?
+        (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+        54
+        (opt-test-f32-bits "16777217.0"))
+      (=
+        (opt-mov-dst-i64-value-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+          55
+          999)
+        (- 0 3))
+      (=
+        (opt-count-cast-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view deferred-casts))
+        4))))
 
 ;; --- commutative constant-lhs canonicalisation --------------------------------
 ;;
@@ -5229,31 +5280,125 @@
         (compiler_optimize.OptConstEnv.Nil)
         (opt-typed-fold-invalid-instrs))]
     (begin
-      (unless (= (opt-count-arith-instr-seq pos) 0) (return 1))
-      (unless (= (opt-count-cast-instr-seq pos) 0) (return 3))
       (unless
-        (= (opt-mov-dst-i64-value-instr-seq pos 2 (- 0 999)) 0)
+        (=
+          (opt-count-arith-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos))
+          0)
+        (return 1))
+      (unless
+        (=
+          (opt-count-cast-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos))
+          0)
+        (return 3))
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos)
+            2
+            (- 0 999))
+          0)
         (return 4))
-      (unless (opt-mov-dst-bool-value? pos 5 true) (return 5))
-      (unless (opt-mov-dst-bool-value? pos 6 false) (return 6))
-      (unless (= (opt-mov-dst-i64-value-instr-seq pos 7 0) 255) (return 7))
-      (unless (= (opt-mov-dst-char-code pos 8 0) 44) (return 8))
-      (unless (= (opt-mov-dst-i64-value-instr-seq pos 10 0) 65) (return 9))
-      (unless (opt-mov-dst-bool-value? pos 12 false) (return 10))
-      (unless (= (opt-mov-dst-i64-value-instr-seq pos 13 0) 7) (return 11))
-      (unless (= (opt-mov-dst-i64-value-instr-seq pos 14 0) 1) (return 12))
-      (unless (= (opt-mov-dst-i64-value-instr-seq pos 17 0) 8) (return 13))
       (unless
-        (= (opt-mov-dst-i64-value-instr-seq pos 19 0) (- 0 4))
+        (opt-mov-dst-bool-value?
+          (compiler_ir_types.compiler-ir-global-shared-view pos)
+          5
+          true)
+        (return 5))
+      (unless
+        (opt-mov-dst-bool-value?
+          (compiler_ir_types.compiler-ir-global-shared-view pos)
+          6
+          false)
+        (return 6))
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos)
+            7
+            0)
+          255)
+        (return 7))
+      (unless
+        (=
+          (opt-mov-dst-char-code
+            (compiler_ir_types.compiler-ir-global-shared-view pos)
+            8
+            0)
+          44)
+        (return 8))
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos)
+            10
+            0)
+          65)
+        (return 9))
+      (unless
+        (opt-mov-dst-bool-value?
+          (compiler_ir_types.compiler-ir-global-shared-view pos)
+          12
+          false)
+        (return 10))
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos)
+            13
+            0)
+          7)
+        (return 11))
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos)
+            14
+            0)
+          1)
+        (return 12))
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos)
+            17
+            0)
+          8)
+        (return 13))
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos)
+            19
+            0)
+          (- 0 4))
         (return 14))
-      (unless (= (opt-mov-dst-i64-value-instr-seq pos 22 0) 1) (return 15))
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos)
+            22
+            0)
+          1)
+        (return 15))
       ;; An immediate is normalized with the shift's U8 RHS payload before
       ;; folding: 256 wraps to zero instead of being treated as an invalid
       ;; U64 count, preserving the all-ones U64 lhs.
       (unless
-        (= (opt-mov-dst-i64-value-instr-seq pos 23 0) (- 0 1))
+        (=
+          (opt-mov-dst-i64-value-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view pos)
+            23
+            0)
+          (- 0 1))
         (return 16))
-      (unless (= (opt-count-arith-instr-seq neg) 4) (return 17))
+      (unless
+        (=
+          (opt-count-arith-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view neg))
+          4)
+        (return 17))
       (unless (compiler_float.compiler-float-self-test) (return 18))
       (unless (compiler-optimize-float-fold-ok?) (return 19))
       (unless
@@ -6787,19 +6932,84 @@
         (compiler_optimize.OptExprTable.Nil)
         (opt-cse-shift-count-type-instrs))]
     (begin
-      (unless (= (opt-count-arith-instr-seq cse) 1) (return 1))
-      (unless (= (opt-mov-src-var-instr-seq sqrt 3 (- 0 1)) 2) (return 10))
-      (unless (= (opt-count-arith-instr-seq store) 2) (return 2))
-      (unless (= (opt-count-arith-instr-seq redef) 2) (return 3))
-      (unless (= (opt-count-cpuid-instr-seq probe) 1) (return 4))
-      (unless (= (opt-mov-src-var-instr-seq probe 3 (- 0 1)) 2) (return 5))
-      (unless (= (opt-count-xgetbv-instr-seq probe) 1) (return 6))
-      (unless (= (opt-mov-src-var-instr-seq probe 5 (- 0 1)) 4) (return 7))
-      (unless (= (opt-count-cpuid-instr-seq probe-different) 3) (return 8))
-      (unless (= (opt-count-xgetbv-instr-seq probe-different) 2) (return 9))
-      (unless (= (opt-count-shift-binops shift-count-types) 2) (return 10))
       (unless
-        (= (opt-count-mov-dst-instr-seq shift-count-types 61) 0)
+        (=
+          (opt-count-arith-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view cse))
+          1)
+        (return 1))
+      (unless
+        (=
+          (opt-mov-src-var-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view sqrt)
+            3
+            (- 0 1))
+          2)
+        (return 10))
+      (unless
+        (=
+          (opt-count-arith-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view store))
+          2)
+        (return 2))
+      (unless
+        (=
+          (opt-count-arith-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view redef))
+          2)
+        (return 3))
+      (unless
+        (=
+          (opt-count-cpuid-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view probe))
+          1)
+        (return 4))
+      (unless
+        (=
+          (opt-mov-src-var-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view probe)
+            3
+            (- 0 1))
+          2)
+        (return 5))
+      (unless
+        (=
+          (opt-count-xgetbv-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view probe))
+          1)
+        (return 6))
+      (unless
+        (=
+          (opt-mov-src-var-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view probe)
+            5
+            (- 0 1))
+          4)
+        (return 7))
+      (unless
+        (=
+          (opt-count-cpuid-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view probe-different))
+          3)
+        (return 8))
+      (unless
+        (=
+          (opt-count-xgetbv-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view probe-different))
+          2)
+        (return 9))
+      (unless
+        (=
+          (opt-count-shift-binops
+            (compiler_ir_types.compiler-ir-global-shared-view shift-count-types))
+          2)
+        (return 10))
+      (unless
+        (=
+          (opt-count-mov-dst-instr-seq
+            (compiler_ir_types.compiler-ir-global-shared-view shift-count-types)
+            61)
+          0)
         (return 11))
       42)))
 
@@ -7802,7 +8012,8 @@
         tail
         0
         tail-count)
-      (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))
+      (compiler_ir_types.compiler-ir-instr-builder-to-seq
+        (compiler_ir_types.compiler-ir-global-shared-view builder)))))
 
 (define (opt-cmp-dup-test-return-block [label : String] [var : i64]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
@@ -54894,15 +55105,15 @@
           g
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ir_types.CompilerIrValue.Var a)
-          elem-ty)
+          (owned_view.compiler-owned-shared-view elem-ty))
         (compiler_ir_types.CompilerIrInstr.Load
           l
           (compiler_ir_types.CompilerIrValue.Var g)
-          elem-ty)
+          (owned_view.compiler-owned-shared-view elem-ty))
         (compiler_ir_types.CompilerIrInstr.Cast
           c
           (compiler_ir_types.CompilerIrValue.Var l)
-          elem-ty
+          (owned_view.compiler-owned-shared-view elem-ty)
           (compiler_ast_types.AstType.I64))))))
 
 (define (opt-lc-compose-test-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
@@ -58455,7 +58666,7 @@
             (if offset-add?
               (compiler_ir_types.CompilerIrValue.Var 10)
               (compiler_ir_types.CompilerIrValue.Var 4)))
-          elem-ty)
+          (owned_view.compiler-owned-shared-view elem-ty))
         (compiler_ir_types.CompilerIrInstr.StorePtr
           (compiler_ir_types.CompilerIrValue.Var 7)
           store-value
@@ -58464,11 +58675,11 @@
       5
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 4)
-      elem-ty)
+      (owned_view.compiler-owned-shared-view elem-ty))
     (compiler_ir_types.CompilerIrInstr.Load
       6
       (compiler_ir_types.CompilerIrValue.Var 5)
-      elem-ty)))
+      (owned_view.compiler-owned-shared-view elem-ty))))
 
 (define (opt-cc-test-function
   [loop-name : String]

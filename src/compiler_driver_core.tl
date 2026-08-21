@@ -277,8 +277,7 @@
   (compiler_typecheck_core.tc-macro-state-bind-source-names!
     (compiler_typecheck_core.tc-job-state-macro-state
       (compiler-driver-state-typecheck state))
-    (ci.intern-source-name-session-handle-from-state
-      (compiler-driver-state-owned-interns state))))
+    (compiler-driver-state-source-name-session-in-current state)))
 
 (define (compiler-driver-state-prefix-cache-enable!
   [state : CompilerDriverState]) : unit
@@ -733,14 +732,48 @@
 (define (compiler-driver-state-owned-interns [state : CompilerDriverState]) : ci.InternCompatState
   (array-ref state.intern-state 0))
 
-;; Source-name/structural capabilities outlive the optional frontend arena:
-;; opt1/2 retire that arena before lower reachability and the backend finish.
-(define (compiler-driver-state-source-name-session
-  [state : CompilerDriverState]) : ci.InternSourceNameSessionHandle
+;; Allocate an immutable source-name snapshot in an explicit owner. Production
+;; batch entries keep their snapshot in the rotating entry scratch arena; only
+;; callers that explicitly request a retained driver capability use the
+;; process-lived surface arena below.
+(define (compiler-driver-state-source-name-session-in-arena
+  [state : CompilerDriverState]
+  [owner : i64]) : ci.InternSourceNameSessionHandle
   (in-arena
-    (arena.Arena (compiler-driver-state-surface-arena state))
+    (arena.Arena owner)
     (ci.intern-source-name-session-handle-from-state
       (compiler-driver-state-owned-interns state))))
+
+(define (compiler-driver-state-source-name-session-in-current
+  [state : CompilerDriverState]) : ci.InternSourceNameSessionHandle
+  (compiler-driver-state-source-name-session-in-arena
+    state
+    (arena.tl_arena_current)))
+
+;; Opt1/2 parsing runs in a disposable frontend arena, but the capability must
+;; survive through lower reachability and backend emission. Route that one
+;; snapshot into the saved entry arena instead of accumulating it in the
+;; driver's process-lived surface arena across batch entries.
+(define (compiler-driver-state-entry-source-name-session
+  [state : CompilerDriverState]) : ci.InternSourceNameSessionHandle
+  (compiler-driver-state-source-name-session-in-arena
+    state
+    (if (= compiler-driver-pending-frontend-return-arena 0)
+      (arena.tl_arena_current)
+      compiler-driver-pending-frontend-return-arena)))
+
+(define (compiler-driver-state-entry-structural-session
+  [state : CompilerDriverState]) : cis.InternStructuralSessionHandle
+  (cis.intern-structural-session-handle-from-source-names
+    (compiler-driver-state-entry-source-name-session state)))
+
+;; Retained adapter for callers whose capability must survive an arbitrary
+;; caller arena. Per-entry compiler paths use the rotating adapter above.
+(define (compiler-driver-state-source-name-session
+  [state : CompilerDriverState]) : ci.InternSourceNameSessionHandle
+  (compiler-driver-state-source-name-session-in-arena
+    state
+    (compiler-driver-state-surface-arena state)))
 
 (define (compiler-driver-state-structural-session [state : CompilerDriverState]) : cis.InternStructuralSessionHandle
   (cis.intern-structural-session-handle-from-source-names
@@ -3954,7 +3987,7 @@
             [_capture-source-names : unit
               (compiler-driver-state-capture-active-interns! state)]
             [source-names : ci.InternSourceNameSessionHandle
-              (compiler-driver-state-source-name-session state)]
+              (compiler-driver-state-entry-source-name-session state)]
             [dest-pools : compiler_ast_types.AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)

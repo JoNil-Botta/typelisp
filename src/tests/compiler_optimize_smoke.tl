@@ -4271,6 +4271,12 @@
     "the accept window is two-sided: the model must agree with a free inline within a factor of two"))
 
 (test
+  inline-checked-window-wide
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-window-wide-ok?)
+    "the wide window lifts the upper bound only for merges whose allocation term stays within the slack"))
+
+(test
   inline-checked-budget
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-checked-budget-ok?)
@@ -4297,10 +4303,10 @@
     "the tier keeps a call-carrying site one loop deeper too, and both callers verify"))
 
 (test
-  inline-checked-call-carrying-revert
+  inline-checked-call-carrying-wide-keep
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-call-carrying-revert-ok?)
-    "the same call-carrying callee reverts when its measured plan does not repay the boundary"))
+    (compiler_optimize_tests.compiler-optimize-inline-checked-call-carrying-wide-keep-ok?)
+    "an allocation-neutral call-carrying merge just past the narrow upper edge is kept by the wide window"))
 
 (test
   inline-multiblock-call-clone-spans

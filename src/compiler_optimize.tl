@@ -84036,6 +84036,13 @@
 ;; means "not known", which is what the first round starts from.
 (define opt-inline-checked-next-state-cost : i64
   (- 0 1))
+
+;; The allocation half of the same published state, so the wide accept window
+;; can compare the merged plan's allocation term against the banked caller's
+;; without re-running the allocator. Negative means "not known" and is only
+;; read alongside a known cost.
+(define opt-inline-checked-next-state-alloc : i64
+  (- 0 1))
 (define opt-inline-caller-checked-blocks : i64
   0)
 (define opt-inline-caller-checked-taken? : bool
@@ -84588,12 +84595,15 @@
 ;; `--trace-passes` report passes over functions the pipeline never optimized
 ;; and would push throwaway generations into the `--dump-ir` buffer, which is
 ;; what scripts/verify-ir-observability.sh reads.
-(define (opt-inline-checked-plan-cost-at
+(defenum OptInlineCheckedPlanParts
+  (Parts i64 i64))
+
+(define (opt-inline-checked-plan-parts-at
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [offset : i64]
-  [entry-weight : i64]) : i64
+  [entry-weight : i64]) : OptInlineCheckedPlanParts
   (let
     [saved-verify : bool compiler-opt-debug-verify-ir]
     [_silence : unit
@@ -84606,9 +84616,29 @@
       (begin
         (compiler-opt-debug-set-suppressed! false)
         (set! compiler-opt-debug-verify-ir saved-verify))]
-    (+
+    (OptInlineCheckedPlanParts.Parts
       (opt-inline-checked-weighted-instrs-at optimized offset)
       (* entry-weight (opt-inline-checked-alloc-cost optimized)))))
+
+(define (opt-inline-checked-plan-parts
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptInlineCheckedPlanParts
+  (opt-inline-checked-plan-parts-at pools type-segment-bases func 0 1))
+
+(define (opt-inline-checked-plan-cost-at
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [offset : i64]
+  [entry-weight : i64]) : i64
+  (match (opt-inline-checked-plan-parts-at
+    pools
+    type-segment-bases
+    func
+    offset
+    entry-weight)
+    [(OptInlineCheckedPlanParts.Parts instrs alloc) (+ instrs alloc)]))
 
 (define (opt-inline-checked-plan-cost
   [pools : ast.AstNodePoolContext]
@@ -84621,6 +84651,61 @@
 ;; remove. See opt-inline-checked-verdict for why the window is two-sided.
 (define (opt-inline-checked-window-ok? [saving : i64] [boundary : i64]) : bool
   (and (>= (* 2 saving) boundary) (<= saving (* 2 boundary))))
+
+;; Wide-window admission for merges that stay allocation-neutral. The two-sided
+;; window above refuses every site whose modelled saving exceeds twice the
+;; boundary, because a saving many times a free inline's prediction has
+;; historically meant the depth estimate stopped being commensurate across the
+;; merge -- and those sites measured worse. The refusal is blunt, though: it
+;; also refuses merges whose re-optimized plan is much cheaper because
+;; cross-boundary cleanup (invariant hoisting, dominated-check retirement, dead
+;; spine removal) only becomes possible once the callee body sits inside the
+;; caller. On the corpus those refusals cost real wins: rt-match-route into
+;; rt-route-request (253 modelled saving against a 104 boundary) measures -9%
+;; on the row; ls-digit?/ls-hex-digit? measure -6% on lex_source; gvn_table's
+;; vector `set-ref!` into its scan loop retires 13M executed instructions;
+;; ln-fold-live-in (1216 against 704) measures -1..-2% on liveness_scan.
+;;
+;; The two populations separate on the plan's ALLOCATION term, which the
+;; window does not read. A merge that stays allocation-neutral keeps the
+;; caller's register working set intact, so a large modelled instruction
+;; saving is retired work rather than pressure the model cannot price; a merge
+;; that multiplies the caller's callee-saved homes and spill traffic is the
+;; allocation-churn shape every documented loser presents -- recompute! into
+;; fixpoint! (+327 alloc), pl-line-end into pl-run-chunk (-2 but 19x),
+;; cfg-loop-preheader into cfg-natural-loops (+223), cfg-build-csr into
+;; cfg-function (+208), it-intern-slice into it-bench (+761) -- and those stay
+;; refused here. The relaxation is also capped at four-fold rather than more:
+;; gvn_table's `gvn-node-mentions-var?` into its table-invalidate loop models
+;; 316 against a 64 boundary (4.9x) yet MEASURES +16M executed instructions --
+;; the merged loop body allocates no worse per the plan (+6) but executes more,
+;; which is the signature of a static estimate that stops being commensurate
+;; past a few multiples of what a free inline can retire. Every measured winner
+;; sits at or under 2.75x. So the upper bound is relaxed four-fold ONLY when
+;; the merged plan's allocation cost exceeds the banked caller's by at most
+;; opt-inline-checked-alloc-slack. Full-corpus measurement: cfg_domloops
+;; -0.59%, lex_source -1.20%, liveness_scan -0.19% and gvn_table -1.18%
+;; retired instructions against the prior baseline, every other row's assembly
+;; byte-identical, and self-compile time unmoved.
+(define (opt-inline-checked-alloc-slack) : i64
+  128)
+
+;; The wide bound's ceiling as a multiple of the boundary. Four, measured: the
+;; one corpus candidate past it (4.9x) executed more merged than split.
+(define (opt-inline-checked-window-wide-mult) : i64
+  4)
+
+(define (opt-inline-checked-window-ok-wide?
+  [saving : i64]
+  [boundary : i64]
+  [alloc-before : i64]
+  [alloc-after : i64]) : bool
+  (or
+    (opt-inline-checked-window-ok? saving boundary)
+    (and
+      (>= (* 2 saving) boundary)
+      (<= saving (* (opt-inline-checked-window-wide-mult) boundary))
+      (<= (- alloc-after alloc-before) (opt-inline-checked-alloc-slack)))))
 
 ;; The verdict. Both sides priced per invocation of the caller; see the tier
 ;; comment for the model and the margin.
@@ -84642,23 +84727,34 @@
   [banked-cost-in : i64]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
-    [after : i64
-      (opt-inline-checked-plan-cost pools type-segment-bases checked)]
-    [banked-cost : i64
+    [after-parts : OptInlineCheckedPlanParts
+      (opt-inline-checked-plan-parts pools type-segment-bases checked)]
+    [banked-parts : OptInlineCheckedPlanParts
       (if (>= banked-cost-in 0)
-        banked-cost-in
-        (opt-inline-checked-plan-cost pools type-segment-bases banked))]
+        (OptInlineCheckedPlanParts.Parts
+          (- banked-cost-in opt-inline-checked-next-state-alloc)
+          opt-inline-checked-next-state-alloc)
+        (opt-inline-checked-plan-parts pools type-segment-bases banked))]
     ;; The callee priced where the inline would put it: its instructions at the
     ;; site's depth, its prologue and its spill traffic once per site
     ;; execution.
-    [callee-cost : i64
-      (opt-inline-checked-plan-cost-at
+    [callee-parts : OptInlineCheckedPlanParts
+      (opt-inline-checked-plan-parts-at
         pools
         type-segment-bases
         callee
         site-depth
         site-weight)]
     [boundary : i64 (* site-weight (opt-inline-checked-boundary-cost np))]
+    [after : i64
+      (match after-parts
+        [(OptInlineCheckedPlanParts.Parts instrs alloc) (+ instrs alloc)])]
+    [banked-cost : i64
+      (match banked-parts
+        [(OptInlineCheckedPlanParts.Parts instrs alloc) (+ instrs alloc)])]
+    [callee-cost : i64
+      (match callee-parts
+        [(OptInlineCheckedPlanParts.Parts instrs alloc) (+ instrs alloc)])]
     [before : i64 (+ banked-cost (+ boundary callee-cost))]
     ;; A TWO-SIDED window, not a threshold. A free inline -- the copy exactly as
     ;; good as the callee, the boundary gone -- predicts a saving of exactly
@@ -84682,13 +84778,33 @@
     ;; not, the model is not trusted in either direction and the site reverts.
     ;; This is the clear-margin discipline read as a confidence interval, which
     ;; is the only honest reading of a two-sided estimate.
-    [keep? : bool (opt-inline-checked-window-ok? (- before after) boundary)]
+    ;;
+    ;; The wide window (opt-inline-checked-window-ok-wide?) lifts the upper
+    ;; bound for merges whose allocation term does not regress; see its comment.
+    [banked-alloc : i64
+      (match banked-parts
+        [(OptInlineCheckedPlanParts.Parts _ alloc) alloc])]
+    [after-alloc : i64
+      (match after-parts
+        [(OptInlineCheckedPlanParts.Parts _ alloc) alloc])]
+    [keep? : bool
+      (opt-inline-checked-window-ok-wide?
+        (- before after)
+        boundary
+        banked-alloc
+        after-alloc)]
     [_publish : unit
-      (set!
-        opt-inline-checked-next-state-cost
-        (if keep?
-          after
-          banked-cost))]
+      (begin
+        (set!
+          opt-inline-checked-next-state-cost
+          (if keep?
+            after
+            banked-cost))
+        (set!
+          opt-inline-checked-next-state-alloc
+          (if keep?
+            after-alloc
+            banked-alloc)))]
     keep?))
 
 ;; The check allocates three optimizer generations and three allocation plans
@@ -87014,6 +87130,9 @@
     [(OptMaybeFunction.No)
       (begin
         (set! opt-inline-checked-next-state-cost banked-cost)
+        (if (>= banked-cost 0)
+          unit
+          (set! opt-inline-checked-next-state-alloc (- 0 1)))
         false)]))
 
 (define (opt-inline-function-walk

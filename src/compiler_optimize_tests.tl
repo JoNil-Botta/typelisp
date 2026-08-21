@@ -15637,6 +15637,56 @@
       (compiler_optimize.opt-inline-checked-boundary-cost 14)
       (compiler_optimize.opt-inline-checked-boundary-cost 2))))
 
+;; The wide window. A merge whose re-optimized plan stays allocation-neutral
+;; gets opt-inline-checked-window-wide-mult times the narrow upper bound:
+;; cross-boundary cleanup only becomes possible once the callee body sits
+;; inside the caller, so a much cheaper merged plan is evidence of retired
+;; work, not of a broken model -- as long as the caller's register working set
+;; survives the merge AND the saving stays within a few multiples of what a
+;; free inline could retire (the measured loser at 4.9x executed MORE merged).
+;; A merge that adds allocation pressure past opt-inline-checked-alloc-slack
+;; is the allocation-churn shape every documented loser presents and stays at
+;; the narrow window.
+(define (compiler-optimize-inline-checked-window-wide-ok?) : bool
+  (let
+    [slack : i64 (compiler_optimize.opt-inline-checked-alloc-slack)]
+    [mult : i64 (compiler_optimize.opt-inline-checked-window-wide-mult)]
+    [wide-edge : i64 (* mult 64)]
+    [over-edge : i64 (* (+ mult 1) 64)]
+    [grown : i64 (+ 40 slack)]
+    [over-grown : i64 (+ 41 slack)]
+    (and
+      ;; allocation-neutral merges take the wide bound in both directions:
+      ;; everything the narrow window admits still admits...
+      (compiler_optimize.opt-inline-checked-window-ok-wide? 64 64 40 40)
+      (compiler_optimize.opt-inline-checked-window-ok-wide? 32 64 40 40)
+      ;; ...and a saving up to the wide multiple of the boundary now admits
+      ;; when the merged plan's allocation term did not grow past the slack
+      (compiler_optimize.opt-inline-checked-window-ok-wide?
+        wide-edge
+        64
+        40
+        grown)
+      ;; one over the wide multiple still refuses
+      (not
+        (compiler_optimize.opt-inline-checked-window-ok-wide?
+          over-edge
+          64
+          40
+          grown))
+      ;; allocation growth past the slack falls back to the narrow window,
+      ;; which refuses anything past twice the boundary
+      (not
+        (compiler_optimize.opt-inline-checked-window-ok-wide?
+          wide-edge
+          64
+          40
+          over-grown))
+      ;; below the lower edge the verdict refuses at any allocation level
+      (not (compiler_optimize.opt-inline-checked-window-ok-wide? 31 64 40 40))
+      ;; and a merge that REDUCES allocation always takes the wide bound
+      (compiler_optimize.opt-inline-checked-window-ok-wide? wide-edge 64 400 40))))
+
 ;; The program budget counts VERDICTS, not accepts, because a rejected
 ;; candidate costs the same work an accepted one does. The level-2 inline
 ;; driver arms the tier and resets the budget; the test hook disarms it.
@@ -15959,10 +16009,17 @@
 ;; `before - after` is exactly the boundary the site would retire plus the
 ;; callee's own body, priced where the inline would put it. A body that costs
 ;; more than the boundary it retires is over-credit rather than saving, which
-;; is precisely what the window's upper bound refuses -- and the callee here is
-;; the call-carrying leaf the accept fixtures use, so what separates the two
+;; is precisely what the window refuses -- and the callee here is the
+;; call-carrying leaf the accept fixtures use, so what separates the two
 ;; outcomes is the measured plan and nothing about the callee's calls.
-(define (compiler-optimize-inline-checked-call-carrying-revert-ok?) : bool
+;;
+;; The merged plan here lands just past the narrow window's upper edge (the
+;; re-optimized body retires a little cross-boundary work), and the merge is
+;; allocation-neutral, so the wide window takes it: this fixture pins THAT
+;; admission. The pure over-credit refusal -- a merged plan that costs more
+;; than it saves -- is pinned by the after>before cases of the window tests
+;; above.
+(define (compiler-optimize-inline-checked-call-carrying-wide-keep-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
@@ -15983,7 +16040,7 @@
         (compiler_optimize.opt-inline-census-depth-base)
         3
         (- 0 1))]
-    (not keep?)))
+    keep?))
 
 ;; --- the sequence: one caller, one site at a time ---------------------------
 ;;
@@ -20242,6 +20299,9 @@
                       (compiler-optimize-inline-checked-window-ok?)
                       (return 102))
                     (unless
+                      (compiler-optimize-inline-checked-window-wide-ok?)
+                      (return 114))
+                    (unless
                       (compiler-optimize-inline-checked-budget-ok?)
                       (return 103))
                     (unless
@@ -20254,7 +20314,7 @@
                       (compiler-optimize-inline-checked-call-carrying-deep-ok?)
                       (return 106))
                     (unless
-                      (compiler-optimize-inline-checked-call-carrying-revert-ok?)
+                      (compiler-optimize-inline-checked-call-carrying-wide-keep-ok?)
                       (return 107))
                     (unless
                       (compiler-optimize-spans-inline-multiblock-call-ok?)

@@ -512,60 +512,66 @@
 ;; The hot form accepts a value already proven to be in the table-backed
 ;; structural range; ownership is still proven from the explicit session and
 ;; its re-owned table.
-(define (intern-structural-session-record-kind-for-structural-or
-  [handle : InternStructuralSessionHandle]
-  [raw : i64]
-  [fallback : i64]) : i64
-  (if (<= handle.address 0)
-    fallback
-    (let
-      [session-ptr : (Ptr ci.InternSourceNameSession)
-        (unsafe
-          (int->ptr
-            (cast handle.address : u64)
-            : (Ptr ci.InternSourceNameSession)))]
-      [structural-owner : i64
-        (unsafe
-          (__tl-project-field (ptr-read session-ptr) structural-owner))]
-      (if (ci.intern-active-structural-session? structural-owner)
-        (ci.intern-active-structural-record-kind-or raw fallback)
-        (let
-          [table-cell : (__tl_dyn-array ci.InternStructuralTable)
-            (unsafe
-              (__tl-project-field (ptr-read session-ptr) structural-table-cell))]
-          [table-ptr : (Ptr ci.InternStructuralTable)
-            (unsafe
-              (ptr-cast
-                (__tl_array-data table-cell)
-                : (Ptr ci.InternStructuralTable)))]
-          [table-owner : i64
-            (unsafe
-              (__tl-project-field (ptr-read table-ptr) owner))]
-          [table-len : i64
-            (unsafe
-              (__tl-project-field (ptr-read table-ptr) len))]
-          [encoded-index : i64
-            (-
-              raw
-              (+
-                (ci.intern-structural-key-base)
-                (* structural-owner (ci.intern-structural-key-owner-stride))))]
-          (if (or
-            (not (= table-owner structural-owner))
-            (<= encoded-index 0)
-            (> encoded-index table-len))
-            fallback
-            (let
-              [kinds : (__tl_dyn-array u8)
-                (unsafe
-                  (__tl-project-field (ptr-read table-ptr) kinds))]
-              (cast
-                (unsafe
-                  (ptr-read
-                    (ptr-offset
-                      (ptr-cast (__tl_array-data kinds) : (Ptr u8))
-                      (- encoded-index 1))))
-                : i64))))))))
+(defmacro (intern-structural-session-record-kind-for-structural-or
+  [handle : Expr]
+  [raw : Expr]
+  [fallback : Expr]) : i64
+  `(let
+    [kind-session-address : i64 (__tl-project-field-name ,handle "address")]
+    [kind-raw : i64 ,raw]
+    [kind-fallback : i64 ,fallback]
+    (if (<= kind-session-address 0)
+      kind-fallback
+      (let
+        [session-ptr : (Ptr ci.InternSourceNameSession)
+          (unsafe
+            (int->ptr
+              (cast kind-session-address : u64)
+              : (Ptr ci.InternSourceNameSession)))]
+        [structural-owner : i64
+          (unsafe
+            (__tl-project-field (ptr-read session-ptr) structural-owner))]
+        (if (ci.intern-active-structural-session? structural-owner)
+          (ci.intern-active-structural-record-kind-or kind-raw kind-fallback)
+          (let
+            [table-cell : (__tl_dyn-array ci.InternStructuralTable)
+              (unsafe
+                (__tl-project-field
+                  (ptr-read session-ptr)
+                  structural-table-cell))]
+            [table-ptr : (Ptr ci.InternStructuralTable)
+              (unsafe
+                (ptr-cast
+                  (__tl_array-data table-cell)
+                  : (Ptr ci.InternStructuralTable)))]
+            [table-owner : i64
+              (unsafe
+                (__tl-project-field (ptr-read table-ptr) owner))]
+            [table-len : i64
+              (unsafe
+                (__tl-project-field (ptr-read table-ptr) len))]
+            [encoded-index : i64
+              (-
+                kind-raw
+                (+
+                  (ci.intern-structural-key-base)
+                  (* structural-owner (ci.intern-structural-key-owner-stride))))]
+            (if (or
+              (not (= table-owner structural-owner))
+              (<= encoded-index 0)
+              (> encoded-index table-len))
+              kind-fallback
+              (let
+                [kinds : (__tl_dyn-array u8)
+                  (unsafe
+                    (__tl-project-field (ptr-read table-ptr) kinds))]
+                (cast
+                  (unsafe
+                    (ptr-read
+                      (ptr-offset
+                        (ptr-cast (__tl_array-data kinds) : (Ptr u8))
+                        (- encoded-index 1))))
+                  : i64)))))))))
 
 ;; Total mixed-id adapter for callers that have not already classified the raw
 ;; identity. Hot compiler name paths use the proven form above so they do not
@@ -733,14 +739,14 @@
                         record.right-id))]
                   [else InternMaybeMacroGlobalRecord.No]))]))))))
 
-(define (intern-structural-session-macro-global-record-for-raw
-  [handle : InternStructuralSessionHandle]
-  [raw : i64]) : InternMaybeMacroGlobalRecord
+(defmacro (intern-structural-session-macro-global-record-for-raw
+  [handle : Expr]
+  [raw : Expr]) : InternMaybeMacroGlobalRecord
   ;; The typed decoder is already total over mixed raw ids. Do not perform the
   ;; same structural-range check in both this compatibility adapter and it.
-  (intern-structural-session-macro-global-record
-    handle
-    (InternMacroGlobalIdentity raw)))
+  `(intern-structural-session-macro-global-record
+    ,handle
+    (InternMacroGlobalIdentity ,raw)))
 
 (define (intern-structural-session-macro-local-identity
   [handle : InternStructuralSessionHandle]

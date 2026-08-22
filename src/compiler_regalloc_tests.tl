@@ -16123,13 +16123,16 @@
       (reg.compiler-reg-win64-callee-saved-xmm-registers)]
     [pool-ok : bool
       (and
-        (= (reg.compiler-reg-id-seq-count sysv-pool) (cfg scratch-vreg 16 14))
-        (= (reg.compiler-reg-id-seq-count win-pool) (cfg scratch-vreg 16 14))
-        (= (reg.compiler-reg-id-seq-count win-vector-pool) 14)
+        ;; Families 14 and 15 are fixed YMM/ZMM spill scratch. They must stay
+        ;; outside both scalar-XMM and vector allocation pools so an implicit
+        ;; spill temporary cannot overwrite an unrelated resident value.
+        (= (reg.compiler-reg-id-seq-count sysv-pool) (cfg scratch-vreg 14 12))
+        (= (reg.compiler-reg-id-seq-count win-pool) (cfg scratch-vreg 14 12))
+        (= (reg.compiler-reg-id-seq-count win-vector-pool) 12)
         (=
           (reg.compiler-reg-xmm-caller-register-count-for-abi
             cabi.CompilerRegTargetAbi.Linux)
-          (cfg scratch-vreg 16 14))
+          (cfg scratch-vreg 14 12))
         (=
           (reg.compiler-reg-xmm-caller-register-count-for-abi
             cabi.CompilerRegTargetAbi.Windows)
@@ -16147,24 +16150,39 @@
         (reg.compiler-reg-id-seq-contains?
           sysv-pool
           (cabi.compiler-abi-xmm-register-id 2))
-        (reg.compiler-reg-id-seq-contains?
-          sysv-pool
-          (cabi.compiler-abi-xmm-register-id 15))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            sysv-pool
+            (cabi.compiler-abi-xmm-register-id 14)))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            sysv-pool
+            (cabi.compiler-abi-xmm-register-id 15)))
         (reg.compiler-reg-id-seq-contains?
           win-pool
           (cabi.compiler-abi-xmm-register-id 2))
         (reg.compiler-reg-id-seq-contains?
           win-pool
           (cabi.compiler-abi-xmm-register-id 6))
-        (reg.compiler-reg-id-seq-contains?
-          win-pool
-          (cabi.compiler-abi-xmm-register-id 15))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            win-pool
+            (cabi.compiler-abi-xmm-register-id 14)))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            win-pool
+            (cabi.compiler-abi-xmm-register-id 15)))
         (reg.compiler-reg-id-seq-contains?
           win-vector-pool
           (cabi.compiler-abi-vector-register-id 2))
-        (reg.compiler-reg-id-seq-contains?
-          win-vector-pool
-          (cabi.compiler-abi-vector-register-id 15))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            win-vector-pool
+            (cabi.compiler-abi-vector-register-id 14)))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            win-vector-pool
+            (cabi.compiler-abi-vector-register-id 15)))
         (not
           (reg.compiler-reg-id-seq-contains?
             win-vector-pool
@@ -16278,9 +16296,11 @@
       (reg.compiler-reg-location-register?
         (reg.compiler-reg-assignment-lookup win-float 0)
         (cabi.compiler-abi-xmm-register-id 6))
-      (reg.compiler-reg-location-register?
-        (reg.compiler-reg-assignment-lookup win-vector 0)
-        (cabi.compiler-abi-vector-register-id 6))
+      ;; Win64 preserves only each register's low XMM half, never the full YMM
+      ;; value, so a vector that spans even a private call must be spilled.
+      (not
+        (compiler-reg-location-any-register?
+          (reg.compiler-reg-assignment-lookup win-vector 0)))
       (reg.compiler-reg-location-register?
         (reg.compiler-reg-assignment-lookup sysv-leaf 0)
         (cfg

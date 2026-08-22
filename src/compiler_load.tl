@@ -10,6 +10,7 @@
 (import lex as lexer)
 (import read as reader)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_cfg_core as cfg_core)
 (import compiler_build_identity as build_identity)
 (import compiler_surface_facts as surface_facts)
@@ -1501,7 +1502,8 @@
 (define (compiler-load-dependency-surface-hydrate-entry
   [_owner : i64]
   [entry : CompilerLoadDependencyCatalogEntry]
-  [configuration : String]) : CompilerLoadDependencySurfaceFragment
+  [configuration : String]
+  [structural-session : cis.InternStructuralSessionHandle]) : CompilerLoadDependencySurfaceFragment
   (match entry.status
     [(CompilerLoadDependencyCatalogStatus.Unavailable _)
       CompilerLoadDependencySurfaceFragment.Unavailable]
@@ -1542,6 +1544,7 @@
                       (surface_hydrate.compiler-surface-hydrate
                         image.rodata
                         key
+                        structural-session
                         pools))]
                   (match hydrated
                     [(surface_hydrate.ResultCompilerSurfaceHydration.Ok
@@ -1557,6 +1560,14 @@
                             (ast.ast-node-pool-context-base-arena pools)))
                         CompilerLoadDependencySurfaceFragment.Unavailable)])))])])]))
 
+(define (compiler-load-session-state-structural-session
+  [state : CompilerLoadSessionState]) : cis.InternStructuralSessionHandle
+  (if (array-ref state.intern-state-ready 0)
+    (cis.intern-structural-session-handle-from-source-names
+      (ci.intern-source-name-session-handle-from-state
+        (array-ref state.intern-state 0)))
+    (cis.InternStructuralSessionHandle 0)))
+
 (define (compiler-load-dependency-surfaces-build-cache!
   [state : CompilerLoadSessionState]
   [configuration : String]) : bool
@@ -1568,6 +1579,8 @@
     [owner : i64 (compiler-load-dependency-catalog-owner-arena-ensure! state)]
     [prior : CompilerLoadDependencySurfaceList
       (array-ref surface-state.fragments 0)]
+    [structural-session : cis.InternStructuralSessionHandle
+      (compiler-load-session-state-structural-session state)]
     [verify-reject-last : bool
       (cfg
         dependency-tlci-verification
@@ -1597,7 +1610,8 @@
                     (compiler-load-dependency-surface-hydrate-entry
                       owner
                       (array-ref catalog.slots index)
-                      configuration))]
+                      configuration
+                      structural-session))]
                 (begin
                   (set! (array-ref slots index) fragment)
                   (match fragment

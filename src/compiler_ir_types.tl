@@ -6,6 +6,7 @@
 (import stdlib.string)
 (import stdlib.array)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_builtin_ids as cbi)
 (import compiler_ast_types as ast)
 (import stdlib.str_cat_runtime as str_cat)
@@ -3574,6 +3575,7 @@
         (compiler-ir-clone-extern-seq pools externs))]))
 
 (define (compiler-ir-type-list-render-at
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : String
@@ -3581,6 +3583,7 @@
     ""
     (str_cat.str-cat
       (compiler-ir-type-render
+        structural-session
         type-segment-bases
         (ast.ast-type-segment-bases-get
           type-segment-bases
@@ -3589,48 +3592,76 @@
         ""
         (str_cat.str-cat
           " "
-          (compiler-ir-type-list-render-at type-segment-bases types (+ index 1)))))))
+          (compiler-ir-type-list-render-at
+            structural-session
+            type-segment-bases
+            types
+            (+ index 1)))))))
 
 (define (compiler-ir-type-list-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [types : ast.AstTypeList]) : String
-  (compiler-ir-type-list-render-at type-segment-bases (& types) 0))
+  (compiler-ir-type-list-render-at
+    structural-session
+    type-segment-bases
+    (& types)
+    0))
 
 (define (compiler-ir-lifetime-list-render-at
+  [structural-session : cis.InternStructuralSessionHandle]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]) : String
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     ""
     (str_cat.str-cat
       (compiler-ir-lifetime-render
+        structural-session
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
       (if (>= (+ index 1) (ast.ast-lifetime-list-len lifetimes))
         ""
         (str_cat.str-cat
           " "
-          (compiler-ir-lifetime-list-render-at lifetimes (+ index 1)))))))
+          (compiler-ir-lifetime-list-render-at
+            structural-session
+            lifetimes
+            (+ index 1)))))))
 
-(define (compiler-ir-lifetime-list-render [lifetimes : ast.AstLifetimeList]) : String
-  (compiler-ir-lifetime-list-render-at (& lifetimes) 0))
+(define (compiler-ir-lifetime-list-render
+  [structural-session : cis.InternStructuralSessionHandle]
+  [lifetimes : ast.AstLifetimeList]) : String
+  (compiler-ir-lifetime-list-render-at structural-session (& lifetimes) 0))
 
 (define (compiler-ir-nominal-lifetime-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [name : String]
   [lifetimes : ast.AstLifetimeList]) : String
   (str_cat.str-cat
     "("
     name
     " "
-    (compiler-ir-lifetime-list-render lifetimes)
+    (compiler-ir-lifetime-list-render structural-session lifetimes)
     ")"))
 
-(define (compiler-ir-lifetime-render [region : i64]) : String
+(define (compiler-ir-lifetime-render
+  [structural-session : cis.InternStructuralSessionHandle]
+  [region : i64]) : String
   (if (ci.intern-renderable-id? region)
     (ci.intern-str region)
-    (ci.intern-syntax-name-text-or
-      region
-      (str_cat.str-cat "<id:" (string.int->string region) ">"))))
+    (let
+      [source-id : i64
+        (cis.intern-structural-session-syntax-source-name-id-or
+          structural-session
+          region
+          -1)]
+      (if (>= source-id 0)
+        (ci.intern-str source-id)
+        (str_cat.str-cat "<id:" (string.int->string region) ">")))))
 
-(define (compiler-ir-type-render [type-segment-bases : i64] [ty : ast.AstType]) : String
+(define (compiler-ir-type-render
+  [structural-session : cis.InternStructuralSessionHandle]
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : String
   (match ty
     [(ast.AstType.I64) "i64"]
     [(ast.AstType.I32) "i32"]
@@ -3654,21 +3685,29 @@
     [(ast.AstType.Func args ret)
       (str_cat.str-cat
         "(-> "
-        (compiler-ir-type-list-render type-segment-bases (__tl-box-place args))
+        (compiler-ir-type-list-render
+          structural-session
+          type-segment-bases
+          (__tl-box-place args))
         " "
         (compiler-ir-type-render
+          structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases ret))
         ")")]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple "
-        (compiler-ir-type-list-render type-segment-bases (__tl-box-place elems))
+        (compiler-ir-type-list-render
+          structural-session
+          type-segment-bases
+          (__tl-box-place elems))
         ")")]
     [(ast.AstType.Array elem count)
       (str_cat.str-cat
         "(Array "
         (compiler-ir-type-render
+          structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases elem))
         " "
@@ -3678,6 +3717,7 @@
       (str_cat.str-cat
         "(Array "
         (compiler-ir-type-render
+          structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases elem))
         ")")]
@@ -3685,6 +3725,7 @@
       (str_cat.str-cat
         "(Slice "
         (compiler-ir-type-render
+          structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases elem))
         ")")]
@@ -3692,55 +3733,63 @@
       (str_cat.str-cat
         "(Box "
         (compiler-ir-type-render
+          structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases elem))
         ")")]
     [(ast.AstType.Region region inner)
       (str_cat.str-cat
         "(Region "
-        (compiler-ir-lifetime-render region)
+        (compiler-ir-lifetime-render structural-session region)
         " "
         (compiler-ir-type-render
+          structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases inner))
         ")")]
     [(ast.AstType.Ref region inner)
       (str_cat.str-cat
         "(& "
-        (compiler-ir-lifetime-render region)
+        (compiler-ir-lifetime-render structural-session region)
         " "
         (compiler-ir-type-render
+          structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases inner))
         ")")]
     [(ast.AstType.MutRef region inner)
       (str_cat.str-cat
         "(&mut "
-        (compiler-ir-lifetime-render region)
+        (compiler-ir-lifetime-render structural-session region)
         " "
         (compiler-ir-type-render
+          structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases inner))
         ")")]
     [(ast.AstType.Enum name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.EnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
+        structural-session
         (ast.ast-nominal-name-id-display name)
         (__tl-box-place lifetimes))]
     [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
+        structural-session
         (ast.ast-nominal-name-id-display name)
         (__tl-box-place lifetimes))]
     [(ast.AstType.Var name) (ci.intern-str name)]
     [(ast.AstType.VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
+        structural-session
         (ci.intern-str name)
         (__tl-box-place lifetimes))]
     [(ast.AstType.Ptr elem)
       (str_cat.str-cat
         "(Ptr "
         (compiler-ir-type-render
+          structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases elem))
         ")")]
@@ -3748,11 +3797,13 @@
       (str_cat.str-cat
         "(MutPtr "
         (compiler-ir-type-render
+          structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases elem))
         ")")]
     [(ast.AstType.Consume inner)
       (compiler-ir-type-render
+        structural-session
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]))
 
@@ -3947,6 +3998,7 @@
     [(CompilerIrSpmdValueClass.Mask) "mask"]))
 
 (define (compiler-ir-spmd-call-arg-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [arg : CompilerIrSpmdCallArg]) : String
   (match arg
@@ -3956,9 +4008,10 @@
         " "
         (compiler-ir-value-render value)
         " : "
-        (compiler-ir-type-render type-segment-bases ty))]))
+        (compiler-ir-type-render structural-session type-segment-bases ty))]))
 
 (define (compiler-ir-spmd-call-arg-seq-render-from
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [seq : CompilerIrSpmdCallArgSeq]
   [index : i64]) : String
@@ -3969,6 +4022,7 @@
       ""
       (str_cat.str-cat
         (compiler-ir-spmd-call-arg-render
+          structural-session
           type-segment-bases
           (array-ref slots index))
         (if (= (+ index 1) count)
@@ -3976,19 +4030,26 @@
           (str_cat.str-cat
             ", "
             (compiler-ir-spmd-call-arg-seq-render-from
+              structural-session
               type-segment-bases
               seq
               (+ index 1))))))))
 
 (define (compiler-ir-spmd-call-args-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [args : CompilerIrSpmdCallArgSeq]) : String
-  (compiler-ir-spmd-call-arg-seq-render-from type-segment-bases args 0))
+  (compiler-ir-spmd-call-arg-seq-render-from
+    structural-session
+    type-segment-bases
+    args
+    0))
 
 (define (compiler-ir-spmd-call-arg-seq-count [args : CompilerIrSpmdCallArgSeq]) : i64
   args.len)
 
 (define (compiler-ir-spmd-result-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [result : CompilerIrSpmdCallResult]) : String
   (match result
@@ -3997,9 +4058,10 @@
       (str_cat.str-cat
         (compiler-ir-spmd-value-class-render class)
         " "
-        (compiler-ir-type-render type-segment-bases ty))]))
+        (compiler-ir-type-render structural-session type-segment-bases ty))]))
 
 (define (compiler-ir-tail-call-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [name : i64]
   [args : CompilerIrCallArgs]
@@ -4010,9 +4072,10 @@
     "("
     (compiler-ir-call-args-render args)
     ") : "
-    (compiler-ir-type-render type-segment-bases ty)))
+    (compiler-ir-type-render structural-session type-segment-bases ty)))
 
 (define (compiler-ir-spmd-call-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [callee : i64]
   [backend : CompilerIrSpmdBackend]
@@ -4030,11 +4093,18 @@
     " mask "
     (compiler-ir-value-render active-mask)
     "("
-    (compiler-ir-spmd-call-args-render type-segment-bases args)
+    (compiler-ir-spmd-call-args-render
+      structural-session
+      type-segment-bases
+      args)
     ") : "
-    (compiler-ir-spmd-result-render type-segment-bases result)))
+    (compiler-ir-spmd-result-render
+      structural-session
+      type-segment-bases
+      result)))
 
 (define (compiler-ir-tail-call-indirect-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [callee : CompilerIrValue]
   [args : CompilerIrCallArgs]
@@ -4045,7 +4115,7 @@
     "("
     (compiler-ir-call-args-render args)
     ") : "
-    (compiler-ir-type-render type-segment-bases ty)))
+    (compiler-ir-type-render structural-session type-segment-bases ty)))
 
 (define (compiler-ir-bin-op-render [op : CompilerIrBinOp]) : String
   (match op
@@ -4089,13 +4159,14 @@
   (str_cat.str-cat "  %" (string.int->string dst) " = "))
 
 (define (compiler-ir-typed-value-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [value : CompilerIrValue]
   [ty : ast.AstType]) : String
   (str_cat.str-cat
     (compiler-ir-value-render value)
     " : "
-    (compiler-ir-type-render type-segment-bases ty)))
+    (compiler-ir-type-render structural-session type-segment-bases ty)))
 
 (define (compiler-ir-maybe-value-render [value : CompilerIrMaybeValue]) : String
   (match value
@@ -4123,6 +4194,7 @@
               (compiler-ir-phi-input-list-render (__tl-box-place rest)))]))]))
 
 (define (compiler-ir-c-abi-return-slot-seq-render-from
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [slots : (__tl_dyn-array CompilerIrCAbiReturnSlot)]
   [index : i64]
@@ -4132,7 +4204,7 @@
     (match (array-ref slots index)
       [(CompilerIrCAbiReturnSlot.Slot ty offset)
         (str_cat.str-cat
-          (compiler-ir-type-render type-segment-bases ty)
+          (compiler-ir-type-render structural-session type-segment-bases ty)
           "@"
           (string.int->string offset)
           (if (= (+ index 1) count)
@@ -4140,21 +4212,25 @@
             (str_cat.str-cat
               ", "
               (compiler-ir-c-abi-return-slot-seq-render-from
+                structural-session
                 type-segment-bases
                 slots
                 (+ index 1)
                 count))))])))
 
 (define (compiler-ir-c-abi-return-slot-seq-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [slots : CompilerIrCAbiReturnSlotSeq]) : String
   (compiler-ir-c-abi-return-slot-seq-render-from
+    structural-session
     type-segment-bases
     slots.slots
     0
     slots.len))
 
 (define (compiler-ir-instr-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [instr : CompilerIrInstr]) : String
   (match instr
@@ -4162,12 +4238,16 @@
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
         "mov "
-        (compiler-ir-typed-value-render type-segment-bases value ty))]
+        (compiler-ir-typed-value-render
+          structural-session
+          type-segment-bases
+          value
+          ty))]
     [(CompilerIrInstr.Alloc dst ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
         "alloc "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.AddrOf dst src)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4179,18 +4259,30 @@
         "gep "
         (compiler-ir-value-render base)
         ", "
-        (compiler-ir-typed-value-render type-segment-bases offset ty))]
+        (compiler-ir-typed-value-render
+          structural-session
+          type-segment-bases
+          offset
+          ty))]
     [(CompilerIrInstr.Load dst source ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
         "load "
-        (compiler-ir-typed-value-render type-segment-bases source ty))]
+        (compiler-ir-typed-value-render
+          structural-session
+          type-segment-bases
+          source
+          ty))]
     [(CompilerIrInstr.StorePtr ptr value ty)
       (str_cat.str-cat
         "  store_ptr "
         (compiler-ir-value-render ptr)
         ", "
-        (compiler-ir-typed-value-render type-segment-bases value ty))]
+        (compiler-ir-typed-value-render
+          structural-session
+          type-segment-bases
+          value
+          ty))]
     [(CompilerIrInstr.CopyBytes dst src count)
       (str_cat.str-cat
         "  copy_bytes "
@@ -4214,18 +4306,18 @@
         "cast "
         (compiler-ir-value-render value)
         " : "
-        (compiler-ir-type-render type-segment-bases from)
+        (compiler-ir-type-render structural-session type-segment-bases from)
         " to "
-        (compiler-ir-type-render type-segment-bases to))]
+        (compiler-ir-type-render structural-session type-segment-bases to))]
     [(CompilerIrInstr.Bitcast dst value from to)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
         "bitcast "
         (compiler-ir-value-render value)
         " : "
-        (compiler-ir-type-render type-segment-bases from)
+        (compiler-ir-type-render structural-session type-segment-bases from)
         " to "
-        (compiler-ir-type-render type-segment-bases to))]
+        (compiler-ir-type-render structural-session type-segment-bases to))]
     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4233,20 +4325,28 @@
         " "
         (compiler-ir-value-render lhs)
         ", "
-        (compiler-ir-typed-value-render type-segment-bases rhs ty))]
+        (compiler-ir-typed-value-render
+          structural-session
+          type-segment-bases
+          rhs
+          ty))]
     [(CompilerIrInstr.UnOp dst op value ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
         (compiler-ir-un-op-render op)
         " "
-        (compiler-ir-typed-value-render type-segment-bases value ty))]
+        (compiler-ir-typed-value-render
+          structural-session
+          type-segment-bases
+          value
+          ty))]
     [(CompilerIrInstr.LaneId dst lanes ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
         "lane_id "
         (string.int->string lanes)
         " : "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.Splat dst value lanes ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4255,7 +4355,7 @@
         " lanes "
         (string.int->string lanes)
         " : "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (let
         [dst (__tl-project-field (__tl-box-place payload-box) dst)]
@@ -4275,7 +4375,7 @@
           " lanes "
           (string.int->string lanes)
           " : "
-          (compiler-ir-type-render type-segment-bases ty)))]
+          (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (let
         [dst (__tl-project-field (__tl-box-place payload-box) dst)]
@@ -4295,7 +4395,7 @@
           " lanes "
           (string.int->string lanes)
           " : "
-          (compiler-ir-type-render type-segment-bases ty)))]
+          (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(CompilerIrInstr.VectorReduce dst op value lanes ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4306,7 +4406,7 @@
         " lanes "
         (string.int->string lanes)
         " : "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.VectorCompare payload-box)
       (let
         [dst (__tl-project-field (__tl-box-place payload-box) dst)]
@@ -4326,7 +4426,7 @@
           " lanes "
           (string.int->string lanes)
           " : "
-          (compiler-ir-type-render type-segment-bases ty)))]
+          (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4373,7 +4473,7 @@
           " lanes "
           (string.int->string lanes)
           " : "
-          (compiler-ir-type-render type-segment-bases ty)))]
+          (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(CompilerIrInstr.VectorLoad dst base index lanes ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4384,7 +4484,7 @@
         " lanes "
         (string.int->string lanes)
         " : "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.VectorStore payload-box)
       (let
         [base (__tl-project-field (__tl-box-place payload-box) base)]
@@ -4402,7 +4502,7 @@
           " lanes "
           (string.int->string lanes)
           " : "
-          (compiler-ir-type-render type-segment-bases ty)))]
+          (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(CompilerIrInstr.PredicatedStore payload-box)
       (let
         [base (__tl-project-field (__tl-box-place payload-box) base)]
@@ -4423,7 +4523,7 @@
           " lanes "
           (string.int->string lanes)
           " : "
-          (compiler-ir-type-render type-segment-bases ty)))]
+          (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (let
         [dst (__tl-project-field (__tl-box-place payload-box) dst)]
@@ -4443,7 +4543,7 @@
           " lanes "
           (string.int->string lanes)
           " : "
-          (compiler-ir-type-render type-segment-bases ty)))]
+          (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(CompilerIrInstr.GatherLoad payload-box)
       (let
         [dst (__tl-project-field (__tl-box-place payload-box) dst)]
@@ -4470,7 +4570,7 @@
           " lanes "
           (string.int->string lanes)
           " : "
-          (compiler-ir-type-render type-segment-bases ty)))]
+          (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (let
         [dst (__tl-project-field (__tl-box-place payload-box) dst)]
@@ -4496,7 +4596,7 @@
           " lanes "
           (string.int->string lanes)
           " : "
-          (compiler-ir-type-render type-segment-bases ty)))]
+          (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(CompilerIrInstr.TailMask dst index length lanes)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4540,7 +4640,7 @@
         "("
         (compiler-ir-call-args-render args)
         ") : "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.CallIndirect dst callee args ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4549,7 +4649,7 @@
         "("
         (compiler-ir-call-args-render args)
         ") : "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.CallIndirectC dst callee args ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4558,7 +4658,7 @@
         "("
         (compiler-ir-call-args-render args)
         ") : "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
         [base (__tl-project-field (__tl-box-place payload-box) base)]
@@ -4573,7 +4673,10 @@
           ") -> "
           (compiler-ir-value-render base)
           " ["
-          (compiler-ir-c-abi-return-slot-seq-render type-segment-bases slots)
+          (compiler-ir-c-abi-return-slot-seq-render
+            structural-session
+            type-segment-bases
+            slots)
           "]"))]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
@@ -4589,12 +4692,25 @@
           ") -> "
           (compiler-ir-value-render base)
           " ["
-          (compiler-ir-c-abi-return-slot-seq-render type-segment-bases slots)
+          (compiler-ir-c-abi-return-slot-seq-render
+            structural-session
+            type-segment-bases
+            slots)
           "]"))]
     [(CompilerIrInstr.TailCall name args ty)
-      (compiler-ir-tail-call-render type-segment-bases name args ty)]
+      (compiler-ir-tail-call-render
+        structural-session
+        type-segment-bases
+        name
+        args
+        ty)]
     [(CompilerIrInstr.TailCallIndirect callee args ty)
-      (compiler-ir-tail-call-indirect-render type-segment-bases callee args ty)]
+      (compiler-ir-tail-call-indirect-render
+        structural-session
+        type-segment-bases
+        callee
+        args
+        ty)]
     [(CompilerIrInstr.SpmdCall payload-box)
       (let
         [callee (__tl-project-field (__tl-box-place payload-box) callee)]
@@ -4605,6 +4721,7 @@
         [args (__tl-project-field (__tl-box-place payload-box) args)]
         [result (__tl-project-field (__tl-box-place payload-box) result)]
         (compiler-ir-spmd-call-render
+          structural-session
           type-segment-bases
           callee
           backend
@@ -4617,7 +4734,11 @@
         "  store %"
         (string.int->string dst)
         ", "
-        (compiler-ir-typed-value-render type-segment-bases value ty))]
+        (compiler-ir-typed-value-render
+          structural-session
+          type-segment-bases
+          value
+          ty))]
     [(CompilerIrInstr.Jump label)
       (str_cat.str-cat "  jump " (compiler-ir-label-text label))]
     [(CompilerIrInstr.Branch test on-true on-false)
@@ -4644,14 +4765,14 @@
         "phi "
         (compiler-ir-phi-input-list-render inputs)
         " : "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.Pack dst values ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
         "pack ["
         (compiler-ir-value-list-render values)
         "] : "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.Word dst value index ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4660,7 +4781,7 @@
         ", "
         (string.int->string index)
         " : "
-        (compiler-ir-type-render type-segment-bases ty))]
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.Switch index base cases default-label)
       (str_cat.str-cat
         "  switch "
@@ -4687,6 +4808,7 @@
 ;; of the retired recursive suffix concatenation, which copied the remaining
 ;; text once per element (#6115).
 (define (compiler-ir-instr-seq-render-into
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
   [instrs : CompilerIrInstrSeq]
@@ -4694,11 +4816,13 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     buf
     (compiler-ir-instr-seq-render-into
+      structural-session
       type-segment-bases
       (text_buf.append
         (text_buf.append
           buf
           (compiler-ir-instr-render
+            structural-session
             type-segment-bases
             (compiler-ir-instr-seq-ref instrs index)))
         "\n")
@@ -4706,17 +4830,20 @@
       (+ index 1))))
 
 (define (compiler-ir-instr-seq-render-from
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : String
   (text_buf.render
     (compiler-ir-instr-seq-render-into
+      structural-session
       type-segment-bases
       (text_buf.empty)
       instrs
       index)))
 
 (define (compiler-ir-block-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [block : CompilerIrBlock]) : String
   (match block
@@ -4725,9 +4852,14 @@
         (compiler-ir-label-text label)
         ":
 "
-        (compiler-ir-instr-seq-render-from type-segment-bases instrs 0))]))
+        (compiler-ir-instr-seq-render-from
+          structural-session
+          type-segment-bases
+          instrs
+          0))]))
 
 (define (compiler-ir-block-list-render-into
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
   [blocks : CompilerIrBlockList]) : text_buf.TextBuf
@@ -4735,35 +4867,46 @@
     [(CompilerIrBlockList.Nil) buf]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-block-list-render-into
+        structural-session
         type-segment-bases
         buf
         (compiler-ir-block-seq-to-list seq))]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-block-list-render-into
+        structural-session
         type-segment-bases
         (match (compiler-ir-block-list-force-cons (__tl-box-place rest))
           [(CompilerIrBlockList.Nil)
             (text_buf.append
               buf
-              (compiler-ir-block-render type-segment-bases block))]
+              (compiler-ir-block-render
+                structural-session
+                type-segment-bases
+                block))]
           [_
             (text_buf.append
               (text_buf.append
                 buf
-                (compiler-ir-block-render type-segment-bases block))
+                (compiler-ir-block-render
+                  structural-session
+                  type-segment-bases
+                  block))
               "\n")])
         (__tl-box-place rest))]))
 
 (define (compiler-ir-block-list-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]) : String
   (text_buf.render
     (compiler-ir-block-list-render-into
+      structural-session
       type-segment-bases
       (text_buf.empty)
       blocks)))
 
 (define (compiler-ir-param-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [param : CompilerIrParam]) : String
   (match param
@@ -4773,30 +4916,34 @@
         "=%"
         (string.int->string var)
         ":"
-        (compiler-ir-type-render type-segment-bases ty))]))
+        (compiler-ir-type-render structural-session type-segment-bases ty))]))
 
 (define (compiler-ir-param-list-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [params : CompilerIrParamList]) : String
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) ""]
     [(CompilerIrParamList.Array seq)
       (compiler-ir-param-list-render
+        structural-session
         type-segment-bases
         (compiler-ir-param-seq-to-list seq))]
     [(CompilerIrParamList.Cons param rest)
       (str_cat.str-cat
-        (compiler-ir-param-render type-segment-bases param)
+        (compiler-ir-param-render structural-session type-segment-bases param)
         (match (compiler-ir-param-list-force-cons (__tl-box-place rest))
           [(CompilerIrParamList.Nil) ""]
           [_
             (str_cat.str-cat
               ", "
               (compiler-ir-param-list-render
+                structural-session
                 type-segment-bases
                 (__tl-box-place rest)))]))]))
 
 (define (compiler-ir-function-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [func : CompilerIrFunction]) : String
   (match func
@@ -4805,16 +4952,23 @@
         "function @"
         (compiler-ir-symbol-text name)
         "("
-        (compiler-ir-param-list-render type-segment-bases params)
+        (compiler-ir-param-list-render
+          structural-session
+          type-segment-bases
+          params)
         ") -> "
-        (compiler-ir-type-render type-segment-bases ret)
+        (compiler-ir-type-render structural-session type-segment-bases ret)
         " vars "
         (string.int->string vars)
         " {\n"
-        (compiler-ir-block-list-render type-segment-bases blocks)
+        (compiler-ir-block-list-render
+          structural-session
+          type-segment-bases
+          blocks)
         "}\n")]))
 
 (define (compiler-ir-function-list-render-into
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
   [functions : CompilerIrFunctionList]) : text_buf.TextBuf
@@ -4822,26 +4976,35 @@
     [(CompilerIrFunctionList.Nil) buf]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-list-render-into
+        structural-session
         type-segment-bases
         buf
         (compiler-ir-function-seq-to-list seq))]
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-function-list-render-into
+        structural-session
         type-segment-bases
         (match (compiler-ir-function-list-force-cons (__tl-box-place rest))
           [(CompilerIrFunctionList.Nil)
             (text_buf.append
               buf
-              (compiler-ir-function-render type-segment-bases func))]
+              (compiler-ir-function-render
+                structural-session
+                type-segment-bases
+                func))]
           [_
             (text_buf.append
               (text_buf.append
                 buf
-                (compiler-ir-function-render type-segment-bases func))
+                (compiler-ir-function-render
+                  structural-session
+                  type-segment-bases
+                  func))
               "\n")])
         (__tl-box-place rest))]))
 
 (define (compiler-ir-global-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [global : CompilerIrGlobal]) : String
   (match global
@@ -4850,12 +5013,13 @@
         "global @"
         (compiler-ir-symbol-text name)
         " : "
-        (compiler-ir-type-render type-segment-bases ty)
+        (compiler-ir-type-render structural-session type-segment-bases ty)
         " = "
         (compiler-ir-value-render value)
         "\n")]))
 
 (define (compiler-ir-global-seq-render-into
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
   [globals : CompilerIrGlobalSeq]) : text_buf.TextBuf
@@ -4870,12 +5034,14 @@
             (text_buf.append
               out
               (compiler-ir-global-render
+                structural-session
                 type-segment-bases
                 (compiler-ir-global-seq-ref globals index))))
           (set! index (+ index 1))))
       out)))
 
 (define (compiler-ir-extern-abi-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [abi : ast.AstExternAbi]) : String
   (match abi
@@ -4884,9 +5050,10 @@
     [(ast.AstExternAbi.CVarargsTyped ty)
       (str_cat.str-cat
         "c-varargs:"
-        (compiler-ir-type-render type-segment-bases ty))]))
+        (compiler-ir-type-render structural-session type-segment-bases ty))]))
 
 (define (compiler-ir-extern-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [extern : CompilerIrExtern]) : String
   (match extern
@@ -4897,15 +5064,19 @@
         " symbol \""
         symbol
         "\" : "
-        (compiler-ir-type-render type-segment-bases ty)
+        (compiler-ir-type-render structural-session type-segment-bases ty)
         " abi "
-        (compiler-ir-extern-abi-render type-segment-bases abi)
+        (compiler-ir-extern-abi-render
+          structural-session
+          type-segment-bases
+          abi)
         (if weak
           " weak"
           "")
         "\n")]))
 
 (define (compiler-ir-extern-seq-render-into
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
   [externs : CompilerIrExternSeq]) : text_buf.TextBuf
@@ -4920,12 +5091,14 @@
             (text_buf.append
               out
               (compiler-ir-extern-render
+                structural-session
                 type-segment-bases
                 (compiler-ir-extern-seq-ref externs index))))
           (set! index (+ index 1))))
       out)))
 
 (define (compiler-ir-program-render
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [program : CompilerIrProgram]) : String
   (match program
@@ -4933,6 +5106,7 @@
       (let
         [globals-buf : text_buf.TextBuf
           (compiler-ir-global-seq-render-into
+            structural-session
             type-segment-bases
             (text_buf.append (text_buf.empty) "typelisp-ir v1\n")
             globals)]
@@ -4942,6 +5116,7 @@
             (text_buf.append globals-buf "\n"))]
         [externs-buf : text_buf.TextBuf
           (compiler-ir-extern-seq-render-into
+            structural-session
             type-segment-bases
             globals-sep-buf
             externs)]
@@ -4951,6 +5126,7 @@
             (text_buf.append externs-buf "\n"))]
         (text_buf.render
           (compiler-ir-function-list-render-into
+            structural-session
             type-segment-bases
             externs-sep-buf
             functions)))]))
@@ -6754,7 +6930,9 @@
     [(ast.AstType.Region region inner)
       (str_cat.str-cat
         "(in "
-        (compiler-ir-lifetime-render region)
+        (compiler-ir-lifetime-render
+          (cis.InternStructuralSessionHandle 0)
+          region)
         " "
         (compiler-ir-type-name
           type-segment-bases
@@ -6763,7 +6941,9 @@
     [(ast.AstType.Ref region inner)
       (str_cat.str-cat
         "(& "
-        (compiler-ir-lifetime-render region)
+        (compiler-ir-lifetime-render
+          (cis.InternStructuralSessionHandle 0)
+          region)
         " "
         (compiler-ir-type-name
           type-segment-bases
@@ -6772,7 +6952,9 @@
     [(ast.AstType.MutRef region inner)
       (str_cat.str-cat
         "(&mut "
-        (compiler-ir-lifetime-render region)
+        (compiler-ir-lifetime-render
+          (cis.InternStructuralSessionHandle 0)
+          region)
         " "
         (compiler-ir-type-name
           type-segment-bases
@@ -6781,16 +6963,19 @@
     [(ast.AstType.Enum name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.EnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
+        (cis.InternStructuralSessionHandle 0)
         (ast.ast-nominal-name-id-display name)
         (__tl-box-place lifetimes))]
     [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
+        (cis.InternStructuralSessionHandle 0)
         (ast.ast-nominal-name-id-display name)
         (__tl-box-place lifetimes))]
     [(ast.AstType.Var name) (str_cat.str-cat "'" (ci.intern-str name) "'")]
     [(ast.AstType.VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
+        (cis.InternStructuralSessionHandle 0)
         (ci.intern-str name)
         (__tl-box-place lifetimes))]
     [(ast.AstType.Ptr elem)
@@ -7756,6 +7941,7 @@
     (and
       (string.eq
         (compiler-ir-instr-render
+          (cis.InternStructuralSessionHandle 0)
           (ast.ast-node-pool-reader-type-segment-bases)
           instr)
         "  %42 = vector_prefix_min %7, carry -3 lanes 4 : i64")
@@ -8695,6 +8881,7 @@
 (define (compiler-ir-tail-call-render-ok?) : bool
   (string.eq
     (compiler-ir-instr-render
+      (cis.InternStructuralSessionHandle 0)
       (ast.ast-node-pool-reader-type-segment-bases)
       (CompilerIrInstr.TailCall
         (compiler-ir-test-symbol "fact_loop")
@@ -8721,6 +8908,7 @@
     (and
       (string.eq
         (compiler-ir-instr-render
+          (cis.InternStructuralSessionHandle 0)
           (ast.ast-node-pool-reader-type-segment-bases)
           instr)
         "  switch %9 base 4 [4:four, 5:five] default other")

@@ -20,6 +20,7 @@
 (import compiler_typecheck_core as tc)
 (import compiler_ast_types as ast)
 (import compiler_symbols as csym)
+(import compiler_intern_state as cis)
 
 ;; Tool-facing semantic data is copied into an explicitly owned arena. None of
 ;; these records retain TcContext, TcTypeEnv, parser sidecars, or intern-pool
@@ -2496,7 +2497,9 @@
                           (tc.macro-decl-module-display module-id)
                           module-id))]
                     [display-name : String
-                      (tc.tc-env-key-name-text decl-name-id)]
+                      (tc.tc-env-key-name-text-for-session
+                        (tc.tc-context-structural-session ctx)
+                        decl-name-id)]
                     [type-text : String
                       (match (tc.tc-lookup-visible-id ctx env lookup-id)
                         [(tc.ResultTcType.Ok ty) (tc.tc-type-render ty)]
@@ -2604,7 +2607,10 @@
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
-    [name : String (tc.tc-env-key-name-text name-id)]
+    [name : String
+      (tc.tc-env-key-name-text-for-session
+        (tc.tc-type-env-structural-session env)
+        name-id)]
     [binding-ty : ast.AstType
       (match maybe-ty
         [(ast.AstMaybeType.Some ty) ty]
@@ -2700,7 +2706,9 @@
     (match (tc.tc-let-binding-init-type-at
       ctx
       env
-      (tc.tc-env-key-name-text name-id)
+      (tc.tc-env-key-name-text-for-session
+        (tc.tc-context-structural-session ctx)
+        name-id)
       maybe-ty
       init-id
       bindings
@@ -3504,7 +3512,10 @@
         state
         value-id
         (string.string-length state.source))]
-    [name : String (tc.tc-env-key-name-text name-id)]
+    [name : String
+      (tc.tc-env-key-name-text-for-session
+        (tc.tc-context-structural-session state.ctx)
+        name-id)]
     [span : CompilerSemanticSpan
       (compiler-semantic-name-span-in-range
         state.path
@@ -4262,7 +4273,9 @@
       (compiler-semantic-name-span-in-range
         state.path
         state.source
-        (tc.tc-env-key-name-text name-id)
+        (tc.tc-env-key-name-text-for-session
+          (tc.tc-context-structural-session state.ctx)
+          name-id)
         (compiler-semantic-form-head-end state.source form-start)
         body-start)]
     (if (>= name-span.end-byte 0)
@@ -4361,7 +4374,10 @@
       (tc.tc-macro-call-site-span-for-state sites site-index)]
     [site-editable : bool
       (tc.tc-macro-call-site-editable-for-state? sites site-index)]
-    [display-name : String (tc.tc-env-key-name-text name-id)]
+    [display-name : String
+      (tc.tc-env-key-name-text-for-session
+        (tc.tc-context-structural-session ctx)
+        name-id)]
     [decl-ctx : tc.TcContext
       (if (= definition-module-id cbi.compiler-builtin-id-fix-empty)
         (tc.tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
@@ -4846,6 +4862,7 @@
             (set! width (* width 2))))))))
 
 (define (compiler-semantic-top-map-walk!
+  [session : cis.InternStructuralSessionHandle]
   [symbols : csym.CompilerSymbols]
   [map : csym.CompilerSymbolMap]
   [namespace-tag : i64]
@@ -4905,7 +4922,8 @@
                     (+ (array-ref counts-or-cursors module-index) 1))
                   (let
                     [out-index : i64 (array-ref counts-or-cursors module-index)]
-                    [label : String (tc.tc-env-key-name-text name-id)]
+                    [label : String
+                      (tc.tc-env-key-name-text-for-session session name-id)]
                     (begin
                       (set!
                         (array-ref out out-index)
@@ -4945,6 +4963,7 @@
         true))))
 
 (define (compiler-semantic-core-macro-walk!
+  [session : cis.InternStructuralSessionHandle]
   [symbols : csym.CompilerSymbols]
   [macros : csym.CompilerSymbolMap]
   [core-module-id : i64]
@@ -4980,7 +4999,8 @@
                 (> (array-ref decl-record-indices decl-index) 0))
                 (let
                   [module-index : i64 0]
-                  [label : String (tc.tc-env-key-name-text name-id)]
+                  [label : String
+                    (tc.tc-env-key-name-text-for-session session name-id)]
                   (while (< module-index module-len)
                     (let
                       [module-id : i64
@@ -5044,6 +5064,7 @@
         [cursor : i64 0]
         (begin
           (compiler-semantic-top-map-walk!
+            (tc.tc-context-structural-session ctx)
             symbols
             values
             1
@@ -5055,6 +5076,7 @@
             labels
             true)
           (compiler-semantic-top-map-walk!
+            (tc.tc-context-structural-session ctx)
             symbols
             types
             2
@@ -5066,6 +5088,7 @@
             labels
             true)
           (compiler-semantic-top-map-walk!
+            (tc.tc-context-structural-session ctx)
             symbols
             macros
             4
@@ -5077,6 +5100,7 @@
             labels
             true)
           (compiler-semantic-core-macro-walk!
+            (tc.tc-context-structural-session ctx)
             symbols
             macros
             core-module-id
@@ -5099,6 +5123,7 @@
                 (set! cursor (+ cursor info.candidate-len))
                 (set! module-index (+ module-index 1)))))
           (compiler-semantic-top-map-walk!
+            (tc.tc-context-structural-session ctx)
             symbols
             values
             1
@@ -5110,6 +5135,7 @@
             labels
             false)
           (compiler-semantic-top-map-walk!
+            (tc.tc-context-structural-session ctx)
             symbols
             types
             2
@@ -5121,6 +5147,7 @@
             labels
             false)
           (compiler-semantic-top-map-walk!
+            (tc.tc-context-structural-session ctx)
             symbols
             macros
             4
@@ -5132,6 +5159,7 @@
             labels
             false)
           (compiler-semantic-core-macro-walk!
+            (tc.tc-context-structural-session ctx)
             symbols
             macros
             core-module-id
@@ -5362,7 +5390,10 @@
                   (match (compiler-semantic-decl-symbol decl)
                     [(CompilerSemanticMaybeDecl.Some name-id kind)
                       (let
-                        [name : String (tc.tc-env-key-name-text name-id)]
+                        [name : String
+                          (tc.tc-env-key-name-text-for-session
+                            (tc.tc-context-structural-session walk-state.ctx)
+                            name-id)]
                         [maybe-origin : parse_core.CompilerParseMaybeDeclSpan
                           (compiler-semantic-decl-origin (& decls) index decl)]
                         [form-start : i64

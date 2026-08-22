@@ -1235,6 +1235,8 @@
               (compiler_driver_core.compiler-driver-state-reset-file-state!
                 state)
               (opt.compiler-opt-debug-configure!
+                (compiler_driver_core.compiler-driver-state-entry-structural-session
+                  state)
                 compile-cli-trace-passes-requested
                 (string.copy (& compile-cli-dump-ir-pass))
                 compile-cli-verify-ir-requested)
@@ -1453,6 +1455,8 @@
             unit)
           (compiler_driver_core.compiler-driver-state-reset-file-state! state)
           (opt.compiler-opt-debug-configure!
+            (compiler_driver_core.compiler-driver-state-entry-structural-session
+              state)
             compile-cli-trace-passes-requested
             (string.copy (& compile-cli-dump-ir-pass))
             compile-cli-verify-ir-requested)

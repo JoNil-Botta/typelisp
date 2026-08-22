@@ -2,6 +2,7 @@
 ;; package surface producers and consumers.
 (import compiler_surface_binary as binary)
 (import compiler_surface_identity as surface_identity)
+(import compiler_intern_state as cis)
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.arena))
@@ -836,6 +837,7 @@
     embedded-stdlib-tlci)
   (define (surface-typecheck-facts-encode
     [facts : SurfaceTypecheckFacts]
+    [structural-session : cis.InternStructuralSessionHandle]
     [source-count : i64]
     [identity-count : i64]) : ResultSurfaceTypecheckFactBytes
     (if (not (surface-typecheck-facts-valid? facts))
@@ -868,11 +870,13 @@
             (let
               [decl-key : i64
                 (surface_identity.surface-identity-portable-id
+                  structural-session
                   (array-ref decl-keys index)
                   source-count
                   identity-count)]
               [root-key : i64
                 (surface_identity.surface-identity-portable-id
+                  structural-session
                   (array-ref root-keys index)
                   source-count
                   identity-count)]
@@ -941,6 +945,7 @@
 
 (define (surface-typecheck-facts-decode
   [bytes : (__tl_dyn-array u8)]
+  [structural-session : cis.InternStructuralSessionHandle]
   [remap : (__tl_dyn-array i64)]) : ResultSurfaceTypecheckFacts
   (let
     [reader : SurfaceTypecheckFactReader
@@ -994,11 +999,13 @@
                   (set!
                     (array-ref decl-keys index)
                     (surface_identity.surface-identity-resolve-portable-id
+                      structural-session
                       decl-key
                       remap))
                   (set!
                     (array-ref root-keys index)
                     (surface_identity.surface-identity-resolve-portable-id
+                      structural-session
                       root-key
                       remap))
                   (set! (array-ref call-indices index) call-index)

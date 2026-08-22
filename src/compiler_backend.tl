@@ -36,6 +36,7 @@
 ;; Block labels are interned ids, so their maps are integer-keyed (refs #5718).
 (import (hashmap.hashmap i64 i64) as backend_label_i64_map)
 (import (hashmap.hashmap i64 i64) as backend_i64_i64_map)
+(import (hashmap.hashmap i64 String) as backend_i64_string_map)
 (import stdlib.string)
 (import stdlib.byte_buf_core)
 (import stdlib.str_cat_runtime as str_cat)
@@ -1520,9 +1521,9 @@
 ;; ptr-write!, the same mechanism CompilerBackendStateData uses behind its
 ;; opaque handle.
 (defstruct CompilerBackendCallSymbolMemo
-  ;; name-id -> slot into `values`, following the backend_i64_i64_map pattern.
-  (keys backend_i64_i64_map.Map)
-  (values (__tl_dyn-array String))
+  ;; callee name-id -> resolved assembly symbol, held in one integer-keyed
+  ;; hashmap so growth is amortized internal to the map.
+  (symbols backend_i64_string_map.Map)
   ;; Fingerprint of the emission context this memo was filled under: every
   ;; plan-dependent branch of call-symbol-index flows through the runtime-plan
   ;; provided predicates, which these eleven packed plan bits fully determine,
@@ -17098,9 +17099,15 @@
 ;; home the user-symbol cache uses; emission otherwise rewinds per-function
 ;; regions whose strings would dangle (see the prefix-rewind cache resets in
 ;; the function emitter).
-(define (compiler-backend-call-symbol-memo-owner [state : CompilerBackendState]) : arena.Arena
-  (arena.Arena
-    (__tl-project-field (compiler-backend-state-data state) owner-arena)))
+(define (compiler-backend-call-symbol-memo-arena
+  [index : CompilerBackendProgramIndex]) : i64
+  (if (= (array-ref index.call-symbol-memo 1) 0)
+    (let
+      [handle : i64 (arena.tl_arena_make_small)]
+      (begin
+        (set! (array-ref index.call-symbol-memo 1) handle)
+        handle))
+    (array-ref index.call-symbol-memo 1)))
 
 ;; Raw-pointer access to the shared memo value.  Copies of the wide program
 ;; index must observe one cell without deep-copying the embedded map on every
@@ -17123,25 +17130,24 @@
         : (MutPtr CompilerBackendCallSymbolMemo))
       memo)))
 
-;; Allocate the memo value in the owner arena and publish its address through
-;; the index's cell, following the compiler-backend-state-new construction.
+;; Allocate the memo value in the dedicated memo arena and publish its address
+;; through the index cell, following the compiler-backend-state-new
+;; construction.
 (define (compiler-backend-call-symbol-memo-allocate!
   [index : CompilerBackendProgramIndex]
   [flags : i64]) : unit
   (let
-    [owner : arena.Arena
-      (compiler-backend-call-symbol-memo-owner index.backend-state)]
+    [arena-handle : i64 (compiler-backend-call-symbol-memo-arena index)]
     (in-arena
-      owner
+      (arena.Arena arena-handle)
       (let
-        [cell : (__tl_dyn-array CompilerBackendCallSymbolMemo)
+        [memo-cell : (__tl_dyn-array CompilerBackendCallSymbolMemo)
           (array.make-array CompilerBackendCallSymbolMemo 1)]
         (begin
           (set!
-            (array-ref cell 0)
+            (array-ref memo-cell 0)
             (CompilerBackendCallSymbolMemo
-              (backend_i64_i64_map.new)
-              (array.make-array String 0)
+              (backend_i64_string_map.new)
               flags
               (compiler-backend-state-intern-generation index.backend-state)
               (compiler-backend-state-intern-table-id index.backend-state)))
@@ -17151,12 +17157,44 @@
               (unsafe
                 (ptr->int
                   (ptr-cast
-                    (__tl_array-data cell)
+                    (__tl_array-data memo-cell)
                     : (Ptr CompilerBackendCallSymbolMemo))))
               : i64)))))))
 
-;; Fresh-cell allocation stamps the current fingerprint, so first use goes
-;; straight through the memo path.
+;; Hit: return the retained symbol.  Miss: resolve once, copy the result into
+;; the memo arena (the uncached result may name a transient region), retain it,
+;; and publish the mutated value back through the shared cell.
+(define (compiler-backend-call-symbol-memo-lookup-or-fill
+  [name : i64]
+  [plan : CompilerBackendRuntimePlan]
+  [index : CompilerBackendProgramIndex]
+  [memo-address : i64]) : String
+  (let
+    [memo : CompilerBackendCallSymbolMemo
+      (unsafe
+        (ptr-read
+          (int->ptr
+            (cast memo-address : u64)
+            : (Ptr CompilerBackendCallSymbolMemo))))]
+    (match (backend_i64_string_map.get (& memo.symbols) name)
+      [(backend_i64_string_map.LookupFound symbol) symbol]
+      [(backend_i64_string_map.LookupMissing)
+        (let
+          [owner : arena.Arena
+            (arena.Arena (compiler-backend-call-symbol-memo-arena index))]
+          [resolved : String
+            (compiler-backend-call-symbol-index-uncached name plan index)]
+          [stable : String (in-arena owner (str_cat.str-cat resolved ""))]
+          (begin
+            (in-arena
+              owner
+              (backend_i64_string_map.insert-ref!
+                (&mut memo.symbols)
+                name
+                stable))
+            (compiler-backend-call-symbol-memo-store! index memo)
+            stable))])))
+
 (define (compiler-backend-call-symbol-index
   [name : i64]
   [plan : CompilerBackendRuntimePlan]
@@ -17179,30 +17217,11 @@
           (=
             memo.table-id
             (compiler-backend-state-intern-table-id index.backend-state)))
-          (match (backend_i64_i64_map.get (& memo.keys) name)
-            [(backend_i64_i64_map.LookupFound slot)
-              (array-ref memo.values slot)]
-            [(backend_i64_i64_map.LookupMissing)
-              ;; Copy the resolved string into the owner arena before retaining
-              ;; it: the uncached result may name a transient region.
-              (let
-                [owner : arena.Arena
-                  (compiler-backend-call-symbol-memo-owner index.backend-state)]
-                [resolved : String
-                  (compiler-backend-call-symbol-index-uncached name plan index)]
-                [stable : String (in-arena owner (str_cat.str-cat resolved ""))]
-                (begin
-                  (in-arena
-                    owner
-                    (begin
-                      (backend_i64_i64_map.insert-ref!
-                        (&mut memo.keys)
-                        name
-                        (array-length memo.values))
-                      (array.push! memo.values stable)))
-                  ;; Publish the mutated value back into the shared cell.
-                  (compiler-backend-call-symbol-memo-store! index memo)
-                  stable))])
+          (compiler-backend-call-symbol-memo-lookup-or-fill
+            name
+            plan
+            index
+            (array-ref index.call-symbol-memo 0))
           (begin
             ;; A differently flagged plan or a switched intern table
             ;; invalidates every entry at once: reset in place, stamped with
@@ -17210,8 +17229,7 @@
             (compiler-backend-call-symbol-memo-store!
               index
               (CompilerBackendCallSymbolMemo
-                (backend_i64_i64_map.new)
-                (array.make-array String 0)
+                (backend_i64_string_map.new)
                 flags
                 (compiler-backend-state-intern-generation index.backend-state)
                 (compiler-backend-state-intern-table-id index.backend-state)))
@@ -36350,8 +36368,11 @@
         type-segment-bases
         functions
         externs)]
-    [call-symbol-memo : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [_call-symbol-memo-init : unit (set! (array-ref call-symbol-memo 0) 0)]
+    [call-symbol-memo : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [_call-symbol-memo-init : unit
+      (begin
+        (set! (array-ref call-symbol-memo 0) 0)
+        (set! (array-ref call-symbol-memo 1) 0))]
     (CompilerBackendProgramIndex
       function-ids
       function-names

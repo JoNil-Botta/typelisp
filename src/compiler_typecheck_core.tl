@@ -54489,6 +54489,8 @@
 ;; right here, built ONCE into the pool context's base arena so the cached value
 ;; never dangles into a rewound scratch arena. Later requests rebase the cached
 ;; env onto their own pools instead of rebuilding.
+;; Compiles that never request metadata keep the empty env for their whole
+;; lifetime, so those O(program) walks run only when metadata is consumed.
 (define (tc-ctfe-env [ctx : TcContext]) : ctfe_support.CtfeEnv
   (let
     [state : TcMacroState (tc-context-macro-state ctx)]

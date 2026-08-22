@@ -87,20 +87,6 @@
     [(CompilerParseSemanticOriginKind.ImportAlias)
       "__tl_semantic_origin_import_alias"]))
 
-(define (compiler-parse-semantic-origin-kind-tag
-  [kind : CompilerParseSemanticOriginKind]) : i64
-  (match kind
-    [(CompilerParseSemanticOriginKind.TypeName) 1]
-    [(CompilerParseSemanticOriginKind.TypeDefinition) 0]
-    [(CompilerParseSemanticOriginKind.StructFieldDefinition) 2]
-    [(CompilerParseSemanticOriginKind.EnumVariantDefinition) 3]
-    [(CompilerParseSemanticOriginKind.StructFieldUse) 4]
-    [(CompilerParseSemanticOriginKind.EnumVariantPattern) 5]
-    [(CompilerParseSemanticOriginKind.DispatchFunction) 6]
-    [(CompilerParseSemanticOriginKind.ModuleDefinition) 7]
-    [(CompilerParseSemanticOriginKind.ModulePath) 8]
-    [(CompilerParseSemanticOriginKind.ImportAlias) 9]))
-
 (define (compiler-parse-semantic-origin-kind-tag-from-marker [marker : String]) : i64
   (cond
     [(string.eq marker "__tl_semantic_origin_type_name") 1]
@@ -128,6 +114,9 @@
     [(= tag 8) (CompilerParseSemanticOriginKind.ModulePath)]
     [else (CompilerParseSemanticOriginKind.ImportAlias)]))
 
+(define (compiler-parse-semantic-origin-marker? [marker : String]) : bool
+  (>= (compiler-parse-semantic-origin-kind-tag-from-marker marker) 0))
+
 (define (compiler-parse-semantic-origin-capture-begin!) : unit
   (set! compiler-parse-semantic-origin-capture-active true))
 
@@ -143,14 +132,8 @@
       (reader.sp-node-push
         (reader.SpannedSexpr.Int
           written-name
-          "__tl_semantic_origin_pending"
-          (token.SourceSpan
-            (bit-or
-              (shl (token.span-start-line span) 4)
-              (compiler-parse-semantic-origin-kind-tag kind))
-            (token.span-start-col span)
-            (token.span-end-line span)
-            (token.span-end-col span))))
+          (compiler-parse-semantic-origin-kind-marker kind)
+          span))
       unit)
     unit))
 
@@ -179,14 +162,12 @@
                   (reader.sp-node-push
                     (reader.SpannedSexpr.Int
                       (ci.intern-slice text start len)
-                      "__tl_semantic_origin_pending"
+                      (compiler-parse-semantic-origin-kind-marker
+                        (if (= cursor n)
+                          final-kind
+                          prefix-kind))
                       (token.SourceSpan
-                        (bit-or
-                          (shl (token.span-start-line span) 4)
-                          (compiler-parse-semantic-origin-kind-tag
-                            (if (= cursor n)
-                              final-kind
-                              prefix-kind)))
+                        (token.span-start-line span)
                         (+ (token.span-start-col span) start)
                         (token.span-end-line span)
                         (+ (token.span-start-col span) cursor))))
@@ -10881,25 +10862,30 @@
                           (set! advance (+ 2 (token.span-start-line run-span)))
                           unit)]
                       [_ unit])]
-                  [(string.eq marker "__tl_semantic_origin_pending")
-                    (begin
-                      (parse-semantic-origin-vec-push!
-                        (&mut v.semantic-origins)
-                        (ParseSemanticOriginRecord
-                          v.len
-                          (bit-and span.start-line 15)
-                          written-name
-                          (shr span.start-line 4)
-                          span.start-col
-                          span.end-line
-                          span.end-col))
-                      (set!
-                        (array-ref reader.sp-node-pool-slots cursor)
-                        (reader.SpannedSexpr.Int
-                          written-name
-                          "__tl_semantic_origin_consumed"
-                          span)))]
-                  [else unit])]
+                  [else
+                    (let
+                      [kind-tag : i64
+                        (compiler-parse-semantic-origin-kind-tag-from-marker
+                          marker)]
+                      (if (>= kind-tag 0)
+                        (begin
+                          (parse-semantic-origin-vec-push!
+                            (&mut v.semantic-origins)
+                            (ParseSemanticOriginRecord
+                              v.len
+                              kind-tag
+                              written-name
+                              span.start-line
+                              span.start-col
+                              span.end-line
+                              span.end-col))
+                          (set!
+                            (array-ref reader.sp-node-pool-slots cursor)
+                            (reader.SpannedSexpr.Int
+                              written-name
+                              "__tl_semantic_origin_consumed"
+                              span)))
+                        unit))])]
               [_ unit])
             (set! cursor (+ cursor advance)))))
       unit)))
@@ -10934,7 +10920,7 @@
                         (set! advance (+ 2 (token.span-start-line run-span)))
                         unit)]
                     [_ unit])]
-                [(string.eq marker "__tl_semantic_origin_pending")
+                [(compiler-parse-semantic-origin-marker? marker)
                   (set!
                     (array-ref reader.sp-node-pool-slots cursor)
                     (reader.SpannedSexpr.Int

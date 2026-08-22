@@ -304,6 +304,20 @@
         (set! sp-node-pool-count (+ id 1))
         id))))
 
+;; Reserve one contiguous range for cold parser metadata that already knows its
+;; final row count. Callers fill `sp-node-pool-slots` directly after this call;
+;; avoiding one capacity check and global count update per row matters for large
+;; semantic sidecars while preserving the pool's single growth discipline.
+(define (sp-node-pool-reserve! [additional : i64]) : i64
+  (let
+    [start : i64 sp-node-pool-count]
+    [required : i64 (+ start additional)]
+    (begin
+      (while (< (array-length sp-node-pool-slots) required)
+        (sp-node-pool-grow!))
+      (set! sp-node-pool-count required)
+      start)))
+
 (define (sexpr-node-push [node : Sexpr]) : i64
   (begin
     (if (>= sexpr-node-pool-count (array-length sexpr-node-pool-slots))

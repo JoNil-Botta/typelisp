@@ -1,12 +1,16 @@
 ;; compiler_load_lazy_smoke.tl - Lazy dotted import loader smokes.
 (import stdlib.byte_buf)
 (import stdlib.io)
+(import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_load)
 (import compiler_cfg_core as cfg)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
+(import compiler_intern as ci)
+(import compiler_parse_core as parser)
+(import read as reader)
 (import sym_i64_env)
 
 (define (lazy-write-text [path : String] [contents : String]) : unit
@@ -674,6 +678,86 @@
           ok))]
     [(ResultAstProgramDiagnostic.Err _) false]))
 
+(define (lazy-semantic-origin-same-defstruct-ok?
+  [decls : (& decls ast.AstDeclList)]) : bool
+  (match (parser.compiler-parse-semantic-origin-run decls 0)
+    [(parser.CompilerParseMaybeSemanticOriginRun.Some run)
+      (let
+        [type-origin : parser.CompilerParseSemanticOrigin
+          (parser.compiler-parse-semantic-origin-run-get
+            (& run)
+            0
+            (parser.compiler-parse-semantic-origin-fallback))]
+        [field-origin : parser.CompilerParseSemanticOrigin
+          (parser.compiler-parse-semantic-origin-run-get
+            (& run)
+            1
+            (parser.compiler-parse-semantic-origin-fallback))]
+        [type-span : ast.AstSourceSpan type-origin.span]
+        [field-span : ast.AstSourceSpan field-origin.span]
+        (and
+          (= (parser.compiler-parse-semantic-origin-run-len (& run)) 4)
+          (string.eq
+            (parser.compiler-parse-semantic-origin-kind-marker type-origin.kind)
+            "__tl_semantic_origin_type_definition")
+          (string.eq (ci.intern-str type-origin.written-name) "Same")
+          (= (ast.ast-source-span-start-line type-span) 3)
+          (= (ast.ast-source-span-start-col type-span) 12)
+          (= (ast.ast-source-span-end-line type-span) 3)
+          (= (ast.ast-source-span-end-col type-span) 16)
+          (string.eq
+            (parser.compiler-parse-semantic-origin-kind-marker
+              field-origin.kind)
+            "__tl_semantic_origin_struct_field_definition")
+          (string.eq (ci.intern-str field-origin.written-name) "same-field")
+          (= (ast.ast-source-span-start-line field-span) 3)
+          (= (ast.ast-source-span-start-col field-span) 18)
+          (= (ast.ast-source-span-end-line field-span) 3)
+          (= (ast.ast-source-span-end-col field-span) 28)))]
+    [(parser.CompilerParseMaybeSemanticOriginRun.None) false]))
+
+(define (lazy-semantic-origin-same-count
+  [decls : ast.AstDeclList]
+  [count : i64]) : i64
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) count]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (let
+        [rest : ast.AstDeclList rest]
+        (match decl
+          [(ast.AstDecl.DefStruct _ name _ _ _)
+            (if (string.eq (ci.intern-str name) "Same")
+              (if (lazy-semantic-origin-same-defstruct-ok? (& decls))
+                (lazy-semantic-origin-same-count rest (+ count 1))
+                -100)
+              (lazy-semantic-origin-same-count rest count))]
+          [_ (lazy-semantic-origin-same-count rest count)]))]))
+
+(define (lazy-semantic-origin-import-flatten-ok?) : bool
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    [ok : bool false]
+    (begin
+      (lazy-write-text
+        "target/cl_semantic_origin_dep.tl"
+        "(module cl_semantic_origin_dep)
+(define dep-padding : i64 0)
+(defstruct Same (same-field Shared.Type))")
+      (lazy-write-text
+        "target/cl_semantic_origin_entry.tl"
+        "(module cl_semantic_origin_entry)
+(import cl_semantic_origin_dep as dep)
+(defstruct Same (same-field Shared.Type))")
+      (match (compiler_load.compiler-load-file-with-paths
+        "target/cl_semantic_origin_entry.tl"
+        (sym_i64_env.sym-i64-empty))
+        [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
+          (set! ok (= (lazy-semantic-origin-same-count decls 0) 2))]
+        [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
+      (reader.sp-node-pool-truncate! mark)
+      (parser.compiler-parse-decl-origin-cache-reset!)
+      ok)))
+
 (define (main) : i64
   (begin
     (unless
@@ -747,6 +831,9 @@
     (unless
       (lazy-preload-observer-state-isolation-ok?)
       (return (io.panic "lazy preload observer isolation smoke mismatch")))
+    (unless
+      (lazy-semantic-origin-import-flatten-ok?)
+      (return (io.panic "lazy semantic origin import flatten smoke mismatch")))
     (unless
       (compiler_load.compiler-load-lazy-qualified-observer-dense-stack-ok?)
       (return (io.panic "lazy observer dense stack smoke mismatch")))

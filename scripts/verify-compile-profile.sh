@@ -1585,9 +1585,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # crosses the next boundary: the authoritative Windows probe measured
     # 2,888,486 used nodes, 2,949,120 capacity, and 94,371,840 physical payload
     # bytes. The separately pinned checked-expression and type pools remain in
-    # their existing segment families.
+    # their existing segment families. #6267's semantic occurrence sidecar and
+    # exact-span parser coverage cross the next macro-expand expression boundary:
+    # the authoritative Windows CI probe measured 2,950,768 used nodes,
+    # 3,014,656 capacity, and 96,468,992 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 45 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 46 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

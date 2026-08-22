@@ -19,13 +19,13 @@ native_link_detect_host
 # child-node fallback accounting from the root build.
 case "$NL_HOST_OS" in
     windows)
-        TRUSTED_PREFIX_SKIPPED=227
-        FAILURE_PREFIX_SKIPPED=205
+        TRUSTED_PREFIX_SKIPPED=228
+        FAILURE_PREFIX_SKIPPED=206
         FORCED_SOURCE_FALLBACKS=3
         ;;
     *)
-        TRUSTED_PREFIX_SKIPPED=222
-        FAILURE_PREFIX_SKIPPED=200
+        TRUSTED_PREFIX_SKIPPED=223
+        FAILURE_PREFIX_SKIPPED=201
         FORCED_SOURCE_FALLBACKS=1
         ;;
 esac

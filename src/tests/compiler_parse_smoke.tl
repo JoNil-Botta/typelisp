@@ -8,7 +8,7 @@
 (import compiler_diagnostic_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
-(import stdlib.io as io)
+(import stdlib.io)
 
 (define (compiler-parse-test-decl-origin-start-ok?
   [origin : compiler_parse_core.CompilerParseMaybeDeclSpan]

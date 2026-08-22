@@ -7,12 +7,12 @@
     0))
 
 (define (string-eq-round
-  [text : String]
-  [same : String]
-  [first-mismatch : String]
-  [late-mismatch : String]
-  [empty : String]
-  [short : String]) : i64
+  [text : (& text str)]
+  [same : (& same str)]
+  [first-mismatch : (& first-mismatch str)]
+  [late-mismatch : (& late-mismatch str)]
+  [empty : (& empty str)]
+  [short : (& short str)]) : i64
   (let
     [acc : i64 0]
     (begin

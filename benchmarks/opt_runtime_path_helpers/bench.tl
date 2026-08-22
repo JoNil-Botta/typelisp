@@ -4,20 +4,22 @@
 (define (path-separator? [c : char]) : bool
   (= c '/'))
 
-(define (path-starts-separator? [path : String]) : bool
+(define (path-starts-separator? [path : (& path str)]) : bool
   (and
     (> (string.string-length path) 0)
     (path-separator? (string.string-ref path 0))))
 
-(define (path-ends-separator? [path : String]) : bool
+(define (path-ends-separator? [path : (& path str)]) : bool
   (let
     [n : i64 (string.string-length path)]
     (and (> n 0) (path-separator? (string.string-ref path (- n 1))))))
 
-(define (path-join [left : String] [right : String]) : String
+(define (path-join [left : (& left str)] [right : (& right str)]) : String
   (cond
-    [(= (string.string-length left) 0) right]
-    [(= (string.string-length right) 0) left]
+    [(= (string.string-length left) 0)
+      (string.substring right 0 (string.string-length right))]
+    [(= (string.string-length right) 0)
+      (string.substring left 0 (string.string-length left))]
     [(path-ends-separator? left)
       (if (path-starts-separator? right)
         (string.append
@@ -27,7 +29,7 @@
     [(path-starts-separator? right) (string.append left right)]
     [else (string.append (string.append left "/") right)]))
 
-(define (last-separator-index [path : String]) : i64
+(define (last-separator-index [path : (& path str)]) : i64
   (let
     [i : i64 0]
     [n : i64 (string.string-length path)]
@@ -41,7 +43,7 @@
           (set! i (+ i 1))))
       last)))
 
-(define (dirname [path : String]) : String
+(define (dirname [path : (& path str)]) : String
   (let
     [last : i64 (last-separator-index path)]
     (if (< last 0)
@@ -50,15 +52,15 @@
         "/"
         (string.substring path 0 last)))))
 
-(define (basename [path : String]) : String
+(define (basename [path : (& path str)]) : String
   (let
     [n : i64 (string.string-length path)]
     [last : i64 (last-separator-index path)]
     (if (< last 0)
-      path
+      (string.substring path 0 n)
       (string.substring path (+ last 1) (- n (+ last 1))))))
 
-(define (extension [path : String]) : String
+(define (extension [path : (& path str)]) : String
   (let
     [base : String (basename path)]
     [i : i64 0]
@@ -75,7 +77,7 @@
         ""
         (string.substring base (+ dot 1) (- n (+ dot 1)))))))
 
-(define (path-helper-round [root : String] [leaf : String]) : i64
+(define (path-helper-round [root : (& root str)] [leaf : (& leaf str)]) : i64
   (let
     [joined : String (path-join root leaf)]
     [dir : String (dirname joined)]

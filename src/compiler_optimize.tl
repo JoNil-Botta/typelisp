@@ -8974,29 +8974,108 @@
 ;; maps each `I64->U64` cast dst back to its source; entries are dropped when the
 ;; dst or the source var is redefined, and the whole env is cleared wherever the
 ;; bounds facts are (calls/stores/CF/phi), so it can never outlive a redefinition
-;; of the source.
+;; of the source. Function-local vreg ids are dense, so destination lookup is
+;; direct. The direct table stores only i64 compact-slot indices; a compact
+;; binding sidecar keeps wide source values proportional to actual occupancy
+;; rather than the largest vreg id and also bounds source invalidation scans.
+;; Most sequences contain no relevant cast, so allocate the storage lazily on
+;; the first binding.
+(defstruct OptBoundsCastBinding
+  (dst i64)
+  (src ir.CompilerIrValue))
+
+(import (vector.vector OptBoundsCastBinding core) as opt_bounds_cast_binding_vec)
+
+(defstruct OptBoundsCastState
+  (indices opt_dense_i64_vec.Vec)
+  (bindings opt_bounds_cast_binding_vec.Vec))
+
 (defenum OptBoundsCastEnv
-  (Nil)
-  (Cons i64 ir.CompilerIrValue (Box OptBoundsCastEnv)))
+  (Empty)
+  (Dense (Box OptBoundsCastState)))
 
 (define (opt-bounds-cast-unbind [env : OptBoundsCastEnv] [var : i64]) : OptBoundsCastEnv
   (match env
-    [(OptBoundsCastEnv.Nil) (OptBoundsCastEnv.Nil)]
-    [(OptBoundsCastEnv.Cons dst src rest)
-      (let
-        [tail : OptBoundsCastEnv
-          (opt-bounds-cast-unbind (compiler-opt-box-shared-view rest) var)]
-        (if (or
-          (= dst var)
-          (opt-value-is-var? (compiler-opt-global-shared-view src) var))
-          tail
-          (OptBoundsCastEnv.Cons dst src (box tail))))]))
+    [(OptBoundsCastEnv.Empty) (OptBoundsCastEnv.Empty)]
+    [(OptBoundsCastEnv.Dense state)
+      (begin
+        (let
+          [content : (&mut state OptBoundsCastState)
+            (&mut (__tl-box-place state))]
+          [count : i64 (opt_bounds_cast_binding_vec.len (& content.bindings))]
+          [read : i64 0]
+          [write : i64 0]
+          (begin
+            (while (< read count)
+              (let
+                [binding : OptBoundsCastBinding
+                  (compiler-opt-borrowed-array-element-shared-view
+                    (opt_bounds_cast_binding_vec.slots (& content.bindings))
+                    read)]
+                (begin
+                  (if (or
+                    (= binding.dst var)
+                    (opt-value-is-var?
+                      (compiler-opt-global-shared-view binding.src)
+                      var))
+                    (opt_dense_i64_vec.set-ref!
+                      (&mut content.indices)
+                      binding.dst
+                      (- 0 1))
+                    (begin
+                      (opt_dense_i64_vec.set-ref!
+                        (&mut content.indices)
+                        binding.dst
+                        write)
+                      (when
+                        (!= write read)
+                        (opt_bounds_cast_binding_vec.set-ref!
+                          (&mut content.bindings)
+                          write
+                          binding))
+                      (set! write (+ write 1))))
+                  (set! read (+ read 1)))))
+            (set! content.bindings.len write)))
+        (OptBoundsCastEnv.Dense state))]))
 
 (define (opt-bounds-cast-bind
   [env : OptBoundsCastEnv]
   [dst : i64]
   [src : ir.CompilerIrValue]) : OptBoundsCastEnv
-  (OptBoundsCastEnv.Cons dst src (box (opt-bounds-cast-unbind env dst))))
+  (let
+    [without-dependents : OptBoundsCastEnv (opt-bounds-cast-unbind env dst)]
+    (if (< dst 0)
+      without-dependents
+      (match without-dependents
+        [(OptBoundsCastEnv.Empty)
+          (let
+            [indices : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+            [bindings : opt_bounds_cast_binding_vec.Vec
+              (opt_bounds_cast_binding_vec.new)]
+            (begin
+              (while (<= (opt_dense_i64_vec.len (& indices)) dst)
+                (opt_dense_i64_vec.push-ref! (&mut indices) (- 0 1)))
+              (opt_bounds_cast_binding_vec.push-ref!
+                (&mut bindings)
+                (OptBoundsCastBinding dst src))
+              (opt_dense_i64_vec.set-ref! (&mut indices) dst 0)
+              (OptBoundsCastEnv.Dense
+                (box (OptBoundsCastState indices bindings)))))]
+        [(OptBoundsCastEnv.Dense state)
+          (begin
+            (let
+              [content : (&mut state OptBoundsCastState)
+                (&mut (__tl-box-place state))]
+              [slot : i64
+                (opt_bounds_cast_binding_vec.len (& content.bindings))]
+              (begin
+                (while (<= (opt_dense_i64_vec.len (& content.indices)) dst)
+                  (opt_dense_i64_vec.push-ref! (&mut content.indices) (- 0 1)))
+                (opt_bounds_cast_binding_vec.push-ref!
+                  (&mut content.bindings)
+                  (OptBoundsCastBinding dst src))
+                (opt_dense_i64_vec.set-ref! (&mut content.indices) dst slot)))
+            (OptBoundsCastEnv.Dense state))]))))
 
 ;; Resolve `value` back through one `I64->U64` reinterpret cast, if recorded.
 (define (opt-bounds-cast-canon
@@ -9004,12 +9083,27 @@
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
   (match (compiler-opt-global-shared-view value)
     [(ir.CompilerIrValue.Var var)
-      (match env
-        [(OptBoundsCastEnv.Nil) value]
-        [(OptBoundsCastEnv.Cons dst src rest)
-          (if (= dst var)
-            src
-            (opt-bounds-cast-canon (compiler-opt-box-shared-view rest) value))])]
+      (match (compiler-opt-global-shared-view env)
+        [(OptBoundsCastEnv.Empty) value]
+        [(OptBoundsCastEnv.Dense state)
+          (let
+            [indices : opt_dense_i64_vec.Vec
+              (compiler-opt-box-field-shared-view state indices)]
+            (if (or (< var 0) (>= var (opt_dense_i64_vec.len (& indices))))
+              value
+              (let
+                [slot : i64
+                  (array-ref (opt_dense_i64_vec.slots (& indices)) var)]
+                (if (< slot 0)
+                  value
+                  (let
+                    [bindings : opt_bounds_cast_binding_vec.Vec
+                      (compiler-opt-box-field-shared-view state bindings)]
+                    [binding : OptBoundsCastBinding
+                      (compiler-opt-borrowed-array-element-shared-view
+                        (opt_bounds_cast_binding_vec.slots (& bindings))
+                        slot)]
+                    binding.src)))))])]
     [_ value]))
 
 ;; Record an `I64->U64` reinterpret cast (the index/length unsigned-compare form)
@@ -9727,7 +9821,7 @@
     [write : i64 0]
     [count : i64 instrs.len]
     [state : OptBoundsSeqState
-      (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) (OptBoundsCastEnv.Nil))]
+      (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) (OptBoundsCastEnv.Empty))]
     (begin
       (while (< read count)
         (let

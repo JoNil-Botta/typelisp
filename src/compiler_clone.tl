@@ -1,17 +1,18 @@
-;; compiler_clone.tl - synthesize clone$<Type> helpers.
+;; compiler_clone.tl - compiler clone semantics and reachable-helper planning.
 ;;
 ;; `(clone x)` is the canonical deep-copy and the canonical way to escape an
 ;; arena. The lowerer dispatches `(clone x)` to `clone$<type-of-x>` for named
 ;; aggregate types (enums/structs); strings copy their buffer via `substring`
-;; and scalars are returned as-is. This module is a driver pre-pass: for every
-;; clone-able enum/struct type in the program it generates a recursive
-;; `clone$<Name>` define and prepends it, so a self-hosted compiler supports
-;; `(clone x)` for any user type (mirroring the Rust generic clone codegen).
+;; and scalars are returned as-is. The compiler computes the whole-program
+;; clone-ability fixed point, records canonical nominal and helper identities,
+;; and expands roots observed during typechecking to their exact reachable
+;; named-aggregate closure. It also validates the generated declarations and
+;; reports producer conflicts. `stdlib.clone/synthesize-helpers` is the sole
+;; helper-declaration producer; this module does not construct or prepend AST.
 ;;
-;; tuple, fixed array, dynamic array, Box of a clone-able type, or another
-;; clone-able named type. Function, reference, raw-pointer, str, and
-;; compile-time-only values are not clone-able. Clone-ability is a
-;; least-fixed-point over the type graph.
+;; Clone-able values are scalars, String, tuples, fixed arrays, dynamic arrays,
+;; Box of a clone-able type, and clone-able named aggregates. Function,
+;; reference, raw-pointer, str, and compile-time-only values are not clone-able.
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)

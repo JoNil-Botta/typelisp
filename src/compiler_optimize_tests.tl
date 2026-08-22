@@ -304,6 +304,128 @@
         70
         "a non-copy destination redefinition drops its stale fact"))))
 
+(test
+  bounds-cast-env-indexed-semantics
+  (let
+    [env : compiler_optimize.OptBoundsCastEnv
+      (compiler_optimize.OptBoundsCastEnv.Empty)]
+    (begin
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var 12))
+          (compiler_ir_types.CompilerIrValue.Var 12))
+        "a missing destination canonicalizes to itself")
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var (- 0 1)))
+          (compiler_ir_types.CompilerIrValue.Var (- 0 1)))
+        "a negative var stays out of the dense table")
+      (set!
+        env
+        (compiler_optimize.opt-bounds-cast-bind
+          env
+          64
+          (compiler_ir_types.CompilerIrValue.Var 7)))
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var 64))
+          (compiler_ir_types.CompilerIrValue.Var 7))
+        "a high destination grows the direct table")
+      (set!
+        env
+        (compiler_optimize.opt-bounds-cast-bind
+          env
+          64
+          (compiler_ir_types.CompilerIrValue.Var 8)))
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var 64))
+          (compiler_ir_types.CompilerIrValue.Var 8))
+        "the newest destination binding replaces the old source")
+      (set!
+        env
+        (compiler_optimize.opt-bounds-cast-bind
+          env
+          65
+          (compiler_ir_types.CompilerIrValue.Var 8)))
+      (set!
+        env
+        (compiler_optimize.opt-bounds-cast-bind
+          env
+          70
+          (compiler_ir_types.CompilerIrValue.Var 9)))
+      (set! env (compiler_optimize.opt-bounds-cast-unbind env 8))
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var 64))
+          (compiler_ir_types.CompilerIrValue.Var 64))
+        "source invalidation drops the first dependent destination")
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var 65))
+          (compiler_ir_types.CompilerIrValue.Var 65))
+        "source invalidation drops every dependent destination")
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var 70))
+          (compiler_ir_types.CompilerIrValue.Var 9))
+        "source invalidation preserves unrelated destinations")
+      (set!
+        env
+        (compiler_optimize.opt-bounds-cast-bind
+          env
+          512
+          (compiler_ir_types.CompilerIrValue.I64 33)))
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var 512))
+          (compiler_ir_types.CompilerIrValue.I64 33))
+        "table growth preserves non-var sources")
+      (set!
+        env
+        (compiler_optimize.opt-bounds-cast-bind
+          env
+          71
+          (compiler_ir_types.CompilerIrValue.Var 70)))
+      (set! env (compiler_optimize.opt-bounds-cast-unbind env 70))
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var 70))
+          (compiler_ir_types.CompilerIrValue.Var 70))
+        "destination invalidation drops its stale binding")
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var 71))
+          (compiler_ir_types.CompilerIrValue.Var 71))
+        "destination invalidation also drops its dependents")
+      (test.assert-true
+        (compiler_optimize.opt-value-eq
+          (compiler_optimize.opt-bounds-cast-canon
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (compiler_ir_types.CompilerIrValue.Var 512))
+          (compiler_ir_types.CompilerIrValue.I64 33))
+        "compaction preserves later unrelated destinations"))))
+
 ;; #6061: force every converted dense family past its initial capacity and
 ;; pin the logical newest-first/LIFO semantics that the former Cons chains had.
 (define (opt-dense-test-licm-roots
@@ -4268,7 +4390,7 @@
       (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
-        (compiler_optimize.OptBoundsCastEnv.Nil)
+        (compiler_optimize.OptBoundsCastEnv.Empty)
         (compiler_optimize.compiler-opt-global-shared-view instrs))]
     [vector-cse : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-cse-instrs
@@ -12637,37 +12759,37 @@
       (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
-        (compiler_optimize.OptBoundsCastEnv.Nil)
+        (compiler_optimize.OptBoundsCastEnv.Empty)
         (opt-bounds-duplicate-instrs))]
     [different : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
-        (compiler_optimize.OptBoundsCastEnv.Nil)
+        (compiler_optimize.OptBoundsCastEnv.Empty)
         (opt-bounds-different-instrs))]
     [redef : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
-        (compiler_optimize.OptBoundsCastEnv.Nil)
+        (compiler_optimize.OptBoundsCastEnv.Empty)
         (opt-bounds-redef-instrs))]
     [call : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
-        (compiler_optimize.OptBoundsCastEnv.Nil)
+        (compiler_optimize.OptBoundsCastEnv.Empty)
         (opt-bounds-call-instrs))]
     [branch : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
-        (compiler_optimize.OptBoundsCastEnv.Nil)
+        (compiler_optimize.OptBoundsCastEnv.Empty)
         (opt-bounds-branch-instrs))]
     [copy : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
-        (compiler_optimize.OptBoundsCastEnv.Nil)
+        (compiler_optimize.OptBoundsCastEnv.Empty)
         (opt-test-copy-instrs
           (compiler_optimize.OptCopyEnv.Nil)
           (opt-bounds-copy-instrs)))]
@@ -12816,13 +12938,13 @@
       (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
-        (compiler_optimize.OptBoundsCastEnv.Nil)
+        (compiler_optimize.OptBoundsCastEnv.Empty)
         (opt-bounds-index-cast-instrs))]
     [index-cast-redef : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
-        (compiler_optimize.OptBoundsCastEnv.Nil)
+        (compiler_optimize.OptBoundsCastEnv.Empty)
         (opt-bounds-index-cast-redef-instrs))]
     (cond
       [(not (= (opt-count-bounds-instrs duplicate) 1)) 1]

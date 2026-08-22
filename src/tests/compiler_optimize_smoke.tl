@@ -2156,7 +2156,7 @@
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
-        (opt.OptBoundsCastEnv.Nil)
+        (opt.OptBoundsCastEnv.Empty)
         (smoke-bounds-object-pair
           (ir.CompilerIrValue.Var 1)
           (ir.CompilerIrValue.I64 1)
@@ -2165,7 +2165,7 @@
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
-        (opt.OptBoundsCastEnv.Nil)
+        (opt.OptBoundsCastEnv.Empty)
         (smoke-bounds-object-pair
           (ir.CompilerIrValue.Var 1)
           (ir.CompilerIrValue.I64 8)
@@ -2174,7 +2174,7 @@
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
-        (opt.OptBoundsCastEnv.Nil)
+        (opt.OptBoundsCastEnv.Empty)
         (smoke-bounds-object-pair
           (ir.CompilerIrValue.Var 2)
           (ir.CompilerIrValue.I64 1)
@@ -2183,19 +2183,19 @@
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
-        (opt.OptBoundsCastEnv.Nil)
+        (opt.OptBoundsCastEnv.Empty)
         (smoke-bounds-object-call-barrier))]
     [object-store : ir.CompilerIrInstrSeq
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
-        (opt.OptBoundsCastEnv.Nil)
+        (opt.OptBoundsCastEnv.Empty)
         (smoke-bounds-object-store-barrier (ir.CompilerIrValue.Var 10)))]
     [object-element-store : ir.CompilerIrInstrSeq
       (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
-        (opt.OptBoundsCastEnv.Nil)
+        (opt.OptBoundsCastEnv.Empty)
         (smoke-bounds-object-store-barrier (ir.CompilerIrValue.Var 99)))]
     (cond
       [(not

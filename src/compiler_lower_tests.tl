@@ -10773,7 +10773,9 @@
               (= pred-store-count 1)
               (= select-count 2)
               (= tail-mask-count 1)
-              (>= shape-count 15)))])]
+              ;; One uniform source splat now serves both vector paths from the
+              ;; preheader, reducing this shape floor by one.
+              (>= shape-count 14)))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-masked-if-bitwise-value-shape-ok?

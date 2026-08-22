@@ -775,6 +775,32 @@
       (array-ref intern-structural-table-cell 0)
       structural-cache-raws)))
 
+;; Explicit sessions normally name the installed compatibility owner. A
+;; structural owner is allocated once process-wide for every table generation,
+;; so equality with the installed owner alone proves both table identity and
+;; generation. This lets the adapter reuse the synchronized scalar/address
+;; snapshot without reloading the session's table id on every name lookup. An
+;; isolated or stale session falls back to its own table and never observes
+;; this view.
+(defmacro (intern-active-structural-session? [structural-owner : Expr]) : bool
+  `(= ,structural-owner intern-active-structural-owner))
+
+(defmacro (intern-active-structural-record-kind-or
+  [raw : Expr]
+  [fallback : Expr]) : i64
+  `(let
+    [structural-id : i64 ,raw]
+    [encoded-index : i64 (- structural-id intern-active-structural-prefix)]
+    (if (and
+      (> encoded-index 0)
+      (<= encoded-index intern-active-structural-len))
+      (cast
+        (intern-active-u8-ref
+          intern-active-structural-kinds-address
+          (- encoded-index 1))
+        : i64)
+      ,fallback)))
+
 (define (intern-active-structural-sync!
   [cell : (__tl_dyn-array InternStructuralTable)]) : unit
   (let
@@ -2271,6 +2297,16 @@
 
 (define (intern-persistent-copy [text : String]) : String
   (intern-persistent-substring text 0 (__tl_string_length text)))
+
+;; Explicit structural-session caches share the source-name session's
+;; persistent arena. Keep this small boundary here so the structural adapter
+;; does not need to duplicate arena switching and byte-copy details.
+(define (intern-persistent-copy-in-arena [arena-handle : i64] [text : String]) : String
+  (if (= (tl_arena_current) arena-handle)
+    text
+    (in-arena
+      (arena.Arena arena-handle)
+      (intern-substring text 0 (__tl_string_length text)))))
 
 (define (intern-composite-rendered-name [id : i64]) : String
   (if (or (intern-composite-pair-id? id) (intern-composite-triple-id? id))

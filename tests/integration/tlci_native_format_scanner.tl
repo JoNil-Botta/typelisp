@@ -3,24 +3,30 @@
 ;; and comment-modified-root (interpreted) routes can be compared for
 ;; byte-identical assembly.
 ;;
-;; `stdlib.format/format` guards the literal template and
-;; `stdlib.format/format-from`
-;; walks it one byte at a time, re-invoking itself at the next offset. Every
-;; piece of that walk is arithmetic on a comptime string index: a scanner that
+;; `stdlib.format/format` guards the literal template, parses a dense plan, and
+;; expands that plan through generated bindings. Every piece of the parse is
+;; arithmetic on a comptime string index: a scanner that
 ;; mis-indexes by one, drops the byte after a `{{` escape, consumes the wrong
-;; positional argument, or stops one byte early still compiles and still runs --
-;; it just formats the wrong text. Nothing but a route differential catches
-;; that, so the assertions compare exact strings rather than lengths, and the
-;; templates cover an empty template, adjacent placeholders, a placeholder at
-;; each end, both brace escapes, and a brace escape adjacent to a placeholder.
+;; positional/named argument, loses call-site capture, or stops one byte early
+;; still compiles and still runs -- it just formats the wrong text. Nothing but
+;; a route differential catches that, so the assertions compare exact strings.
 ;; Refs #5701, #5596.
 ;; Exit code: 42
 (import stdlib.format)
 (import stdlib.io)
 (import stdlib.string)
 
+(defstruct ScannerEvalState
+  (value i64))
+
+(define (scanner-counted [state : (&mut state ScannerEvalState)] [digit : i64]) : i64
+  (begin
+    (set! state.value (+ (* state.value 10) digit))
+    digit))
+
 (define (scanner-checks-ok?) : bool
   (let
+    [state : ScannerEvalState (ScannerEvalState 0)]
     [one : i64 1]
     [two : i64 2]
     [three : i64 3]
@@ -41,6 +47,24 @@
     [escape-then-hole : String (format.format "{{{}" eight)]
     [mixed : String (format.format "{{{}}} and {} at {}" one two three)]
     [typed : String (format.format "{} {} {}" true 'z' "tail")]
+    [indexed : String (format.format "{2}/{0}/{1}/{2}" one two three)]
+    [mixed-selection : String (format.format "{1} {} {0} {}" one two)]
+    [named : String
+      (format.format
+        "{left}:{right}:{left}"
+        (format.named left "L")
+        (format.named right "R"))]
+    [capture : String "captured"]
+    [captured : String
+      (if (string.eq capture "captured")
+        (format.format "{capture}:{seven   }")
+        "wrong")]
+    [ordered : String
+      (format.format
+        "{2}:{0}:{1}:{2}"
+        (scanner-counted (&mut state) 1)
+        (scanner-counted (&mut state) 2)
+        (scanner-counted (&mut state) 3))]
     (and
       (string.eq empty-template "")
       (string.eq no-holes "plain text")
@@ -53,7 +77,13 @@
       (string.eq both-escapes "{9}")
       (string.eq escape-then-hole "{8")
       (string.eq mixed "{1} and 2 at 3")
-      (string.eq typed "true z tail"))))
+      (string.eq typed "true z tail")
+      (string.eq indexed "3/1/2/3")
+      (string.eq mixed-selection "2 1 1 2")
+      (string.eq named "L:R:L")
+      (string.eq captured "captured:7")
+      (string.eq ordered "3:1:2:3")
+      (= state.value 123))))
 
 ;; The same scanner drives `println`/`print-format`, which reach it through
 ;; different wrapper macros; a wrapper that passed the wrong initial offset or
@@ -62,9 +92,12 @@
   (let
     [one : i64 1]
     [two : i64 2]
+    ;; Referenced by generated call-site capture syntax.
+    ;; lint-allow: unused-variable
+    [label : String "scanner"]
     (begin
-      (io.println "scanner: {} {{}} {}" one two)
-      (io.print-format "done\n")
+      (io.println "{label}: {1} {{}} {0}" two one)
+      (io.print-format "{word}\n" (format.named word "done"))
       true)))
 
 (define (main) : i64

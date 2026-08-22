@@ -7410,6 +7410,52 @@
         [(CompilerCtfeMaybeExpr.Some _) 0]
         [(CompilerCtfeMaybeExpr.None) -3]))))
 
+;; Local Expr.Int destructuring mirrors the operand callbacks while retaining
+;; the computed expression in its session slot. The value accessor is a data
+;; callback and is only issued after the shape probe succeeds. Refs #6644.
+(define (compiler-comptime-host-callback-local-expr-int?
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (match (compiler-comptime-host-local-expr arg-a)
+        [(CompilerCtfeMaybeExpr.Some
+            (ast.AstExpr.Literal (ast.AstLiteral.Int _ _)))
+          1]
+        [(CompilerCtfeMaybeExpr.Some _) 0]
+        [(CompilerCtfeMaybeExpr.None) -3]))))
+
+(define (compiler-comptime-host-callback-local-expr-int-value
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (match (compiler-comptime-host-local-expr arg-a)
+        [(CompilerCtfeMaybeExpr.Some
+            (ast.AstExpr.Literal (ast.AstLiteral.Int value text)))
+          (ast.ast-int-literal-value-or-payload value text)]
+        [_ 0]))))
+
 (define (compiler-comptime-host-callback-local-expr-var?
   [session : i64]
   [arg-a : i64]
@@ -9582,6 +9628,16 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-local-expr-string?)
         compiler-comptime-host-callback-local-expr-string?)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-local-expr-int?)
+        compiler-comptime-host-callback-local-expr-int?)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-local-expr-int-value)
+        compiler-comptime-host-callback-local-expr-int-value)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

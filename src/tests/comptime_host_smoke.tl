@@ -883,9 +883,10 @@
         (= (compiler_ctfe.ctfe-expr-list-nth items 0) expected-node))]
     [_ false]))
 
-;; Local Expr destructuring retains Name and captured-list values, while the
-;; bool data/value pair round-trips both immediate states. Wrong local shapes
-;; and invalid immediates are rejected through their documented ABI channel.
+;; Local Expr destructuring retains Name, Int, and captured-list values, while
+;; the bool data/value pair round-trips both immediate states. Wrong local
+;; shapes and invalid immediates are rejected through their documented ABI
+;; channel.
 (define (comptime-host-smoke-local-values-ok?) : bool
   (let
     [pools : compiler_ast_types.AstNodePoolContext
@@ -899,11 +900,15 @@
         pools
         (compiler_ast_types.AstExpr.Literal
           (compiler_ast_types.AstLiteral.Unit)))]
+    [int-node : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools
+        (compiler_ast_types.AstExpr.Literal (compiler_ast_types.ast-lit-int 73)))]
     [items : compiler_ast_types.AstExprList
       (compiler_ast_types.ast-expr-list-with-capacity 1)]
     [begin-node : i64 0]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
+      (array.make-array compiler_ctfe.CompilerCtfeValue 4)]
     (begin
       (compiler_ast_types.ast-expr-list-push (&mut items) item-node)
       (set!
@@ -923,10 +928,15 @@
           (compiler_ast_types.AstType.Expr)
           pools))
       (set! (array-ref operands 2) (compiler_ctfe.CompilerCtfeValue.Bool true))
+      (set!
+        (array-ref operands 3)
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          int-node
+          (compiler_ast_types.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         pools
         operands
-        3
+        4
         32
         comptime-host-smoke-cookie
         (compiler_ctfe.ctfe-reflect-info-list-empty))
@@ -971,6 +981,18 @@
               0)
             (=
               (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                3
+                0)
+              0)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-set
+                3
+                0)
+              0)
+            (=
+              (comptime-host-smoke-invoke
                 compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-expr-var?
                 0
                 0)
@@ -999,6 +1021,24 @@
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-captured-begin-items? item-node)
             (comptime-host-smoke-consume-test-result!)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-expr-int?
+                3
+                0)
+              1)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-expr-int-value
+                3
+                0)
+              73)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-expr-int?
+                0
+                0)
+              0)
             (=
               (comptime-host-smoke-invoke
                 compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-bool-value
@@ -1031,7 +1071,7 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
             pools
             operands
-            3
+            4
             8
             comptime-host-smoke-cookie
             (compiler_ctfe.ctfe-reflect-info-list-empty))
@@ -1051,7 +1091,7 @@
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
                 pools
                 operands
-                3
+                4
                 8
                 comptime-host-smoke-cookie
                 (compiler_ctfe.ctfe-reflect-info-list-empty))
@@ -1083,7 +1123,7 @@
                   (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
                     pools
                     operands
-                    3
+                    4
                     8
                     comptime-host-smoke-cookie
                     (compiler_ctfe.ctfe-reflect-info-list-empty))

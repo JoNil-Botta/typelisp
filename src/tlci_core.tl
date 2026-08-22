@@ -839,6 +839,10 @@
   "operand-expr-int?")
 (define tlci-host-callback-name-operand-expr-int-value : String
   "operand-expr-int-value")
+(define tlci-host-callback-name-local-expr-int? : String
+  "local-expr-int?")
+(define tlci-host-callback-name-local-expr-int-value : String
+  "local-expr-int-value")
 (define tlci-host-callback-name-local-expr-list-length : String
   "local-expr-list-length")
 (define tlci-host-callback-name-local-expr-list-nth : String

@@ -17801,16 +17801,16 @@ g:
   (compiler_ir_types.CompilerIrInstr.Switch
     (compiler_ir_types.CompilerIrValue.Var 0)
     0
-    (compiler_ir_types.compiler-ir-switch-case-cons
-      0
-      (compiler_ir_types.compiler-ir-label "zero")
-      (compiler_ir_types.compiler-ir-switch-case-cons
+    (compiler_ir_types.compiler-ir-switch-case-seq3
+      (compiler_ir_types.CompilerIrSwitchCase.Case
+        0
+        (compiler_ir_types.compiler-ir-label "zero"))
+      (compiler_ir_types.CompilerIrSwitchCase.Case
         1
-        (compiler_ir_types.compiler-ir-label "one")
-        (compiler_ir_types.compiler-ir-switch-case-cons
-          2
-          (compiler_ir_types.compiler-ir-label "two")
-          compiler_ir_types.CompilerIrSwitchCaseList.Nil)))
+        (compiler_ir_types.compiler-ir-label "one"))
+      (compiler_ir_types.CompilerIrSwitchCase.Case
+        2
+        (compiler_ir_types.compiler-ir-label "two")))
     (compiler_ir_types.compiler-ir-label "other")))
 
 (define (compiler-backend-switch-test-program) : compiler_ir_types.CompilerIrProgram
@@ -17864,26 +17864,42 @@ g:
       compiler_ir_types.CompilerIrFunctionList.Nil)
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
-(define (compiler-backend-total-switch-test-cases) : compiler_ir_types.CompilerIrSwitchCaseList
-  (compiler_ir_types.compiler-ir-switch-case-cons
-    0
-    (compiler_ir_types.compiler-ir-label "zero")
-    (compiler_ir_types.compiler-ir-switch-case-cons
-      1
-      (compiler_ir_types.compiler-ir-label "one")
-      (compiler_ir_types.compiler-ir-switch-case-cons
-        2
-        (compiler_ir_types.compiler-ir-label "two")
-        (compiler_ir_types.compiler-ir-switch-case-cons
+(define (compiler-backend-total-switch-test-cases) : compiler_ir_types.CompilerIrSwitchCaseSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrSwitchCaseBuilder
+      (compiler_ir_types.compiler-ir-switch-case-builder-with-capacity 6)]
+    (begin
+      (compiler_ir_types.compiler-ir-switch-case-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSwitchCase.Case
+          0
+          (compiler_ir_types.compiler-ir-label "zero")))
+      (compiler_ir_types.compiler-ir-switch-case-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSwitchCase.Case
+          1
+          (compiler_ir_types.compiler-ir-label "one")))
+      (compiler_ir_types.compiler-ir-switch-case-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSwitchCase.Case
+          2
+          (compiler_ir_types.compiler-ir-label "two")))
+      (compiler_ir_types.compiler-ir-switch-case-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSwitchCase.Case
           3
-          (compiler_ir_types.compiler-ir-label "three")
-          (compiler_ir_types.compiler-ir-switch-case-cons
-            4
-            (compiler_ir_types.compiler-ir-label "four")
-            (compiler_ir_types.compiler-ir-switch-case-cons
-              5
-              (compiler_ir_types.compiler-ir-label "five")
-              compiler_ir_types.CompilerIrSwitchCaseList.Nil)))))))
+          (compiler_ir_types.compiler-ir-label "three")))
+      (compiler_ir_types.compiler-ir-switch-case-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSwitchCase.Case
+          4
+          (compiler_ir_types.compiler-ir-label "four")))
+      (compiler_ir_types.compiler-ir-switch-case-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSwitchCase.Case
+          5
+          (compiler_ir_types.compiler-ir-label "five")))
+      (compiler_ir_types.compiler-ir-switch-case-builder-to-seq builder))))
 
 (define (compiler-backend-total-switch-return-block
   [label : i64]
@@ -18294,13 +18310,13 @@ g:
               (compiler_ir_types.CompilerIrInstr.Switch
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 4
-                (compiler_ir_types.compiler-ir-switch-case-cons
-                  4
-                  (compiler_ir_types.compiler-ir-label "four")
-                  (compiler_ir_types.compiler-ir-switch-case-cons
+                (compiler_ir_types.compiler-ir-switch-case-seq2
+                  (compiler_ir_types.CompilerIrSwitchCase.Case
+                    4
+                    (compiler_ir_types.compiler-ir-label "four"))
+                  (compiler_ir_types.CompilerIrSwitchCase.Case
                     5
-                    (compiler_ir_types.compiler-ir-label "five")
-                    compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+                    (compiler_ir_types.compiler-ir-label "five")))
                 (compiler_ir_types.compiler-ir-label "other"))
               compiler_ir_types.CompilerIrInstrList.Nil))
           (compiler_ir_types.compiler-ir-block-cons
@@ -18381,13 +18397,13 @@ g:
               (compiler_ir_types.CompilerIrInstr.Switch
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 0
-                (compiler_ir_types.compiler-ir-switch-case-cons
-                  0
-                  (compiler_ir_types.compiler-ir-label "zero")
-                  (compiler_ir_types.compiler-ir-switch-case-cons
+                (compiler_ir_types.compiler-ir-switch-case-seq2
+                  (compiler_ir_types.CompilerIrSwitchCase.Case
+                    0
+                    (compiler_ir_types.compiler-ir-label "zero"))
+                  (compiler_ir_types.CompilerIrSwitchCase.Case
                     2
-                    (compiler_ir_types.compiler-ir-label "two")
-                    compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+                    (compiler_ir_types.compiler-ir-label "two")))
                 (compiler_ir_types.compiler-ir-label "other"))
               compiler_ir_types.CompilerIrInstrList.Nil))
           compiler_ir_types.CompilerIrBlockList.Nil))
@@ -18419,13 +18435,13 @@ g:
               (compiler_ir_types.CompilerIrInstr.Switch
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 0
-                (compiler_ir_types.compiler-ir-switch-case-cons
-                  0
-                  (compiler_ir_types.compiler-ir-label "join")
-                  (compiler_ir_types.compiler-ir-switch-case-cons
+                (compiler_ir_types.compiler-ir-switch-case-seq2
+                  (compiler_ir_types.CompilerIrSwitchCase.Case
+                    0
+                    (compiler_ir_types.compiler-ir-label "join"))
+                  (compiler_ir_types.CompilerIrSwitchCase.Case
                     1
-                    (compiler_ir_types.compiler-ir-label "join")
-                    compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+                    (compiler_ir_types.compiler-ir-label "join")))
                 (compiler_ir_types.compiler-ir-label "join"))
               compiler_ir_types.CompilerIrInstrList.Nil))
           (compiler_ir_types.compiler-ir-block-cons
@@ -18509,16 +18525,16 @@ g:
               (compiler_ir_types.CompilerIrInstr.Switch
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 (- 0 1)
-                (compiler_ir_types.compiler-ir-switch-case-cons
-                  (- 0 1)
-                  (compiler_ir_types.compiler-ir-label "join")
-                  (compiler_ir_types.compiler-ir-switch-case-cons
+                (compiler_ir_types.compiler-ir-switch-case-seq3
+                  (compiler_ir_types.CompilerIrSwitchCase.Case
+                    (- 0 1)
+                    (compiler_ir_types.compiler-ir-label "join"))
+                  (compiler_ir_types.CompilerIrSwitchCase.Case
                     0
-                    (compiler_ir_types.compiler-ir-label "join")
-                    (compiler_ir_types.compiler-ir-switch-case-cons
-                      1
-                      (compiler_ir_types.compiler-ir-label "join")
-                      compiler_ir_types.CompilerIrSwitchCaseList.Nil)))
+                    (compiler_ir_types.compiler-ir-label "join"))
+                  (compiler_ir_types.CompilerIrSwitchCase.Case
+                    1
+                    (compiler_ir_types.compiler-ir-label "join")))
                 (compiler_ir_types.compiler-ir-label "join"))
               compiler_ir_types.CompilerIrInstrList.Nil))
           (compiler_ir_types.compiler-ir-block-cons
@@ -42375,13 +42391,13 @@ g:
         (compiler_ir_types.CompilerIrInstr.Switch
           (compiler_ir_types.CompilerIrValue.Var 0)
           4
-          (compiler_ir_types.compiler-ir-switch-case-cons
-            4
-            (compiler_ir_types.compiler-ir-label "four")
-            (compiler_ir_types.compiler-ir-switch-case-cons
+          (compiler_ir_types.compiler-ir-switch-case-seq2
+            (compiler_ir_types.CompilerIrSwitchCase.Case
+              4
+              (compiler_ir_types.compiler-ir-label "four"))
+            (compiler_ir_types.CompilerIrSwitchCase.Case
               5
-              (compiler_ir_types.compiler-ir-label "five")
-              compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+              (compiler_ir_types.compiler-ir-label "five")))
           (compiler_ir_types.compiler-ir-label "other"))
         compiler_ir_types.CompilerIrInstrList.Nil))
     compiler_ir_types.CompilerIrBlockList.Nil))

@@ -12,6 +12,7 @@
 (import compiler_ast_types as ast)
 (import compiler_check_core as check_core)
 (import compiler_diagnostic as cdiag)
+(import compiler_semantic_index as semantic_index)
 (import compiler_typecheck_core as tc_core)
 (import compiler_owned_view as owned_view)
 (import format_rules)
@@ -1141,64 +1142,120 @@
 
 (define (lsp-document-highlight-smoke-ok?) : bool
   (let
+    [baseline : i64
+      (semantic_index.compiler-semantic-source-index-live-owner-count)]
+    [uri : String "file:///lsp-document-highlight-smoke.tl"]
+    [path : String "src/tests/lsp_document_highlight_smoke.tl"]
     [source : String
-      "(define foo : i64 1)\n(define foo-bar : i64 foo)\n(define qualified : i64 mod.foo)\n(define another : i64 mod.foo)\n; foo mod.foo\n(define text : String \"foo mod.foo\")\n(define f : char 'f')\n(define punct : i64 foo?)"]
-    [foo : String
-      (json.stringify
-        (lsp_frame_core.lsp-json-array
-          (lsp_frame_core.lsp-document-highlights-in-text
-            (owned_view.compiler-owned-shared-view source)
-            "foo")))]
-    [qualified : String
-      (json.stringify
-        (lsp_frame_core.lsp-json-array
-          (lsp_frame_core.lsp-document-highlights-in-text
-            (owned_view.compiler-owned-shared-view source)
-            "mod.foo")))]
-    [letter : String
-      (json.stringify
-        (lsp_frame_core.lsp-json-array
-          (lsp_frame_core.lsp-document-highlights-in-text
-            (owned_view.compiler-owned-shared-view source)
-            "f")))]
+      "(define prefix : String \"λ€𝄞\") (define top : i64 1)\n(define (bump [slot : i64]) : i64\n  (begin\n    (set! slot (+ slot 1))\n    slot))\n(define (shadow [top : i64]) : i64 top)\n(define (local-use) : i64 (let [local : i64 top] local))\n(define (read) : i64 top)\n; top\n(define text : String \"top\")\n(define top-suffix : i64 2)\n(defmacro (wrap [value : Expr]) : Expr value)\n(define result : i64 (wrap top))"]
     [capabilities : String
       (json.stringify (lsp_frame_core.lsp-initialize-result))]
-    [foo-want : String
-      "[{\"range\":{\"start\":{\"line\":0,\"character\":8},\"end\":{\"line\":0,\"character\":11}},\"kind\":1},{\"range\":{\"start\":{\"line\":1,\"character\":22},\"end\":{\"line\":1,\"character\":25}},\"kind\":1}]"]
-    [qualified-want : String
-      "[{\"range\":{\"start\":{\"line\":2,\"character\":24},\"end\":{\"line\":2,\"character\":31}},\"kind\":1},{\"range\":{\"start\":{\"line\":3,\"character\":22},\"end\":{\"line\":3,\"character\":29}},\"kind\":1}]"]
-    [letter-want : String
-      "[{\"range\":{\"start\":{\"line\":6,\"character\":8},\"end\":{\"line\":6,\"character\":9}},\"kind\":1}]"]
+    [top-want : String
+      "[{\"range\":{\"start\":{\"line\":0,\"character\":40},\"end\":{\"line\":0,\"character\":43}},\"kind\":1},{\"range\":{\"start\":{\"line\":6,\"character\":44},\"end\":{\"line\":6,\"character\":47}},\"kind\":2},{\"range\":{\"start\":{\"line\":7,\"character\":21},\"end\":{\"line\":7,\"character\":24}},\"kind\":2},{\"range\":{\"start\":{\"line\":12,\"character\":27},\"end\":{\"line\":12,\"character\":30}},\"kind\":2}]"]
+    [local-want : String
+      "[{\"range\":{\"start\":{\"line\":6,\"character\":32},\"end\":{\"line\":6,\"character\":37}},\"kind\":1},{\"range\":{\"start\":{\"line\":6,\"character\":49},\"end\":{\"line\":6,\"character\":54}},\"kind\":2}]"]
+    [slot-want : String
+      "[{\"range\":{\"start\":{\"line\":1,\"character\":15},\"end\":{\"line\":1,\"character\":19}},\"kind\":1},{\"range\":{\"start\":{\"line\":3,\"character\":10},\"end\":{\"line\":3,\"character\":14}},\"kind\":3},{\"range\":{\"start\":{\"line\":3,\"character\":18},\"end\":{\"line\":3,\"character\":22}},\"kind\":2},{\"range\":{\"start\":{\"line\":4,\"character\":4},\"end\":{\"line\":4,\"character\":8}},\"kind\":2}]"]
+    [wrap-want : String
+      "[{\"range\":{\"start\":{\"line\":11,\"character\":11},\"end\":{\"line\":11,\"character\":15}},\"kind\":1},{\"range\":{\"start\":{\"line\":12,\"character\":22},\"end\":{\"line\":12,\"character\":26}},\"kind\":2}]"]
     [capability : String "\"documentHighlightProvider\":true"]
-    (and
-      (string.contains (& capabilities) (& capability))
-      (string.eq foo foo-want)
-      (string.eq qualified qualified-want)
-      (string.eq letter letter-want)
-      (string.eq
-        (lsp_frame_core.lsp-code-symbol-at-offset
-          (owned_view.compiler-owned-shared-view source)
-          (lsp_frame_core.lsp-offset-at-position
-            (owned_view.compiler-owned-shared-view source)
-            2
-            25))
-        "mod.foo")
-      (string.eq
-        (lsp_frame_core.lsp-code-symbol-at-offset
-          (owned_view.compiler-owned-shared-view source)
-          (lsp_frame_core.lsp-offset-at-position
-            (owned_view.compiler-owned-shared-view source)
-            4
-            3))
-        "")
-      (string.eq
-        (lsp_frame_core.lsp-code-symbol-at-offset
-          (owned_view.compiler-owned-shared-view source)
-          (lsp_frame_core.lsp-offset-at-position
-            (owned_view.compiler-owned-shared-view source)
-            5
-            24))
-        ""))))
+    (match (semantic_index.compiler-check-source-index-with-roots
+      path
+      source
+      (lsp_svec.new))
+      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (semantic_index.compiler-semantic-source-index-release!
+            (&mut partial))
+          false)]
+      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Err _) false]
+      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [docs : lsp_document_vec.Vec
+            (lsp_frame_core.lsp-documents-set-semantic-index
+              (lsp_frame_core.lsp-documents-set-versioned
+                (lsp_document_vec.new)
+                uri
+                path
+                source
+                1
+                (lsp_frame_core.lsp-diagnostic-uris-empty))
+              uri
+              1
+              index)]
+          [doc : lsp_vector_families.LspDocument
+            (lsp_document_vec.get
+              (& docs)
+              0
+              (lsp_frame_core.lsp-document-fallback))]
+          [top-results : lsp_frame_core.LspDocumentHighlightResults
+            (lsp_frame_core.lsp-document-highlights-at
+              (& doc)
+              (lsp_frame_core.lsp-offset-at-position source 7 22))]
+          [local-results : lsp_frame_core.LspDocumentHighlightResults
+            (lsp_frame_core.lsp-document-highlights-at
+              (& doc)
+              (lsp_frame_core.lsp-offset-at-position source 6 33))]
+          [slot-results : lsp_frame_core.LspDocumentHighlightResults
+            (lsp_frame_core.lsp-document-highlights-at
+              (& doc)
+              (lsp_frame_core.lsp-offset-at-position source 1 16))]
+          [wrap-results : lsp_frame_core.LspDocumentHighlightResults
+            (lsp_frame_core.lsp-document-highlights-at
+              (& doc)
+              (lsp_frame_core.lsp-offset-at-position source 12 23))]
+          [comment-results : lsp_frame_core.LspDocumentHighlightResults
+            (lsp_frame_core.lsp-document-highlights-at
+              (& doc)
+              (lsp_frame_core.lsp-offset-at-position source 8 3))]
+          [string-results : lsp_frame_core.LspDocumentHighlightResults
+            (lsp_frame_core.lsp-document-highlights-at
+              (& doc)
+              (lsp_frame_core.lsp-offset-at-position source 9 24))]
+          [record-count : i64
+            (semantic_index.compiler-semantic-source-index-len
+              (& doc.semantic.index))]
+          [ok : bool
+            (and
+              (string.contains (& capabilities) (& capability))
+              (string.eq
+                (json.stringify
+                  (lsp_frame_core.lsp-document-highlight-results-json
+                    (& top-results)))
+                top-want)
+              (string.eq
+                (json.stringify
+                  (lsp_frame_core.lsp-document-highlight-results-json
+                    (& local-results)))
+                local-want)
+              (string.eq
+                (json.stringify
+                  (lsp_frame_core.lsp-document-highlight-results-json
+                    (& slot-results)))
+                slot-want)
+              (string.eq
+                (json.stringify
+                  (lsp_frame_core.lsp-document-highlight-results-json
+                    (& wrap-results)))
+                wrap-want)
+              (= comment-results.len 0)
+              (= string-results.len 0)
+              (= top-results.record-visits record-count)
+              (= local-results.record-visits record-count)
+              (= slot-results.record-visits record-count)
+              (= wrap-results.record-visits record-count)
+              (= comment-results.record-visits 0)
+              (= string-results.record-visits 0)
+              (=
+                (semantic_index.compiler-semantic-source-index-live-owner-count)
+                (+ baseline 1)))]
+          (begin
+            (lsp_frame_core.lsp-documents-release-all! (&mut docs))
+            (and
+              ok
+              (=
+                (semantic_index.compiler-semantic-source-index-live-owner-count)
+                baseline))))])))
 
 (define (lsp-fold-render [source : String]) : String
   (json.stringify

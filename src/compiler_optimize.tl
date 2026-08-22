@@ -6689,35 +6689,23 @@
         [(ir.CompilerIrSwitchCase.Case bt blabel)
           (and (= at bt) (= alabel blabel))])]))
 
-(define (opt-switch-case-list-eq
-  [a : ir.CompilerIrSwitchCaseList]
-  [b : ir.CompilerIrSwitchCaseList]) : bool
-  (match (ir.compiler-ir-switch-case-list-force-cons a)
-    [(ir.CompilerIrSwitchCaseList.Nil)
-      (match (ir.compiler-ir-switch-case-list-force-cons b)
-        [(ir.CompilerIrSwitchCaseList.Nil) true]
-        [(ir.CompilerIrSwitchCaseList.Array seq) (= seq.len 0)]
-        [_ false])]
-    [(ir.CompilerIrSwitchCaseList.Cons acase at)
-      (match (ir.compiler-ir-switch-case-list-force-cons b)
-        [(ir.CompilerIrSwitchCaseList.Cons bcase bt)
-          (and
-            (opt-switch-case-eq acase bcase)
-            (opt-switch-case-list-eq
-              (compiler-opt-box-shared-view at)
-              (compiler-opt-box-shared-view bt)))]
-        [(ir.CompilerIrSwitchCaseList.Array seq)
-          (match acase
-            [(ir.CompilerIrSwitchCase.Case tag label)
-              (opt-switch-case-list-eq
-                (ir.compiler-ir-switch-case-cons-linked
-                  tag
-                  label
-                  (compiler-opt-box-shared-view at))
-                (ir.compiler-ir-switch-case-seq-to-list seq))])]
-        [_ false])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-switch-case-list-eq (ir.compiler-ir-switch-case-seq-to-list seq) b)]))
+(define (opt-switch-case-seq-eq
+  [a : ir.CompilerIrSwitchCaseSeq]
+  [b : ir.CompilerIrSwitchCaseSeq]) : bool
+  (if (not (= a.len b.len))
+    false
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index a.len)
+          (begin
+            (unless
+              (opt-switch-case-eq
+                (ir.compiler-ir-switch-case-seq-ref a index)
+                (ir.compiler-ir-switch-case-seq-ref b index))
+              (return false))
+            (set! index (+ index 1))))
+        true))))
 
 (define (opt-c-abi-return-slot-eq
   [type-segment-bases : i64]
@@ -7573,9 +7561,7 @@
               (compiler-opt-global-shared-view av)
               (compiler-opt-global-shared-view bv))
             (= abase bbase)
-            (opt-switch-case-list-eq
-              (compiler-opt-global-shared-view acases)
-              (compiler-opt-global-shared-view bcases))
+            (opt-switch-case-seq-eq acases bcases)
             (= adefault bdefault))]
         [_ false])]
     [(ir.CompilerIrInstr.TotalEnumSwitch av abase acases adefault atrap)
@@ -7586,9 +7572,7 @@
               (compiler-opt-global-shared-view av)
               (compiler-opt-global-shared-view bv))
             (= abase bbase)
-            (opt-switch-case-list-eq
-              (compiler-opt-global-shared-view acases)
-              (compiler-opt-global-shared-view bcases))
+            (opt-switch-case-seq-eq acases bcases)
             (= adefault bdefault)
             (= atrap btrap))]
         [_ false])]))
@@ -18698,54 +18682,44 @@
 
 (define (opt-cfg-switch-case-successors-hashed
   [set : OptLabelSet]
-  [cases : ir.CompilerIrSwitchCaseList]
-  [seen-input : opt_string_i64_map.Map]) : OptLabelSet
+  [cases : ir.CompilerIrSwitchCaseSeq]
+  [seen : opt_string_i64_map.Map (:consume)]) : OptLabelSet
   (let
-    [seen : opt_string_i64_map.Map (compiler-opt-global-shared-view seen-input)]
-    (match cases
-      [(ir.CompilerIrSwitchCaseList.Nil) set]
-      [(ir.CompilerIrSwitchCaseList.Cons case rest)
-        (match case
-          [(ir.CompilerIrSwitchCase.Case _ label)
-            (if (opt_string_i64_map.contains? (& seen) label)
-              (opt-cfg-switch-case-successors-hashed
-                set
-                (compiler-opt-box-shared-view rest)
-                seen)
-              (begin
-                (opt_string_i64_map.insert-ref! (&mut seen) label 1)
-                (opt-cfg-switch-case-successors-hashed
-                  (opt-label-cons label set)
-                  (compiler-opt-box-shared-view rest)
-                  seen)))])]
-      [(ir.CompilerIrSwitchCaseList.Array seq)
-        (opt-cfg-switch-case-successors-hashed
-          set
-          (ir.compiler-ir-switch-case-seq-to-list seq)
-          seen)])))
+    [index : i64 0]
+    [out : OptLabelSet set]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (unless
+                (opt_string_i64_map.contains? (& seen) label)
+                (begin
+                  (opt_string_i64_map.insert-ref! (&mut seen) label 1)
+                  (set! out (opt-label-cons label out))))])
+          (set! index (+ index 1))))
+      out)))
 
 (define (opt-cfg-switch-case-successors-linear
   [set : OptLabelSet]
-  [cases : ir.CompilerIrSwitchCaseList]) : OptLabelSet
-  (match cases
-    [(ir.CompilerIrSwitchCaseList.Nil) set]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case _ label)
-          (opt-cfg-switch-case-successors-linear
-            (opt-label-add set label)
-            (compiler-opt-box-shared-view rest))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-cfg-switch-case-successors-linear
-        set
-        (ir.compiler-ir-switch-case-seq-to-list seq))]))
+  [cases : ir.CompilerIrSwitchCaseSeq]) : OptLabelSet
+  (let
+    [index : i64 0]
+    [out : OptLabelSet set]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (set! out (opt-label-add out label))])
+          (set! index (+ index 1))))
+      out)))
 
 (define (opt-cfg-switch-case-successors
   [set : OptLabelSet]
-  [cases : ir.CompilerIrSwitchCaseList]) : OptLabelSet
+  [cases : ir.CompilerIrSwitchCaseSeq]) : OptLabelSet
   (if (<
-    (ir.compiler-ir-switch-case-list-count
-      (compiler-opt-global-shared-view cases))
+    (ir.compiler-ir-switch-case-seq-count cases)
     (opt-cfg-switch-case-hash-threshold))
     (opt-cfg-switch-case-successors-linear set cases)
     (opt-cfg-switch-case-successors-hashed
@@ -19739,41 +19713,26 @@
     preheader
     label))
 
-(define (opt-loop-preheaders-retarget-switch-cases-acc
-  [cases : ir.CompilerIrSwitchCaseList]
-  [header : i64]
-  [preheader : i64]
-  [acc : ir.CompilerIrSwitchCaseList]) : ir.CompilerIrSwitchCaseList
-  (match (ir.compiler-ir-switch-case-list-force-cons cases)
-    [(ir.CompilerIrSwitchCaseList.Nil) acc]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case tag label)
-          (opt-loop-preheaders-retarget-switch-cases-acc
-            (compiler-opt-box-shared-view rest)
-            header
-            preheader
-            (ir.compiler-ir-switch-case-cons-linked
-              tag
-              (opt-loop-preheaders-retarget-label label header preheader)
-              acc))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-loop-preheaders-retarget-switch-cases-acc
-        (ir.compiler-ir-switch-case-seq-to-list seq)
-        header
-        preheader
-        acc)]))
-
 (define (opt-loop-preheaders-retarget-switch-cases
-  [cases : ir.CompilerIrSwitchCaseList]
+  [cases : ir.CompilerIrSwitchCaseSeq]
   [header : i64]
-  [preheader : i64]) : ir.CompilerIrSwitchCaseList
-  (ir.compiler-ir-switch-case-list-compact-reversed
-    (opt-loop-preheaders-retarget-switch-cases-acc
-      cases
-      header
-      preheader
-      ir.CompilerIrSwitchCaseList.Nil)))
+  [preheader : i64]) : ir.CompilerIrSwitchCaseSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
+      (array.make-array ir.CompilerIrSwitchCase cases.len)]
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case tag label)
+              (set!
+                (array-ref slots index)
+                (ir.CompilerIrSwitchCase.Case
+                  tag
+                  (opt-loop-preheaders-retarget-label label header preheader)))])
+          (set! index (+ index 1))))
+      (ir.CompilerIrSwitchCaseSeq slots cases.len))))
 
 (define (opt-loop-preheaders-retarget-instr
   [instr : ir.CompilerIrInstr]
@@ -25278,22 +25237,17 @@
 
 (define (opt-licm-switch-case-outside?
   [body : OptLabelSet]
-  [cases : ir.CompilerIrSwitchCaseList]) : bool
-  (match cases
-    [(ir.CompilerIrSwitchCaseList.Nil) false]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case _ label)
-          (if (not
-            (opt-label-contains (compiler-opt-global-shared-view body) label))
-            true
-            (opt-licm-switch-case-outside?
-              body
-              (compiler-opt-box-shared-view rest)))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-licm-switch-case-outside?
-        (compiler-opt-global-shared-view body)
-        (ir.compiler-ir-switch-case-seq-to-list seq))]))
+  [cases : ir.CompilerIrSwitchCaseSeq]) : bool
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (unless (opt-label-contains body label) (return true))])
+          (set! index (+ index 1))))
+      false)))
 
 ;; Pure register staging that a return path may perform without counting as
 ;; "more work": scalar copies/arithmetic and the group packing a multi-word
@@ -25477,26 +25431,19 @@
 (define (opt-licm-switch-cases-return-shaped?
   [blocks : ir.CompilerIrBlockList]
   [body : OptLabelSet]
-  [cases : ir.CompilerIrSwitchCaseList]) : bool
-  (match cases
-    [(ir.CompilerIrSwitchCaseList.Nil) true]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case _ label)
-          (and
-            (opt-licm-branch-exit-return-shaped?
-              (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view body)
-              label)
-            (opt-licm-switch-cases-return-shaped?
-              (compiler-opt-global-shared-view blocks)
-              body
-              (compiler-opt-box-shared-view rest)))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-licm-switch-cases-return-shaped?
-        (compiler-opt-global-shared-view blocks)
-        body
-        (ir.compiler-ir-switch-case-seq-to-list seq))]))
+  [cases : ir.CompilerIrSwitchCaseSeq]) : bool
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (unless
+                (opt-licm-branch-exit-return-shaped? blocks body label)
+                (return false))])
+          (set! index (+ index 1))))
+      true)))
 
 ;; Suppression kind for the whole loop: max over the non-header body blocks'
 ;; terminator classifications.
@@ -27152,25 +27099,24 @@
                     (opt-licm-unswitch-chain-fuel))))])))]))
 
 (define (opt-licm-unswitch-switch-cases
-  [cases : ir.CompilerIrSwitchCaseList]
-  [body-labels : OptLabelSet]) : ir.CompilerIrSwitchCaseList
-  (match (ir.compiler-ir-switch-case-list-force-cons cases)
-    [(ir.CompilerIrSwitchCaseList.Nil) ir.CompilerIrSwitchCaseList.Nil]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-licm-unswitch-switch-cases
-        (ir.compiler-ir-switch-case-seq-to-list seq)
-        body-labels)]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case tag label)
-          (ir.compiler-ir-switch-case-cons-linked
-            tag
-            (opt-licm-unswitch-clone-label
-              (compiler-opt-global-shared-view body-labels)
-              label)
-            (opt-licm-unswitch-switch-cases
-              (compiler-opt-box-shared-view rest)
-              body-labels))])]))
+  [cases : ir.CompilerIrSwitchCaseSeq]
+  [body-labels : OptLabelSet]) : ir.CompilerIrSwitchCaseSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
+      (array.make-array ir.CompilerIrSwitchCase cases.len)]
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case tag label)
+              (set!
+                (array-ref slots index)
+                (ir.CompilerIrSwitchCase.Case
+                  tag
+                  (opt-licm-unswitch-clone-label body-labels label)))])
+          (set! index (+ index 1))))
+      (ir.CompilerIrSwitchCaseSeq slots cases.len))))
 
 (define (opt-licm-unswitch-clone-phi-inputs
   [inputs : ir.CompilerIrPhiInputList]
@@ -39069,22 +39015,18 @@
         (opt-cfg-straighten-resolve index entry-label next label (- fuel 1))))))
 
 (define (opt-cfg-straighten-cases-contain?
-  [cases : ir.CompilerIrSwitchCaseList]
+  [cases : ir.CompilerIrSwitchCaseSeq]
   [label : i64]) : bool
-  (match (ir.compiler-ir-switch-case-list-force-cons cases)
-    [(ir.CompilerIrSwitchCaseList.Nil) false]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case _ case-label)
-          (if (= case-label label)
-            true
-            (opt-cfg-straighten-cases-contain?
-              (compiler-opt-box-shared-view rest)
-              label))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-cfg-straighten-cases-contain?
-        (ir.compiler-ir-switch-case-seq-to-list seq)
-        label)]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case _ case-label)
+              (when (= case-label label) (return true))])
+          (set! index (+ index 1))))
+      false)))
 
 (define (opt-cfg-straighten-instr-contains?
   [instr : ir.CompilerIrInstr]
@@ -39164,7 +39106,7 @@
   [flag : (__tl_dyn-array i64)]
   [value : ir.CompilerIrValue]
   [base : i64]
-  [cases : ir.CompilerIrSwitchCaseList]
+  [cases : ir.CompilerIrSwitchCaseSeq]
   [default-label : i64]
   [fuel : i64]) : ir.CompilerIrInstr
   (let
@@ -39180,10 +39122,8 @@
         (compiler-opt-global-shared-view flag)
         default-label
         fuel)]
-    [seq : ir.CompilerIrSwitchCaseSeq
-      (ir.compiler-ir-switch-case-seq-from-list cases)]
-    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) seq.slots]
-    [count : i64 seq.len]
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cases.slots]
+    [count : i64 cases.len]
     [out : (__tl_dyn-array ir.CompilerIrSwitchCase)
       (array.make-array ir.CompilerIrSwitchCase count)]
     [pos : i64 0]
@@ -39218,8 +39158,7 @@
       (ir.CompilerIrInstr.Switch
         value
         base
-        (ir.CompilerIrSwitchCaseList.Array
-          (ir.CompilerIrSwitchCaseSeq out count))
+        (ir.CompilerIrSwitchCaseSeq out count)
         next-default))))
 
 (define (opt-cfg-straighten-terminator
@@ -39957,19 +39896,18 @@
 
 (define (opt-sccp-mark-switch-targets
   [state : OptSccpState]
-  [cases : ir.CompilerIrSwitchCaseList]) : OptSccpState
-  (match cases
-    [(ir.CompilerIrSwitchCaseList.Nil) state]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case _ label)
-          (opt-sccp-mark-switch-targets
-            (opt-sccp-state-mark-executable state label)
-            (compiler-opt-box-shared-view rest))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-sccp-mark-switch-targets
-        (compiler-opt-global-shared-view state)
-        (ir.compiler-ir-switch-case-seq-to-list seq))]))
+  [cases : ir.CompilerIrSwitchCaseSeq]) : OptSccpState
+  (let
+    [index : i64 0]
+    [out : OptSccpState state]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (set! out (opt-sccp-state-mark-executable out label))])
+          (set! index (+ index 1))))
+      out)))
 
 (define (opt-sccp-process-instr
   [type-segment-bases : i64]
@@ -41593,38 +41531,33 @@
 ;; extra information. Filling a hole with `default-label` therefore preserves
 ;; semantics and keeps the case list contiguous, which is the backend's
 ;; requirement for a jump table.
-(define (opt-switch-build-cases-desc
-  [items : OptSwitchCandidateList]
-  [tag : i64]
-  [min-tag : i64]
-  [default-label : i64]
-  [acc : ir.CompilerIrSwitchCaseList]) : ir.CompilerIrSwitchCaseList
-  (if (< tag min-tag)
-    acc
-    (opt-switch-build-cases-desc
-      (compiler-opt-global-shared-view items)
-      (- tag 1)
-      min-tag
-      default-label
-      (ir.compiler-ir-switch-case-cons-linked
-        tag
-        (match (opt-switch-candidate-label-for-tag items tag)
-          [(OptSwitchMaybeLabel.SomeLabel label) label]
-          [(OptSwitchMaybeLabel.NoLabel) default-label])
-        acc))))
-
 (define (opt-switch-build-cases
   [items : OptSwitchCandidateList]
   [min-tag : i64]
   [max-tag : i64]
-  [default-label : i64]) : ir.CompilerIrSwitchCaseList
-  (ir.compiler-ir-switch-case-list-compact
-    (opt-switch-build-cases-desc
-      items
-      max-tag
-      min-tag
-      default-label
-      ir.CompilerIrSwitchCaseList.Nil)))
+  [default-label : i64]) : ir.CompilerIrSwitchCaseSeq
+  (let
+    [count : i64
+      (if (< max-tag min-tag)
+        0
+        (+ (- max-tag min-tag) 1))]
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
+      (array.make-array ir.CompilerIrSwitchCase count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [tag : i64 (+ min-tag index)]
+          (begin
+            (set!
+              (array-ref slots index)
+              (ir.CompilerIrSwitchCase.Case
+                tag
+                (match (opt-switch-candidate-label-for-tag items tag)
+                  [(OptSwitchMaybeLabel.SomeLabel label) label]
+                  [(OptSwitchMaybeLabel.NoLabel) default-label])))
+            (set! index (+ index 1)))))
+      (ir.CompilerIrSwitchCaseSeq slots count))))
 
 (define (opt-switch-total-enum-trap-block [label : i64] [dst : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
@@ -41643,7 +41576,7 @@
 ;; the last exhaustive arm as the default, and no trap label yet.
 (defenum OptLateTotalSwitchCases
   (No)
-  (Some ir.CompilerIrSwitchCaseList i64))
+  (Some ir.CompilerIrSwitchCaseSeq i64))
 
 (defenum OptLateTotalSwitchBlock
   (Unchanged ir.CompilerIrBlock)
@@ -41653,36 +41586,32 @@
   (Result ir.CompilerIrBlockList ir.CompilerIrBlockList))
 
 (define (opt-late-total-switch-cases-from
-  [cases : ir.CompilerIrSwitchCaseList]
+  [cases : ir.CompilerIrSwitchCaseSeq]
   [expected : i64]
   [final-label : i64]) : OptLateTotalSwitchCases
-  (match cases
-    [(ir.CompilerIrSwitchCaseList.Nil)
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
+      (array.make-array ir.CompilerIrSwitchCase (+ cases.len 1))]
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case tag label)
+              (begin
+                (unless
+                  (= tag (+ expected index))
+                  (return (OptLateTotalSwitchCases.No)))
+                (set!
+                  (array-ref slots index)
+                  (ir.CompilerIrSwitchCase.Case tag label)))])
+          (set! index (+ index 1))))
+      (set!
+        (array-ref slots cases.len)
+        (ir.CompilerIrSwitchCase.Case (+ expected cases.len) final-label))
       (OptLateTotalSwitchCases.Some
-        (ir.compiler-ir-switch-case-cons-linked
-          expected
-          final-label
-          ir.CompilerIrSwitchCaseList.Nil)
-        0)]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case tag label)
-          (if (= tag expected)
-            (match (opt-late-total-switch-cases-from
-              (compiler-opt-box-shared-view rest)
-              (+ expected 1)
-              final-label)
-              [(OptLateTotalSwitchCases.No) (OptLateTotalSwitchCases.No)]
-              [(OptLateTotalSwitchCases.Some tail count)
-                (OptLateTotalSwitchCases.Some
-                  (ir.compiler-ir-switch-case-cons-linked tag label tail)
-                  (+ count 1))])
-            (OptLateTotalSwitchCases.No))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-late-total-switch-cases-from
-        (ir.compiler-ir-switch-case-seq-to-list seq)
-        expected
-        final-label)]))
+        (ir.CompilerIrSwitchCaseSeq slots (+ cases.len 1))
+        cases.len))))
 
 (define (opt-late-total-switch-mark-params!
   [occupied : (__tl_dyn-array i64)]
@@ -41767,8 +41696,7 @@
                               (ir.CompilerIrInstr.TotalEnumSwitch
                                 index
                                 base
-                                (ir.compiler-ir-switch-case-list-compact
-                                  total-cases)
+                                total-cases
                                 trap-label
                                 trap-label)))
                           (opt-switch-total-enum-trap-block trap-label trap-var))))])
@@ -75386,36 +75314,25 @@
             0)
           (ir.CompilerIrCallArgs.Array out)))]))
 
-(define (opt-bce-mb-clone-switch-cases-acc
-  [cases : ir.CompilerIrSwitchCaseList]
-  [body-labels : OptLabelSet]
-  [acc : ir.CompilerIrSwitchCaseList]) : ir.CompilerIrSwitchCaseList
-  (match (ir.compiler-ir-switch-case-list-force-cons cases)
-    [(ir.CompilerIrSwitchCaseList.Nil) acc]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case tag label)
-          (opt-bce-mb-clone-switch-cases-acc
-            (compiler-opt-box-shared-view rest)
-            (compiler-opt-global-shared-view body-labels)
-            (ir.compiler-ir-switch-case-cons-linked
-              tag
-              (opt-bce-mb-fast-label body-labels label)
-              acc))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-bce-mb-clone-switch-cases-acc
-        (ir.compiler-ir-switch-case-seq-to-list seq)
-        body-labels
-        acc)]))
-
 (define (opt-bce-mb-clone-switch-cases
-  [cases : ir.CompilerIrSwitchCaseList]
-  [body-labels : OptLabelSet]) : ir.CompilerIrSwitchCaseList
-  (ir.compiler-ir-switch-case-list-compact-reversed
-    (opt-bce-mb-clone-switch-cases-acc
-      cases
-      body-labels
-      ir.CompilerIrSwitchCaseList.Nil)))
+  [cases : ir.CompilerIrSwitchCaseSeq]
+  [body-labels : OptLabelSet]) : ir.CompilerIrSwitchCaseSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
+      (array.make-array ir.CompilerIrSwitchCase cases.len)]
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case tag label)
+              (set!
+                (array-ref slots index)
+                (ir.CompilerIrSwitchCase.Case
+                  tag
+                  (opt-bce-mb-fast-label body-labels label)))])
+          (set! index (+ index 1))))
+      (ir.CompilerIrSwitchCaseSeq slots cases.len))))
 
 (define (opt-bce-mb-clone-phi-inputs
   [inputs : ir.CompilerIrPhiInputList]
@@ -90298,26 +90215,23 @@
       false)))
 
 (define (opt-inline-census-depth-switch-cases!
-  [cases : ir.CompilerIrSwitchCaseList]
+  [cases : ir.CompilerIrSwitchCaseSeq]
   [generation : i64]
   [source : i64]
   [found : bool]) : bool
-  (match cases
-    [(ir.CompilerIrSwitchCaseList.Nil) found]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case _ label)
-          (opt-inline-census-depth-switch-cases!
-            (compiler-opt-box-shared-view rest)
-            generation
-            source
-            (or (opt-inline-census-depth-edge! label generation source) found))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-inline-census-depth-switch-cases!
-        (ir.compiler-ir-switch-case-seq-to-list seq)
-        generation
-        source
-        found)]))
+  (let
+    [index : i64 0]
+    [out : bool found]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (set!
+                out
+                (or (opt-inline-census-depth-edge! label generation source) out))])
+          (set! index (+ index 1))))
+      out)))
 
 (define (opt-inline-census-depth-instrs!
   [instrs : ir.CompilerIrInstrSeq]
@@ -94000,36 +93914,25 @@
           np
           base))]))
 
-(define (opt-inline-prefix-switch-cases-acc
-  [cases : ir.CompilerIrSwitchCaseList]
-  [prefix : String]
-  [acc : ir.CompilerIrSwitchCaseList]) : ir.CompilerIrSwitchCaseList
-  (match (ir.compiler-ir-switch-case-list-force-cons cases)
-    [(ir.CompilerIrSwitchCaseList.Nil) acc]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case tag label)
-          (opt-inline-prefix-switch-cases-acc
-            (compiler-opt-box-shared-view rest)
-            (compiler-opt-global-shared-view prefix)
-            (ir.compiler-ir-switch-case-cons-linked
-              tag
-              (opt-inline-prefix-label prefix label)
-              acc))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-inline-prefix-switch-cases-acc
-        (ir.compiler-ir-switch-case-seq-to-list seq)
-        prefix
-        acc)]))
-
 (define (opt-inline-prefix-switch-cases
-  [cases : ir.CompilerIrSwitchCaseList]
-  [prefix : String]) : ir.CompilerIrSwitchCaseList
-  (ir.compiler-ir-switch-case-list-compact-reversed
-    (opt-inline-prefix-switch-cases-acc
-      cases
-      prefix
-      ir.CompilerIrSwitchCaseList.Nil)))
+  [cases : ir.CompilerIrSwitchCaseSeq]
+  [prefix : String]) : ir.CompilerIrSwitchCaseSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
+      (array.make-array ir.CompilerIrSwitchCase cases.len)]
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case tag label)
+              (set!
+                (array-ref slots index)
+                (ir.CompilerIrSwitchCase.Case
+                  tag
+                  (opt-inline-prefix-label prefix label)))])
+          (set! index (+ index 1))))
+      (ir.CompilerIrSwitchCaseSeq slots cases.len))))
 
 (define (opt-inline-clone-multiblock-instr
   [instr : ir.CompilerIrInstr]

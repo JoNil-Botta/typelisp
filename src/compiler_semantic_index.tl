@@ -4175,7 +4175,7 @@
       (tc.tc-env-key-name-text-for-session
         (tc.tc-context-structural-session state.ctx)
         name-id)]
-    [span : CompilerSemanticSpan
+    [preferred-span : CompilerSemanticSpan
       (compiler-semantic-name-span-in-range
         (owned_view.compiler-owned-shared-view state.path)
         (owned_view.compiler-owned-shared-view state.source)
@@ -4184,6 +4184,19 @@
           (owned_view.compiler-owned-shared-view state.source)
           form-start)
         value-start)]
+    ;; Parser spans for `set!` may begin either at the form or directly at the
+    ;; target binding. The ordinary form-head search handles the former; when
+    ;; it has already skipped the target, retry from the retained origin so
+    ;; direct writes keep an editable source span.
+    [span : CompilerSemanticSpan
+      (if (>= preferred-span.start-byte 0)
+        preferred-span
+        (compiler-semantic-name-span-in-range
+          state.path
+          state.source
+          name
+          form-start
+          value-start))]
     (begin
       (compiler-semantic-record-name-write-span!
         (owned_view.compiler-owned-shared-view state)

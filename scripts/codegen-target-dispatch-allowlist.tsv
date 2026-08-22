@@ -17,7 +17,6 @@ src/compiler_lower.tl	lower-mode-linux-c-abi?	abi	CompilerLowerMode[.]Linux(Scal
 src/compiler_lower.tl	lower-mode-windows-c-abi?	abi	CompilerLowerMode[.]Windows(Scalar|Avx2|Avx512)|lower-mode-windows-c-abi[?]	4	Windows-target lower modes select Win64 C ABI lowering.
 src/compiler_lower.tl	lower-mode-c-abi?	abi	lower-mode-(linux|windows)-c-abi[?]	2	Combined C ABI helper intentionally delegates to target-specific ABI predicates.
 src/compiler_lower.tl	lower-simd-lanes-for-elem	backend-mode	CompilerLowerMode[.](Linux|Windows)(Avx2|Avx512)	4	Target-aware SIMD modes share lane counts with the target-neutral ISA modes.
-src/compiler_lower.tl	lower-masked-preheader-uniform-can-add?	backend-mode	CompilerLowerMode[.](Linux|Windows)Avx2	2	Target-aware AVX2 modes apply platform-specific safe bounds while the backend register-allocation follow-up remains open.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-linux-payload-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI payload enum aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-linux-tag-only-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI enum aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-byref-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 by-reference aggregate shape.

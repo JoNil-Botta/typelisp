@@ -47087,26 +47087,22 @@
   "backend: CompilerIrInstr.Switch requires non-empty contiguous ordered cases")
 
 (define (compiler-backend-switch-case-count
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]) : i64
-  (compiler_ir_types.compiler-ir-switch-case-list-count cases))
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]) : i64
+  (compiler_ir_types.compiler-ir-switch-case-seq-count cases))
 
 (define (compiler-backend-switch-cases-contiguous-from?
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [expected : i64]) : bool
-  (match cases
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Nil) true]
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(compiler_ir_types.CompilerIrSwitchCase.Case tag _)
-          (and
-            (= tag expected)
-            (compiler-backend-switch-cases-contiguous-from?
-              (__tl-box-place rest)
-              (+ expected 1)))])]
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Array seq)
-      (compiler-backend-switch-cases-contiguous-from?
-        (compiler_ir_types.compiler-ir-switch-case-seq-to-list seq)
-        expected)]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
+            [(compiler_ir_types.CompilerIrSwitchCase.Case tag _)
+              (unless (= tag (+ expected index)) (return false))])
+          (set! index (+ index 1))))
+      true)))
 
 (define (compiler-backend-total-switch-trap-instrs?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -47183,7 +47179,7 @@
 (define (compiler-backend-total-switch?
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [base : i64]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [default-label : i64]
   [trap-label : i64]) : bool
   (and
@@ -47194,7 +47190,7 @@
 
 (define (compiler-backend-object-total-switch?
   [base : i64]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [trap-label : i64]) : bool
   (and
     (= base 0)
@@ -47206,25 +47202,23 @@
 
 (define (compiler-backend-switch-cases-target-phi?
   [targets : BackendSymbolSeq]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]) : bool
-  (match cases
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Nil) false]
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(compiler_ir_types.CompilerIrSwitchCase.Case _ label)
-          (or
-            (compiler-backend-symbol-list-contains-id? targets label)
-            (compiler-backend-switch-cases-target-phi?
-              targets
-              (__tl-box-place rest)))])]
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Array seq)
-      (compiler-backend-switch-cases-target-phi?
-        targets
-        (compiler_ir_types.compiler-ir-switch-case-seq-to-list seq))]))
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]) : bool
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
+            [(compiler_ir_types.CompilerIrSwitchCase.Case _ label)
+              (when
+                (compiler-backend-symbol-list-contains-id? targets label)
+                (return true))])
+          (set! index (+ index 1))))
+      false)))
 
 (define (compiler-backend-switch-target-phi?
   [targets : BackendSymbolSeq]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [default-label : i64]) : bool
   (if (= targets.len 0)
     false
@@ -47277,89 +47271,102 @@
       (compiler-backend-jump-label function target-label)
       "")))
 
-(define (compiler-backend-emit-switch-case-edge-blocks
+(define (compiler-backend-emit-switch-case-edge-blocks-from
   [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
+  [index : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [planned-cycle : String]
   [planned-stage : String]) : ResultCompilerBackend
-  (let
-    [targets : BackendSymbolSeq
-      (compiler-backend-function-state-phi-targets
-        (compiler-backend-state-function-state program-index.backend-state))]
-    (match cases
-      [(compiler_ir_types.CompilerIrSwitchCaseList.Nil)
-        (ResultCompilerBackend.Ok "")]
-      [(compiler_ir_types.CompilerIrSwitchCaseList.Cons case rest)
-        (match case
-          [(compiler_ir_types.CompilerIrSwitchCase.Case tag label)
-            (if (compiler-backend-symbol-list-contains-id? targets label)
-              (match (compiler-backend-emit-phi-edge-copies
-                type-segment-bases
-                assignments
-                blocks
-                label
-                current-label
-                program-index
-                vars
-                planned-cycle
-                planned-stage
-                "")
-                [(ResultCompilerBackend.Ok copies)
-                  (match (compiler-backend-emit-switch-case-edge-blocks
-                    type-segment-bases
-                    function
-                    current-label
-                    (__tl-box-place rest)
-                    assignments
-                    blocks
-                    program-index
-                    vars
-                    planned-cycle
-                    planned-stage)
-                    [(ResultCompilerBackend.Ok rest-blocks)
-                      (ResultCompilerBackend.Ok
-                        (str_cat.str-cat
-                          (compiler-backend-emit-switch-edge-block
-                            function
-                            (compiler-backend-switch-case-edge-label
-                              current-label
-                              tag)
-                            label
-                            copies)
-                          rest-blocks))]
-                    [(ResultCompilerBackend.Err message)
-                      (ResultCompilerBackend.Err message)])]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)])
-              (compiler-backend-emit-switch-case-edge-blocks
-                type-segment-bases
-                function
-                current-label
-                (__tl-box-place rest)
-                assignments
-                blocks
-                program-index
-                vars
-                planned-cycle
-                planned-stage))])]
-      [(compiler_ir_types.CompilerIrSwitchCaseList.Array seq)
-        (compiler-backend-emit-switch-case-edge-blocks
-          type-segment-bases
-          function
-          current-label
-          (compiler_ir_types.compiler-ir-switch-case-seq-to-list seq)
-          assignments
-          blocks
-          program-index
-          vars
-          planned-cycle
-          planned-stage)])))
+  (if (>= index cases.len)
+    (ResultCompilerBackend.Ok "")
+    (let
+      [targets : BackendSymbolSeq
+        (compiler-backend-function-state-phi-targets
+          (compiler-backend-state-function-state program-index.backend-state))]
+      (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
+        [(compiler_ir_types.CompilerIrSwitchCase.Case tag label)
+          (if (compiler-backend-symbol-list-contains-id? targets label)
+            (match (compiler-backend-emit-phi-edge-copies
+              type-segment-bases
+              assignments
+              blocks
+              label
+              current-label
+              program-index
+              vars
+              planned-cycle
+              planned-stage
+              "")
+              [(ResultCompilerBackend.Ok copies)
+                (match (compiler-backend-emit-switch-case-edge-blocks-from
+                  type-segment-bases
+                  function
+                  current-label
+                  cases
+                  (+ index 1)
+                  assignments
+                  blocks
+                  program-index
+                  vars
+                  planned-cycle
+                  planned-stage)
+                  [(ResultCompilerBackend.Ok rest-blocks)
+                    (ResultCompilerBackend.Ok
+                      (str_cat.str-cat
+                        (compiler-backend-emit-switch-edge-block
+                          function
+                          (compiler-backend-switch-case-edge-label
+                            current-label
+                            tag)
+                          label
+                          copies)
+                        rest-blocks))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])
+            (compiler-backend-emit-switch-case-edge-blocks-from
+              type-segment-bases
+              function
+              current-label
+              cases
+              (+ index 1)
+              assignments
+              blocks
+              program-index
+              vars
+              planned-cycle
+              planned-stage))]))))
+
+(define (compiler-backend-emit-switch-case-edge-blocks
+  [type-segment-bases : i64]
+  [function : String]
+  [current-label : i64]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [planned-cycle : String]
+  [planned-stage : String]) : ResultCompilerBackend
+  (compiler-backend-emit-switch-case-edge-blocks-from
+    type-segment-bases
+    function
+    current-label
+    cases
+    0
+    assignments
+    blocks
+    program-index
+    vars
+    planned-cycle
+    planned-stage))
 
 (define (compiler-backend-switch-table-label
   [function : String]
@@ -47377,43 +47384,40 @@
   [current-label : i64]
   [retarget-phi-edges : bool]
   [targets : BackendSymbolSeq]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match cases
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Nil) buf]
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(compiler_ir_types.CompilerIrSwitchCase.Case tag label)
-          (compiler-backend-emit-switch-table-cases-into
-            function
-            current-label
-            retarget-phi-edges
-            targets
-            (__tl-box-place rest)
-            (text_buf.append
-              (text_buf.append
-                (text_buf.append buf "    .quad ")
-                (compiler-backend-asm-label
-                  function
-                  (if (and
-                    retarget-phi-edges
-                    (compiler-backend-symbol-list-contains-id? targets label))
-                    (compiler-backend-switch-case-edge-label current-label tag)
-                    label)))
-              "\n"))])]
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Array seq)
-      (compiler-backend-emit-switch-table-cases-into
-        function
-        current-label
-        retarget-phi-edges
-        targets
-        (compiler_ir_types.compiler-ir-switch-case-seq-to-list seq)
-        buf)]))
+  (let
+    [index : i64 0]
+    [out : text_buf.TextBuf buf]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
+            [(compiler_ir_types.CompilerIrSwitchCase.Case tag label)
+              (set!
+                out
+                (text_buf.append
+                  (text_buf.append
+                    (text_buf.append out "    .quad ")
+                    (compiler-backend-asm-label
+                      function
+                      (if (and
+                        retarget-phi-edges
+                        (compiler-backend-symbol-list-contains-id?
+                          targets
+                          label))
+                        (compiler-backend-switch-case-edge-label
+                          current-label
+                          tag)
+                        label)))
+                  "\n"))])
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-emit-switch-table
   [function : String]
   [current-label : i64]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [retarget-phi-edges : bool]
   [targets : BackendSymbolSeq]) : String
   (text_buf.render
@@ -48066,7 +48070,7 @@
   [current-label : i64]
   [index : compiler_ir_types.CompilerIrValue]
   [base : i64]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [default-label : i64]
   [trap-label : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -48189,7 +48193,7 @@
 (define (compiler-backend-switch-validate-one
   [targets : BackendSymbolSeq]
   [base : i64]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [default-label : i64]) : CompilerBackendSwitchValidation
   (let
     [case-count : i64 (compiler-backend-switch-case-count cases)]
@@ -74166,44 +74170,36 @@
   [parts : object_target.CompilerBackendObjectTargetParts]
   [label-scope : String]
   [table-label : String]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
-  (match cases
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Nil) parts]
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(compiler_ir_types.CompilerIrSwitchCase.Case _ label)
-          (let
-            [entry-label : String
-              (compiler-backend-object-switch-entry-label table-label index)]
-            [target : String (compiler-backend-asm-label label-scope label)]
-            (compiler-backend-object-switch-table-cases
-              (object_target.compiler-backend-object-add-rodata
-                (object_target.compiler-backend-object-add-rodata-relocation
-                  (object_target.compiler-backend-object-add-rodata
-                    parts
-                    (cobj.CompilerObjectDataRecord.Label entry-label))
-                  entry-label
-                  (cobj.CompilerObjectRelocationKind.Abs64)
-                  target)
-                (cobj.CompilerObjectDataRecord.SymbolAddress target))
-              label-scope
-              table-label
-              (__tl-box-place rest)
-              (+ index 1)))])]
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Array seq)
-      (compiler-backend-object-switch-table-cases
-        parts
-        label-scope
-        table-label
-        (compiler_ir_types.compiler-ir-switch-case-seq-to-list seq)
-        index)]))
+  (if (>= index cases.len)
+    parts
+    (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
+      [(compiler_ir_types.CompilerIrSwitchCase.Case _ label)
+        (let
+          [entry-label : String
+            (compiler-backend-object-switch-entry-label table-label index)]
+          [target : String (compiler-backend-asm-label label-scope label)]
+          (compiler-backend-object-switch-table-cases
+            (object_target.compiler-backend-object-add-rodata
+              (object_target.compiler-backend-object-add-rodata-relocation
+                (object_target.compiler-backend-object-add-rodata
+                  parts
+                  (cobj.CompilerObjectDataRecord.Label entry-label))
+                entry-label
+                (cobj.CompilerObjectRelocationKind.Abs64)
+                target)
+              (cobj.CompilerObjectDataRecord.SymbolAddress target))
+            label-scope
+            table-label
+            cases
+            (+ index 1)))])))
 
 (define (compiler-backend-object-switch-table
   [parts : object_target.CompilerBackendObjectTargetParts]
   [label-scope : String]
   [current-label : i64]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]) : object_target.CompilerBackendObjectTargetParts
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]) : object_target.CompilerBackendObjectTargetParts
   (let
     [table-label : String
       (compiler-backend-switch-table-label label-scope current-label)]
@@ -74289,7 +74285,7 @@
   [current-label : i64]
   [index : compiler_ir_types.CompilerIrValue]
   [base : i64]
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [default-label : i64]
   [trap-label : i64]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts

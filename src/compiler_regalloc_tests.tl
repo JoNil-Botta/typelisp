@@ -11198,10 +11198,8 @@
         (ir.CompilerIrInstr.Switch
           (ir.CompilerIrValue.Var 0)
           1
-          (ir.compiler-ir-switch-case-cons
-            1
-            (ir.compiler-ir-label "one")
-            ir.CompilerIrSwitchCaseList.Nil)
+          (ir.compiler-ir-switch-case-seq1
+            (ir.CompilerIrSwitchCase.Case 1 (ir.compiler-ir-label "one")))
           (ir.compiler-ir-label "other"))
         ir.CompilerIrInstrList.Nil))
     ir.CompilerIrBlockList.Nil))
@@ -11423,7 +11421,7 @@
           (ir.CompilerIrInstr.Switch
             (ir.CompilerIrValue.Var 0)
             1
-            ir.CompilerIrSwitchCaseList.Nil
+            (ir.compiler-ir-switch-case-seq-empty)
             (ir.compiler-ir-label "other"))
           (ir.compiler-ir-instr-cons
             (ir.CompilerIrInstr.BinOp

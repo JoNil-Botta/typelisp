@@ -10700,9 +10700,9 @@
     [(ir.CompilerIrInstr.TailCall _ _ _) 0]
     [(ir.CompilerIrInstr.TailCallIndirect _ _ _) 0]
     [(ir.CompilerIrInstr.Switch _ _ cases _)
-      (+ 1 (ir.compiler-ir-switch-case-list-count cases))]
+      (+ 1 (ir.compiler-ir-switch-case-seq-count cases))]
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases _ _)
-      (+ 2 (ir.compiler-ir-switch-case-list-count cases))]
+      (+ 2 (ir.compiler-ir-switch-case-seq-count cases))]
     ;; Not a terminator: one unnamed fall-through edge.
     [_ 1]))
 
@@ -22352,13 +22352,11 @@
 ;; aborts, so nothing is live into it -- but the refusal is what makes that a
 ;; fact about the code rather than about the optimizer.)
 (define (compiler-reg-loop-park-cases-name?
-  [cases : ir.CompilerIrSwitchCaseList]
+  [cases : ir.CompilerIrSwitchCaseSeq]
   [target-label : i64]) : bool
   (let
-    [seq : ir.CompilerIrSwitchCaseSeq
-      (ir.compiler-ir-switch-case-seq-from-list cases)]
-    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) seq.slots]
-    [count : i64 seq.len]
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cases.slots]
+    [count : i64 cases.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -22428,12 +22426,10 @@
   [pk : CompilerRegLoopParkPlan]
   [seq : ir.CompilerIrBlockSeq]
   [b : i64]
-  [cases : ir.CompilerIrSwitchCaseList]) : ir.CompilerIrSwitchCaseList
+  [cases : ir.CompilerIrSwitchCaseSeq]) : ir.CompilerIrSwitchCaseSeq
   (let
-    [cseq : ir.CompilerIrSwitchCaseSeq
-      (ir.compiler-ir-switch-case-seq-from-list cases)]
-    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cseq.slots]
-    [count : i64 cseq.len]
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cases.slots]
+    [count : i64 cases.len]
     [out : (__tl_dyn-array ir.CompilerIrSwitchCase)
       (array.make-array ir.CompilerIrSwitchCase count)]
     [index : i64 0]
@@ -22448,7 +22444,7 @@
                   tag
                   (compiler-reg-loop-park-subst-label pk seq b label)))])
           (set! index (+ index 1))))
-      (ir.CompilerIrSwitchCaseList.Array (ir.CompilerIrSwitchCaseSeq out count)))))
+      (ir.CompilerIrSwitchCaseSeq out count))))
 
 (define (compiler-reg-loop-park-redirect-instr
   [pk : CompilerRegLoopParkPlan]
@@ -39297,13 +39293,13 @@
 (define (compiler-reg-scratch-switch-phi-registers
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentTable]
-  [cases : ir.CompilerIrSwitchCaseList]
+  [cases : ir.CompilerIrSwitchCaseSeq]
   [default-label : i64]) : CompilerRegIdSeq
   (compiler-reg-id-seq-push-all
     (compiler-reg-scratch-switch-phi-registers-seq-from
       policy
       assignments
-      (ir.compiler-ir-switch-case-seq-from-list cases)
+      cases
       0
       (compiler-reg-id-seq-empty))
     (compiler-reg-scratch-phi-dst-registers-label

@@ -129,12 +129,8 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-count-switch-blocks (ir.compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-switch-case-list-count [cases : ir.CompilerIrSwitchCaseList]) : i64
-  (match cases
-    [(ir.CompilerIrSwitchCaseList.Nil) 0]
-    [(ir.CompilerIrSwitchCaseList.Cons _ rest)
-      (+ 1 (opt-switch-case-list-count (__tl-box-place rest)))]
-    [(ir.CompilerIrSwitchCaseList.Array seq) seq.len]))
+(define (opt-switch-case-seq-count [cases : ir.CompilerIrSwitchCaseSeq]) : i64
+  cases.len)
 
 (define (opt-switch-entry-base [blocks : ir.CompilerIrBlockList]) : i64
   (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry"))
@@ -158,9 +154,9 @@
           (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
             (match (ir.compiler-ir-instr-seq-ref instrs 0)
               [(ir.CompilerIrInstr.Switch _ _ cases _)
-                (opt-switch-case-list-count cases)]
+                (opt-switch-case-seq-count cases)]
               [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases _ _)
-                (opt-switch-case-list-count cases)]
+                (opt-switch-case-seq-count cases)]
               [_ 0])
             0)])]))
 
@@ -299,9 +295,9 @@
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
         [(ir.CompilerIrInstr.Switch _ _ cases _)
-          (opt-switch-case-list-count cases)]
+          (opt-switch-case-seq-count cases)]
         [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases _ _)
-          (opt-switch-case-list-count cases)]
+          (opt-switch-case-seq-count cases)]
         [_ 0])]))
 
 (define (opt-switch-test-block-tail-default [block : ir.CompilerIrBlock]) : i64
@@ -332,25 +328,19 @@
         [_ false])]))
 
 (define (opt-switch-test-cases-have?
-  [cases : ir.CompilerIrSwitchCaseList]
+  [cases : ir.CompilerIrSwitchCaseSeq]
   [want-tag : i64]
   [want-label : i64]) : bool
-  (match (ir.compiler-ir-switch-case-list-force-cons cases)
-    [(ir.CompilerIrSwitchCaseList.Nil) false]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case tag label)
-          (if (= tag want-tag)
-            (= label want-label)
-            (opt-switch-test-cases-have?
-              (__tl-box-place rest)
-              want-tag
-              want-label))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (opt-switch-test-cases-have?
-        (ir.compiler-ir-switch-case-seq-to-list seq)
-        want-tag
-        want-label)]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case tag label)
+              (when (= tag want-tag) (return (= label want-label)))])
+          (set! index (+ index 1))))
+      false)))
 
 (define (opt-switch-test-block-tail-has-case?
   [block : ir.CompilerIrBlock]
@@ -1086,10 +1076,8 @@
         (ir.CompilerIrInstr.TotalEnumSwitch
           (ir.CompilerIrValue.Var 9)
           0
-          (ir.compiler-ir-switch-case-cons-linked
-            0
-            (ir.compiler-ir-label "arm")
-            ir.CompilerIrSwitchCaseList.Nil)
+          (ir.compiler-ir-switch-case-seq1
+            (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "arm")))
           (ir.compiler-ir-label "default")
           (ir.compiler-ir-label "trap"))
         "cloned"
@@ -1101,10 +1089,8 @@
         (ir.CompilerIrInstr.TotalEnumSwitch
           (ir.CompilerIrValue.Var 9)
           0
-          (ir.compiler-ir-switch-case-cons-linked
-            0
-            (ir.compiler-ir-label "arm")
-            ir.CompilerIrSwitchCaseList.Nil)
+          (ir.compiler-ir-switch-case-seq1
+            (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "arm")))
           (ir.compiler-ir-label "default")
           (ir.compiler-ir-label-none))
         "pending"
@@ -1116,10 +1102,8 @@
         (ir.CompilerIrInstr.TotalEnumSwitch
           (ir.CompilerIrValue.Var 9)
           0
-          (ir.compiler-ir-switch-case-cons-linked
-            0
-            (ir.compiler-ir-label "arm")
-            ir.CompilerIrSwitchCaseList.Nil)
+          (ir.compiler-ir-switch-case-seq1
+            (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "arm")))
           (ir.compiler-ir-label "trap")
           (ir.compiler-ir-label "trap"))
         (ir.compiler-ir-label "trap")

@@ -1086,19 +1086,18 @@
 
 (define (compiler-live-switch-case-successors
   [set : CompilerLiveLabelSet]
-  [cases : ir.CompilerIrSwitchCaseList]) : CompilerLiveLabelSet
-  (match cases
-    [(ir.CompilerIrSwitchCaseList.Nil) set]
-    [(ir.CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(ir.CompilerIrSwitchCase.Case _ label)
-          (compiler-live-switch-case-successors
-            (compiler-live-label-set-insert set label)
-            (__tl-box-place rest))])]
-    [(ir.CompilerIrSwitchCaseList.Array seq)
-      (compiler-live-switch-case-successors
-        set
-        (ir.compiler-ir-switch-case-seq-to-list seq))]))
+  [cases : ir.CompilerIrSwitchCaseSeq]) : CompilerLiveLabelSet
+  (let
+    [index : i64 0]
+    [out : CompilerLiveLabelSet set]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (set! out (compiler-live-label-set-insert out label))])
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-live-instr-uses [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
   (match instr

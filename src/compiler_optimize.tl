@@ -17753,14 +17753,154 @@
 ;; input from the landing block, while the exit phis keep the direct
 ;; preheader/latch edges. The rewrite is verifier-gated; any rejected shape or
 ;; failed verify returns the input function unchanged.
+(defenum OptRotateSsaPhiRec
+  (Rec i64 ir.CompilerIrValue ir.CompilerIrValue ast.AstType))
+
+;; Physical entries are oldest -> newest while indexed access presents the
+;; source phi order. The collector walks the source tail first and prepends on
+;; unwind, so an amortized push plus reverse physical indexing preserves the
+;; old logical Cons order without one box per phi.
 (defenum OptRotateSsaPhiRecs
   (Nil)
-  (Cons
-    i64
-    ir.CompilerIrValue
-    ir.CompilerIrValue
-    ast.AstType
-    (Box OptRotateSsaPhiRecs)))
+  (Dense (__tl_dyn-array OptRotateSsaPhiRec) i64))
+
+(define (opt-rotate-ssa-phi-rec-ref [recs : OptRotateSsaPhiRecs] [index : i64]) : OptRotateSsaPhiRec
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil)
+      (OptRotateSsaPhiRec.Rec
+        -1
+        (ir.CompilerIrValue.I64 0)
+        (ir.CompilerIrValue.I64 0)
+        (ast.AstType.I64))]
+    [(OptRotateSsaPhiRecs.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (opt-rotate-ssa-phi-recs-tail [recs : OptRotateSsaPhiRecs]) : OptRotateSsaPhiRecs
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) (OptRotateSsaPhiRecs.Nil)]
+    [(OptRotateSsaPhiRecs.Dense items len)
+      (if (<= len 1)
+        (OptRotateSsaPhiRecs.Nil)
+        (OptRotateSsaPhiRecs.Dense items (- len 1)))]))
+
+(define (opt-rotate-ssa-phi-recs-cons
+  [record : OptRotateSsaPhiRec]
+  [recs : OptRotateSsaPhiRecs]) : OptRotateSsaPhiRecs
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil)
+      (let
+        [items : (__tl_dyn-array OptRotateSsaPhiRec)
+          (array.make-array OptRotateSsaPhiRec 4)]
+        (begin
+          (set! (array-ref items 0) record)
+          (OptRotateSsaPhiRecs.Dense items 1)))]
+    [(OptRotateSsaPhiRecs.Dense items len)
+      (if (< len (array-length items))
+        (begin
+          (set! (array-ref items len) record)
+          (OptRotateSsaPhiRecs.Dense items (+ len 1)))
+        (let
+          [bigger : (__tl_dyn-array OptRotateSsaPhiRec)
+            (array.make-array OptRotateSsaPhiRec (opt-dense-next-capacity len))]
+          [index : i64 0]
+          (begin
+            (while (< index len)
+              (begin
+                (set! (array-ref bigger index) (array-ref items index))
+                (set! index (+ index 1))))
+            (set! (array-ref bigger len) record)
+            (OptRotateSsaPhiRecs.Dense bigger (+ len 1)))))]))
+
+(define (opt-rotate-ssa-phi-rec-count [recs : OptRotateSsaPhiRecs]) : i64
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) 0]
+    [(OptRotateSsaPhiRecs.Dense _ len) len]))
+
+(cfg
+  test
+  (test
+    optimizer-rotate-ssa-phi-record-dense-storage-grows-in-source-order
+    (let
+      [recs : OptRotateSsaPhiRecs (OptRotateSsaPhiRecs.Nil)]
+      [retained : OptRotateSsaPhiRecs
+        (opt-rotate-ssa-phi-recs-cons
+          (OptRotateSsaPhiRec.Rec
+            44
+            (ir.CompilerIrValue.I64 44)
+            (ir.CompilerIrValue.I64 144)
+            (ast.AstType.I64))
+          (OptRotateSsaPhiRecs.Nil))]
+      [two : OptRotateSsaPhiRecs
+        (opt-rotate-ssa-phi-recs-cons
+          (OptRotateSsaPhiRec.Rec
+            44
+            (ir.CompilerIrValue.I64 45)
+            (ir.CompilerIrValue.I64 145)
+            (ast.AstType.I64))
+          retained)]
+      [index : i64 8]
+      (begin
+        (test.assert-i64-eq
+          (opt-rotate-ssa-phi-rec-count recs)
+          0
+          "rotate SSA empty phi storage")
+        (test.assert-i64-eq
+          (opt-rotate-ssa-phi-rec-count retained)
+          1
+          "rotate SSA retained singleton length")
+        (test.assert-i64-eq
+          (opt-rotate-ssa-phi-rec-count two)
+          2
+          "rotate SSA duplicate phi length")
+        (match (opt-rotate-ssa-phi-rec-ref retained 0)
+          [(OptRotateSsaPhiRec.Rec dst (ir.CompilerIrValue.I64 init) _ _)
+            (begin
+              (test.assert-i64-eq
+                dst
+                44
+                "rotate SSA retained duplicate destination")
+              (test.assert-i64-eq init 44 "rotate SSA retained singleton value"))]
+          [_ (test.assert-true false "rotate SSA retained singleton shape")])
+        (match (opt-rotate-ssa-phi-rec-ref two 0)
+          [(OptRotateSsaPhiRec.Rec dst (ir.CompilerIrValue.I64 init) _ _)
+            (begin
+              (test.assert-i64-eq dst 44 "rotate SSA duplicate destination")
+              (test.assert-i64-eq init 45 "rotate SSA duplicate prepend order"))]
+          [_ (test.assert-true false "rotate SSA duplicate shape")])
+        ;; Match production's tail-first collector: source phi 0 is prepended
+        ;; last and must remain logical index 0 after two capacity growths.
+        (while (>= index 0)
+          (begin
+            (set!
+              recs
+              (opt-rotate-ssa-phi-recs-cons
+                (OptRotateSsaPhiRec.Rec
+                  index
+                  (ir.CompilerIrValue.I64 index)
+                  (ir.CompilerIrValue.I64 (+ index 100))
+                  (ast.AstType.I64))
+                recs))
+            (set! index (- index 1))))
+        (match recs
+          [(OptRotateSsaPhiRecs.Nil)
+            (test.assert-true false "rotate SSA phi storage is non-empty")]
+          [(OptRotateSsaPhiRecs.Dense items len)
+            (begin
+              (test.assert-i64-eq len 9 "rotate SSA phi storage length")
+              (test.assert-true
+                (>= (array-length items) 9)
+                "rotate SSA phi storage grows past eight"))])
+        (match (opt-rotate-ssa-phi-rec-ref recs 0)
+          [(OptRotateSsaPhiRec.Rec dst _ _ _)
+            (test.assert-i64-eq dst 0 "rotate SSA first source phi")])
+        (match (opt-rotate-ssa-phi-rec-ref recs 8)
+          [(OptRotateSsaPhiRec.Rec dst _ _ _)
+            (test.assert-i64-eq dst 8 "rotate SSA last source phi")])
+        (match (opt-rotate-ssa-phi-rec-ref
+          (opt-rotate-ssa-phi-recs-tail recs)
+          0)
+          [(OptRotateSsaPhiRec.Rec dst _ _ _)
+            (test.assert-i64-eq dst 1 "rotate SSA dense tail order")])))))
 
 (defenum OptRotateSsaMaybePhiRecs
   (No)
@@ -17857,22 +17997,24 @@
                               (= first-label preheader)
                               (= second-label latch))
                             (OptRotateSsaMaybePhiRecs.Some
-                              (OptRotateSsaPhiRecs.Cons
-                                dst
-                                first-value
-                                second-value
-                                ty
-                                (box recs)))]
+                              (opt-rotate-ssa-phi-recs-cons
+                                (OptRotateSsaPhiRec.Rec
+                                  dst
+                                  first-value
+                                  second-value
+                                  ty)
+                                recs))]
                           [(and
                               (= first-label latch)
                               (= second-label preheader))
                             (OptRotateSsaMaybePhiRecs.Some
-                              (OptRotateSsaPhiRecs.Cons
-                                dst
-                                second-value
-                                first-value
-                                ty
-                                (box recs)))]
+                              (opt-rotate-ssa-phi-recs-cons
+                                (OptRotateSsaPhiRec.Rec
+                                  dst
+                                  second-value
+                                  first-value
+                                  ty)
+                                recs))]
                           [else (OptRotateSsaMaybePhiRecs.No)])]
                       [_ (OptRotateSsaMaybePhiRecs.No)])]
                   [_ (OptRotateSsaMaybePhiRecs.No)])]
@@ -18322,13 +18464,18 @@
 (define (opt-rotate-ssa-edge-env [recs : OptRotateSsaPhiRecs] [use-init : bool]) : OptCopyEnv
   (match recs
     [(OptRotateSsaPhiRecs.Nil) (OptCopyEnv.Nil)]
-    [(OptRotateSsaPhiRecs.Cons dst init back _ rest)
-      (OptCopyEnv.Cons
-        dst
-        (if use-init
-          init
-          back)
-        (box (opt-rotate-ssa-edge-env (__tl-box-place rest) use-init)))]))
+    [(OptRotateSsaPhiRecs.Dense _ _)
+      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+        [(OptRotateSsaPhiRec.Rec dst init back _)
+          (OptCopyEnv.Cons
+            dst
+            (if use-init
+              init
+              back)
+            (box
+              (opt-rotate-ssa-edge-env
+                (opt-rotate-ssa-phi-recs-tail recs)
+                use-init)))])]))
 
 (define (opt-rotate-ssa-clone-guard-instr
   [env : OptCopyEnv]
@@ -18402,12 +18549,6 @@
 ;; Rebuild the header phis for the top of the loop-body block: same
 ;; destinations, initial input relabeled to the landing block (the body's new
 ;; preheader-side predecessor), latch input unchanged.
-(define (opt-rotate-ssa-phi-rec-count [recs : OptRotateSsaPhiRecs]) : i64
-  (match recs
-    [(OptRotateSsaPhiRecs.Nil) 0]
-    [(OptRotateSsaPhiRecs.Cons _ _ _ _ rest)
-      (+ 1 (opt-rotate-ssa-phi-rec-count (__tl-box-place rest)))]))
-
 (define (opt-rotate-ssa-moved-phis-fill!
   [recs : OptRotateSsaPhiRecs]
   [land-label : i64]
@@ -18416,26 +18557,28 @@
   [index : i64]) : unit
   (match recs
     [(OptRotateSsaPhiRecs.Nil) unit]
-    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
-      (begin
-        (set!
-          (array-ref slots index)
-          (ir.CompilerIrInstr.Phi
-            dst
-            (ir.compiler-ir-phi-input-cons
-              init
+    [(OptRotateSsaPhiRecs.Dense _ _)
+      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+        [(OptRotateSsaPhiRec.Rec dst init back ty)
+          (begin
+            (set!
+              (array-ref slots index)
+              (ir.CompilerIrInstr.Phi
+                dst
+                (ir.compiler-ir-phi-input-cons
+                  init
+                  land-label
+                  (ir.compiler-ir-phi-input-cons
+                    back
+                    latch
+                    (ir.CompilerIrPhiInputList.Nil)))
+                ty))
+            (opt-rotate-ssa-moved-phis-fill!
+              (opt-rotate-ssa-phi-recs-tail recs)
               land-label
-              (ir.compiler-ir-phi-input-cons
-                back
-                latch
-                (ir.CompilerIrPhiInputList.Nil)))
-            ty))
-        (opt-rotate-ssa-moved-phis-fill!
-          (__tl-box-place rest)
-          land-label
-          latch
-          slots
-          (+ index 1)))]))
+              latch
+              slots
+              (+ index 1)))])]))
 
 (define (opt-rotate-ssa-moved-phis
   [recs : OptRotateSsaPhiRecs]
@@ -18468,45 +18611,49 @@
         (ir.CompilerIrInstrSeq slots write)
         (OptCopyEnv.Nil)
         next-var)]
-    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
-      (if (opt-used-contains outside-uses dst)
-        (begin
-          (set!
-            (array-ref slots write)
-            (ir.CompilerIrInstr.Phi
-              next-var
-              (ir.compiler-ir-phi-input-cons
-                init
-                preheader
-                (ir.compiler-ir-phi-input-cons
-                  back
+    [(OptRotateSsaPhiRecs.Dense _ _)
+      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+        [(OptRotateSsaPhiRec.Rec dst init back ty)
+          (let
+            [rest : OptRotateSsaPhiRecs (opt-rotate-ssa-phi-recs-tail recs)]
+            (if (opt-used-contains outside-uses dst)
+              (begin
+                (set!
+                  (array-ref slots write)
+                  (ir.CompilerIrInstr.Phi
+                    next-var
+                    (ir.compiler-ir-phi-input-cons
+                      init
+                      preheader
+                      (ir.compiler-ir-phi-input-cons
+                        back
+                        latch
+                        (ir.CompilerIrPhiInputList.Nil)))
+                    ty))
+                (match (opt-rotate-ssa-exit-phis-from
+                  rest
+                  outside-uses
+                  preheader
                   latch
-                  (ir.CompilerIrPhiInputList.Nil)))
-              ty))
-          (match (opt-rotate-ssa-exit-phis-from
-            (__tl-box-place rest)
-            outside-uses
-            preheader
-            latch
-            (+ next-var 1)
-            slots
-            (+ write 1))
-            [(OptRotateSsaExitPhis.Result phis env out-var)
-              (OptRotateSsaExitPhis.Result
-                phis
-                (OptCopyEnv.Cons
-                  dst
-                  (ir.CompilerIrValue.Var next-var)
-                  (box env))
-                out-var)]))
-        (opt-rotate-ssa-exit-phis-from
-          (__tl-box-place rest)
-          outside-uses
-          preheader
-          latch
-          next-var
-          slots
-          write))]))
+                  (+ next-var 1)
+                  slots
+                  (+ write 1))
+                  [(OptRotateSsaExitPhis.Result phis env out-var)
+                    (OptRotateSsaExitPhis.Result
+                      phis
+                      (OptCopyEnv.Cons
+                        dst
+                        (ir.CompilerIrValue.Var next-var)
+                        (box env))
+                      out-var)]))
+              (opt-rotate-ssa-exit-phis-from
+                rest
+                outside-uses
+                preheader
+                latch
+                next-var
+                slots
+                write)))])]))
 
 (define (opt-rotate-ssa-exit-phis
   [recs : OptRotateSsaPhiRecs]
@@ -18833,13 +18980,18 @@
   [nonphi-uses : opt_i64_i64_map.Map]) : bool
   (match recs
     [(OptRotateSsaPhiRecs.Nil) false]
-    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
-      (or
-        (and
-          (= dst var)
-          (opt-rotate-ssa-flag-seeded-rec? init back ty)
-          (not (opt-used-contains nonphi-uses dst)))
-        (opt-rotate-ssa-rec-flag-seeded? (__tl-box-place rest) var nonphi-uses))]))
+    [(OptRotateSsaPhiRecs.Dense _ _)
+      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+        [(OptRotateSsaPhiRec.Rec dst init back ty)
+          (or
+            (and
+              (= dst var)
+              (opt-rotate-ssa-flag-seeded-rec? init back ty)
+              (not (opt-used-contains nonphi-uses dst)))
+            (opt-rotate-ssa-rec-flag-seeded?
+              (opt-rotate-ssa-phi-recs-tail recs)
+              var
+              nonphi-uses))])]))
 
 ;; flag_exit's C3 gate, in the direct form: a block inside the loop ending in a
 ;; branch ON THE FLAG ITSELF with one arm leaving the loop. C3 wants the branch
@@ -18930,10 +19082,14 @@
   [outside-uses : opt_i64_i64_map.Map]) : bool
   (match recs
     [(OptRotateSsaPhiRecs.Nil) false]
-    [(OptRotateSsaPhiRecs.Cons dst _ _ _ rest)
-      (or
-        (opt-used-contains outside-uses dst)
-        (opt-rotate-ssa-recs-used-outside? (__tl-box-place rest) outside-uses))]))
+    [(OptRotateSsaPhiRecs.Dense _ _)
+      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+        [(OptRotateSsaPhiRec.Rec dst _ _ _)
+          (or
+            (opt-used-contains outside-uses dst)
+            (opt-rotate-ssa-recs-used-outside?
+              (opt-rotate-ssa-phi-recs-tail recs)
+              outside-uses))])]))
 
 (define (opt-rotate-ssa-apply
   [blocks : ir.CompilerIrBlockList]
@@ -48997,7 +49153,143 @@
 
 (defenum OptUnrollPhiList
   (Nil)
-  (Cons OptUnrollPhi (Box OptUnrollPhiList)))
+  (Dense (__tl_dyn-array OptUnrollPhi) i64))
+
+;; The source scan recurses to the end before prepending each non-counter phi.
+;; Store those prepends as amortized physical pushes and expose the old source
+;; order by indexing from the live end toward zero.
+(define (opt-unroll-phi-list-ref [phis : OptUnrollPhiList] [index : i64]) : OptUnrollPhi
+  (match phis
+    [(OptUnrollPhiList.Nil)
+      (OptUnrollPhi.Phi
+        -1
+        (ir.CompilerIrValue.I64 0)
+        (ir.CompilerIrValue.I64 0)
+        (ast.AstType.I64))]
+    [(OptUnrollPhiList.Dense items len) (array-ref items (- (- len 1) index))]))
+
+(define (opt-unroll-phi-list-tail [phis : OptUnrollPhiList]) : OptUnrollPhiList
+  (match phis
+    [(OptUnrollPhiList.Nil) (OptUnrollPhiList.Nil)]
+    [(OptUnrollPhiList.Dense items len)
+      (if (<= len 1)
+        (OptUnrollPhiList.Nil)
+        (OptUnrollPhiList.Dense items (- len 1)))]))
+
+(define (opt-unroll-phi-list-cons
+  [phi : OptUnrollPhi]
+  [phis : OptUnrollPhiList]) : OptUnrollPhiList
+  (match phis
+    [(OptUnrollPhiList.Nil)
+      (let
+        [items : (__tl_dyn-array OptUnrollPhi)
+          (array.make-array OptUnrollPhi 4)]
+        (begin
+          (set! (array-ref items 0) phi)
+          (OptUnrollPhiList.Dense items 1)))]
+    [(OptUnrollPhiList.Dense items len)
+      (if (< len (array-length items))
+        (begin
+          (set! (array-ref items len) phi)
+          (OptUnrollPhiList.Dense items (+ len 1)))
+        (let
+          [bigger : (__tl_dyn-array OptUnrollPhi)
+            (array.make-array OptUnrollPhi (opt-dense-next-capacity len))]
+          [index : i64 0]
+          (begin
+            (while (< index len)
+              (begin
+                (set! (array-ref bigger index) (array-ref items index))
+                (set! index (+ index 1))))
+            (set! (array-ref bigger len) phi)
+            (OptUnrollPhiList.Dense bigger (+ len 1)))))]))
+
+(define (opt-unroll-phi-list-count [phis : OptUnrollPhiList]) : i64
+  (match phis
+    [(OptUnrollPhiList.Nil) 0]
+    [(OptUnrollPhiList.Dense _ len) len]))
+
+(cfg
+  test
+  (test
+    optimizer-unroll-phi-dense-storage-grows-in-source-order
+    (let
+      [phis : OptUnrollPhiList (OptUnrollPhiList.Nil)]
+      [retained : OptUnrollPhiList
+        (opt-unroll-phi-list-cons
+          (OptUnrollPhi.Phi
+            44
+            (ir.CompilerIrValue.I64 44)
+            (ir.CompilerIrValue.I64 144)
+            (ast.AstType.I64))
+          (OptUnrollPhiList.Nil))]
+      [two : OptUnrollPhiList
+        (opt-unroll-phi-list-cons
+          (OptUnrollPhi.Phi
+            44
+            (ir.CompilerIrValue.I64 45)
+            (ir.CompilerIrValue.I64 145)
+            (ast.AstType.I64))
+          retained)]
+      [index : i64 8]
+      (begin
+        (test.assert-i64-eq
+          (opt-unroll-phi-list-count phis)
+          0
+          "unroll empty phi storage")
+        (test.assert-i64-eq
+          (opt-unroll-phi-list-count retained)
+          1
+          "unroll retained singleton length")
+        (test.assert-i64-eq
+          (opt-unroll-phi-list-count two)
+          2
+          "unroll duplicate phi length")
+        (match (opt-unroll-phi-list-ref retained 0)
+          [(OptUnrollPhi.Phi dst (ir.CompilerIrValue.I64 init) _ _)
+            (begin
+              (test.assert-i64-eq
+                dst
+                44
+                "unroll retained duplicate destination")
+              (test.assert-i64-eq init 44 "unroll retained singleton value"))]
+          [_ (test.assert-true false "unroll retained singleton shape")])
+        (match (opt-unroll-phi-list-ref two 0)
+          [(OptUnrollPhi.Phi dst (ir.CompilerIrValue.I64 init) _ _)
+            (begin
+              (test.assert-i64-eq dst 44 "unroll duplicate destination")
+              (test.assert-i64-eq init 45 "unroll duplicate prepend order"))]
+          [_ (test.assert-true false "unroll duplicate shape")])
+        (while (>= index 0)
+          (begin
+            (set!
+              phis
+              (opt-unroll-phi-list-cons
+                (OptUnrollPhi.Phi
+                  index
+                  (ir.CompilerIrValue.I64 index)
+                  (ir.CompilerIrValue.I64 (+ index 100))
+                  (ast.AstType.I64))
+                phis))
+            (set! index (- index 1))))
+        (match phis
+          [(OptUnrollPhiList.Nil)
+            (test.assert-true false "unroll phi storage is non-empty")]
+          [(OptUnrollPhiList.Dense items len)
+            (begin
+              (test.assert-i64-eq len 9 "unroll phi storage length")
+              (test.assert-true
+                (>= (array-length items) 9)
+                "unroll phi storage grows past eight"))])
+        (match (opt-unroll-phi-list-ref phis 0)
+          [(OptUnrollPhi.Phi dst _ _ _)
+            (test.assert-i64-eq dst 0 "unroll first source phi")])
+        (match (opt-unroll-phi-list-ref phis 8)
+          [(OptUnrollPhi.Phi dst _ _ _)
+            (test.assert-i64-eq dst 8 "unroll last source phi")])
+        (match (opt-unroll-phi-list-ref (opt-unroll-phi-list-tail phis) 0)
+          [(OptUnrollPhi.Phi dst _ _ _)
+            (test.assert-i64-eq dst 1 "unroll dense tail order")])))))
 
 ;; init value (from the outside pred), back-edge value, outside pred label.
 (defenum OptUnrollPhiSplit
@@ -49257,9 +49549,9 @@
                   iphi)
                   [(OptUnrollMaybePhis.Some rest)
                     (OptUnrollMaybePhis.Some
-                      (OptUnrollPhiList.Cons
+                      (opt-unroll-phi-list-cons
                         (OptUnrollPhi.Phi dst init back ty)
-                        (box rest)))]
+                        rest))]
                   [(OptUnrollMaybePhis.No) (OptUnrollMaybePhis.No)])
                 (OptUnrollMaybePhis.No))]
             [(OptUnrollPhiSplit.No) (OptUnrollMaybePhis.No)]))]
@@ -50213,12 +50505,6 @@
             (opt-unroll-copy-suffix copy))))]
     [_ instr]))
 
-(define (opt-unroll-phi-list-count [phis : OptUnrollPhiList]) : i64
-  (match phis
-    [(OptUnrollPhiList.Nil) 0]
-    [(OptUnrollPhiList.Cons _ rest)
-      (+ 1 (opt-unroll-phi-list-count (__tl-box-place rest)))]))
-
 (define (opt-unroll-alloc-ku-ids
   [ku-ids : (__tl_dyn-array i64)]
   [index : i64]
@@ -50249,12 +50535,14 @@
   [others : OptUnrollPhiList]) : ir.CompilerIrValueList
   (match others
     [(OptUnrollPhiList.Nil) (ir.CompilerIrValueList.Nil)]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
+    [(OptUnrollPhiList.Dense _ _)
+      (match (opt-unroll-phi-list-ref others 0)
         [(OptUnrollPhi.Phi _ _ back _)
           (ir.compiler-ir-value-cons
             (opt-unroll-subst-value remap back)
-            (opt-unroll-phi-chain-values remap (__tl-box-place rest)))])]))
+            (opt-unroll-phi-chain-values
+              remap
+              (opt-unroll-phi-list-tail others)))])]))
 
 (define (opt-unroll-write-phi-seeds
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
@@ -50262,8 +50550,8 @@
   [values : ir.CompilerIrValueList]) : unit
   (match others
     [(OptUnrollPhiList.Nil) unit]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
+    [(OptUnrollPhiList.Dense _ _)
+      (match (opt-unroll-phi-list-ref others 0)
         [(OptUnrollPhi.Phi dst _ _ _)
           (match values
             [(ir.CompilerIrValueList.Cons value value-rest)
@@ -50271,7 +50559,7 @@
                 (opt-unroll-remap-set remap dst value)
                 (opt-unroll-write-phi-seeds
                   remap
-                  (__tl-box-place rest)
+                  (opt-unroll-phi-list-tail others)
                   (__tl-box-place value-rest)))]
             [(ir.CompilerIrValueList.Array seq)
               (opt-unroll-write-phi-seeds
@@ -50429,8 +50717,8 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (match others
     [(OptUnrollPhiList.Nil) unit]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
+    [(OptUnrollPhiList.Dense _ _)
+      (match (opt-unroll-phi-list-ref others 0)
         [(OptUnrollPhi.Phi _ init _ ty)
           (match chains
             [(ir.CompilerIrValueList.Cons chain chain-rest)
@@ -50448,7 +50736,7 @@
                         (ir.CompilerIrPhiInputList.Nil)))
                     ty))
                 (opt-unroll-push-unrolled-phis!
-                  (__tl-box-place rest)
+                  (opt-unroll-phi-list-tail others)
                   ku-ids
                   (+ index 1)
                   (__tl-box-place chain-rest)
@@ -50519,8 +50807,8 @@
               unrolled-label
               builder))
           (match others
-            [(OptUnrollPhiList.Cons phi other-rest)
-              (match phi
+            [(OptUnrollPhiList.Dense _ _)
+              (match (opt-unroll-phi-list-ref others 0)
                 [(OptUnrollPhi.Phi _ init back _)
                   (match chains
                     [(ir.CompilerIrValueList.Cons chain chain-rest)
@@ -50549,7 +50837,7 @@
                           seed
                           inext
                           inext3
-                          (__tl-box-place other-rest)
+                          (opt-unroll-phi-list-tail others)
                           (__tl-box-place chain-rest)
                           guard-label
                           unrolled-label
@@ -53043,12 +53331,12 @@
 (define (opt-unroll-const-init-values [others : OptUnrollPhiList]) : ir.CompilerIrValueList
   (match others
     [(OptUnrollPhiList.Nil) (ir.CompilerIrValueList.Nil)]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
+    [(OptUnrollPhiList.Dense _ _)
+      (match (opt-unroll-phi-list-ref others 0)
         [(OptUnrollPhi.Phi _ init _ _)
           (ir.compiler-ir-value-cons
             init
-            (opt-unroll-const-init-values (__tl-box-place rest)))])]))
+            (opt-unroll-const-init-values (opt-unroll-phi-list-tail others)))])]))
 
 ;; One body copy per simulated trip. The counter phi reads the literal counter
 ;; value of its trip; every other phi reads its init value on copy 0 and the
@@ -59613,8 +59901,8 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (match others
     [(OptUnrollPhiList.Nil) unit]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
+    [(OptUnrollPhiList.Dense _ _)
+      (match (opt-unroll-phi-list-ref others 0)
         [(OptUnrollPhi.Phi dst init back ty)
           (begin
             (ir.compiler-ir-instr-builder-push!
@@ -59634,7 +59922,7 @@
                     (ir.CompilerIrPhiInputList.Nil)))
                 ty))
             (opt-bce-version-push-fast-phis!
-              (__tl-box-place rest)
+              (opt-unroll-phi-list-tail others)
               remap
               guard-label
               fast-label
@@ -60085,12 +60373,15 @@
   [others : OptUnrollPhiList]) : unit
   (match others
     [(OptUnrollPhiList.Nil) unit]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
+    [(OptUnrollPhiList.Dense _ _)
+      (match (opt-unroll-phi-list-ref others 0)
         [(OptUnrollPhi.Phi dst _ _ _)
           (begin
             (opt-unroll-clone-dst remap cell dst)
-            (opt-bce-version-alloc-other-phis remap cell (__tl-box-place rest)))])]))
+            (opt-bce-version-alloc-other-phis
+              remap
+              cell
+              (opt-unroll-phi-list-tail others)))])]))
 
 ;; A scan's outcome, plus WHICH loop it applied to: the header (single-block
 ;; loop label / multi-block loop header) the rewrite belongs to, or

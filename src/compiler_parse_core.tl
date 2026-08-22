@@ -276,10 +276,17 @@
   (if compiler-parse-semantic-origin-capture-active
     (let
       [syntax-name : i64 (ci.intern-syntax-id-value name)]
-      [written-name : i64
+      [resolved-name : i64
         (if (ci.intern-renderable-id? syntax-name)
           syntax-name
           (ci.intern-syntax-source-name-id-or syntax-name -1))]
+      ;; Loader dispatch qualifies resolved names as `module/base`, while the
+      ;; span still covers only the source-written base. Dots in the internal
+      ;; module path are therefore not semantic source components.
+      [written-name : i64
+        (if (and (>= resolved-name 0) (ci.intern-qualified? resolved-name))
+          (ci.intern-qualified-base-id resolved-name)
+          resolved-name)]
       (if (< written-name 0)
         unit
         (let

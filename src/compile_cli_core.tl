@@ -2071,7 +2071,7 @@
       (backend.compiler-backend-state-immediate-cache-storage-ensure!
         backend-state)
       (backend.compiler-backend-state-slot-cache-reset! backend-state)
-      (tc_core.tc-type-needs-resolution-storage-ensure!)
+      (tc_core.tc-type-needs-resolution-storage-ensure-for-job! typecheck-state)
       (tc_core.tc-agg-size-cache-storage-ensure-for-job! typecheck-state)
       (tc_core.tc-agg-align-cache-storage-ensure-for-job! typecheck-state)
       (tc_core.tc-agg-regwords-cache-storage-ensure-for-job! typecheck-state)

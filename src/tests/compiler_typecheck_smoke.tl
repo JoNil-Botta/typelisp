@@ -5649,7 +5649,7 @@
         (= (ci.intern-compat-state-structural-count intern-a) 10)
         (= (ci.intern-structural-record-slot-bytes) 37))]
     (begin
-      (ci.intern-compat-state-reset-to! intern-a 0)
+      (ci.intern-compat-state-reset-to! (&mut intern-a) 0)
       (let
         [next-session-a : cis.InternStructuralSessionHandle
           (cis.intern-structural-session-handle-from-source-names
@@ -5665,7 +5665,7 @@
             (tc_core.macro-hygiene-global-id? session-b b-context-id)
             (tc_core.macro-hygiene-local-id? session-b b-local-id))]
         (begin
-          (ci.intern-compat-state-reset! intern-b)
+          (ci.intern-compat-state-reset! (&mut intern-b))
           (and reset-ok (not (cis.intern-structural-session-valid? session-b))))))))
 
 (define (compiler-typecheck-smoke-structural-name-rendering-ok?) : bool
@@ -5741,7 +5741,7 @@
 
 (define (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
   [decls : ast.AstDeclList]) : bool
-  (match (ast.ast-decl-list-step decls)
+  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
     [(ast.AstDeclListStep.Nil) false]
     [(ast.AstDeclListStep.Cons decl rest)
       (let
@@ -5773,7 +5773,7 @@
               (match expanded
                 [(ast.AstProgram.Program decls-box)
                   (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
-                    (__tl-box-place decls-box))])]
+                    (ast.ast-decl-list-box-shared-view decls-box))])]
             [(tc_core.ResultMacroExpand.Err _) false])]
         [(parser.ResultAstProgramDiagnostic.Err _) false])]
     (begin

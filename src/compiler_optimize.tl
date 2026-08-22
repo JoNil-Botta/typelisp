@@ -20587,19 +20587,20 @@
             (ir.CompilerIrValue.I64 45)
             (ir.CompilerIrValue.I64 145)
             (ast.AstType.I64))
-          retained)]
+          (compiler-opt-global-shared-view retained))]
       [index : i64 8]
       (begin
         (test.assert-i64-eq
-          (opt-rotate-ssa-phi-rec-count recs)
+          (opt-rotate-ssa-phi-rec-count (compiler-opt-global-shared-view recs))
           0
           "rotate SSA empty phi storage")
         (test.assert-i64-eq
-          (opt-rotate-ssa-phi-rec-count retained)
+          (opt-rotate-ssa-phi-rec-count
+            (compiler-opt-global-shared-view retained))
           1
           "rotate SSA retained singleton length")
         (test.assert-i64-eq
-          (opt-rotate-ssa-phi-rec-count two)
+          (opt-rotate-ssa-phi-rec-count (compiler-opt-global-shared-view two))
           2
           "rotate SSA duplicate phi length")
         (match (opt-rotate-ssa-phi-rec-ref retained 0)
@@ -20631,7 +20632,7 @@
                   (ast.AstType.I64))
                 recs))
             (set! index (- index 1))))
-        (match recs
+        (match (compiler-opt-global-shared-view recs)
           [(OptRotateSsaPhiRecs.Nil)
             (test.assert-true false "rotate SSA phi storage is non-empty")]
           [(OptRotateSsaPhiRecs.Dense items len)
@@ -20640,10 +20641,14 @@
               (test.assert-true
                 (>= (array-length items) 9)
                 "rotate SSA phi storage grows past eight"))])
-        (match (opt-rotate-ssa-phi-rec-ref recs 0)
+        (match (opt-rotate-ssa-phi-rec-ref
+          (compiler-opt-global-shared-view recs)
+          0)
           [(OptRotateSsaPhiRec.Rec dst _ _ _)
             (test.assert-i64-eq dst 0 "rotate SSA first source phi")])
-        (match (opt-rotate-ssa-phi-rec-ref recs 8)
+        (match (opt-rotate-ssa-phi-rec-ref
+          (compiler-opt-global-shared-view recs)
+          8)
           [(OptRotateSsaPhiRec.Rec dst _ _ _)
             (test.assert-i64-eq dst 8 "rotate SSA last source phi")])
         (match (opt-rotate-ssa-phi-rec-ref
@@ -21281,7 +21286,9 @@
   (match (compiler-opt-global-shared-view recs)
     [(OptRotateSsaPhiRecs.Nil) (OptCopyEnv.Nil)]
     [(OptRotateSsaPhiRecs.Dense _ _)
-      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+      (match (opt-rotate-ssa-phi-rec-ref
+        (compiler-opt-global-shared-view recs)
+        0)
         [(OptRotateSsaPhiRec.Rec dst init back _)
           (OptCopyEnv.Cons
             dst
@@ -21378,7 +21385,9 @@
   (match (compiler-opt-global-shared-view recs)
     [(OptRotateSsaPhiRecs.Nil) unit]
     [(OptRotateSsaPhiRecs.Dense _ _)
-      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+      (match (opt-rotate-ssa-phi-rec-ref
+        (compiler-opt-global-shared-view recs)
+        0)
         [(OptRotateSsaPhiRec.Rec dst init back ty)
           (begin
             (set!
@@ -21438,11 +21447,15 @@
         (OptCopyEnv.Nil)
         next-var)]
     [(OptRotateSsaPhiRecs.Dense _ _)
-      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+      (match (opt-rotate-ssa-phi-rec-ref
+        (compiler-opt-global-shared-view recs)
+        0)
         [(OptRotateSsaPhiRec.Rec dst init back ty)
           (let
             [rest : OptRotateSsaPhiRecs (opt-rotate-ssa-phi-recs-tail recs)]
-            (if (opt-used-contains outside-uses dst)
+            (if (opt-used-contains
+              (compiler-opt-global-shared-view outside-uses)
+              dst)
               (begin
                 (set!
                   (array-ref slots write)
@@ -21832,13 +21845,18 @@
   (match (compiler-opt-global-shared-view recs)
     [(OptRotateSsaPhiRecs.Nil) false]
     [(OptRotateSsaPhiRecs.Dense _ _)
-      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+      (match (opt-rotate-ssa-phi-rec-ref
+        (compiler-opt-global-shared-view recs)
+        0)
         [(OptRotateSsaPhiRec.Rec dst init back ty)
           (or
             (and
               (= dst var)
               (opt-rotate-ssa-flag-seeded-rec? init back ty)
-              (not (opt-used-contains nonphi-uses dst)))
+              (not
+                (opt-used-contains
+                  (compiler-opt-global-shared-view nonphi-uses)
+                  dst)))
             (opt-rotate-ssa-rec-flag-seeded?
               (opt-rotate-ssa-phi-recs-tail recs)
               var
@@ -21953,10 +21971,14 @@
   (match (compiler-opt-global-shared-view recs)
     [(OptRotateSsaPhiRecs.Nil) false]
     [(OptRotateSsaPhiRecs.Dense _ _)
-      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+      (match (opt-rotate-ssa-phi-rec-ref
+        (compiler-opt-global-shared-view recs)
+        0)
         [(OptRotateSsaPhiRec.Rec dst _ _ _)
           (or
-            (opt-used-contains outside-uses dst)
+            (opt-used-contains
+              (compiler-opt-global-shared-view outside-uses)
+              dst)
             (opt-rotate-ssa-recs-used-outside?
               (opt-rotate-ssa-phi-recs-tail recs)
               outside-uses))])]))
@@ -55151,19 +55173,19 @@
             (ir.CompilerIrValue.I64 45)
             (ir.CompilerIrValue.I64 145)
             (ast.AstType.I64))
-          retained)]
+          (compiler-opt-global-shared-view retained))]
       [index : i64 8]
       (begin
         (test.assert-i64-eq
-          (opt-unroll-phi-list-count phis)
+          (opt-unroll-phi-list-count (compiler-opt-global-shared-view phis))
           0
           "unroll empty phi storage")
         (test.assert-i64-eq
-          (opt-unroll-phi-list-count retained)
+          (opt-unroll-phi-list-count (compiler-opt-global-shared-view retained))
           1
           "unroll retained singleton length")
         (test.assert-i64-eq
-          (opt-unroll-phi-list-count two)
+          (opt-unroll-phi-list-count (compiler-opt-global-shared-view two))
           2
           "unroll duplicate phi length")
         (match (opt-unroll-phi-list-ref retained 0)
@@ -55193,7 +55215,7 @@
                   (ast.AstType.I64))
                 phis))
             (set! index (- index 1))))
-        (match phis
+        (match (compiler-opt-global-shared-view phis)
           [(OptUnrollPhiList.Nil)
             (test.assert-true false "unroll phi storage is non-empty")]
           [(OptUnrollPhiList.Dense items len)
@@ -55202,10 +55224,14 @@
               (test.assert-true
                 (>= (array-length items) 9)
                 "unroll phi storage grows past eight"))])
-        (match (opt-unroll-phi-list-ref phis 0)
+        (match (opt-unroll-phi-list-ref
+          (compiler-opt-global-shared-view phis)
+          0)
           [(OptUnrollPhi.Phi dst _ _ _)
             (test.assert-i64-eq dst 0 "unroll first source phi")])
-        (match (opt-unroll-phi-list-ref phis 8)
+        (match (opt-unroll-phi-list-ref
+          (compiler-opt-global-shared-view phis)
+          8)
           [(OptUnrollPhi.Phi dst _ _ _)
             (test.assert-i64-eq dst 8 "unroll last source phi")])
         (match (opt-unroll-phi-list-ref (opt-unroll-phi-list-tail phis) 0)
@@ -56620,10 +56646,14 @@
   (match (compiler-opt-global-shared-view others)
     [(OptUnrollPhiList.Nil) (ir.CompilerIrValueList.Nil)]
     [(OptUnrollPhiList.Dense _ _)
-      (match (opt-unroll-phi-list-ref others 0)
+      (match (opt-unroll-phi-list-ref
+        (compiler-opt-global-shared-view others)
+        0)
         [(OptUnrollPhi.Phi _ _ back _)
           (ir.compiler-ir-value-cons
-            (opt-unroll-subst-value remap back)
+            (opt-unroll-subst-value
+              (compiler-opt-global-shared-view remap)
+              back)
             (opt-unroll-phi-chain-values
               remap
               (opt-unroll-phi-list-tail others)))])]))
@@ -56635,7 +56665,9 @@
   (match (compiler-opt-global-shared-view others)
     [(OptUnrollPhiList.Nil) unit]
     [(OptUnrollPhiList.Dense _ _)
-      (match (opt-unroll-phi-list-ref others 0)
+      (match (opt-unroll-phi-list-ref
+        (compiler-opt-global-shared-view others)
+        0)
         [(OptUnrollPhi.Phi dst _ _ _)
           (match values
             [(ir.CompilerIrValueList.Cons value value-rest)
@@ -56647,7 +56679,7 @@
                 (opt-unroll-write-phi-seeds
                   remap
                   (opt-unroll-phi-list-tail others)
-                  (__tl-box-place value-rest)))]
+                  (compiler-opt-box-shared-view value-rest)))]
             [(ir.CompilerIrValueList.Array seq)
               (opt-unroll-write-phi-seeds
                 remap
@@ -56819,7 +56851,9 @@
   (match (compiler-opt-global-shared-view others)
     [(OptUnrollPhiList.Nil) unit]
     [(OptUnrollPhiList.Dense _ _)
-      (match (opt-unroll-phi-list-ref others 0)
+      (match (opt-unroll-phi-list-ref
+        (compiler-opt-global-shared-view others)
+        0)
         [(OptUnrollPhi.Phi _ init _ ty)
           (match chains
             [(ir.CompilerIrValueList.Cons chain chain-rest)
@@ -56907,9 +56941,11 @@
               guard-label
               unrolled-label
               builder))
-          (match others
+          (match (compiler-opt-global-shared-view others)
             [(OptUnrollPhiList.Dense _ _)
-              (match (opt-unroll-phi-list-ref others 0)
+              (match (opt-unroll-phi-list-ref
+                (compiler-opt-global-shared-view others)
+                0)
                 [(OptUnrollPhi.Phi _ init back _)
                   (match chains
                     [(ir.CompilerIrValueList.Cons chain chain-rest)
@@ -56939,7 +56975,7 @@
                           inext
                           inext3
                           (opt-unroll-phi-list-tail others)
-                          (__tl-box-place chain-rest)
+                          (compiler-opt-box-shared-view chain-rest)
                           guard-label
                           unrolled-label
                           builder))]
@@ -59694,10 +59730,12 @@
             builder))))))
 
 (define (opt-unroll-const-init-values [others : OptUnrollPhiList]) : ir.CompilerIrValueList
-  (match others
+  (match (compiler-opt-global-shared-view others)
     [(OptUnrollPhiList.Nil) (ir.CompilerIrValueList.Nil)]
     [(OptUnrollPhiList.Dense _ _)
-      (match (opt-unroll-phi-list-ref others 0)
+      (match (opt-unroll-phi-list-ref
+        (compiler-opt-global-shared-view others)
+        0)
         [(OptUnrollPhi.Phi _ init _ _)
           (ir.compiler-ir-value-cons
             init
@@ -66790,7 +66828,9 @@
   (match (compiler-opt-global-shared-view others)
     [(OptUnrollPhiList.Nil) unit]
     [(OptUnrollPhiList.Dense _ _)
-      (match (opt-unroll-phi-list-ref others 0)
+      (match (opt-unroll-phi-list-ref
+        (compiler-opt-global-shared-view others)
+        0)
         [(OptUnrollPhi.Phi dst init back ty)
           (begin
             (ir.compiler-ir-instr-builder-push!
@@ -67302,13 +67342,18 @@
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [cell : (__tl_dyn-array i64)]
   [others : OptUnrollPhiList]) : unit
-  (match others
+  (match (compiler-opt-global-shared-view others)
     [(OptUnrollPhiList.Nil) unit]
     [(OptUnrollPhiList.Dense _ _)
-      (match (opt-unroll-phi-list-ref others 0)
+      (match (opt-unroll-phi-list-ref
+        (compiler-opt-global-shared-view others)
+        0)
         [(OptUnrollPhi.Phi dst _ _ _)
           (begin
-            (opt-unroll-clone-dst remap cell dst)
+            (opt-unroll-clone-dst
+              (compiler-opt-global-shared-view remap)
+              (compiler-opt-global-shared-view cell)
+              dst)
             (opt-bce-version-alloc-other-phis
               remap
               cell

@@ -8,6 +8,7 @@
 (import compiler_diagnostic_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 (import stdlib.io)
 
 (define (compiler-parse-test-decl-origin-start-ok?
@@ -193,7 +194,7 @@
         index
         expected-count
         expected-kind
-        expected-name
+        (owned_view.compiler-owned-shared-view expected-name)
         start-line
         start-col
         end-line
@@ -278,7 +279,8 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
             (set!
               ok
               (and
@@ -612,8 +614,11 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
-            [tail : ast.AstDeclList (ast.ast-decl-list-tail decls)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
+            [tail : ast.AstDeclList
+              (ast.ast-decl-list-tail
+                (owned_view.compiler-owned-shared-view decls))]
             [alias : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
             [generated : ast.AstDeclList (ast.ast-decl-list-with-capacity 2)]
             (begin
@@ -689,11 +694,13 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
             (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
               [(ast.AstDecl.ModuleBody _ body-box)
                 (let
-                  [body : ast.AstDeclList (__tl-box-place body-box)]
+                  [body : ast.AstDeclList
+                    (ast.ast-decl-list-box-shared-view body-box)]
                   (set!
                     ok
                     (and
@@ -776,7 +783,8 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
             (begin
               (set!
                 ok
@@ -812,8 +820,7 @@
     [(compiler_parse_core.ResultAstProgram.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList
-          (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
           [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
             (let
@@ -847,8 +854,7 @@
     [(compiler_parse_core.ResultAstProgram.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList
-          (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         (and
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
             [(ast.AstDecl.Module name)
@@ -1016,9 +1022,13 @@
           (= edits.len 2)
           (let
             [first : diagnostic.CompilerDiagnosticTextEdit
-              (owned_view.compiler-owned-array-element-shared-view edits.slots 0)]
+              (owned_view.compiler-owned-array-element-shared-view
+                edits.slots
+                0)]
             [second : diagnostic.CompilerDiagnosticTextEdit
-              (owned_view.compiler-owned-array-element-shared-view edits.slots 1)]
+              (owned_view.compiler-owned-array-element-shared-view
+                edits.slots
+                1)]
             [first-span : diagnostic.CompilerDiagnosticSpan
               (diagnostic.compiler-diagnostic-text-edit-span (clone first))]
             [second-span : diagnostic.CompilerDiagnosticSpan

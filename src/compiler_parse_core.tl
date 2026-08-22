@@ -288,10 +288,17 @@
   (if compiler-parse-semantic-origin-capture-active
     (let
       [syntax-name : i64 (ci.intern-syntax-id-value name)]
-      [written-name : i64
+      [resolved-name : i64
         (if (ci.intern-renderable-id? syntax-name)
           syntax-name
           (ci.intern-syntax-source-name-id-or syntax-name -1))]
+      ;; Loader dispatch qualifies resolved names as `module/base`, while the
+      ;; span still covers only the source-written base. Dots in the internal
+      ;; module path are therefore not semantic source components.
+      [written-name : i64
+        (if (and (>= resolved-name 0) (ci.intern-qualified? resolved-name))
+          (ci.intern-qualified-base-id resolved-name)
+          resolved-name)]
       (if (< written-name 0)
         unit
         (let
@@ -3914,7 +3921,7 @@
 (define (compiler-parse-semantic-func-type-item-origins!
   [dispatch : sym_i64_env.SymI64Env]
   [item : reader.SpannedSexpr]) : unit
-  (match (reader.spanned-sexpr-view item)
+  (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view item))
     [(reader.SpannedSexprView.Cons key-node tail _)
       (match (reader.spanned-sexpr-view key-node)
         [(reader.SpannedSexprView.Sym key _)
@@ -4832,11 +4839,16 @@
         [next-fields : ast.AstFieldDefList
           (compiler-parse-place-shared-view fields)]
         (begin
-          (match (reader.spanned-sexpr-view head)
+          (match (reader.spanned-sexpr-view
+            (compiler-parse-place-shared-view head))
             [(reader.SpannedSexprView.BracketList items _)
-              (compiler-parse-semantic-field-definition-origins! dispatch items)]
+              (compiler-parse-semantic-field-definition-origins!
+                (compiler-parse-place-shared-view dispatch)
+                items)]
             [(reader.SpannedSexprView.Cons _ _ _)
-              (compiler-parse-semantic-field-definition-origins! dispatch head)]
+              (compiler-parse-semantic-field-definition-origins!
+                (compiler-parse-place-shared-view dispatch)
+                (compiler-parse-place-shared-view head))]
             [_ unit])
           (ast.ast-field-def-list-push (&mut next-fields) parsed-field)
           (reader.sp-node-push
@@ -5237,7 +5249,8 @@
     [(reader.SpannedSexprView.Nil _) unit]
     [(reader.SpannedSexprView.Cons head tail _)
       (begin
-        (if (compiler-parse-metadata-sexpr? (reader.spanned-sexpr-form head))
+        (if (compiler-parse-metadata-sexpr?
+          (reader.spanned-sexpr-form (compiler-parse-place-shared-view head)))
           unit
           (compiler-parse-semantic-type-origins! dispatch head))
         (compiler-parse-semantic-variant-payload-origins! dispatch tail))]
@@ -5259,7 +5272,8 @@
     (ast.ast-enum-cleanup? cleanup))
     [(ResultAstVariantDef.Ok parsed-variant)
       (begin
-        (match (reader.spanned-sexpr-view head)
+        (match (reader.spanned-sexpr-view
+          (compiler-parse-place-shared-view head))
           [(reader.SpannedSexprView.Cons name-node payloads _)
             (begin
               (match (reader.spanned-sexpr-view name-node)
@@ -5271,7 +5285,7 @@
                     (CompilerParseSemanticOriginKind.EnumVariantDefinition))]
                 [_ unit])
               (compiler-parse-semantic-variant-payload-origins!
-                dispatch
+                (compiler-parse-place-shared-view dispatch)
                 payloads))]
           [_ unit])
         (reader.sp-node-push
@@ -6181,7 +6195,8 @@
         [(reader.SpannedSexprView.Cons name-node tail _)
           (match (reader.spanned-sexpr-view name-node)
             [(reader.SpannedSexprView.Sym name _)
-              (match (reader.spanned-sexpr-view tail)
+              (match (reader.spanned-sexpr-view
+                (compiler-parse-place-shared-view tail))
                 [(reader.SpannedSexprView.Cons second rest _)
                   (match (reader.spanned-sexpr-view rest)
                     [(reader.SpannedSexprView.Nil _)
@@ -6340,23 +6355,30 @@
       (match (parse-ast-param-list
         (compiler-parse-place-shared-view dispatch)
         (compiler-parse-place-shared-view pools)
-        (reader.spanned-sexpr-form params))
+        (reader.spanned-sexpr-form (compiler-parse-place-shared-view params)))
         [(ResultAstParamList.Ok parsed-params)
           (begin
-            (compiler-parse-semantic-param-list-origins! dispatch params)
-            (if (ast-param-list-has-comptime? parsed-params)
+            (compiler-parse-semantic-param-list-origins!
+              (compiler-parse-place-shared-view dispatch)
+              (compiler-parse-place-shared-view params))
+            (if (ast-param-list-has-comptime?
+              (compiler-parse-place-shared-view parsed-params))
               (ResultAstExpr.Err
                 "comptime parameters are only supported on top-level function definitions")
-              (match (reader.spanned-sexpr-view tail)
+              (match (reader.spanned-sexpr-view
+                (compiler-parse-place-shared-view tail))
                 [(reader.SpannedSexprView.Cons first rest-tail _)
                   (if (sexpr-colon? (reader.spanned-sexpr-form first))
                     (match (reader.spanned-sexpr-view rest-tail)
                       [(reader.SpannedSexprView.Cons ret body-tail _)
-                        (match (parse-ast-type-spanned dispatch pools ret)
+                        (match (parse-ast-type-spanned
+                          (compiler-parse-place-shared-view dispatch)
+                          (compiler-parse-place-shared-view pools)
+                          ret)
                           [(ResultAstType.Ok parsed-ret)
                             (match (parse-ast-body-tail
-                              dispatch
-                              pools
+                              (compiler-parse-place-shared-view dispatch)
+                              (compiler-parse-place-shared-view pools)
                               body-tail
                               "parse: malformed lambda")
                               [(ResultAstExpr.Ok parsed-body)
@@ -6372,8 +6394,8 @@
                             (ResultAstExpr.Err message)])]
                       [_ (ResultAstExpr.Err "parse: malformed lambda")])
                     (match (parse-ast-body-tail
-                      dispatch
-                      pools
+                      (compiler-parse-place-shared-view dispatch)
+                      (compiler-parse-place-shared-view pools)
                       tail
                       "parse: malformed lambda")
                       [(ResultAstExpr.Ok parsed-body)
@@ -6773,7 +6795,8 @@
         [(reader.SpannedSexprView.Cons field-node end _)
           (match (reader.spanned-sexpr-view end)
             [(reader.SpannedSexprView.Nil _)
-              (match (reader.spanned-sexpr-view field-node)
+              (match (reader.spanned-sexpr-view
+                (compiler-parse-place-shared-view field-node))
                 [(reader.SpannedSexprView.Sym field _)
                   (match (parse-ast-expr-with-pools
                     dispatch
@@ -8122,8 +8145,13 @@
                   (compiler-parse-place-shared-view pattern)))
                 [(ResultAstPattern.Ok parsed-pattern)
                   (begin
-                    (compiler-parse-semantic-pattern-origins! dispatch pattern)
-                    (match (parse-ast-expr-with-pools dispatch pools body)
+                    (compiler-parse-semantic-pattern-origins!
+                      (compiler-parse-place-shared-view dispatch)
+                      (compiler-parse-place-shared-view pattern))
+                    (match (parse-ast-expr-with-pools
+                      (compiler-parse-place-shared-view dispatch)
+                      (compiler-parse-place-shared-view pools)
+                      body)
                       [(ResultAstExpr.Ok parsed-body)
                         (ResultAstMatchArm.Ok
                           (ast.ast-match-arm
@@ -9417,10 +9445,12 @@
   (match (parse-ast-param-list
     (compiler-parse-place-shared-view dispatch)
     (compiler-parse-place-shared-view pools)
-    (reader.spanned-sexpr-form params))
+    (reader.spanned-sexpr-form (compiler-parse-place-shared-view params)))
     [(ResultAstParamList.Ok parsed-params)
       (begin
-        (compiler-parse-semantic-param-list-origins! dispatch params)
+        (compiler-parse-semantic-param-list-origins!
+          (compiler-parse-place-shared-view dispatch)
+          params)
         (parse-ast-define-fn-rest
           dispatch
           pools
@@ -9482,15 +9512,19 @@
                                 (match (parse-ast-macro-param-list
                                   (compiler-parse-place-shared-view dispatch)
                                   (compiler-parse-place-shared-view pools)
-                                  (reader.spanned-sexpr-form params))
+                                  (reader.spanned-sexpr-form
+                                    (compiler-parse-place-shared-view params)))
                                   [(ResultAstMacroParamList.Ok parsed-params)
                                     (begin
                                       (compiler-parse-semantic-param-list-origins!
-                                        dispatch
-                                        params)
+                                        (compiler-parse-place-shared-view
+                                          dispatch)
+                                        (compiler-parse-place-shared-view
+                                          params))
                                       (match (parse-ast-type-spanned
-                                        dispatch
-                                        pools
+                                        (compiler-parse-place-shared-view
+                                          dispatch)
+                                        (compiler-parse-place-shared-view pools)
                                         ret)
                                         [(ResultAstType.Ok parsed-ret)
                                           (match (parse-ast-expr-with-pools
@@ -9556,19 +9590,19 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [item : reader.SpannedSexpr]) : ResultAstExternHeadItem
-  (match (parse-ast-param dispatch pools (reader.spanned-sexpr-form item))
+  (match (parse-ast-param
+    (compiler-parse-place-shared-view dispatch)
+    pools
+    (reader.spanned-sexpr-form (compiler-parse-place-shared-view item)))
     [(ResultAstParam.Ok param)
       (begin
         (compiler-parse-semantic-param-origin! dispatch item)
         (match param
-          [(ast.AstParam.Param _ ty comptime? consume?)
+          [(ast.AstParam.Param _ ty comptime?)
             (if comptime?
               (ResultAstExternHeadItem.Err
                 "parse: extern parameters cannot be comptime")
-              (if consume?
-                (ResultAstExternHeadItem.Err
-                  "parse: extern parameters cannot be consuming")
-                (ResultAstExternHeadItem.Ok (AstExternHeadItem.Param ty))))]))]
+              (ResultAstExternHeadItem.Ok (AstExternHeadItem.Param ty)))]))]
     [(ResultAstParam.Err message) (ResultAstExternHeadItem.Err message)]))
 
 (define (parse-ast-extern-head-bracket-item
@@ -9812,7 +9846,8 @@
         (match (reader.spanned-sexpr-view
           (compiler-parse-place-shared-view tail))
           [(reader.SpannedSexprView.Cons ty end _)
-            (match (reader.spanned-sexpr-view end)
+            (match (reader.spanned-sexpr-view
+              (compiler-parse-place-shared-view end))
               [(reader.SpannedSexprView.Nil _)
                 (match (parse-ast-type-spanned dispatch pools ty)
                   [(ResultAstType.Ok parsed-ty)
@@ -10366,16 +10401,14 @@
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view rest)
     [(reader.SpannedSexprView.Cons name-node variants _)
-      (match (reader.spanned-sexpr-view name-node)
+      (match (reader.spanned-sexpr-view
+        (compiler-parse-place-shared-view name-node))
         [(reader.SpannedSexprView.Sym name name-span)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
               (reader.sp-node-push
-                (reader.SpannedSexpr.Int
-                  0
-                  "__tl_member_origin"
-                  (reader.spanned-sexpr-span name-node)))]
+                (reader.SpannedSexpr.Int 0 "__tl_member_origin" name-span))]
             (begin
               (compiler-parse-semantic-origin-push-components!
                 name
@@ -10404,7 +10437,7 @@
                                 : (Ptr u8)))
                             : i64))
                         "__tl_member_origin"
-                        (reader.spanned-sexpr-span name-node)))
+                        name-span))
                     (if (ast.ast-variant-def-list-empty? (& parsed-variants))
                       (ResultAstDecl.Err
                         "parse: defenum needs at least one variant")
@@ -10431,16 +10464,14 @@
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view rest)
     [(reader.SpannedSexprView.Cons name-node fields _)
-      (match (reader.spanned-sexpr-view name-node)
+      (match (reader.spanned-sexpr-view
+        (compiler-parse-place-shared-view name-node))
         [(reader.SpannedSexprView.Sym name name-span)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
               (reader.sp-node-push
-                (reader.SpannedSexpr.Int
-                  0
-                  "__tl_member_origin"
-                  (reader.spanned-sexpr-span name-node)))]
+                (reader.SpannedSexpr.Int 0 "__tl_member_origin" name-span))]
             (begin
               (compiler-parse-semantic-origin-push-components!
                 name
@@ -10476,7 +10507,7 @@
                                 : (Ptr u8)))
                             : i64))
                         "__tl_member_origin"
-                        (reader.spanned-sexpr-span name-node)))
+                        name-span))
                     (if (ast.ast-field-def-list-empty? (& parsed-fields))
                       (ResultAstDecl.Err
                         "parse: defstruct needs at least one field")
@@ -10533,13 +10564,18 @@
           (compiler-parse-semantic-origin-capture-select!
             semantic-origins
             out.len)
-          (match (parse-ast-decl-maybe-with-pools dispatch pools form)
+          (match (parse-ast-decl-maybe-with-pools
+            (compiler-parse-place-shared-view dispatch)
+            (compiler-parse-place-shared-view pools)
+            (compiler-parse-place-shared-view form))
             [(ResultAstMaybeDecl.SomeDecl decl)
               (begin
                 (parse-ast-decl-vec-push-with-span
                   out
                   decl
-                  (compiler-parse-decl-origin-syntax-span dispatch form))
+                  (compiler-parse-decl-origin-syntax-span
+                    (compiler-parse-place-shared-view dispatch)
+                    form))
                 (parse-ast-module-body-forms-into-vec
                   dispatch
                   pools
@@ -10612,7 +10648,8 @@
               span
               (CompilerParseSemanticOriginKind.ModuleDefinition)
               (CompilerParseSemanticOriginKind.ModuleDefinition))
-            (match (reader.spanned-sexpr-view end)
+            (match (reader.spanned-sexpr-view
+              (compiler-parse-place-shared-view end))
               [(reader.SpannedSexprView.Nil _)
                 (ResultAstDecl.Ok
                   (ast.ast-decl-module-id (ci.intern-syntax-id-value name)))]
@@ -10821,11 +10858,14 @@
     [start-line : i64 (token.span-start-line span)]
     [start-col : i64 (token.span-start-col span)]
     [end-line : i64 (token.span-end-line span)]
-    (if (parse-ast-dotted-import-wildcard? text)
+    (if (parse-ast-dotted-import-wildcard?
+      (compiler-parse-place-shared-view text))
       unit
       (let
-        [start : i64 (parse-ast-dotted-import-default-alias-start text)]
-        [n : i64 (string.string-length text)]
+        [start : i64
+          (parse-ast-dotted-import-default-alias-start
+            (compiler-parse-place-shared-view text))]
+        [n : i64 (string.string-length (compiler-parse-place-shared-view text))]
         (compiler-parse-semantic-origin-push!
           (CompilerParseSemanticOriginKind.ImportAlias)
           (ci.intern-slice text start (- n start))
@@ -10917,9 +10957,9 @@
                 [result : ResultAstDecl
                   (parse-ast-dotted-import-tail
                     (ci.intern-syntax-id-value module-name)
-                    tail
+                    (compiler-parse-place-shared-view tail)
                     span)]
-                (match result
+                (match (compiler-parse-place-shared-view result)
                   [(ResultAstDecl.Ok _)
                     (begin
                       (match (reader.spanned-sexpr-view tail)
@@ -11648,7 +11688,7 @@
       ;; truncate the spanned pool back to here before reading the next form.
       ;; Bounds the spanned pool to a single form so it never has to grow.
       [mark : i64 (reader.sp-node-pool-len)]
-      (match (reader.form-spanned-result toks cur)
+      (match (reader.form-spanned-result (& toks) (&mut cur))
         [(reader.ResultSpannedSexpr.Ok form)
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
@@ -11657,13 +11697,18 @@
               (compiler-parse-semantic-origin-capture-begin!
                 semantic-origins
                 out.len)
-              (match (parse-ast-decl-maybe-with-pools dispatch pools form)
+              (match (parse-ast-decl-maybe-with-pools
+                (compiler-parse-place-shared-view dispatch)
+                (compiler-parse-place-shared-view pools)
+                (compiler-parse-place-shared-view form))
                 [(ResultAstMaybeDecl.SomeDecl decl)
                   (begin
                     (parse-ast-decl-vec-push-with-span
                       out
                       decl
-                      (compiler-parse-decl-origin-syntax-span dispatch form))
+                      (compiler-parse-decl-origin-syntax-span
+                        (compiler-parse-place-shared-view dispatch)
+                        form))
                     (compiler-parse-semantic-origin-capture-end!)
                     (compiler-parse-member-records-compact! mark records-start)
                     (parse-ast-program-forms-into-vec
@@ -11740,22 +11785,14 @@
   [toks : (__tl_dyn-array token.SpannedToken)]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgram
-  (let
-    [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [base-dispatch : sym_i64_env.SymI64Env
-      (parse-ast-program-dispatch-with-cfg cfgs)]
-    [invocation : (__tl_dyn-array i64) (array.make-array i64 6)]
-    [dispatch : sym_i64_env.SymI64Env
-      (sym_i64_env.sym-i64-bind-id
-        base-dispatch
-        compiler-parse-invocation-marker-id
-        (compiler-parse-array-data-addr-i64 invocation))]
-    (begin
-      (reader.sexpr-node-pool-reset!)
-      (compiler-parse-semantic-origin-capture-end!)
-      (set! (array-ref cur 0) 0)
-      (set!
-        (array-ref invocation compiler-parse-invocation-control-slot)
+  (begin
+    (reader.sexpr-node-pool-reset!)
+    (compiler-parse-semantic-origin-capture-end!)
+    (let
+      [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [base-dispatch : sym_i64_env.SymI64Env
+        (parse-ast-program-dispatch-with-cfg cfgs)]
+      [base-control : i64
         (compiler-parse-env-marker-value
           (compiler-parse-place-shared-view base-dispatch)
           compiler-parse-state-marker-id)]
@@ -12134,25 +12171,49 @@
         (parse-ast-program-dispatch-with-cfg cfgs)]
       [base-control : i64
         (compiler-parse-env-marker-value
-          base-dispatch
-          compiler-parse-state-marker-id))
-      (let
-        [diagnostics : cdiag.CompilerDiagnosticList
-          (cdiag.compiler-diagnostic-list-empty)]
-        (begin
-          (parse-ast-program-forms-recovery-into-vec
-            path
-            dispatch
-            pools
-            toks
-            cur
-            (unsafe
-              (ptr-addr-of out.semantic-origins))
-            (&mut out)
-            (&mut diagnostics))
-          (ResultAstProgramRecovery.Parsed
-            (ast.ast-program (parse-ast-decl-vec-to-list (& out)))
-            (box diagnostics)))))))
+          (compiler-parse-place-shared-view base-dispatch)
+          compiler-parse-state-marker-id)]
+      [invocation : CompilerParseInvocationFrame
+        (CompilerParseInvocationFrame 0 0 0 0 0 0)]
+      [invocation-address : i64
+        (cast
+          (unsafe
+            (ptr->int (ptr-cast (ptr-addr-of invocation) : (Ptr u8))))
+          : i64)]
+      [dispatch-with-invocation : sym_i64_env.SymI64Env
+        (sym_i64_env.sym-i64-bind-id
+          (compiler-parse-place-shared-view base-dispatch)
+          compiler-parse-invocation-marker-id
+          invocation-address)]
+      [dispatch : sym_i64_env.SymI64Env
+        (sym_i64_env.sym-i64-bind-id
+          dispatch-with-invocation
+          compiler-parse-invocation-control-marker-id
+          base-control)]
+      [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+      (begin
+        (set! (array-ref cur 0) 0)
+        (compiler-parse-raw-i64-set!
+          invocation-address
+          compiler-parse-invocation-control-slot
+          base-control)
+        (let
+          [diagnostics : cdiag.CompilerDiagnosticList
+            (cdiag.compiler-diagnostic-list-empty)]
+          (begin
+            (parse-ast-program-forms-recovery-into-vec
+              path
+              dispatch
+              pools
+              toks
+              cur
+              (unsafe
+                (ptr-addr-of out.semantic-origins))
+              (&mut out)
+              (&mut diagnostics))
+            (ResultAstProgramRecovery.Parsed
+              (ast.ast-program (parse-ast-decl-vec-to-list (& out)))
+              (box diagnostics))))))))
 
 (define (parse-ast-source-recovery-diagnostic-with-cfg-and-pools
   [path : String]

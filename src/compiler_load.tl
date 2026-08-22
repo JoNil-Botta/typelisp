@@ -339,7 +339,15 @@
   (has-tests bool)
   (has-export-metadata bool)
   (has-generated-decls bool)
-  (has-decl-emitting-macro bool))
+  (has-decl-emitting-macro bool)
+  ;; Lazy-policy inputs folded into the same single pass that accumulates the
+  ;; decls: `any-requires-eager` is the OR of
+  ;; compiler-load-surface-summary-decl-requires-eager? over every accumulated
+  ;; decl, so the finished summary never needs a second require-eager walk.
+  (any-requires-eager bool)
+  ;; Vacuous-true AND of per-decl decl-emitting over accumulated decls. Only
+  ;; meaningful together with decl-len > 0; imports never touch it.
+  (all-decl-emitting bool))
 
 (defstruct CompilerLoadSurfaceCounts
   (imports i64)
@@ -6658,8 +6666,11 @@
               (compiler-load-lazy-alias-demand-qualified member-id))))]
       [(sym_i64_env.sym-i64-contains-id locals name)
         (compiler-load-lazy-alias-demand-none)]
-      [(or
-          (= name alias)
+      [(= name alias) (compiler-load-lazy-alias-demand-direct)]
+      ;; The scan over an empty decl list can only answer false, so summaries
+      ;; without decls (e.g. the structural-pass stub summary) skip it.
+      [(and
+          (> (compiler-load-surface-decl-list-count summary.decls) 0)
           (compiler-load-lazy-surface-decls-direct-name? summary.decls name))
         (compiler-load-lazy-alias-demand-direct)]
       [else (compiler-load-lazy-alias-demand-none)])))
@@ -6675,35 +6686,22 @@
       [(CompilerLoadSurfaceMacroDecls) true]
       [_ false])))
 
-(define (compiler-load-surface-decls-decl-emitting-only?
-  [decls : CompilerLoadSurfaceDeclList]) : bool
-  (let
-    [len : i64 (compiler-load-surface-decl-list-count decls)]
-    [index : i64 0]
-    (begin
-      (when (= len 0) (return false))
-      (while (< index len)
-        (if (not
-          (compiler-load-surface-decl-decl-emitting?
-            (compiler-load-surface-decl-list-at decls index)))
-          (return false)
-          (set! index (+ index 1))))
-      true)))
-
-(define (compiler-load-surface-lazy-policy
-  [decls : CompilerLoadSurfaceDeclList]
-  [has-tests : bool]
-  [has-export-metadata : bool]
-  [has-generated-decls : bool]
-  [has-decl-emitting-macro : bool]) : CompilerLoadLazyImportPolicy
+(define (compiler-load-surface-lazy-policy [build : CompilerLoadSurfaceBuild]) : CompilerLoadLazyImportPolicy
+  ;; The policy inputs are folded into the decl build pass:
+  ;; `any-requires-eager` accumulates the per-decl require-eager test and
+  ;; `all-decl-emitting` accumulates the decl-emitting AND while decls are
+  ;; added, so deciding the policy never re-walks the finished decl list.
+  ;; Decision order is unchanged: Eager still wins even when every decl is
+  ;; itself a decl-emitting macro, and an all-emitting decision requires at
+  ;; least one decl (the empty list keeps the historical Eager outcome).
   (if (or
-    has-tests
-    has-export-metadata
-    has-generated-decls
-    (compiler-load-surface-summary-decls-require-eager? decls))
+    build.has-tests
+    build.has-export-metadata
+    build.has-generated-decls
+    build.any-requires-eager)
     (CompilerLoadLazyImportEager)
-    (if has-decl-emitting-macro
-      (if (compiler-load-surface-decls-decl-emitting-only? decls)
+    (if build.has-decl-emitting-macro
+      (if (and (> build.decl-len 0) build.all-decl-emitting)
         (CompilerLoadLazyImportQualified)
         (CompilerLoadLazyImportEager))
       (CompilerLoadLazyImportDirect))))
@@ -8864,12 +8862,6 @@
         [else (CompilerLoadSurfaceMacroOther)])]
     [_ (CompilerLoadSurfaceMacroOther)]))
 
-(define (compiler-load-surface-macro-result-decl-emitting? [ret : ast.AstType]) : bool
-  (match (compiler-load-surface-macro-result-kind ret)
-    [(CompilerLoadSurfaceMacroModule) true]
-    [(CompilerLoadSurfaceMacroDecls) true]
-    [_ false]))
-
 (define (compiler-load-surface-fn-export? [export : ast.AstFnExport]) : bool
   (match export
     [(ast.AstFnExport.No) false]
@@ -8968,7 +8960,9 @@
     false
     false
     false
-    false))
+    false
+    false
+    true))
 
 (define (compiler-load-surface-build-add-import
   [build : CompilerLoadSurfaceBuild]
@@ -8986,17 +8980,22 @@
         build.has-tests
         build.has-export-metadata
         build.has-generated-decls
-        (or build.has-decl-emitting-macro decl-emitting)))))
+        (or build.has-decl-emitting-macro decl-emitting)
+        build.any-requires-eager
+        build.all-decl-emitting))))
 
 (define (compiler-load-surface-build-add-decl
   [build : CompilerLoadSurfaceBuild]
   [decl : CompilerLoadSurfaceDecl]
   [has-test : bool]
   [has-export : bool]
-  [has-generated : bool]
-  [decl-emitting : bool]) : CompilerLoadSurfaceBuild
+  [has-generated : bool]) : CompilerLoadSurfaceBuild
+  ;; The lazy-policy inputs are derived here from the very decl value being
+  ;; stored, so the folded flags cannot drift from what a rescan of the
+  ;; finished decl list would report.
   (let
     [index : i64 build.decl-len]
+    [decl-emitting : bool (compiler-load-surface-decl-decl-emitting? decl)]
     (begin
       (set! (array-ref build.decl-slots index) decl)
       (CompilerLoadSurfaceBuild
@@ -9007,7 +9006,11 @@
         (or build.has-tests has-test)
         (or build.has-export-metadata has-export)
         (or build.has-generated-decls has-generated)
-        (or build.has-decl-emitting-macro decl-emitting)))))
+        (or build.has-decl-emitting-macro decl-emitting)
+        (or
+          build.any-requires-eager
+          (compiler-load-surface-summary-decl-requires-eager? decl))
+        (and build.all-decl-emitting decl-emitting)))))
 
 (define (compiler-load-surface-build-decl-inner
   [source-path : String]
@@ -9048,8 +9051,7 @@
           (compiler-load-surface-zero-span))
         false
         false
-        generated
-        false)]
+        generated)]
     [(ast.AstDecl.DefFn decl-meta name params ret _ metadata)
       (let
         [has-export : bool
@@ -9070,8 +9072,7 @@
             (compiler-load-surface-zero-span))
           false
           has-export
-          generated
-          false))]
+          generated))]
     [(ast.AstDecl.Extern decl-meta name kind meta ty)
       (compiler-load-surface-build-add-decl
         build
@@ -9088,8 +9089,7 @@
           (compiler-load-surface-zero-span))
         false
         false
-        generated
-        false)]
+        generated)]
     [(ast.AstDecl.DefStruct decl-meta name repr cleanup fields)
       (let
         [has-cleanup : bool
@@ -9115,8 +9115,7 @@
             (compiler-load-surface-zero-span))
           false
           false
-          generated
-          false))]
+          generated))]
     [(ast.AstDecl.DefStructLifetimes
         decl-meta
         name
@@ -9144,8 +9143,7 @@
             (compiler-load-surface-zero-span))
           false
           false
-          generated
-          false))]
+          generated))]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
       (let
         [has-cleanup : bool
@@ -9170,8 +9168,7 @@
             (compiler-load-surface-zero-span))
           false
           false
-          generated
-          false))]
+          generated))]
     [(ast.AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (let
         [has-cleanup : bool
@@ -9193,14 +9190,11 @@
             (compiler-load-surface-zero-span))
           false
           false
-          generated
-          false))]
+          generated))]
     [(ast.AstDecl.DefMacro decl-meta name params ret body-box)
       (let
         [result-kind : CompilerLoadSurfaceMacroResultKind
           (compiler-load-surface-macro-result-kind ret)]
-        [decl-emitting : bool
-          (compiler-load-surface-macro-result-decl-emitting? ret)]
         (compiler-load-surface-build-add-decl
           build
           (CompilerLoadSurfaceDecl
@@ -9216,8 +9210,7 @@
             (compiler-load-surface-zero-span))
           false
           false
-          generated
-          decl-emitting))]
+          generated))]
     [(ast.AstDecl.DefDispatch decl-meta name variants)
       (compiler-load-surface-build-add-decl
         build
@@ -9234,8 +9227,7 @@
           (compiler-load-surface-zero-span))
         false
         false
-        generated
-        false)]
+        generated)]
     [(ast.AstDecl.Test name _ span)
       (compiler-load-surface-build-add-decl
         build
@@ -9252,8 +9244,7 @@
           span)
         true
         false
-        generated
-        false)]
+        generated)]
     [(ast.AstDecl.IncludeStr name _)
       (compiler-load-surface-build-add-decl
         build
@@ -9270,8 +9261,7 @@
           (compiler-load-surface-zero-span))
         false
         false
-        generated
-        false)]
+        generated)]
     [(ast.AstDecl.IncludeStrComptime name _)
       (compiler-load-surface-build-add-decl
         build
@@ -9288,8 +9278,7 @@
           (compiler-load-surface-zero-span))
         false
         false
-        generated
-        false)]
+        generated)]
     [(ast.AstDecl.IncludeStrLzss name _)
       (compiler-load-surface-build-add-decl
         build
@@ -9306,8 +9295,7 @@
           (compiler-load-surface-zero-span))
         false
         false
-        generated
-        false)]
+        generated)]
     [(ast.AstDecl.IncludeBin name _)
       (compiler-load-surface-build-add-decl
         build
@@ -9324,8 +9312,7 @@
           (compiler-load-surface-zero-span))
         false
         false
-        generated
-        false)]
+        generated)]
     [(ast.AstDecl.Unsafe inner-box)
       (compiler-load-surface-build-decl
         source-path
@@ -9438,12 +9425,7 @@
       build.has-export-metadata
       build.has-generated-decls
       build.has-decl-emitting-macro
-      (compiler-load-surface-lazy-policy
-        (CompilerLoadSurfaceDeclList build.decl-slots build.decl-len)
-        build.has-tests
-        build.has-export-metadata
-        build.has-generated-decls
-        build.has-decl-emitting-macro))))
+      (compiler-load-surface-lazy-policy build))))
 
 (define (compiler-load-surface-summary-build
   [path : String]
@@ -14735,6 +14717,80 @@
             [(ResultCompilerLoadSurfaceSummary.Err _) false]))]
       [(parser.ResultAstProgramDiagnostic.Err _) false])))
 
+;; Policy codes returned by compiler-load-surface-policy-code-for:
+;; 1 Eager, 2 Qualified, 3 Direct, 0 failed parse/summary build.
+(define (compiler-load-surface-policy-code-for
+  [source : String]
+  [path : String]) : i64
+  (let
+    [parse-identity : CompilerLoadParseIdentity
+      (compiler-load-parse-identity path "src.policy" ast.AstMaybeModuleName.No)]
+    (match (compiler-load-parse-source-diagnostic-escaping
+      path
+      source
+      (parser.compiler-cfg-empty))
+      [(parser.ResultAstProgramDiagnostic.Ok program)
+        (match (compiler-load-surface-summary-build
+          path
+          parse-identity.source-path-id
+          "src"
+          program
+          parse-identity.module-fallback-id
+          false)
+          [(ResultCompilerLoadSurfaceSummary.Ok summary)
+            (match summary.lazy-policy
+              [(CompilerLoadLazyImportEager) 1]
+              [(CompilerLoadLazyImportQualified) 2]
+              [(CompilerLoadLazyImportDirect) 3])]
+          [(ResultCompilerLoadSurfaceSummary.Err _) 0])]
+      [(parser.ResultAstProgramDiagnostic.Err _) 0])))
+
+(define (compiler-load-surface-lazy-policy-ok?) : bool
+  (and
+    ;; Plain value decls only: nothing forces eager, so Direct.
+    (=
+      (compiler-load-surface-policy-code-for
+        "(module policy.plain)\n(define plain-value : i64 1)\n"
+        "src\\policy_plain.tl")
+      3)
+    ;; Only decl-emitting macros: every decl is decl-emitting -> Qualified.
+    (=
+      (compiler-load-surface-policy-code-for
+        "(module policy.macros)\n(defmacro (policy-m [T : type]) : Decls (expr-unit))\n"
+        "src\\policy_macros.tl")
+      2)
+    ;; Decl-emitting macro mixed with a plain value -> Eager again.
+    (=
+      (compiler-load-surface-policy-code-for
+        "(module policy.mixed)\n(defmacro (policy-m [T : type]) : Decls (expr-unit))\n(define mixed-value : i64 2)\n"
+        "src\\policy_mixed.tl")
+      1)
+    ;; Extern decls force Eager through the folded require-eager flag.
+    (=
+      (compiler-load-surface-policy-code-for
+        "(module policy.extern)\n(extern (policy-foreign [x : i64]) : i64)\n"
+        "src\\policy_extern.tl")
+      1)
+    ;; Struct cleanup forces Eager.
+    (=
+      (compiler-load-surface-policy-code-for
+        "(module policy.cleanup)\n(defstruct PolicyResource (:cleanup close-policy-resource) (fd i64))\n"
+        "src\\policy_cleanup.tl")
+      1)
+    ;; Exported functions force Eager.
+    (=
+      (compiler-load-surface-policy-code-for
+        "(module policy.export)\n(define (policy-pub [x : i64]) (:export-symbol \"policy-pub\") : i64 x)\n"
+        "src\\policy_export.tl")
+      1)
+    ;; A module-level macro-call import marks has-decl-emitting-macro while
+    ;; the decl list stays empty: the empty all-emitting guard keeps Eager.
+    (=
+      (compiler-load-surface-policy-code-for
+        "(module policy.macroimport)\n(policy-make i64)\n"
+        "src\\policy_macroimport.tl")
+      1)))
+
 (define (compiler-load-normalize-ok?) : bool
   (and
     (string.eq
@@ -19780,6 +19836,9 @@
     (unless
       (compiler-load-surface-summary-smoke-ok?)
       (return (io.panic "compiler-load: surface summary smoke mismatch")))
+    (unless
+      (compiler-load-surface-lazy-policy-ok?)
+      (return (io.panic "compiler-load: surface lazy policy smoke mismatch")))
     (unless
       (compiler-load-session-cache-common-dep-ok?)
       (return

@@ -1337,6 +1337,24 @@
   (No)
   (Some (Box LowerMaskedLoadCacheData)))
 
+;; Values materialized before a recursive masked foreach. Uniform vectors are
+;; keyed by both their scalar IR value and lane type: the masked path can carry
+;; more than one scalar type even though every operation has the same lane
+;; count. Array entries hold dynamic-sequence data pointers, not lane loads.
+(defstruct LowerMaskedPreheaderCacheData
+  (uniform-instrs ir.CompilerIrInstrBuilder)
+  (uniform-values (__tl_dyn-array ir.CompilerIrValue))
+  (uniform-types (__tl_dyn-array ast.AstType))
+  (uniform-vectors (__tl_dyn-array ir.CompilerIrValue))
+  (uniform-count i64)
+  (array-vars (__tl_dyn-array i64))
+  (array-data (__tl_dyn-array ir.CompilerIrValue))
+  (array-count i64))
+
+(defenum LowerMaybeMaskedPreheaderCache
+  (No)
+  (Some (Box LowerMaskedPreheaderCacheData)))
+
 ;; Lowering threads one state through every expression in a function. Keep the
 ;; public carrier to one word and mutate its function-owned cell in place:
 ;; returning the former wide value from every variable allocation, emission,
@@ -1364,7 +1382,9 @@
   (tail-param-start i64)
   (tail-param-end i64)
   ;; Allocated only when this function enters masked SPMD lowering.
-  (masked-load-cache LowerMaybeMaskedLoadCache))
+  (masked-load-cache LowerMaybeMaskedLoadCache)
+  ;; Attached only while lowering one masked vector loop and its vector tail.
+  (masked-preheader-cache LowerMaybeMaskedPreheaderCache))
 
 (defenum LowerState
   (State (Box LowerStateData)))
@@ -1405,7 +1425,8 @@
         address-taken
         tail-param-start
         tail-param-end
-        (LowerMaybeMaskedLoadCache.No)))))
+        (LowerMaybeMaskedLoadCache.No)
+        (LowerMaybeMaskedPreheaderCache.No)))))
 
 ;; Most lowering transitions consume their state linearly. A few control-flow
 ;; builders deliberately fork from a shared snapshot; clone only at those
@@ -15320,6 +15341,164 @@
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
     [(LowerState.State data) (__tl-project-field (__tl-box-place data) mode)]))
+
+(define (lower-masked-preheader-cache-new) : (Box LowerMaskedPreheaderCacheData)
+  (box
+    (LowerMaskedPreheaderCacheData
+      (ir.compiler-ir-instr-builder-new)
+      (__tl_make-array ir.CompilerIrValue 0)
+      (__tl_make-array ast.AstType 0)
+      (__tl_make-array ir.CompilerIrValue 0)
+      0
+      (__tl_make-array i64 0)
+      (__tl_make-array ir.CompilerIrValue 0)
+      0)))
+
+(define (lower-state-masked-preheader-cache [state : LowerState]) : LowerMaybeMaskedPreheaderCache
+  (match state
+    [(LowerState.State data)
+      (__tl-project-field (__tl-box-place data) masked-preheader-cache)]))
+
+(define (lower-masked-preheader-cache-set!
+  [state : LowerState]
+  [cache : (Box LowerMaskedPreheaderCacheData)]) : unit
+  (match state
+    [(LowerState.State data)
+      (__tl-project-set-field
+        (__tl-box-place data)
+        masked-preheader-cache
+        (LowerMaybeMaskedPreheaderCache.Some cache))]))
+
+(define (lower-masked-preheader-cache-disable! [state : LowerState]) : unit
+  (match state
+    [(LowerState.State data)
+      (__tl-project-set-field
+        (__tl-box-place data)
+        masked-preheader-cache
+        (LowerMaybeMaskedPreheaderCache.No))]))
+
+(define (lower-masked-preheader-uniform-get
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [elem-ty : ast.AstType]) : LowerMaybeIrValue
+  (match (lower-state-masked-preheader-cache state)
+    [(LowerMaybeMaskedPreheaderCache.No) (LowerMaybeIrValue.No)]
+    [(LowerMaybeMaskedPreheaderCache.Some cache)
+      (let
+        [index : i64 0]
+        [count : i64 (__tl-project-field (__tl-box-place cache) uniform-count)]
+        (begin
+          (while (< index count)
+            (begin
+              (when
+                (and
+                  (lower-vector-map-ir-value-eq?
+                    value
+                    (array-ref
+                      (__tl-project-field (__tl-box-place cache) uniform-values)
+                      index))
+                  (tc_core.tc-type-eq
+                    elem-ty
+                    (array-ref
+                      (__tl-project-field (__tl-box-place cache) uniform-types)
+                      index)))
+                (return
+                  (LowerMaybeIrValue.Some
+                    (array-ref
+                      (__tl-project-field
+                        (__tl-box-place cache)
+                        uniform-vectors)
+                      index))))
+              (set! index (+ index 1))))
+          (LowerMaybeIrValue.No)))]))
+
+(define (lower-masked-preheader-uniform-add!
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [elem-ty : ast.AstType]
+  [vector : ir.CompilerIrValue]) : unit
+  (match (lower-state-masked-preheader-cache state)
+    [(LowerMaybeMaskedPreheaderCache.No) unit]
+    [(LowerMaybeMaskedPreheaderCache.Some cache)
+      (let
+        [count : i64 (__tl-project-field (__tl-box-place cache) uniform-count)]
+        [values : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl-project-field (__tl-box-place cache) uniform-values)]
+        [types : (__tl_dyn-array ast.AstType)
+          (__tl-project-field (__tl-box-place cache) uniform-types)]
+        [vectors : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl-project-field (__tl-box-place cache) uniform-vectors)]
+        (begin
+          (__tl_array-push! values value)
+          (__tl_array-push! types elem-ty)
+          (__tl_array-push! vectors vector)
+          (__tl-project-set-field
+            (__tl-box-place cache)
+            uniform-count
+            (+ count 1))))]))
+
+;; Windows AVX2 has six volatile vector registers. The current allocator can
+;; corrupt masked calls and nested recurrences when a loop-wide vector crosses
+;; branch-state clones; keep pointer hoists there, but leave uniform-vector
+;; hoisting disabled until #6761 fixes those live ranges.
+;; Linux has sixteen vector registers, but the same allocator still needs a
+;; two-vector bound for high-pressure varying enum matches.
+(define (lower-masked-preheader-uniform-can-add? [state : LowerState]) : bool
+  (match (lower-state-masked-preheader-cache state)
+    [(LowerMaybeMaskedPreheaderCache.No) false]
+    [(LowerMaybeMaskedPreheaderCache.Some cache)
+      (match (lower-state-mode state)
+        [(CompilerLowerMode.WindowsAvx2) false]
+        [(CompilerLowerMode.LinuxAvx2)
+          (< (__tl-project-field (__tl-box-place cache) uniform-count) 2)]
+        [_ true])]))
+
+(define (lower-masked-preheader-array-data-get
+  [state : LowerState]
+  [array-var : i64]) : LowerMaybeIrValue
+  (match (lower-state-masked-preheader-cache state)
+    [(LowerMaybeMaskedPreheaderCache.No) (LowerMaybeIrValue.No)]
+    [(LowerMaybeMaskedPreheaderCache.Some cache)
+      (let
+        [index : i64 0]
+        [count : i64 (__tl-project-field (__tl-box-place cache) array-count)]
+        (begin
+          (while (< index count)
+            (begin
+              (when
+                (=
+                  array-var
+                  (array-ref
+                    (__tl-project-field (__tl-box-place cache) array-vars)
+                    index))
+                (return
+                  (LowerMaybeIrValue.Some
+                    (array-ref
+                      (__tl-project-field (__tl-box-place cache) array-data)
+                      index))))
+              (set! index (+ index 1))))
+          (LowerMaybeIrValue.No)))]))
+
+(define (lower-masked-preheader-array-data-add!
+  [state : LowerState]
+  [array-var : i64]
+  [data : ir.CompilerIrValue]) : unit
+  (match (lower-state-masked-preheader-cache state)
+    [(LowerMaybeMaskedPreheaderCache.No) unit]
+    [(LowerMaybeMaskedPreheaderCache.Some cache)
+      (let
+        [count : i64 (__tl-project-field (__tl-box-place cache) array-count)]
+        [vars : (__tl_dyn-array i64)
+          (__tl-project-field (__tl-box-place cache) array-vars)]
+        [values : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl-project-field (__tl-box-place cache) array-data)]
+        (begin
+          (__tl_array-push! vars array-var)
+          (__tl_array-push! values data)
+          (__tl-project-set-field
+            (__tl-box-place cache)
+            array-count
+            (+ count 1))))]))
 
 (define (lower-masked-load-cache-entry-capacity) : i64
   32)
@@ -50566,15 +50745,19 @@
 (define (lower-sequence-data-pointer-value
   [state : LowerState]
   [sequence-var : i64]) : LowerExpr
-  (if (lower-sequence-var-slice? sequence-var)
-    (lower-emit-word
-      state
-      (lower-sequence-ir-value sequence-var)
-      0
-      (ast.AstType.U64))
-    (lower-array-data-pointer-value
-      state
-      (lower-sequence-ir-value sequence-var))))
+  (match (lower-masked-preheader-array-data-get state sequence-var)
+    [(LowerMaybeIrValue.Some data-ptr)
+      (LowerExpr.Expr state data-ptr (ast.AstType.U64))]
+    [(LowerMaybeIrValue.No)
+      (if (lower-sequence-var-slice? sequence-var)
+        (lower-emit-word
+          state
+          (lower-sequence-ir-value sequence-var)
+          0
+          (ast.AstType.U64))
+        (lower-array-data-pointer-value
+          state
+          (lower-sequence-ir-value sequence-var)))]))
 
 (define (lower-sequence-element-addr
   [ctx : tc_core.TcContext]
@@ -50835,6 +51018,40 @@
         (lower-state-emit s (ir.CompilerIrInstr.Splat v value lanes elem-ty))
         (ir.CompilerIrValue.Var v)
         elem-ty)]))
+
+;; Only source-level uniform values participate in the masked preheader cache.
+;; Internal enum-mask and lane-stitch splats are control-flow temporaries; making
+;; those loop-wide creates very long AVX2 live ranges through recursive matches.
+(define (lower-emit-masked-preheader-splat
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : ast.AstType]) : LowerExpr
+  (match (lower-masked-preheader-uniform-get state value elem-ty)
+    [(LowerMaybeIrValue.Some cached) (LowerExpr.Expr state cached elem-ty)]
+    [(LowerMaybeIrValue.No)
+      (if (lower-masked-preheader-uniform-can-add? state)
+        (match (lower-state-alloc-var state)
+          [(LowerAlloc.Alloc next-state vector-var)
+            (let
+              [vector : ir.CompilerIrValue (ir.CompilerIrValue.Var vector-var)]
+              (begin
+                (match (lower-state-masked-preheader-cache next-state)
+                  [(LowerMaybeMaskedPreheaderCache.Some cache)
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut
+                        (__tl-project-field
+                          (__tl-box-place cache)
+                          uniform-instrs))
+                      (ir.CompilerIrInstr.Splat vector-var value lanes elem-ty))]
+                  [(LowerMaybeMaskedPreheaderCache.No) unit])
+                (lower-masked-preheader-uniform-add!
+                  next-state
+                  value
+                  elem-ty
+                  vector)
+                (LowerExpr.Expr next-state vector elem-ty)))])
+        (lower-emit-splat state value lanes elem-ty))]))
 
 (define (lower-emit-lane-id
   [state : LowerState]
@@ -54958,7 +55175,7 @@
                   (lower-simd-lanes-for-elem (lower-state-mode state) lane-ty)
                   0)
                   (ResultLowerExpr.Ok
-                    (lower-emit-splat
+                    (lower-emit-masked-preheader-splat
                       state
                       (ir.CompilerIrValue.Var var-id)
                       lanes
@@ -60173,7 +60390,7 @@
             (lower-avx512-masked-bool-literal state active-mask lanes value))]
         [_
           (ResultLowerExpr.Ok
-            (lower-emit-splat
+            (lower-emit-masked-preheader-splat
               state
               (lower-literal-value-with-type lit (tc_core.tc-literal-type lit))
               lanes
@@ -60182,7 +60399,7 @@
       (ResultLowerExpr.Ok (lower-emit-lane-id state lanes (ast.AstType.I64)))]
     [(ast.AstExpr.SpmdProgramCount)
       (ResultLowerExpr.Ok
-        (lower-emit-splat
+        (lower-emit-masked-preheader-splat
           state
           (ir.CompilerIrValue.I64 lanes)
           lanes
@@ -60472,7 +60689,11 @@
             (match plan
               [(LowerVectorMapValue.Uniform value)
                 (ResultLowerExpr.Ok
-                  (lower-emit-splat state value lanes resolved-expected))]
+                  (lower-emit-masked-preheader-splat
+                    state
+                    value
+                    lanes
+                    resolved-expected))]
               [_
                 (lower-avx512-masked-expr
                   ctx
@@ -60504,7 +60725,7 @@
             (lower-avx512-masked-bool-literal state active-mask lanes value))]
         [_
           (ResultLowerExpr.Ok
-            (lower-emit-splat
+            (lower-emit-masked-preheader-splat
               state
               (lower-literal-value-with-type
                 lit
@@ -60627,6 +60848,25 @@
           s))]
     [(LowerMaybeVectorMap.No) state]))
 
+(define (lower-masked-preheader-cache-array-data
+  [state : LowerState]
+  [arrays : LowerArrayVarSet]) : LowerState
+  (let
+    [s : LowerState state]
+    [array-index : i64 0]
+    (begin
+      (while (< array-index arrays.count)
+        (let
+          [array-var : i64 (array-ref arrays.vars array-index)]
+          (begin
+            (match (lower-sequence-data-pointer-value s array-var)
+              [(LowerExpr.Expr next-state data-ptr _)
+                (begin
+                  (set! s next-state)
+                  (lower-masked-preheader-array-data-add! s array-var data-ptr))])
+            (set! array-index (+ array-index 1)))))
+      s)))
+
 (define (lower-avx512-masked-map-body
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -60685,6 +60925,8 @@
                 body-type-env
                 index
                 body)]
+            [preheader-cache : (Box LowerMaskedPreheaderCacheData)
+              (lower-masked-preheader-cache-new)]
             [header-label : i64 (ir.compiler-ir-label-none)]
             [body-label : i64 (ir.compiler-ir-label-none)]
             [tail-header-label : i64 (ir.compiler-ir-label-none)]
@@ -60692,6 +60934,8 @@
             [tail-mask-label : i64 (ir.compiler-ir-label-none)]
             [tail-body-label : i64 (ir.compiler-ir-label-none)]
             [exit-label : i64 (ir.compiler-ir-label-none)]
+            [preheader-label : i64 (ir.compiler-ir-label-none)]
+            [preheader-block-index : i64 (- 0 1)]
             [vector-limit : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             [vector-start-ok : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             [next-index : ir.CompilerIrValue ir.CompilerIrValue.Unit]
@@ -60735,6 +60979,11 @@
                   (begin
                     (set! s next-s)
                     (set! exit-label label))])
+              (match (lower-state-fresh-label s "foreach_mask_preheader")
+                [(LowerLabel.Label next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! preheader-label label))])
               (match (lower-vector-loop-limit s end-value arrays lanes)
                 [(LowerExpr.Expr next-s value _)
                   (begin
@@ -60745,6 +60994,20 @@
                   (begin
                     (set! s next-s)
                     (set! vector-start-ok value))])
+              (lower-masked-preheader-cache-set! s preheader-cache)
+              (set! s (lower-masked-preheader-cache-array-data s arrays))
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit s (ir.CompilerIrInstr.Jump preheader-label))
+                  preheader-label))
+              (match s
+                [(LowerState.State data)
+                  (set!
+                    preheader-block-index
+                    (__tl-project-field
+                      (__tl-project-field (__tl-box-place data) blocks)
+                      len))])
               (set!
                 s
                 (lower-state-finish-block
@@ -60874,6 +61137,33 @@
                           tail-body-label))])]
                 [(ResultLowerExpr.Err message)
                   (return (ResultLowerExpr.Err message))])
+              (match (lower-state-masked-preheader-cache s)
+                [(LowerMaybeMaskedPreheaderCache.Some cache)
+                  (begin
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut
+                        (__tl-project-field
+                          (__tl-box-place cache)
+                          uniform-instrs))
+                      (ir.CompilerIrInstr.Branch
+                        vector-start-ok
+                        header-label
+                        tail-header-label))
+                    (match s
+                      [(LowerState.State data)
+                        (let
+                          [blocks : ir.CompilerIrBlockBuilder
+                            (__tl-project-field (__tl-box-place data) blocks)]
+                          (set!
+                            (array-ref blocks.slots preheader-block-index)
+                            (ir.CompilerIrBlock.Block
+                              preheader-label
+                              (ir.compiler-ir-instr-builder-to-seq
+                                (__tl-project-field
+                                  (__tl-box-place cache)
+                                  uniform-instrs)))))]))]
+                [(LowerMaybeMaskedPreheaderCache.No) unit])
+              (lower-masked-preheader-cache-disable! s)
               (match (lower-expr ctx s body-env body-type-env body)
                 [(ResultLowerExpr.Ok scalar-tail-lowered)
                   (match scalar-tail-lowered

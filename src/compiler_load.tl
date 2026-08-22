@@ -4527,8 +4527,12 @@
     [same-storage : bool
       (= rest-key (parser.compiler-parse-decl-list-storage-key (& out)))]
     (begin
-      (if (parser.compiler-parse-decl-origin-needs-record?
-        (ast.ast-decl-list-get (& source) 0 (ast.ast-decl-fallback)))
+      (if (or
+        (parser.compiler-parse-decl-origin-needs-record?
+          (ast.ast-decl-list-get (& source) 0 (ast.ast-decl-fallback)))
+        (parser.compiler-parse-semantic-origin-key-slot-has-run?
+          (parser.compiler-parse-decl-list-storage-key (& source))
+          source.offset))
         (parser.compiler-parse-decl-origin-register-alias-record!
           (& out)
           0
@@ -15005,6 +15009,86 @@
         (compiler-load-decl-list-has-import-alias? decls "cl_alias_dep" "dep")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
+(define (compiler-load-semantic-origin-same-defstruct-ok?
+  [decls : (& decls ast.AstDeclList)]) : bool
+  (match (parser.compiler-parse-semantic-origin-run decls 0)
+    [(parser.CompilerParseMaybeSemanticOriginRun.Some run)
+      (let
+        [type-origin : parser.CompilerParseSemanticOrigin
+          (parser.compiler-parse-semantic-origin-run-get
+            (& run)
+            0
+            (parser.compiler-parse-semantic-origin-fallback))]
+        [field-origin : parser.CompilerParseSemanticOrigin
+          (parser.compiler-parse-semantic-origin-run-get
+            (& run)
+            1
+            (parser.compiler-parse-semantic-origin-fallback))]
+        [type-span : ast.AstSourceSpan type-origin.span]
+        [field-span : ast.AstSourceSpan field-origin.span]
+        (and
+          (= (parser.compiler-parse-semantic-origin-run-len (& run)) 4)
+          (string.eq
+            (parser.compiler-parse-semantic-origin-kind-marker type-origin.kind)
+            "__tl_semantic_origin_type_definition")
+          (string.eq (ci.intern-str type-origin.written-name) "Same")
+          (= (ast.ast-source-span-start-line type-span) 3)
+          (= (ast.ast-source-span-start-col type-span) 12)
+          (= (ast.ast-source-span-end-line type-span) 3)
+          (= (ast.ast-source-span-end-col type-span) 16)
+          (string.eq
+            (parser.compiler-parse-semantic-origin-kind-marker
+              field-origin.kind)
+            "__tl_semantic_origin_struct_field_definition")
+          (string.eq (ci.intern-str field-origin.written-name) "same-field")
+          (= (ast.ast-source-span-start-line field-span) 3)
+          (= (ast.ast-source-span-start-col field-span) 18)
+          (= (ast.ast-source-span-end-line field-span) 3)
+          (= (ast.ast-source-span-end-col field-span) 28)))]
+    [(parser.CompilerParseMaybeSemanticOriginRun.None) false]))
+
+(define (compiler-load-semantic-origin-same-count
+  [decls : ast.AstDeclList]
+  [count : i64]) : i64
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) count]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (let
+        [rest : ast.AstDeclList rest]
+        (match decl
+          [(ast.AstDecl.DefStruct _ name _ _ _)
+            (if (string.eq (ci.intern-str name) "Same")
+              (if (compiler-load-semantic-origin-same-defstruct-ok? (& decls))
+                (compiler-load-semantic-origin-same-count rest (+ count 1))
+                -100)
+              (compiler-load-semantic-origin-same-count rest count))]
+          [_ (compiler-load-semantic-origin-same-count rest count)]))]))
+
+(define (compiler-load-semantic-origin-import-flatten-ok?) : bool
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    [ok : bool false]
+    (begin
+      (compiler-load-write-file-text
+        "target/cl_semantic_origin_dep.tl"
+        "(module cl_semantic_origin_dep)
+(define dep-padding : i64 0)
+(defstruct Same (same-field Shared.Type))")
+      (compiler-load-write-file-text
+        "target/cl_semantic_origin_entry.tl"
+        "(module cl_semantic_origin_entry)
+(import cl_semantic_origin_dep as dep)
+(defstruct Same (same-field Shared.Type))")
+      (match (compiler-load-file-with-paths
+        "target/cl_semantic_origin_entry.tl"
+        (sym_i64_env.sym-i64-empty))
+        [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
+          (set! ok (= (compiler-load-semantic-origin-same-count decls 0) 2))]
+        [(ResultCompilerLoadWithPaths.Err _) unit])
+      (reader.sp-node-pool-truncate! mark)
+      (parser.compiler-parse-decl-origin-cache-reset!)
+      ok)))
+
 (define (compiler-load-dotted-import-duplicate-alias-ok?) : bool
   (match (compiler-load-source
     "src/dup_alias.tl"
@@ -19831,6 +19915,11 @@
       (compiler-load-import-alias-preserved-ok?)
       (return
         (io.panic "compiler-load: import alias preservation smoke mismatch")))
+    (unless
+      (compiler-load-semantic-origin-import-flatten-ok?)
+      (return
+        (io.panic
+          "compiler-load: semantic origin import flatten smoke mismatch")))
     (unless
       (compiler-load-dotted-import-duplicate-alias-ok?)
       (return

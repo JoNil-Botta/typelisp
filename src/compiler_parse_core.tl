@@ -24,8 +24,37 @@
   (Some ast.AstSourceSpan)
   (None))
 
+(defenum CompilerParseSemanticOriginKind
+  (TypeDefinition)
+  (TypeName)
+  (StructFieldDefinition)
+  (EnumVariantDefinition)
+  (StructFieldUse)
+  (EnumVariantPattern)
+  (DispatchFunction)
+  (ModuleDefinition)
+  (ModulePath)
+  (ImportAlias))
+
+(defstruct CompilerParseSemanticOrigin
+  (kind CompilerParseSemanticOriginKind)
+  (written-name i64)
+  (span ast.AstSourceSpan)
+  (ordinal i64))
+
+(defstruct CompilerParseSemanticOriginRun
+  (start i64)
+  (count i64))
+
+(defenum CompilerParseMaybeSemanticOriginRun
+  (Some CompilerParseSemanticOriginRun)
+  (None))
+
+(define compiler-parse-semantic-origin-capture-active : bool
+  false)
+
 (define (compiler-parse-decl-origin-cache-reset!) : unit
-  unit)
+  (set! compiler-parse-semantic-origin-capture-active false))
 
 (define (compiler-parse-token-span-from-ast-span [span : ast.AstSourceSpan]) : token.SourceSpan
   (token.SourceSpan
@@ -33,6 +62,149 @@
     (ast.ast-source-span-start-col span)
     (ast.ast-source-span-end-line span)
     (ast.ast-source-span-end-col span)))
+
+(define (compiler-parse-semantic-origin-kind-marker
+  [kind : CompilerParseSemanticOriginKind]) : String
+  (match kind
+    [(CompilerParseSemanticOriginKind.TypeDefinition)
+      "__tl_semantic_origin_type_definition"]
+    [(CompilerParseSemanticOriginKind.TypeName)
+      "__tl_semantic_origin_type_name"]
+    [(CompilerParseSemanticOriginKind.StructFieldDefinition)
+      "__tl_semantic_origin_struct_field_definition"]
+    [(CompilerParseSemanticOriginKind.EnumVariantDefinition)
+      "__tl_semantic_origin_enum_variant_definition"]
+    [(CompilerParseSemanticOriginKind.StructFieldUse)
+      "__tl_semantic_origin_struct_field_use"]
+    [(CompilerParseSemanticOriginKind.EnumVariantPattern)
+      "__tl_semantic_origin_enum_variant_pattern"]
+    [(CompilerParseSemanticOriginKind.DispatchFunction)
+      "__tl_semantic_origin_dispatch_function"]
+    [(CompilerParseSemanticOriginKind.ModuleDefinition)
+      "__tl_semantic_origin_module_definition"]
+    [(CompilerParseSemanticOriginKind.ModulePath)
+      "__tl_semantic_origin_module_path"]
+    [(CompilerParseSemanticOriginKind.ImportAlias)
+      "__tl_semantic_origin_import_alias"]))
+
+(define (compiler-parse-semantic-origin-kind-from-marker [marker : String]) : CompilerParseSemanticOriginKind
+  (cond
+    [(string.eq marker "__tl_semantic_origin_type_definition")
+      (CompilerParseSemanticOriginKind.TypeDefinition)]
+    [(string.eq marker "__tl_semantic_origin_type_name")
+      (CompilerParseSemanticOriginKind.TypeName)]
+    [(string.eq marker "__tl_semantic_origin_struct_field_definition")
+      (CompilerParseSemanticOriginKind.StructFieldDefinition)]
+    [(string.eq marker "__tl_semantic_origin_enum_variant_definition")
+      (CompilerParseSemanticOriginKind.EnumVariantDefinition)]
+    [(string.eq marker "__tl_semantic_origin_struct_field_use")
+      (CompilerParseSemanticOriginKind.StructFieldUse)]
+    [(string.eq marker "__tl_semantic_origin_enum_variant_pattern")
+      (CompilerParseSemanticOriginKind.EnumVariantPattern)]
+    [(string.eq marker "__tl_semantic_origin_dispatch_function")
+      (CompilerParseSemanticOriginKind.DispatchFunction)]
+    [(string.eq marker "__tl_semantic_origin_module_definition")
+      (CompilerParseSemanticOriginKind.ModuleDefinition)]
+    [(string.eq marker "__tl_semantic_origin_module_path")
+      (CompilerParseSemanticOriginKind.ModulePath)]
+    [else (CompilerParseSemanticOriginKind.ImportAlias)]))
+
+(define (compiler-parse-semantic-origin-kind-tag
+  [kind : CompilerParseSemanticOriginKind]) : i64
+  (match kind
+    [(CompilerParseSemanticOriginKind.TypeDefinition) 0]
+    [(CompilerParseSemanticOriginKind.TypeName) 1]
+    [(CompilerParseSemanticOriginKind.StructFieldDefinition) 2]
+    [(CompilerParseSemanticOriginKind.EnumVariantDefinition) 3]
+    [(CompilerParseSemanticOriginKind.StructFieldUse) 4]
+    [(CompilerParseSemanticOriginKind.EnumVariantPattern) 5]
+    [(CompilerParseSemanticOriginKind.DispatchFunction) 6]
+    [(CompilerParseSemanticOriginKind.ModuleDefinition) 7]
+    [(CompilerParseSemanticOriginKind.ModulePath) 8]
+    [(CompilerParseSemanticOriginKind.ImportAlias) 9]))
+
+(define (compiler-parse-semantic-origin-kind-from-tag [tag : i64]) : CompilerParseSemanticOriginKind
+  (cond
+    [(= tag 0) (CompilerParseSemanticOriginKind.TypeDefinition)]
+    [(= tag 1) (CompilerParseSemanticOriginKind.TypeName)]
+    [(= tag 2) (CompilerParseSemanticOriginKind.StructFieldDefinition)]
+    [(= tag 3) (CompilerParseSemanticOriginKind.EnumVariantDefinition)]
+    [(= tag 4) (CompilerParseSemanticOriginKind.StructFieldUse)]
+    [(= tag 5) (CompilerParseSemanticOriginKind.EnumVariantPattern)]
+    [(= tag 6) (CompilerParseSemanticOriginKind.DispatchFunction)]
+    [(= tag 7) (CompilerParseSemanticOriginKind.ModuleDefinition)]
+    [(= tag 8) (CompilerParseSemanticOriginKind.ModulePath)]
+    [else (CompilerParseSemanticOriginKind.ImportAlias)]))
+
+(define (compiler-parse-semantic-origin-marker? [marker : String]) : bool
+  (or
+    (string.eq marker "__tl_semantic_origin_type_definition")
+    (string.eq marker "__tl_semantic_origin_type_name")
+    (string.eq marker "__tl_semantic_origin_struct_field_definition")
+    (string.eq marker "__tl_semantic_origin_enum_variant_definition")
+    (string.eq marker "__tl_semantic_origin_struct_field_use")
+    (string.eq marker "__tl_semantic_origin_enum_variant_pattern")
+    (string.eq marker "__tl_semantic_origin_dispatch_function")
+    (string.eq marker "__tl_semantic_origin_module_definition")
+    (string.eq marker "__tl_semantic_origin_module_path")
+    (string.eq marker "__tl_semantic_origin_import_alias")))
+
+(define (compiler-parse-semantic-origin-capture-begin!) : unit
+  (set! compiler-parse-semantic-origin-capture-active true))
+
+(define (compiler-parse-semantic-origin-capture-end!) : unit
+  (set! compiler-parse-semantic-origin-capture-active false))
+
+(define (compiler-parse-semantic-origin-push!
+  [kind : CompilerParseSemanticOriginKind]
+  [written-name : i64]
+  [span : token.SourceSpan]) : unit
+  (if compiler-parse-semantic-origin-capture-active
+    (begin
+      (reader.sp-node-push
+        (reader.SpannedSexpr.Int
+          written-name
+          (compiler-parse-semantic-origin-kind-marker kind)
+          span))
+      unit)
+    unit))
+
+;; Dotted identifiers are one lexer token. Split their already-known token span
+;; by byte offset (the lexer uses byte columns) without searching source text.
+(define (compiler-parse-semantic-origin-push-components!
+  [name : ci.InternSyntaxId]
+  [span : token.SourceSpan]
+  [prefix-kind : CompilerParseSemanticOriginKind]
+  [final-kind : CompilerParseSemanticOriginKind]) : unit
+  (if compiler-parse-semantic-origin-capture-active
+    (let
+      [text : String (ci.intern-syntax-id-text name)]
+      [n : i64 (string.string-length text)]
+      [start : i64 0]
+      [cursor : i64 0]
+      (while (<= cursor n)
+        (if (or
+          (= cursor n)
+          (string.char-eq (string.string-ref text cursor) '.'))
+          (let
+            [len : i64 (- cursor start)]
+            (begin
+              (if (> len 0)
+                (compiler-parse-semantic-origin-push!
+                  (if (= cursor n)
+                    final-kind
+                    prefix-kind)
+                  (ci.intern-slice text start len)
+                  (token.SourceSpan
+                    (token.span-start-line span)
+                    (+ (token.span-start-col span) start)
+                    (token.span-end-line span)
+                    (+ (token.span-start-col span) cursor)))
+                unit)
+              (set! start (+ cursor 1))))
+          unit)
+        (set! cursor (+ cursor 1))))
+    unit))
 
 (define (compiler-parse-decl-list-storage-key
   [decls : (& decls ast.AstDeclList)]) : i64
@@ -189,35 +361,76 @@
       (begin
         (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
           [(reader.SpannedSexprView.Int record-key marker _)
-            (if (and
-              (= record-key source-key)
-              (string.eq marker "__tl_decl_origin")
-              (< (+ cursor 2) limit))
-              (match (reader.spanned-sexpr-view
-                (reader.sp-node-get (+ cursor 1)))
-                [(reader.SpannedSexprView.Int
-                    record-slot
-                    run-marker
-                    marker-span)
-                  (if (and
-                    (string.eq run-marker "__tl_decl_origin_start")
-                    (>= record-slot source-start)
-                    (< record-slot source-end))
-                    (begin
-                      (reader.sp-node-push
-                        (reader.SpannedSexpr.Int
-                          dest-key
-                          "__tl_decl_origin"
-                          marker-span))
-                      (reader.sp-node-push
-                        (reader.SpannedSexpr.Int
-                          (+ dest-start (- record-slot source-start))
-                          "__tl_decl_origin_start"
-                          marker-span))
-                      (reader.sp-node-push (reader.sp-node-get (+ cursor 2)))
-                      unit)
-                    unit)]
-                [_ unit])
+            (if (= record-key source-key)
+              (cond
+                [(and
+                    (string.eq marker "__tl_decl_origin")
+                    (< (+ cursor 2) limit))
+                  (match (reader.spanned-sexpr-view
+                    (reader.sp-node-get (+ cursor 1)))
+                    [(reader.SpannedSexprView.Int
+                        record-slot
+                        run-marker
+                        marker-span)
+                      (if (and
+                        (string.eq run-marker "__tl_decl_origin_start")
+                        (>= record-slot source-start)
+                        (< record-slot source-end))
+                        (begin
+                          (reader.sp-node-push
+                            (reader.SpannedSexpr.Int
+                              dest-key
+                              "__tl_decl_origin"
+                              marker-span))
+                          (reader.sp-node-push
+                            (reader.SpannedSexpr.Int
+                              (+ dest-start (- record-slot source-start))
+                              "__tl_decl_origin_start"
+                              marker-span))
+                          (reader.sp-node-push
+                            (reader.sp-node-get (+ cursor 2)))
+                          unit)
+                        unit)]
+                    [_ unit])]
+                [(and
+                    (string.eq marker "__tl_semantic_origin")
+                    (< (+ cursor 1) limit))
+                  (match (reader.spanned-sexpr-view
+                    (reader.sp-node-get (+ cursor 1)))
+                    [(reader.SpannedSexprView.Int
+                        record-slot
+                        run-marker
+                        run-span)
+                      (let
+                        [count : i64 (token.span-start-line run-span)]
+                        (if (and
+                          (string.eq run-marker "__tl_semantic_origin_start")
+                          (>= record-slot source-start)
+                          (< record-slot source-end)
+                          (>= count 0)
+                          (<= (+ (+ cursor 2) count) limit))
+                          (let
+                            [record-index : i64 0]
+                            (begin
+                              (reader.sp-node-push
+                                (reader.SpannedSexpr.Int
+                                  dest-key
+                                  "__tl_semantic_origin"
+                                  run-span))
+                              (reader.sp-node-push
+                                (reader.SpannedSexpr.Int
+                                  (+ dest-start (- record-slot source-start))
+                                  "__tl_semantic_origin_start"
+                                  run-span))
+                              (while (< record-index count)
+                                (begin
+                                  (reader.sp-node-push
+                                    (reader.sp-node-get
+                                      (+ (+ cursor 2) record-index)))
+                                  (set! record-index (+ record-index 1))))))
+                          unit))]
+                    [_ unit])]
+                [else unit])
               unit)]
           [_ unit])
         (set! cursor (+ cursor 1))))))
@@ -315,7 +528,15 @@
   [source-slot : i64]
   [source-decl : ast.AstDecl]
   [repeat : bool]) : unit
-  (if (and (> count 0) (compiler-parse-decl-origin-needs-record? source-decl))
+  (if (and
+    (> count 0)
+    (or
+      (compiler-parse-decl-origin-needs-record? source-decl)
+      (and
+        (not repeat)
+        (compiler-parse-semantic-origin-key-slot-has-run?
+          source-key
+          source-slot))))
     (if (compiler-parse-decl-origin-alias-vec-extend-last?
       aliases
       target-start
@@ -362,6 +583,130 @@
               alias.source-slot)
             (< alias.source-slot 0))
           (set! index (+ index 1)))))))
+
+;; Semantic occurrence runs are direct records keyed by declaration storage and
+;; slot. A normal declaration-origin alias preserves the run; a repeat alias is
+;; intentionally ignored because it represents a one-to-many generated rewrite
+;; whose new declarations have no independent editable source occurrences.
+(define (compiler-parse-semantic-origin-run-key-slot-depth
+  [key : i64]
+  [target : i64]
+  [depth : i64]) : CompilerParseMaybeSemanticOriginRun
+  (let
+    [cursor : i64 0]
+    [result : CompilerParseMaybeSemanticOriginRun
+      (CompilerParseMaybeSemanticOriginRun.None)]
+    [alias-key : i64 0]
+    [alias-slot : i64 0]
+    [alias-found : bool false]
+    (begin
+      (while (< cursor (reader.sp-node-pool-len))
+        (begin
+          (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+            [(reader.SpannedSexprView.Int record-key marker marker-span)
+              (if (= record-key key)
+                (cond
+                  [(and
+                      (string.eq marker "__tl_semantic_origin")
+                      (< (+ cursor 1) (reader.sp-node-pool-len)))
+                    (match (reader.spanned-sexpr-view
+                      (reader.sp-node-get (+ cursor 1)))
+                      [(reader.SpannedSexprView.Int
+                          run-slot
+                          run-marker
+                          run-span)
+                        (if (and
+                          (= run-slot target)
+                          (string.eq run-marker "__tl_semantic_origin_start"))
+                          (let
+                            [count : i64 (token.span-start-line run-span)]
+                            (if (and
+                              (>= count 0)
+                              (<=
+                                (+ (+ cursor 2) count)
+                                (reader.sp-node-pool-len)))
+                              (begin
+                                (set!
+                                  result
+                                  (CompilerParseMaybeSemanticOriginRun.Some
+                                    (CompilerParseSemanticOriginRun
+                                      (+ cursor 2)
+                                      count)))
+                                (set! alias-found false))
+                              unit))
+                          unit)]
+                      [_ unit])]
+                  [(string.eq marker "__tl_decl_origin_alias")
+                    (let
+                      [alias-start : i64 (token.span-start-line marker-span)]
+                      [alias-count : i64 (token.span-start-col marker-span)]
+                      (if (and
+                        (>= target alias-start)
+                        (< target (+ alias-start alias-count)))
+                        (begin
+                          (set! alias-key (token.span-end-line marker-span))
+                          (set!
+                            alias-slot
+                            (+
+                              (token.span-end-col marker-span)
+                              (- target alias-start)))
+                          (set! alias-found true))
+                        unit))]
+                  [else unit])
+                unit)]
+            [_ unit])
+          (set! cursor (+ cursor 1))))
+      (if (and alias-found (< depth 64))
+        (compiler-parse-semantic-origin-run-key-slot-depth
+          alias-key
+          alias-slot
+          (+ depth 1))
+        result))))
+
+(define (compiler-parse-semantic-origin-run-key-slot [key : i64] [slot : i64]) : CompilerParseMaybeSemanticOriginRun
+  (compiler-parse-semantic-origin-run-key-slot-depth key slot 0))
+
+(define (compiler-parse-semantic-origin-run
+  [decls : (& decls ast.AstDeclList)]
+  [slot : i64]) : CompilerParseMaybeSemanticOriginRun
+  (compiler-parse-semantic-origin-run-key-slot
+    (compiler-parse-decl-list-storage-key decls)
+    (+ decls.offset slot)))
+
+(define (compiler-parse-semantic-origin-run-len
+  [run : (& run CompilerParseSemanticOriginRun)]) : i64
+  run.count)
+
+(define (compiler-parse-semantic-origin-fallback) : CompilerParseSemanticOrigin
+  (CompilerParseSemanticOrigin
+    (CompilerParseSemanticOriginKind.TypeName)
+    cbi.compiler-builtin-id-fix-empty
+    (ast.ast-decl-span-fallback)
+    -1))
+
+(define (compiler-parse-semantic-origin-run-get
+  [run : (& run CompilerParseSemanticOriginRun)]
+  [index : i64]
+  [fallback : CompilerParseSemanticOrigin]) : CompilerParseSemanticOrigin
+  (if (and (>= index 0) (< index run.count))
+    (match (reader.spanned-sexpr-view (reader.sp-node-get (+ run.start index)))
+      [(reader.SpannedSexprView.Int written-name marker span)
+        (if (compiler-parse-semantic-origin-marker? marker)
+          (CompilerParseSemanticOrigin
+            (compiler-parse-semantic-origin-kind-from-marker marker)
+            written-name
+            (ast-source-span-from-source-span span)
+            index)
+          fallback)]
+      [_ fallback])
+    fallback))
+
+(define (compiler-parse-semantic-origin-key-slot-has-run?
+  [key : i64]
+  [slot : i64]) : bool
+  (match (compiler-parse-semantic-origin-run-key-slot key slot)
+    [(CompilerParseMaybeSemanticOriginRun.Some _) true]
+    [(CompilerParseMaybeSemanticOriginRun.None) false]))
 
 ;; Aggregate member origins reuse the transient spanned-node pool instead of
 ;; widening hot AST nodes. After each top-level form, only marker + span records
@@ -443,12 +788,25 @@
     [end : i64 (reader.sp-node-pool-len)]
     (begin
       (while (< read-index end)
-        (begin
-          (set!
-            (array-ref reader.sp-node-pool-slots write-index)
-            (reader.sp-node-get read-index))
-          (set! read-index (+ read-index 1))
-          (set! write-index (+ write-index 1))))
+        (let
+          [record : reader.SpannedSexpr (reader.sp-node-get read-index)]
+          (begin
+            (match (reader.spanned-sexpr-view record)
+              [(reader.SpannedSexprView.Int _ marker _)
+                (if (string.eq marker "__tl_semantic_origin_consumed")
+                  unit
+                  (begin
+                    (set!
+                      (array-ref reader.sp-node-pool-slots write-index)
+                      record)
+                    (set! write-index (+ write-index 1))))]
+              [_
+                (begin
+                  (set!
+                    (array-ref reader.sp-node-pool-slots write-index)
+                    record)
+                  (set! write-index (+ write-index 1)))])
+            (set! read-index (+ read-index 1)))))
       (reader.sp-node-pool-truncate! write-index))))
 
 (defenum ResultAstType
@@ -3346,6 +3704,140 @@
         [_ (ResultAstType.Err "parse: expected type")])]
     [_ (ResultAstType.Err "parse: expected type")]))
 
+(define (compiler-parse-semantic-type-list-origins!
+  [dispatch : sym_i64_env.SymI64Env]
+  [items : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view items)
+    [(reader.SpannedSexprView.Nil _) unit]
+    [(reader.SpannedSexprView.Cons head tail _)
+      (begin
+        (compiler-parse-semantic-type-origins! dispatch head)
+        (compiler-parse-semantic-type-list-origins! dispatch tail))]
+    [_ unit]))
+
+(define (compiler-parse-semantic-func-type-item-origins!
+  [dispatch : sym_i64_env.SymI64Env]
+  [item : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view item)
+    [(reader.SpannedSexprView.Cons key-node tail _)
+      (match (reader.spanned-sexpr-view key-node)
+        [(reader.SpannedSexprView.Sym key _)
+          (if (=
+            (ci.intern-syntax-id-value key)
+            (cbi.compiler-builtin-ctfe-ref 179))
+            (match (reader.spanned-sexpr-view tail)
+              [(reader.SpannedSexprView.Cons ty-node end _)
+                (match (reader.spanned-sexpr-view end)
+                  [(reader.SpannedSexprView.Nil _)
+                    (compiler-parse-semantic-type-origins! dispatch ty-node)]
+                  [_ unit])]
+              [_ unit])
+            (compiler-parse-semantic-type-origins! dispatch item))]
+        [_ (compiler-parse-semantic-type-origins! dispatch item)])]
+    [_ (compiler-parse-semantic-type-origins! dispatch item)]))
+
+(define (compiler-parse-semantic-func-type-list-origins!
+  [dispatch : sym_i64_env.SymI64Env]
+  [items : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view items)
+    [(reader.SpannedSexprView.Nil _) unit]
+    [(reader.SpannedSexprView.Cons head tail _)
+      (begin
+        (compiler-parse-semantic-func-type-item-origins! dispatch head)
+        (compiler-parse-semantic-func-type-list-origins! dispatch tail))]
+    [_ unit]))
+
+(define (compiler-parse-semantic-type-second-origin!
+  [dispatch : sym_i64_env.SymI64Env]
+  [items : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view items)
+    [(reader.SpannedSexprView.Cons _ tail _)
+      (match (reader.spanned-sexpr-view tail)
+        [(reader.SpannedSexprView.Cons second _ _)
+          (compiler-parse-semantic-type-origins! dispatch second)]
+        [_ unit])]
+    [_ unit]))
+
+(define (compiler-parse-semantic-type-first-origin!
+  [dispatch : sym_i64_env.SymI64Env]
+  [items : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view items)
+    [(reader.SpannedSexprView.Cons first _ _)
+      (compiler-parse-semantic-type-origins! dispatch first)]
+    [_ unit]))
+
+(define (compiler-parse-semantic-reference-type-origin!
+  [dispatch : sym_i64_env.SymI64Env]
+  [items : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view items)
+    [(reader.SpannedSexprView.Cons first tail _)
+      (match (reader.spanned-sexpr-view tail)
+        [(reader.SpannedSexprView.Nil _)
+          (compiler-parse-semantic-type-origins! dispatch first)]
+        [(reader.SpannedSexprView.Cons second _ _)
+          (compiler-parse-semantic-type-origins! dispatch second)]
+        [_ unit])]
+    [_ unit]))
+
+(define (compiler-parse-semantic-type-origins!
+  [dispatch : sym_i64_env.SymI64Env]
+  [s : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view s)
+    [(reader.SpannedSexprView.Sym name span)
+      (let
+        [name-id : i64 (ci.intern-syntax-id-value name)]
+        [tag : i64 (compiler-parse-dispatch-tag-id dispatch name-id)]
+        (if (or
+          (and
+            (>= tag (compiler-parse-tag-ty-i64))
+            (<= tag (compiler-parse-tag-ty-bytes)))
+          (= tag (compiler-parse-tag-unit))
+          (= tag (compiler-parse-tag-ty-never))
+          (= tag (compiler-parse-tag-ty-expr)))
+          unit
+          (compiler-parse-semantic-origin-push-components!
+            name
+            span
+            (CompilerParseSemanticOriginKind.ModulePath)
+            (CompilerParseSemanticOriginKind.TypeName))))]
+    [(reader.SpannedSexprView.Cons head-node rest _)
+      (match (reader.spanned-sexpr-view head-node)
+        [(reader.SpannedSexprView.Sym head head-span)
+          (let
+            [head-id : i64 (ci.intern-syntax-id-value head)]
+            [tag : i64 (compiler-parse-dispatch-tag-id dispatch head-id)]
+            (cond
+              [(or
+                  (= head-id (cbi.compiler-builtin-ctfe-ref 106))
+                  (= head-id (cbi.compiler-builtin-ctfe-ref 107)))
+                unit]
+              [(= tag (compiler-parse-tag-ty-func))
+                (compiler-parse-semantic-func-type-list-origins! dispatch rest)]
+              [(= tag (compiler-parse-tag-ty-tuple))
+                (compiler-parse-semantic-type-list-origins! dispatch rest)]
+              [(or
+                  (= tag (compiler-parse-tag-ty-array))
+                  (= tag (compiler-parse-tag-ty-dyn-array))
+                  (= tag (compiler-parse-tag-ty-slice))
+                  (= tag (compiler-parse-tag-ty-ptr))
+                  (= tag (compiler-parse-tag-ty-mut-ptr))
+                  (= tag (compiler-parse-tag-ty-box)))
+                (compiler-parse-semantic-type-first-origin! dispatch rest)]
+              [(or
+                  (= tag (compiler-parse-tag-ty-ref))
+                  (= tag (compiler-parse-tag-ty-mut-ref)))
+                (compiler-parse-semantic-reference-type-origin! dispatch rest)]
+              [(= tag (compiler-parse-tag-ty-region))
+                (compiler-parse-semantic-type-second-origin! dispatch rest)]
+              [else
+                (compiler-parse-semantic-origin-push-components!
+                  head
+                  head-span
+                  (CompilerParseSemanticOriginKind.ModulePath)
+                  (CompilerParseSemanticOriginKind.TypeName))]))]
+        [_ unit])]
+    [_ unit]))
+
 (define (parse-ast-type-spanned
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -3358,7 +3850,10 @@
         (begin
           (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
           result)]
-      [_ result])))
+      [(ResultAstType.Ok _)
+        (begin
+          (compiler-parse-semantic-type-origins! dispatch s)
+          result)])))
 
 (define (parse-ast-runtime-param-result
   [name : ci.InternSyntaxId]
@@ -3861,6 +4356,38 @@
         [(ResultAstParam.Err message) (ResultAstParamListBuild.Err message)])]
     [_ (ResultAstParamListBuild.Err "parse: malformed parameter list")]))
 
+(define (compiler-parse-semantic-param-items-origin!
+  [dispatch : sym_i64_env.SymI64Env]
+  [items : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view items)
+    [(reader.SpannedSexprView.Cons head tail _)
+      (if (sexpr-colon? (reader.spanned-sexpr-form head))
+        (match (reader.spanned-sexpr-view tail)
+          [(reader.SpannedSexprView.Cons ty-node _ _)
+            (compiler-parse-semantic-type-origins! dispatch ty-node)]
+          [_ unit])
+        (compiler-parse-semantic-param-items-origin! dispatch tail))]
+    [_ unit]))
+
+(define (compiler-parse-semantic-param-origin!
+  [dispatch : sym_i64_env.SymI64Env]
+  [item : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view item)
+    [(reader.SpannedSexprView.BracketList items _)
+      (compiler-parse-semantic-param-items-origin! dispatch items)]
+    [_ unit]))
+
+(define (compiler-parse-semantic-param-list-origins!
+  [dispatch : sym_i64_env.SymI64Env]
+  [items : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view items)
+    [(reader.SpannedSexprView.Nil _) unit]
+    [(reader.SpannedSexprView.Cons head tail _)
+      (begin
+        (compiler-parse-semantic-param-origin! dispatch head)
+        (compiler-parse-semantic-param-list-origins! dispatch tail))]
+    [_ unit]))
+
 (define (parse-ast-field-cleanup [s : reader.Sexpr]) : ResultAstFieldCleanup
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons key-node tail)
@@ -4088,6 +4615,26 @@
             "parse: malformed defenum :cleanup metadata")])]
     [_ (ResultAstEnumCleanup.Err "parse: malformed defenum :cleanup metadata")]))
 
+(define (compiler-parse-semantic-field-definition-origins!
+  [dispatch : sym_i64_env.SymI64Env]
+  [items : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view items)
+    [(reader.SpannedSexprView.Cons name-node tail-items _)
+      (begin
+        (match (reader.spanned-sexpr-view name-node)
+          [(reader.SpannedSexprView.Sym name span)
+            (compiler-parse-semantic-origin-push-components!
+              name
+              span
+              (CompilerParseSemanticOriginKind.ModulePath)
+              (CompilerParseSemanticOriginKind.StructFieldDefinition))]
+          [_ unit])
+        (match (reader.spanned-sexpr-view tail-items)
+          [(reader.SpannedSexprView.Cons ty-node _ _)
+            (compiler-parse-semantic-type-origins! dispatch ty-node)]
+          [_ unit]))]
+    [_ unit]))
+
 (define (parse-ast-defstruct-field-item
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -4109,6 +4656,12 @@
       (let
         [next-fields : ast.AstFieldDefList fields]
         (begin
+          (match (reader.spanned-sexpr-view head)
+            [(reader.SpannedSexprView.BracketList items _)
+              (compiler-parse-semantic-field-definition-origins! dispatch items)]
+            [(reader.SpannedSexprView.Cons _ _ _)
+              (compiler-parse-semantic-field-definition-origins! dispatch head)]
+            [_ unit])
           (ast.ast-field-def-list-push (&mut next-fields) parsed-field)
           (reader.sp-node-push
             (reader.spanned-sexpr-empty (reader.spanned-sexpr-span head)))
@@ -4439,13 +4992,19 @@
               (match (reader.spanned-sexpr-view end)
                 [(reader.SpannedSexprView.Nil _)
                   (match (reader.spanned-sexpr-view fn-node)
-                    [(reader.SpannedSexprView.Sym fn-name _)
+                    [(reader.SpannedSexprView.Sym fn-name fn-span)
                       (match (parse-ast-dispatch-isa isa-name)
                         [(ResultAstDispatchIsa.Ok isa)
-                          (ResultAstDispatchVariant.Ok
-                            (ast.AstDispatchVariant.Variant
-                              isa
-                              (ci.intern-syntax-id-value fn-name)))]
+                          (begin
+                            (compiler-parse-semantic-origin-push-components!
+                              fn-name
+                              fn-span
+                              (CompilerParseSemanticOriginKind.ModulePath)
+                              (CompilerParseSemanticOriginKind.DispatchFunction))
+                            (ResultAstDispatchVariant.Ok
+                              (ast.AstDispatchVariant.Variant
+                                isa
+                                (ci.intern-syntax-id-value fn-name))))]
                         [(ResultAstDispatchIsa.Err message)
                           (ResultAstDispatchVariant.Err message)])]
                     [_
@@ -4487,6 +5046,19 @@
       [(ResultAstDispatchVariantListBuild.Err message)
         (ResultAstDispatchVariantList.Err message)])))
 
+(define (compiler-parse-semantic-variant-payload-origins!
+  [dispatch : sym_i64_env.SymI64Env]
+  [payloads : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view payloads)
+    [(reader.SpannedSexprView.Nil _) unit]
+    [(reader.SpannedSexprView.Cons head tail _)
+      (begin
+        (if (compiler-parse-metadata-sexpr? (reader.spanned-sexpr-form head))
+          unit
+          (compiler-parse-semantic-type-origins! dispatch head))
+        (compiler-parse-semantic-variant-payload-origins! dispatch tail))]
+    [_ unit]))
+
 (define (parse-ast-defenum-variant-item
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -4503,6 +5075,21 @@
     (ast.ast-enum-cleanup? cleanup))
     [(ResultAstVariantDef.Ok parsed-variant)
       (begin
+        (match (reader.spanned-sexpr-view head)
+          [(reader.SpannedSexprView.Cons name-node payloads _)
+            (begin
+              (match (reader.spanned-sexpr-view name-node)
+                [(reader.SpannedSexprView.Sym name span)
+                  (compiler-parse-semantic-origin-push-components!
+                    name
+                    span
+                    (CompilerParseSemanticOriginKind.ModulePath)
+                    (CompilerParseSemanticOriginKind.EnumVariantDefinition))]
+                [_ unit])
+              (compiler-parse-semantic-variant-payload-origins!
+                dispatch
+                payloads))]
+          [_ unit])
         (reader.sp-node-push
           (reader.spanned-sexpr-empty (reader.spanned-sexpr-span head)))
         (match (parse-ast-defenum-items
@@ -4703,6 +5290,45 @@
             [(ResultAstPatternList.Err message) (ResultAstPattern.Err message)])]
         [_ (ResultAstPattern.Err "parse: expected pattern")])]
     [_ (ResultAstPattern.Err "parse: expected pattern")]))
+
+(define (compiler-parse-semantic-pattern-list-origins!
+  [dispatch : sym_i64_env.SymI64Env]
+  [patterns : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view patterns)
+    [(reader.SpannedSexprView.Nil _) unit]
+    [(reader.SpannedSexprView.Cons head tail _)
+      (begin
+        (compiler-parse-semantic-pattern-origins! dispatch head)
+        (compiler-parse-semantic-pattern-list-origins! dispatch tail))]
+    [_ unit]))
+
+(define (compiler-parse-semantic-pattern-origins!
+  [dispatch : sym_i64_env.SymI64Env]
+  [pattern : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view pattern)
+    [(reader.SpannedSexprView.BracketList items _)
+      (compiler-parse-semantic-pattern-origins! dispatch items)]
+    [(reader.SpannedSexprView.Cons name-node args _)
+      (begin
+        (match (reader.spanned-sexpr-view name-node)
+          [(reader.SpannedSexprView.Sym name span)
+            (let
+              [tag : i64
+                (compiler-parse-dispatch-tag-id
+                  dispatch
+                  (ci.intern-syntax-id-value name))]
+              (if (or
+                (= tag (compiler-parse-tag-expr-tuple))
+                (= tag (compiler-parse-tag-expr-array)))
+                unit
+                (compiler-parse-semantic-origin-push-components!
+                  name
+                  span
+                  (CompilerParseSemanticOriginKind.ModulePath)
+                  (CompilerParseSemanticOriginKind.EnumVariantPattern))))]
+          [_ unit])
+        (compiler-parse-semantic-pattern-list-origins! dispatch args))]
+    [_ unit]))
 
 (define (parse-ast-cfg-expr-maybe
   [dispatch : sym_i64_env.SymI64Env]
@@ -5445,47 +6071,49 @@
         pools
         (reader.spanned-sexpr-form params))
         [(ResultAstParamList.Ok parsed-params)
-          (if (ast-param-list-has-comptime? parsed-params)
-            (ResultAstExpr.Err
-              "comptime parameters are only supported on top-level function definitions")
-            (match (reader.spanned-sexpr-view tail)
-              [(reader.SpannedSexprView.Cons first rest-tail _)
-                (if (sexpr-colon? (reader.spanned-sexpr-form first))
-                  (match (reader.spanned-sexpr-view rest-tail)
-                    [(reader.SpannedSexprView.Cons ret body-tail _)
-                      (match (parse-ast-type-spanned dispatch pools ret)
-                        [(ResultAstType.Ok parsed-ret)
-                          (match (parse-ast-body-tail
-                            dispatch
+          (begin
+            (compiler-parse-semantic-param-list-origins! dispatch params)
+            (if (ast-param-list-has-comptime? parsed-params)
+              (ResultAstExpr.Err
+                "comptime parameters are only supported on top-level function definitions")
+              (match (reader.spanned-sexpr-view tail)
+                [(reader.SpannedSexprView.Cons first rest-tail _)
+                  (if (sexpr-colon? (reader.spanned-sexpr-form first))
+                    (match (reader.spanned-sexpr-view rest-tail)
+                      [(reader.SpannedSexprView.Cons ret body-tail _)
+                        (match (parse-ast-type-spanned dispatch pools ret)
+                          [(ResultAstType.Ok parsed-ret)
+                            (match (parse-ast-body-tail
+                              dispatch
+                              pools
+                              body-tail
+                              "parse: malformed lambda")
+                              [(ResultAstExpr.Ok parsed-body)
+                                (ResultAstExpr.Ok
+                                  (ast.ast-expr-lambda-with-pools
+                                    pools
+                                    parsed-params
+                                    (ast.AstMaybeType.Some parsed-ret)
+                                    parsed-body))]
+                              [(ResultAstExpr.Err message)
+                                (ResultAstExpr.Err message)])]
+                          [(ResultAstType.Err message)
+                            (ResultAstExpr.Err message)])]
+                      [_ (ResultAstExpr.Err "parse: malformed lambda")])
+                    (match (parse-ast-body-tail
+                      dispatch
+                      pools
+                      tail
+                      "parse: malformed lambda")
+                      [(ResultAstExpr.Ok parsed-body)
+                        (ResultAstExpr.Ok
+                          (ast.ast-expr-lambda-with-pools
                             pools
-                            body-tail
-                            "parse: malformed lambda")
-                            [(ResultAstExpr.Ok parsed-body)
-                              (ResultAstExpr.Ok
-                                (ast.ast-expr-lambda-with-pools
-                                  pools
-                                  parsed-params
-                                  (ast.AstMaybeType.Some parsed-ret)
-                                  parsed-body))]
-                            [(ResultAstExpr.Err message)
-                              (ResultAstExpr.Err message)])]
-                        [(ResultAstType.Err message)
-                          (ResultAstExpr.Err message)])]
-                    [_ (ResultAstExpr.Err "parse: malformed lambda")])
-                  (match (parse-ast-body-tail
-                    dispatch
-                    pools
-                    tail
-                    "parse: malformed lambda")
-                    [(ResultAstExpr.Ok parsed-body)
-                      (ResultAstExpr.Ok
-                        (ast.ast-expr-lambda-with-pools
-                          pools
-                          parsed-params
-                          ast.AstMaybeType.No
-                          parsed-body))]
-                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))]
-              [_ (ResultAstExpr.Err "parse: malformed lambda")]))]
+                            parsed-params
+                            ast.AstMaybeType.No
+                            parsed-body))]
+                      [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))]
+                [_ (ResultAstExpr.Err "parse: malformed lambda")])))]
         [(ResultAstParamList.Err message) (ResultAstExpr.Err message)])]
     [_ (ResultAstExpr.Err "parse: malformed lambda")]))
 
@@ -5824,11 +6452,17 @@
                 [(reader.SpannedSexprView.Sym field _)
                   (match (parse-ast-expr-with-pools dispatch pools expr)
                     [(ResultAstExpr.Ok parsed-expr)
-                      (ResultAstExpr.Ok
-                        (ast.ast-expr-struct-get-id-with-pools
-                          pools
-                          parsed-expr
-                          (ci.intern-syntax-id-value field)))]
+                      (begin
+                        (compiler-parse-semantic-origin-push-components!
+                          field
+                          (reader.spanned-sexpr-span field-node)
+                          (CompilerParseSemanticOriginKind.ModulePath)
+                          (CompilerParseSemanticOriginKind.StructFieldUse))
+                        (ResultAstExpr.Ok
+                          (ast.ast-expr-struct-get-id-with-pools
+                            pools
+                            parsed-expr
+                            (ci.intern-syntax-id-value field))))]
                     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
                 [_ (ResultAstExpr.Err "parse: malformed struct-get")])]
             [_ (ResultAstExpr.Err "parse: malformed struct-get")])]
@@ -7020,18 +7654,20 @@
                 pools
                 (reader.spanned-sexpr-form pattern))
                 [(ResultAstPattern.Ok parsed-pattern)
-                  (match (parse-ast-expr-with-pools dispatch pools body)
-                    [(ResultAstExpr.Ok parsed-body)
-                      (ResultAstMatchArm.Ok
-                        (ast.ast-match-arm
-                          parsed-pattern
-                          (ast.ast-expr-spanned-with-pools
-                            pools
-                            parsed-body
-                            (ast-source-span-from-source-span
-                              (reader.spanned-sexpr-span pattern)))))]
-                    [(ResultAstExpr.Err message)
-                      (ResultAstMatchArm.Err message)])]
+                  (begin
+                    (compiler-parse-semantic-pattern-origins! dispatch pattern)
+                    (match (parse-ast-expr-with-pools dispatch pools body)
+                      [(ResultAstExpr.Ok parsed-body)
+                        (ResultAstMatchArm.Ok
+                          (ast.ast-match-arm
+                            parsed-pattern
+                            (ast.ast-expr-spanned-with-pools
+                              pools
+                              parsed-body
+                              (ast-source-span-from-source-span
+                                (reader.spanned-sexpr-span pattern)))))]
+                      [(ResultAstExpr.Err message)
+                        (ResultAstMatchArm.Err message)]))]
                 [(ResultAstPattern.Err message) (ResultAstMatchArm.Err message)])]
             [_ (ResultAstMatchArm.Err "parse: malformed match arm")])]
         [_ (ResultAstMatchArm.Err "parse: malformed match arm")])]
@@ -8236,16 +8872,18 @@
     pools
     (reader.spanned-sexpr-form params))
     [(ResultAstParamList.Ok parsed-params)
-      (parse-ast-define-fn-rest
-        dispatch
-        pools
-        name
-        parsed-params
-        ast.AstFnExport.No
-        false
-        ast.AstSpmdCallable.No
-        false
-        rest)]
+      (begin
+        (compiler-parse-semantic-param-list-origins! dispatch params)
+        (parse-ast-define-fn-rest
+          dispatch
+          pools
+          name
+          parsed-params
+          ast.AstFnExport.No
+          false
+          ast.AstSpmdCallable.No
+          false
+          rest))]
     [(ResultAstParamList.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-define
@@ -8299,26 +8937,31 @@
                                   pools
                                   (reader.spanned-sexpr-form params))
                                   [(ResultAstMacroParamList.Ok parsed-params)
-                                    (match (parse-ast-type-spanned
-                                      dispatch
-                                      pools
-                                      ret)
-                                      [(ResultAstType.Ok parsed-ret)
-                                        (match (parse-ast-expr-with-pools
-                                          dispatch
-                                          pools
-                                          body)
-                                          [(ResultAstExpr.Ok parsed-body)
-                                            (ResultAstDecl.Ok
-                                              (ast.ast-decl-def-macro-id
-                                                (ci.intern-syntax-id-value name)
-                                                parsed-params
-                                                parsed-ret
-                                                parsed-body))]
-                                          [(ResultAstExpr.Err message)
-                                            (ResultAstDecl.Err message)])]
-                                      [(ResultAstType.Err message)
-                                        (ResultAstDecl.Err message)])]
+                                    (begin
+                                      (compiler-parse-semantic-param-list-origins!
+                                        dispatch
+                                        params)
+                                      (match (parse-ast-type-spanned
+                                        dispatch
+                                        pools
+                                        ret)
+                                        [(ResultAstType.Ok parsed-ret)
+                                          (match (parse-ast-expr-with-pools
+                                            dispatch
+                                            pools
+                                            body)
+                                            [(ResultAstExpr.Ok parsed-body)
+                                              (ResultAstDecl.Ok
+                                                (ast.ast-decl-def-macro-id
+                                                  (ci.intern-syntax-id-value
+                                                    name)
+                                                  parsed-params
+                                                  parsed-ret
+                                                  parsed-body))]
+                                            [(ResultAstExpr.Err message)
+                                              (ResultAstDecl.Err message)])]
+                                        [(ResultAstType.Err message)
+                                          (ResultAstDecl.Err message)]))]
                                   [(ResultAstMacroParamList.Err message)
                                     (ResultAstDecl.Err message)])
                                 (ResultAstDecl.Err
@@ -8368,15 +9011,17 @@
   [item : reader.SpannedSexpr]) : ResultAstExternHeadItem
   (match (parse-ast-param dispatch pools (reader.spanned-sexpr-form item))
     [(ResultAstParam.Ok param)
-      (match param
-        [(ast.AstParam.Param _ ty comptime? consume?)
-          (if comptime?
-            (ResultAstExternHeadItem.Err
-              "parse: extern parameters cannot be comptime")
-            (if consume?
+      (begin
+        (compiler-parse-semantic-param-origin! dispatch item)
+        (match param
+          [(ast.AstParam.Param _ ty comptime? consume?)
+            (if comptime?
               (ResultAstExternHeadItem.Err
-                "parse: extern parameters cannot be consuming")
-              (ResultAstExternHeadItem.Ok (AstExternHeadItem.Param ty))))])]
+                "parse: extern parameters cannot be comptime")
+              (if consume?
+                (ResultAstExternHeadItem.Err
+                  "parse: extern parameters cannot be consuming")
+                (ResultAstExternHeadItem.Ok (AstExternHeadItem.Param ty))))]))]
     [(ResultAstParam.Err message) (ResultAstExternHeadItem.Err message)]))
 
 (define (parse-ast-extern-head-bracket-item
@@ -8394,7 +9039,7 @@
                 [(reader.SpannedSexprView.Nil _)
                   (if (sexpr-colon? (reader.spanned-sexpr-form colon))
                     (match (reader.spanned-sexpr-view ty-node)
-                      [(reader.SpannedSexprView.Sym ty-name _)
+                      [(reader.SpannedSexprView.Sym ty-name ty-span)
                         (if (parse-ast-extern-varargs-open? ty-name)
                           (ResultAstExternHeadItem.Err
                             "parse: extern typed varargs tail needs a type")
@@ -8404,8 +9049,20 @@
                               pools
                               ty-name)
                               [(ResultAstType.Ok tail-ty)
-                                (ResultAstExternHeadItem.Ok
-                                  (AstExternHeadItem.VarargsTyped tail-ty))]
+                                (begin
+                                  (compiler-parse-semantic-type-origins!
+                                    dispatch
+                                    (reader.SpannedSexpr.Sym
+                                      (ci.intern-syntax-id-from-raw
+                                        (parse-ast-extern-varargs-tail-id
+                                          ty-name))
+                                      (token.SourceSpan
+                                        (token.span-start-line ty-span)
+                                        (+ (token.span-start-col ty-span) 3)
+                                        (token.span-end-line ty-span)
+                                        (token.span-end-col ty-span))))
+                                  (ResultAstExternHeadItem.Ok
+                                    (AstExternHeadItem.VarargsTyped tail-ty)))]
                               [(ResultAstType.Err message)
                                 (ResultAstExternHeadItem.Err message)])
                             (parse-ast-extern-head-fixed-param
@@ -9143,7 +9800,7 @@
   (match (reader.spanned-sexpr-view rest)
     [(reader.SpannedSexprView.Cons name-node variants _)
       (match (reader.spanned-sexpr-view name-node)
-        [(reader.SpannedSexprView.Sym name _)
+        [(reader.SpannedSexprView.Sym name name-span)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
@@ -9152,45 +9809,52 @@
                   0
                   "__tl_member_origin"
                   (reader.spanned-sexpr-span name-node)))]
-            (match (parse-ast-defenum-items
-              dispatch
-              pools
-              variants
-              (ast.ast-lifetime-list-new)
-              (ast.AstEnumCleanup.No)
-              false
-              false
-              false)
-              [(ResultAstEnumDefParts.Ok lifetimes cleanup parsed-variants)
-                (begin
-                  (set!
-                    (array-ref reader.sp-node-pool-slots member-marker)
-                    (reader.SpannedSexpr.Int
-                      (unsafe
-                        (cast
-                          (ptr->int
-                            (ptr-cast
-                              (__tl_array-data parsed-variants.slots)
-                              : (Ptr u8)))
-                          : i64))
-                      "__tl_member_origin"
-                      (reader.spanned-sexpr-span name-node)))
-                  (if (ast.ast-variant-def-list-empty? (& parsed-variants))
-                    (ResultAstDecl.Err
-                      "parse: defenum needs at least one variant")
-                    (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                      (ResultAstDecl.Ok
-                        (ast.ast-decl-def-enum-id
-                          name-id
-                          cleanup
-                          parsed-variants))
-                      (ResultAstDecl.Ok
-                        (ast.ast-decl-def-enum-lifetimes-id
-                          name-id
-                          lifetimes
-                          cleanup
-                          parsed-variants)))))]
-              [(ResultAstEnumDefParts.Err message) (ResultAstDecl.Err message)]))]
+            (begin
+              (compiler-parse-semantic-origin-push-components!
+                name
+                name-span
+                (CompilerParseSemanticOriginKind.ModulePath)
+                (CompilerParseSemanticOriginKind.TypeDefinition))
+              (match (parse-ast-defenum-items
+                dispatch
+                pools
+                variants
+                (ast.ast-lifetime-list-new)
+                (ast.AstEnumCleanup.No)
+                false
+                false
+                false)
+                [(ResultAstEnumDefParts.Ok lifetimes cleanup parsed-variants)
+                  (begin
+                    (set!
+                      (array-ref reader.sp-node-pool-slots member-marker)
+                      (reader.SpannedSexpr.Int
+                        (unsafe
+                          (cast
+                            (ptr->int
+                              (ptr-cast
+                                (__tl_array-data parsed-variants.slots)
+                                : (Ptr u8)))
+                            : i64))
+                        "__tl_member_origin"
+                        (reader.spanned-sexpr-span name-node)))
+                    (if (ast.ast-variant-def-list-empty? (& parsed-variants))
+                      (ResultAstDecl.Err
+                        "parse: defenum needs at least one variant")
+                      (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                        (ResultAstDecl.Ok
+                          (ast.ast-decl-def-enum-id
+                            name-id
+                            cleanup
+                            parsed-variants))
+                        (ResultAstDecl.Ok
+                          (ast.ast-decl-def-enum-lifetimes-id
+                            name-id
+                            lifetimes
+                            cleanup
+                            parsed-variants)))))]
+                [(ResultAstEnumDefParts.Err message)
+                  (ResultAstDecl.Err message)])))]
         [_ (ResultAstDecl.Err "parse: malformed defenum")])]
     [_ (ResultAstDecl.Err "parse: malformed defenum")]))
 
@@ -9201,7 +9865,7 @@
   (match (reader.spanned-sexpr-view rest)
     [(reader.SpannedSexprView.Cons name-node fields _)
       (match (reader.spanned-sexpr-view name-node)
-        [(reader.SpannedSexprView.Sym name _)
+        [(reader.SpannedSexprView.Sym name name-span)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
@@ -9210,51 +9874,61 @@
                   0
                   "__tl_member_origin"
                   (reader.spanned-sexpr-span name-node)))]
-            (match (parse-ast-defstruct-items
-              dispatch
-              pools
-              fields
-              (ast.ast-lifetime-list-new)
-              (ast.AstStructRepr.Default)
-              (ast.AstStructCleanup.No)
-              (ast.ast-field-def-list-new)
-              false
-              false
-              false
-              false)
-              [(ResultAstStructDefParts.Ok lifetimes repr cleanup parsed-fields)
-                (begin
-                  (set!
-                    (array-ref reader.sp-node-pool-slots member-marker)
-                    (reader.SpannedSexpr.Int
-                      (unsafe
-                        (cast
-                          (ptr->int
-                            (ptr-cast
-                              (__tl_array-data parsed-fields.slots)
-                              : (Ptr u8)))
-                          : i64))
-                      "__tl_member_origin"
-                      (reader.spanned-sexpr-span name-node)))
-                  (if (ast.ast-field-def-list-empty? (& parsed-fields))
-                    (ResultAstDecl.Err
-                      "parse: defstruct needs at least one field")
-                    (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                      (ResultAstDecl.Ok
-                        (ast.ast-decl-def-struct-id
-                          name-id
-                          repr
-                          cleanup
-                          parsed-fields))
-                      (ResultAstDecl.Ok
-                        (ast.ast-decl-def-struct-lifetimes-id
-                          name-id
-                          lifetimes
-                          repr
-                          cleanup
-                          parsed-fields)))))]
-              [(ResultAstStructDefParts.Err message)
-                (ResultAstDecl.Err message)]))]
+            (begin
+              (compiler-parse-semantic-origin-push-components!
+                name
+                name-span
+                (CompilerParseSemanticOriginKind.ModulePath)
+                (CompilerParseSemanticOriginKind.TypeDefinition))
+              (match (parse-ast-defstruct-items
+                dispatch
+                pools
+                fields
+                (ast.ast-lifetime-list-new)
+                (ast.AstStructRepr.Default)
+                (ast.AstStructCleanup.No)
+                (ast.ast-field-def-list-new)
+                false
+                false
+                false
+                false)
+                [(ResultAstStructDefParts.Ok
+                    lifetimes
+                    repr
+                    cleanup
+                    parsed-fields)
+                  (begin
+                    (set!
+                      (array-ref reader.sp-node-pool-slots member-marker)
+                      (reader.SpannedSexpr.Int
+                        (unsafe
+                          (cast
+                            (ptr->int
+                              (ptr-cast
+                                (__tl_array-data parsed-fields.slots)
+                                : (Ptr u8)))
+                            : i64))
+                        "__tl_member_origin"
+                        (reader.spanned-sexpr-span name-node)))
+                    (if (ast.ast-field-def-list-empty? (& parsed-fields))
+                      (ResultAstDecl.Err
+                        "parse: defstruct needs at least one field")
+                      (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                        (ResultAstDecl.Ok
+                          (ast.ast-decl-def-struct-id
+                            name-id
+                            repr
+                            cleanup
+                            parsed-fields))
+                        (ResultAstDecl.Ok
+                          (ast.ast-decl-def-struct-lifetimes-id
+                            name-id
+                            lifetimes
+                            repr
+                            cleanup
+                            parsed-fields)))))]
+                [(ResultAstStructDefParts.Err message)
+                  (ResultAstDecl.Err message)])))]
         [_ (ResultAstDecl.Err "parse: malformed defstruct")])]
     [_ (ResultAstDecl.Err "parse: malformed defstruct")]))
 
@@ -9285,21 +9959,27 @@
   (match (reader.spanned-sexpr-view forms)
     [(reader.SpannedSexprView.Nil _) (ResultParseAstDeclVec.Ok)]
     [(reader.SpannedSexprView.Cons form rest _)
-      (match (parse-ast-decl-maybe-with-pools dispatch pools form)
-        [(ResultAstMaybeDecl.SomeDecl decl)
-          (begin
-            (parse-ast-decl-vec-push-with-span
-              out
-              decl
-              (compiler-parse-decl-origin-syntax-span dispatch form))
-            (parse-ast-module-body-forms-into-vec dispatch pools rest out))]
-        [(ResultAstMaybeDecl.Decls decls)
-          (begin
-            (parse-ast-decl-vec-push-list! out decls)
-            (parse-ast-module-body-forms-into-vec dispatch pools rest out))]
-        [(ResultAstMaybeDecl.NoDecl)
-          (parse-ast-module-body-forms-into-vec dispatch pools rest out)]
-        [(ResultAstMaybeDecl.Err message) (ResultParseAstDeclVec.Err message)])]
+      (let
+        [records-start : i64 (reader.sp-node-pool-len)]
+        (match (parse-ast-decl-maybe-with-pools dispatch pools form)
+          [(ResultAstMaybeDecl.SomeDecl decl)
+            (begin
+              (parse-ast-decl-vec-push-with-span-from-records!
+                out
+                decl
+                (compiler-parse-decl-origin-syntax-span dispatch form)
+                records-start)
+              (parse-ast-module-body-forms-into-vec dispatch pools rest out))]
+          [(ResultAstMaybeDecl.Decls decls)
+            (begin
+              (compiler-parse-semantic-origin-discard-records! records-start)
+              (parse-ast-decl-vec-push-list! out decls)
+              (parse-ast-module-body-forms-into-vec dispatch pools rest out))]
+          [(ResultAstMaybeDecl.NoDecl)
+            (begin
+              (compiler-parse-semantic-origin-discard-records! records-start)
+              (parse-ast-module-body-forms-into-vec dispatch pools rest out))]
+          [(ResultAstMaybeDecl.Err message) (ResultParseAstDeclVec.Err message)]))]
     [_ (ResultParseAstDeclVec.Err "parse: malformed module")]))
 
 (define (parse-ast-module-body
@@ -9324,17 +10004,23 @@
   (match (reader.spanned-sexpr-view rest)
     [(reader.SpannedSexprView.Cons name-node end _)
       (match (reader.spanned-sexpr-view name-node)
-        [(reader.SpannedSexprView.Sym name _)
-          (match (reader.spanned-sexpr-view end)
-            [(reader.SpannedSexprView.Nil _)
-              (ResultAstDecl.Ok
-                (ast.ast-decl-module-id (ci.intern-syntax-id-value name)))]
-            [_
-              (parse-ast-module-body
-                dispatch
-                pools
-                (ci.intern-syntax-id-value name)
-                end)])]
+        [(reader.SpannedSexprView.Sym name span)
+          (begin
+            (compiler-parse-semantic-origin-push-components!
+              name
+              span
+              (CompilerParseSemanticOriginKind.ModuleDefinition)
+              (CompilerParseSemanticOriginKind.ModuleDefinition))
+            (match (reader.spanned-sexpr-view end)
+              [(reader.SpannedSexprView.Nil _)
+                (ResultAstDecl.Ok
+                  (ast.ast-decl-module-id (ci.intern-syntax-id-value name)))]
+              [_
+                (parse-ast-module-body
+                  dispatch
+                  pools
+                  (ci.intern-syntax-id-value name)
+                  end)]))]
         [_ (ResultAstDecl.Err "parse: malformed module")])]
     [_ (ResultAstDecl.Err "parse: malformed module")]))
 
@@ -9364,17 +10050,23 @@
               (match (reader.spanned-sexpr-view end)
                 [(reader.SpannedSexprView.Nil _)
                   (match (reader.spanned-sexpr-view alias-node)
-                    [(reader.SpannedSexprView.Sym alias _)
+                    [(reader.SpannedSexprView.Sym alias alias-span)
                       (if (=
                         (ci.intern-syntax-id-value as-name)
                         (cbi.compiler-builtin-ctfe-ref 260))
-                        (parse-ast-import-spec
-                          kind
-                          path
-                          module-name
-                          (ast.AstMaybeImportAlias.Some
-                            (ci.intern-syntax-id-value alias))
-                          span)
+                        (begin
+                          (compiler-parse-semantic-origin-push-components!
+                            alias
+                            alias-span
+                            (CompilerParseSemanticOriginKind.ModulePath)
+                            (CompilerParseSemanticOriginKind.ImportAlias))
+                          (parse-ast-import-spec
+                            kind
+                            path
+                            module-name
+                            (ast.AstMaybeImportAlias.Some
+                              (ci.intern-syntax-id-value alias))
+                            span))
                         (ResultAstDecl.Err "parse: malformed import"))]
                     [_ (ResultAstDecl.Err "parse: malformed import")])]
                 [_ (ResultAstDecl.Err "parse: malformed import")])]
@@ -9484,6 +10176,53 @@
     [n : i64 (string.string-length name)]
     (and (>= n 2) (string.eq (string.substring name (- n 2) 2) ".*"))))
 
+(define (compiler-parse-semantic-import-path-origins!
+  [module-name : ci.InternSyntaxId]
+  [span : token.SourceSpan]) : unit
+  (let
+    [text : String (ci.intern-syntax-id-text module-name)]
+    [wildcard : bool (parse-ast-dotted-import-wildcard? text)]
+    (begin
+      (if wildcard
+        (compiler-parse-semantic-origin-push-components!
+          (ci.intern-syntax-id-from-raw
+            (ci.intern-dotted-prefix-id (ci.intern-syntax-id-value module-name)))
+          (token.SourceSpan
+            (token.span-start-line span)
+            (token.span-start-col span)
+            (token.span-end-line span)
+            (- (token.span-end-col span) 2))
+          (CompilerParseSemanticOriginKind.ModulePath)
+          (CompilerParseSemanticOriginKind.ModulePath))
+        (compiler-parse-semantic-origin-push-components!
+          module-name
+          span
+          (CompilerParseSemanticOriginKind.ModulePath)
+          (CompilerParseSemanticOriginKind.ModulePath)))
+      unit)))
+
+(define (compiler-parse-semantic-default-import-alias-origin!
+  [module-name : ci.InternSyntaxId]
+  [span : token.SourceSpan]) : unit
+  (let
+    [text : String (ci.intern-syntax-id-text module-name)]
+    [start-line : i64 (token.span-start-line span)]
+    [start-col : i64 (token.span-start-col span)]
+    [end-line : i64 (token.span-end-line span)]
+    (if (parse-ast-dotted-import-wildcard? text)
+      unit
+      (let
+        [start : i64 (parse-ast-dotted-import-default-alias-start text)]
+        [n : i64 (string.string-length text)]
+        (compiler-parse-semantic-origin-push!
+          (CompilerParseSemanticOriginKind.ImportAlias)
+          (ci.intern-slice text start (- n start))
+          (token.SourceSpan
+            start-line
+            (+ start-col start)
+            end-line
+            (+ start-col n)))))))
+
 (define (parse-ast-dotted-import-tail
   [module-name-id : i64]
   [tail : reader.SpannedSexpr]
@@ -9542,11 +10281,41 @@
         [(reader.SpannedSexprView.Str _ _)
           (ResultAstDecl.Err
             "parse: string-path imports are no longer supported; use a dotted module identity")]
-        [(reader.SpannedSexprView.Sym module-name _)
-          (parse-ast-dotted-import-tail
-            (ci.intern-syntax-id-value module-name)
-            tail
-            span)]
+        [(reader.SpannedSexprView.Sym module-name module-span)
+          (let
+            [module-start-line : i64 module-span.start-line]
+            [module-start-col : i64 module-span.start-col]
+            [module-end-line : i64 module-span.end-line]
+            [module-end-col : i64 module-span.end-col]
+            (begin
+              (compiler-parse-semantic-import-path-origins!
+                module-name
+                (token.SourceSpan
+                  module-start-line
+                  module-start-col
+                  module-end-line
+                  module-end-col))
+              (let
+                [result : ResultAstDecl
+                  (parse-ast-dotted-import-tail
+                    (ci.intern-syntax-id-value module-name)
+                    tail
+                    span)]
+                (match result
+                  [(ResultAstDecl.Ok _)
+                    (begin
+                      (match (reader.spanned-sexpr-view tail)
+                        [(reader.SpannedSexprView.Nil _)
+                          (compiler-parse-semantic-default-import-alias-origin!
+                            module-name
+                            (token.SourceSpan
+                              module-start-line
+                              module-start-col
+                              module-end-line
+                              module-end-col))]
+                        [_ unit])
+                      result)]
+                  [(ResultAstDecl.Err _) result]))))]
         [(reader.SpannedSexprView.Cons _ _ _)
           (parse-ast-import-macro-tail dispatch pools path-node tail span)]
         [_ (ResultAstDecl.Err "parse: malformed import")])]
@@ -9917,9 +10686,71 @@
       (ast.ast-node-pool-context-install! pools)
       result)))
 
+(defstruct ParseSemanticOriginRecord
+  (kind-tag i64)
+  (written-name i64)
+  (start-line i64)
+  (start-col i64)
+  (end-line i64)
+  (end-col i64))
+
+(defstruct ParseSemanticOriginVec
+  (items (__tl_dyn-array ParseSemanticOriginRecord))
+  (len i64))
+
+(define (parse-semantic-origin-vec-with-capacity [capacity : i64]) : ParseSemanticOriginVec
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (ParseSemanticOriginVec (__tl_make-array ParseSemanticOriginRecord cap) 0)))
+
+(define (parse-semantic-origin-vec-grow!
+  [items : (&mut items ParseSemanticOriginVec)]) : unit
+  (let
+    [old : (__tl_dyn-array ParseSemanticOriginRecord) items.items]
+    [old-cap : i64 (array-length old)]
+    [next : (__tl_dyn-array ParseSemanticOriginRecord)
+      (__tl_make-array
+        ParseSemanticOriginRecord
+        (if (< old-cap 1)
+          1
+          (* old-cap 2)))]
+    [index : i64 0]
+    (begin
+      (while (< index items.len)
+        (let
+          [origin : ParseSemanticOriginRecord (array-ref old index)]
+          (begin
+            (set!
+              (array-ref next index)
+              (ParseSemanticOriginRecord
+                origin.kind-tag
+                origin.written-name
+                origin.start-line
+                origin.start-col
+                origin.end-line
+                origin.end-col))
+            (set! index (+ index 1)))))
+      (set! items.items next))))
+
+(define (parse-semantic-origin-vec-push!
+  [items : (&mut items ParseSemanticOriginVec)]
+  [origin : ParseSemanticOriginRecord]) : unit
+  (begin
+    (if (>= items.len (array-length items.items))
+      (parse-semantic-origin-vec-grow! items)
+      unit)
+    (set! (array-ref items.items items.len) origin)
+    (set! items.len (+ items.len 1))))
+
 (defstruct ParseAstDeclVec
   (slots (__tl_dyn-array ast.AstDecl))
   (spans (__tl_dyn-array ast.AstSourceSpan))
+  (semantic-origin-starts (__tl_dyn-array i64))
+  (semantic-origin-counts (__tl_dyn-array i64))
+  (semantic-origins ParseSemanticOriginVec)
   (len i64))
 
 (define (parse-ast-decl-vec-fallback) : ast.AstDecl
@@ -9935,6 +10766,9 @@
     (ParseAstDeclVec
       (__tl_make-array ast.AstDecl cap)
       (__tl_make-array ast.AstSourceSpan cap)
+      (__tl_make-array i64 cap)
+      (__tl_make-array i64 cap)
+      (parse-semantic-origin-vec-with-capacity cap)
       0)))
 
 (define (parse-ast-decl-vec-new) : ParseAstDeclVec
@@ -9973,6 +10807,17 @@
       (set! (array-ref dst index) (array-ref src index))
       (parse-ast-decl-vec-span-copy-range dst src (+ index 1) count))))
 
+(define (parse-ast-decl-vec-i64-copy-range
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [src : (& src (__tl_dyn-array i64))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (set! (array-ref dst index) (array-ref src index))
+      (parse-ast-decl-vec-i64-copy-range dst src (+ index 1) count))))
+
 (define (parse-ast-decl-vec-grow [v : (&mut v ParseAstDeclVec)]) : unit
   (let
     [n : i64 v.len]
@@ -9985,16 +10830,32 @@
       (__tl_make-array ast.AstDecl new-cap)]
     [bigger-spans : (__tl_dyn-array ast.AstSourceSpan)
       (__tl_make-array ast.AstSourceSpan new-cap)]
+    [bigger-origin-starts : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
+    [bigger-origin-counts : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
     (begin
       (parse-ast-decl-vec-copy-range (&mut bigger) (& v.slots) 0 n)
       (parse-ast-decl-vec-span-copy-range (&mut bigger-spans) (& v.spans) 0 n)
+      (parse-ast-decl-vec-i64-copy-range
+        (&mut bigger-origin-starts)
+        (& v.semantic-origin-starts)
+        0
+        n)
+      (parse-ast-decl-vec-i64-copy-range
+        (&mut bigger-origin-counts)
+        (& v.semantic-origin-counts)
+        0
+        n)
       (set! v.slots bigger)
-      (set! v.spans bigger-spans))))
+      (set! v.spans bigger-spans)
+      (set! v.semantic-origin-starts bigger-origin-starts)
+      (set! v.semantic-origin-counts bigger-origin-counts))))
 
-(define (parse-ast-decl-vec-push-with-span
+(define (parse-ast-decl-vec-push-with-span-and-semantic-range!
   [v : (&mut v ParseAstDeclVec)]
   [value : ast.AstDecl]
-  [span : ast.AstSourceSpan]) : unit
+  [span : ast.AstSourceSpan]
+  [semantic-origin-start : i64]
+  [semantic-origin-count : i64]) : unit
   (begin
     (if (< v.len (array-length v.slots))
       unit
@@ -10004,7 +10865,118 @@
       (begin
         (set! (array-ref v.slots index) value)
         (set! (array-ref v.spans index) span)
+        (set! (array-ref v.semantic-origin-starts index) semantic-origin-start)
+        (set! (array-ref v.semantic-origin-counts index) semantic-origin-count)
         (set! v.len (+ index 1))))))
+
+(define (parse-ast-decl-vec-push-with-span
+  [v : (&mut v ParseAstDeclVec)]
+  [value : ast.AstDecl]
+  [span : ast.AstSourceSpan]) : unit
+  (parse-ast-decl-vec-push-with-span-and-semantic-range!
+    v
+    value
+    span
+    v.semantic-origins.len
+    0))
+
+(define (parse-ast-decl-vec-capture-semantic-origins!
+  [v : (&mut v ParseAstDeclVec)]
+  [records-start : i64]) : i64
+  (let
+    [cursor : i64 records-start]
+    [count : i64 0]
+    [end : i64 (reader.sp-node-pool-len)]
+    (begin
+      (while (< cursor end)
+        (let
+          [advance : i64 1]
+          (begin
+            (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+              [(reader.SpannedSexprView.Int written-name marker span)
+                (cond
+                  [(and
+                      (string.eq marker "__tl_semantic_origin")
+                      (< (+ cursor 1) end))
+                    (match (reader.spanned-sexpr-view
+                      (reader.sp-node-get (+ cursor 1)))
+                      [(reader.SpannedSexprView.Int _ run-marker run-span)
+                        (if (string.eq run-marker "__tl_semantic_origin_start")
+                          (set! advance (+ 2 (token.span-start-line run-span)))
+                          unit)]
+                      [_ unit])]
+                  [(compiler-parse-semantic-origin-marker? marker)
+                    (begin
+                      (parse-semantic-origin-vec-push!
+                        (&mut v.semantic-origins)
+                        (ParseSemanticOriginRecord
+                          (compiler-parse-semantic-origin-kind-tag
+                            (compiler-parse-semantic-origin-kind-from-marker
+                              marker))
+                          written-name
+                          span.start-line
+                          span.start-col
+                          span.end-line
+                          span.end-col))
+                      (set!
+                        (array-ref reader.sp-node-pool-slots cursor)
+                        (reader.SpannedSexpr.Int
+                          written-name
+                          "__tl_semantic_origin_consumed"
+                          span))
+                      (set! count (+ count 1)))]
+                  [else unit])]
+              [_ unit])
+            (set! cursor (+ cursor advance)))))
+      count)))
+
+(define (parse-ast-decl-vec-push-with-span-from-records!
+  [v : (&mut v ParseAstDeclVec)]
+  [value : ast.AstDecl]
+  [span : ast.AstSourceSpan]
+  [records-start : i64]) : unit
+  (let
+    [semantic-origin-start : i64 v.semantic-origins.len]
+    [semantic-origin-count : i64
+      (parse-ast-decl-vec-capture-semantic-origins! v records-start)]
+    (parse-ast-decl-vec-push-with-span-and-semantic-range!
+      v
+      value
+      span
+      semantic-origin-start
+      semantic-origin-count)))
+
+(define (compiler-parse-semantic-origin-discard-records! [records-start : i64]) : unit
+  (let
+    [cursor : i64 records-start]
+    [end : i64 (reader.sp-node-pool-len)]
+    (while (< cursor end)
+      (let
+        [advance : i64 1]
+        (begin
+          (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+            [(reader.SpannedSexprView.Int written-name marker span)
+              (cond
+                [(and
+                    (string.eq marker "__tl_semantic_origin")
+                    (< (+ cursor 1) end))
+                  (match (reader.spanned-sexpr-view
+                    (reader.sp-node-get (+ cursor 1)))
+                    [(reader.SpannedSexprView.Int _ run-marker run-span)
+                      (if (string.eq run-marker "__tl_semantic_origin_start")
+                        (set! advance (+ 2 (token.span-start-line run-span)))
+                        unit)]
+                    [_ unit])]
+                [(compiler-parse-semantic-origin-marker? marker)
+                  (set!
+                    (array-ref reader.sp-node-pool-slots cursor)
+                    (reader.SpannedSexpr.Int
+                      written-name
+                      "__tl_semantic_origin_consumed"
+                      span))]
+                [else unit])]
+            [_ unit])
+          (set! cursor (+ cursor advance)))))))
 
 (define (parse-ast-decl-vec-push
   [v : (&mut v ParseAstDeclVec)]
@@ -10066,6 +11038,67 @@
           unit)
         (set! index (+ index 1))))))
 
+(define (compiler-parse-semantic-origin-register-run!
+  [decls : (& decls ast.AstDeclList)]
+  [slot : i64]
+  [origins : (& origins ParseSemanticOriginVec)]
+  [start : i64]
+  [count : i64]) : unit
+  (if (<= count 0)
+    unit
+    (let
+      [first : ParseSemanticOriginRecord (array-ref origins.items start)]
+      [marker-span : token.SourceSpan
+        (token.SourceSpan
+          first.start-line
+          first.start-col
+          first.end-line
+          first.end-col)]
+      [index : i64 0]
+      (begin
+        (reader.sp-node-push
+          (reader.SpannedSexpr.Int
+            (compiler-parse-decl-list-storage-key decls)
+            "__tl_semantic_origin"
+            marker-span))
+        (reader.sp-node-push
+          (reader.SpannedSexpr.Int
+            (+ decls.offset slot)
+            "__tl_semantic_origin_start"
+            (token.SourceSpan count 0 0 0)))
+        (while (< index count)
+          (let
+            [origin : ParseSemanticOriginRecord
+              (array-ref origins.items (+ start index))]
+            (begin
+              (reader.sp-node-push
+                (reader.SpannedSexpr.Int
+                  origin.written-name
+                  (compiler-parse-semantic-origin-kind-marker
+                    (compiler-parse-semantic-origin-kind-from-tag
+                      origin.kind-tag))
+                  (token.SourceSpan
+                    origin.start-line
+                    origin.start-col
+                    origin.end-line
+                    origin.end-col)))
+              (set! index (+ index 1)))))))))
+
+(define (compiler-parse-semantic-origin-register-selected!
+  [items : (& items ParseAstDeclVec)]
+  [out : (& out ast.AstDeclList)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (parse-ast-decl-vec-len items))
+      (begin
+        (compiler-parse-semantic-origin-register-run!
+          out
+          index
+          (& items.semantic-origins)
+          (array-ref items.semantic-origin-starts index)
+          (array-ref items.semantic-origin-counts index))
+        (set! index (+ index 1))))))
+
 (define (parse-ast-decl-vec-to-list [items : (& items ParseAstDeclVec)]) : ast.AstDeclList
   (let
     [out : ast.AstDeclList
@@ -10073,6 +11106,7 @@
     (begin
       (parse-ast-decl-vec-copy-to-list items 0 (&mut out))
       (compiler-parse-decl-origin-register-selected! items (& out))
+      (compiler-parse-semantic-origin-register-selected! items (& out))
       out)))
 
 ;; Wrappers are declarations semantically, but declaration-shape errors belong
@@ -10132,28 +11166,54 @@
         [(reader.ResultSpannedSexpr.Ok form)
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
-            (match (parse-ast-decl-maybe-with-pools dispatch pools form)
-              [(ResultAstMaybeDecl.SomeDecl decl)
-                (begin
-                  (parse-ast-decl-vec-push-with-span
-                    out
-                    decl
-                    (compiler-parse-decl-origin-syntax-span dispatch form))
-                  (compiler-parse-member-records-compact! mark records-start)
-                  (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-              [(ResultAstMaybeDecl.Decls decls)
-                (begin
-                  (compiler-parse-member-records-compact! mark records-start)
-                  (parse-ast-decl-vec-push-list! out decls)
-                  (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-              [(ResultAstMaybeDecl.NoDecl)
-                (begin
-                  (compiler-parse-member-records-compact! mark records-start)
-                  (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-              [(ResultAstMaybeDecl.Err message)
-                (begin
-                  (reader.sp-node-pool-truncate! mark)
-                  (ResultParseAstDeclVec.Err message))]))]
+            (begin
+              (compiler-parse-semantic-origin-capture-begin!)
+              (match (parse-ast-decl-maybe-with-pools dispatch pools form)
+                [(ResultAstMaybeDecl.SomeDecl decl)
+                  (begin
+                    (parse-ast-decl-vec-push-with-span-from-records!
+                      out
+                      decl
+                      (compiler-parse-decl-origin-syntax-span dispatch form)
+                      records-start)
+                    (compiler-parse-semantic-origin-capture-end!)
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-program-forms-into-vec
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out))]
+                [(ResultAstMaybeDecl.Decls decls)
+                  (begin
+                    (compiler-parse-semantic-origin-discard-records!
+                      records-start)
+                    (compiler-parse-semantic-origin-capture-end!)
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-decl-vec-push-list! out decls)
+                    (parse-ast-program-forms-into-vec
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out))]
+                [(ResultAstMaybeDecl.NoDecl)
+                  (begin
+                    (compiler-parse-semantic-origin-discard-records!
+                      records-start)
+                    (compiler-parse-semantic-origin-capture-end!)
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-program-forms-into-vec
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out))]
+                [(ResultAstMaybeDecl.Err message)
+                  (begin
+                    (compiler-parse-semantic-origin-capture-end!)
+                    (reader.sp-node-pool-truncate! mark)
+                    (ResultParseAstDeclVec.Err message))])))]
         [(reader.ResultSpannedSexpr.Err err)
           (begin
             (reader.sp-node-pool-truncate! mark)
@@ -10195,6 +11255,7 @@
         (compiler-parse-array-data-addr-i64 invocation))]
     (begin
       (reader.sexpr-node-pool-reset!)
+      (compiler-parse-semantic-origin-capture-end!)
       (set! (array-ref cur 0) 0)
       (set!
         (array-ref invocation compiler-parse-invocation-control-slot)
@@ -10423,18 +11484,21 @@
             [records-start : i64 (reader.sp-node-pool-len)]
             (begin
               (parse-ast-error-span-clear! dispatch)
+              (compiler-parse-semantic-origin-capture-begin!)
               (match (parse-ast-decl-maybe-with-pools
                 dispatch
                 pools
                 spanned-form)
                 [(ResultAstMaybeDecl.SomeDecl decl)
                   (begin
-                    (parse-ast-decl-vec-push-with-span
+                    (parse-ast-decl-vec-push-with-span-from-records!
                       out
                       decl
                       (compiler-parse-decl-origin-syntax-span
                         dispatch
-                        spanned-form))
+                        spanned-form)
+                      records-start)
+                    (compiler-parse-semantic-origin-capture-end!)
                     (compiler-parse-member-records-compact! mark records-start)
                     (parse-ast-program-forms-recovery-into-vec
                       path
@@ -10446,6 +11510,9 @@
                       diagnostics))]
                 [(ResultAstMaybeDecl.Decls decls)
                   (begin
+                    (compiler-parse-semantic-origin-discard-records!
+                      records-start)
+                    (compiler-parse-semantic-origin-capture-end!)
                     (compiler-parse-member-records-compact! mark records-start)
                     (parse-ast-decl-vec-push-list! out decls)
                     (parse-ast-program-forms-recovery-into-vec
@@ -10458,6 +11525,9 @@
                       diagnostics))]
                 [(ResultAstMaybeDecl.NoDecl)
                   (begin
+                    (compiler-parse-semantic-origin-discard-records!
+                      records-start)
+                    (compiler-parse-semantic-origin-capture-end!)
                     (compiler-parse-member-records-compact! mark records-start)
                     (parse-ast-program-forms-recovery-into-vec
                       path
@@ -10478,6 +11548,7 @@
                             (reader.spanned-sexpr-span spanned-form))
                           message))]
                     (begin
+                      (compiler-parse-semantic-origin-capture-end!)
                       (reader.sp-node-pool-truncate! mark)
                       (cdiag.compiler-diagnostic-list-push! diagnostics diag)
                       (parse-ast-program-forms-recovery-into-vec
@@ -10606,18 +11677,21 @@
             [records-start : i64 (reader.sp-node-pool-len)]
             (begin
               (parse-ast-error-span-clear! dispatch)
+              (compiler-parse-semantic-origin-capture-begin!)
               (match (parse-ast-decl-maybe-with-pools
                 dispatch
                 pools
                 spanned-form)
                 [(ResultAstMaybeDecl.SomeDecl decl)
                   (begin
-                    (parse-ast-decl-vec-push-with-span
+                    (parse-ast-decl-vec-push-with-span-from-records!
                       out
                       decl
                       (compiler-parse-decl-origin-syntax-span
                         dispatch
-                        spanned-form))
+                        spanned-form)
+                      records-start)
+                    (compiler-parse-semantic-origin-capture-end!)
                     (compiler-parse-member-records-compact! mark records-start)
                     (parse-ast-program-forms-diagnostic-into-vec
                       path
@@ -10628,6 +11702,9 @@
                       out))]
                 [(ResultAstMaybeDecl.Decls decls)
                   (begin
+                    (compiler-parse-semantic-origin-discard-records!
+                      records-start)
+                    (compiler-parse-semantic-origin-capture-end!)
                     (compiler-parse-member-records-compact! mark records-start)
                     (parse-ast-decl-vec-push-list! out decls)
                     (parse-ast-program-forms-diagnostic-into-vec
@@ -10639,6 +11716,9 @@
                       out))]
                 [(ResultAstMaybeDecl.NoDecl)
                   (begin
+                    (compiler-parse-semantic-origin-discard-records!
+                      records-start)
+                    (compiler-parse-semantic-origin-capture-end!)
                     (compiler-parse-member-records-compact! mark records-start)
                     (parse-ast-program-forms-diagnostic-into-vec
                       path
@@ -10649,6 +11729,7 @@
                       out))]
                 [(ResultAstMaybeDecl.Err message)
                   (begin
+                    (compiler-parse-semantic-origin-capture-end!)
                     (reader.sp-node-pool-truncate! mark)
                     (ResultParseAstDeclVecDiagnostic.Err
                       (box

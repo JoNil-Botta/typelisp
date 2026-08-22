@@ -77193,7 +77193,7 @@
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
-  [intern-state : ci.InternCompatState]) : ResultCompilerLower
+  [intern-state-input : ci.InternCompatState]) : ResultCompilerLower
   (begin
     (cfg
       (any
@@ -77217,6 +77217,8 @@
       unit)
     (cfg compile-profile (compiler-lower-profile-start lower-state))
     (let
+      [intern-state : ci.InternCompatState
+        (ci.intern-global-shared-view intern-state-input)]
       [needs-specialization : bool
         (spec.compiler-specialize-needed-with-pools
           (lower-global-shared-view program)

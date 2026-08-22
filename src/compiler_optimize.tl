@@ -23229,30 +23229,32 @@
 
 (define (opt-licm-return-alias-add-functions
   [functions : ir.CompilerIrFunctionList]
-  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (match (compiler-opt-global-shared-view functions)
-    [(ir.CompilerIrFunctionList.Nil) out]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
-          (let
-            [index : i64
-              (opt-licm-return-alias-function-index
-                (compiler-opt-global-shared-view func))]
-            [_record : unit
-              (if (< index 0)
-                unit
-                (opt_i64_i64_map.insert-ref!
-                  (&mut out)
-                  (ir.compiler-ir-symbol-id name)
-                  (+ index 1)))]
-            (opt-licm-return-alias-add-functions
-              (compiler-opt-box-shared-view rest)
-              out))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-licm-return-alias-add-functions
-        (ir.compiler-ir-function-seq-to-list seq)
-        out)]))
+  [out-input : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (let
+    [out : opt_i64_i64_map.Map (compiler-opt-global-shared-view out-input)]
+    (match (compiler-opt-global-shared-view functions)
+      [(ir.CompilerIrFunctionList.Nil) out]
+      [(ir.CompilerIrFunctionList.Cons func rest)
+        (match (compiler-opt-global-shared-view func)
+          [(ir.CompilerIrFunction.Function name _ _ _ _)
+            (let
+              [index : i64
+                (opt-licm-return-alias-function-index
+                  (compiler-opt-global-shared-view func))]
+              [_record : unit
+                (if (< index 0)
+                  unit
+                  (opt_i64_i64_map.insert-ref!
+                    (&mut out)
+                    (ir.compiler-ir-symbol-id name)
+                    (+ index 1)))]
+              (opt-licm-return-alias-add-functions
+                (compiler-opt-box-shared-view rest)
+                out))])]
+      [(ir.CompilerIrFunctionList.Array seq)
+        (opt-licm-return-alias-add-functions
+          (ir.compiler-ir-function-seq-to-list seq)
+          out)])))
 
 (define (opt-licm-return-alias-map
   [functions : ir.CompilerIrFunctionList]
@@ -103445,7 +103447,7 @@
   [disq : opt_i64_i64_map.Map]
   [args : ir.CompilerIrSpmdCallArgSeq]) : opt_i64_i64_map.Map
   (let
-    [out : opt_i64_i64_map.Map disq]
+    [out : opt_i64_i64_map.Map (compiler-opt-global-shared-view disq)]
     [i : i64 0]
     (begin
       (while (< i args.len)
@@ -104582,7 +104584,7 @@
     OptI64List.Nil))
 
 (define (opt-global-cell-scan-ref [scan : OptGlobalCellScan] [name : i64]) : OptGlobalCellScan
-  (match scan
+  (match (compiler-opt-global-shared-view scan)
     [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
       (match (opt_i64_i64_map.get (& refs) name)
         [(opt_i64_i64_map.LookupFound seen)
@@ -104612,7 +104614,7 @@
               callee-list))])]))
 
 (define (opt-global-cell-scan-store [scan : OptGlobalCellScan] [name : i64]) : OptGlobalCellScan
-  (match scan
+  (match (compiler-opt-global-shared-view scan)
     [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
       (begin
         (opt_i64_i64_map.insert-ref! (&mut stores) name 1)
@@ -104637,7 +104639,7 @@
 ;; pass of it (opt-global-cell-summary-build) is what the table is built FROM --
 ;; so opt-global-cell-call-writes reads the rows once per function instead.
 (define (opt-global-cell-scan-callee [scan : OptGlobalCellScan] [name : i64]) : OptGlobalCellScan
-  (match scan
+  (match (compiler-opt-global-shared-view scan)
     [(OptGlobalCellScan refs ref-list stores call-any callees callee-list)
       (if (opt_i64_i64_map.contains? (& callees) name)
         (OptGlobalCellScan refs ref-list stores call-any callees callee-list)
@@ -105375,7 +105377,8 @@
           (if (>= next (opt-global-mod-ref-limit))
             (OptGlobalModRefIndex.No)
             (let
-              [assigned : opt_i64_i64_map.Map out]
+              [assigned : opt_i64_i64_map.Map
+                (compiler-opt-global-shared-view out)]
               (begin
                 (opt_i64_i64_map.insert-ref!
                   (&mut assigned)
@@ -105517,7 +105520,7 @@
                 (compiler-opt-global-shared-view function-set)
                 blocks
                 previous)]
-            [next : opt_i64_i64_map.Map out]
+            [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
             (begin
               (opt_i64_i64_map.insert-ref! (&mut next) name-id mask)
               (opt-global-mod-ref-pass
@@ -106508,7 +106511,7 @@
   [scan : OptGlobalFrozenWriterScan]
   [bad : (&mut bad opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : OptGlobalFrozenWriterScan
-  (match scan
+  (match (compiler-opt-global-shared-view scan)
     [(OptGlobalFrozenWriterScan writes allocs call-dsts)
       (let
         [alloc-dst : i64
@@ -107106,7 +107109,7 @@
                   disq
                   cand
                   (+ index 1))
-                (match cand
+                (match (compiler-opt-global-shared-view cand)
                   [(OptGlobalFrozenCandidates map names inits)
                     (if (opt_i64_i64_map.contains? (& inits) init-id)
                       (opt-global-frozen-candidates-fill
@@ -107188,7 +107191,7 @@
     [(OptI64List.Nil) out]
     [(OptI64List.Cons id rest)
       (let
-        [next : opt_i64_i64_map.Map out]
+        [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
         (begin
           ;; `seen` is what makes a missing initializer a refusal rather than a
           ;; silent pass: the backend's startup store is the one cell write the

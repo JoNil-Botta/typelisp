@@ -38661,20 +38661,23 @@
           link-symbol
           _
           provided)
-        (begin
-          (set! (array-ref link-symbols out-index) link-symbol)
-          (set! (array-ref provideds out-index) provided)
-          (backend_i64_i64_map.insert-ref!
-            (&mut link-references)
-            link-symbol
-            out-index)
-          (compiler-backend-program-index-extern-link-seq-into
-            externs
-            link-references
-            link-symbols
-            provideds
-            (+ out-index 1)
-            (+ seq-index 1)))])))
+        (let
+          [next-link-references : backend_i64_i64_map.Map
+            (compiler-backend-global-shared-view link-references)]
+          (begin
+            (set! (array-ref link-symbols out-index) link-symbol)
+            (set! (array-ref provideds out-index) provided)
+            (backend_i64_i64_map.insert-ref!
+              (&mut next-link-references)
+              link-symbol
+              out-index)
+            (compiler-backend-program-index-extern-link-seq-into
+              externs
+              next-link-references
+              link-symbols
+              provideds
+              (+ out-index 1)
+              (+ seq-index 1))))])))
 
 ;; Logical extern names carry parser/generated identities.
 (define (compiler-backend-program-index-extern-reference-names-into

@@ -15437,21 +15437,10 @@
             uniform-count
             (+ count 1))))]))
 
-;; Windows AVX2 has six volatile vector registers. The current allocator can
-;; corrupt masked calls and nested recurrences when a loop-wide vector crosses
-;; branch-state clones; keep pointer hoists there, but leave uniform-vector
-;; hoisting disabled until #6761 fixes those live ranges.
-;; Linux has sixteen vector registers, but the same allocator still needs a
-;; two-vector bound for high-pressure varying enum matches.
 (define (lower-masked-preheader-uniform-can-add? [state : LowerState]) : bool
   (match (lower-state-masked-preheader-cache state)
     [(LowerMaybeMaskedPreheaderCache.No) false]
-    [(LowerMaybeMaskedPreheaderCache.Some cache)
-      (match (lower-state-mode state)
-        [(CompilerLowerMode.WindowsAvx2) false]
-        [(CompilerLowerMode.LinuxAvx2)
-          (< (__tl-project-field (__tl-box-place cache) uniform-count) 2)]
-        [_ true])]))
+    [(LowerMaybeMaskedPreheaderCache.Some _cache) true]))
 
 (define (lower-masked-preheader-array-data-get
   [state : LowerState]

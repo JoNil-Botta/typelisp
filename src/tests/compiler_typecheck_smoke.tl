@@ -4290,14 +4290,26 @@
 ;; surfaced that poisoned miss as a bogus CompilerCtfeValue.I64 lookup failure.
 (define (compiler-typecheck-smoke-dotted-constructor-cache-domain-ok?) : bool
   (let
+    [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-state))]
     [bare-id : i64 (ci.intern "Full")]
     [dotted-id : i64 (ci.intern "Choice.Full")]
     [qualified-id : i64 (ci.intern "provider/Full")]
     (and
-      (tc_core.tc-constructor-non-root-bare-name-id? "entry" bare-id)
-      (not (tc_core.tc-constructor-non-root-bare-name-id? "entry" dotted-id))
-      (not (tc_core.tc-constructor-non-root-bare-name-id? "entry" qualified-id))
-      (not (tc_core.tc-constructor-non-root-bare-name-id? "" bare-id)))))
+      (tc_core.tc-constructor-non-root-bare-name-id? session "entry" bare-id)
+      (not
+        (tc_core.tc-constructor-non-root-bare-name-id?
+          session
+          "entry"
+          dotted-id))
+      (not
+        (tc_core.tc-constructor-non-root-bare-name-id?
+          session
+          "entry"
+          qualified-id))
+      (not (tc_core.tc-constructor-non-root-bare-name-id? session "" bare-id)))))
 
 (test
   compiler-typecheck-dotted-constructor-cache-domain
@@ -5352,73 +5364,220 @@
 
 (define (compiler-typecheck-smoke-hygiene-structural-ids-ok?) : bool
   (let
+    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [session-a : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-a))]
+    [session-b : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-b))]
     [source-id : i64 17]
     [module-id : i64 23]
     [declaration-id : i64 42]
-    [legacy-id : i64 (tc_core.macro-hygiene-global-id module-id source-id true)]
+    [root-module-id : i64 (compiler_symbols.compiler-symbol-root-module-id)]
+    [legacy-id : i64
+      (tc_core.macro-hygiene-global-id session-a module-id source-id true)]
     [context-id : i64
-      (tc_core.macro-hygiene-global-id module-id source-id false)]
+      (tc_core.macro-hygiene-global-id session-a module-id source-id false)]
     [root-context-id : i64
+      (tc_core.macro-hygiene-global-id session-a root-module-id source-id false)]
+    ;; The structural map starts with 512 slots. Adding 512 to one component
+    ;; preserves its first bucket while still requiring a distinct record.
+    [collision-context-id : i64
       (tc_core.macro-hygiene-global-id
-        (compiler_symbols.compiler-symbol-root-module-id)
-        source-id
+        session-a
+        module-id
+        (+ source-id 512)
         false)]
+    [definition-a : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity
+        session-a
+        root-module-id
+        source-id)]
+    [definition-a-again : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity
+        session-a
+        root-module-id
+        source-id)]
     [direct-local-id : i64
       (tc_core.macro-hygiene-local-id
+        session-a
         (tc_core.MacroHygieneContext
           source-id
-          (compiler_symbols.compiler-symbol-root-module-id)
+          root-module-id
           declaration-id
           (compiler_symbols.compiler-symbols-empty))
         3
         source-id)]
     [surface-local-id : i64
       (tc_core.macro-hygiene-local-id
+        session-a
         (tc_core.MacroHygieneContext
           source-id
-          (compiler_symbols.compiler-symbol-root-module-id)
+          root-module-id
           -1
           (compiler_symbols.compiler-symbols-empty))
         3
         source-id)]
     [other-macro-local-id : i64
       (tc_core.macro-hygiene-local-id
+        session-a
         (tc_core.MacroHygieneContext
           (+ source-id 1)
-          (compiler_symbols.compiler-symbol-root-module-id)
+          root-module-id
           declaration-id
           (compiler_symbols.compiler-symbols-empty))
         3
         source-id)]
-    (and
-      (tc_core.macro-hygiene-global-legacy-id? legacy-id)
-      (= (tc_core.macro-hygiene-global-module-id legacy-id) module-id)
-      (= (tc_core.macro-hygiene-global-module-id context-id) module-id)
-      (not (tc_core.macro-hygiene-global-legacy-id? root-context-id))
-      (=
-        (tc_core.macro-hygiene-global-module-id root-context-id)
-        (compiler_symbols.compiler-symbol-root-module-id))
-      (=
-        (tc_core.macro-hygiene-structural-source-name-id root-context-id)
-        source-id)
-      (tc_core.macro-hygiene-local-id? direct-local-id)
-      (tc_core.macro-hygiene-local-id? surface-local-id)
-      ;; The hygienic-local namespace belongs to the macro, not to the route
-      ;; that resolved it: a dense symbol declaration id and the surface
-      ;; fallback must rename the same local to the same id. Two different
-      ;; macros still get two namespaces.
-      (= direct-local-id surface-local-id)
-      (not (= direct-local-id other-macro-local-id)))))
+    [deep-local-id : i64
+      (tc_core.macro-hygiene-local-id
+        session-a
+        (tc_core.MacroHygieneContext
+          source-id
+          root-module-id
+          declaration-id
+          (compiler_symbols.compiler-symbols-empty))
+        1024
+        source-id)]
+    [deep-local-again : i64
+      (tc_core.macro-hygiene-local-id
+        session-a
+        (tc_core.MacroHygieneContext
+          source-id
+          root-module-id
+          -1
+          (compiler_symbols.compiler-symbols-empty))
+        1024
+        source-id)]
+    [collision-local-id : i64
+      (tc_core.macro-hygiene-local-id
+        session-a
+        (tc_core.MacroHygieneContext
+          source-id
+          root-module-id
+          declaration-id
+          (compiler_symbols.compiler-symbols-empty))
+        1536
+        source-id)]
+    [b-context-id : i64
+      (tc_core.macro-hygiene-global-id session-b module-id source-id false)]
+    [b-local-id : i64
+      (tc_core.macro-hygiene-local-id
+        session-b
+        (tc_core.MacroHygieneContext
+          source-id
+          root-module-id
+          declaration-id
+          (compiler_symbols.compiler-symbols-empty))
+        3
+        source-id)]
+    [before-reset : bool
+      (and
+        (tc_core.macro-hygiene-global-legacy-id? session-a legacy-id)
+        (=
+          (tc_core.macro-hygiene-global-module-id session-a legacy-id)
+          module-id)
+        (=
+          (tc_core.macro-hygiene-global-module-id session-a context-id)
+          module-id)
+        (not
+          (tc_core.macro-hygiene-global-legacy-id? session-a root-context-id))
+        (=
+          (tc_core.macro-hygiene-global-module-id session-a root-context-id)
+          root-module-id)
+        (=
+          (tc_core.macro-hygiene-structural-source-name-id
+            session-a
+            root-context-id)
+          source-id)
+        (tc_core.macro-hygiene-local-id? session-a direct-local-id)
+        (tc_core.macro-hygiene-local-id? session-a surface-local-id)
+        ;; Dense declaration ids are deliberately absent from the structural
+        ;; macro definition key, preserving generated-module replay stability.
+        (= direct-local-id surface-local-id)
+        (= deep-local-id deep-local-again)
+        (not (= direct-local-id other-macro-local-id))
+        (not (= context-id collision-context-id))
+        (not (= deep-local-id collision-local-id))
+        (=
+          (cis.intern-macro-definition-identity-raw definition-a)
+          (cis.intern-macro-definition-identity-raw definition-a-again))
+        (not
+          (= (cis.intern-macro-definition-identity-raw definition-a) context-id))
+        (not (= context-id b-context-id))
+        (not (= direct-local-id b-local-id))
+        (not (tc_core.macro-hygiene-global-id? session-b context-id))
+        (not (tc_core.macro-hygiene-local-id? session-b direct-local-id))
+        (match (cis.intern-structural-session-macro-global-record-for-raw
+          session-a
+          context-id)
+          [(cis.InternMaybeMacroGlobalRecord.Some record)
+            (and
+              (= record.definition-module-id module-id)
+              (= record.source-name-id source-id)
+              (match record.role
+                [(cis.InternMacroGlobalRole.Context) true]
+                [_ false]))]
+          [_ false])
+        (match (cis.intern-structural-session-macro-local-record-for-raw
+          session-a
+          deep-local-id)
+          [(cis.InternMaybeMacroLocalRecord.Some record)
+            (and
+              (= record.lexical-depth 1024)
+              (= record.source-name-id source-id)
+              (match (cis.intern-structural-session-macro-definition-record
+                session-a
+                record.macro-definition)
+                [(cis.InternMaybeMacroDefinitionRecord.Some definition)
+                  (and
+                    (= definition.definition-module-id root-module-id)
+                    (= definition.macro-name-id source-id))]
+                [_ false]))]
+          [_ false])
+        (=
+          (cis.intern-structural-session-kind-count
+            session-a
+            (ci.intern-structural-kind-macro-definition))
+          2)
+        (=
+          (cis.intern-structural-session-kind-count
+            session-a
+            (ci.intern-structural-kind-macro-global))
+          4)
+        (=
+          (cis.intern-structural-session-kind-count
+            session-a
+            (ci.intern-structural-kind-macro-local))
+          4)
+        (= (ci.intern-compat-state-structural-count intern-a) 10)
+        (= (ci.intern-structural-record-slot-bytes) 37))]
+    (begin
+      (ci.intern-compat-state-reset-to! intern-a 0)
+      (let
+        [next-session-a : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names
+            (ci.intern-source-name-session-handle-from-state intern-a))]
+        [reset-ok : bool
+          (and
+            before-reset
+            (not (cis.intern-structural-session-valid? session-a))
+            (cis.intern-structural-session-valid? next-session-a)
+            (not (tc_core.macro-hygiene-global-id? next-session-a context-id))
+            (not
+              (tc_core.macro-hygiene-local-id? next-session-a direct-local-id))
+            (tc_core.macro-hygiene-global-id? session-b b-context-id)
+            (tc_core.macro-hygiene-local-id? session-b b-local-id))]
+        (begin
+          (ci.intern-compat-state-reset! intern-b)
+          (and reset-ok (not (cis.intern-structural-session-valid? session-b))))))))
 
 (define (compiler-typecheck-smoke-structural-name-rendering-ok?) : bool
   (let
     [source-name-id : i64 (ci.intern "generated.module")]
     [owner-module-id : i64 (ci.intern "macro.owner")]
     [item-name-id : i64 (ci.intern "Item")]
-    [structural-module-id : i64
-      (tc_core.macro-hygiene-global-id owner-module-id source-name-id false)]
-    [qualified-item-id : i64
-      (ci.intern-composite-pair-id structural-module-id item-name-id)]
     [ctx : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -5427,17 +5586,34 @@
         ""
         cbi.compiler-builtin-id-fix-empty
         (ast.ast-node-pool-context-capture-active))]
+    [session : cis.InternStructuralSessionHandle
+      (tc_core.tc-context-structural-session ctx)]
+    [structural-module-id : i64
+      (tc_core.macro-hygiene-global-id
+        session
+        owner-module-id
+        source-name-id
+        false)]
+    [qualified-item-id : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-pair-key
+          session
+          structural-module-id
+          item-name-id))]
     (and
       (string.eq
-        (tc_core.tc-env-key-name-text structural-module-id)
+        (tc_core.tc-env-key-name-text-for-session session structural-module-id)
         "generated.module")
       (string.eq
-        (ast.ast-nominal-name-id-display qualified-item-id)
+        (tc_core.tc-env-key-name-text-for-session session qualified-item-id)
         "generated.module/Item")
       (=
         (tc_core.tc-source-name-id-or ctx structural-module-id -1)
         source-name-id)
-      (tc_core.tc-module-identity-id-eq? structural-module-id source-name-id))))
+      (tc_core.tc-module-identity-id-eq?
+        session
+        structural-module-id
+        source-name-id))))
 
 (test
   compiler-typecheck-structural-name-rendering

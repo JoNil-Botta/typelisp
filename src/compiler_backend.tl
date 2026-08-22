@@ -73456,7 +73456,22 @@
         ;; copied those bytes into the home-owned output stream, nothing reads
         ;; them again, but they used to stay resident in the backend emit arena
         ;; for the whole per-function loop -- underneath the compile-wide peak.
-        ;; Mark here and release after the stream has consumed the prefix.
+        ;; Prefix helpers share a few ABI/rendering utilities with function
+        ;; emission. Give them an entry-owned function carrier explicitly;
+        ;; otherwise the compatibility getter installs one in the backend
+        ;; state's process-lived owner on every batch entry.
+        [prefix-previous-function-state-address : i64
+          (compiler-backend-state-function-state-address
+            program-index.backend-state)]
+        [prefix-function-state : CompilerBackendFunctionState
+          (compiler-backend-function-state-new)]
+        [_prefix-function-state-install : unit
+          (compiler-backend-state-install-function-state!
+            program-index.backend-state
+            prefix-function-state)]
+        ;; Preserve the carrier across the prefix rewind; everything allocated
+        ;; after this mark is pure prefix output and may be released once the
+        ;; stream has consumed it.
         [prefix-mark : arena.ArenaMark (arena.mark)]
         [base-prefix-buf : text_buf.TextBuf
           (compiler-backend-emit-program-prefix-buffer
@@ -73506,6 +73521,13 @@
                 (arena.rewind prefix-mark))
               (text_buf.empty))
             prefix-buf)]
+        [_prefix-function-state-retire : unit
+          (begin
+            (compiler-backend-clear-function-owned-state!
+              program-index.backend-state)
+            (compiler-backend-state-set-function-state-address!
+              program-index.backend-state
+              prefix-previous-function-state-address))]
         (begin
           ;; This window previously started at the "collect" finish and was
           ;; overwritten by the next start without ever being reported,

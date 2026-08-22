@@ -8,6 +8,7 @@
 (import compiler_ir_types)
 (import compiler_ast_types)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_parse_core)
 (import compiler_typecheck_core)
 (import compiler_symbols)
@@ -2984,6 +2985,19 @@
     [(compiler_ir_types.CompilerIrInstr.Load _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-splat-shape-count
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [lanes : i64]
+  [elem-ty : compiler_ast_types.AstType]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Splat _ _ actual-lanes actual-ty)
+      (if (and
+        (= actual-lanes lanes)
+        (compiler_typecheck_core.tc-type-eq actual-ty elem-ty))
+        1
+        0)]
+    [_ 0]))
+
 (define (lower-test-instr-branch-count
   [instr : compiler_ir_types.CompilerIrInstr]) : i64
   (match instr
@@ -3632,6 +3646,29 @@
           (set!
             acc
             (+ acc (lower-test-instr-load-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-splat-shape-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [lanes : i64]
+  [elem-ty : compiler_ast_types.AstType]) : i64
+  (let
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-splat-shape-count
+                (array-ref slots index)
+                lanes
+                elem-ty)))
           (set! index (+ index 1))))
       acc)))
 
@@ -4345,6 +4382,47 @@
       (lower-test-blocks-load-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
 
+(define (lower-test-blocks-splat-shape-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [lanes : i64]
+  [elem-ty : compiler_ast_types.AstType]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (lower-test-instr-seq-splat-shape-count instrs lanes elem-ty)
+            (lower-test-blocks-splat-shape-count
+              (__tl-box-place rest)
+              lanes
+              elem-ty))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (lower-test-blocks-splat-shape-count
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        lanes
+        elem-ty)]))
+
+(define (lower-test-blocks-label-load-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [want-label : String]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+          (if (string.eq
+            (compiler_ir_types.compiler-ir-label-text label)
+            want-label)
+            (lower-test-instr-seq-load-count instrs)
+            (lower-test-blocks-label-load-count
+              (__tl-box-place rest)
+              want-label))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (lower-test-blocks-label-load-count
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        want-label)]))
+
 (define (lower-test-blocks-branch-count
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
   (match blocks
@@ -5020,6 +5098,51 @@
       (lower-test-function-load-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
         name)]))
+
+(define (lower-test-function-splat-shape-count
+  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [name : String]
+  [lanes : i64]
+  [elem-ty : compiler_ast_types.AstType]) : i64
+  (match funcs
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
+          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
+            (lower-test-blocks-splat-shape-count blocks lanes elem-ty)
+            (lower-test-function-splat-shape-count
+              (__tl-box-place rest)
+              name
+              lanes
+              elem-ty))])]
+    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
+      (lower-test-function-splat-shape-count
+        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
+        name
+        lanes
+        elem-ty)]))
+
+(define (lower-test-function-label-load-count
+  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [name : String]
+  [want-label : String]) : i64
+  (match funcs
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
+          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
+            (lower-test-blocks-label-load-count blocks want-label)
+            (lower-test-function-label-load-count
+              (__tl-box-place rest)
+              name
+              want-label))])]
+    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
+      (lower-test-function-label-load-count
+        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
+        name
+        want-label)]))
 
 (define (lower-test-function-branch-count
   [funcs : compiler_ir_types.CompilerIrFunctionList]
@@ -10180,6 +10303,150 @@
               predicated-loads))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-masked-preheader-cache-counts-ok?
+  [mode : compiler_lower.CompilerLowerMode]
+  [lanes : i64]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-masked-load-cache-let-source)
+    mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            ;; The condition's repeated literal and both arms' shared bias are
+            ;; each materialized once for the full body and vector tail.
+            (=
+              (lower-test-function-splat-shape-count
+                functions
+                "fill"
+                lanes
+                (compiler_ast_types.AstType.I64))
+              2)
+            ;; Dynamic-array slot-0 loads live in entry, never in either vector
+            ;; body. The scalar tail deliberately retains its checked reloads.
+            (=
+              (lower-test-function-label-load-count functions "fill" "entry")
+              4)
+            (=
+              (lower-test-function-label-load-count
+                functions
+                "fill"
+                "foreach_avx512_mask_body.1")
+              0)
+            (=
+              (lower-test-function-label-load-count
+                functions
+                "fill"
+                "foreach_tail_mask.4")
+              0))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-masked-preheader-reassign-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (begin
+      (set! xs out)
+      (set! (array-ref out i) (array-ref xs i)))))")
+
+(define (compiler-lower-masked-preheader-grow-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (if (< i 4)
+      (array-push! xs i)
+      (set! (array-ref out i) (array-ref xs i)))))")
+
+(define (compiler-lower-masked-preheader-windows-avx2-cap-source) : String
+  "(define (fill
+    [xs : (Array i32)]
+    [out : (Array i32)]
+    [n : i64]
+    [a : i32]
+    [b : i32]
+    [c : i32]
+    [d : i32]
+    [e : i32]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (if (< (array-ref xs i) a)
+      (+ (+ (+ (+ (array-ref xs i) b) c) d) e)
+      (- (array-ref xs i) a)))))")
+
+(define (compiler-lower-masked-preheader-windows-avx2-cap-ok?) : bool
+  (and
+    (match (compiler_lower.lower-compiler-source-with-mode
+      (compiler-lower-masked-preheader-windows-avx2-cap-source)
+      (compiler_lower.CompilerLowerMode.Avx2))
+      [(compiler_lower.ResultCompilerLower.Ok program _)
+        (match program
+          [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+            (=
+              (lower-test-function-splat-shape-count
+                functions
+                "fill"
+                8
+                (compiler_ast_types.AstType.I32))
+              5)])]
+      [(compiler_lower.ResultCompilerLower.Err _) false])
+    (match (compiler_lower.lower-compiler-source-with-mode
+      (compiler-lower-masked-preheader-windows-avx2-cap-source)
+      (compiler_lower.CompilerLowerMode.LinuxAvx2))
+      [(compiler_lower.ResultCompilerLower.Ok program _)
+        (match program
+          [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+            ;; Two preheader vectors plus three local full-body and tail splats.
+            (=
+              (lower-test-function-splat-shape-count
+                functions
+                "fill"
+                8
+                (compiler_ast_types.AstType.I32))
+              8)])]
+      [(compiler_lower.ResultCompilerLower.Err _) false])
+    (match (compiler_lower.lower-compiler-source-with-mode
+      (compiler-lower-masked-preheader-windows-avx2-cap-source)
+      (compiler_lower.CompilerLowerMode.WindowsAvx2))
+      [(compiler_lower.ResultCompilerLower.Ok program _)
+        (match program
+          [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+            ;; Windows AVX2 keeps six source splats (including repeated `a`)
+            ;; local in both vector paths.
+            (=
+              (lower-test-function-splat-shape-count
+                functions
+                "fill"
+                8
+                (compiler_ast_types.AstType.I32))
+              12)])]
+      [(compiler_lower.ResultCompilerLower.Err _) false])))
+
+(define (compiler-lower-masked-preheader-unsafe-rejected?
+  [mode : compiler_lower.CompilerLowerMode]) : bool
+  (and
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-masked-preheader-reassign-source)
+      mode
+      "typecheck: foreach cannot set binding declared outside foreach")
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-masked-preheader-grow-source)
+      mode
+      "typecheck: SPMD masked if does not support side effects other than contiguous array writes inside masked branches")))
+
+(define (compiler-lower-masked-preheader-cache-tests-ok?) : bool
+  (and
+    (compiler-lower-masked-preheader-cache-counts-ok?
+      (compiler_lower.CompilerLowerMode.Avx2)
+      4)
+    (compiler-lower-masked-preheader-cache-counts-ok?
+      (compiler_lower.CompilerLowerMode.Avx512)
+      8)
+    (compiler-lower-masked-preheader-unsafe-rejected?
+      (compiler_lower.CompilerLowerMode.Avx2))
+    (compiler-lower-masked-preheader-unsafe-rejected?
+      (compiler_lower.CompilerLowerMode.Avx512))
+    (compiler-lower-masked-preheader-windows-avx2-cap-ok?)))
+
 (define (compiler-lower-masked-load-cache-tests-ok?) : bool
   (and
     ;; Repeated spelling and an explicit lane-local binding each issue one
@@ -10507,7 +10774,9 @@
               (= pred-store-count 1)
               (= select-count 2)
               (= tail-mask-count 1)
-              (>= shape-count 15)))])]
+              ;; One uniform source splat now serves both vector paths from the
+              ;; preheader, reducing this shape floor by one.
+              (>= shape-count 14)))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-masked-if-bitwise-value-shape-ok?
@@ -13322,12 +13591,14 @@
 ;; hygiene-local ids (post-splice trees), structural-local ids, and
 ;; composite keys, including bound-name shadowing.
 (define (compiler-lower-compat-prescan-id-parity?
+  [session : cis.InternStructuralSessionHandle]
   [expr-bases : i64]
   [tree : compiler_ast_types.AstExpr]
   [when-id : i64]
   [unless-id : i64]) : bool
   (=
     (compiler_typecheck_core.tc-expr-uses-free-source-id?
+      session
       expr-bases
       tree
       when-id
@@ -13372,6 +13643,11 @@
     [when-id : i64 (ci.intern "when")]
     [unless-id : i64 (ci.intern "unless")]
     [x-id : i64 (ci.intern "x")]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-state))]
     [hygiene-ctx : compiler_typecheck_core.MacroHygieneContext
       (compiler_typecheck_core.MacroHygieneContext
         (ci.intern "test-macro")
@@ -13379,9 +13655,17 @@
         1360
         (compiler_symbols.compiler-symbols-empty))]
     [hyg-when-id : i64
-      (compiler_typecheck_core.macro-hygiene-local-id hygiene-ctx 1 when-id)]
+      (compiler_typecheck_core.macro-hygiene-local-id
+        session
+        hygiene-ctx
+        1
+        when-id)]
     [hyg-x-id : i64
-      (compiler_typecheck_core.macro-hygiene-local-id hygiene-ctx 1 x-id)]
+      (compiler_typecheck_core.macro-hygiene-local-id
+        session
+        hygiene-ctx
+        1
+        x-id)]
     [struct-when-id : i64 (ci.intern-structural-local-id 1 when-id)]
     [composite-id : i64
       (compiler_typecheck_core.tc-module-name-id-by-id
@@ -13397,64 +13681,80 @@
     [x-var : i64 (push-var x-id)]
     (and
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var when-id)
         when-id
         unless-id)
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var x-id)
         when-id
         unless-id)
-      (compiler-lower-compat-prescan-id-parity?
+      (compiler_typecheck_core.tc-expr-uses-free-source-id?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var hyg-when-id)
         when-id
-        unless-id)
+        unless-id
+        compiler_typecheck_core.TcNameIdList.Nil)
+      (not
+        (compiler_typecheck_core.tc-expr-uses-free-source-id?
+          session
+          expr-bases
+          (compiler_ast_types.AstExpr.Var hyg-x-id)
+          when-id
+          unless-id
+          compiler_typecheck_core.TcNameIdList.Nil))
       (compiler-lower-compat-prescan-id-parity?
-        expr-bases
-        (compiler_ast_types.AstExpr.Var hyg-x-id)
-        when-id
-        unless-id)
-      (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var struct-when-id)
         when-id
         unless-id)
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var composite-id)
         when-id
         unless-id)
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler_ast_types.AstExpr.Var unless-id)
         when-id
         unless-id)
       ;; A pool binder named `when` shadows a pool use of `when`.
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler-lower-compat-prescan-test-let when-id x-var when-var)
         when-id
         unless-id)
       ;; A differently-named binder does not shadow the use.
       (compiler-lower-compat-prescan-id-parity?
+        session
         expr-bases
         (compiler-lower-compat-prescan-test-let x-id x-var when-var)
         when-id
         unless-id)
       ;; A pool binder named `when` also shadows a hygiene-id use whose
       ;; source name is `when` (the post-splice re-run shape).
-      (compiler-lower-compat-prescan-id-parity?
-        expr-bases
-        (compiler-lower-compat-prescan-test-let when-id x-var hyg-when-var)
-        when-id
-        unless-id)
+      (not
+        (compiler_typecheck_core.tc-expr-uses-free-source-id?
+          session
+          expr-bases
+          (compiler-lower-compat-prescan-test-let when-id x-var hyg-when-var)
+          when-id
+          unless-id
+          compiler_typecheck_core.TcNameIdList.Nil))
       ;; A hygiene binder whose source name is `when` shadows the hygiene
       ;; use (the string walker cannot see this shape: intern-str traps on
       ;; out-of-pool ids, so check the id walker directly).
       (not
         (compiler_typecheck_core.tc-expr-uses-free-source-id?
+          session
           expr-bases
           (compiler-lower-compat-prescan-test-let
             hyg-when-id
@@ -13469,6 +13769,46 @@
   (test.assert-true
     (compiler-lower-compat-prescan-id-parity-ok?)
     "id-keyed compat prescan matches the string-keyed walks incl. hygiene ids"))
+
+(define (compiler-lower-macro-structural-growth-ok?) : bool
+  (let
+    [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-state))]
+    [definition : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity session 1 2)]
+    [index : i64 0]
+    [last : i64 -1]
+    (begin
+      (while (< index 600)
+        (begin
+          (set!
+            last
+            (cis.intern-macro-local-identity-raw
+              (cis.intern-structural-session-macro-local-identity
+                session
+                definition
+                index
+                3)))
+          (set! index (+ index 1))))
+      (set!
+        last
+        (cis.intern-macro-local-identity-raw
+          (cis.intern-structural-session-macro-local-identity
+            session
+            definition
+            7
+            3)))
+      (and
+        (> last 0)
+        (= (ci.intern-compat-state-structural-count intern-state) 601)))))
+
+(test
+  compiler-lower-macro-structural-growth
+  (test.assert-true
+    (compiler-lower-macro-structural-growth-ok?)
+    "macro structural records grow beyond the first record slab"))
 
 ;; The standalone adapter resets the active intern generation after constructing
 ;; its lower carrier. Cleanup synthesis must use the refreshed post-reset view;
@@ -14404,7 +14744,9 @@
         [(InternLookupMissing) true])]
     (and
       (string.eq
-        (compiler_typecheck_core.tc-env-key-display qualified-id)
+        (compiler_typecheck_core.tc-env-key-display
+          (compiler_lower.compiler-lower-state-structural-session lower-state)
+          qualified-id)
         qualified-name)
       fallback-primary-missing-before
       missing-before
@@ -15306,6 +15648,12 @@
   (test.assert-true
     (compiler-lower-masked-load-cache-tests-ok?)
     "masked loads reuse only through dominating masks and memory epochs"))
+
+(test
+  compiler-lower-masked-preheader-cache
+  (test.assert-true
+    (compiler-lower-masked-preheader-cache-tests-ok?)
+    "masked loops hoist typed splats and dynamic-array data pointers"))
 
 (test
   compiler-lower-module-phase-cache-storage

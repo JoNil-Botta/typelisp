@@ -12,6 +12,7 @@
 (import compiler_cfg_core as cfg_core)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_surface_facts as surface_facts)
 (import compiler_surface_identity as surface_identity)
 (import stdlib.arena)
@@ -25,7 +26,11 @@
   (Err String))
 
 (defenum ResultPreludeSurfaceFacts
-  (Ok surface_facts.SurfaceTypecheckFacts ast.AstProgram ast.AstDeclPathList)
+  (Ok
+    surface_facts.SurfaceTypecheckFacts
+    ast.AstProgram
+    ast.AstDeclPathList
+    ci.InternSourceNameSessionHandle)
   (Err String))
 
 (define (prelude-surface-target-cfgs [windows-target : bool]) : cfg_env.SymI64Env
@@ -157,7 +162,8 @@
                   functions
                   externs)
                 surface-program
-                surface-paths)]))])))
+                surface-paths
+                source-names)]))])))
 
 (define (prelude-surface-typecheck-facts-expanded
   [load-state : load.CompilerLoadSessionState]
@@ -293,6 +299,7 @@
         [(tlci.ResultTlciAuxBytes.Ok rodata) (ResultPreludeSurface.Ok rodata)]))))
 
 (define (prelude-surface-encode-payloads
+  [structural-session : cis.InternStructuralSessionHandle]
   [identity-payload : surface_identity.SurfaceIdentityPayload]
   [facts : surface_facts.SurfaceTypecheckFacts]
   [decls : ast.AstDeclList]
@@ -307,6 +314,7 @@
       (ResultPreludeSurface.Err message)]
     [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
       (match (surface_ast.surface-ast-encode
+        structural-session
         decls
         paths
         modules
@@ -319,6 +327,7 @@
         [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
           (match (surface_facts.surface-typecheck-facts-encode
             facts
+            structural-session
             source-count
             identity-count)
             [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
@@ -381,7 +390,11 @@
                 (unsafe
                   (arena.tl_arena_set previous-arena))
                 (ResultPreludeSurface.Err message))]
-            [(ResultPreludeSurfaceFacts.Ok facts surface-program surface-paths)
+            [(ResultPreludeSurfaceFacts.Ok
+                facts
+                surface-program
+                surface-paths
+                source-names)
               (let
                 [module-set : (__tl_dyn-array String)
                   (prelude_shared.prelude-surface-module-set paths)]
@@ -408,6 +421,8 @@
                   (unsafe
                     (arena.tl_arena_set previous-arena))
                   (prelude-surface-encode-payloads
+                    (cis.intern-structural-session-handle-from-source-names
+                      source-names)
                     identity-payload
                     facts
                     surface-decls

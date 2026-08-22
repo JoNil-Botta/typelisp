@@ -18,6 +18,7 @@
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_diagnostic as cdiag)
 (import compiler_float as cfloat)
 (import stdlib.string)
@@ -165,6 +166,7 @@
   (module-macro-export-keys ctfe_key_map.Map)
   (module-value-type-ids ctfe_key_map.Map)
   (module-value-reflection-enabled bool)
+  (source-names ci.InternSourceNameSessionHandle)
   ;; Hash-table backing arrays outlive per-file scratch arenas. Growth switches
   ;; to this owning compiler-job arena before publishing a replacement array.
   (map-storage-arena i64))
@@ -186,6 +188,7 @@
           (ctfe_key_map.with-capacity 1)
           (ctfe_key_map.with-capacity 1)
           false
+          (ci.InternSourceNameSessionHandle 0)
           (arena.tl_arena_current)))
       (CompilerCtfeMacroState
         (cast
@@ -210,6 +213,20 @@
         (cast state.address : u64)
         : (MutPtr CompilerCtfeMacroStateData))
       data)))
+
+(define (compiler-ctfe-macro-state-bind-source-names!
+  [state : CompilerCtfeMacroState]
+  [source-names : ci.InternSourceNameSessionHandle]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (begin
+      (set! data.source-names source-names)
+      (compiler-ctfe-macro-state-data-set! state data))))
+
+(define (compiler-ctfe-macro-state-structural-session
+  [state : CompilerCtfeMacroState]) : cis.InternStructuralSessionHandle
+  (cis.intern-structural-session-handle-from-source-names
+    (__tl-project-field (compiler-ctfe-macro-state-data state) source-names)))
 
 (define (compiler-ctfe-key-map-grow-for-state-if-needed!
   [state : CompilerCtfeMacroState]
@@ -328,7 +345,9 @@
 (define (ctfe-result-may-contain-macro?) : bool
   (ctfe-result-may-contain-macro-for-state? (compiler-ctfe-serial-macro-state)))
 
-(define (ctfe-macro-provenance-callee-base-name-id [name-id : i64]) : i64
+(define (ctfe-macro-provenance-callee-base-name-id
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
   (cond
     [(ci.intern-composite-triple-id? name-id)
       (ci.intern-composite-right-id-unchecked name-id)]
@@ -339,7 +358,14 @@
         [source-id : i64
           (if (ci.intern-template-source-id? name-id)
             (ci.intern-template-source-name-id name-id)
-            (ci.intern-macro-global-source-name-id-or name-id name-id))]
+            (if (cis.intern-structural-session-valid? session)
+              (match (cis.intern-structural-session-macro-global-record-for-raw
+                session
+                name-id)
+                [(cis.InternMaybeMacroGlobalRecord.Some record)
+                  record.source-name-id]
+                [(cis.InternMaybeMacroGlobalRecord.No) name-id])
+              name-id))]
         [base-id : i64
           (if (and
             (ci.intern-renderable-id? source-id)
@@ -359,7 +385,10 @@
     (ast.ast-node-pool-context-expr-get pools callee-node))
     [(ast.AstExpr.Var name-id)
       (let
-        [base-id : i64 (ctfe-macro-provenance-callee-base-name-id name-id)]
+        [base-id : i64
+          (ctfe-macro-provenance-callee-base-name-id
+            (compiler-ctfe-macro-state-structural-session state)
+            name-id)]
         [data : CompilerCtfeMacroStateData
           (compiler-ctfe-macro-state-data state)]
         (or
@@ -775,9 +804,51 @@
   (TypeVariant String ast.AstTypeList)
   (TypeVariantList CtfeReflectVariantList))
 
+(define (ctfe-name-source-id-for-session
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
+  (if (ci.intern-renderable-id? name-id)
+    name-id
+    (match (cis.intern-structural-session-macro-global-record-for-raw
+      session
+      name-id)
+      [(cis.InternMaybeMacroGlobalRecord.Some record) record.source-name-id]
+      [(cis.InternMaybeMacroGlobalRecord.No)
+        (match (cis.intern-structural-session-macro-local-record-for-raw
+          session
+          name-id)
+          [(cis.InternMaybeMacroLocalRecord.Some record) record.source-name-id]
+          [(cis.InternMaybeMacroLocalRecord.No)
+            (cond
+              [(ci.intern-structural-local-id? name-id)
+                (ci.intern-structural-local-source-name-id name-id)]
+              [(ci.intern-template-source-id? name-id)
+                (ci.intern-template-source-name-id name-id)]
+              [else -1])])])))
+
+(define (ctfe-name-value-for-session
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : CompilerCtfeValue
+  (let
+    [source-id : i64 (ctfe-name-source-id-for-session session name-id)]
+    (CompilerCtfeValue.Name
+      (if (ci.intern-renderable-id? source-id)
+        (ci.intern-str source-id)
+        "<structural-name>")
+      name-id)))
+
+(define (ctfe-name-value-for-source-names
+  [source-names : ci.InternSourceNameSessionHandle]
+  [name-id : i64]) : CompilerCtfeValue
+  (ctfe-name-value-for-session
+    (cis.intern-structural-session-handle-from-source-names source-names)
+    name-id))
+
+;; Standalone CTFE APIs and direct tests use the installed source-name owner.
+;; Production evaluation passes its job-owned structural session explicitly.
 (define (ctfe-name-value [name-id : i64]) : CompilerCtfeValue
-  (CompilerCtfeValue.Name
-    (ci.intern-syntax-name-text-or name-id "<structural-name>")
+  (ctfe-name-value-for-source-names
+    (ci.intern-source-name-session-capture-active-handle)
     name-id))
 
 (define (ctfe-generated-string-value [text : String]) : CompilerCtfeValue
@@ -1166,6 +1237,7 @@
   [macro-state : CompilerCtfeMacroState]) : CtfeEnv
   (begin
     (cfg compile-profile (ctfe-env-profile-note-arena-root!) unit)
+    (compiler-ctfe-macro-state-bind-source-names! macro-state source-names)
     (CtfeEnv
       (box (ctfe-env-arena-new))
       -1
@@ -1627,6 +1699,10 @@
 
 (define (ctfe-env-source-names [env : CtfeEnv]) : ci.InternSourceNameSessionHandle
   (__tl-project-field (__tl-box-place env.metadata) source-names))
+
+(define (ctfe-env-structural-session [env : CtfeEnv]) : cis.InternStructuralSessionHandle
+  (cis.intern-structural-session-handle-from-source-names
+    (ctfe-env-source-names env)))
 
 (define (ctfe-env-macro-state [env : CtfeEnv]) : CompilerCtfeMacroState
   env.macro-state)
@@ -4874,7 +4950,8 @@
                   ty)
                   [(CtfeMaybeReflectInfo.Some info)
                     (ResultCtfe.Ok
-                      (ctfe-name-value
+                      (ctfe-name-value-for-session
+                        (ctfe-env-structural-session env)
                         (ctfe-reflect-info-nominal-module-id info))
                       arg-fuel)]
                   [(CtfeMaybeReflectInfo.None)
@@ -4890,7 +4967,9 @@
                   ty)
                   [(CtfeMaybeReflectInfo.Some info)
                     (ResultCtfe.Ok
-                      (ctfe-name-value (ctfe-reflect-info-nominal-name-id info))
+                      (ctfe-name-value-for-session
+                        (ctfe-env-structural-session env)
+                        (ctfe-reflect-info-nominal-name-id info))
                       arg-fuel)]
                   [(CtfeMaybeReflectInfo.None)
                     (ResultCtfe.Err
@@ -5084,6 +5163,7 @@
   [name : String]
   [fields : CtfeReflectFieldList]
   [pools : ast.AstNodePoolContext]
+  [session : cis.InternStructuralSessionHandle]
   [infos : CtfeReflectInfoList]
   [index : i64]
   [expr : ast.AstExpr]
@@ -5091,7 +5171,7 @@
   (if (string.eq name "struct-field-name")
     (match (ctfe-reflect-field-name-at fields index)
       [(ResultCtfeNameLookup.Ok field-name)
-        (ResultCtfe.Ok (ctfe-name-value field-name) fuel)]
+        (ResultCtfe.Ok (ctfe-name-value-for-session session field-name) fuel)]
       [(ResultCtfeNameLookup.Err message)
         (ResultCtfe.Err
           (box
@@ -5121,6 +5201,7 @@
               name
               fields
               (ctfe-env-pools env)
+              (ctfe-env-structural-session env)
               infos
               index
               expr
@@ -5172,13 +5253,14 @@
 (define (ctfe-eval-enum-variant-from-variants
   [name : String]
   [variants : CtfeReflectVariantList]
+  [session : cis.InternStructuralSessionHandle]
   [index : i64]
   [expr : ast.AstExpr]
   [fuel : i64]) : ResultCtfe
   (if (string.eq name "enum-variant-name")
     (match (ctfe-reflect-variant-name-at variants index)
       [(ResultCtfeNameLookup.Ok variant-name)
-        (ResultCtfe.Ok (ctfe-name-value variant-name) fuel)]
+        (ResultCtfe.Ok (ctfe-name-value-for-session session variant-name) fuel)]
       [(ResultCtfeNameLookup.Err message)
         (ResultCtfe.Err
           (box
@@ -5206,7 +5288,13 @@
       [(CtfeMaybeReflectInfo.Some info)
         (match info
           [(CtfeReflectInfo.Enum _ _ _ _ _ variants)
-            (ctfe-eval-enum-variant-from-variants name variants index expr fuel)]
+            (ctfe-eval-enum-variant-from-variants
+              name
+              variants
+              (ctfe-env-structural-session env)
+              index
+              expr
+              fuel)]
           [_ (ctfe-enum-variant-kind-error name expr)])]
       [(CtfeMaybeReflectInfo.None) (ctfe-enum-variant-kind-error name expr)])))
 
@@ -7377,7 +7465,9 @@
               (cond
                 [(string.eq name "expr-binding-clause-name")
                   (ResultCtfe.Ok
-                    (ctfe-name-value (ctfe-expr-binding-clause-name-id clause))
+                    (ctfe-name-value-for-session
+                      (ctfe-env-structural-session env)
+                      (ctfe-expr-binding-clause-name-id clause))
                     arg-fuel)]
                 [(string.eq name "expr-binding-clause-has-type?")
                   (ResultCtfe.Ok
@@ -9303,7 +9393,13 @@
         (ctfe-eval-call inner args expr env fuel))]
     [(ast.AstExpr.Var name)
       (let
-        [raw-id : i64 (ci.intern-macro-global-source-name-id-or name name)]
+        [raw-id : i64
+          (match (cis.intern-structural-session-macro-global-record-for-raw
+            (ctfe-env-structural-session env)
+            name)
+            [(cis.InternMaybeMacroGlobalRecord.Some record)
+              record.source-name-id]
+            [(cis.InternMaybeMacroGlobalRecord.No) name])]
         [call-id : i64 (ctfe-comptime-helper-call-name-id raw-id)]
         (cond
           [(= call-id (ctfe-builtin-ref 27))
@@ -9596,7 +9692,11 @@
     [source-id : i64
       (if (ci.intern-template-source-id? name-id)
         (ci.intern-template-source-name-id name-id)
-        (ci.intern-macro-global-source-name-id-or name-id name-id))]
+        (match (cis.intern-structural-session-macro-global-record-for-raw
+          (ctfe-env-structural-session env)
+          name-id)
+          [(cis.InternMaybeMacroGlobalRecord.Some record) record.source-name-id]
+          [(cis.InternMaybeMacroGlobalRecord.No) name-id]))]
     (if (and
       (ci.intern-renderable-id? source-id)
       (not (ci.intern-qualified? source-id))
@@ -9720,6 +9820,7 @@
   [field : i64]
   [expr : ast.AstExpr]
   [pools : ast.AstNodePoolContext]
+  [session : cis.InternStructuralSessionHandle]
   [fuel : i64]) : ResultCtfe
   (let
     [field-kind : i64 field]
@@ -9800,7 +9901,9 @@
         (cond
           [(= field-kind cbi.compiler-builtin-id-fix-name)
             (ResultCtfe.Ok
-              (ctfe-name-value (ctfe-expr-binding-clause-name-id clause))
+              (ctfe-name-value-for-session
+                session
+                (ctfe-expr-binding-clause-name-id clause))
               fuel)]
           [(= field-kind cbi.compiler-builtin-id-fix-has_type)
             (ResultCtfe.Ok
@@ -9936,6 +10039,8 @@
     field
     expr
     (ast.ast-node-pool-context-capture-active)
+    (cis.intern-structural-session-handle-from-source-names
+      (ci.intern-source-name-session-capture-active-handle))
     fuel))
 
 (define (ctfe-eval-struct-get
@@ -9951,6 +10056,7 @@
         field
         expr
         (ctfe-env-pools env)
+        (ctfe-env-structural-session env)
         next-fuel)]
     [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
@@ -10423,7 +10529,8 @@
       (if (ctfe-pattern-variant-name? variant "Var")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (ctfe-name-value name))
+          (ctfe-value-list1
+            (ctfe-name-value-for-session (ctfe-env-structural-session env) name))
           env)
         (CtfePatternMatch.No))]
     [(ast.AstExpr.If cond then-branch else-branch)

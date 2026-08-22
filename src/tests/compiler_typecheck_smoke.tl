@@ -15,6 +15,7 @@
 (import compiler_load as load)
 (import compiler_ctfe as ctfe)
 (import compiler_parse_core as parser)
+(import read as reader)
 (import compiler_symbols)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
@@ -5738,6 +5739,55 @@
       (tc_core.compiler-typecheck-reset-file-state!)
       ok)))
 
+(define (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
+  [decls : ast.AstDeclList]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (let
+        [rest : ast.AstDeclList rest]
+        (match decl
+          [(ast.AstDecl.DefStruct _ name _ _ _)
+            (if (string.eq (ci.intern-str name) "Generated")
+              (match (parser.compiler-parse-semantic-origin-run (& decls) 0)
+                [(parser.CompilerParseMaybeSemanticOriginRun.Some _) false]
+                [(parser.CompilerParseMaybeSemanticOriginRun.None) true])
+              (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
+                rest))]
+          [_
+            (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
+              rest)]))]))
+
+(define (compiler-typecheck-smoke-generated-semantic-origin-absent-ok?) : bool
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    [ok : bool
+      (match (parser.parse-ast-source-diagnostic
+        ""
+        "(defmacro (emit) : Decls
+  `(begin (defstruct Generated (field Source.Type))))
+(emit)")
+        [(parser.ResultAstProgramDiagnostic.Ok program)
+          (match (tc_core.macro-expand-program program)
+            [(tc_core.ResultMacroExpand.Ok expanded _)
+              (match expanded
+                [(ast.AstProgram.Program decls-box)
+                  (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
+                    (__tl-box-place decls-box))])]
+            [(tc_core.ResultMacroExpand.Err _) false])]
+        [(parser.ResultAstProgramDiagnostic.Err _) false])]
+    (begin
+      (tc_core.compiler-typecheck-reset-file-state!)
+      (reader.sp-node-pool-truncate! mark)
+      (parser.compiler-parse-decl-origin-cache-reset!)
+      ok)))
+
+(test
+  compiler-typecheck-generated-semantic-origin-absent
+  (unless
+    (compiler-typecheck-smoke-generated-semantic-origin-absent-ok?)
+    (io.panic "typecheck: generated declaration has editable semantic origin")))
+
 (define (compiler-typecheck-smoke-macro-no-change-signal-ok?) : bool
   ;; An unused defmacro forces the full declaration walk while every output
   ;; declaration remains shared with the compact input program.
@@ -6754,6 +6804,9 @@
     (unless
       (compiler-typecheck-smoke-macro-decl-change-signal-ok?)
       (io.panic "typecheck: declaration macro change signal smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-semantic-origin-absent-ok?)
+      (io.panic "typecheck: generated declaration has editable semantic origin"))
     (unless
       (compiler-typecheck-smoke-macro-module-import-change-signal-ok?)
       (io.panic "typecheck: module import macro change signal smoke failed"))

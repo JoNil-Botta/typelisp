@@ -4798,16 +4798,17 @@
     [same-storage : bool
       (= rest-key (parser.compiler-parse-decl-list-storage-key (& out)))]
     (begin
-      (if (parser.compiler-parse-decl-origin-needs-record?
-        (ast.ast-decl-list-get (& source) 0 (ast.ast-decl-fallback)))
-        (parser.compiler-parse-decl-origin-register-alias-record!
-          (& out)
-          0
-          1
-          (parser.compiler-parse-decl-list-storage-key (& source))
-          source.offset
-          false)
-        unit)
+      ;; Normal source aliases are cheap and may carry a semantic sidecar even
+      ;; when their declaration kind has no declaration-span record. Recording
+      ;; the alias unconditionally avoids scanning every prior semantic run for
+      ;; each declaration flattened by the loader.
+      (parser.compiler-parse-decl-origin-register-alias-record!
+        (& out)
+        0
+        1
+        (parser.compiler-parse-decl-list-storage-key (& source))
+        source.offset
+        false)
       (if same-storage
         unit
         (parser.compiler-parse-decl-origin-register-list-aliases!

@@ -53,7 +53,7 @@
                         ,(comptime.expr-list-nth elems index))
                       stores))))
               `(let
-                [__tl_str_cat_pack : stdlib.str_cat_runtime/StrCatPack ,pack]
+                [__tl_str_cat_pack ,pack]
                 (begin
                   ,@stores
                   __tl_str_cat_pack))))]

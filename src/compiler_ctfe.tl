@@ -815,6 +815,81 @@
   (TypeVariant String ast.AstTypeList)
   (TypeVariantList CtfeReflectVariantList))
 
+;; CTFE environments own copied values, but captured syntax pool contexts are
+;; identity-bearing shared state cells. The compiler-generated aggregate clone
+;; recursively clones those cells into the current macro arena, leaving
+;; captured syntax pointed at storage destroyed with the generation. Keep
+;; ordinary payload cloning while sharing only the captured pool owners.
+(define (ctfe-value-owned-copy [value : (& value CompilerCtfeValue)]) : CompilerCtfeValue
+  (match (owned_view.compiler-owned-reference-shared-view value)
+    [(CompilerCtfeValue.I64 n) (CompilerCtfeValue.I64 n)]
+    [(CompilerCtfeValue.F64 n) (CompilerCtfeValue.F64 n)]
+    [(CompilerCtfeValue.F32 n) (CompilerCtfeValue.F32 n)]
+    [(CompilerCtfeValue.Bool enabled) (CompilerCtfeValue.Bool enabled)]
+    [(CompilerCtfeValue.Char ch) (CompilerCtfeValue.Char ch)]
+    [(CompilerCtfeValue.String text identity)
+      (CompilerCtfeValue.String (clone text) identity)]
+    [(CompilerCtfeValue.Name text identity)
+      (CompilerCtfeValue.Name (clone text) identity)]
+    [(CompilerCtfeValue.Unit) CompilerCtfeValue.Unit]
+    [(CompilerCtfeValue.Type ty) (CompilerCtfeValue.Type (clone ty))]
+    [(CompilerCtfeValue.Expr node ty) (CompilerCtfeValue.Expr node (clone ty))]
+    [(CompilerCtfeValue.CapturedExpr node ty pools)
+      (CompilerCtfeValue.CapturedExpr
+        node
+        (clone ty)
+        (ast.ast-node-pool-context-shared-view (& pools)))]
+    [(CompilerCtfeValue.ExprList items)
+      (CompilerCtfeValue.ExprList (clone items))]
+    [(CompilerCtfeValue.CapturedExprList items pools)
+      (CompilerCtfeValue.CapturedExprList
+        (clone items)
+        (ast.ast-node-pool-context-shared-view (& pools)))]
+    [(CompilerCtfeValue.ExprClause clause)
+      (CompilerCtfeValue.ExprClause (clone clause))]
+    [(CompilerCtfeValue.CapturedExprClause clause pools)
+      (CompilerCtfeValue.CapturedExprClause
+        (clone clause)
+        (ast.ast-node-pool-context-shared-view (& pools)))]
+    [(CompilerCtfeValue.ExprClauseList clauses)
+      (CompilerCtfeValue.ExprClauseList (clone clauses))]
+    [(CompilerCtfeValue.CapturedExprClauseList clauses pools)
+      (CompilerCtfeValue.CapturedExprClauseList
+        (clone clauses)
+        (ast.ast-node-pool-context-shared-view (& pools)))]
+    [(CompilerCtfeValue.ExprBindingClause binding)
+      (CompilerCtfeValue.ExprBindingClause (clone binding))]
+    [(CompilerCtfeValue.ExprBindingClauseList bindings)
+      (CompilerCtfeValue.ExprBindingClauseList (clone bindings))]
+    [(CompilerCtfeValue.Pattern pattern)
+      (CompilerCtfeValue.Pattern (clone pattern))]
+    [(CompilerCtfeValue.PatternList patterns)
+      (CompilerCtfeValue.PatternList (clone patterns))]
+    [(CompilerCtfeValue.MatchArm arm) (CompilerCtfeValue.MatchArm (clone arm))]
+    [(CompilerCtfeValue.MatchArmList arms)
+      (CompilerCtfeValue.MatchArmList (clone arms))]
+    [(CompilerCtfeValue.LetBinding binding)
+      (CompilerCtfeValue.LetBinding (clone binding))]
+    [(CompilerCtfeValue.LetBindingList bindings)
+      (CompilerCtfeValue.LetBindingList (clone bindings))]
+    [(CompilerCtfeValue.TypeInfo ty) (CompilerCtfeValue.TypeInfo (clone ty))]
+    [(CompilerCtfeValue.TypeInfoBox ty)
+      (CompilerCtfeValue.TypeInfoBox (clone ty))]
+    [(CompilerCtfeValue.TypeInfoList types)
+      (CompilerCtfeValue.TypeInfoList (clone types))]
+    [(CompilerCtfeValue.TypeField name ty)
+      (CompilerCtfeValue.TypeField (clone name) (clone ty))]
+    [(CompilerCtfeValue.TypeFieldList fields)
+      (CompilerCtfeValue.TypeFieldList (clone fields))]
+    [(CompilerCtfeValue.TypeVariantPayload ty)
+      (CompilerCtfeValue.TypeVariantPayload (clone ty))]
+    [(CompilerCtfeValue.TypeVariantPayloadList types)
+      (CompilerCtfeValue.TypeVariantPayloadList (clone types))]
+    [(CompilerCtfeValue.TypeVariant name payloads)
+      (CompilerCtfeValue.TypeVariant (clone name) (clone payloads))]
+    [(CompilerCtfeValue.TypeVariantList variants)
+      (CompilerCtfeValue.TypeVariantList (clone variants))]))
+
 (define (ctfe-name-source-id-for-session
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
@@ -1757,12 +1832,80 @@
       (ctfe-env-metadata-box-shared-view view.metadata)]
     metadata.reflections))
 
-(define (ctfe-env-structural-session [env : CtfeEnv]) : cis.InternStructuralSessionHandle
+;; Pool contexts are mutable state cells, not owned values. Keep this accessor
+;; syntax-level so its explicit shallow read reaches the consumer directly;
+;; returning an `AstNodePoolContext` through a function's owned-value boundary
+;; would detach the cells under by-value ownership.
+(define (ctfe-env-pools-address [env : (& env CtfeEnv)]) : u64
+  (let
+    [cell : (CtfeEnvRef env) (CtfeEnvRef env)]
+    [env-address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
+    ;; CtfeEnv word 6 is the metadata box pointer, and `pools` is the first
+    ;; field of that boxed payload.
+    (unsafe
+      (ptr-read (ptr-offset (int->ptr env-address : (Ptr u64)) 6)))))
+
+(defmacro (ctfe-env-pools [env : Expr]) : ast.AstNodePoolContext
+  `(unsafe
+    (ptr-read
+      (int->ptr (ctfe-env-pools-address ,env) : (Ptr ast.AstNodePoolContext)))))
+
+;; A caller pool can be a newer snapshot of the transformer's backing tables.
+;; Advance the owning context before appending provenance wrappers, while the
+;; pool primitive's storage check keeps unrelated syntax domains isolated.
+(define (ctfe-env-adopt-active-pools! [env : (& env CtfeEnv)]) : unit
+  (let
+    [owner-address : u64 (ctfe-env-pools-address env)]
+    [syntax-address : u64 (ctfe-env-syntax-pool-context-address-live env)]
+    (begin
+      (ast.ast-node-pool-context-adopt-newer-cells!
+        (ctfe-pool-context-cell-address-at owner-address 0)
+        (ctfe-pool-context-cell-address-at owner-address 1)
+        (ctfe-pool-context-cell-address-at syntax-address 0)
+        (ctfe-pool-context-cell-address-at syntax-address 1))
+      (if (ast.ast-node-pool-has-active-context?)
+        (ast.ast-node-pool-context-adopt-newer-cells!
+          (ctfe-pool-context-cell-address-at owner-address 0)
+          (ctfe-pool-context-cell-address-at owner-address 1)
+          (ast.ast-node-pool-active-context-expr-cell-address)
+          (ast.ast-node-pool-active-context-type-cell-address))
+        unit))))
+
+(define (ctfe-env-publish-owning-pools! [env : (& env CtfeEnv)]) : unit
+  (let
+    [owner-address : u64 (ctfe-env-pools-address env)]
+    [syntax-address : u64 (ctfe-env-syntax-pool-context-address-live env)]
+    (begin
+      (ast.ast-node-pool-context-adopt-newer-cells!
+        (ctfe-pool-context-cell-address-at syntax-address 0)
+        (ctfe-pool-context-cell-address-at syntax-address 1)
+        (ctfe-pool-context-cell-address-at owner-address 0)
+        (ctfe-pool-context-cell-address-at owner-address 1))
+      (if (ast.ast-node-pool-has-active-context?)
+        (ast.ast-node-pool-context-adopt-newer-cells!
+          (ast.ast-node-pool-active-context-expr-cell-address)
+          (ast.ast-node-pool-active-context-type-cell-address)
+          (ctfe-pool-context-cell-address-at owner-address 0)
+          (ctfe-pool-context-cell-address-at owner-address 1))
+        unit))))
+
+(define (ctfe-env-source-names [env : (& env CtfeEnv)]) : ci.InternSourceNameSessionHandle
+  (let
+    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [metadata : CtfeEnvMetadata
+      (ctfe-env-metadata-box-shared-view view.metadata)]
+    metadata.source-names))
+
+(define (ctfe-env-structural-session [env : (& env CtfeEnv)]) : cis.InternStructuralSessionHandle
   (cis.intern-structural-session-handle-from-source-names
     (ctfe-env-source-names env)))
 
-(define (ctfe-env-macro-state [env : CtfeEnv]) : CompilerCtfeMacroState
-  env.macro-state)
+(define (ctfe-env-macro-state [env : (& env CtfeEnv)]) : CompilerCtfeMacroState
+  (let
+    [view : CtfeEnv (ctfe-env-shared-view env)]
+    view.macro-state))
 
 ;; A transformer reads its definition body from `ctfe-env-pools`, but syntax
 ;; selected from a variadic caller argument may belong to a newer pool. Carry

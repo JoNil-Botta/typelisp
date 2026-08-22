@@ -152,19 +152,23 @@
   [pools : ast.AstNodePoolContext]) : unit
   (match (package-surface-capture-state-shared-view)
     [(PackageSurfaceCaptureState.Pending key seen result-arena)
-      (begin
-        (surface_facts.surface-typecheck-facts-recording-start! result-arena)
-        (set!
-          package-surface-capture-state
-          (PackageSurfaceCaptureState.Expanded
-            key
-            structural-session
-            seen
-            program
-            paths
-            pools
-            (package-surface-program-decl-count program)
-            result-arena)))]
+      (let
+        [macro-decl-count : i64
+          (package-surface-program-decl-count
+            (owned_view.compiler-owned-shared-view program))]
+        (begin
+          (surface_facts.surface-typecheck-facts-recording-start! result-arena)
+          (set!
+            package-surface-capture-state
+            (PackageSurfaceCaptureState.Expanded
+              key
+              structural-session
+              seen
+              program
+              paths
+              pools
+              macro-decl-count
+              result-arena))))]
     [(PackageSurfaceCaptureState.Inactive) unit]
     [(PackageSurfaceCaptureState.Err _) unit]
     [_
@@ -201,7 +205,7 @@
           [(ast.AstProgram.Program decls-box)
             (match (surface_ast.surface-ast-encode
               structural-session
-              (__tl-box-place decls-box)
+              (owned_view.compiler-owned-box-shared-view decls-box)
               paths
               modules
               seen

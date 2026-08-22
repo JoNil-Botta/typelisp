@@ -282,7 +282,8 @@
   [state : CompilerDriverState]) : unit
   (compiler_typecheck_core.tc-macro-state-bind-source-names!
     (compiler_typecheck_core.tc-job-state-macro-state
-      (compiler-driver-state-typecheck state))
+      (compiler-driver-state-typecheck
+        (owned_view.compiler-owned-shared-view state)))
     (compiler-driver-state-source-name-session-in-current state)))
 
 (define (compiler-driver-state-prefix-cache-enable!
@@ -767,6 +768,11 @@
 (define (compiler-driver-state-owned-interns [state : CompilerDriverState]) : ci.InternCompatState
   (array-ref state.intern-state 0))
 
+(define (compiler-driver-state-owned-interns-mut [state : CompilerDriverState]) : (&mut
+    state
+    ci.InternCompatState)
+  (&mut (array-ref state.intern-state 0)))
+
 ;; Allocate an immutable source-name snapshot in an explicit owner. Production
 ;; batch entries keep their snapshot in the rotating entry scratch arena; only
 ;; callers that explicitly request a retained driver capability use the
@@ -776,8 +782,10 @@
   [owner : i64]) : ci.InternSourceNameSessionHandle
   (in-arena
     (arena.Arena owner)
-    (ci.intern-source-name-session-handle-from-state
-      (compiler-driver-state-owned-interns state))))
+    (let
+      [intern-state : ci.InternCompatState
+        (compiler-driver-state-owned-interns state)]
+      (ci.intern-source-name-session-handle-from-state (& intern-state)))))
 
 (define (compiler-driver-state-source-name-session-in-current
   [state : CompilerDriverState]) : ci.InternSourceNameSessionHandle
@@ -807,7 +815,7 @@
 (define (compiler-driver-state-source-name-session
   [state : CompilerDriverState]) : ci.InternSourceNameSessionHandle
   (compiler-driver-state-source-name-session-in-arena
-    state
+    (owned_view.compiler-owned-shared-view state)
     (compiler-driver-state-surface-arena state)))
 
 (define (compiler-driver-state-structural-session [state : CompilerDriverState]) : cis.InternStructuralSessionHandle
@@ -828,18 +836,20 @@
             (arena.tl_arena_set transient-arena))
           (let
             [session : ci.InternSourceNameSessionHandle
-              (compiler-driver-state-source-name-session state)]
+              (compiler-driver-state-source-name-session
+                (owned_view.compiler-owned-shared-view state))]
             (begin
               (unsafe
                 (arena.tl_arena_set return-arena))
               session)))]
+      [owned-interns : ci.InternCompatState
+        (compiler-driver-state-owned-interns state)]
       (begin
         (unsafe
           (arena.tl_arena_destroy transient-arena))
         (test.assert-i64-eq
           (ci.intern-source-name-session-handle-table-id source-names)
-          (ci.intern-compat-state-table-id
-            (compiler-driver-state-owned-interns state))
+          (ci.intern-compat-state-table-id owned-interns)
           "source-name capability survives retirement of the caller arena")))))
 
 (define (compiler-driver-state-capture-active-builtins!
@@ -3712,10 +3722,10 @@
           unit)]
       [surface : CompilerDriverPreludeSurface
         (compiler-driver-try-hydrate-runtime-prelude
-          load-state
-          stdlib-roots
-          cfgs
-          pools
+          (owned_view.compiler-owned-shared-view load-state)
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view cfgs)
+          (owned_view.compiler-owned-shared-view pools)
           surface-arena)]
       [_surface-end : unit
         (cfg
@@ -4209,7 +4219,8 @@
               (compiler-driver-state-owned-interns
                 (owned_view.compiler-owned-shared-view state))]
             [source-names : ci.InternSourceNameSessionHandle
-              (compiler-driver-state-entry-source-name-session state)]
+              (compiler-driver-state-entry-source-name-session
+                (owned_view.compiler-owned-shared-view state))]
             [dest-pools : compiler_ast_types.AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)

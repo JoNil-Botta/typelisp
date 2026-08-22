@@ -14545,8 +14545,11 @@
   [text : String]
   [fixed-id : i64]) : bool
   (let
-    [source-id : i64 (reader.stable-symbol-id text)]
-    [generated-id : i64 (ci.intern-generated-canonical-name text)]
+    [source-id : i64
+      (reader.stable-symbol-id (compiler-parse-place-shared-view text))]
+    [generated-id : i64
+      (ci.intern-generated-canonical-name
+        (compiler-parse-place-shared-view text))]
     (and
       (= source-id fixed-id)
       (not (= generated-id fixed-id))

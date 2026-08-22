@@ -3889,9 +3889,11 @@
             (+
               acc
               (lower-test-instr-splat-shape-count
-                (array-ref slots index)
+                (owned_view.compiler-owned-array-element-shared-view
+                  slots
+                  index)
                 lanes
-                elem-ty)))
+                (owned_view.compiler-owned-shared-view elem-ty))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4749,9 +4751,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-splat-shape-count instrs lanes elem-ty)
+            (lower-test-instr-seq-splat-shape-count
+              instrs
+              lanes
+              (owned_view.compiler-owned-shared-view elem-ty))
             (lower-test-blocks-splat-shape-count
-              (__tl-box-place rest)
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
               lanes
               elem-ty))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -4773,7 +4778,7 @@
             want-label)
             (lower-test-instr-seq-load-count instrs)
             (lower-test-blocks-label-load-count
-              (__tl-box-place rest)
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
               want-label))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-label-load-count
@@ -5547,7 +5552,7 @@
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-splat-shape-count blocks lanes elem-ty)
             (lower-test-function-splat-shape-count
-              (__tl-box-place rest)
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
               name
               lanes
               elem-ty))])]
@@ -5570,7 +5575,7 @@
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-label-load-count blocks want-label)
             (lower-test-function-label-load-count
-              (__tl-box-place rest)
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
               name
               want-label))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
@@ -11929,7 +11934,7 @@
             ;; each materialized once for the full body and vector tail.
             (=
               (lower-test-function-splat-shape-count
-                functions
+                (owned_view.compiler-owned-shared-view functions)
                 "fill"
                 lanes
                 (compiler_ast_types.AstType.I64))
@@ -11937,11 +11942,14 @@
             ;; Dynamic-array slot-0 loads live in entry, never in either vector
             ;; body. The scalar tail deliberately retains its checked reloads.
             (=
-              (lower-test-function-label-load-count functions "fill" "entry")
+              (lower-test-function-label-load-count
+                (owned_view.compiler-owned-shared-view functions)
+                "fill"
+                "entry")
               4)
             (=
               (lower-test-function-label-load-count
-                functions
+                (owned_view.compiler-owned-shared-view functions)
                 "fill"
                 "foreach_avx512_mask_body.1")
               0)
@@ -15818,7 +15826,7 @@
     [hyg-when-id : i64
       (compiler_typecheck_core.macro-hygiene-local-id
         session
-        hygiene-ctx
+        (owned_view.compiler-owned-shared-view hygiene-ctx)
         1
         when-id)]
     [hyg-x-id : i64

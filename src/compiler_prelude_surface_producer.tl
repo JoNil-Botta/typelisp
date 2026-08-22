@@ -10,6 +10,7 @@
 (import compiler_cfg_core as cfg_core)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
 (import compiler_surface_facts as surface_facts)
 (import compiler_surface_identity as surface_identity)
@@ -364,6 +365,7 @@
         [(tlci.ResultTlciAuxBytes.Ok rodata) (ResultPreludeSurface.Ok rodata)]))))
 
 (define (prelude-surface-encode-payloads
+  [structural-session : cis.InternStructuralSessionHandle]
   [identity-payload : surface_identity.SurfaceIdentityPayload]
   [facts : surface_facts.SurfaceTypecheckFacts]
   [decls : ast.AstDeclList]
@@ -378,6 +380,7 @@
       (ResultPreludeSurface.Err message)]
     [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
       (match (surface_ast.surface-ast-encode
+        structural-session
         decls
         paths
         modules
@@ -390,6 +393,7 @@
         [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
           (match (surface_facts.surface-typecheck-facts-encode
             facts
+            structural-session
             source-count
             identity-count)
             [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
@@ -442,7 +446,7 @@
                   (cdiag.compiler-diagnostic-box-shared-view diag)))))]
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules seen)
           (match (prelude-surface-typecheck-facts
-            load-state
+            (load.compiler-load-session-state-shared-view (& load-state))
             decls
             (ast.ast-place-shared-view paths)
             roots
@@ -480,6 +484,8 @@
                   (unsafe
                     (arena.tl_arena_set previous-arena))
                   (prelude-surface-encode-payloads
+                    (load.compiler-load-session-state-structural-session
+                      load-state)
                     identity-payload
                     facts
                     surface-decls

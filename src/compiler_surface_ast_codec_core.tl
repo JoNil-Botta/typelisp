@@ -6,6 +6,7 @@
 ;; pointer, Box address, or producer-generation intern id is serialized.
 (import compiler_ast_types as ast)
 (import compiler_intern_state as cis)
+(import compiler_owned_view as owned_view)
 (import compiler_surface_identity as identity)
 (import compiler_surface_binary as binary)
 (cfg
@@ -144,7 +145,7 @@
     (let
       [portable : i64
         (identity.surface-identity-portable-id
-          context.structural-session
+          (owned_view.compiler-owned-shared-view context.structural-session)
           name
           context.source-identity-count
           context.identity-count)]
@@ -272,9 +273,9 @@
     [portable : i64 (surface-ast-read-i64! reader)]
     [resolved : i64
       (identity.surface-identity-resolve-portable-id
-        reader.structural-session
+        (owned_view.compiler-owned-shared-view reader.structural-session)
         portable
-        reader.identity-remap)]
+        (& reader.identity-remap))]
     (if (< resolved 0)
       (begin
         (surface-ast-reader-fail!

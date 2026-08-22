@@ -3496,9 +3496,14 @@
   (match ctx
     [(TcContext _ _ _ _ _ _ _ source-names _) source-names]))
 
-(define (tc-context-structural-session [ctx : TcContext]) : cis.InternStructuralSessionHandle
+(define (tc-context-structural-session-owned [ctx : TcContext]) : cis.InternStructuralSessionHandle
   (cis.intern-structural-session-handle-from-source-names
     (tc-context-source-names ctx)))
+
+;; Structural-session lookup is observational. Preserve the context owner at
+;; every call site, including qualified callers in lowering and indexing.
+(defmacro (tc-context-structural-session [ctx : Expr]) : Expr
+  `(tc-context-structural-session-owned (tc-global-shared-view ,ctx)))
 
 (define (tc-context-body-state [ctx : TcContext]) : TcBodyState
   (match ctx
@@ -9058,6 +9063,7 @@
           (let
             [value : ast.AstExpr (ast.ast-node-get value-box)]
             [target : String (tc-env-key-name-text-for-session session name)]
+            [help : String (tc-escape-help (tc-global-shared-view message))]
             (match (tc-expr-maybe-span value)
               [(TcMaybeAstSourceSpan.Some value-span)
                 (TcMaybeString.Some
@@ -15127,7 +15133,7 @@
   (match (tc-global-shared-view ty)
     [(ast.AstType.Var name)
       (tc-resolve-type-name
-        ctx
+        (tc-global-shared-view ctx)
         (tc-hygiene-name-text-id-for-session
           (tc-context-structural-session ctx)
           name)
@@ -17413,7 +17419,7 @@
                 (tc-env-key-display
                   (tc-type-env-structural-session env)
                   display-id)))))
-        (match scoped
+        (match (tc-global-shared-view scoped)
           [(ResultTcTypeUnsafe.Ok ty _) (tc-poison-observation-note! ty)]
           [(ResultTcTypeUnsafe.Err _) unit])
         scoped))
@@ -17715,7 +17721,7 @@
           (macro-hygiene-global-module-id
             (tc-type-env-structural-session env)
             name-id)
-          (tc-context-module-id ctx))]
+          (tc-context-module-id (tc-global-shared-view ctx)))]
       (if (tc-name-qualified-id? (tc-context-structural-session ctx) source-id)
         (TcMaybeString.No)
         (let
@@ -21459,21 +21465,24 @@
   [session : cis.InternStructuralSessionHandle]
   [name : String]
   [name-id : i64]) : bool
-  (let
-    [source-name-id : i64
-      (macro-hygiene-global-source-name-id-or session name-id name-id)]
-    [slash : i64 (ci.intern-qualified-last-slash source-name-id)]
-    [n : i64 (string.string-length name)]
-    (and
-      (not (tc-hygiene-local-name-id? session name-id))
-      (not (tc-hygiene-global-name-id? session name-id))
-      (> slash 0)
-      (< slash (- n 1)))))
+  (if (< name-id 0)
+    false
+    (let
+      [source-name-id : i64
+        (macro-hygiene-global-source-name-id-or session name-id name-id)]
+      [slash : i64 (ci.intern-qualified-last-slash source-name-id)]
+      [n : i64 (string.string-length name)]
+      (and
+        (not (tc-hygiene-local-name-id? session name-id))
+        (not (tc-hygiene-global-name-id? session name-id))
+        (> slash 0)
+        (< slash (- n 1))))))
 
 (test
   tc-source-slash-qualified-private-name
   (test.assert-false
     (tc-source-slash-qualified-id?
+      (cis.InternStructuralSessionHandle 0)
       "__lower_private"
       (- 0 (+ (* (ci.intern-capacity) 4) 5)))
     "lowerer-private names stay outside intern metadata"))
@@ -21548,7 +21557,10 @@
   [env : TcTypeEnv]
   [_name : String]
   [name-id : i64]) : TcMaybeString
-  (match (tc-current-module-source-lookup-key-id ctx env name-id)
+  (match (tc-current-module-source-lookup-key-id
+    (tc-global-shared-view ctx)
+    env
+    name-id)
     [(TcMaybeNameId.Some key-id)
       (TcMaybeString.Some
         (tc-env-key-display (tc-context-structural-session ctx) key-id))]
@@ -22172,7 +22184,7 @@
           (tc-dotted-name-first-dot-id (tc-context-structural-session ctx) name)
           0))
         ResultTcUnit.Ok
-        (if (tc-dotted-place-name-id? ctx env name)
+        (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
           (match (tc-dotted-local-field-expr-id-after-check
             (tc-context-structural-session ctx)
             name)
@@ -22197,7 +22209,7 @@
           (tc-dotted-name-first-dot-id (tc-context-structural-session ctx) name)
           0))
         ResultTcUnit.Ok
-        (if (tc-dotted-place-name-id? ctx env name)
+        (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
           (match (tc-dotted-local-field-set-expr-id-after-check
             (tc-context-structural-session ctx)
             name
@@ -22496,12 +22508,12 @@
                       (tc-context-job-state (tc-global-shared-view ctx)))
                       (macro-segmented-imported-module-identity-ids?
                         (tc-context-structural-session ctx)
-                        (tc-context-job-state ctx)
+                        (tc-context-job-state (tc-global-shared-view ctx))
                         current-module-id
                         target-id)
                       (tc-imported-module-identity-ids?
                         (tc-context-structural-session ctx)
-                        (__tl-box-place decls-box)
+                        (ast.ast-decl-list-box-shared-view decls-box)
                         current-module-id
                         target-id
                         cbi.compiler-builtin-id-fix-empty))]
@@ -22517,7 +22529,7 @@
   (let
     [session : ci.InternSourceNameSession
       (ci.intern-source-name-session-handle-session
-        (tc-context-source-names ctx))]
+        (tc-context-source-names (tc-global-shared-view ctx)))]
     [source-name : i64
       (tc-dotted-name-source-id (tc-context-structural-session ctx) name)]
     ;; Qualified source names already carry their parsed module ID. Returning
@@ -23113,15 +23125,21 @@
     source-match
     (cbi.compiler-builtin-typecheck-stdlib-string-bare-helper-id? source-id))
     (or
-      (tc-context-is-stdlib-string? ctx)
-      (tc-context-imports-stdlib-string? ctx)
-      (tc-stdlib-string-helper-bound-wrapper? env base-id base)
-      (tc-stdlib-string-helper-symbol-wrapper? ctx base-id base)
+      (tc-context-is-stdlib-string? (tc-global-shared-view ctx))
+      (tc-context-imports-stdlib-string? (tc-global-shared-view ctx))
+      (tc-stdlib-string-helper-bound-wrapper?
+        env
+        base-id
+        (tc-global-shared-view base))
+      (tc-stdlib-string-helper-symbol-wrapper?
+        (tc-global-shared-view ctx)
+        base-id
+        (tc-global-shared-view base))
       (tc-stdlib-string-qualified-helper-id?
         (tc-context-structural-session ctx)
         lookup-id
         base-id
-        base))
+        (tc-global-shared-view base)))
     (tc-stdlib-string-qualified-helper-id?
       (tc-context-structural-session ctx)
       lookup-id
@@ -24469,7 +24487,7 @@
   [name-id : i64]) : ResultTcString
   (if (tc-source-slash-qualified-id?
     (tc-context-structural-session ctx)
-    name
+    (tc-global-shared-view name)
     name-id)
     (ResultTcString.Err (tc-source-slash-qualified-message name))
     (tc-dotted-type-name-lookup-key-from-id ctx name name-id)))
@@ -24480,7 +24498,7 @@
   [name-id : i64]) : TcNameLookup
   (if (tc-source-slash-qualified-id?
     (tc-context-structural-session ctx)
-    name
+    (tc-global-shared-view name)
     name-id)
     (TcNameLookup.Err (tc-source-slash-qualified-message name))
     (tc-dotted-type-name-lookup-from-id ctx name name-id)))
@@ -24621,7 +24639,7 @@
   (if (tc-enum-qualified-variant-lookup-name-id?
     (tc-context-structural-session ctx)
     name-id)
-    (match ctx
+    (match (tc-global-shared-view ctx)
       [(TcContext _ _ registries module _ _ _ _ _)
         (let
           [registry-id : i64 (csym.compiler-registries-identity registries)]
@@ -24723,7 +24741,7 @@
   ;; re-interns the string; the public String wrappers below intern once.
   (if (tc-source-slash-qualified-id?
     (tc-context-structural-session ctx)
-    name
+    (tc-global-shared-view name)
     name-id)
     (ResultTcString.Err (tc-source-slash-qualified-message name))
     (let
@@ -24799,7 +24817,7 @@
   [check-local-field : bool]) : TcNameLookup
   (if (tc-source-slash-qualified-id?
     (tc-context-structural-session ctx)
-    name
+    (tc-global-shared-view name)
     name-id)
     (TcNameLookup.Err (tc-source-slash-qualified-message name))
     (let
@@ -24808,7 +24826,10 @@
       (if (< first-dot 0)
         (if (tc-source-name-bound-exact-id? env name-id)
           (TcNameLookup.Ok name name-id)
-          (match (tc-current-module-source-lookup-key-id ctx env name-id)
+          (match (tc-current-module-source-lookup-key-id
+            (tc-global-shared-view ctx)
+            env
+            name-id)
             [(TcMaybeNameId.Some key-id)
               (TcNameLookup.Ok
                 (tc-env-key-display (tc-context-structural-session ctx) key-id)
@@ -25026,7 +25047,8 @@
       (if (string.eq (tc-nominal-name-id-display name-id) owner-name)
         (tc-resolved-nominal-type-id name-id handle)
         (let
-          [owner-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
+          [owner-id : i64
+            (tc-nominal-owner-id-or (tc-global-shared-view ctx) handle name-id)]
           (if (tc-current-module-owner-name-matches-id?
             (tc-context-structural-session ctx)
             name-id
@@ -25059,7 +25081,8 @@
       (if (string.eq (tc-nominal-name-id-display name-id) owner-name)
         (tc-resolved-nominal-type-with-args-id name-id handle lifetimes)
         (let
-          [owner-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
+          [owner-id : i64
+            (tc-nominal-owner-id-or (tc-global-shared-view ctx) handle name-id)]
           (if (tc-current-module-owner-name-matches-id?
             (tc-context-structural-session ctx)
             name-id
@@ -25687,7 +25710,11 @@
                   lookup-id
                   handle)])
             (let
-              [canonical-id : i64 (tc-nominal-owner-id-or ctx handle lookup-id)]
+              [canonical-id : i64
+                (tc-nominal-owner-id-or
+                  (tc-global-shared-view ctx)
+                  handle
+                  lookup-id)]
               (match (tc-stdlib-comptime-syntax-type-id canonical-id)
                 [(ast.AstMaybeType.Some syntax-ty) syntax-ty]
                 [(ast.AstMaybeType.No)
@@ -25738,7 +25765,8 @@
 
 (define (tc-resolve-type-name [ctx : TcContext] [name : String] [name-id : i64]) : ast.AstType
   (let
-    [resolution-ctx : TcContext (tc-context-for-type-resolution ctx)]
+    [resolution-ctx : TcContext
+      (tc-context-for-type-resolution (tc-global-shared-view ctx))]
     (if (macro-hygiene-global-id? (tc-context-structural-session ctx) name-id)
       (let
         [source-id : i64
@@ -25942,7 +25970,7 @@
               (ast.ast-node-pool-context-type-get pools inner)))]
         [(ast.AstType.VarArgs name lifetimes)
           (tc-resolve-type-name-with-args
-            ctx
+            (tc-global-shared-view ctx)
             (tc-hygiene-name-text-id-for-session
               (tc-context-structural-session ctx)
               name)
@@ -25950,7 +25978,7 @@
             (ast.ast-lifetime-list-box-shared-view lifetimes))]
         [(ast.AstType.Var name)
           (tc-resolve-type-name
-            ctx
+            (tc-global-shared-view ctx)
             (tc-hygiene-name-text-id-for-session
               (tc-context-structural-session ctx)
               name)
@@ -26244,7 +26272,11 @@
                   handle
                   lifetimes)])
             (let
-              [canonical-id : i64 (tc-nominal-owner-id-or ctx handle lookup-id)]
+              [canonical-id : i64
+                (tc-nominal-owner-id-or
+                  (tc-global-shared-view ctx)
+                  handle
+                  lookup-id)]
               (match (tc-stdlib-comptime-syntax-type-id canonical-id)
                 [(ast.AstMaybeType.Some syntax-ty) syntax-ty]
                 [(ast.AstMaybeType.No)
@@ -26271,7 +26303,8 @@
   [name-id : i64]
   [lifetimes : ast.AstLifetimeList]) : ast.AstType
   (let
-    [resolution-ctx : TcContext (tc-context-for-type-resolution ctx)]
+    [resolution-ctx : TcContext
+      (tc-context-for-type-resolution (tc-global-shared-view ctx))]
     (if (macro-hygiene-global-id? (tc-context-structural-session ctx) name-id)
       (let
         [source-id : i64
@@ -26381,7 +26414,7 @@
     [(ast.AstDecl.Unsafe inner-box)
       (tc-program-nominal-lifetimes-from-decl
         session
-        (__tl-box-place inner-box)
+        (ast.ast-decl-box-shared-view inner-box)
         lookup-id
         module-id)]
     [_ (ResultTcLifetimeList.Err "typecheck: nominal type not found")]))
@@ -26425,12 +26458,12 @@
     [(ast.AstProgram.Program decls-box)
       (tc-program-nominal-lifetimes-in-module
         session
-        (__tl-box-place decls-box)
+        (ast.ast-decl-list-box-shared-view decls-box)
         lookup-id
         -1)]))
 
 (define (tc-nominal-lifetimes-id [ctx : TcContext] [name-id : i64]) : ResultTcLifetimeList
-  (match ctx
+  (match (tc-global-shared-view ctx)
     [(TcContext program symbols _ _ _ _ _ _ _)
       (let
         [handle : i64
@@ -28715,7 +28748,7 @@
             (ast.ast-decl-list-box-shared-view decls-box)]
           (tc-source-decl-list-policy-diagnostic-in-module
             ctx
-            decls
+            (tc-global-shared-view decls)
             paths
             ""
             (csym.compiler-symbol-root-module-id)))])))
@@ -35746,7 +35779,7 @@
       (tc-module-local-root-shadow-decl-note!
         session
         seen
-        (__tl-box-place inner-box))]
+        (ast.ast-decl-box-shared-view inner-box))]
     [(ast.AstDecl.Def _ name _ _)
       (tc-module-local-root-shadow-name-note! session seen name)]
     [(ast.AstDecl.DefFn _ name _ _ _ _)
@@ -35808,7 +35841,8 @@
   [seen : (&mut seen tc_i64_i64_map.Map)]
   [name-id : i64]) : bool
   (if (or
-    (csym.compiler-symbol-root-module-id? (tc-context-module-id ctx))
+    (csym.compiler-symbol-root-module-id?
+      (tc-context-module-id (tc-global-shared-view ctx)))
     (ci.intern-dotted? name-id))
     true
     (let
@@ -36101,7 +36135,7 @@
         [_root-shadows : unit
           (tc-module-local-root-shadow-names-note!
             (tc-context-structural-session ctx)
-            decls
+            (tc-global-shared-view decls)
             (&mut seen))]
         [message : String ""]
         [ok : bool true]
@@ -36412,7 +36446,7 @@
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (match (tc-integer-literal-expr-with-expected
-          ctx
+          (tc-global-shared-view ctx)
           (tc-global-shared-view inner)
           expected)
           [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
@@ -37744,7 +37778,7 @@
         expected
         allow-mut-by-value-borrow
         (tc-var-expr-after-local-field-check
-          ctx
+          (tc-global-shared-view ctx)
           env
           name
           (tc-hygiene-name-text-id-for-session
@@ -38124,7 +38158,12 @@
             (tc-context-structural-session ctx)
             raw-name
             hygiene-global)]
-        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+        [lookup-id : i64
+          (tc-call-builtin-lookup-id
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
+            (tc-global-shared-view name)
+            name-id)]
         (tc-private-string-intrinsic-type ctx env lookup-id))]
     [_ (ResultTcType.Err "")]))
 
@@ -38316,7 +38355,11 @@
   [message : String]) : ResultTcType
   (if (tc-borrow-place-error-message? (tc-global-shared-view message))
     (ResultTcType.Err (tc-rich-borrow-place-error span message))
-    (match (tc-spanned-escape-error session inner span message)
+    (match (tc-spanned-escape-error
+      session
+      (tc-global-shared-view inner)
+      span
+      (tc-global-shared-view message))
       [(TcMaybeString.Some rich) (ResultTcType.Err rich)]
       [(TcMaybeString.No) (tc-locate-call-arity-error inner span message)])))
 
@@ -38984,7 +39027,10 @@
     (tc-call-arity-callee-name (tc-global-shared-view func))
     "` argument "
     (string.int->string (+ index 1))
-    (match (tc-call-parameter-name-at ctx (tc-global-shared-view func) index)
+    (match (tc-call-parameter-name-at
+      (tc-global-shared-view ctx)
+      (tc-global-shared-view func)
+      index)
       [(TcMaybeNameId.Some name-id)
         (str_cat.str-cat
           " (parameter `"
@@ -40490,12 +40536,15 @@
 
 (define (tc-call-extern-abi-for-name-id [ctx : TcContext] [name-id : i64]) : TcMaybeExternAbi
   (let
-    [lookup-id : i64
-      (tc-env-name-key-id (tc-context-structural-session ctx) name-id)]
+    [symbols-ctx : TcContext (tc-global-shared-view ctx)]
+    [structural-session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [lookup-id : i64 (tc-env-name-key-id structural-session name-id)]
+    [module-id : i64 (tc-context-module-id (tc-global-shared-view ctx))]
     [handle : i64
       (if (or
-        (macro-hygiene-global-id? (tc-context-structural-session ctx) name-id)
-        (tc-name-qualified-id? (tc-context-structural-session ctx) name-id))
+        (macro-hygiene-global-id? structural-session name-id)
+        (tc-name-qualified-id? structural-session name-id))
         (csym.compiler-symbols-lookup-value-id-or
           (tc-context-symbols symbols-ctx)
           lookup-id
@@ -40995,7 +41044,11 @@
                 (tc-context-structural-session ctx)
                 nid
                 nid)]
-            [lookup-id : i64 (tc-arena-call-lookup-id ctx env source-id)]
+            [lookup-id : i64
+              (tc-arena-call-lookup-id
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view env)
+                source-id)]
             (tc-arena-owner-call-kind-ids ctx env source-id lookup-id args.len))
           (tc-arena-owner-kind-none)))]
     [_ (tc-arena-owner-kind-none)]))
@@ -41022,7 +41075,11 @@
                   (tc-context-structural-session ctx)
                   nid
                   nid)]
-              [lookup-id : i64 (tc-arena-call-lookup-id ctx env source-id)]
+              [lookup-id : i64
+                (tc-arena-call-lookup-id
+                  (tc-global-shared-view ctx)
+                  (tc-global-shared-view env)
+                  source-id)]
               (if (=
                 (tc-arena-safe-call-kind-id
                   (tc-global-shared-view ctx)
@@ -42674,8 +42731,8 @@
         [source-id : i64
           (macro-hygiene-global-source-name-id-or
             (tc-context-structural-session ctx)
-            (tc-expr-var-name-id func)
-            (tc-expr-var-name-id func))]
+            (tc-expr-var-name-id (tc-global-shared-view func))
+            (tc-expr-var-name-id (tc-global-shared-view func)))]
         [lookup-name : String
           (tc-thread-spawn-lookup-name
             (tc-global-shared-view ctx)
@@ -42802,8 +42859,8 @@
         [source-id : i64
           (macro-hygiene-global-source-name-id-or
             (tc-context-structural-session ctx)
-            (tc-expr-var-name-id func)
-            (tc-expr-var-name-id func))]
+            (tc-expr-var-name-id (tc-global-shared-view func))
+            (tc-expr-var-name-id (tc-global-shared-view func)))]
         [lookup-name : String
           (tc-thread-spawn-lookup-name
             (tc-global-shared-view ctx)
@@ -45058,7 +45115,12 @@
               (tc-context-structural-session ctx)
               raw-name
               hygiene-global)]
-          [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+          [lookup-id : i64
+            (tc-call-builtin-lookup-id
+              (tc-global-shared-view ctx)
+              (tc-global-shared-view env)
+              (tc-global-shared-view name)
+              name-id)]
           (if (or
             (< name-id 0)
             (csym.compiler-composite-triple-key-id? lookup-id)
@@ -45321,9 +45383,9 @@
                 (tc-env-key-name-text-for-session
                   (tc-context-structural-session ctx)
                   name)
-                resolved-maybe-ty
-                init
-                init-ty)
+                (tc-global-shared-view resolved-maybe-ty)
+                (tc-global-shared-view init)
+                (tc-global-shared-view init-ty))
                 [(ResultTcUnit.Ok)
                   (match (tc-ensure-cleanup-resource-not-let-bound
                     (tc-global-shared-view ctx)
@@ -46828,7 +46890,7 @@
             (tc-env-key-name-text-for-session
               (tc-context-structural-session ctx)
               name)
-            maybe-ty
+            (tc-global-shared-view maybe-ty)
             init-box
             bindings
             (+ index 1)
@@ -46856,9 +46918,10 @@
                           (tc-env-key-name-text-for-session
                             (tc-context-structural-session ctx)
                             name)
-                          (ast.AstMaybeType.Some resolved-want)
-                          init
-                          init-ty)
+                          (ast.AstMaybeType.Some
+                            (tc-global-shared-view resolved-want))
+                          (tc-global-shared-view init)
+                          (tc-global-shared-view init-ty))
                           [(ResultTcUnit.Ok)
                             (match (tc-ensure-cleanup-resource-not-let-bound
                               (tc-global-shared-view ctx)
@@ -49743,7 +49806,7 @@
     [(ast.AstExpr.SpmdProgramCount)
       (tc-spmd-reduce-class-finish ctx env spmd-env expr TcSpmdClass.Uniform)]
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
         (match (tc-dotted-local-field-expr-id-after-check
           (tc-context-structural-session ctx)
           name)
@@ -50319,7 +50382,7 @@
     [(ast.AstExpr.SpmdProgramCount)
       (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
         (match (tc-dotted-local-field-expr-id-after-check
           (tc-context-structural-session ctx)
           name)
@@ -50416,7 +50479,7 @@
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         (if (tc-spmd-array-length-call?
           (tc-context-structural-session ctx)
-          func)
+          (tc-global-shared-view func))
           (tc-spmd-array-length-call ctx expr-bases env spmd-env expr-ty args)
           (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args)))]
     [(ast.AstExpr.BracketClause items)
@@ -50905,7 +50968,7 @@
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (if (tc-dotted-place-name-id? ctx env name)
+        (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
           (match (tc-dotted-local-field-set-expr-id-after-check
             (tc-context-structural-session ctx)
             name
@@ -52793,18 +52856,21 @@
       (tc-name-id-list-add bound (tc-env-key-source-id-or-neg session name))]
     [(ast.AstPattern.Tuple patterns-box)
       (let
-        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
         (tc-pattern-list-add-bound-source-ids session patterns bound))]
     [(ast.AstPattern.Array patterns-box)
       (let
-        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
         (tc-pattern-list-add-bound-source-ids session patterns bound))]
     [(ast.AstPattern.Wildcard) bound]
     [(ast.AstPattern.Binding name)
       (tc-name-id-list-add bound (tc-env-key-source-id-or-neg session name))]
     [(ast.AstPattern.Variant _ patterns-box)
       (let
-        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
         (tc-pattern-list-add-bound-source-ids session patterns bound))]
     [(ast.AstPattern.Literal _) bound]))
 
@@ -59180,7 +59246,7 @@
   [expr : ast.AstExpr]) : ResultTcBorrowPlace
   (match (ast.ast-expr-unspan (tc-global-shared-view expr))
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
         (match (tc-dotted-local-field-expr-id-after-check
           (tc-context-structural-session ctx)
           name)
@@ -59195,7 +59261,7 @@
           [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
           [(ResultTcType.Err message)
             (match (tc-var-expr-after-local-field-check
-              ctx
+              (tc-global-shared-view ctx)
               env
               name
               (tc-hygiene-name-text-id-for-session
@@ -59358,7 +59424,7 @@
   [expr : ast.AstExpr]) : ResultTcNameId
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
         (match (tc-dotted-local-field-expr-id-after-check
           (tc-context-structural-session ctx)
           name)
@@ -61373,7 +61439,7 @@
   [variant-name-id : i64]
   [fallback : i64]) : i64
   (let
-    [registries : csym.CompilerRegistries (tc-context-registries ctx)]
+    [registries : (& ctx csym.CompilerRegistries) (tc-context-registries ctx)]
     (if (tc-name-qualified-id?
       (tc-context-structural-session ctx)
       variant-name-id)
@@ -62034,7 +62100,7 @@
   [variant-id : i64]) : bool
   (or
     (tc-variant-name-matches-id?
-      ctx
+      (tc-global-shared-view ctx)
       (tc-expr-pattern-enum-id)
       pattern-id
       variant-id)
@@ -64979,7 +65045,7 @@
   [array : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan (tc-global-shared-view array))
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
         (match (tc-dotted-local-field-expr-id-after-check
           (tc-context-structural-session ctx)
           name)
@@ -65056,7 +65122,7 @@
   [place : ast.AstExpr]) : ResultTcType
   (match (ast.ast-expr-unspan place)
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
         (match (tc-dotted-local-field-expr-id-after-check
           (tc-context-structural-session ctx)
           name)
@@ -65832,7 +65898,7 @@
             (tc-hygiene-name-text-id-for-session
               (tc-context-structural-session ctx)
               name)]
-          (if (tc-dotted-place-name-id? ctx env name)
+          (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
             (match (tc-dotted-local-field-expr-id-after-check
               (tc-context-structural-session ctx)
               name)
@@ -66270,7 +66336,7 @@
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Set name value-box)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
         (match (tc-dotted-local-field-set-expr-id-after-check
           (tc-context-structural-session ctx)
           name
@@ -68584,7 +68650,7 @@
             (tc-qualified-name-module name)))]
       [(tc-comptime-purity-ctfe-builtin?
           (tc-context-structural-session ctx)
-          name
+          (tc-global-shared-view name)
           name-id)
         ResultTcUnit.Ok]
       [else
@@ -68633,7 +68699,7 @@
         (macro-hygiene-global-module-id
           (tc-context-structural-session ctx)
           name-id)
-        (tc-context-module-id ctx))]
+        (tc-context-module-id (tc-global-shared-view ctx)))]
     [handle : i64
       (csym.compiler-symbols-lookup-value-in-module-id-or
         (tc-context-symbols ctx)
@@ -72209,7 +72275,7 @@
           (tc-macro-abstract-call-id
             (tc-macro-state-structural-session state)
             (ast.ast-node-get func)
-            bound)
+            (tc-global-shared-view bound))
           (cbi.compiler-builtin-ctfe-ref 210))
         (= args.len 1)
         (tc-macro-abstract-param-var?
@@ -72407,8 +72473,8 @@
         [call-id : i64
           (tc-macro-abstract-call-id
             (tc-macro-state-structural-session state)
-            func
-            bound)]
+            (tc-global-shared-view func)
+            (tc-global-shared-view bound))]
         (if (and
           (or
             (ctfe_support.ctfe-builtin-reflection-id? call-id)
@@ -72457,7 +72523,7 @@
           (tc-macro-abstract-call-id
             (tc-macro-state-structural-session state)
             (ast.ast-node-get func)
-            bound)
+            (tc-global-shared-view bound))
           (cbi.compiler-builtin-ctfe-ref 71))
         (= args.len 1)
         (tc-macro-abstract-param-var?
@@ -76348,7 +76414,7 @@
   [place : ast.AstExpr]) : TcMaybeNameId
   (match (ast.ast-expr-unspan place)
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
         (match (tc-dotted-local-field-expr-id-after-check
           (tc-context-structural-session ctx)
           name)
@@ -77162,12 +77228,12 @@
     (let
       [resolved : ast.AstType
         (tc-resolve-type-name
-          ctx
+          (tc-global-shared-view ctx)
           (tc-hygiene-name-text-id-for-session
             (tc-context-structural-session ctx)
             name-id)
           name-id)]
-      (match resolved
+      (match (tc-global-shared-view resolved)
         [(ast.AstType.Var resolved-id)
           (if (= resolved-id name-id)
             false
@@ -77379,13 +77445,13 @@
   [origin : ast.AstExpr]) : TcMoveResult
   (if (tc-moved-contains? locals name-id)
     (if (or
-      (tc-moved-contains? moved name-id)
-      (tc-moved-partial? moved name-id))
+      (tc-moved-contains? (tc-global-shared-view moved) name-id)
+      (tc-moved-partial? (tc-global-shared-view moved) name-id))
       (let
         [name : String (tc-hygiene-name-text-id name-id)]
         (tc-move-rich-use-conflict-result
           expr-bases
-          (tc-moved-root-conflict moved name-id)
+          (tc-moved-root-conflict (tc-global-shared-view moved) name-id)
           (tc-global-shared-view name)
           origin
           name))
@@ -77406,13 +77472,14 @@
   [origin : ast.AstExpr]) : TcMoveResult
   (cond
     [(not (tc-moved-contains? locals name-id)) (TcMoveResult.Ok moved)]
-    [(tc-moved-contains? moved name-id) (TcMoveResult.Ok moved)]
-    [(tc-moved-partial? moved name-id)
+    [(tc-moved-contains? (tc-global-shared-view moved) name-id)
+      (TcMoveResult.Ok moved)]
+    [(tc-moved-partial? (tc-global-shared-view moved) name-id)
       (let
         [name : String (tc-hygiene-name-text-id name-id)]
         (tc-move-rich-use-conflict-result
           expr-bases
-          (tc-moved-root-conflict moved name-id)
+          (tc-moved-root-conflict (tc-global-shared-view moved) name-id)
           (tc-global-shared-view name)
           origin
           name))]
@@ -77922,7 +77989,12 @@
             (tc-context-structural-session ctx)
             raw-id
             hygiene-global)]
-        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+        [lookup-id : i64
+          (tc-call-builtin-lookup-id
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
+            name
+            name-id)]
         [arena-call-kind : i64
           (tc-arena-safe-call-kind-id
             (tc-global-shared-view ctx)
@@ -79451,10 +79523,10 @@
           (tc-hygiene-name-text-id-for-session
             (tc-context-structural-session ctx)
             name)]
-        (if (tc-moved-contains? moved name)
+        (if (tc-moved-contains? (tc-global-shared-view moved) name)
           (tc-move-rich-use-conflict-result
             expr-bases
-            (tc-moved-conflict moved name)
+            (tc-moved-conflict (tc-global-shared-view moved) name)
             (tc-global-shared-view name-text)
             origin
             name-text)
@@ -80751,7 +80823,7 @@
           (tc-hygiene-name-text-id-for-session
             (tc-context-structural-session ctx)
             name)]
-        (if (tc-dotted-place-name-id? ctx env name)
+        (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
           (match (tc-dotted-local-field-expr-id-after-check
             (tc-context-structural-session ctx)
             name)
@@ -81546,7 +81618,7 @@
     [(ast.AstExpr.Set name rhs-box)
       (let
         [rhs : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases rhs-box)]
-        (if (tc-dotted-place-name-id? ctx env name)
+        (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
           (match (tc-dotted-local-field-set-expr-id-after-check
             (tc-context-structural-session ctx)
             name
@@ -86382,7 +86454,12 @@
             (tc-context-structural-session ctx)
             raw-id
             hygiene-global)]
-        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+        [lookup-id : i64
+          (tc-call-builtin-lookup-id
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
+            name
+            name-id)]
         [arena-call-kind : i64
           (tc-arena-safe-call-kind-id
             (tc-global-shared-view ctx)
@@ -87724,7 +87801,7 @@
               arms
               lifetime))])]
     [(ast.AstExpr.Set name rhs-box)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
         (match (tc-dotted-local-field-set-expr-id-after-check
           (tc-context-structural-session ctx)
           name
@@ -90127,7 +90204,7 @@
               (TcBorrowCheckResult.Err message)])))]
     [(ast.AstExpr.Literal _) (TcBorrowCheckResult.Ok borrowed)]
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
+      (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
         (match (tc-dotted-local-field-expr-id-after-check
           (tc-context-structural-session ctx)
           name)
@@ -90911,7 +90988,7 @@
     [(ast.AstExpr.Set name rhs-box)
       (let
         [rhs : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases rhs-box)]
-        (if (tc-dotted-place-name-id? ctx env name)
+        (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
           (match (tc-dotted-local-field-set-expr-id-after-check
             (tc-context-structural-session ctx)
             name
@@ -94207,12 +94284,13 @@
   [decls : ast.AstDeclList]) : unit
   (let
     [expr-bases : i64 (ast.ast-node-pool-active-expr-segment-bases)]
-    [has-defmacro : bool (macro-program-has-defmacro? decls)]
+    [has-defmacro : bool
+      (macro-program-has-defmacro? (tc-global-shared-view decls))]
     [needs-expansion : bool
       (macro-program-needs-expansion?
         (tc-macro-state-structural-session state)
         expr-bases
-        decls)]
+        (tc-global-shared-view decls))]
     (begin
       (tc-macro-walk-set! state macro-live-prescan-has-defmacro has-defmacro)
       (tc-macro-walk-set!
@@ -94300,7 +94378,7 @@
           (macro-program-needs-expansion?
             (tc-macro-state-structural-session state)
             expr-bases
-            decls)))
+            (tc-global-shared-view decls))))
       (tc-macro-walk-set!
         state
         macro-live-prescan-summary-import
@@ -94990,7 +95068,11 @@
       name-id]
     [else
       (let
-        [name : String (macro-output-symbol-text-id session name-id site)]
+        [name : String
+          (macro-output-symbol-text-id
+            session
+            name-id
+            (tc-global-shared-view site))]
         (if (tc-hygiene-template-name? name)
           (let
             [source-id : i64 (tc-hygiene-template-source-id-or name-id -1)]
@@ -95038,13 +95120,17 @@
   [name-id : i64]
   [site : String]) : String
   (let
-    [name : String (macro-output-symbol-text-id session name-id site)]
+    [name : String
+      (macro-output-symbol-text-id session name-id (tc-global-shared-view site))]
     [source-name : String
       (if (tc-hygiene-template-name? (tc-global-shared-view name))
         (tc-hygiene-template-base name)
         (tc-hygiene-global-symbol-name name))]
     [source-name-id : i64 (macro-output-syntax-id-at session name-id site)]
-    (if (tc-source-slash-qualified-id? session source-name source-name-id)
+    (if (tc-source-slash-qualified-id?
+      session
+      (tc-global-shared-view source-name)
+      source-name-id)
       (tc-name-slashes-to-dots source-name)
       source-name)))
 
@@ -97248,7 +97334,7 @@
   [fuel : i64]
   [call-expr : ast.AstExpr]) : spec.ResultGenKey
   (if (macro-identity-syntax-param-type?
-    ctx
+    (tc-global-shared-view ctx)
     fallback-module
     fallback-module-id
     ty)
@@ -99590,7 +99676,7 @@
     [(ast.AstType.Tuple items)
       (match (macro-type-list-to-spanned-sexpr
         session
-        (__tl-box-place items)
+        (ast.ast-type-list-box-shared-view items)
         span
         origin)
         [(ResultMacroSexpr.Ok stail)
@@ -99603,7 +99689,7 @@
     [(ast.AstType.Func args ret)
       (match (macro-type-list-to-spanned-sexpr
         session
-        (__tl-box-place args)
+        (ast.ast-type-list-box-shared-view args)
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sargs)
@@ -99668,7 +99754,7 @@
     [(ast.AstType.VarArgs name lifetimes)
       (macro-type-named-args-sexpr
         (macro-output-source-identity-id-at session name "type-var-args")
-        (__tl-box-place lifetimes)
+        (ast.ast-lifetime-list-box-shared-view lifetimes)
         span)]
     [(ast.AstType.Ref region inner)
       (match (macro-type-to-spanned-sexpr
@@ -99715,14 +99801,7 @@
               (macro-spanned-symbol-id region span)
               sinner
               span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-    [(ast.AstType.Consume inner)
-      (macro-type-unary-sexpr-id
-        session
-        (cbi.compiler-builtin-ctfe-ref 179)
-        inner
-        span
-        origin)]))
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-child-form1-id
   [session : cis.InternStructuralSessionHandle]
@@ -99742,7 +99821,11 @@
   [right-id : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
-  (match (macro-child-to-spanned-sexpr session left-id span origin)
+  (match (macro-child-to-spanned-sexpr
+    session
+    left-id
+    span
+    (tc-global-shared-view origin))
     [(ResultMacroSexpr.Ok sleft)
       (match (macro-child-to-spanned-sexpr session right-id span origin)
         [(ResultMacroSexpr.Ok sright)
@@ -99757,7 +99840,11 @@
   [ty : ast.AstType]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
-  (match (macro-child-to-spanned-sexpr session expr-id span origin)
+  (match (macro-child-to-spanned-sexpr
+    session
+    expr-id
+    span
+    (tc-global-shared-view origin))
     [(ResultMacroSexpr.Ok sexpr)
       (match (macro-type-to-spanned-sexpr session ty span origin)
         [(ResultMacroSexpr.Ok sty)
@@ -99856,7 +99943,7 @@
     [(ast.AstPattern.Variant name args-box)
       (match (macro-pattern-list-to-spanned-sexpr
         session
-        (__tl-box-place args-box)
+        (ast.ast-pattern-list-box-shared-view args-box)
         span
         origin)
         [(ResultMacroSexpr.Ok args)
@@ -99874,7 +99961,7 @@
     [(ast.AstPattern.Tuple patterns-box)
       (match (macro-pattern-list-to-spanned-sexpr
         session
-        (__tl-box-place patterns-box)
+        (ast.ast-pattern-list-box-shared-view patterns-box)
         span
         origin)
         [(ResultMacroSexpr.Ok patterns)
@@ -99887,7 +99974,7 @@
     [(ast.AstPattern.Array patterns-box)
       (match (macro-pattern-list-to-spanned-sexpr
         session
-        (__tl-box-place patterns-box)
+        (ast.ast-pattern-list-box-shared-view patterns-box)
         span
         origin)
         [(ResultMacroSexpr.Ok patterns)
@@ -99911,9 +99998,17 @@
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match arm
     [(ast.AstMatchArm.Arm pattern body-id)
-      (match (macro-pattern-to-spanned-sexpr session pattern span origin)
+      (match (macro-pattern-to-spanned-sexpr
+        session
+        pattern
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok spattern)
-          (match (macro-child-to-spanned-sexpr session body-id span origin)
+          (match (macro-child-to-spanned-sexpr
+            session
+            body-id
+            span
+            (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok sbody)
               (ResultMacroSexpr.Ok
                 (reader.spanned-sexpr-bracket-list
@@ -99977,7 +100072,11 @@
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match binding
     [(ast.AstLetBinding.Binding name maybe-ty value-id)
-      (match (macro-child-to-spanned-sexpr session value-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        value-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok svalue)
           (match maybe-ty
             [(ast.AstMaybeType.No)
@@ -100094,7 +100193,7 @@
         session
         head-expr
         span
-        origin)
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok shead)
           (macro-expr-list-to-spanned-sexpr-at
             session
@@ -100191,7 +100290,11 @@
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr (ast.ast-node-get func-box)]
-        (match (macro-call-head-to-spanned-sexpr session func span origin)
+        (match (macro-call-head-to-spanned-sexpr
+          session
+          func
+          span
+          (tc-global-shared-view origin))
           [(ResultMacroSexpr.Ok head)
             (match (macro-expr-list-to-spanned-sexpr session args span origin)
               [(ResultMacroSexpr.Ok tail)
@@ -100279,7 +100382,11 @@
         span
         origin)]
     [(ast.AstExpr.Binary op left-id right-id)
-      (match (macro-child-to-spanned-sexpr session left-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        left-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sleft)
           (match (macro-child-to-spanned-sexpr session right-id span origin)
             [(ResultMacroSexpr.Ok sright)
@@ -100296,7 +100403,11 @@
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-id)
-          (match (macro-child-to-spanned-sexpr session body-id span origin)
+          (match (macro-child-to-spanned-sexpr
+            session
+            body-id
+            span
+            (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok sbody)
               (match (macro-let-tail session bindings sbody span origin)
                 [(ResultMacroSexpr.Ok stail)
@@ -100310,7 +100421,11 @@
                 [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
     [(ast.AstExpr.While cond-id body-id)
-      (match (macro-child-to-spanned-sexpr session cond-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        cond-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok scond)
           (match (macro-child-to-spanned-sexpr session body-id span origin)
             [(ResultMacroSexpr.Ok sbody)
@@ -100325,7 +100440,11 @@
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-id arms)
-          (match (macro-child-to-spanned-sexpr session scrutinee-id span origin)
+          (match (macro-child-to-spanned-sexpr
+            session
+            scrutinee-id
+            span
+            (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok sscrutinee)
               (match (macro-match-arm-list-to-spanned-sexpr
                 session
@@ -100364,7 +100483,7 @@
         session
         (ast.ty-node-get ty-id)
         span
-        origin)
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sty)
           (match (macro-child-to-spanned-sexpr session len-id span origin)
             [(ResultMacroSexpr.Ok slen)
@@ -100377,7 +100496,11 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayRef array-id index-id)
-      (match (macro-child-to-spanned-sexpr session array-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        array-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
           (match (macro-child-to-spanned-sexpr session index-id span origin)
             [(ResultMacroSexpr.Ok sindex)
@@ -100390,9 +100513,17 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArraySet array-id index-id value-id)
-      (match (macro-child-to-spanned-sexpr session array-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        array-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
-          (match (macro-child-to-spanned-sexpr session index-id span origin)
+          (match (macro-child-to-spanned-sexpr
+            session
+            index-id
+            span
+            (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok sindex)
               (match (macro-child-to-spanned-sexpr session value-id span origin)
                 [(ResultMacroSexpr.Ok svalue)
@@ -100407,9 +100538,17 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayTake array-id live-id index-id)
-      (match (macro-child-to-spanned-sexpr session array-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        array-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
-          (match (macro-child-to-spanned-sexpr session live-id span origin)
+          (match (macro-child-to-spanned-sexpr
+            session
+            live-id
+            span
+            (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok slive)
               (match (macro-child-to-spanned-sexpr session index-id span origin)
                 [(ResultMacroSexpr.Ok sindex)
@@ -100424,7 +100563,11 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.FixedArrayTake array-id index-id)
-      (match (macro-child-to-spanned-sexpr session array-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        array-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
           (match (macro-child-to-spanned-sexpr session index-id span origin)
             [(ResultMacroSexpr.Ok sindex)
@@ -100437,7 +100580,11 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Replace place-id replacement-id)
-      (match (macro-child-to-spanned-sexpr session place-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        place-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok splace)
           (match (macro-child-to-spanned-sexpr
             session
@@ -100454,7 +100601,11 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayPush array-id value-id)
-      (match (macro-child-to-spanned-sexpr session array-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        array-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
           (match (macro-child-to-spanned-sexpr session value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
@@ -100467,7 +100618,11 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.StringRef string-id index-id)
-      (match (macro-child-to-spanned-sexpr session string-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        string-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sstring)
           (match (macro-child-to-spanned-sexpr session index-id span origin)
             [(ResultMacroSexpr.Ok sindex)
@@ -100490,7 +100645,11 @@
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.StructSet receiver-id field value-id)
-      (match (macro-child-to-spanned-sexpr session receiver-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        receiver-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sreceiver)
           (match (macro-child-to-spanned-sexpr session value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
@@ -100522,7 +100681,11 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Cast inner-id ty-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        inner-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sinner)
           (match (macro-type-to-spanned-sexpr
             session
@@ -100542,7 +100705,11 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Ann inner-id ty-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        inner-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sinner)
           (match (macro-type-to-spanned-sexpr
             session
@@ -100611,7 +100778,11 @@
             (macro-form1-id (ci.intern "__tl_box-take") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxSet receiver-id value-id)
-      (match (macro-child-to-spanned-sexpr session receiver-id span origin)
+      (match (macro-child-to-spanned-sexpr
+        session
+        receiver-id
+        span
+        (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sreceiver)
           (match (macro-child-to-spanned-sexpr session value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
@@ -100862,7 +101033,10 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [sexpr-mark : i64 (reader.sexpr-node-pool-len)]
-    (match (macro-expr-to-spanned-sexpr session expr origin)
+    (match (macro-expr-to-spanned-sexpr
+      session
+      expr
+      (tc-global-shared-view origin))
       [(ResultMacroSexpr.Ok form)
         (match (macro-parse-decl-sexpr dispatch form origin)
           [(ResultMacroParsedDecls.Ok decls)
@@ -100899,7 +101073,11 @@
     (let
       [head-expr : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
-      (match (macro-parse-decls-from-expr session dispatch head-expr origin)
+      (match (macro-parse-decls-from-expr
+        session
+        dispatch
+        head-expr
+        (tc-global-shared-view origin))
         [(ResultMacroParsedDecls.Ok head-decls)
           (match (macro-parse-decls-from-exprs-at
             session
@@ -102860,7 +103038,8 @@
                             (tc-macro-state-structural-session env.state)
                             source-name-id)
                           0)
-                        (macro-hygiene-env-has-output-flat-import? env))
+                        (macro-hygiene-env-has-output-flat-import?
+                          (macro-hygiene-env-shared-view env)))
                         source-name-id
                         (macro-hygiene-global-name-id
                           env.state
@@ -109634,7 +109813,7 @@
                   call-expr)]
               [(TcHygieneGlobalName.Context module lookup-name)
                 (macro-call-decl-from-hygiene-name
-                  ctx
+                  (tc-global-shared-view ctx)
                   decls
                   module
                   (macro-source-module-id (ci.intern-qualified-module-id name))
@@ -109647,8 +109826,9 @@
           (macro-call-decl-from-source-name
             (tc-global-shared-view ctx)
             decls
-            (tc-context-module ctx)
-            (macro-source-module-id (tc-context-module-id ctx))
+            (tc-context-module (tc-global-shared-view ctx))
+            (macro-source-module-id
+              (tc-context-module-id (tc-global-shared-view ctx)))
             (tc-hygiene-name-text-id-for-session
               (tc-context-structural-session ctx)
               name)
@@ -109759,17 +109939,18 @@
 (define (macro-type-arg-module-qualify-id [ctx : TcContext] [name : i64]) : i64
   (let
     [module : String (tc-context-module (tc-global-shared-view ctx))]
+    [structural-session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
     (if (and
       (> (string.string-length module) 0)
-      (not (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
-      (not
-        (tc-structural-local-name-id? (tc-context-structural-session ctx) name))
+      (not (macro-hygiene-global-id? structural-session name))
+      (not (tc-structural-local-name-id? structural-session name))
       (not (csym.compiler-composite-pair-key-id? name))
       (not (csym.compiler-composite-triple-key-id? name))
-      (not (tc-name-qualified-id? (tc-context-structural-session ctx) name))
+      (not (tc-name-qualified-id? structural-session name))
       (not
         (tc-source-slash-qualified-id?
-          (tc-context-structural-session ctx)
+          structural-session
           (tc-env-key-name-text name)
           name)))
       (tc-module-name-id-by-id (tc-context-module-id ctx) name)
@@ -110052,7 +110233,7 @@
         [name : String (ci.intern-str source-id)]
         (if (tc-source-slash-qualified-id?
           (tc-context-structural-session ctx)
-          name
+          (tc-global-shared-view name)
           source-id)
           (ResultMacroModuleArg.Err
             (box
@@ -113513,7 +113694,7 @@
       (let
         [lookup-id : i64
           (macro-output-source-identity-id-at
-            (tc-ctfe-env-structural-session env)
+            (tc-ctfe-env-structural-session (tc-global-shared-view env))
             name
             "generated-type-param")]
         (match (if (>= lookup-id 0)
@@ -113781,7 +113962,7 @@
             [lookup-func : ast.AstExpr
               (macro-generated-call-func-for-lookup
                 (tc-context-structural-session ctx)
-                pools
+                (tc-global-shared-view pools)
                 func)]
             (match (macro-call-decl-with-context
               (tc-global-shared-view ctx)
@@ -114603,16 +114784,19 @@
       out)))
 
 (define (macro-compat-call-name [ctx : TcContext] [func : ast.AstExpr]) : TcMaybeString
-  (match (ast.ast-expr-unspan func)
-    [(ast.AstExpr.Var name)
-      (if (or
-        (macro-hygiene-global-id? (tc-context-structural-session ctx) name)
-        (tc-structural-local-name-id? (tc-context-structural-session ctx) name)
-        (csym.compiler-composite-pair-key-id? name)
-        (csym.compiler-composite-triple-key-id? name))
-        (TcMaybeString.No)
-        (TcMaybeString.Some (tc-env-key-name-text name)))]
-    [_ (TcMaybeString.No)]))
+  (let
+    [structural-session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    (match (ast.ast-expr-unspan func)
+      [(ast.AstExpr.Var name)
+        (if (or
+          (macro-hygiene-global-id? structural-session name)
+          (tc-structural-local-name-id? structural-session name)
+          (csym.compiler-composite-pair-key-id? name)
+          (csym.compiler-composite-triple-key-id? name))
+          (TcMaybeString.No)
+          (TcMaybeString.Some (tc-env-key-name-text name)))]
+      [_ (TcMaybeString.No)])))
 
 (define (macro-compat-guard-message [name : String]) : String
   (if (string.eq name "unless")
@@ -114683,7 +114867,7 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroCompatCall
-  (match (macro-compat-call-name ctx func)
+  (match (macro-compat-call-name (tc-global-shared-view ctx) func)
     [(TcMaybeString.Some name)
       (if (string.eq name "when")
         (macro-expand-compat-guard-call
@@ -117978,8 +118162,8 @@
   [state : TcMacroState]
   [func : ast.AstExpr]) : bool
   (match (macro-call-callee-base-name-id
-    (tc-macro-state-structural-session state)
-    func)
+    (tc-macro-state-structural-session (tc-global-shared-view state))
+    (tc-global-shared-view func))
     [(TcMaybeNameId.Some base-id)
       (let
         [names : tc_i64_i64_map.Map
@@ -118000,7 +118184,9 @@
   [decls : ast.AstDeclList]
   [func : ast.AstExpr]
   [call-expr : ast.AstExpr]) : bool
-  (match (macro-call-callee-name (tc-context-structural-session ctx) func)
+  (match (macro-call-callee-name
+    (tc-context-structural-session ctx)
+    (tc-global-shared-view func))
     [(TcMaybeString.Some name)
       ;; Only callees whose base name matches a declared macro need precise
       ;; alias/module resolution. This keeps value-heavy dotted imports such as
@@ -120801,7 +120987,7 @@
         [_ false])]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (__tl-box-place inner-box)]
+        [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
         (macro-decl-needs-expansion? session expr-bases inner when-id unless-id))]
     [_ false]))
 
@@ -122085,14 +122271,14 @@
   [cleanup-name : i64]) : i64
   (let
     [cleanup-str : String (ci.intern-str cleanup-name)]
+    [structural-session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
     (if (tc-source-slash-qualified-id?
-      (tc-context-structural-session ctx)
+      structural-session
       cleanup-str
       cleanup-name)
       (tc-cleanup-source-slash-alias-helper-name ctx cleanup-name)
-      (if (tc-name-qualified-id?
-        (tc-context-structural-session ctx)
-        cleanup-name)
+      (if (tc-name-qualified-id? structural-session cleanup-name)
         cleanup-name
         (csym.compiler-symbol-module-key-id-by-id
           (let
@@ -123668,7 +123854,7 @@
 
 (define (tc-check-decl-scoped-name-id [ctx : TcContext] [name : i64]) : i64
   (if (and
-    (> (string.string-length (tc-context-module ctx)) 0)
+    (> (string.string-length (tc-context-module (tc-global-shared-view ctx))) 0)
     (not (tc-name-qualified-id? (tc-context-structural-session ctx) name)))
     (tc-module-name-id-by-id (tc-context-module-id ctx) name)
     name))

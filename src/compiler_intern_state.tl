@@ -234,7 +234,7 @@
                 (ptr-cast (__tl_array-data persistent-arena-cell) : (Ptr i64))))]
           [raw : i64
             (ci.intern-structural-table-intern
-              structural-table-cell
+              (&mut structural-table-cell)
               persistent-arena
               kind
               left-id
@@ -314,7 +314,9 @@
         [session : ci.InternSourceNameSession
           (intern-structural-session-handle-session handle)]
         [table : ci.InternStructuralTable
-          (array-ref session.structural-table-cell 0)]
+          (owned_view.compiler-owned-array-element-shared-view
+            session.structural-table-cell
+            0)]
         [raw : i64 (intern-structural-key-raw key)]
         [prefix : i64
           (+
@@ -615,7 +617,9 @@
       [session : ci.InternSourceNameSession
         (intern-structural-session-handle-session handle)]
       [table : ci.InternStructuralTable
-        (array-ref session.structural-table-cell 0)]
+        (owned_view.compiler-owned-array-element-shared-view
+          session.structural-table-cell
+          0)]
       [index : i64 0]
       [count : i64 0]
       (begin

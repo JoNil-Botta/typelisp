@@ -1431,7 +1431,7 @@
 
 (define (tltest-reachable-name-marked?
   [session : cis.InternStructuralSessionHandle]
-  [names : tltest_name_map.Map]
+  [names : (& names tltest_name_map.Map)]
   [name-id : i64]) : bool
   (let
     [key-id : i64 (csym.compiler-symbol-name-id-key name-id)]
@@ -1621,7 +1621,10 @@
       (let
         [func : ast.AstExpr (ast.ast-node-get func-box)]
         [called-names : tltest_name_map.Map
-          (tltest-reach-mark-expr session func names)]
+          (tltest-reach-mark-expr
+            session
+            (owned_view.compiler-owned-shared-view func)
+            names)]
         [runtime-names : tltest_name_map.Map
           (match (ast.ast-expr-unspan func)
             [(ast.AstExpr.Var name)
@@ -2123,7 +2126,9 @@
   [session : cis.InternStructuralSessionHandle]
   [tests : (__tl_dyn-array InlineTest)]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (tltest-reach-mark-tests-from session tests (- (array-length tests) 1) names))
+  (let
+    [last-index : i64 (- (array-length tests) 1)]
+    (tltest-reach-mark-tests-from session tests last-index names)))
 
 (define (tltest-runtime-string-helper-impl-name-id? [name-id : i64]) : bool
   (or
@@ -2274,7 +2279,7 @@
   [session : cis.InternStructuralSessionHandle]
   [decl : ast.AstDecl]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (match decl
+  (match (owned_view.compiler-owned-shared-view decl)
     [(ast.AstDecl.Def decl-meta name _ expr-box)
       (let
         [expr : ast.AstExpr (ast.ast-node-get expr-box)]
@@ -2300,7 +2305,8 @@
         (tltest-reach-mark-expr session body names))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (__tl-box-place inner-box)]
+        [inner : ast.AstDecl
+          (owned_view.compiler-owned-box-shared-view inner-box)]
         (tltest-reach-mark-decl session inner names))]
     [(ast.AstDecl.DefStruct decl-meta _ _ cleanup fields)
       (tltest-reach-mark-field-cleanups
@@ -2358,7 +2364,10 @@
         (let
           [before : i64 (tltest_name_map.len (& result))]
           [next : tltest_name_map.Map
-            (tltest-reach-mark-decls-from session decls result)]
+            (tltest-reach-mark-decls-from
+              session
+              (owned_view.compiler-owned-shared-view decls)
+              (owned_view.compiler-owned-shared-view result))]
           (begin
             (set! result next)
             (if (= (tltest_name_map.len (& result)) before)
@@ -2370,23 +2379,26 @@
   [session : cis.InternStructuralSessionHandle]
   [decls : ast.AstDeclList]
   [tests : (__tl_dyn-array InlineTest)]) : tltest_name_map.Map
-  (tltest-reach-fixed
-    session
-    decls
-    (tltest-decl-list-count decls)
-    (tltest-reach-mark-runtime-helper-roots
-      decls
-      (tltest-reach-mark-test-harness-runtime
-        (tltest-reach-mark-tests
-          session
-          tests
-          (tltest_name_map.with-capacity 64))))))
+  (let
+    [decl-count : i64
+      (tltest-decl-list-count (owned_view.compiler-owned-shared-view decls))]
+    (tltest-reach-fixed
+      session
+      (owned_view.compiler-owned-shared-view decls)
+      decl-count
+      (tltest-reach-mark-runtime-helper-roots
+        decls
+        (tltest-reach-mark-test-harness-runtime
+          (tltest-reach-mark-tests
+            session
+            tests
+            (tltest_name_map.with-capacity 64)))))))
 
 (define (tltest-reachable-runtime-decl?
   [session : cis.InternStructuralSessionHandle]
   [decl : ast.AstDecl]
-  [names : tltest_name_map.Map]) : bool
-  (match decl
+  [names : (& names tltest_name_map.Map)]) : bool
+  (match (owned_view.compiler-owned-shared-view decl)
     [(ast.AstDecl.Def decl-meta name _ _)
       (tltest-reachable-name-marked? session names name)]
     [(ast.AstDecl.DefFn decl-meta name _ _ _ metadata)
@@ -2400,7 +2412,8 @@
     [(ast.AstDecl.DefMacro decl-meta _ _ _ _) true]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (__tl-box-place inner-box)]
+        [inner : ast.AstDecl
+          (owned_view.compiler-owned-box-shared-view inner-box)]
         (tltest-reachable-runtime-decl? session inner names))]
     [_ true]))
 
@@ -2446,7 +2459,10 @@
                     ;; functions/values still go through reachability pruning so tiny
                     ;; inline harnesses stay small.
                     (if (or
-                      (tltest-reachable-runtime-decl? session decl names)
+                      (tltest-reachable-runtime-decl?
+                        session
+                        (owned_view.compiler-owned-shared-view decl)
+                        names)
                       (and
                         (not
                           (tltest-owned-test-path?
@@ -2475,7 +2491,7 @@
   [tests : (__tl_dyn-array InlineTest)]) : InlineRuntimeDecls
   (tltest-prune-runtime-decls-in
     session
-    decls
+    (owned_view.compiler-owned-shared-view decls)
     paths
     (compiler_load.compiler-load-normalize-path source)
     (tltest-reachable-names session decls tests)
@@ -2494,7 +2510,7 @@
     [(InlineCollect.Collect runtime-decls runtime-paths tests)
       (match (tltest-prune-runtime-decls
         session
-        source
+        (owned_view.compiler-owned-shared-view source)
         runtime-decls
         runtime-paths
         (owned_view.compiler-owned-shared-view tests))
@@ -2565,10 +2581,10 @@
           0
           (match (tltest-prune-runtime-decls
             (tltest-active-structural-session)
-            source
+            (owned_view.compiler-owned-shared-view source)
             runtime-decls
             runtime-paths
-            tests)
+            (owned_view.compiler-owned-shared-view tests))
             [(InlineRuntimeDecls.Decls pruned-decls pruned-paths)
               (let
                 [legacy-roots : cli_svec.Vec roots]

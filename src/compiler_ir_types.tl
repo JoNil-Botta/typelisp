@@ -3966,7 +3966,7 @@
         (compiler-ir-type-list-render
           structural-session
           type-segment-bases
-          (__tl-box-place args))
+          (ast.ast-type-list-box-shared-view args))
         " "
         (compiler-ir-type-render
           structural-session
@@ -3979,7 +3979,7 @@
         (compiler-ir-type-list-render
           structural-session
           type-segment-bases
-          (__tl-box-place elems))
+          (ast.ast-type-list-box-shared-view elems))
         ")")]
     [(ast.AstType.Array elem count)
       (str_cat.str-cat
@@ -4078,12 +4078,7 @@
           structural-session
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases elem))
-        ")")]
-    [(ast.AstType.Consume inner)
-      (compiler-ir-type-render
-        structural-session
-        type-segment-bases
-        (ast.ast-type-segment-bases-get type-segment-bases inner))]))
+        ")")]))
 
 (define (compiler-ir-u64-payload-render [value : u64]) : String
   (string.int->string (cast value : i64)))
@@ -5250,7 +5245,8 @@
     [(CompilerIrParamList.Cons param rest)
       (str_cat.str-cat
         (compiler-ir-param-render structural-session type-segment-bases param)
-        (match (compiler-ir-param-list-force-cons (__tl-box-place rest))
+        (match (compiler-ir-param-list-force-cons
+          (compiler-ir-box-shared-view rest))
           [(CompilerIrParamList.Nil) ""]
           [_
             (str_cat.str-cat

@@ -80,7 +80,7 @@
       (match (surface_ast.surface-ast-decode
         ast-bytes
         structural-session
-        identity.remap
+        (owned_view.compiler-owned-place-shared-view identity.remap)
         pools)
         [(surface_ast.ResultSurfaceAstHydration.Err message)
           (ResultCompilerSurfaceHydration.Err message)]

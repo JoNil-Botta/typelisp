@@ -1254,7 +1254,7 @@
                 (owned_view.compiler-owned-shared-view state))
               (opt.compiler-opt-debug-configure!
                 (compiler_driver_core.compiler-driver-state-entry-structural-session
-                  state)
+                  (owned_view.compiler-owned-shared-view state))
                 compile-cli-trace-passes-requested
                 (string.copy (& compile-cli-dump-ir-pass))
                 compile-cli-verify-ir-requested)
@@ -1495,7 +1495,7 @@
             (owned_view.compiler-owned-shared-view state))
           (opt.compiler-opt-debug-configure!
             (compiler_driver_core.compiler-driver-state-entry-structural-session
-              state)
+              (owned_view.compiler-owned-shared-view state))
             compile-cli-trace-passes-requested
             (string.copy (& compile-cli-dump-ir-pass))
             compile-cli-verify-ir-requested)

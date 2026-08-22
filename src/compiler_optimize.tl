@@ -259,7 +259,7 @@
                       (ir.compiler-ir-function-render
                         state.structural-session
                         type-segment-bases
-                        func)))]
+                        (compiler-opt-global-shared-view func))))]
                 (__tl-project-set-field
                   compiler-opt-owned-state
                   debug-state

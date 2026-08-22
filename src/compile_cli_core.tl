@@ -1158,7 +1158,8 @@
   (if (compile-cli-ir-verification-failed?)
     1
     (compiler_driver_core.compiler-driver-write-result
-      (compiler_driver_core.compiler-driver-state-profile state)
+      (compiler_driver_core.compiler-driver-state-profile
+        (owned_view.compiler-owned-shared-view state))
       result
       output-path)))
 
@@ -1169,7 +1170,8 @@
   (if (compile-cli-ir-verification-failed?)
     1
     (compiler_driver_core.compiler-driver-write-buffer-result
-      (compiler_driver_core.compiler-driver-state-profile state)
+      (compiler_driver_core.compiler-driver-state-profile
+        (owned_view.compiler-owned-shared-view state))
       result
       output-path)))
 
@@ -1180,7 +1182,8 @@
   (if (compile-cli-ir-verification-failed?)
     1
     (compiler_driver_core.compiler-driver-write-pic-result
-      (compiler_driver_core.compiler-driver-state-profile state)
+      (compiler_driver_core.compiler-driver-state-profile
+        (owned_view.compiler-owned-shared-view state))
       result
       output-path)))
 
@@ -1346,7 +1349,8 @@
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-start-phase
-                  (compiler_driver_core.compiler-driver-state-profile _state)))
+                  (compiler_driver_core.compiler-driver-state-profile
+                    (owned_view.compiler-owned-shared-view _state))))
               (match (io.try-write-file
                 (& object-path)
                 (byte_buf.str-as-bytes (& object)))
@@ -1365,14 +1369,16 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                (compiler_driver_core.compiler-driver-state-profile _state)
+                (compiler_driver_core.compiler-driver-state-profile
+                  (owned_view.compiler-owned-shared-view _state))
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
               "write")
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-total
-                (compiler_driver_core.compiler-driver-state-profile _state)))
+                (compiler_driver_core.compiler-driver-state-profile
+                  (owned_view.compiler-owned-shared-view _state))))
             (if (= write-status 0)
               (begin
                 (io.print-format
@@ -1395,7 +1401,8 @@
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-start-phase
-                  (compiler_driver_core.compiler-driver-state-profile _state)))
+                  (compiler_driver_core.compiler-driver-state-profile
+                    (owned_view.compiler-owned-shared-view _state))))
               (compiler_driver_core.compiler-driver-write-text-buf
                 (owned_view.compiler-owned-shared-view assembly-path)
                 asm))]
@@ -1403,14 +1410,16 @@
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-phase
-                (compiler_driver_core.compiler-driver-state-profile _state)
+                (compiler_driver_core.compiler-driver-state-profile
+                  (owned_view.compiler-owned-shared-view _state))
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
               "write")
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-total
-                (compiler_driver_core.compiler-driver-state-profile _state)))
+                (compiler_driver_core.compiler-driver-state-profile
+                  (owned_view.compiler-owned-shared-view _state))))
             (if (= write-status 0)
               (begin
                 (io.print-format
@@ -1431,7 +1440,8 @@
           (cfg
             compile-profile
             (compiler_driver_core.compiler-driver-profile-finish-total
-              (compiler_driver_core.compiler-driver-state-profile _state)))
+              (compiler_driver_core.compiler-driver-state-profile
+                (owned_view.compiler-owned-shared-view _state))))
           (io.print-error
             (compiler_driver_core.compiler-driver-render-source-diagnostic
               (cdiag.compiler-diagnostic-box-shared-view
@@ -1903,7 +1913,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-start-entry!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
@@ -1939,7 +1950,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal
             "emit-complete")
           unit)]
@@ -2003,7 +2015,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal
             "scratch-destroy-steady")
           unit)
@@ -2108,7 +2121,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-start-entry!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
@@ -2137,7 +2151,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal
             "emit-complete")
           unit)]
@@ -2209,7 +2224,8 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-batch-profile-mark!
-            (compiler_driver_core.compiler-driver-state-profile state)
+            (compiler_driver_core.compiler-driver-state-profile
+              (owned_view.compiler-owned-shared-view state))
             ordinal
             "scratch-destroy-steady")
           unit)

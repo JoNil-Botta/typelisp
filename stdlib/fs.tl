@@ -1064,20 +1064,20 @@
   (cond
     [(string.eq segment "") unit]
     [(string.eq segment ".") unit]
-    [(not (string.eq segment "..")) (svec.push-ref! (&mut segments) segment)]
-    [(<= (svec.len (& segments)) 0)
+    [(not (string.eq segment "..")) (svec.push-ref! segments segment)]
+    [(<= (svec.len segments) 0)
       (if rooted
         unit
-        (svec.push-ref! (&mut segments) segment))]
+        (svec.push-ref! segments segment))]
     [else
       (let
-        [top : String (svec.last (& segments) "")]
+        [top : String (svec.last segments "")]
         (if (string.eq top "..")
           (begin
-            (svec.push-ref! (&mut segments) segment)
+            (svec.push-ref! segments segment)
             unit)
           (begin
-            (match (svec.pop-ref! (&mut segments))
+            (match (svec.pop-ref! segments)
               [(svec.Pop.Ok _) unit]
               [svec.Pop.Empty unit])
             unit)))]))

@@ -1181,45 +1181,51 @@
     (compiler-load-session-state-dependency-catalog-handle state)
     provenance-id))
 
+(define (compiler-load-dependency-catalog-handle-slot-for-provenance-path
+  [handle : CompilerLoadDependencyCatalogHandle]
+  [provenance-path : String]) : i64
+  (let
+    [path : String (compiler-load-canonical-path provenance-path)]
+    [items : CompilerLoadDependencyCatalogList
+      (compiler-load-dependency-catalog-handle-items handle)]
+    [index : i64 0]
+    [best : i64 -1]
+    [best-len : i64 -1]
+    (begin
+      (while (< index items.len)
+        (let
+          [entry : CompilerLoadDependencyCatalogEntry
+            (owned_view.compiler-owned-array-element-shared-view
+              items.slots
+              index)]
+          [root : String
+            (owned_view.compiler-owned-shared-view entry.key.canonical-root)]
+          [root-len : i64 (string.string-length root)]
+          (begin
+            (if (and
+              (> root-len best-len)
+              (or
+                (string.eq
+                  (owned_view.compiler-owned-shared-view path)
+                  (owned_view.compiler-owned-shared-view root))
+                (compiler-load-path-under-root?
+                  (owned_view.compiler-owned-shared-view path)
+                  (owned_view.compiler-owned-shared-view root))))
+              (begin
+                (set! best index)
+                (set! best-len root-len))
+              unit)
+            (set! index (+ index 1)))))
+      best)))
+
 (define (compiler-load-dependency-catalog-handle-slot-for-provenance-id
   [handle : CompilerLoadDependencyCatalogHandle]
   [provenance-id : i64]) : i64
   (if (< provenance-id 0)
     -1
-    (let
-      [path : String
-        (compiler-load-canonical-path (ci.intern-str provenance-id))]
-      [items : CompilerLoadDependencyCatalogList
-        (compiler-load-dependency-catalog-handle-items handle)]
-      [index : i64 0]
-      [best : i64 -1]
-      [best-len : i64 -1]
-      (begin
-        (while (< index items.len)
-          (let
-            [entry : CompilerLoadDependencyCatalogEntry
-              (owned_view.compiler-owned-array-element-shared-view
-                items.slots
-                index)]
-            [root : String
-              (owned_view.compiler-owned-shared-view entry.key.canonical-root)]
-            [root-len : i64 (string.string-length root)]
-            (begin
-              (if (and
-                (> root-len best-len)
-                (or
-                  (string.eq
-                    (owned_view.compiler-owned-shared-view path)
-                    (owned_view.compiler-owned-shared-view root))
-                  (compiler-load-path-under-root?
-                    (owned_view.compiler-owned-shared-view path)
-                    (owned_view.compiler-owned-shared-view root))))
-                (begin
-                  (set! best index)
-                  (set! best-len root-len))
-                unit)
-              (set! index (+ index 1)))))
-        best))))
+    (compiler-load-dependency-catalog-handle-slot-for-provenance-path
+      handle
+      (ci.intern-str provenance-id))))
 
 (define (compiler-load-dependency-catalog-lookup-macro
   [state : CompilerLoadSessionState]
@@ -12316,7 +12322,7 @@
   [path : (& path str)]
   [root : (& root str)]) : bool
   (let
-    [prefix : String (compiler-load-root-prefix (& root))]
+    [prefix : String (compiler-load-root-prefix root)]
     [prefix-len : i64 (string.string-length prefix)]
     (and (> prefix-len 0) (compiler-load-string-prefix-at? path prefix 0))))
 

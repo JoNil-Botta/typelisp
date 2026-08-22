@@ -525,37 +525,37 @@
       (compiler-opt-load-cse-profile-line
         "max_table_size"
         (profile_state.compiler-profile-state-metric-value
-          state
+          (profile_state.compiler-profile-state-shared-view state)
           compiler-opt-load-cse-profile-max-table-size-metric))
       (compiler-opt-load-cse-profile-line
         "max_kinds_size"
         (profile_state.compiler-profile-state-metric-value
-          state
+          (profile_state.compiler-profile-state-shared-view state)
           compiler-opt-load-cse-profile-max-kinds-size-metric))
       (compiler-opt-load-cse-profile-line
         "max_table_cap"
         (profile_state.compiler-profile-state-metric-value
-          state
+          (profile_state.compiler-profile-state-shared-view state)
           compiler-opt-load-cse-profile-max-table-cap-metric))
       (compiler-opt-load-cse-profile-line
         "max_kinds_cap"
         (profile_state.compiler-profile-state-metric-value
-          state
+          (profile_state.compiler-profile-state-shared-view state)
           compiler-opt-load-cse-profile-max-kinds-cap-metric))
       (compiler-opt-load-cse-profile-line
         "table_cap_hits"
         (profile_state.compiler-profile-state-metric-value
-          state
+          (profile_state.compiler-profile-state-shared-view state)
           compiler-opt-load-cse-profile-table-cap-hits-metric))
       (compiler-opt-load-cse-profile-line
         "kinds_cap_hits"
         (profile_state.compiler-profile-state-metric-value
-          state
+          (profile_state.compiler-profile-state-shared-view state)
           compiler-opt-load-cse-profile-kinds-cap-hits-metric))
       (compiler-opt-load-cse-profile-line
         "field_key_drops"
         (profile_state.compiler-profile-state-metric-value
-          state
+          (profile_state.compiler-profile-state-shared-view state)
           compiler-opt-load-cse-profile-field-key-drops-metric)))))
 
 (cfg
@@ -667,15 +667,15 @@
     [state : profile_state.CompilerProfileState]) : unit
     (begin
       (profile_state.compiler-profile-state-metric-set!
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         compiler-opt-profile-start-ms-metric
         (profile.now-ms))
       (profile_state.compiler-profile-state-metric-set!
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         compiler-opt-profile-start-total-metric
         (profile.alloc-total))
       (profile_state.compiler-profile-state-metric-set!
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         compiler-opt-profile-start-live-metric
         (profile.alloc-live))
       (profile.alloc-reset-peak))))
@@ -693,7 +693,7 @@
         (-
           (profile.alloc-peak)
           (profile_state.compiler-profile-state-metric-value
-            state
+            (profile_state.compiler-profile-state-shared-view state)
             compiler-opt-profile-start-live-metric))]
       (io.print-error
         (str_cat.str-cat
@@ -703,19 +703,19 @@
             (-
               end-ms
               (profile_state.compiler-profile-state-metric-value
-                state
+                (profile_state.compiler-profile-state-shared-view state)
                 compiler-opt-profile-start-ms-metric)))
           (compiler-opt-profile-field
             (-
               end-total
               (profile_state.compiler-profile-state-metric-value
-                state
+                (profile_state.compiler-profile-state-shared-view state)
                 compiler-opt-profile-start-total-metric)))
           (compiler-opt-profile-field
             (-
               end-live
               (profile_state.compiler-profile-state-metric-value
-                state
+                (profile_state.compiler-profile-state-shared-view state)
                 compiler-opt-profile-start-live-metric)))
           (compiler-opt-profile-field peak-delta)
           "\n")))))
@@ -25493,7 +25493,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (let
         [here : i64
-          (match block
+          (match (compiler-opt-global-shared-view block)
             [(ir.CompilerIrBlock.Block label instrs)
               ;; the header's AND the latch's loop-exit branches are the
               ;; normal counted exits (a rotated loop tests at its latch);
@@ -87258,7 +87258,9 @@
   [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunction
   (let
     [load-cse-profile : profile_state.CompilerProfileMetrics
-      (profile_state.compiler-profile-state-metrics summaries.profile-state)]
+      (profile_state.compiler-profile-state-metrics
+        (profile_state.compiler-profile-state-shared-view
+          summaries.profile-state))]
     [_t-tailrec : i64 (cfg compile-profile (profile.now-ms) 0)]
     [tailrec : ir.CompilerIrFunction
       (compiler-opt-debug-observe-function
@@ -87274,7 +87276,8 @@
             (cfg
               compile-profile
               (compiler-opt-profile-pass-finish
-                summaries.profile-state
+                (profile_state.compiler-profile-state-shared-view
+                  summaries.profile-state)
                 "tailrec"
                 name
                 _t-tailrec)
@@ -87323,7 +87326,8 @@
             (cfg
               compile-profile
               (compiler-opt-profile-pass-finish
-                summaries.profile-state
+                (profile_state.compiler-profile-state-shared-view
+                  summaries.profile-state)
                 "fold"
                 name
                 _t-fold)
@@ -87353,7 +87357,8 @@
             (cfg
               compile-profile
               (compiler-opt-profile-pass-finish
-                summaries.profile-state
+                (profile_state.compiler-profile-state-shared-view
+                  summaries.profile-state)
                 "affine"
                 name
                 _t-affine)
@@ -87380,7 +87385,8 @@
             (cfg
               compile-profile
               (compiler-opt-profile-pass-finish
-                summaries.profile-state
+                (profile_state.compiler-profile-state-shared-view
+                  summaries.profile-state)
                 "ctor_fwd"
                 name
                 _t-ctor-fwd)
@@ -87402,7 +87408,8 @@
             (cfg
               compile-profile
               (compiler-opt-profile-pass-finish
-                summaries.profile-state
+                (profile_state.compiler-profile-state-shared-view
+                  summaries.profile-state)
                 "stack_promote"
                 name
                 _t-promote)
@@ -87435,7 +87442,8 @@
                   (cfg
                     compile-profile
                     (compiler-opt-profile-pass-finish
-                      summaries.profile-state
+                      (profile_state.compiler-profile-state-shared-view
+                        summaries.profile-state)
                       "sroa"
                       name
                       _t-sroa)
@@ -87544,7 +87552,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "rotation"
                             name
                             _t-rotation)
@@ -87574,7 +87583,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "ssa"
                             name
                             _t-ssa)
@@ -87600,7 +87610,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "global_cell"
                             name
                             _t-global-cell)
@@ -87633,7 +87644,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "gvn"
                             name
                             _t-gvn)
@@ -87677,7 +87689,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "bounds_dom"
                             name
                             _t-bounds-dom)
@@ -87710,7 +87723,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "sccp"
                             name
                             _t-sccp)
@@ -87757,7 +87771,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "bool_branch"
                             name
                             _t-bool-branch)
@@ -87821,7 +87836,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "thread_branch"
                             name
                             _t-thread-branch)
@@ -87853,7 +87869,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "cfg"
                             name
                             _t-cfg2)
@@ -87902,7 +87919,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "bit_test"
                             name
                             _t-bit-test)
@@ -87939,7 +87957,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "switch"
                             name
                             _t-switch)
@@ -87999,7 +88018,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "preheaders"
                             name
                             _t-preheaders)
@@ -88025,7 +88045,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "rotate_ssa"
                             name
                             _t-rotate-ssa)
@@ -88052,7 +88073,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "scratch_reset"
                             name
                             _t-scratch-reset)
@@ -88086,7 +88108,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "dead_phi"
                             name
                             _t-dead-phi)
@@ -88118,7 +88141,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "licm"
                             name
                             _t-licm)
@@ -88165,7 +88189,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "induction"
                             name
                             _t-induction)
@@ -88196,7 +88221,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "flag_exit"
                             name
                             _t-flag-exit)
@@ -88230,7 +88256,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "bce_version"
                             name
                             _t-bce-version)
@@ -88264,7 +88291,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "fill_call"
                             name
                             _t-fill-call)
@@ -88296,7 +88324,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "copy_call"
                             name
                             _t-copy-call)
@@ -88326,7 +88355,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "unroll"
                             name
                             _t-unroll)
@@ -88362,7 +88392,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "load_combine"
                             name
                             _t-load-combine)
@@ -88392,7 +88423,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "lftr"
                             name
                             _t-lftr)
@@ -88430,7 +88462,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "post_lftr_licm"
                             name
                             _t-post-lftr-licm)
@@ -88467,7 +88500,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "gep_offset"
                             name
                             _t-gep-offset)
@@ -88525,7 +88559,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "global_gvn"
                             name
                             _t-global)
@@ -88567,7 +88602,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "divrem_safety"
                             name
                             _t-divrem-safety)
@@ -88598,7 +88634,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "gep_split"
                             name
                             _t-gep-split)
@@ -88663,7 +88700,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "rotate_ssa"
                             name
                             _t-rotate-ssa-late)
@@ -88685,7 +88723,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "cmp_sink"
                             name
                             _t-cmp-sink)
@@ -88727,7 +88766,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "successor_sink"
                             name
                             _t-successor-sink)
@@ -88782,7 +88822,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "bool_branch_late"
                             name
                             _t-bool-branch-late)
@@ -88824,7 +88865,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "ubound"
                             name
                             _t-ubound)
@@ -88857,7 +88899,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "dce"
                             name
                             _t-dce)
@@ -88886,7 +88929,8 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
-                            summaries.profile-state
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
                             "load_sink"
                             name
                             _t-load-sink)
@@ -88923,7 +88967,9 @@
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
         [load-cse-profile : profile_state.CompilerProfileMetrics
-          (profile_state.compiler-profile-state-metrics summaries.profile-state)]
+          (profile_state.compiler-profile-state-metrics
+            (profile_state.compiler-profile-state-shared-view
+              summaries.profile-state))]
         [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
         [folded : ir.CompilerIrBlockList
           (compiler-opt-debug-observe-blocks
@@ -88944,7 +88990,8 @@
           (cfg
             compile-profile
             (compiler-opt-profile-pass-finish
-              summaries.profile-state
+              (profile_state.compiler-profile-state-shared-view
+                summaries.profile-state)
               "fold"
               name
               _t-fold)
@@ -88973,7 +89020,8 @@
           (cfg
             compile-profile
             (compiler-opt-profile-pass-finish
-              summaries.profile-state
+              (profile_state.compiler-profile-state-shared-view
+                summaries.profile-state)
               "ctor_fwd"
               name
               _t-ctor-fwd)
@@ -88995,7 +89043,8 @@
           (cfg
             compile-profile
             (compiler-opt-profile-pass-finish
-              summaries.profile-state
+              (profile_state.compiler-profile-state-shared-view
+                summaries.profile-state)
               "stack_promote"
               name
               _t-promote)
@@ -89020,7 +89069,8 @@
                 (cfg
                   compile-profile
                   (compiler-opt-profile-pass-finish
-                    summaries.profile-state
+                    (profile_state.compiler-profile-state-shared-view
+                      summaries.profile-state)
                     "cfg"
                     name
                     _t-cfg)
@@ -89043,7 +89093,7 @@
     pools
     type-segment-bases
     func
-    summaries)
+    (compiler-opt-global-shared-view summaries))
     [(OptLevel1PreDceResult.Result pre-dce used)
       (match pre-dce
         [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -89064,7 +89114,8 @@
               (cfg
                 compile-profile
                 (compiler-opt-profile-pass-finish
-                  summaries.profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    summaries.profile-state)
                   "dce"
                   name
                   _t-dce)
@@ -89462,7 +89513,11 @@
         [_profile-body : unit
           (cfg
             compile-profile
-            (compiler-opt-profile-escape-finish "body" 1 _profile-name _t-body))]
+            (compiler-opt-profile-escape-finish
+              "body"
+              1
+              (compiler-opt-global-shared-view _profile-name)
+              _t-body))]
         (match pre-dce-result
           [(OptLevel1PreDceResult.Result pre-dce used)
             (match pre-dce
@@ -89495,7 +89550,7 @@
                           (compiler-opt-profile-escape-finish
                             "dce_escape"
                             1
-                            _profile-name
+                            (compiler-opt-global-shared-view _profile-name)
                             _t-dce))]
                       [_t-restore : i64
                         (cfg compile-profile (profile.now-ms) 0)]
@@ -89510,7 +89565,7 @@
                           (compiler-opt-profile-escape-finish
                             "restore"
                             1
-                            _profile-name
+                            (compiler-opt-global-shared-view _profile-name)
                             _t-restore))]
                       escaped)))])])))))
 
@@ -89527,12 +89582,14 @@
         [_start : unit
           (cfg
             compile-profile
-            (compiler-opt-profile-detail-start summaries.profile-state))]
+            (compiler-opt-profile-detail-start
+              (profile_state.compiler-profile-state-shared-view
+                summaries.profile-state)))]
         [optimized : ir.CompilerIrFunction
           (optimize-function-level1-escaping-with-summaries
             (compiler-opt-global-shared-view pools)
             type-segment-bases
-            func
+            (compiler-opt-global-shared-view func)
             scratch
             (compiler-opt-global-shared-view summaries))]
         [_report : unit
@@ -89540,15 +89597,17 @@
             compile-profile
             (compiler-opt-scratch-region-report-function-escaping
               type-segment-bases
-              optimized
+              (compiler-opt-global-shared-view optimized)
               scratch))]
         [_finish : unit
           (cfg
             compile-profile
             (compiler-opt-profile-detail-finish
-              summaries.profile-state
+              (profile_state.compiler-profile-state-shared-view
+                summaries.profile-state)
               "function"
-              (compiler-opt-profile-function-name func)))]
+              (compiler-opt-profile-function-name
+                (compiler-opt-global-shared-view func))))]
         (ir.compiler-ir-function-cons
           optimized
           (optimize-function-list-level1-escaping-with-summaries
@@ -89580,12 +89639,14 @@
         [_start : unit
           (cfg
             compile-profile
-            (compiler-opt-profile-detail-start summaries.profile-state))]
+            (compiler-opt-profile-detail-start
+              (profile_state.compiler-profile-state-shared-view
+                summaries.profile-state)))]
         [optimized : ir.CompilerIrFunction
           (optimize-function-escaping-with-summaries
             (compiler-opt-global-shared-view pools)
             type-segment-bases
-            func
+            (compiler-opt-global-shared-view func)
             level
             scratch
             (compiler-opt-global-shared-view summaries))]
@@ -89594,13 +89655,14 @@
             compile-profile
             (compiler-opt-scratch-region-report-function-escaping
               type-segment-bases
-              optimized
+              (compiler-opt-global-shared-view optimized)
               scratch))]
         [_finish : unit
           (cfg
             compile-profile
             (compiler-opt-profile-detail-finish
-              summaries.profile-state
+              (profile_state.compiler-profile-state-shared-view
+                summaries.profile-state)
               "function"
               (compiler-opt-profile-function-name func)))]
         (ir.compiler-ir-function-cons
@@ -89637,7 +89699,11 @@
   (let
     [enclosing : i64 (arena.tl_arena_current)]
     [_profile-name : String
-      (cfg compile-profile (compiler-opt-profile-function-name func) "")]
+      (cfg
+        compile-profile
+        (compiler-opt-profile-function-name
+          (compiler-opt-global-shared-view func))
+        "")]
     (begin
       (unsafe
         (arena.tl_arena_set scratch))
@@ -89657,7 +89723,7 @@
             (compiler-opt-profile-escape-finish
               "body"
               level
-              _profile-name
+              (compiler-opt-global-shared-view _profile-name)
               _t-body))]
         (match body-result
           [(OptFunctionPassResult.Result body _)
@@ -89671,7 +89737,7 @@
                   (compiler-opt-profile-escape-finish
                     "compact"
                     level
-                    _profile-name
+                    (compiler-opt-global-shared-view _profile-name)
                     _t-compact))]
               (begin
                 (unsafe
@@ -89686,7 +89752,7 @@
                       (compiler-opt-profile-escape-finish
                         "clone"
                         level
-                        _profile-name
+                        (compiler-opt-global-shared-view _profile-name)
                         _t-clone))]
                   [_t-restore : i64 (cfg compile-profile (profile.now-ms) 0)]
                   [_restore : unit
@@ -89700,7 +89766,7 @@
                       (compiler-opt-profile-escape-finish
                         "restore"
                         level
-                        _profile-name
+                        (compiler-opt-global-shared-view _profile-name)
                         _t-restore))]
                   escaped)))])))))
 
@@ -91458,7 +91524,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (let
         [here? : bool
-          (match block
+          (match (compiler-opt-global-shared-view block)
             [(ir.CompilerIrBlock.Block _ instrs)
               (opt-devirt-prepare-instrs! instrs)])]
         [later? : bool
@@ -91977,7 +92043,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (compiler-opt-box-shared-view rest)
         [(ir.CompilerIrBlockList.Nil)
-          (match block
+          (match (compiler-opt-global-shared-view block)
             [(ir.CompilerIrBlock.Block _ seq)
               (opt-inline-single-block-seq-ok? seq np)])]
         [_ false])]
@@ -104002,7 +104068,7 @@
   [const-divisors : opt_i64_i64_map.Map]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     summaries.enabled
-    summaries.profile-state
+    (profile_state.compiler-profile-state-shared-view summaries.profile-state)
     summaries.length-clean
     summaries.direct-call-clean
     summaries.call-memory
@@ -104017,7 +104083,7 @@
   [global-cell : OptGlobalCellSummary]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     summaries.enabled
-    summaries.profile-state
+    (profile_state.compiler-profile-state-shared-view summaries.profile-state)
     summaries.length-clean
     summaries.direct-call-clean
     summaries.call-memory
@@ -104047,7 +104113,7 @@
   [representations : ir.CompilerIrRepresentationIndex]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     summaries.enabled
-    summaries.profile-state
+    (profile_state.compiler-profile-state-shared-view summaries.profile-state)
     summaries.length-clean
     summaries.direct-call-clean
     summaries.call-memory
@@ -108746,7 +108812,10 @@
         ;; (no caller of this entry compiles a whole program) and would need the
         ;; same escape argument re-made for a second control flow.
         (begin
-          (cfg compile-profile (compiler-opt-profile-start profile-state))
+          (cfg
+            compile-profile
+            (compiler-opt-profile-start
+              (profile_state.compiler-profile-state-shared-view profile-state)))
           (opt-inline-checked-set-active! true)
           (let
             [reachable-functions : ir.CompilerIrFunctionList
@@ -108754,8 +108823,15 @@
             (begin
               (cfg
                 compile-profile
-                (compiler-opt-profile-finish profile-state "pre_prune"))
-              (cfg compile-profile (compiler-opt-profile-start profile-state))
+                (compiler-opt-profile-finish
+                  (profile_state.compiler-profile-state-shared-view
+                    profile-state)
+                  "pre_prune"))
+              (cfg
+                compile-profile
+                (compiler-opt-profile-start
+                  (profile_state.compiler-profile-state-shared-view
+                    profile-state)))
               (let
                 [pruned : OptPrunedProgram
                   (opt-prune-unreachable-program
@@ -108774,11 +108850,14 @@
                       (compiler-opt-global-shared-view pruned-globals)
                       (compiler-opt-global-shared-view pruned-functions)
                       level)
-                    profile-state)]
+                    (profile_state.compiler-profile-state-shared-view
+                      profile-state))]
                 [_load-cse-profile-reset : unit
                   (cfg
                     compile-profile
-                    (compiler-opt-load-cse-profile-reset profile-state)
+                    (compiler-opt-load-cse-profile-reset
+                      (profile_state.compiler-profile-state-shared-view
+                        profile-state))
                     unit)]
                 [optimized-functions : ir.CompilerIrFunctionList
                   (optimize-function-list-with-level-and-summaries
@@ -108790,16 +108869,25 @@
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-opt-profile-finish profile-state "functions"))
+                    (compiler-opt-profile-finish
+                      (profile_state.compiler-profile-state-shared-view
+                        profile-state)
+                      "functions"))
                   (cfg
                     compile-profile-summary
-                    (compiler-opt-profile-summary-emit summaries.profile-state))
+                    (compiler-opt-profile-summary-emit
+                      (profile_state.compiler-profile-state-shared-view
+                        summaries.profile-state)))
                   (cfg
                     compile-profile
-                    (compiler-opt-load-cse-profile-emit profile-state))
+                    (compiler-opt-load-cse-profile-emit
+                      (profile_state.compiler-profile-state-shared-view
+                        profile-state)))
                   (cfg
                     compile-profile
-                    (compiler-opt-profile-start profile-state))
+                    (compiler-opt-profile-start
+                      (profile_state.compiler-profile-state-shared-view
+                        profile-state)))
                   (let
                     [final-pruned
                       : OptPrunedProgram
@@ -108825,7 +108913,10 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-opt-profile-finish profile-state "post_prune"))
+                        (compiler-opt-profile-finish
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)
+                          "post_prune"))
                       (ir.CompilerIrProgram.Program
                         final-globals
                         (ir.compiler-ir-function-list-compact late-functions)
@@ -109180,7 +109271,10 @@
             (compiler-opt-global-shared-view program))
           (opt-remap-spans-program spans program))
         (begin
-          (cfg compile-profile (compiler-opt-profile-start profile-state))
+          (cfg
+            compile-profile
+            (compiler-opt-profile-start
+              (profile_state.compiler-profile-state-shared-view profile-state)))
           ;; Everything the inline stage builds -- the devirtualized function
           ;; index, the call graph, the SCC and census tables, every rewritten
           ;; caller body, and every superseded spans array -- is dead once
@@ -109227,10 +109321,15 @@
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-opt-profile-finish profile-state "pre_prune"))
+                    (compiler-opt-profile-finish
+                      (profile_state.compiler-profile-state-shared-view
+                        profile-state)
+                      "pre_prune"))
                   (cfg
                     compile-profile
-                    (compiler-opt-profile-start profile-state))
+                    (compiler-opt-profile-start
+                      (profile_state.compiler-profile-state-shared-view
+                        profile-state)))
                   (let
                     ;; The one inline-stage result that must survive the arena:
                     ;; the spans table is consumed after the destroy, by
@@ -109277,7 +109376,9 @@
                     [_load-cse-profile-reset : unit
                       (cfg
                         compile-profile
-                        (compiler-opt-load-cse-profile-reset profile-state)
+                        (compiler-opt-load-cse-profile-reset
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state))
                         unit)]
                     [optimized-functions : ir.CompilerIrFunctionList
                       (optimize-function-list-with-level-and-summaries
@@ -109312,17 +109413,25 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-opt-profile-finish profile-state "functions"))
+                        (compiler-opt-profile-finish
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)
+                          "functions"))
                       (cfg
                         compile-profile-summary
                         (compiler-opt-profile-summary-emit
-                          summaries.profile-state))
+                          (profile_state.compiler-profile-state-shared-view
+                            summaries.profile-state)))
                       (cfg
                         compile-profile
-                        (compiler-opt-load-cse-profile-emit profile-state))
+                        (compiler-opt-load-cse-profile-emit
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)))
                       (cfg
                         compile-profile
-                        (compiler-opt-profile-start profile-state))
+                        (compiler-opt-profile-start
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)))
                       (let
                         [final-pruned
                           : OptPrunedProgram
@@ -110773,9 +110882,10 @@
           (if (> allocs 0)
             (io.print-error
               (compiler-opt-scratch-region-report-line
-                (compiler-opt-scratch-region-report-status blocker)
+                (compiler-opt-scratch-region-report-status
+                  (compiler-opt-global-shared-view blocker))
                 scope
-                function
+                (compiler-opt-global-shared-view function)
                 label
                 latch
                 allocs
@@ -110793,22 +110903,24 @@
       [(ir.CompilerIrBlockList.Nil) unit]
       [(ir.CompilerIrBlockList.Cons block rest)
         (begin
-          (match block
+          (match (compiler-opt-global-shared-view block)
             [(ir.CompilerIrBlock.Block label _)
               (compiler-opt-scratch-region-report-one
                 "block"
-                function
+                (compiler-opt-global-shared-view function)
                 label
                 (ir.compiler-ir-label "-")
-                (opt-scratch-scope-report-block type-segment-bases block))])
+                (opt-scratch-scope-report-block
+                  type-segment-bases
+                  (compiler-opt-global-shared-view block)))])
           (compiler-opt-scratch-region-report-blocks
             type-segment-bases
-            function
+            (compiler-opt-global-shared-view function)
             (compiler-opt-box-shared-view rest)))]
       [(ir.CompilerIrBlockList.Array seq)
         (compiler-opt-scratch-region-report-blocks
           type-segment-bases
-          function
+          (compiler-opt-global-shared-view function)
           (ir.compiler-ir-block-seq-to-list seq))])))
 
 (cfg
@@ -110823,15 +110935,16 @@
         (begin
           (compiler-opt-scratch-region-report-one
             "loop"
-            function
-            (opt-natural-loop-header loop)
-            (opt-natural-loop-latch loop)
+            (compiler-opt-global-shared-view function)
+            (opt-natural-loop-header (compiler-opt-global-shared-view loop))
+            (opt-natural-loop-latch (compiler-opt-global-shared-view loop))
             (opt-scratch-scope-report-blocks
               type-segment-bases
-              (opt-natural-loop-body-blocks loop)))
+              (opt-natural-loop-body-blocks
+                (compiler-opt-global-shared-view loop))))
           (compiler-opt-scratch-region-report-loops
             type-segment-bases
-            function
+            (compiler-opt-global-shared-view function)
             (compiler-opt-box-shared-view rest)))])))
 
 (cfg
@@ -110846,18 +110959,20 @@
           (begin
             (compiler-opt-scratch-region-report-one
               "function"
-              name-text
+              (compiler-opt-global-shared-view name-text)
               (ir.compiler-ir-label "-")
               (ir.compiler-ir-label "-")
-              (opt-scratch-scope-report-blocks type-segment-bases blocks))
+              (opt-scratch-scope-report-blocks
+                type-segment-bases
+                (compiler-opt-global-shared-view blocks)))
             (compiler-opt-scratch-region-report-blocks
               type-segment-bases
-              name-text
-              blocks)
+              (compiler-opt-global-shared-view name-text)
+              (compiler-opt-global-shared-view blocks))
             (compiler-opt-scratch-region-report-loops
               type-segment-bases
-              name-text
-              (opt-cfg-natural-loops blocks))))])))
+              (compiler-opt-global-shared-view name-text)
+              (opt-cfg-natural-loops (compiler-opt-global-shared-view blocks)))))])))
 
 (cfg
   compile-profile
@@ -112476,19 +112591,22 @@
                 (cfg
                   compile-profile
                   (compiler-opt-load-cse-profile-note-kinds-size
-                    _profile-state
+                    (profile_state.compiler-profile-state-shared-view
+                      _profile-state)
                     current-len))
                 (cfg
                   compile-profile
                   (compiler-opt-load-cse-profile-note-kinds-cap
-                    _profile-state
+                    (profile_state.compiler-profile-state-shared-view
+                      _profile-state)
                     cap))
                 (if (>= current-len cap)
                   (begin
                     (cfg
                       compile-profile
                       (compiler-opt-load-cse-profile-note-kinds-cap-hit
-                        _profile-state))
+                        (profile_state.compiler-profile-state-shared-view
+                          _profile-state)))
                     removed)
                   (let
                     [refs2 : opt_i64_i64_map.Map
@@ -112497,7 +112615,8 @@
                       (cfg
                         compile-profile
                         (compiler-opt-load-cse-profile-note-kinds-size
-                          _profile-state
+                          (profile_state.compiler-profile-state-shared-view
+                            _profile-state)
                           (+ current-len 1)))
                       (OptLoadPtrKinds.Sparse
                         (let
@@ -112522,7 +112641,8 @@
                   (cfg
                     compile-profile
                     (compiler-opt-load-cse-profile-note-kinds-cap-hit
-                      _profile-state)))
+                      (profile_state.compiler-profile-state-shared-view
+                        _profile-state))))
                 removed)
               (begin
                 (opt-load-kinds-dense-ref-add-kind!
@@ -112539,7 +112659,8 @@
                 (cfg
                   compile-profile
                   (compiler-opt-load-cse-profile-note-kinds-size
-                    _profile-state
+                    (profile_state.compiler-profile-state-shared-view
+                      _profile-state)
                     (+ len 1)))
                 (OptLoadPtrKinds.Dense work generation (+ len 1) cap)))]))]))
 
@@ -113614,23 +113735,27 @@
           (cfg
             compile-profile
             (compiler-opt-load-cse-profile-note-table-size
-              _profile-state
+              (profile_state.compiler-profile-state-shared-view _profile-state)
               current-len))
           (cfg
             compile-profile
-            (compiler-opt-load-cse-profile-note-table-cap _profile-state cap))
+            (compiler-opt-load-cse-profile-note-table-cap
+              (profile_state.compiler-profile-state-shared-view _profile-state)
+              cap))
           (if (>= current-len cap)
             (begin
               (cfg
                 compile-profile
                 (compiler-opt-load-cse-profile-note-table-cap-hit
-                  _profile-state))
+                  (profile_state.compiler-profile-state-shared-view
+                    _profile-state)))
               table)
             (begin
               (cfg
                 compile-profile
                 (compiler-opt-load-cse-profile-note-table-size
-                  _profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    _profile-state)
                   (+ current-len 1)))
               (OptLoadTable.Cons
                 (OptLoadEntry.Entry key value epoch)
@@ -115192,7 +115317,9 @@
   (begin
     (cfg
       compile-profile
-      (compiler-opt-load-cse-profile-note-table-cap profile-state table-cap))
+      (compiler-opt-load-cse-profile-note-table-cap
+        (profile_state.compiler-profile-state-shared-view profile-state)
+        table-cap))
     (OptLoadCseState.State
       facts
       (OptLoadTable.Nil)
@@ -115232,7 +115359,9 @@
     (begin
       (cfg
         compile-profile
-        (compiler-opt-load-cse-profile-note-table-cap profile-state table-cap))
+        (compiler-opt-load-cse-profile-note-table-cap
+          (profile_state.compiler-profile-state-shared-view profile-state)
+          table-cap))
       (OptLoadCseState.State
         facts
         (OptLoadTable.Nil)

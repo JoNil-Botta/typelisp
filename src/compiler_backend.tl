@@ -100,15 +100,15 @@
     [state : profile_state.CompilerProfileState]) : unit
     (begin
       (profile_state.compiler-profile-state-metric-set!
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         compiler-backend-profile-start-ms-metric
         (profile.now-ms))
       (profile_state.compiler-profile-state-metric-set!
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         compiler-backend-profile-start-total-metric
         (profile.alloc-total))
       (profile_state.compiler-profile-state-metric-set!
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         compiler-backend-profile-start-live-metric
         (profile.alloc-live))
       (profile.alloc-reset-peak))))
@@ -126,7 +126,7 @@
         (-
           (profile.alloc-peak)
           (profile_state.compiler-profile-state-metric-value
-            state
+            (profile_state.compiler-profile-state-shared-view state)
             compiler-backend-profile-start-live-metric))]
       (io.print-error
         (str_cat.str-cat
@@ -136,19 +136,19 @@
             (-
               end-ms
               (profile_state.compiler-profile-state-metric-value
-                state
+                (profile_state.compiler-profile-state-shared-view state)
                 compiler-backend-profile-start-ms-metric)))
           (compiler-backend-profile-field
             (-
               end-total
               (profile_state.compiler-profile-state-metric-value
-                state
+                (profile_state.compiler-profile-state-shared-view state)
                 compiler-backend-profile-start-total-metric)))
           (compiler-backend-profile-field
             (-
               end-live
               (profile_state.compiler-profile-state-metric-value
-                state
+                (profile_state.compiler-profile-state-shared-view state)
                 compiler-backend-profile-start-live-metric)))
           (compiler-backend-profile-field peak-delta)
           "\n")))))
@@ -74818,7 +74818,9 @@
       (begin
         (cfg
           compile-profile
-          (compiler-backend-profile-detail-start program-index.profile-state))
+          (compiler-backend-profile-detail-start
+            (profile_state.compiler-profile-state-shared-view
+              program-index.profile-state)))
         (match (compiler-backend-emit-function-escaping
           type-segment-bases
           target
@@ -74843,7 +74845,8 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  program-index.profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    program-index.profile-state)
                   "function"
                   (compiler-backend-profile-function-name
                     program-index.backend-state
@@ -74870,7 +74873,8 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  program-index.profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    program-index.profile-state)
                   "function"
                   (compiler-backend-profile-function-name
                     program-index.backend-state
@@ -74927,7 +74931,9 @@
       (begin
         (cfg
           compile-profile
-          (compiler-backend-profile-detail-start program-index.profile-state))
+          (compiler-backend-profile-detail-start
+            (profile_state.compiler-profile-state-shared-view
+              program-index.profile-state)))
         (match (compiler-backend-emit-function-escaping
           type-segment-bases
           target
@@ -74952,7 +74958,8 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  program-index.profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    program-index.profile-state)
                   "function"
                   (compiler-backend-profile-function-name
                     program-index.backend-state
@@ -74980,7 +74987,8 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  program-index.profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    program-index.profile-state)
                   "function"
                   (compiler-backend-profile-function-name
                     program-index.backend-state
@@ -75018,7 +75026,9 @@
             (compiler-backend-state-stream-state program-index.backend-state))
           (cfg
             compile-profile
-            (compiler-backend-profile-detail-start program-index.profile-state))
+            (compiler-backend-profile-detail-start
+              (profile_state.compiler-profile-state-shared-view
+                program-index.profile-state)))
           (match (compiler-backend-emit-function-escaping
             type-segment-bases
             target
@@ -75043,7 +75053,8 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-detail-finish
-                    program-index.profile-state
+                    (profile_state.compiler-profile-state-shared-view
+                      program-index.profile-state)
                     "function"
                     (compiler-backend-profile-function-name
                       program-index.backend-state
@@ -75080,7 +75091,8 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-detail-finish
-                    program-index.profile-state
+                    (profile_state.compiler-profile-state-shared-view
+                      program-index.profile-state)
                     "function"
                     (compiler-backend-profile-function-name
                       program-index.backend-state
@@ -75143,7 +75155,9 @@
           (compiler-backend-state-stream-state program-index.backend-state))
         (cfg
           compile-profile
-          (compiler-backend-profile-detail-start program-index.profile-state))
+          (compiler-backend-profile-detail-start
+            (profile_state.compiler-profile-state-shared-view
+              program-index.profile-state)))
         (match (compiler-backend-emit-function-escaping
           type-segment-bases
           target
@@ -75168,7 +75182,8 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  program-index.profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    program-index.profile-state)
                   "function"
                   (compiler-backend-profile-function-name
                     program-index.backend-state
@@ -75206,7 +75221,8 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  program-index.profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    program-index.profile-state)
                   "function"
                   (compiler-backend-profile-function-name
                     program-index.backend-state
@@ -78055,11 +78071,14 @@
       (cfg
         compile-profile
         (compiler-backend-profile-finish
-          program-index.profile-state
+          (profile_state.compiler-profile-state-shared-view
+            program-index.profile-state)
           "compose.string_rodata"))
       (cfg
         compile-profile
-        (compiler-backend-profile-start program-index.profile-state))
+        (compiler-backend-profile-start
+          (profile_state.compiler-profile-state-shared-view
+            program-index.profile-state)))
       (let
         [bytes-buf : text_buf.TextBuf
           (compiler-backend-emit-bytes-data-into bytes string-buf)]
@@ -78067,11 +78086,14 @@
           (cfg
             compile-profile
             (compiler-backend-profile-finish
-              program-index.profile-state
+              (profile_state.compiler-profile-state-shared-view
+                program-index.profile-state)
               "compose.bytes_data"))
           (cfg
             compile-profile
-            (compiler-backend-profile-start program-index.profile-state))
+            (compiler-backend-profile-start
+              (profile_state.compiler-profile-state-shared-view
+                program-index.profile-state)))
           (let
             [float-literals-buf : text_buf.TextBuf
               (compiler-backend-emit-float-rodata-into floats bytes-buf)]
@@ -78088,11 +78110,14 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-finish
-                  program-index.profile-state
+                  (profile_state.compiler-profile-state-shared-view
+                    program-index.profile-state)
                   "compose.float_rodata"))
               (cfg
                 compile-profile
-                (compiler-backend-profile-start program-index.profile-state))
+                (compiler-backend-profile-start
+                  (profile_state.compiler-profile-state-shared-view
+                    program-index.profile-state)))
               (let
                 [descriptor-buf : text_buf.TextBuf
                   (compiler-backend-emit-closure-descriptors-into
@@ -78105,11 +78130,14 @@
                   (cfg
                     compile-profile
                     (compiler-backend-profile-finish
-                      program-index.profile-state
+                      (profile_state.compiler-profile-state-shared-view
+                        program-index.profile-state)
                       "compose.closure_descriptors"))
                   (cfg
                     compile-profile
-                    (compiler-backend-profile-start program-index.profile-state))
+                    (compiler-backend-profile-start
+                      (profile_state.compiler-profile-state-shared-view
+                        program-index.profile-state)))
                   (let
                     [switch-buf : text_buf.TextBuf
                       (compiler-backend-emit-switch-tables-functions-into
@@ -78128,12 +78156,14 @@
                       (cfg
                         compile-profile
                         (compiler-backend-profile-finish
-                          program-index.profile-state
+                          (profile_state.compiler-profile-state-shared-view
+                            program-index.profile-state)
                           "compose.runtime_data"))
                       (cfg
                         compile-profile
                         (compiler-backend-profile-start
-                          program-index.profile-state))
+                          (profile_state.compiler-profile-state-shared-view
+                            program-index.profile-state)))
                       (let
                         [externs-buf : text_buf.TextBuf
                           (compiler-backend-emit-externs-into
@@ -78147,12 +78177,14 @@
                           (cfg
                             compile-profile
                             (compiler-backend-profile-finish
-                              program-index.profile-state
+                              (profile_state.compiler-profile-state-shared-view
+                                program-index.profile-state)
                               "compose.externs"))
                           (cfg
                             compile-profile
                             (compiler-backend-profile-start
-                              program-index.profile-state))
+                              (profile_state.compiler-profile-state-shared-view
+                                program-index.profile-state)))
                           (let
                             [runtime-externs-buf : text_buf.TextBuf
                               (text_buf.append
@@ -78166,12 +78198,14 @@
                               (cfg
                                 compile-profile
                                 (compiler-backend-profile-finish
-                                  program-index.profile-state
+                                  (profile_state.compiler-profile-state-shared-view
+                                    program-index.profile-state)
                                   "compose.runtime_externs"))
                               (cfg
                                 compile-profile
                                 (compiler-backend-profile-start
-                                  program-index.profile-state))
+                                  (profile_state.compiler-profile-state-shared-view
+                                    program-index.profile-state)))
                               (let
                                 [prefix-buf : text_buf.TextBuf
                                   (text_buf.append
@@ -78184,7 +78218,8 @@
                                   (cfg
                                     compile-profile
                                     (compiler-backend-profile-finish
-                                      program-index.profile-state
+                                      (profile_state.compiler-profile-state-shared-view
+                                        program-index.profile-state)
                                       "compose.entry_text"))
                                   prefix-buf)))))))))))))))))
 
@@ -78247,10 +78282,15 @@
     (begin
       (cfg
         compile-profile
-        (compiler-backend-profile-finish program-index.profile-state "collect"))
+        (compiler-backend-profile-finish
+          (profile_state.compiler-profile-state-shared-view
+            program-index.profile-state)
+          "collect"))
       (cfg
         compile-profile
-        (compiler-backend-profile-start program-index.profile-state))
+        (compiler-backend-profile-start
+          (profile_state.compiler-profile-state-shared-view
+            program-index.profile-state)))
       (let
         ;; Prefix composition (string/bytes/float rodata, closure descriptors,
         ;; switch tables, runtime data, externs, debug prefix and the rendered
@@ -78315,11 +78355,14 @@
           (cfg
             compile-profile
             (compiler-backend-profile-finish
-              program-index.profile-state
+              (profile_state.compiler-profile-state-shared-view
+                program-index.profile-state)
               "prefix"))
           (cfg
             compile-profile
-            (compiler-backend-profile-start program-index.profile-state))
+            (compiler-backend-profile-start
+              (profile_state.compiler-profile-state-shared-view
+                program-index.profile-state)))
           (match (compiler-backend-emit-functions-buffer-into
             type-segment-bases
             target
@@ -78341,15 +78384,19 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-finish
-                    program-index.profile-state
+                    (profile_state.compiler-profile-state-shared-view
+                      program-index.profile-state)
                     "functions"))
                 (cfg
                   compile-profile-summary
                   (compiler-backend-profile-summary-emit
-                    program-index.profile-state))
+                    (profile_state.compiler-profile-state-shared-view
+                      program-index.profile-state)))
                 (cfg
                   compile-profile
-                  (compiler-backend-profile-start program-index.profile-state))
+                  (compiler-backend-profile-start
+                    (profile_state.compiler-profile-state-shared-view
+                      program-index.profile-state)))
                 (match (compiler-backend-emit-closure-entry-adapters-buffer-into
                   type-segment-bases
                   target
@@ -78369,12 +78416,14 @@
                       (cfg
                         compile-profile
                         (compiler-backend-profile-finish
-                          program-index.profile-state
+                          (profile_state.compiler-profile-state-shared-view
+                            program-index.profile-state)
                           "adapters"))
                       (cfg
                         compile-profile
                         (compiler-backend-profile-start
-                          program-index.profile-state))
+                          (profile_state.compiler-profile-state-shared-view
+                            program-index.profile-state)))
                       (let
                         [buf : text_buf.TextBuf
                           (text_buf.append
@@ -78399,7 +78448,8 @@
                           (cfg
                             compile-profile
                             (compiler-backend-profile-finish
-                              program-index.profile-state
+                              (profile_state.compiler-profile-state-shared-view
+                                program-index.profile-state)
                               "compose_tail"))
                           (cfg
                             regalloc-census
@@ -78473,7 +78523,8 @@
                       (cfg
                         compile-profile
                         (compiler-backend-profile-finish
-                          program-index.profile-state
+                          (profile_state.compiler-profile-state-shared-view
+                            program-index.profile-state)
                           "adapters"))
                       (ResultCompilerBackendBuffer.Err message))]))]
             [(ResultCompilerBackendBuffer.Err message)
@@ -78481,12 +78532,14 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-finish
-                    program-index.profile-state
+                    (profile_state.compiler-profile-state-shared-view
+                      program-index.profile-state)
                     "functions"))
                 (cfg
                   compile-profile-summary
                   (compiler-backend-profile-summary-emit
-                    program-index.profile-state))
+                    (profile_state.compiler-profile-state-shared-view
+                      program-index.profile-state)))
                 (ResultCompilerBackendBuffer.Err message))]))))))
 
 (define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-prepared-backend-state
@@ -78534,7 +78587,10 @@
         (compiler_regalloc.compiler-reg-assignment-census-reset!)
         (compiler_regalloc.compiler-reg-move-census-reset!)))
     (cfg scavenge-census (compiler-backend-scavenge-census-reset!))
-    (cfg compile-profile (compiler-backend-profile-start profile-state))
+    (cfg
+      compile-profile
+      (compiler-backend-profile-start
+        (profile_state.compiler-profile-state-shared-view profile-state)))
     (match (compiler-backend-runtime-plan-with-index-with-backend-state
       backend-state
       (compiler-backend-global-shared-view program))
@@ -78545,8 +78601,13 @@
           (begin
             (cfg
               compile-profile
-              (compiler-backend-profile-finish profile-state "runtime_plan"))
-            (cfg compile-profile (compiler-backend-profile-start profile-state))
+              (compiler-backend-profile-finish
+                (profile_state.compiler-profile-state-shared-view profile-state)
+                "runtime_plan"))
+            (cfg
+              compile-profile
+              (compiler-backend-profile-start
+                (profile_state.compiler-profile-state-shared-view profile-state)))
             (match (compiler-backend-global-shared-view program)
               [(compiler_ir_types.CompilerIrProgram.Program
                   globals
@@ -78571,14 +78632,20 @@
                       type-segment-bases
                       (compiler-backend-global-shared-view entry-functions)
                       (compiler-backend-global-shared-view externs)
-                      profile-state)]
+                      (profile_state.compiler-profile-state-shared-view
+                        profile-state))]
                   (begin
                     (cfg
                       compile-profile
-                      (compiler-backend-profile-finish profile-state "index"))
+                      (compiler-backend-profile-finish
+                        (profile_state.compiler-profile-state-shared-view
+                          profile-state)
+                        "index"))
                     (cfg
                       compile-profile
-                      (compiler-backend-profile-start profile-state))
+                      (compiler-backend-profile-start
+                        (profile_state.compiler-profile-state-shared-view
+                          profile-state)))
                     (match (compiler-backend-emit-globals-buffer-into
                       type-segment-bases
                       target
@@ -78590,11 +78657,14 @@
                           (cfg
                             compile-profile
                             (compiler-backend-profile-finish
-                              profile-state
+                              (profile_state.compiler-profile-state-shared-view
+                                profile-state)
                               "(compiler-backend-global-shared-view globals)"))
                           (cfg
                             compile-profile
-                            (compiler-backend-profile-start profile-state))
+                            (compiler-backend-profile-start
+                              (profile_state.compiler-profile-state-shared-view
+                                profile-state)))
                           (match (compiler-backend-validate-function-symbols
                             (compiler-backend-global-shared-view globals)
                             (compiler-backend-global-shared-view
@@ -78627,14 +78697,17 @@
                           (cfg
                             compile-profile
                             (compiler-backend-profile-finish
-                              profile-state
+                              (profile_state.compiler-profile-state-shared-view
+                                profile-state)
                               "(compiler-backend-global-shared-view globals)"))
                           (ResultCompilerBackendBuffer.Err message))])))])))]
       [(ResultBackendRuntimePlanWithIndex.Err message)
         (begin
           (cfg
             compile-profile
-            (compiler-backend-profile-finish profile-state "runtime_plan"))
+            (compiler-backend-profile-finish
+              (profile_state.compiler-profile-state-shared-view profile-state)
+              "runtime_plan"))
           (ResultCompilerBackendBuffer.Err
             (box (compiler_diagnostic.compiler-diagnostic-at-start "" message))))])))
 

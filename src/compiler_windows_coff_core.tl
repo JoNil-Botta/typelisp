@@ -240,7 +240,7 @@
         (cfg
           compile-profile
           (compiler_driver_core.compiler-driver-profile-start-phase
-            profile-state))
+            (profile_state.compiler-profile-state-shared-view profile-state)))
         (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
           backend-state
           (owned_view.compiler-owned-shared-view pools)
@@ -268,7 +268,8 @@
                     (cfg
                       compile-profile
                       (compiler_driver_core.compiler-driver-profile-start-phase
-                        profile-state))
+                        (profile_state.compiler-profile-state-shared-view
+                          profile-state)))
                     (match (compiler_object_coff.compiler-object-coff-render
                       (owned_view.compiler-owned-shared-view image))
                       [(compiler_object_coff.ResultCompilerObjectCoff.Ok object)
@@ -472,7 +473,8 @@
     (cfg
       compile-profile
       (compiler_driver_core.compiler-driver-profile-start-total
-        (compiler_driver_core.compiler-driver-state-profile state)))
+        (compiler_driver_core.compiler-driver-state-profile
+          (owned_view.compiler-owned-shared-view state))))
     (let
       [target : compiler_backend.CompilerBackendTarget
         (compiler_backend.CompilerBackendTarget.Windows)]

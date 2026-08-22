@@ -3397,13 +3397,16 @@
 
 (define (compiler-typecheck-smoke-macro-dependency-helper-source) : String
   "(module tc_macro_context_helper)
-(define (bump [value : i64]) : i64 (+ value 1))")
+(defmacro (bump [T : type] [value : Expr]) : Expr
+  (match (type-kind T)
+    [\"i64\" `(+ ,value 1)]
+    [_ `0]))")
 
 (define (compiler-typecheck-smoke-macro-dependency-provider-source) : String
   "(module tc_macro_context_provider)
 (import tc_macro_context_helper as helper)
-(defmacro (bumped [value : i64]) : i64
-  `(helper.bump ,value))")
+(defmacro (bumped [value : Expr]) : Expr
+  `(helper.bump i64 ,value))")
 
 (define (compiler-typecheck-smoke-macro-dependency-entry-source) : String
   "(import tc_macro_context_provider as provider)

@@ -1855,6 +1855,15 @@
     (begin
       (if handoff.rolled-over
         (begin
+          ;; Rollover installs the macro frontend as the active allocation arena.
+          ;; Move back to the driver's surviving first destination before releasing
+          ;; either abort-owned generation; otherwise the frontend destroy leaves a
+          ;; dangling current arena for the next pool-context installation.
+          (unless
+            (> handoff.source-release-arena 0)
+            (io.panic "compiler lower abort: missing surviving source arena"))
+          (unsafe
+            (arena.tl_arena_set handoff.source-release-arena))
           ;; The driver's original destination is the compact macro source after a
           ;; rollover. Release a materialized second destination here; if expansion
           ;; failed before demand, it never existed. The driver then releases the
@@ -2265,7 +2274,9 @@
           (set! ok false)))
       (compiler-lower-checked-dest-pools-abort-uncommitted! deferred-state)
       (unless
-        (compiler-lower-checked-pools-state-inert? deferred-state)
+        (and
+          (compiler-lower-checked-pools-state-inert? deferred-state)
+          (= (arena.tl_arena_current) deferred-base))
         (set! ok false))
       (compiler-lower-checked-pools-test-context-destroy!
         deferred-source
@@ -2293,7 +2304,9 @@
           (set! ok false)))
       (compiler-lower-checked-dest-pools-abort-uncommitted! materialized-state)
       (unless
-        (compiler-lower-checked-pools-state-inert? materialized-state)
+        (and
+          (compiler-lower-checked-pools-state-inert? materialized-state)
+          (= (arena.tl_arena_current) materialized-base))
         (set! ok false))
       (compiler-lower-checked-pools-test-context-destroy!
         (lower-global-shared-view materialized-source)
@@ -2639,7 +2652,7 @@
         (io.print-error
           (str_cat.str-cat
             "compile-profile|lower."
-            phase
+            (lower-global-shared-view phase)
             (compiler-lower-profile-field
               (-
                 end-ms
@@ -2666,7 +2679,7 @@
           (io.print-error
             (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase|"
-              phase
+              (lower-global-shared-view phase)
               "|"
               (string.int->string
                 (-
@@ -2681,7 +2694,7 @@
           (io.print-error
             (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase.slice|"
-              phase
+              (lower-global-shared-view phase)
               "|"
               (string.int->string
                 (-
@@ -2696,7 +2709,7 @@
           (io.print-error
             (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase.render|"
-              phase
+              (lower-global-shared-view phase)
               "|"
               (string.int->string
                 (-
@@ -2711,7 +2724,7 @@
           (io.print-error
             (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase.generated|"
-              phase
+              (lower-global-shared-view phase)
               "|"
               (string.int->string
                 (-
@@ -2777,13 +2790,22 @@
     [role : i64]) : unit
     (begin
       (compiler-lower-profile-counter
-        (str_cat.str-cat "generated_role." name ".created")
+        (str_cat.str-cat
+          "generated_role."
+          (lower-global-shared-view name)
+          ".created")
         (ci.intern-profile-generated-role-create-value role))
       (compiler-lower-profile-counter
-        (str_cat.str-cat "generated_role." name ".reused")
+        (str_cat.str-cat
+          "generated_role."
+          (lower-global-shared-view name)
+          ".reused")
         (ci.intern-profile-generated-role-reuse-value role))
       (compiler-lower-profile-counter
-        (str_cat.str-cat "generated_role." name ".rendered")
+        (str_cat.str-cat
+          "generated_role."
+          (lower-global-shared-view name)
+          ".rendered")
         (ci.intern-profile-generated-role-render-value role)))))
 
 (cfg
@@ -2793,22 +2815,28 @@
     (begin
       (compiler-lower-profile-counter
         "specialization.structural_keys.created"
-        (spec.spec-profile-structural-key-created-value state))
+        (spec.spec-profile-structural-key-created-value
+          (profile_state.compiler-profile-state-shared-view state)))
       (compiler-lower-profile-counter
         "specialization.structural_keys.reused"
-        (spec.spec-profile-structural-key-reused-value state))
+        (spec.spec-profile-structural-key-reused-value
+          (profile_state.compiler-profile-state-shared-view state)))
       (compiler-lower-profile-counter
         "specialization.generated_text.materialized"
-        (spec.spec-profile-generated-text-materialized-value state))
+        (spec.spec-profile-generated-text-materialized-value
+          (profile_state.compiler-profile-state-shared-view state)))
       (compiler-lower-profile-counter
         "specialization.render.calls"
-        (spec.spec-profile-name-render-calls-value state))
+        (spec.spec-profile-name-render-calls-value
+          (profile_state.compiler-profile-state-shared-view state)))
       (compiler-lower-profile-counter
         "specialization.render.cache_hits"
-        (spec.spec-profile-name-render-cache-hits-value state))
+        (spec.spec-profile-name-render-cache-hits-value
+          (profile_state.compiler-profile-state-shared-view state)))
       (compiler-lower-profile-counter
         "specialization.render.cache_misses"
-        (spec.spec-profile-name-render-cache-misses-value state)))))
+        (spec.spec-profile-name-render-cache-misses-value
+          (profile_state.compiler-profile-state-shared-view state))))))
 
 (cfg
   compile-profile
@@ -3163,28 +3191,52 @@
     [pools : ast.AstNodePoolContext]) : unit
     (begin
       (compiler-lower-profile-counter
-        (str_cat.str-cat "ast_expr_pool." point ".len")
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".len")
         (ast.ast-node-pool-context-expr-len pools))
       (compiler-lower-profile-counter
-        (str_cat.str-cat "ast_expr_pool." point ".capacity")
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".capacity")
         (ast.ast-node-pool-context-expr-capacity pools))
       (compiler-lower-profile-counter
-        (str_cat.str-cat "ast_expr_pool." point ".segments")
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".segments")
         (ast.ast-node-pool-context-expr-segment-count pools))
       (compiler-lower-profile-counter
-        (str_cat.str-cat "ast_expr_pool." point ".segment_bytes")
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".segment_bytes")
         (ast.ast-node-pool-context-expr-segment-bytes pools))
       (compiler-lower-profile-counter
-        (str_cat.str-cat "ast_type_pool." point ".len")
+        (str_cat.str-cat
+          "ast_type_pool."
+          (lower-global-shared-view point)
+          ".len")
         (ast.ast-node-pool-context-type-len pools))
       (compiler-lower-profile-counter
-        (str_cat.str-cat "ast_type_pool." point ".capacity")
+        (str_cat.str-cat
+          "ast_type_pool."
+          (lower-global-shared-view point)
+          ".capacity")
         (ast.ast-node-pool-context-type-capacity pools))
       (compiler-lower-profile-counter
-        (str_cat.str-cat "ast_type_pool." point ".segments")
+        (str_cat.str-cat
+          "ast_type_pool."
+          (lower-global-shared-view point)
+          ".segments")
         (ast.ast-node-pool-context-type-segment-count pools))
       (compiler-lower-profile-counter
-        (str_cat.str-cat "ast_type_pool." point ".segment_bytes")
+        (str_cat.str-cat
+          "ast_type_pool."
+          (lower-global-shared-view point)
+          ".segment_bytes")
         (ast.ast-node-pool-context-type-segment-bytes pools)))))
 
 (cfg
@@ -3197,17 +3249,24 @@
   (define (compiler-lower-profile-program-counts
     [point : String]
     [program : ast.AstProgram]) : unit
-    (match program
+    (match (lower-global-shared-view program)
       [(ast.AstProgram.Program decls-box)
         (let
-          [decls : ast.AstDeclList (__tl-box-place decls-box)]
+          [decls : ast.AstDeclList (lower-box-shared-view decls-box)]
           (begin
             (compiler-lower-profile-counter
-              (str_cat.str-cat "checked_program." point ".decls")
-              (compiler-lower-profile-decl-list-count decls))
+              (str_cat.str-cat
+                "checked_program."
+                (lower-global-shared-view point)
+                ".decls")
+              (compiler-lower-profile-decl-list-count
+                (lower-global-shared-view decls)))
             (compiler-lower-profile-counter
-              (str_cat.str-cat "checked_program." point ".functions")
-              (lower-function-decl-count decls))))])))
+              (str_cat.str-cat
+                "checked_program."
+                (lower-global-shared-view point)
+                ".functions")
+              (lower-function-decl-count (lower-global-shared-view decls)))))])))
 
 (cfg
   compile-profile
@@ -3218,14 +3277,23 @@
       [(ir.CompilerIrProgram.Program _ functions _)
         (begin
           (compiler-lower-profile-counter
-            (str_cat.str-cat "ir." point ".functions")
-            (ir.compiler-ir-function-list-count functions))
+            (str_cat.str-cat
+              "ir."
+              (lower-global-shared-view point)
+              ".functions")
+            (ir.compiler-ir-function-list-count
+              (lower-global-shared-view functions)))
           (compiler-lower-profile-counter
-            (str_cat.str-cat "ir." point ".blocks")
-            (ir.compiler-ir-function-list-block-count functions))
+            (str_cat.str-cat "ir." (lower-global-shared-view point) ".blocks")
+            (ir.compiler-ir-function-list-block-count
+              (lower-global-shared-view functions)))
           (compiler-lower-profile-counter
-            (str_cat.str-cat "ir." point ".instructions")
-            (ir.compiler-ir-function-list-instruction-count functions)))])))
+            (str_cat.str-cat
+              "ir."
+              (lower-global-shared-view point)
+              ".instructions")
+            (ir.compiler-ir-function-list-instruction-count
+              (lower-global-shared-view functions))))])))
 
 (cfg
   compile-profile
@@ -4142,7 +4210,7 @@
           (set!
             compiler-lower-profile-module-name-cache-lookups
             (+ compiler-lower-profile-module-name-cache-lookups 1))
-          (match result
+          (match (lower-global-shared-view result)
             [(LowerMaybeModuleNameCache.Some _)
               (set!
                 compiler-lower-profile-module-name-cache-hits
@@ -8221,7 +8289,7 @@
           (set!
             compiler-lower-profile-module-local-view-lookups
             (+ compiler-lower-profile-module-local-view-lookups 1))
-          (match result
+          (match (lower-global-shared-view result)
             [(LowerMaybeModuleLocalView.Some _)
               (set!
                 compiler-lower-profile-module-local-view-hits
@@ -19299,7 +19367,7 @@
     (cfg
       compile-profile
       (compiler-lower-profile-string-concat-note-runtime-call!
-        (lower-state-owner state)))
+        (lower-state-owner (lower-global-shared-view state))))
     (match (lower-state-alloc-var state)
       [(LowerAlloc.Alloc allocated var-id)
         (LowerExpr.Expr
@@ -19416,7 +19484,7 @@
     (cfg
       compile-profile
       (compiler-lower-profile-string-concat-note-tree!
-        (lower-state-owner state)
+        (lower-state-owner (lower-global-shared-view state))
         exprs.len))
     (lower-string-concat-exprs-batched
       ctx
@@ -75474,7 +75542,7 @@
                                     (compiler-lower-profile-detail-finish
                                       lower-state
                                       "function"
-                                      logical-name))
+                                      (lower-global-shared-view logical-name)))
                                   (set! result (ResultLowerDecls.Err message))
                                   (set! done true))]
                               [(ResultLowerFunction.Ok
@@ -75490,7 +75558,8 @@
                                           (ir.CompilerIrExtern.Extern
                                             function-symbol
                                             function-symbol
-                                            logical-name
+                                            (lower-global-shared-view
+                                              logical-name)
                                             (ast.ast-ty-func
                                               (tc_core.tc-type-list-without-regions
                                                 (tc_core.tc-param-type-list
@@ -75511,7 +75580,7 @@
                                       (compiler-lower-profile-detail-finish
                                         lower-state
                                         "function"
-                                        logical-name))
+                                        (lower-global-shared-view logical-name)))
                                     (ir.compiler-ir-function-builder-append-list!
                                       (&mut cur-functions)
                                       lowered-functions)
@@ -75527,7 +75596,7 @@
                                 (compiler-lower-profile-detail-finish
                                   lower-state
                                   "function"
-                                  logical-name))
+                                  (lower-global-shared-view logical-name)))
                               (set! result (ResultLowerDecls.Err message))
                               (set! done true))]))))]
                 [(ast.AstDecl.DefMacro decl-meta _ _ _ _) (set! cur-decls rest)]
@@ -76190,15 +76259,19 @@
                         "clone_augment_names"))
                     (cfg
                       compile-profile
-                      (compiler-lower-profile-pools "typecheck" pools))
+                      (compiler-lower-profile-pools
+                        "typecheck"
+                        (lower-global-shared-view pools)))
                     (cfg
                       compile-profile
-                      (compiler-lower-profile-pools "pre_decls" pools))
+                      (compiler-lower-profile-pools
+                        "pre_decls"
+                        (lower-global-shared-view pools)))
                     (cfg
                       compile-profile
                       (compiler-lower-profile-program-counts
                         "pre_decls"
-                        checked-program))
+                        (lower-global-shared-view checked-program)))
                     (cfg
                       compile-profile
                       (compiler-lower-profile-start lower-state))
@@ -76220,7 +76293,7 @@
                           compile-profile
                           (compiler-lower-profile-program-counts
                             "reachable"
-                            pruned-program))
+                            (lower-global-shared-view pruned-program)))
                         (cfg
                           compile-profile
                           (compiler-lower-profile-start lower-state))
@@ -76264,7 +76337,7 @@
                                 compile-profile
                                 (compiler-lower-profile-ir-shape
                                   "after_decls"
-                                  ir))
+                                  (lower-global-shared-view ir)))
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-ir-arena "after_decls"))
@@ -76883,7 +76956,7 @@
                               compile-profile
                               (compiler-lower-profile-pools
                                 "macro_expand"
-                                committed-macro-pools))
+                                (lower-global-shared-view committed-macro-pools)))
                             (let
                               [checked-detach? : bool
                                 (compiler-lower-checked-dest-pools-active?
@@ -76990,6 +77063,7 @@
                                   (cfg
                                     compile-profile
                                     (compiler-lower-profile-finish
+                                      lower-state
                                       "macro_finalize"))
                                   unit)]
                               (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state

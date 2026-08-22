@@ -6458,11 +6458,12 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-current-entry [index : i64]) : CompilerTcMacroProfileEntry
-    (array-ref
-      (__tl-project-field
-        (tc-global-shared-view compiler-tc-macro-profile-entries)
-        slots)
-      index)))
+    (clone
+      (array-ref
+        (__tl-project-field
+          (tc-global-shared-view compiler-tc-macro-profile-entries)
+          slots)
+        index))))
 
 (cfg
   compile-profile
@@ -6472,7 +6473,8 @@
       [cursor : i64 0]
       (while (< cursor entries.len)
         (let
-          [entry : CompilerTcMacroProfileEntry (array-ref entries.slots cursor)]
+          [entry : (& entries CompilerTcMacroProfileEntry)
+            (& (array-ref entries.slots cursor))]
           (begin
             (compiler-tc-macro-profile-emit-entry
               (& entry.macro-name)
@@ -6844,7 +6846,7 @@
       [site : String (compiler-tc-reinfer-profile-site-name index)]
       (begin
         (compiler-tc-body-fact-profile-line
-          site
+          (clone site)
           "hits"
           (array.ref compiler-tc-body-fact-profile-hits index))
         (compiler-tc-body-fact-profile-line
@@ -7751,7 +7753,7 @@
     [ctx : TcContext]
     [decl : ast.AstDecl]) : unit
     (begin
-      (match (ast.ast-decl-generated-meta decl)
+      (match (ast.ast-decl-generated-meta (tc-global-shared-view decl))
         [(ast.AstGeneratedDeclMeta.Some generator _ _ _)
           (begin
             ;; The lane split is independent of whether this success was
@@ -7763,7 +7765,10 @@
               (complete-key-for-state
                 (tc-context-macro-state (tc-global-shared-view ctx))
                 generator)
-              (not (tc-generated-decl-dependent-construct? ctx decl)))
+              (not
+                (tc-generated-decl-dependent-construct?
+                  (tc-global-shared-view ctx)
+                  (tc-global-shared-view decl))))
               (set!
                 compiler-tc-macro-generated-decl-checks-invariant-eligible
                 (+ compiler-tc-macro-generated-decl-checks-invariant-eligible 1))
@@ -7828,43 +7833,47 @@
   (define (compiler-tc-env-profile-emit-prefix [prefix : String]) : unit
     (begin
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "binds")
+        (str_cat.str-cat (tc-global-shared-view prefix) "binds")
         compiler-tc-env-profile-binds)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "lookups")
+        (str_cat.str-cat (tc-global-shared-view prefix) "lookups")
         compiler-tc-env-profile-lookups)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "cache_builds")
+        (str_cat.str-cat (tc-global-shared-view prefix) "cache_builds")
         compiler-tc-env-profile-cache-builds)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "cache_entries")
+        (str_cat.str-cat (tc-global-shared-view prefix) "cache_entries")
         compiler-tc-env-profile-cache-entries)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "marker_scans")
+        (str_cat.str-cat (tc-global-shared-view prefix) "marker_scans")
         compiler-tc-env-profile-marker-scans)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "module_local_hits")
+        (str_cat.str-cat (tc-global-shared-view prefix) "module_local_hits")
         compiler-tc-env-profile-module-local-hits)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "module_local_misses")
+        (str_cat.str-cat (tc-global-shared-view prefix) "module_local_misses")
         compiler-tc-env-profile-module-local-misses)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "scoped_binds")
+        (str_cat.str-cat (tc-global-shared-view prefix) "scoped_binds")
         compiler-tc-env-profile-scoped-binds)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "scoped_cache_hits")
+        (str_cat.str-cat (tc-global-shared-view prefix) "scoped_cache_hits")
         compiler-tc-env-profile-scoped-cache-hits)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "scoped_cache_misses")
+        (str_cat.str-cat (tc-global-shared-view prefix) "scoped_cache_misses")
         compiler-tc-env-profile-scoped-cache-misses)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "scoped_tail_fallbacks")
+        (str_cat.str-cat (tc-global-shared-view prefix) "scoped_tail_fallbacks")
         compiler-tc-env-profile-scoped-tail-fallbacks)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "scoped_materializations")
+        (str_cat.str-cat
+          (tc-global-shared-view prefix)
+          "scoped_materializations")
         compiler-tc-env-profile-scoped-materializations)
       (compiler-tc-env-profile-line
-        (str_cat.str-cat prefix "scoped_materialized_slots")
+        (str_cat.str-cat
+          (tc-global-shared-view prefix)
+          "scoped_materialized_slots")
         compiler-tc-env-profile-scoped-materialized-slots))))
 
 (cfg
@@ -37109,11 +37118,15 @@
   (match (tc-body-type-fact-lookup (tc-context-body-state ctx) expr-id)
     [(TcBodyTypeFact.Hit ty)
       (begin
-        (cfg compile-profile (compiler-tc-body-fact-profile-hit _site))
+        (cfg
+          compile-profile
+          (compiler-tc-body-fact-profile-hit (tc-global-shared-view _site)))
         (TcBodyTypeFact.Hit ty))]
     [(TcBodyTypeFact.Miss)
       (begin
-        (cfg compile-profile (compiler-tc-body-fact-profile-miss _site))
+        (cfg
+          compile-profile
+          (compiler-tc-body-fact-profile-miss (tc-global-shared-view _site)))
         (TcBodyTypeFact.Miss))]))
 
 (define (tc-body-type-fact-expr-id
@@ -37171,14 +37184,22 @@
     (tc-global-shared-view exprs))
     [(ResultTcTypeList.Ok types)
       (begin
-        (cfg compile-profile (compiler-tc-body-fact-profile-hit _site))
+        (cfg
+          compile-profile
+          (compiler-tc-body-fact-profile-hit (tc-global-shared-view _site)))
         (ResultTcTypeList.Ok types))]
     [(ResultTcTypeList.Err _)
       (begin
-        (cfg compile-profile (compiler-tc-body-fact-profile-miss _site))
         (cfg
           compile-profile
-          (compiler-tc-reinfer-profile-expr-list-types _site ctx env exprs)
+          (compiler-tc-body-fact-profile-miss (tc-global-shared-view _site)))
+        (cfg
+          compile-profile
+          (compiler-tc-reinfer-profile-expr-list-types
+            (tc-global-shared-view _site)
+            ctx
+            env
+            exprs)
           (tc-expr-list-types ctx env exprs)))]))
 
 (define (tc-move-binding-type-id
@@ -77727,7 +77748,7 @@
   (let
     [func : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases func-id)]
     (match (tc-body-type-fact-lookup-profiled
-      site
+      (tc-global-shared-view site)
       (tc-global-shared-view ctx)
       func-id)
       [(TcBodyTypeFact.Hit fn-ty)
@@ -77736,7 +77757,7 @@
         (cfg
           compile-profile
           (compiler-tc-reinfer-profile-borrow-call-info-id
-            site
+            (tc-global-shared-view site)
             ctx
             expr-bases
             env
@@ -77764,14 +77785,18 @@
   [env : TcTypeEnv]
   [func-id : i64]) : ResultTcTypeList
   (match (tc-body-type-fact-lookup-profiled
-    site
+    (tc-global-shared-view site)
     (tc-global-shared-view ctx)
     func-id)
     [(TcBodyTypeFact.Hit fn-ty) (tc-move-call-param-types-from-type fn-ty)]
     [(TcBodyTypeFact.Miss)
       (cfg
         compile-profile
-        (compiler-tc-reinfer-profile-call-param-types-id site ctx env func-id)
+        (compiler-tc-reinfer-profile-call-param-types-id
+          (tc-global-shared-view site)
+          ctx
+          env
+          func-id)
         (tc-move-call-param-types-id-raw ctx env func-id))]))
 
 (define (tc-move-check-exprs
@@ -85847,7 +85872,7 @@
         "borrow.call_arg"
         ctx
         env
-        arg
+        (tc-global-shared-view arg)
         ty)
       (tc-call-effective-arg-expr ctx env (tc-global-shared-view arg) ty))
       [(ResultTcExpr.Ok effective)
@@ -110323,14 +110348,27 @@
   [declaration-id : i64]) : i64
   (if (< declaration-id 0)
     -1
-    (cload.compiler-load-dependency-catalog-handle-slot-for-provenance-id
-      (tc-macro-walk-field
-        (tc-context-macro-state (tc-global-shared-view ctx))
-        macro-dependency-catalog-handle)
-      (csym.compiler-symbols-provenance-id-at-index-or
-        (tc-context-symbols ctx)
-        declaration-id
-        cbi.compiler-builtin-id-fix-empty))))
+    (let
+      [provenance-id : i64
+        (csym.compiler-symbols-provenance-id-at-index-or
+          (tc-context-symbols ctx)
+          declaration-id
+          cbi.compiler-builtin-id-fix-empty)]
+      [source-names : ci.InternSourceNameSession
+        (ci.intern-source-name-session-handle-session
+          (tc-context-source-names (tc-global-shared-view ctx)))]
+      (if (or
+        (< provenance-id 0)
+        (>= provenance-id source-names.source-count)
+        (>= provenance-id (array-length source-names.pool-slots)))
+        -1
+        (cload.compiler-load-dependency-catalog-handle-slot-for-provenance-path
+          (tc-macro-walk-field
+            (tc-context-macro-state (tc-global-shared-view ctx))
+            macro-dependency-catalog-handle)
+          (owned_view.compiler-owned-array-element-shared-view
+            source-names.pool-slots
+            provenance-id))))))
 
 ;; Both embedded stdlib and dependency catalogs enter through this selection
 ;; contract after ordinary macro lookup has chosen the defining declaration.
@@ -110922,7 +110960,7 @@
               MacroNativeStdlibTlciResult.No)
             (begin
               (embedded_tlci.compiler-comptime-host-session-open-with-macro-state!
-                host-pools
+                (tc-global-shared-view host-pools)
                 (& operands)
                 count
                 (ctfe_support.ctfe-fuel-limit)
@@ -111325,10 +111363,7 @@
         (tc-macro-walk-field
           (tc-context-macro-state (tc-global-shared-view ctx))
           macro-expand-stdlib-tlci-route-active))
-      (> params.len 8)
-      (not
-        (cload.compiler-load-embedded-stdlib-module-id?
-          (tc-global-shared-view fallback-module))))
+      (> params.len 8))
       MacroDirectStdlibTlciResult.No
       (let
         [dependency-slot : i64
@@ -118641,6 +118676,11 @@
                     macro-state
                     macro-active-decl-owner-id
                     decl-owner-id)]
+                [_set-decl-provenance : unit
+                  (tc-macro-walk-set!
+                    macro-state
+                    macro-active-decl-provenance-id
+                    decl-provenance-id)]
                 (match (tc-global-shared-view decl)
                   [(ast.AstDecl.Module next-module)
                     (begin
@@ -123281,8 +123321,8 @@
                                   (cfg
                                     compile-profile
                                     (compiler-tc-decl-profile-record
-                                      decl-ctx
-                                      decl))
+                                      (tc-global-shared-view decl-ctx)
+                                      (tc-global-shared-view decl)))
                                   (set!
                                     cur-summary
                                     (tc-summary-add-decl cur-summary decl)))))]
@@ -123459,12 +123499,16 @@
       (ast.ast-node-pool-context-install! (tc-global-shared-view pools))]
     [_install-intern-state : unit
       (ci.intern-compat-state-install! (tc-global-shared-view intern-state))]
+    [_bind-source-names : unit
+      (tc-macro-state-bind-source-names!
+        (tc-job-state-macro-state (tc-global-shared-view job-state))
+        (tc-global-shared-view source-names))]
     [job-source-names : ci.InternSourceNameSessionHandle
       (tc-macro-state-source-names (tc-job-state-macro-state job-state))]
     [body-state : TcBodyState
       (tc-body-state-new-with-job-state-and-source-names
         (tc-global-shared-view job-state)
-        (tc-global-shared-view source-names))]
+        (tc-global-shared-view job-source-names))]
     [_start-body-state : unit
       (tc-body-early-exit-facts-start!
         (tc-global-shared-view body-state)
@@ -123480,7 +123524,7 @@
           (tc-global-shared-view stdlib-roots)
           (tc-global-shared-view cache-scope)
           (tc-global-shared-view pools)
-          (tc-global-shared-view source-names)
+          (tc-global-shared-view job-source-names)
           (tc-global-shared-view body-state)))]
     (begin
       (ast.ast-node-pool-context-capture-active! (tc-global-shared-view pools))
@@ -123580,7 +123624,9 @@
       (macro-generated-module-memo-reset! macro-state)
       (macro-generated-decls-memo-reset! macro-state))))
 
-(define (compiler-typecheck-reset-file-state-for-job! [job-state : TcJobState]) : unit
+(define (compiler-typecheck-reset-file-state-for-job-with-lazy-import-policy!
+  [job-state : TcJobState]
+  [preserve-lazy-imports : bool]) : unit
   (let
     [macro-state : TcMacroState (tc-job-state-macro-state job-state)]
     (begin
@@ -123605,7 +123651,9 @@
       (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)
       (tc-unqualified-import-ambiguity-reset!)
       (macro-alias-derived-cache-reset-for-state! macro-state)
-      (tc-lazy-import-stubs-reset-for-job! job-state)
+      (if preserve-lazy-imports
+        unit
+        (tc-lazy-import-stubs-reset-for-job! job-state))
       (cload.compiler-load-surface-summaries-reset!)
       (ctfe_support.ctfe-build-seen-reset!)
       (tc-hygiene-clear-active-top-env! macro-state)
@@ -123624,6 +123672,62 @@
       (ctfe_support.ctfe-module-value-reset-for-state!
         (tc-macro-ctfe-state macro-state))
       (tc-macro-walk-set! macro-state ctfe-needs-metadata true))))
+
+(define (compiler-typecheck-reset-file-state-for-job! [job-state : TcJobState]) : unit
+  (compiler-typecheck-reset-file-state-for-job-with-lazy-import-policy!
+    job-state
+    false))
+
+;; Package lowering and later surface/codegen phases share the same explicit
+;; source-name owner. Keep their compact definition-site alias handoff while
+;; dropping all other typecheck caches; a changed table or generation still
+;; invalidates these ids lazily.
+(define (compiler-typecheck-reset-file-state-preserving-lazy-imports-for-job!
+  [job-state : TcJobState]) : unit
+  (compiler-typecheck-reset-file-state-for-job-with-lazy-import-policy!
+    job-state
+    true))
+
+(cfg
+  test
+  (test
+    lazy-import-preserving-reset-handoff
+    (let
+      [job-state : TcJobState (tc-job-state-new)]
+      [macro-state : TcMacroState (tc-job-state-macro-state job-state)]
+      [importer-id : i64 (ci.intern "handoff.importer")]
+      [alias-id : i64 (ci.intern "handoff-alias")]
+      [target-id : i64 (ci.intern "handoff.target")]
+      (begin
+        (tc-lazy-import-stub-record-for-job!
+          job-state
+          importer-id
+          alias-id
+          target-id
+          true)
+        (compiler-typecheck-reset-file-state-preserving-lazy-imports-for-job!
+          job-state)
+        (let
+          [preserved? : bool
+            (match (tc-lazy-import-stub-target-id-for-state
+              macro-state
+              importer-id
+              alias-id)
+              [(TcMaybeNameId.Some target) (= target target-id)]
+              [(TcMaybeNameId.No) false])]
+          (begin
+            (compiler-typecheck-reset-file-state-for-job! job-state)
+            (if (and
+              preserved?
+              (match (tc-lazy-import-stub-target-id-for-state
+                macro-state
+                importer-id
+                alias-id)
+                [(TcMaybeNameId.Some _) false]
+                [(TcMaybeNameId.No) true]))
+              unit
+              (io.panic
+                "typecheck: preserving lazy-import handoff reset failed"))))))))
 
 ;; Serial/test compatibility adapter. Production lowering owns and supplies a
 ;; job state so cache invalidation remains isolated between compiler requests.

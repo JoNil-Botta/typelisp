@@ -54521,6 +54521,81 @@
           (tc-context-source-names ctx)
           (tc-macro-ctfe-state state))))))
 
+;; The demand-driven CTFE base env: when metadata is demanded, the first
+;; request builds once into the pool context's base arena, caches the env in
+;; the macro-walk state, and every later request reuses it instead of walking
+;; the program again. When no metadata is demanded the gate hands back an empty
+;; env and leaves the cache untouched.
+(define (tc-ctfe-env-demand-cache-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ctx : TcContext
+      (tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools)]
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
+    (begin
+      ;; Metadata demanded: exactly one build into the base arena, then reuse.
+      (compiler-typecheck-ctfe-env-cache-clear! state)
+      (tc-macro-walk-set! state ctfe-needs-metadata true)
+      (let
+        [first-env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+        [built-ready? : bool
+          (tc-macro-walk-field state macro-expand-ctfe-env-ready)]
+        [built-has-metadata? : bool
+          (tc-macro-walk-field state macro-expand-ctfe-env-has-metadata)]
+        [built-owner : i64
+          (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena)]
+        [second-env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+        [first-layouts : ctfe_support.CtfeLayoutInfoList
+          (ctfe_support.ctfe-env-layouts first-env)]
+        [second-layouts : ctfe_support.CtfeLayoutInfoList
+          (ctfe_support.ctfe-env-layouts second-env)]
+        [first-reflections : ctfe_support.CtfeReflectInfoList
+          (ctfe_support.ctfe-env-reflections first-env)]
+        [second-reflections : ctfe_support.CtfeReflectInfoList
+          (ctfe_support.ctfe-env-reflections second-env)]
+        ;; No metadata demanded: empty env, cache stays unset.
+        [_cleared : unit (compiler-typecheck-ctfe-env-cache-clear! state)]
+        [_gate-off : unit (tc-macro-walk-set! state ctfe-needs-metadata false)]
+        [empty-env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+        [empty-reflections : ctfe_support.CtfeReflectInfoList
+          (ctfe_support.ctfe-env-reflections empty-env)]
+        [empty-layouts : ctfe_support.CtfeLayoutInfoList
+          (ctfe_support.ctfe-env-layouts empty-env)]
+        [empty-ready? : bool
+          (tc-macro-walk-field state macro-expand-ctfe-env-ready)]
+        [empty-has-metadata? : bool
+          (tc-macro-walk-field state macro-expand-ctfe-env-has-metadata)]
+        ;; Restore the fresh-state defaults for later tests sharing this walk
+        ;; state: cache cleared and the conservative metadata demand back on.
+        [_restore : unit
+          (begin
+            (compiler-typecheck-ctfe-env-cache-clear! state)
+            (tc-macro-walk-set! state ctfe-needs-metadata true))]
+        (and
+          built-ready?
+          built-has-metadata?
+          (= built-owner base-arena)
+          (= first-layouts.len second-layouts.len)
+          (= first-reflections.len second-reflections.len)
+          (= second-layouts.len empty-layouts.len)
+          (= second-reflections.len empty-reflections.len)
+          (not empty-ready?)
+          (not empty-has-metadata?))))))
+
+(test
+  tc-ctfe-env-demand-cache
+  (if (tc-ctfe-env-demand-cache-smoke?)
+    unit
+    (io.panic "typecheck: CTFE env demand cache smoke failed")))
+
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
     [text-len : i64 (string.string-length text)]

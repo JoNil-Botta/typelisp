@@ -114,7 +114,8 @@ Vec bang place macros as available yet.
   `expr-clause-list->expr-list`, `pattern-variant`,
   `pattern-binding-typed`, `pattern-list-bindings`, `match-arm`, and
   `expr-match`; scope/loop builders `expr-resource-scope`, `expr-let-scope`,
-  `expr-set-var`, `expr-begin-unit`, `expr-not`, and `expr-while`; and
+  `expr-shared-let-scope`, `expr-set-var`, `expr-begin-unit`, `expr-not`, and
+  `expr-while`; and
   `syntax-name-fresh` for hygienic computed bindings. Reflection intrinsics
   include `type-cleanup-owning?` and `type-cleanup-function` for generated
   ownership-safe families. `module-value?` and `module-value-type` query public

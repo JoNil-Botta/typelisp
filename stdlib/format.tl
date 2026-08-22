@@ -57,20 +57,29 @@
   (let
     [argument-type : comptime.Expr (comptime.expr-type value)]
     [argument-kind : String (type-kind argument-type)]
+    [borrowed? : bool
+      (if (string.eq argument-kind "ref")
+        true
+        (string.eq argument-kind "mut-ref"))]
+    [value-type : comptime.Expr
+      (if borrowed?
+        (comptime.reference-element-type argument-type)
+        argument-type)]
+    [value-kind : String (type-kind value-type)]
     [nominal? : bool
-      (match argument-kind
+      (match value-kind
         ["struct" true]
         ["enum" true]
         ["region" true]
         [_ false])]
-    [value-key : String (type-key argument-type)]
+    [value-key : String (type-key value-type)]
     [owner : String
       (if nominal?
-        (type-nominal-module argument-type)
+        (type-nominal-module value-type)
         "")]
     [nominal-name : String
       (if nominal?
-        (type-nominal-name argument-type)
+        (type-nominal-name value-type)
         "")]
     [plain-name : String "to-string"]
     [qualified-name : String (comptime.string-append "to-string-" nominal-name)]
@@ -106,13 +115,13 @@
       (if plain-present?
         (comptime.function-shared-borrow-returns-string?
           (comptime.module-value-type owner plain-name)
-          argument-type)
+          value-type)
         false)]
     [qualified-matches? : bool
       (if qualified-present?
         (comptime.function-shared-borrow-returns-string?
           (comptime.module-value-type owner qualified-name)
-          argument-type)
+          value-type)
         false)]
     [hook-dispatch : i64
       (+
@@ -142,13 +151,17 @@
                       "; define only one of "
                       expected-contract))))))]
         [1
-          (comptime.expr-shared-call1
-            (comptime.module-value-expr owner plain-name)
-            value)]
+          (if borrowed?
+            `(,(comptime.module-value-expr owner plain-name) ,value)
+            (comptime.expr-shared-call1
+              (comptime.module-value-expr owner plain-name)
+              value))]
         [2
-          (comptime.expr-shared-call1
-            (comptime.module-value-expr owner qualified-name)
-            value)]
+          (if borrowed?
+            `(,(comptime.module-value-expr owner qualified-name) ,value)
+            (comptime.expr-shared-call1
+              (comptime.module-value-expr owner qualified-name)
+              value))]
         [_
           (if hook-present?
             (comptime.comptime-error
@@ -171,16 +184,36 @@
                     (comptime.string-append
                       owner
                       (comptime.string-append "; expected " expected-contract)))))))])
-      (match argument-kind
-        ["string" value]
-        ["i64" `(stdlib.string.int->string ,value)]
+      (match value-kind
+        ["string"
+          (if borrowed?
+            `(stdlib.string.copy ,value)
+            value)]
+        ["str" `(stdlib.string.copy ,value)]
+        ["i64"
+          (if borrowed?
+            `(stdlib.string.int->string (deref ,value))
+            `(stdlib.string.int->string ,value))]
         ["bool"
-          `(if ,value
-            "true"
-            "false")]
-        ["char" `(stdlib.format.format-char-string ,value)]
-        ["f64" `(stdlib.format.format-float-core ,value)]
-        ["f32" `(stdlib.format.format-float-core (cast ,value : f64))]
+          (if borrowed?
+            `(if (deref ,value)
+              "true"
+              "false")
+            `(if ,value
+              "true"
+              "false"))]
+        ["char"
+          (if borrowed?
+            `(stdlib.format.format-char-string (deref ,value))
+            `(stdlib.format.format-char-string ,value))]
+        ["f64"
+          (if borrowed?
+            `(stdlib.format.format-float-core (deref ,value))
+            `(stdlib.format.format-float-core ,value))]
+        ["f32"
+          (if borrowed?
+            `(stdlib.format.format-float-core (cast (deref ,value) : f64))
+            `(stdlib.format.format-float-core (cast ,value : f64)))]
         [_
           (comptime.comptime-error
             (comptime.string-append
@@ -281,35 +314,47 @@
                                           [fresh-name : String
                                             (comptime.syntax-name-fresh
                                               (comptime.string-append
-                                                "__tl_format_named_"
+                                                "__tl_format_shared_named_"
                                                 (comptime.int->string index)))]
                                           [fresh-var : comptime.Expr
                                             (comptime.expr-var fresh-name)]
-                                          `(stdlib.format.format-expand
-                                            ,plan
-                                            ,argument-carrier
-                                            ,(comptime.expr-int (+ index 1))
-                                            ,(comptime.expr-int 1)
-                                            ,positional-vars
-                                            (__tl_format_named_names
-                                              ,@named-name-items
-                                              ,(comptime.expr-string
-                                                argument-name))
-                                            (__tl_format_named_vars
-                                              ,@named-var-items
-                                              ,fresh-var)
-                                            (__tl_format_bindings
-                                              ,@binding-items
-                                              ,(comptime.expr-begin-unit
-                                                (comptime.expr-list-cons
-                                                  fresh-var
+                                          (begin
+                                            `(stdlib.format.format-expand
+                                              ,plan
+                                              ,argument-carrier
+                                              ,(comptime.expr-int (+ index 1))
+                                              ,(comptime.expr-int 1)
+                                              ,positional-vars
+                                              (__tl_format_named_names
+                                                ,@named-name-items
+                                                ,(comptime.expr-string
+                                                  argument-name))
+                                              (__tl_format_named_vars
+                                                ,@named-var-items
+                                                ,fresh-var)
+                                              (__tl_format_bindings
+                                                ,@binding-items
+                                                ,(comptime.expr-begin-unit
                                                   (comptime.expr-list-cons
-                                                    value-expr
-                                                    (comptime.expr-list-empty))))))))))
+                                                    fresh-var
+                                                    (comptime.expr-list-cons
+                                                      value-expr
+                                                      (comptime.expr-list-empty)))))))))))
                                   (if (!= named-state 0)
                                     (comptime.comptime-error
                                       "format: positional argument follows named argument")
                                     (let
+                                      [argument-value : comptime.Expr
+                                        `(,callee ,@call-items)]
+                                      [value-kind : String
+                                        (type-kind
+                                          (comptime.expr-type argument-value))]
+                                      [borrow-mode : i64
+                                        (match value-kind
+                                          ["struct" 1]
+                                          ["enum" 1]
+                                          ["region" 1]
+                                          [_ 0])]
                                       [fresh-name : String
                                         (comptime.syntax-name-fresh
                                           (comptime.string-append
@@ -317,31 +362,46 @@
                                             (comptime.int->string index)))]
                                       [fresh-var : comptime.Expr
                                         (comptime.expr-var fresh-name)]
-                                      [argument-value : comptime.Expr
-                                        `(,callee ,@call-items)]
-                                      `(stdlib.format.format-expand
-                                        ,plan
-                                        ,argument-carrier
-                                        ,(comptime.expr-int (+ index 1))
-                                        ,(comptime.expr-int 0)
-                                        (__tl_format_positional_vars
-                                          ,@positional-items
-                                          ,fresh-var)
-                                        ,named-names
-                                        ,named-vars
-                                        (__tl_format_bindings
-                                          ,@binding-items
-                                          ,(comptime.expr-begin-unit
-                                            (comptime.expr-list-cons
-                                              fresh-var
+                                      (begin
+                                        (if (= borrow-mode 1)
+                                          (set!
+                                            fresh-var
+                                            (comptime.expr-var
+                                              (comptime.string-append
+                                                "__tl_format_shared_"
+                                                fresh-name)))
+                                          unit)
+                                        `(stdlib.format.format-expand
+                                          ,plan
+                                          ,argument-carrier
+                                          ,(comptime.expr-int (+ index 1))
+                                          ,(comptime.expr-int 0)
+                                          (__tl_format_positional_vars
+                                            ,@positional-items
+                                            ,fresh-var)
+                                          ,named-names
+                                          ,named-vars
+                                          (__tl_format_bindings
+                                            ,@binding-items
+                                            ,(comptime.expr-begin-unit
                                               (comptime.expr-list-cons
-                                                argument-value
-                                                (comptime.expr-list-empty))))))))))]
+                                                fresh-var
+                                                (comptime.expr-list-cons
+                                                  argument-value
+                                                  (comptime.expr-list-empty)))))))))))]
                             [_
                               (if (!= named-state 0)
                                 (comptime.comptime-error
                                   "format: positional argument follows named argument")
                                 (let
+                                  [value-kind : String
+                                    (type-kind (comptime.expr-type argument))]
+                                  [borrow-mode : i64
+                                    (match value-kind
+                                      ["struct" 1]
+                                      ["enum" 1]
+                                      ["region" 1]
+                                      [_ 0])]
                                   [fresh-name : String
                                     (comptime.syntax-name-fresh
                                       (comptime.string-append
@@ -349,24 +409,33 @@
                                         (comptime.int->string index)))]
                                   [fresh-var : comptime.Expr
                                     (comptime.expr-var fresh-name)]
-                                  `(stdlib.format.format-expand
-                                    ,plan
-                                    ,argument-carrier
-                                    ,(comptime.expr-int (+ index 1))
-                                    ,(comptime.expr-int 0)
-                                    (__tl_format_positional_vars
-                                      ,@positional-items
-                                      ,fresh-var)
-                                    ,named-names
-                                    ,named-vars
-                                    (__tl_format_bindings
-                                      ,@binding-items
-                                      ,(comptime.expr-begin-unit
-                                        (comptime.expr-list-cons
-                                          fresh-var
+                                  (begin
+                                    (if (= borrow-mode 1)
+                                      (set!
+                                        fresh-var
+                                        (comptime.expr-var
+                                          (comptime.string-append
+                                            "__tl_format_shared_"
+                                            fresh-name)))
+                                      unit)
+                                    `(stdlib.format.format-expand
+                                      ,plan
+                                      ,argument-carrier
+                                      ,(comptime.expr-int (+ index 1))
+                                      ,(comptime.expr-int 0)
+                                      (__tl_format_positional_vars
+                                        ,@positional-items
+                                        ,fresh-var)
+                                      ,named-names
+                                      ,named-vars
+                                      (__tl_format_bindings
+                                        ,@binding-items
+                                        ,(comptime.expr-begin-unit
                                           (comptime.expr-list-cons
-                                            argument
-                                            (comptime.expr-list-empty))))))))])]
+                                            fresh-var
+                                            (comptime.expr-list-cons
+                                              argument
+                                              (comptime.expr-list-empty)))))))))])]
                         [_
                           (comptime.comptime-error
                             "format: internal binding carrier is malformed")])]
@@ -635,7 +704,7 @@
                                                       [fresh-name : String
                                                         (comptime.syntax-name-fresh
                                                           (comptime.string-append
-                                                            "__tl_format_capture_"
+                                                            "__tl_format_shared_capture_"
                                                             (comptime.int->string
                                                               capture-count)))]
                                                       [fresh-var : comptime.Expr
@@ -802,6 +871,9 @@
                                             ;; Capture entries are reverse
                                             ;; template order; supplied entries
                                             ;; are forward source order.
+                                            ;; Generated binding names begin
+                                            ;; with `__tl_format_`; an `s` at
+                                            ;; offset 12 marks a shared binding.
                                             (while (<
                                               capture-index
                                               (comptime.expr-list-length
@@ -815,14 +887,30 @@
                                                     0)
                                                     [(comptime.Expr.Var
                                                         binding-name)
-                                                      (set!
-                                                        result
-                                                        (comptime.expr-let-scope
-                                                          binding-name
+                                                      (let
+                                                        [init : comptime.Expr
                                                           (comptime.expr-list-nth
                                                             entry
-                                                            1)
-                                                          result))]
+                                                            1)]
+                                                        (if (=
+                                                          (cast
+                                                            (string.string-ref
+                                                              binding-name
+                                                              12)
+                                                            : i64)
+                                                          115)
+                                                          (set!
+                                                            result
+                                                            (comptime.expr-shared-let-scope
+                                                              binding-name
+                                                              init
+                                                              result))
+                                                          (set!
+                                                            result
+                                                            (comptime.expr-let-scope
+                                                              binding-name
+                                                              init
+                                                              result))))]
                                                     [_
                                                       (comptime.comptime-error
                                                         "format: internal capture binding is malformed")])]
@@ -842,14 +930,30 @@
                                                     0)
                                                     [(comptime.Expr.Var
                                                         binding-name)
-                                                      (set!
-                                                        result
-                                                        (comptime.expr-let-scope
-                                                          binding-name
+                                                      (let
+                                                        [init : comptime.Expr
                                                           (comptime.expr-list-nth
                                                             entry
-                                                            1)
-                                                          result))]
+                                                            1)]
+                                                        (if (=
+                                                          (cast
+                                                            (string.string-ref
+                                                              binding-name
+                                                              12)
+                                                            : i64)
+                                                          115)
+                                                          (set!
+                                                            result
+                                                            (comptime.expr-shared-let-scope
+                                                              binding-name
+                                                              init
+                                                              result))
+                                                          (set!
+                                                            result
+                                                            (comptime.expr-let-scope
+                                                              binding-name
+                                                              init
+                                                              result))))]
                                                     [_
                                                       (comptime.comptime-error
                                                         "format: internal supplied binding is malformed")])]

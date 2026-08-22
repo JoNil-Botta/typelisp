@@ -785,8 +785,11 @@ argument is evaluated once in source order.
 `match-arm-list-empty`, `match-arm-list-cons`, and `expr-match` build
 generated match expressions from computed pattern names and payload bindings.
 `pattern-binding-typed` adds captured type syntax to a binding pattern.
-`expr-resource-scope`, `expr-let-scope`, and `expr-set-var` build scopes and
-assignments whose binding identity is supplied at macro time.
+`expr-resource-scope`, `expr-let-scope`, `expr-shared-let-scope`, and
+`expr-set-var` build scopes and assignments whose binding identity is supplied
+at macro time. `expr-shared-let-scope` binds a shared reference to a caller
+place without moving it; for an rvalue it first evaluates the expression once
+into a hidden owner whose lifetime encloses the shared-reference binding.
 `expr-begin-unit`, `expr-not`, and `expr-while` provide the remaining generic
 statement-loop composition used by source macros. `syntax-name-fresh` gives
 computed text a reusable fresh syntax identity: builders that bind or refer to

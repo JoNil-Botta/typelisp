@@ -709,6 +709,8 @@
   "expr-resource-scope")
 (define tlci-host-callback-name-expr-let-scope : String
   "expr-let-scope")
+(define tlci-host-callback-name-expr-shared-let-scope : String
+  "expr-shared-let-scope")
 (define tlci-host-callback-name-expr-for-owned : String
   "expr-for-owned")
 (define tlci-host-callback-name-expr-set-var : String

@@ -9007,6 +9007,113 @@
           expr
           "expr-let-scope expects exactly three args")))))
 
+;; Build a reusable shared-reference binding without moving a caller-owned
+;; place. Rvalues acquire a hidden lexical owner before the reference binding,
+;; mirroring `expr-shared-call1` while allowing multiple uses in `body`.
+(define (ctfe-eval-expr-shared-let-scope-call
+  [args : ast.AstExprList]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 3)
+    (let
+      [name-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
+      [init-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
+      [body-arg : ast.AstExpr (ctfe-expr-arg args 2 env)]
+      (match (ctfe-eval-syntax-name-arg
+        name-arg
+        expr
+        env
+        fuel
+        "expr-shared-let-scope")
+        [(ResultCtfeStringArg.Ok _ name-id name-fuel)
+          (match (compiler-ctfe-eval init-arg env name-fuel)
+            [(ResultCtfe.Ok init-value init-fuel)
+              (match (compiler-ctfe-eval body-arg env init-fuel)
+                [(ResultCtfe.Ok body-value next-fuel)
+                  (let
+                    [init-node : i64 (ctfe-syntax-expr-value-node init-value)]
+                    [body-node : i64 (ctfe-syntax-expr-value-node body-value)]
+                    [pools : ast.AstNodePoolContext
+                      (match (ctfe-env-syntax-pools env)
+                        [(CtfeMaybeSyntaxPools.Some found) found]
+                        [(CtfeMaybeSyntaxPools.None) (ctfe-env-pools env)])]
+                    (if (or (< init-node 0) (< body-node 0))
+                      (ResultCtfe.Err
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "expr-shared-let-scope init and body expect Expr")))
+                      (let
+                        [direct? : bool
+                          (ctfe-expr-borrowable-place-node-with-pools?
+                            pools
+                            init-node)]
+                        [owner-name : i64
+                          (ctfe-materialize-generated-name-id
+                            "__tl_shared_scope_value")]
+                        [owner-node : i64
+                          (ast.ast-node-pool-context-expr-push
+                            pools
+                            (ast.AstExpr.Var owner-name))]
+                        [borrow-node : i64
+                          (ast.ast-expr-borrow-with-pools
+                            pools
+                            false
+                            ast.AstBorrowLifetime.Inferred
+                            (if direct?
+                              init-node
+                              owner-node))]
+                        [borrow-bindings : ast.AstLetBindingList
+                          (ast.ast-let-binding-list-new)]
+                        (begin
+                          (ast.ast-let-binding-list-push
+                            (&mut borrow-bindings)
+                            (ast.ast-let-binding-id
+                              name-id
+                              ast.AstMaybeType.No
+                              borrow-node))
+                          (let
+                            [borrow-body : i64
+                              (ast.ast-expr-let-with-pools
+                                pools
+                                borrow-bindings
+                                body-node)]
+                            (if direct?
+                              (ResultCtfe.Ok
+                                (ctfe-syntax-expr-value
+                                  env
+                                  borrow-body
+                                  (ctfe-untyped-expr-type))
+                                next-fuel)
+                              (let
+                                [owner-bindings : ast.AstLetBindingList
+                                  (ast.ast-let-binding-list-new)]
+                                (begin
+                                  (ast.ast-let-binding-list-push
+                                    (&mut owner-bindings)
+                                    (ast.ast-let-binding-id
+                                      owner-name
+                                      ast.AstMaybeType.No
+                                      init-node))
+                                  (ResultCtfe.Ok
+                                    (ctfe-syntax-expr-value
+                                      env
+                                      (ast.ast-expr-let-with-pools
+                                        pools
+                                        owner-bindings
+                                        borrow-body)
+                                      (ctfe-untyped-expr-type))
+                                    next-fuel)))))))))]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+        [(ResultCtfeStringArg.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "expr-shared-let-scope expects exactly three args")))))
+
 (define (ctfe-eval-expr-set-var-call
   [args : ast.AstExprList]
   [expr : ast.AstExpr]
@@ -9546,6 +9653,8 @@
               fuel)]
           [(= call-id (ctfe-builtin-ref 287))
             (ctfe-eval-expr-shared-call1-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 288))
+            (ctfe-eval-expr-shared-let-scope-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 215))
             (ctfe-eval-expr-list-type-nth-call args expr env fuel)]
           [else

@@ -414,6 +414,9 @@
 (define compiler-comptime-host-session-macro-state : (__tl_dyn-array
     ctfe_support.CompilerCtfeMacroState)
   (array.make-array ctfe_support.CompilerCtfeMacroState 1))
+(define compiler-comptime-host-stack-base : (__tl_dyn-array
+    ctfe_support.CompilerCtfeValue)
+  (array.make-array ctfe_support.CompilerCtfeValue 64))
 (define compiler-comptime-host-stack : (__tl_dyn-array
     ctfe_support.CompilerCtfeValue)
   (array.make-array ctfe_support.CompilerCtfeValue 64))
@@ -521,6 +524,12 @@
     (set!
       compiler-comptime-host-session-status
       tlci.tlci-host-callback-status-ok)
+    ;; A grown stack belongs to the current compilation arena. Never retain
+    ;; that allocation in this process-global slot across batch entries.
+    (set!
+      compiler-comptime-host-stack
+      (compiler-comptime-host-global-shared-view
+        compiler-comptime-host-stack-base))
     (set! compiler-comptime-host-stack-len 0)
     (set! compiler-comptime-host-result-ready false)
     (compiler-comptime-host-locals-clear!)
@@ -610,21 +619,42 @@
       compiler-comptime-host-diagnostic)
     0))
 
-(define (compiler-comptime-host-push! [value : ctfe_support.CompilerCtfeValue]) : i64
-  (if (>=
-    compiler-comptime-host-stack-len
-    (array-length compiler-comptime-host-stack))
-    tlci.tlci-host-callback-status-bad-request
+(define (compiler-comptime-host-stack-grow!) : unit
+  (let
+    [old-cap : i64 (array-length compiler-comptime-host-stack)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array ctfe_support.CompilerCtfeValue)
+      (array.make-array ctfe_support.CompilerCtfeValue new-cap)]
+    [index : i64 0]
     (begin
-      (set!
-        (array-ref
-          compiler-comptime-host-stack
-          compiler-comptime-host-stack-len)
-        value)
-      (set!
+      (while (< index compiler-comptime-host-stack-len)
+        (begin
+          (set!
+            (array-ref bigger index)
+            (array-ref
+              (compiler-comptime-host-global-shared-view
+                compiler-comptime-host-stack)
+              index))
+          (set! index (+ index 1))))
+      (set! compiler-comptime-host-stack bigger))))
+
+(define (compiler-comptime-host-push! [value : ctfe_support.CompilerCtfeValue]) : i64
+  (begin
+    (when
+      (>=
         compiler-comptime-host-stack-len
-        (+ compiler-comptime-host-stack-len 1))
-      tlci.tlci-host-callback-status-ok)))
+        (array-length compiler-comptime-host-stack))
+      (compiler-comptime-host-stack-grow!))
+    (set!
+      (array-ref compiler-comptime-host-stack compiler-comptime-host-stack-len)
+      value)
+    (set!
+      compiler-comptime-host-stack-len
+      (+ compiler-comptime-host-stack-len 1))
+    tlci.tlci-host-callback-status-ok))
 
 ;; Expression list of a variadic operand or stack value. Captured lists carry
 ;; the caller's pools; the session's pools are the caller's, so they project
@@ -8170,6 +8200,112 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+(define (compiler-comptime-host-build-expr-shared-let-scope!
+  [name-id : i64]
+  [init-node : i64]
+  [body-node : i64]) : i64
+  (let
+    [pools : ast.AstNodePoolContext
+      (array-ref
+        (compiler-comptime-host-global-shared-view compiler-comptime-host-pools)
+        0)]
+    [direct? : bool
+      (ctfe_support.ctfe-expr-borrowable-place-node-with-pools? pools init-node)]
+    [owner-name : i64
+      (ctfe_support.ctfe-materialize-generated-name-id
+        "__tl_shared_scope_value")]
+    [owner-node : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var owner-name))]
+    [borrow-node : i64
+      (ast.ast-expr-borrow-with-pools
+        pools
+        false
+        ast.AstBorrowLifetime.Inferred
+        (if direct?
+          init-node
+          owner-node))]
+    [borrow-bindings : ast.AstLetBindingList (ast.ast-let-binding-list-new)]
+    (begin
+      (ast.ast-let-binding-list-push
+        (&mut borrow-bindings)
+        (ast.ast-let-binding-id name-id ast.AstMaybeType.No borrow-node))
+      (let
+        [borrow-body : i64
+          (ast.ast-expr-let-with-pools pools borrow-bindings body-node)]
+        [result-node : i64
+          (if direct?
+            borrow-body
+            (let
+              [owner-bindings : ast.AstLetBindingList
+                (ast.ast-let-binding-list-new)]
+              (begin
+                (ast.ast-let-binding-list-push
+                  (&mut owner-bindings)
+                  (ast.ast-let-binding-id
+                    owner-name
+                    ast.AstMaybeType.No
+                    init-node))
+                (ast.ast-expr-let-with-pools pools owner-bindings borrow-body))))]
+        (begin
+          (set!
+            compiler-comptime-host-stack-len
+            (- compiler-comptime-host-stack-len 3))
+          (compiler-comptime-host-push!
+            (ctfe_support.CompilerCtfeValue.Expr result-node (ast.AstType.Expr))))))))
+
+(define (compiler-comptime-host-callback-expr-shared-let-scope
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 3)
+            tlci.tlci-host-callback-status-bad-request
+            (let
+              [body-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 1))]
+              [init-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 2))]
+              [name-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 3))]
+              [body-node : i64 (compiler-comptime-host-value-node body-value)]
+              [init-node : i64 (compiler-comptime-host-value-node init-value)]
+              (match (compiler-comptime-host-value-name-id name-value)
+                [(CompilerCtfeMaybeNameId.Some name-id)
+                  (if (or (< init-node 0) (< body-node 0))
+                    tlci.tlci-host-callback-status-bad-request
+                    (compiler-comptime-host-build-expr-shared-let-scope!
+                      name-id
+                      init-node
+                      body-node))]
+                [(CompilerCtfeMaybeNameId.None)
+                  tlci.tlci-host-callback-status-bad-request])))]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 (define (compiler-comptime-host-stack-expr-node [index : i64]) : i64
   (if (or (< index 0) (>= index compiler-comptime-host-stack-len))
     -1
@@ -9733,6 +9869,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-let-scope)
         compiler-comptime-host-callback-expr-let-scope)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-shared-let-scope)
+        compiler-comptime-host-callback-expr-shared-let-scope)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

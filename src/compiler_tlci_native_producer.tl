@@ -3425,6 +3425,20 @@
                   ops-count)]
               [(and
                   (or
+                    (string.eq head "comptime.expr-shared-let-scope")
+                    (string.eq head "expr-shared-let-scope"))
+                  (= argc 3))
+                (embedded-native-computed-ternary-ops
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 2 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-shared-let-scope)
+                  ops
+                  ops-count)]
+              [(and
+                  (or
                     (string.eq head "comptime.expr-set-var")
                     (string.eq head "expr-set-var"))
                   (= argc 2))
@@ -8069,6 +8083,7 @@
     "(extern comptime-host-expr-set-var (:symbol \"_tl_comptime_host_expr-set-var\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-resource-scope (:symbol \"_tl_comptime_host_expr-resource-scope\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-let-scope (:symbol \"_tl_comptime_host_expr-let-scope\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-shared-let-scope (:symbol \"_tl_comptime_host_expr-shared-let-scope\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-for-owned (:symbol \"_tl_comptime_host_expr-for-owned\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-not (:symbol \"_tl_comptime_host_expr-not\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-while (:symbol \"_tl_comptime_host_expr-while\") : (-> i64 i64 i64 i64 i64 i64))\n"

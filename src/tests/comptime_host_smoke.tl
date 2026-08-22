@@ -1223,6 +1223,180 @@
                   overflow-status
                   tlci_core.tlci-host-callback-status-bad-request)))))))))
 
+;; The native callback value stack is fuel-bounded rather than carrying a
+;; second, lower fixed ceiling. Formatting a long variadic argument list is one
+;; real workload whose generated transformer can exceed the initial 64 slots.
+(define (comptime-host-smoke-stack-growth-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        128
+        comptime-host-smoke-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (while (and ok (< index 65))
+        (begin
+          (if (=
+            (comptime-host-smoke-invoke
+              compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+              0
+              0)
+            tlci_core.tlci-host-callback-status-ok)
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      (let
+        [grown? : bool
+          (and
+            ok
+            (=
+              compiler_embedded_stdlib_tlci.compiler-comptime-host-stack-len
+              65)
+            (>=
+              (array-length
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-stack)
+              128))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          grown?)))))
+
+(define (comptime-host-smoke-result-shared-let-scope?
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [binding-name : i64]
+  [init-node : i64]
+  [body-node : i64]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr result-node _)
+      (match (compiler_ast_types.ast-node-pool-context-expr-get
+        pools
+        result-node)
+        [(compiler_ast_types.AstExpr.Let let-box)
+          (match (__tl-box-place let-box)
+            [(compiler_ast_types.AstLet.Let bindings actual-body)
+              (and
+                (= actual-body body-node)
+                (= (compiler_ast_types.ast-let-binding-list-len (& bindings)) 1)
+                (match (compiler_ast_types.ast-let-binding-list-get
+                  (& bindings)
+                  0
+                  (compiler_ast_types.ast-let-binding-fallback))
+                  [(compiler_ast_types.AstLetBinding.Binding
+                      actual-name
+                      (compiler_ast_types.AstMaybeType.No)
+                      borrow-node)
+                    (and
+                      (= actual-name binding-name)
+                      (match (compiler_ast_types.ast-node-pool-context-expr-get
+                        pools
+                        borrow-node)
+                        [(compiler_ast_types.AstExpr.Borrow
+                            mutable?
+                            lifetime-id
+                            actual-init)
+                          (and
+                            (not mutable?)
+                            (match (compiler_ast_types.ast-borrow-lifetime-from-id
+                              lifetime-id)
+                              [(compiler_ast_types.AstBorrowLifetime.Inferred)
+                                true]
+                              [_ false])
+                            (= actual-init init-node))]
+                        [_ false]))]
+                  [_ false]))])]
+        [_ false])]
+    [_ false]))
+
+;; The ownership-preserving format path uses this callback directly in native
+;; macro images. Pin the direct-place form and the stable stack-base restoration
+;; after the preceding growth test independently of format expansion.
+(define (comptime-host-smoke-shared-let-scope-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [binding-name : i64 (ci.intern "shared")]
+    [init-node : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools
+        (compiler_ast_types.AstExpr.Var (ci.intern "owner")))]
+    [body-node : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools
+        (compiler_ast_types.AstExpr.Var binding-name))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.Name "shared" binding-name))
+      (set!
+        (array-ref operands 1)
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          init-node
+          (compiler_ast_types.AstType.Expr)))
+      (set!
+        (array-ref operands 2)
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          body-node
+          (compiler_ast_types.AstType.Expr)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        3
+        16
+        comptime-host-smoke-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [base-restored? : bool
+          (=
+            (array-length
+              compiler_embedded_stdlib_tlci.compiler-comptime-host-stack)
+            64)]
+        [positive : bool
+          (and
+            base-restored?
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                0
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                1
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                2
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-shared-let-scope
+                0
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (comptime-host-smoke-commit-result!)
+            (comptime-host-smoke-result-shared-let-scope?
+              pools
+              binding-name
+              init-node
+              body-node))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          positive)))))
+
 (define (comptime-host-smoke-result-string-expr?
   [pools : compiler_ast_types.AstNodePoolContext]
   [expected : String]) : bool
@@ -2222,6 +2396,10 @@
       (io.panic "comptime host smoke: local value callbacks")]
     [(not (comptime-host-smoke-local-capacity-ok?))
       (io.panic "comptime host smoke: local capacity callbacks")]
+    [(not (comptime-host-smoke-stack-growth-ok?))
+      (io.panic "comptime host smoke: value stack growth")]
+    [(not (comptime-host-smoke-shared-let-scope-ok?))
+      (io.panic "comptime host smoke: shared let scope callback")]
     [(not (comptime-host-smoke-reflection-builders-ok?))
       (io.panic "comptime host smoke: reflection builders")]
     [(not (comptime-host-smoke-struct-set-from-value-ok?))

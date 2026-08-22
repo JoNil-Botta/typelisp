@@ -829,14 +829,10 @@
 
 (define (compiler-live-switch-ok?) : bool
   (let
-    [cases : ir.CompilerIrSwitchCaseList
-      (ir.compiler-ir-switch-case-cons
-        4
-        (ir.compiler-ir-label "four")
-        (ir.compiler-ir-switch-case-cons
-          5
-          (ir.compiler-ir-label "five")
-          ir.CompilerIrSwitchCaseList.Nil))]
+    [cases : ir.CompilerIrSwitchCaseSeq
+      (ir.compiler-ir-switch-case-seq2
+        (ir.CompilerIrSwitchCase.Case 4 (ir.compiler-ir-label "four"))
+        (ir.CompilerIrSwitchCase.Case 5 (ir.compiler-ir-label "five")))]
     [instr : ir.CompilerIrInstr
       (ir.CompilerIrInstr.Switch
         (ir.CompilerIrValue.Var 9)

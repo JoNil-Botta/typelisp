@@ -211,6 +211,33 @@
   (unsafe
     (cast (ptr->int (ptr-cast (__tl_array-data decls.slots) : (Ptr u8))) : i64)))
 
+;; Every cold-pool scanner must jump over a semantic run as one record. Walking
+;; its occurrence payload made the existing declaration/member-origin queries
+;; proportional to every semantic token in the compilation and turned the
+;; self-host bootstrap quadratic.
+(define (compiler-parse-semantic-origin-next-record
+  [cursor : i64]
+  [limit : i64]) : i64
+  (if (< (+ cursor 1) limit)
+    (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+      [(reader.SpannedSexprView.Int _ marker _)
+        (if (string.eq marker "__tl_semantic_origin")
+          (match (reader.spanned-sexpr-view (reader.sp-node-get (+ cursor 1)))
+            [(reader.SpannedSexprView.Int _ run-marker run-span)
+              (let
+                [count : i64 (token.span-start-line run-span)]
+                [next : i64 (+ (+ cursor 2) count)]
+                (if (and
+                  (string.eq run-marker "__tl_semantic_origin_start")
+                  (>= count 0)
+                  (<= next limit))
+                  next
+                  (+ cursor 1)))]
+            [_ (+ cursor 1)])
+          (+ cursor 1))]
+      [_ (+ cursor 1)])
+    (+ cursor 1)))
+
 ;; Declaration origins are cold records in the transient spanned-node pool.
 ;; A run is marker(key), marker(start slot), then one Nil(span) per slot.
 (define (compiler-parse-decl-origin-span-key-slot-depth
@@ -219,19 +246,20 @@
   [depth : i64]) : CompilerParseMaybeDeclSpan
   (let
     [cursor : i64 0]
+    [limit : i64 (reader.sp-node-pool-len)]
     [result : CompilerParseMaybeDeclSpan (CompilerParseMaybeDeclSpan.None)]
     [alias-key : i64 0]
     [alias-slot : i64 0]
     [alias-found : bool false]
     (begin
-      (while (< cursor (reader.sp-node-pool-len))
+      (while (< cursor limit)
         (begin
           (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
             [(reader.SpannedSexprView.Int record-key marker marker-span)
               (if (= record-key key)
                 (if (and
                   (string.eq marker "__tl_decl_origin")
-                  (< (+ cursor 2) (reader.sp-node-pool-len)))
+                  (< (+ cursor 2) limit))
                   (match (reader.spanned-sexpr-view
                     (reader.sp-node-get (+ cursor 1)))
                     [(reader.SpannedSexprView.Int run-start run-marker _)
@@ -275,7 +303,9 @@
                     unit))
                 unit)]
             [_ unit])
-          (set! cursor (+ cursor 1))))
+          (set!
+            cursor
+            (compiler-parse-semantic-origin-next-record cursor limit))))
       (if (and alias-found (< depth 64))
         (compiler-parse-decl-origin-span-key-slot-depth
           alias-key
@@ -433,7 +463,7 @@
                 [else unit])
               unit)]
           [_ unit])
-        (set! cursor (+ cursor 1))))))
+        (set! cursor (compiler-parse-semantic-origin-next-record cursor limit))))))
 
 (define (compiler-parse-decl-origin-register-list-aliases!
   [decls : (& decls ast.AstDeclList)]
@@ -532,11 +562,11 @@
     (> count 0)
     (or
       (compiler-parse-decl-origin-needs-record? source-decl)
-      (and
-        (not repeat)
-        (compiler-parse-semantic-origin-key-slot-has-run?
-          source-key
-          source-slot))))
+      ;; A normal alias may carry a semantic sidecar even when this declaration
+      ;; kind has no declaration-span record. Register it conservatively: runs
+      ;; are queried lazily, contiguous aliases coalesce below, and this avoids
+      ;; an O(declarations^2) pool scan while constructing compiler programs.
+      (not repeat)))
     (if (compiler-parse-decl-origin-alias-vec-extend-last?
       aliases
       target-start
@@ -594,13 +624,14 @@
   [depth : i64]) : CompilerParseMaybeSemanticOriginRun
   (let
     [cursor : i64 0]
+    [limit : i64 (reader.sp-node-pool-len)]
     [result : CompilerParseMaybeSemanticOriginRun
       (CompilerParseMaybeSemanticOriginRun.None)]
     [alias-key : i64 0]
     [alias-slot : i64 0]
     [alias-found : bool false]
     (begin
-      (while (< cursor (reader.sp-node-pool-len))
+      (while (< cursor limit)
         (begin
           (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
             [(reader.SpannedSexprView.Int record-key marker marker-span)
@@ -608,7 +639,7 @@
                 (cond
                   [(and
                       (string.eq marker "__tl_semantic_origin")
-                      (< (+ cursor 1) (reader.sp-node-pool-len)))
+                      (< (+ cursor 1) limit))
                     (match (reader.spanned-sexpr-view
                       (reader.sp-node-get (+ cursor 1)))
                       [(reader.SpannedSexprView.Int
@@ -622,9 +653,7 @@
                             [count : i64 (token.span-start-line run-span)]
                             (if (and
                               (>= count 0)
-                              (<=
-                                (+ (+ cursor 2) count)
-                                (reader.sp-node-pool-len)))
+                              (<= (+ (+ cursor 2) count) limit))
                               (begin
                                 (set!
                                   result
@@ -655,7 +684,9 @@
                   [else unit])
                 unit)]
             [_ unit])
-          (set! cursor (+ cursor 1))))
+          (set!
+            cursor
+            (compiler-parse-semantic-origin-next-record cursor limit))))
       (if (and alias-found (< depth 64))
         (compiler-parse-semantic-origin-run-key-slot-depth
           alias-key
@@ -717,9 +748,10 @@
   [fallback : ast.AstSourceSpan]) : ast.AstSourceSpan
   (let
     [cursor : i64 0]
+    [limit : i64 (reader.sp-node-pool-len)]
     [result : ast.AstSourceSpan fallback]
     (begin
-      (while (< cursor (reader.sp-node-pool-len))
+      (while (< cursor limit)
         (begin
           (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
             [(reader.SpannedSexprView.Int record-key marker marker-span)
@@ -734,9 +766,7 @@
                     ;; The marker span is the aggregate name and remains a
                     ;; useful fallback if a later transform appends a member.
                     (set! result (ast-source-span-from-source-span marker-span))
-                    (while (and
-                      (not done)
-                      (< record-index (reader.sp-node-pool-len)))
+                    (while (and (not done) (< record-index limit))
                       (match (reader.spanned-sexpr-view
                         (reader.sp-node-get record-index))
                         [(reader.SpannedSexprView.Nil span)
@@ -752,7 +782,9 @@
                         [_ (set! done true)]))))
                 unit)]
             [_ unit])
-          (set! cursor (+ cursor 1))))
+          (set!
+            cursor
+            (compiler-parse-semantic-origin-next-record cursor limit))))
       result)))
 
 (define (compiler-parse-field-def-list-span-get

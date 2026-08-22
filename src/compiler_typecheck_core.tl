@@ -54482,9 +54482,13 @@
 ;; times per compile -- once in macro expansion plus once per comptime evaluation
 ;; in the typecheck and lower passes -- and each `ctfe-reflections-from-program` /
 ;; `tc-ctfe-layouts` build walks the whole program (O(program), tens of MB). The
-;; cache is populated eagerly in `macro-expand-program` (which always runs first,
-;; in the enclosing program arena, so the cached value never dangles into a
-;; rewound scratch arena) and reset per compile at the top of that function.
+;; cache is reset per compile at the top of `macro-expand-program` (which always
+;; runs first) and populated by whichever request arrives first:
+;; `macro-expand-ctfe-env-build-once!` at expansion entry, or -- for the
+;; typecheck/lower comptime requests after the job setup cleared the cache --
+;; right here, built ONCE into the pool context's base arena so the cached value
+;; never dangles into a rewound scratch arena. Later requests rebase the cached
+;; env onto their own pools instead of rebuilding.
 (define (tc-ctfe-env [ctx : TcContext]) : ctfe_support.CtfeEnv
   (let
     [state : TcMacroState (tc-context-macro-state ctx)]
@@ -54493,12 +54497,24 @@
         (tc-macro-walk-field state macro-expand-ctfe-env-value)
         (tc-context-pools ctx))
       (if (tc-macro-walk-field state ctfe-needs-metadata)
-        (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
-          (tc-ctfe-layouts ctx)
-          (ctfe_support.ctfe-reflections-from-program (tc-context-program ctx))
-          (tc-context-pools ctx)
-          (tc-context-source-names ctx)
-          (tc-macro-ctfe-state state))
+        (let
+          [owner : i64
+            (ast.ast-node-pool-context-base-arena (tc-context-pools ctx))]
+          [built : ctfe_support.CtfeEnv
+            (in-arena
+              (arena.Arena owner)
+              (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
+                (tc-ctfe-layouts ctx)
+                (ctfe_support.ctfe-reflections-from-program (tc-context-program ctx))
+                (tc-context-pools ctx)
+                (tc-context-source-names ctx)
+                (tc-macro-ctfe-state state)))]
+          (begin
+            (tc-macro-walk-set! state macro-expand-ctfe-env-value built)
+            (tc-macro-walk-set! state macro-expand-ctfe-env-owner-arena owner)
+            (tc-macro-walk-set! state macro-expand-ctfe-env-has-metadata true)
+            (tc-macro-walk-set! state macro-expand-ctfe-env-ready true)
+            built))
         (ctfe_support.ctfe-env-empty-with-pools-and-source-names-and-macro-state
           (tc-context-pools ctx)
           (tc-context-source-names ctx)

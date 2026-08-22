@@ -54505,7 +54505,8 @@
               (arena.Arena owner)
               (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
                 (tc-ctfe-layouts ctx)
-                (ctfe_support.ctfe-reflections-from-program (tc-context-program ctx))
+                (ctfe_support.ctfe-reflections-from-program
+                  (tc-context-program ctx))
                 (tc-context-pools ctx)
                 (tc-context-source-names ctx)
                 (tc-macro-ctfe-state state)))]

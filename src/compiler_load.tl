@@ -6686,8 +6686,7 @@
       [(CompilerLoadSurfaceMacroDecls) true]
       [_ false])))
 
-(define (compiler-load-surface-lazy-policy
-  [build : CompilerLoadSurfaceBuild]) : CompilerLoadLazyImportPolicy
+(define (compiler-load-surface-lazy-policy [build : CompilerLoadSurfaceBuild]) : CompilerLoadLazyImportPolicy
   ;; The policy inputs are folded into the decl build pass:
   ;; `any-requires-eager` accumulates the per-decl require-eager test and
   ;; `all-decl-emitting` accumulates the decl-emitting AND while decls are
@@ -14725,10 +14724,7 @@
   [path : String]) : i64
   (let
     [parse-identity : CompilerLoadParseIdentity
-      (compiler-load-parse-identity
-        path
-        "src.policy"
-        ast.AstMaybeModuleName.No)]
+      (compiler-load-parse-identity path "src.policy" ast.AstMaybeModuleName.No)]
     (match (compiler-load-parse-source-diagnostic-escaping
       path
       source

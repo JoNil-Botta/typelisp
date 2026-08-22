@@ -12850,16 +12850,24 @@
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
   (cond
-    [(macro-hygiene-global-id? session name-id)
-      (tc-module-name-id-by-id-for-session
-        session
-        (macro-hygiene-global-module-id session name-id)
-        (macro-hygiene-structural-source-name-id session name-id))]
     [(and
         (tc-env-key-has-name-id? name-id)
         (ci.intern-qualified? name-id)
         (not (tc-hygiene-local-name-id? session name-id)))
       (csym.compiler-symbol-name-id-key name-id)]
+    [(>= name-id (ci.intern-structural-key-base))
+      ;; The table-backed branch is uncommon. Decode a possible macro global
+      ;; once instead of classifying it and then reopening the same record for
+      ;; its module and source-name lanes.
+      (match (cis.intern-structural-session-macro-global-record-for-raw
+        session
+        name-id)
+        [(cis.InternMaybeMacroGlobalRecord.Some record)
+          (tc-module-name-id-by-id-for-session
+            session
+            record.definition-module-id
+            record.source-name-id)]
+        [(cis.InternMaybeMacroGlobalRecord.No) name-id])]
     [else name-id]))
 
 (define tc-unqualified-import-owner-modules : sym_i64_env.SymI64Env
@@ -13470,11 +13478,13 @@
 (define (tc-structural-local-name-id?
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : bool
-  (if (< name-id (ci.intern-capacity))
-    false
-    (or
-      (macro-hygiene-local-id? session name-id)
-      (ci.intern-structural-local-id? name-id))))
+  (cond
+    [(< name-id (ci.intern-capacity)) false]
+    [(ci.intern-structural-local-id? name-id) true]
+    ;; Template-source and the other arithmetic structural families cannot be
+    ;; table-backed macro locals. Reject them before crossing the session API.
+    [(< name-id (ci.intern-structural-key-base)) false]
+    [else (macro-hygiene-local-id? session name-id)]))
 
 (define (tc-hygiene-local-name-id?
   [session : cis.InternStructuralSessionHandle]
@@ -13505,17 +13515,47 @@
             (cond
               [(>= source-id 0) (ci.intern-str source-id)]
               [(= record.kind (ci.intern-structural-kind-pair))
-                (str_cat.str-cat
-                  (tc-hygiene-name-text-id-for-session session record.left-id)
-                  "/"
-                  (tc-hygiene-name-text-id-for-session session record.right-id))]
+                (let
+                  [cached : String
+                    (cis.intern-structural-session-composite-rendered-name-unchecked
+                      session
+                      name-id)]
+                  (if (> (string.string-length cached) 0)
+                    cached
+                    (cis.intern-structural-session-composite-rendered-name-record-unchecked!
+                      session
+                      name-id
+                      (str_cat.str-cat
+                        (tc-hygiene-name-text-id-for-session
+                          session
+                          record.left-id)
+                        "/"
+                        (tc-hygiene-name-text-id-for-session
+                          session
+                          record.right-id)))))]
               [(= record.kind (ci.intern-structural-kind-triple))
-                (str_cat.str-cat
-                  (tc-hygiene-name-text-id-for-session session record.left-id)
-                  "/"
-                  (tc-hygiene-name-text-id-for-session session record.middle-id)
-                  "."
-                  (tc-hygiene-name-text-id-for-session session record.right-id))]
+                (let
+                  [cached : String
+                    (cis.intern-structural-session-composite-rendered-name-unchecked
+                      session
+                      name-id)]
+                  (if (> (string.string-length cached) 0)
+                    cached
+                    (cis.intern-structural-session-composite-rendered-name-record-unchecked!
+                      session
+                      name-id
+                      (str_cat.str-cat
+                        (tc-hygiene-name-text-id-for-session
+                          session
+                          record.left-id)
+                        "/"
+                        (tc-hygiene-name-text-id-for-session
+                          session
+                          record.middle-id)
+                        "."
+                        (tc-hygiene-name-text-id-for-session
+                          session
+                          record.right-id)))))]
               [else
                 (str_cat.str-cat
                   "<structural-id:"
@@ -13529,11 +13569,24 @@
         (str_cat.str-cat "<id:" (string.int->string name-id) ">"))]))
 
 (define (tc-hygiene-name-text-id [name-id : i64]) : String
-  (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
-    (ci.intern-str name-id)
-    (tc-hygiene-name-text-id-for-session
-      (cis.InternStructuralSessionHandle 0)
-      name-id)))
+  (cond
+    [(and (>= name-id 0) (< name-id (ci.intern-capacity)))
+      (ci.intern-str name-id)]
+    [(ci.intern-structural-local-id? name-id)
+      (ci.intern-str (ci.intern-structural-local-source-name-id name-id))]
+    [(ci.intern-template-source-id? name-id)
+      (ci.intern-str (ci.intern-template-source-name-id name-id))]
+    ;; This compatibility helper is used only for non-hygienic compiler keys.
+    ;; Preserve the existing cached composite renderer without letting an
+    ;; active global table stand in for an explicit macro-hygiene session.
+    [(or
+        (csym.compiler-composite-pair-key-id? name-id)
+        (csym.compiler-composite-triple-key-id? name-id))
+      (ast.ast-nominal-name-id-display name-id)]
+    [else
+      (tc-hygiene-name-text-id-for-session
+        (cis.InternStructuralSessionHandle 0)
+        name-id)]))
 
 (define (tc-hygiene-global-base [name : String]) : String
   (tc-hygiene-name-base name (tc-hygiene-global-prefix)))
@@ -14713,7 +14766,12 @@
 (define (tc-stdlib-type-normalize-name [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
   (match ty
     [(ast.AstType.Var name)
-      (tc-resolve-type-name ctx (tc-hygiene-name-text-id name) name)]
+      (tc-resolve-type-name
+        ctx
+        (tc-hygiene-name-text-id-for-session
+          (tc-context-structural-session ctx)
+          name)
+        name)]
     [_ ty]))
 
 (define (tc-stdlib-type-match-normalized?
@@ -16380,28 +16438,33 @@
 (define (tc-env-key-display
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : String
-  (if (or
-    (tc-env-key-has-name-id? name-id)
-    (ci.intern-structural-local-id? name-id)
-    (ci.intern-template-source-id? name-id)
-    (>= name-id (ci.intern-structural-key-base))
-    (csym.compiler-composite-pair-key-id? name-id)
-    (csym.compiler-composite-triple-key-id? name-id))
-    (tc-hygiene-name-text-id-for-session session name-id)
-    (str_cat.str-cat "<structural-id:" (string.int->string name-id) ">")))
+  (if (tc-env-key-has-name-id? name-id)
+    (ci.intern-str name-id)
+    (if (or
+      (ci.intern-structural-local-id? name-id)
+      (ci.intern-template-source-id? name-id)
+      (>= name-id (ci.intern-structural-key-base))
+      (csym.compiler-composite-pair-key-id? name-id)
+      (csym.compiler-composite-triple-key-id? name-id))
+      (tc-hygiene-name-text-id-for-session session name-id)
+      (str_cat.str-cat "<structural-id:" (string.int->string name-id) ">"))))
 
 (define (tc-env-key-name-text-for-session
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : String
-  (tc-env-key-display session name-id))
+  (if (tc-env-key-has-name-id? name-id)
+    (ci.intern-str name-id)
+    (tc-env-key-display session name-id)))
 
 ;; Module, declaration, and registry keys are never hygienic macro identities.
 ;; Keep their pervasive display helper narrow; mixed AST/environment boundaries
 ;; use the explicit-session variant above.
 (define (tc-env-key-name-text [name-id : i64]) : String
-  (tc-env-key-name-text-for-session
-    (cis.InternStructuralSessionHandle 0)
-    name-id))
+  (if (tc-env-key-has-name-id? name-id)
+    (ci.intern-str name-id)
+    (tc-env-key-name-text-for-session
+      (cis.InternStructuralSessionHandle 0)
+      name-id)))
 
 (define (tc-lookup-persistent-key-id
   [env : TcTypeEnv]
@@ -20625,15 +20688,33 @@
       (ci.intern-qualified? name-id))
     (cond
       [(< name-id 0) false]
-      [(tc-structural-local-name-id? session name-id) false]
-      [(macro-hygiene-global-id? session name-id)
-        (not
-          (csym.compiler-symbol-root-module-id?
-            (macro-hygiene-global-module-id session name-id)))]
+      [(ci.intern-structural-local-id? name-id) false]
+      [(< name-id (ci.intern-structural-key-base)) false]
       [else
-        (or
-          (csym.compiler-composite-pair-key-id? name-id)
-          (csym.compiler-composite-triple-key-id? name-id))])))
+        ;; Qualified checks only need a table record's tag in the common
+        ;; pair/triple case. Hygienic globals are rarer and reopen their typed
+        ;; record only when the tag says its module lane is relevant.
+        (let
+          [kind : i64
+            (cis.intern-structural-session-record-kind-for-structural-or
+              session
+              name-id
+              -1)]
+          (cond
+            [(= kind (ci.intern-structural-kind-macro-local)) false]
+            [(= kind (ci.intern-structural-kind-macro-global))
+              (match (cis.intern-structural-session-macro-global-record-for-raw
+                session
+                name-id)
+                [(cis.InternMaybeMacroGlobalRecord.Some record)
+                  (not
+                    (csym.compiler-symbol-root-module-id?
+                      record.definition-module-id))]
+                [(cis.InternMaybeMacroGlobalRecord.No) false])]
+            [else
+              (or
+                (= kind (ci.intern-structural-kind-pair))
+                (= kind (ci.intern-structural-kind-triple)))]))])))
 
 (define (tc-qualified-name-module-id [name-id : i64]) : i64
   (cond
@@ -24972,11 +25053,18 @@
         [(ast.AstType.VarArgs name lifetimes)
           (tc-resolve-type-name-with-args
             ctx
-            (tc-hygiene-name-text-id name)
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              name)
             name
             (__tl-box-place lifetimes))]
         [(ast.AstType.Var name)
-          (tc-resolve-type-name ctx (tc-hygiene-name-text-id name) name)]
+          (tc-resolve-type-name
+            ctx
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              name)
+            name)]
         [_ ty])
       ty)))
 
@@ -35752,7 +35840,9 @@
             ctx
             env
             name
-            (tc-hygiene-name-text-id name))]
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              name))]
         [(ast.AstExpr.Set name value-box)
           (tc-set-expr-after-local-field-check ctx env name value-box)]
         [_ (tc-expr ctx env expr)])]
@@ -35923,7 +36013,9 @@
           ctx
           env
           name
-          (tc-hygiene-name-text-id name)))]
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)))]
     [(ast.AstExpr.Set name value-box)
       (tc-expr-result-with-expected-or-actual
         ctx
@@ -36228,7 +36320,10 @@
   (match (ast.ast-expr-unspan func)
     [(ast.AstExpr.Var raw-name)
       (let
-        [raw-text : String (tc-hygiene-name-text-id raw-name)]
+        [raw-text : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            raw-name)]
         [hygiene-global : bool
           (tc-hygiene-global-name-id?
             (tc-context-structural-session ctx)
@@ -36783,7 +36878,10 @@
               name-id)
             (let
               [name : String
-                (tc-name-slashes-to-dots (tc-hygiene-name-text-id name-id))]
+                (tc-name-slashes-to-dots
+                  (tc-hygiene-name-text-id-for-session
+                    (tc-type-env-structural-session env)
+                    name-id))]
               [clean-name : String
                 (string.substring
                   clean-message
@@ -37068,7 +37166,12 @@
     (string.int->string (+ index 1))
     (match (tc-call-parameter-name-at ctx func index)
       [(TcMaybeNameId.Some name-id)
-        (str_cat.str-cat " (parameter `" (tc-hygiene-name-text-id name-id) "`)")]
+        (str_cat.str-cat
+          " (parameter `"
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name-id)
+          "`)")]
       [(TcMaybeNameId.No) ""])
     " type mismatch"))
 
@@ -38599,7 +38702,14 @@
   [lookup-id : i64]
   [base-id : i64]) : bool
   (and
-    (tc-name-qualified-id? session lookup-id)
+    ;; Test/serial adapters can classify the installed table's ordinary
+    ;; pair/triple compiler keys without granting access to macro-hygiene
+    ;; records. Production contexts take the explicit-session path.
+    (if (<= session.address 0)
+      (or
+        (csym.compiler-composite-pair-key-id? lookup-id)
+        (csym.compiler-composite-triple-key-id? lookup-id))
+      (tc-name-qualified-id? session lookup-id))
     (=
       (tc-qualified-name-module-id lookup-id)
       cbi.compiler-builtin-id-arena-module)
@@ -42123,7 +42233,10 @@
   (match (ast.ast-expr-unspan func)
     [(ast.AstExpr.Var raw-name)
       (let
-        [raw-text : String (tc-hygiene-name-text-id raw-name)]
+        [raw-text : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            raw-name)]
         [hygiene-global : bool
           (tc-hygiene-global-name-id?
             (tc-context-structural-session ctx)
@@ -42437,7 +42550,10 @@
         ;; Keep builtin dispatch identical to the string-name call path; only
         ;; the ordinary fallback needs the pooled function expression id.
         (let
-          [raw-text : String (tc-hygiene-name-text-id raw-name)]
+          [raw-text : String
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              raw-name)]
           [hygiene-global : bool
             (tc-hygiene-global-name-id?
               (tc-context-structural-session ctx)
@@ -44176,7 +44292,10 @@
   (match (ast.ast-expr-unspan func)
     [(ast.AstExpr.Var raw-name)
       (let
-        [raw-text : String (tc-hygiene-name-text-id raw-name)]
+        [raw-text : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            raw-name)]
         [source-name-id : i64
           (macro-hygiene-global-source-name-id-or
             (tc-context-structural-session ctx)
@@ -55284,7 +55403,9 @@
               ctx
               env
               name
-              (tc-hygiene-name-text-id name))
+              (tc-hygiene-name-text-id-for-session
+                (tc-context-structural-session ctx)
+                name))
               [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
               [(ResultTcType.Err _) (ResultTcBorrowPlace.Err message)])]))]
     [(ast.AstExpr.StructGet receiver-box field)
@@ -61249,7 +61370,10 @@
           (macro-hygiene-global-id? (tc-context-structural-session ctx) name)))
         (tc-lookup-id env name)
         (let
-          [name-text : String (tc-hygiene-name-text-id name)]
+          [name-text : String
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              name)]
           (if (tc-dotted-place-name-id? ctx env name)
             (match (tc-dotted-local-field-expr-id-after-check
               (tc-context-structural-session ctx)
@@ -63655,7 +63779,10 @@
   [expr : ast.AstExpr]
   [name-id : i64]) : ResultTcUnit
   (let
-    [name : String (tc-hygiene-name-text-id name-id)]
+    [name : String
+      (tc-hygiene-name-text-id-for-session
+        (tc-context-structural-session ctx)
+        name-id)]
     (cond
       [(tc-string-list-contains bound name) ResultTcUnit.Ok]
       [(tc-comptime-purity-banned-qualified? ctx name name-id)
@@ -67336,7 +67463,9 @@
             [call-name : String
               (if (< name-id 0)
                 "reflection operation"
-                (tc-hygiene-name-text-id name-id))]
+                (tc-hygiene-name-text-id-for-session
+                  (tc-macro-state-structural-session state)
+                  name-id))]
             (ResultTcUnit.Err
               (tc-locate-error-at-expr
                 expr
@@ -67408,7 +67537,9 @@
             (= args.len 2)
             (>= raw-id 0)
             (ctfe_support.ctfe-string-eq-helper-name-id?
-              (tc-hygiene-name-text-id raw-id)
+              (tc-hygiene-name-text-id-for-session
+                (tc-macro-state-structural-session state)
+                raw-id)
               (macro-hygiene-global-source-name-id-or
                 (tc-macro-state-structural-session state)
                 raw-id
@@ -71761,7 +71892,12 @@
     false
     (let
       [resolved : ast.AstType
-        (tc-resolve-type-name ctx (tc-hygiene-name-text-id name-id) name-id)]
+        (tc-resolve-type-name
+          ctx
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name-id)
+          name-id)]
       (match resolved
         [(ast.AstType.Var resolved-id)
           (if (= resolved-id name-id)
@@ -71947,22 +72083,25 @@
   [moved : TcMovedSet]
   [name-id : i64]
   [origin : ast.AstExpr]) : TcMoveResult
-  (let
-    [name : String (tc-hygiene-name-text-id name-id)]
-    (if (tc-moved-contains? locals name-id)
-      (if (or
-        (tc-moved-contains? moved name-id)
-        (tc-moved-partial? moved name-id))
+  (if (tc-moved-contains? locals name-id)
+    (if (or
+      (tc-moved-contains? moved name-id)
+      (tc-moved-partial? moved name-id))
+      (let
+        [name : String (tc-hygiene-name-text-id name-id)]
         (tc-move-rich-use-conflict-result
           expr-bases
           (tc-moved-root-conflict moved name-id)
           name
           origin
-          name)
-        (if (tc-moved-contains? loop-carried name-id)
-          (tc-move-rich-loop-carried-result expr-bases name origin)
-          (TcMoveResult.Ok (tc-moved-add-origin moved name-id origin))))
-      (TcMoveResult.Ok moved))))
+          name))
+      (if (tc-moved-contains? loop-carried name-id)
+        (tc-move-rich-loop-carried-result
+          expr-bases
+          (tc-hygiene-name-text-id name-id)
+          origin)
+        (TcMoveResult.Ok (tc-moved-add-origin moved name-id origin))))
+    (TcMoveResult.Ok moved)))
 
 (define (tc-move-invalidate-local
   [expr-bases : i64]
@@ -71971,21 +72110,24 @@
   [moved : TcMovedSet]
   [name-id : i64]
   [origin : ast.AstExpr]) : TcMoveResult
-  (let
-    [name : String (tc-hygiene-name-text-id name-id)]
-    (cond
-      [(not (tc-moved-contains? locals name-id)) (TcMoveResult.Ok moved)]
-      [(tc-moved-contains? moved name-id) (TcMoveResult.Ok moved)]
-      [(tc-moved-partial? moved name-id)
+  (cond
+    [(not (tc-moved-contains? locals name-id)) (TcMoveResult.Ok moved)]
+    [(tc-moved-contains? moved name-id) (TcMoveResult.Ok moved)]
+    [(tc-moved-partial? moved name-id)
+      (let
+        [name : String (tc-hygiene-name-text-id name-id)]
         (tc-move-rich-use-conflict-result
           expr-bases
           (tc-moved-root-conflict moved name-id)
           name
           origin
-          name)]
-      [(tc-moved-contains? loop-carried name-id)
-        (tc-move-rich-loop-carried-result expr-bases name origin)]
-      [else (TcMoveResult.Ok (tc-moved-add-origin moved name-id origin))])))
+          name))]
+    [(tc-moved-contains? loop-carried name-id)
+      (tc-move-rich-loop-carried-result
+        expr-bases
+        (tc-hygiene-name-text-id name-id)
+        origin)]
+    [else (TcMoveResult.Ok (tc-moved-add-origin moved name-id origin))]))
 
 (define (tc-move-mark-region-locals-scan
   [expr-bases : i64]
@@ -72455,7 +72597,10 @@
     [raw-id : i64 (tc-expr-var-name-id func)]
     (if (>= raw-id 0)
       (let
-        [raw-name : String (tc-hygiene-name-text-id raw-id)]
+        [raw-name : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            raw-id)]
         [hygiene-global : bool
           (tc-hygiene-global-name-id?
             (tc-context-structural-session ctx)
@@ -73891,7 +74036,10 @@
   (match (ast.ast-expr-unspan place)
     [(ast.AstExpr.Var name)
       (let
-        [name-text : String (tc-hygiene-name-text-id name)]
+        [name-text : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)]
         (if (tc-moved-contains? moved name)
           (tc-move-rich-use-conflict-result
             expr-bases
@@ -75124,7 +75272,10 @@
     [(ast.AstExpr.Literal _) (TcMoveResult.Ok moved)]
     [(ast.AstExpr.Var name)
       (let
-        [name-text : String (tc-hygiene-name-text-id name)]
+        [name-text : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)]
         (if (tc-dotted-place-name-id? ctx env name)
           (match (tc-dotted-local-field-expr-id-after-check
             (tc-context-structural-session ctx)
@@ -80311,7 +80462,10 @@
     [raw-id : i64 (tc-expr-var-name-id func)]
     (if (>= raw-id 0)
       (let
-        [raw-name : String (tc-hygiene-name-text-id raw-id)]
+        [raw-name : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            raw-id)]
         [hygiene-global : bool
           (tc-hygiene-global-name-id?
             (tc-context-structural-session ctx)
@@ -94908,9 +95062,14 @@
 (define (macro-hygiene-definition-id?
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : bool
-  (=
-    (cis.intern-structural-session-record-kind-or session name-id -1)
-    (ci.intern-structural-kind-macro-definition)))
+  (and
+    (>= name-id (ci.intern-structural-key-base))
+    (=
+      (cis.intern-structural-session-record-kind-for-structural-or
+        session
+        name-id
+        -1)
+      (ci.intern-structural-kind-macro-definition))))
 
 ;; Classify an already-decoded structural record without revalidating its key.
 ;; Macro locals additionally prove that their definition lane names a definition
@@ -94944,9 +95103,14 @@
 (define (macro-hygiene-global-id?
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : bool
-  (=
-    (cis.intern-structural-session-record-kind-or session name-id -1)
-    (ci.intern-structural-kind-macro-global)))
+  (and
+    (>= name-id (ci.intern-structural-key-base))
+    (=
+      (cis.intern-structural-session-record-kind-for-structural-or
+        session
+        name-id
+        -1)
+      (ci.intern-structural-kind-macro-global))))
 
 (define (macro-hygiene-global-legacy-id?
   [session : cis.InternStructuralSessionHandle]
@@ -95008,9 +95172,14 @@
 (define (macro-hygiene-local-id?
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : bool
-  (=
-    (cis.intern-structural-session-record-kind-or session name-id -1)
-    (ci.intern-structural-kind-macro-local)))
+  (and
+    (>= name-id (ci.intern-structural-key-base))
+    (=
+      (cis.intern-structural-session-record-kind-for-structural-or
+        session
+        name-id
+        -1)
+      (ci.intern-structural-kind-macro-local))))
 
 (define (macro-hygiene-structural-source-name-id
   [session : cis.InternStructuralSessionHandle]
@@ -101916,7 +102085,9 @@
             decls
             (tc-context-module ctx)
             (macro-source-module-id (tc-context-module-id ctx))
-            (tc-hygiene-name-text-id name)
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              name)
             name
             call-expr)))]
     [_ (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]))

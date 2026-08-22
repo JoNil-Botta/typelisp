@@ -2835,10 +2835,10 @@ if ! cmp -s "$STDLIB_TLCI_WILD_EMBEDDED_ASM"     "$STDLIB_TLCI_WILD_MODIFIED_ASM
     fail "native and interpreted wildcard arms produced different assembly"
 fi
 
-# #5701: `stdlib.format/format-from` is a comptime string scanner -- it walks the
-# template one byte at a time and re-invokes itself at the next offset. An
-# off-by-one in any index, a dropped escape byte, or a wrong positional
-# argument still compiles and still runs, producing a subtly wrong string, so
+# #5701/#6644: `stdlib.format/format` scans the template at comptime, then
+# `format-expand` and `format-expand-call` validate and bind the completed plan.
+# An off-by-one in any index, a dropped escape byte, or a wrong positional/named
+# selection still compiles and still runs, producing a subtly wrong string, so
 # the differential is the contract. None of the fixtures above formats
 # anything.
 echo "[compile-profile] verify tlci format-scanner route differential"
@@ -2886,10 +2886,11 @@ assert_profile_counter_eq_in \
     0 \
     "$STDLIB_TLCI_FMT_MODIFIED_STDOUT" \
     "$STDLIB_TLCI_FMT_MODIFIED_STDERR"
-# The scanner itself has to run, not just its wrapper, so a fixture edit
-# cannot silently stop covering the recursive walk.
+# The plan expander and argument classifier have to run, not just the scanner
+# wrapper, so a fixture edit cannot silently stop covering selection/binding.
 assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.format/format arity="
-assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.format/format-from arity="
+assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.format/format-expand arity="
+assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.format/format-expand-call arity="
 if ! cmp -s "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
     "$STDLIB_TLCI_FMT_MODIFIED_ASM"; then
     diff -u "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \

@@ -36,7 +36,13 @@
         left
         right
         (make-point-once))]
-    (if (and (= make-count 1) (string.eq p.label "point"))
+    [captured-body : String (format.format "{p}")]
+    [named-body : String (format.format "{again}" (format.named again p))]
+    (if (and
+      (= make-count 1)
+      (string.eq p.label "point")
+      (string.eq captured-body "Point(1, 2)")
+      (string.eq named-body "Point(1, 2)"))
       (begin
         (io.print-format "format:{}\n" body)
         (io.print-format "print:{}|" p)

@@ -368,6 +368,15 @@
 (define (expr-let-scope [_name : String] [_init : Expr] [body : Expr]) : Expr
   body)
 
+;: Build a shared-borrow binding scope during macro CTFE.
+;:
+;: A borrowable caller place is lent directly. An rvalue is first evaluated
+;: once into a hidden owner, then the named binding borrows that owner for the
+;: duration of `body`. This preserves caller ownership while giving generated
+;: code a reusable stable reference.
+(define (expr-shared-let-scope [_name : String] [_init : Expr] [body : Expr]) : Expr
+  body)
+
 ;; Internal scalar-for planner builders. These remain ordinary bootstrap
 ;; stubs; macro CTFE replaces them with opaque compiler nodes.
 ;: Build the ownership state scope for scalar iteration over an owned source.

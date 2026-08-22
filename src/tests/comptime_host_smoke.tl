@@ -883,9 +883,10 @@
         (= (compiler_ctfe.ctfe-expr-list-nth items 0) expected-node))]
     [_ false]))
 
-;; Local Expr destructuring retains Name and captured-list values, while the
-;; bool data/value pair round-trips both immediate states. Wrong local shapes
-;; and invalid immediates are rejected through their documented ABI channel.
+;; Local Expr destructuring retains Name, Int, and captured-list values, while
+;; the bool data/value pair round-trips both immediate states. Wrong local
+;; shapes and invalid immediates are rejected through their documented ABI
+;; channel.
 (define (comptime-host-smoke-local-values-ok?) : bool
   (let
     [pools : compiler_ast_types.AstNodePoolContext
@@ -899,11 +900,15 @@
         pools
         (compiler_ast_types.AstExpr.Literal
           (compiler_ast_types.AstLiteral.Unit)))]
+    [int-node : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools
+        (compiler_ast_types.AstExpr.Literal (compiler_ast_types.ast-lit-int 73)))]
     [items : compiler_ast_types.AstExprList
       (compiler_ast_types.ast-expr-list-with-capacity 1)]
     [begin-node : i64 0]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
+      (array.make-array compiler_ctfe.CompilerCtfeValue 4)]
     (begin
       (compiler_ast_types.ast-expr-list-push (&mut items) item-node)
       (set!
@@ -923,10 +928,15 @@
           (compiler_ast_types.AstType.Expr)
           pools))
       (set! (array-ref operands 2) (compiler_ctfe.CompilerCtfeValue.Bool true))
+      (set!
+        (array-ref operands 3)
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          int-node
+          (compiler_ast_types.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         pools
         operands
-        3
+        4
         32
         comptime-host-smoke-cookie
         (compiler_ctfe.ctfe-reflect-info-list-empty))
@@ -971,6 +981,18 @@
               0)
             (=
               (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                3
+                0)
+              0)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-set
+                3
+                0)
+              0)
+            (=
+              (comptime-host-smoke-invoke
                 compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-expr-var?
                 0
                 0)
@@ -999,6 +1021,24 @@
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-captured-begin-items? item-node)
             (comptime-host-smoke-consume-test-result!)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-expr-int?
+                3
+                0)
+              1)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-expr-int-value
+                3
+                0)
+              73)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-expr-int?
+                0
+                0)
+              0)
             (=
               (comptime-host-smoke-invoke
                 compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-bool-value
@@ -1031,7 +1071,7 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
             pools
             operands
-            3
+            4
             8
             comptime-host-smoke-cookie
             (compiler_ctfe.ctfe-reflect-info-list-empty))
@@ -1051,7 +1091,7 @@
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
                 pools
                 operands
-                3
+                4
                 8
                 comptime-host-smoke-cookie
                 (compiler_ctfe.ctfe-reflect-info-list-empty))
@@ -1083,7 +1123,7 @@
                   (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
                     pools
                     operands
-                    3
+                    4
                     8
                     comptime-host-smoke-cookie
                     (compiler_ctfe.ctfe-reflect-info-list-empty))
@@ -1182,6 +1222,180 @@
                 (=
                   overflow-status
                   tlci_core.tlci-host-callback-status-bad-request)))))))))
+
+;; The native callback value stack is fuel-bounded rather than carrying a
+;; second, lower fixed ceiling. Formatting a long variadic argument list is one
+;; real workload whose generated transformer can exceed the initial 64 slots.
+(define (comptime-host-smoke-stack-growth-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        128
+        comptime-host-smoke-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (while (and ok (< index 65))
+        (begin
+          (if (=
+            (comptime-host-smoke-invoke
+              compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+              0
+              0)
+            tlci_core.tlci-host-callback-status-ok)
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      (let
+        [grown? : bool
+          (and
+            ok
+            (=
+              compiler_embedded_stdlib_tlci.compiler-comptime-host-stack-len
+              65)
+            (>=
+              (array-length
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-stack)
+              128))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          grown?)))))
+
+(define (comptime-host-smoke-result-shared-let-scope?
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [binding-name : i64]
+  [init-node : i64]
+  [body-node : i64]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr result-node _)
+      (match (compiler_ast_types.ast-node-pool-context-expr-get
+        pools
+        result-node)
+        [(compiler_ast_types.AstExpr.Let let-box)
+          (match (__tl-box-place let-box)
+            [(compiler_ast_types.AstLet.Let bindings actual-body)
+              (and
+                (= actual-body body-node)
+                (= (compiler_ast_types.ast-let-binding-list-len (& bindings)) 1)
+                (match (compiler_ast_types.ast-let-binding-list-get
+                  (& bindings)
+                  0
+                  (compiler_ast_types.ast-let-binding-fallback))
+                  [(compiler_ast_types.AstLetBinding.Binding
+                      actual-name
+                      (compiler_ast_types.AstMaybeType.No)
+                      borrow-node)
+                    (and
+                      (= actual-name binding-name)
+                      (match (compiler_ast_types.ast-node-pool-context-expr-get
+                        pools
+                        borrow-node)
+                        [(compiler_ast_types.AstExpr.Borrow
+                            mutable?
+                            lifetime-id
+                            actual-init)
+                          (and
+                            (not mutable?)
+                            (match (compiler_ast_types.ast-borrow-lifetime-from-id
+                              lifetime-id)
+                              [(compiler_ast_types.AstBorrowLifetime.Inferred)
+                                true]
+                              [_ false])
+                            (= actual-init init-node))]
+                        [_ false]))]
+                  [_ false]))])]
+        [_ false])]
+    [_ false]))
+
+;; The ownership-preserving format path uses this callback directly in native
+;; macro images. Pin the direct-place form and the stable stack-base restoration
+;; after the preceding growth test independently of format expansion.
+(define (comptime-host-smoke-shared-let-scope-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [binding-name : i64 (ci.intern "shared")]
+    [init-node : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools
+        (compiler_ast_types.AstExpr.Var (ci.intern "owner")))]
+    [body-node : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools
+        (compiler_ast_types.AstExpr.Var binding-name))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.Name "shared" binding-name))
+      (set!
+        (array-ref operands 1)
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          init-node
+          (compiler_ast_types.AstType.Expr)))
+      (set!
+        (array-ref operands 2)
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          body-node
+          (compiler_ast_types.AstType.Expr)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        3
+        16
+        comptime-host-smoke-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [base-restored? : bool
+          (=
+            (array-length
+              compiler_embedded_stdlib_tlci.compiler-comptime-host-stack)
+            64)]
+        [positive : bool
+          (and
+            base-restored?
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                0
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                1
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                2
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-shared-let-scope
+                0
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (comptime-host-smoke-commit-result!)
+            (comptime-host-smoke-result-shared-let-scope?
+              pools
+              binding-name
+              init-node
+              body-node))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          positive)))))
 
 (define (comptime-host-smoke-result-string-expr?
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -2182,6 +2396,10 @@
       (io.panic "comptime host smoke: local value callbacks")]
     [(not (comptime-host-smoke-local-capacity-ok?))
       (io.panic "comptime host smoke: local capacity callbacks")]
+    [(not (comptime-host-smoke-stack-growth-ok?))
+      (io.panic "comptime host smoke: value stack growth")]
+    [(not (comptime-host-smoke-shared-let-scope-ok?))
+      (io.panic "comptime host smoke: shared let scope callback")]
     [(not (comptime-host-smoke-reflection-builders-ok?))
       (io.panic "comptime host smoke: reflection builders")]
     [(not (comptime-host-smoke-struct-set-from-value-ok?))

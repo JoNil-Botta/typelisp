@@ -788,7 +788,7 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 288))
+  (__tl_make-array i64 289))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -800,7 +800,7 @@
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 318)]
-    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 288)]
+    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 289)]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)
@@ -812,7 +812,7 @@
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 288)
+      (while (< i 289)
         (begin
           (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
@@ -887,7 +887,7 @@
 (define (state-capture-ctfe-ids! [state : (&mut state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 288)
+    (while (< i 289)
       (begin
         (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -895,7 +895,7 @@
 (define (state-install-ctfe-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 288)
+    (while (< i 289)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
@@ -2072,7 +2072,8 @@
       insert-missing
       286
       "function-shared-borrow-returns-string?")
-    (compiler-builtin-load-ctfe-id! insert-missing 287 "expr-shared-call1")))
+    (compiler-builtin-load-ctfe-id! insert-missing 287 "expr-shared-call1")
+    (compiler-builtin-load-ctfe-id! insert-missing 288 "expr-shared-let-scope")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -3307,6 +3308,9 @@
       (=
         (compiler-builtin-ctfe-ref 287)
         (ci.intern-source-slice "expr-shared-call1" 0 17))
+      (=
+        (compiler-builtin-ctfe-ref 288)
+        (ci.intern-source-slice "expr-shared-let-scope" 0 21))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
@@ -3364,6 +3368,7 @@
           (compiler-builtin-ctfe-set! 285 -1)
           (compiler-builtin-ctfe-set! 286 -1)
           (compiler-builtin-ctfe-set! 287 -1)
+          (compiler-builtin-ctfe-set! 288 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)

@@ -17155,61 +17155,67 @@
                     : (Ptr CompilerBackendCallSymbolMemo))))
               : i64)))))))
 
+;; Fresh-cell allocation stamps the current fingerprint, so first use goes
+;; straight through the memo path.
 (define (compiler-backend-call-symbol-index
   [name : i64]
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : String
   (let
-    [memo : CompilerBackendCallSymbolMemo
-      (compiler-backend-call-symbol-memo-load index)]
     [flags : i64 (compiler-backend-call-symbol-plan-flags plan)]
-    (if (and
-      (= memo.plan-flags flags)
-      (=
-        memo.generation
-        (compiler-backend-state-intern-generation index.backend-state))
-      (=
-        memo.table-id
-        (compiler-backend-state-intern-table-id index.backend-state)))
-      (match (backend_i64_i64_map.get (& memo.keys) name)
-        [(backend_i64_i64_map.LookupFound slot) (array-ref memo.values slot)]
-        [(backend_i64_i64_map.LookupMissing)
-          ;; Copy the resolved string into the owner arena before retaining it:
-          ;; the uncached result may name a transient region.
-          (let
-            [owner : arena.Arena
-              (compiler-backend-call-symbol-memo-owner index.backend-state)]
-            [resolved : String
-              (compiler-backend-call-symbol-index-uncached name plan index)]
-            [stable : String (in-arena owner (str_cat.str-cat resolved ""))]
-            (begin
-              (in-arena
-                owner
+    ;; Allocate before the first load: the cell starts at address 0.
+    (begin
+      (if (= (array-ref index.call-symbol-memo 0) 0)
+        (compiler-backend-call-symbol-memo-allocate! index flags)
+        unit)
+      (let
+        [memo : CompilerBackendCallSymbolMemo
+          (compiler-backend-call-symbol-memo-load index)]
+        (if (and
+          (= memo.plan-flags flags)
+          (=
+            memo.generation
+            (compiler-backend-state-intern-generation index.backend-state))
+          (=
+            memo.table-id
+            (compiler-backend-state-intern-table-id index.backend-state)))
+          (match (backend_i64_i64_map.get (& memo.keys) name)
+            [(backend_i64_i64_map.LookupFound slot)
+              (array-ref memo.values slot)]
+            [(backend_i64_i64_map.LookupMissing)
+              ;; Copy the resolved string into the owner arena before retaining
+              ;; it: the uncached result may name a transient region.
+              (let
+                [owner : arena.Arena
+                  (compiler-backend-call-symbol-memo-owner index.backend-state)]
+                [resolved : String
+                  (compiler-backend-call-symbol-index-uncached name plan index)]
+                [stable : String (in-arena owner (str_cat.str-cat resolved ""))]
                 (begin
-                  (backend_i64_i64_map.insert-ref!
-                    (&mut memo.keys)
-                    name
-                    (array-length memo.values))
-                  (array.push! memo.values stable)))
-              ;; Publish the mutated value back into the shared cell.
-              (compiler-backend-call-symbol-memo-store! index memo)
-              stable))])
-      (begin
-        ;; Fresh cell: allocate the value.  Existing cell: reset it in place.
-        ;; Both stamp the current fingerprint so the retry below hits the memo
-        ;; path (a differently flagged plan or a switched intern table
-        ;; invalidates every entry at once).
-        (if (= (array-ref index.call-symbol-memo 0) 0)
-          (compiler-backend-call-symbol-memo-allocate! index flags)
-          (compiler-backend-call-symbol-memo-store!
-            index
-            (CompilerBackendCallSymbolMemo
-              (backend_i64_i64_map.new)
-              (array.make-array String 0)
-              flags
-              (compiler-backend-state-intern-generation index.backend-state)
-              (compiler-backend-state-intern-table-id index.backend-state))))
-        (compiler-backend-call-symbol-index name plan index)))))
+                  (in-arena
+                    owner
+                    (begin
+                      (backend_i64_i64_map.insert-ref!
+                        (&mut memo.keys)
+                        name
+                        (array-length memo.values))
+                      (array.push! memo.values stable)))
+                  ;; Publish the mutated value back into the shared cell.
+                  (compiler-backend-call-symbol-memo-store! index memo)
+                  stable))])
+          (begin
+            ;; A differently flagged plan or a switched intern table
+            ;; invalidates every entry at once: reset in place, stamped with
+            ;; the current fingerprint so the retry below takes the memo path.
+            (compiler-backend-call-symbol-memo-store!
+              index
+              (CompilerBackendCallSymbolMemo
+                (backend_i64_i64_map.new)
+                (array.make-array String 0)
+                flags
+                (compiler-backend-state-intern-generation index.backend-state)
+                (compiler-backend-state-intern-table-id index.backend-state)))
+            (compiler-backend-call-symbol-index name plan index)))))))
 
 (define (compiler-backend-function-label-scope
   [index : CompilerBackendProgramIndex]

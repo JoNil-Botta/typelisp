@@ -20,6 +20,12 @@
 (import token)
 (import (option.option i64) as option_i64)
 
+(unsafe
+  (extern (compiler-parse-runtime-copy-bytes!
+    [dst : (MutPtr u8)]
+    [src : (Ptr u8)]
+    [count : i64]) : unit (:symbol "tl_memcpy")))
+
 (defenum CompilerParseMaybeDeclSpan
   (Some ast.AstSourceSpan)
   (None))
@@ -82,23 +88,14 @@
         (if (< old-cap 1)
           1
           (* old-cap 2)))]
-    [index : i64 0]
     (begin
-      (while (< index items.len)
-        (let
-          [origin : ParseSemanticOriginRecord (array-ref old index)]
-          (begin
-            (set!
-              (array-ref next index)
-              (ParseSemanticOriginRecord
-                origin.decl-slot
-                origin.kind-tag
-                origin.written-name
-                origin.start-line
-                origin.start-col
-                origin.end-line
-                origin.end-col))
-            (set! index (+ index 1)))))
+      (if (> items.len 0)
+        (unsafe
+          (compiler-parse-runtime-copy-bytes!
+            (ptr-cast (__tl_array-data next) : (MutPtr u8))
+            (ptr-cast (__tl_array-data old) : (Ptr u8))
+            (* items.len 56)))
+        unit)
       (set! items.items next))))
 
 (define (parse-semantic-origin-vec-push!
@@ -278,46 +275,45 @@
   [final-kind : CompilerParseSemanticOriginKind]) : unit
   (if compiler-parse-semantic-origin-capture-active
     (let
-      [text : String (ci.intern-syntax-id-text name)]
-      [n : i64 (string.string-length text)]
+      [syntax-name : i64 (ci.intern-syntax-id-value name)]
       [written-name : i64
-        (ci.intern-id-value (ci.intern-syntax-id-renderable name))]
-      (if (< (ci.intern-first-dot written-name) 0)
-        (compiler-parse-semantic-origin-push-active!
-          final-kind
-          written-name
-          (token.SourceSpan
-            (token.span-start-line span)
-            (token.span-start-col span)
-            (token.span-end-line span)
-            (+ (token.span-start-col span) n)))
+        (if (ci.intern-renderable-id? syntax-name)
+          syntax-name
+          (ci.intern-syntax-source-name-id-or syntax-name -1))]
+      (if (< written-name 0)
+        unit
         (let
-          [start : i64 0]
-          [cursor : i64 0]
-          (while (<= cursor n)
-            (if (or
-              (= cursor n)
-              (string.char-eq (string.string-ref text cursor) '.'))
-              (let
-                [len : i64 (- cursor start)]
+          [current : i64 written-name]
+          [start-col : i64 (token.span-start-col span)]
+          [done : bool false]
+          (while (not done)
+            (let
+              [dot : i64 (ci.intern-first-dot current)]
+              (if (>= dot 0)
                 (begin
-                  (if (> len 0)
-                    (begin
-                      (compiler-parse-semantic-origin-push-active!
-                        (if (= cursor n)
-                          final-kind
-                          prefix-kind)
-                        (ci.intern-slice text start len)
-                        (token.SourceSpan
-                          (token.span-start-line span)
-                          (+ (token.span-start-col span) start)
-                          (token.span-end-line span)
-                          (+ (token.span-start-col span) cursor)))
-                      unit)
-                    unit)
-                  (set! start (+ cursor 1))))
-              unit)
-            (set! cursor (+ cursor 1))))))
+                  (compiler-parse-semantic-origin-push-active!
+                    prefix-kind
+                    (ci.intern-leading-dot-id current)
+                    (token.SourceSpan
+                      (token.span-start-line span)
+                      start-col
+                      (token.span-end-line span)
+                      (+ start-col dot)))
+                  (set! start-col (+ (+ start-col dot) 1))
+                  (set! current (ci.intern-dotted-tail-id current)))
+                (let
+                  [text : String (ci.intern-str current)]
+                  [n : i64 (string.string-length text)]
+                  (begin
+                    (compiler-parse-semantic-origin-push-active!
+                      final-kind
+                      current
+                      (token.SourceSpan
+                        (token.span-start-line span)
+                        start-col
+                        (token.span-end-line span)
+                        (+ start-col n)))
+                    (set! done true)))))))))
     unit))
 
 (define (compiler-parse-decl-list-storage-key

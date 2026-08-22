@@ -919,13 +919,19 @@ release/remap cycles with more than 25,000 routed calls per host.
 
 Package dependency images also carry relocatable checked frontend surfaces.
 `verify-package-surface-tlci.sh` builds a two-parent diamond with a shared
-transitive dependency, same-named macros, a generic macro, `Module` and `Decls`
-macro results, and dependency SPMD metadata. The trusted route must hydrate all
-three surface fragments transactionally, copy their AST/fact/SPMD state into
-consumer-owned storage, and report nonzero `surface-macro-skipped` and
-`surface-typecheck-skipped` counters. Forced-source and injected-last-fragment
-rejection controls must report zero skips, produce byte-identical assembly, and
-run with the same result. Rejection is all-or-source: a consumer never mixes a
+transitive dependency, colliding local names, aliases, repeated imports and
+generated keys, a generic macro, ordered `Module` and `Decls` results, a
+registration shell, and dependency SPMD metadata. The trusted consumer maps
+exactly three code catalogs and records 9 catalog hits, 8 native dispatches, 4
+native/direct `Expr` results, 1 `Module` result, 2 `Decls` results, and one shell
+learn/cache-hit pair. Package-qualified rows pin two calls to the shared-base
+macro, the left/right defining identities, and repeated generated/shell calls.
+All three surface fragments hydrate transactionally into consumer-owned
+AST/fact/SPMD storage. The forced-source twin maps zero code, records zero hits
+and native dispatches plus 9 interpreted fallbacks, and produces byte-identical
+assembly and identical runtime exit/stdout/stderr. Authored-error and host-fuel
+failure twins retain equal semantic text and expansion attribution. The
+injected-last-fragment control remains all-or-source: a consumer never mixes a
 partially hydrated dependency prefix with parsed dependency source.
 
 The separately invokable `verify-embedded-stdlib-tlci-resources.sh` gate runs

@@ -7926,10 +7926,10 @@
         (compiler_ir_types.CompilerIrInstr.Switch
           (compiler_ir_types.CompilerIrValue.Var 6)
           0
-          (compiler_ir_types.compiler-ir-switch-case-cons
-            0
-            (compiler_ir_types.compiler-ir-label "other")
-            compiler_ir_types.CompilerIrSwitchCaseList.Nil)
+          (compiler_ir_types.compiler-ir-switch-case-seq1
+            (compiler_ir_types.CompilerIrSwitchCase.Case
+              0
+              (compiler_ir_types.compiler-ir-label "other")))
           (compiler_ir_types.compiler-ir-label "use"))))
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.CompilerIrBlock.Block
@@ -8153,10 +8153,10 @@
         (compiler_ir_types.CompilerIrInstr.Switch
           (compiler_ir_types.CompilerIrValue.Var 9)
           0
-          (compiler_ir_types.compiler-ir-switch-case-cons
-            0
-            (compiler_ir_types.compiler-ir-label "other")
-            compiler_ir_types.CompilerIrSwitchCaseList.Nil)
+          (compiler_ir_types.compiler-ir-switch-case-seq1
+            (compiler_ir_types.CompilerIrSwitchCase.Case
+              0
+              (compiler_ir_types.compiler-ir-label "other")))
           (compiler_ir_types.compiler-ir-label "use"))))
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.CompilerIrBlock.Block
@@ -8245,10 +8245,10 @@
           (compiler_ir_types.CompilerIrInstr.Switch
             (compiler_ir_types.CompilerIrValue.Var 8)
             0
-            (compiler_ir_types.compiler-ir-switch-case-cons
-              0
-              (compiler_ir_types.compiler-ir-label "other")
-              compiler_ir_types.CompilerIrSwitchCaseList.Nil)
+            (compiler_ir_types.compiler-ir-switch-case-seq1
+              (compiler_ir_types.CompilerIrSwitchCase.Case
+                0
+                (compiler_ir_types.compiler-ir-label "other")))
             (compiler_ir_types.compiler-ir-label "use"))))
       (compiler_ir_types.compiler-ir-block-cons
         (compiler_ir_types.CompilerIrBlock.Block
@@ -15015,14 +15015,10 @@
           2)
         compiler_ir_types.CompilerIrParamList.Nil))))
 
-(define (opt-inline-switch-cases [zero-label : i64] [one-label : i64]) : compiler_ir_types.CompilerIrSwitchCaseList
-  (compiler_ir_types.compiler-ir-switch-case-cons
-    0
-    zero-label
-    (compiler_ir_types.compiler-ir-switch-case-cons
-      1
-      one-label
-      compiler_ir_types.CompilerIrSwitchCaseList.Nil)))
+(define (opt-inline-switch-cases [zero-label : i64] [one-label : i64]) : compiler_ir_types.CompilerIrSwitchCaseSeq
+  (compiler_ir_types.compiler-ir-switch-case-seq2
+    (compiler_ir_types.CompilerIrSwitchCase.Case 0 zero-label)
+    (compiler_ir_types.CompilerIrSwitchCase.Case 1 one-label)))
 
 (define (opt-inline-switch-loop-bounds-instr [ok-label : i64]) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.BoundsCheck
@@ -25020,13 +25016,13 @@
         (compiler_ir_types.CompilerIrInstr.Switch
           (compiler_ir_types.CompilerIrValue.Var 0)
           1
-          (compiler_ir_types.compiler-ir-switch-case-cons
-            1
-            (compiler_ir_types.compiler-ir-label "ss-a")
-            (compiler_ir_types.compiler-ir-switch-case-cons
+          (compiler_ir_types.compiler-ir-switch-case-seq2
+            (compiler_ir_types.CompilerIrSwitchCase.Case
+              1
+              (compiler_ir_types.compiler-ir-label "ss-a"))
+            (compiler_ir_types.CompilerIrSwitchCase.Case
               2
-              (compiler_ir_types.compiler-ir-label "ss-b")
-              compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+              (compiler_ir_types.compiler-ir-label "ss-b")))
           (compiler_ir_types.compiler-ir-label "ss-d"))))
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.CompilerIrBlock.Block
@@ -25136,13 +25132,13 @@
         (compiler_ir_types.CompilerIrInstr.Switch
           (compiler_ir_types.CompilerIrValue.Var 0)
           1
-          (compiler_ir_types.compiler-ir-switch-case-cons
-            1
-            (compiler_ir_types.compiler-ir-label "one")
-            (compiler_ir_types.compiler-ir-switch-case-cons
+          (compiler_ir_types.compiler-ir-switch-case-seq2
+            (compiler_ir_types.CompilerIrSwitchCase.Case
+              1
+              (compiler_ir_types.compiler-ir-label "one"))
+            (compiler_ir_types.CompilerIrSwitchCase.Case
               2
-              (compiler_ir_types.compiler-ir-label "two")
-              compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+              (compiler_ir_types.compiler-ir-label "two")))
           (compiler_ir_types.compiler-ir-label "other"))))
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.CompilerIrBlock.Block
@@ -35133,25 +35129,25 @@
           (compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
             (compiler_ir_types.CompilerIrValue.Var 5)
             0
-            (compiler_ir_types.compiler-ir-switch-case-cons
-              0
-              (compiler_ir_types.compiler-ir-label "else")
-              (compiler_ir_types.compiler-ir-switch-case-cons
+            (compiler_ir_types.compiler-ir-switch-case-seq2
+              (compiler_ir_types.CompilerIrSwitchCase.Case
+                0
+                (compiler_ir_types.compiler-ir-label "else"))
+              (compiler_ir_types.CompilerIrSwitchCase.Case
                 1
-                (compiler_ir_types.compiler-ir-label "then")
-                compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+                (compiler_ir_types.compiler-ir-label "then")))
             (compiler_ir_types.compiler-ir-label "match_total_enum_default")
             (compiler_ir_types.compiler-ir-label-none))
           (compiler_ir_types.CompilerIrInstr.Switch
             (compiler_ir_types.CompilerIrValue.Var 5)
             0
-            (compiler_ir_types.compiler-ir-switch-case-cons
-              0
-              (compiler_ir_types.compiler-ir-label "else")
-              (compiler_ir_types.compiler-ir-switch-case-cons
+            (compiler_ir_types.compiler-ir-switch-case-seq2
+              (compiler_ir_types.CompilerIrSwitchCase.Case
+                0
+                (compiler_ir_types.compiler-ir-label "else"))
+              (compiler_ir_types.CompilerIrSwitchCase.Case
                 1
-                (compiler_ir_types.compiler-ir-label "then")
-                compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+                (compiler_ir_types.compiler-ir-label "then")))
             (compiler_ir_types.compiler-ir-label "match_total_trap")))
         (compiler_ir_types.CompilerIrInstr.Branch
           (compiler_ir_types.CompilerIrValue.Var 5)
@@ -35393,7 +35389,7 @@
           (compiler_ir_types.CompilerIrInstr.Switch
             (compiler_ir_types.CompilerIrValue.I64 0)
             0
-            compiler_ir_types.CompilerIrSwitchCaseList.Nil
+            (compiler_ir_types.compiler-ir-switch-case-seq-empty)
             (compiler_ir_types.compiler-ir-label "body"))
           (compiler_ir_types.CompilerIrInstr.Jump
             (compiler_ir_types.compiler-ir-label "body")))))
@@ -35854,36 +35850,19 @@
       [else 42])))
 
 (define (opt-bce-mb-test-cloned-switch-cases-ok?
-  [cases : compiler_ir_types.CompilerIrSwitchCaseList]) : bool
-  (match (compiler_ir_types.compiler-ir-switch-case-list-force-cons cases)
-    [(compiler_ir_types.CompilerIrSwitchCaseList.Cons first first-rest)
-      (match first
-        [(compiler_ir_types.CompilerIrSwitchCase.Case first-tag first-label)
-          (and
-            (= first-tag 0)
-            (=
-              first-label
-              (compiler_ir_types.compiler-ir-label "else__bce_fast"))
-            (match (compiler_ir_types.compiler-ir-switch-case-list-force-cons
-              (__tl-box-place first-rest))
-              [(compiler_ir_types.CompilerIrSwitchCaseList.Cons
-                  second
-                  second-rest)
-                (match second
-                  [(compiler_ir_types.CompilerIrSwitchCase.Case
-                      second-tag
-                      second-label)
-                    (and
-                      (= second-tag 1)
-                      (=
-                        second-label
-                        (compiler_ir_types.compiler-ir-label "then__bce_fast"))
-                      (match (compiler_ir_types.compiler-ir-switch-case-list-force-cons
-                        (__tl-box-place second-rest))
-                        [(compiler_ir_types.CompilerIrSwitchCaseList.Nil) true]
-                        [_ false]))])]
-              [_ false]))])]
-    [_ false]))
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]) : bool
+  (and
+    (= cases.len 2)
+    (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases 0)
+      [(compiler_ir_types.CompilerIrSwitchCase.Case tag label)
+        (and
+          (= tag 0)
+          (= label (compiler_ir_types.compiler-ir-label "else__bce_fast")))])
+    (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases 1)
+      [(compiler_ir_types.CompilerIrSwitchCase.Case tag label)
+        (and
+          (= tag 1)
+          (= label (compiler_ir_types.compiler-ir-label "then__bce_fast")))])))
 
 (define (opt-bce-mb-test-cloned-switch-ok?
   [blocks : compiler_ir_types.CompilerIrBlockList]) : bool

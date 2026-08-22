@@ -10395,14 +10395,15 @@
       [(compiler_lower.ResultCompilerLower.Ok program _)
         (match program
           [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-            ;; Two preheader vectors plus three local full-body and tail splats.
+            ;; All five unique source splats are shared by the full and tail
+            ;; vector bodies now that the allocator handles their live ranges.
             (=
               (lower-test-function-splat-shape-count
                 functions
                 "fill"
                 8
                 (compiler_ast_types.AstType.I32))
-              8)])]
+              5)])]
       [(compiler_lower.ResultCompilerLower.Err _) false])
     (match (compiler_lower.lower-compiler-source-with-mode
       (compiler-lower-masked-preheader-windows-avx2-cap-source)
@@ -10410,15 +10411,15 @@
       [(compiler_lower.ResultCompilerLower.Ok program _)
         (match program
           [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-            ;; Windows AVX2 keeps six source splats (including repeated `a`)
-            ;; local in both vector paths.
+            ;; Windows shares the same five unique source splats now that
+            ;; full-width call volatility and spill scratch are modeled.
             (=
               (lower-test-function-splat-shape-count
                 functions
                 "fill"
                 8
                 (compiler_ast_types.AstType.I32))
-              12)])]
+              5)])]
       [(compiler_lower.ResultCompilerLower.Err _) false])))
 
 (define (compiler-lower-masked-preheader-unsafe-rejected?

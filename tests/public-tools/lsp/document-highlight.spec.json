@@ -3,14 +3,21 @@
   "stderr_exact": "",
   "message_checks": [
     {"jsonpath_id": 1, "raw_contains": "\"documentHighlightProvider\":true"},
-    {"jsonpath_id": 2, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":0,\"character\":8},\"end\":{\"line\":0,\"character\":11}},\"kind\":1},{\"range\":{\"start\":{\"line\":1,\"character\":22},\"end\":{\"line\":1,\"character\":25}},\"kind\":1}]"},
-    {"jsonpath_id": 3, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":2,\"character\":24},\"end\":{\"line\":2,\"character\":31}},\"kind\":1},{\"range\":{\"start\":{\"line\":3,\"character\":22},\"end\":{\"line\":3,\"character\":29}},\"kind\":1}]"},
-    {"jsonpath_id": 4, "json_contains": "\"result\":[]"},
-    {"jsonpath_id": 5, "json_contains": "\"result\":[]"},
-    {"jsonpath_id": 6, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":7,\"character\":20},\"end\":{\"line\":7,\"character\":24}},\"kind\":1}]"},
+    {"jsonpath_id": 2, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":0,\"character\":40},\"end\":{\"line\":0,\"character\":43}},\"kind\":1},{\"range\":{\"start\":{\"line\":6,\"character\":44},\"end\":{\"line\":6,\"character\":47}},\"kind\":2},{\"range\":{\"start\":{\"line\":7,\"character\":21},\"end\":{\"line\":7,\"character\":24}},\"kind\":2},{\"range\":{\"start\":{\"line\":13,\"character\":27},\"end\":{\"line\":13,\"character\":30}},\"kind\":2}]"},
+    {"jsonpath_id": 3, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":0,\"character\":40},\"end\":{\"line\":0,\"character\":43}},\"kind\":1},{\"range\":{\"start\":{\"line\":6,\"character\":44},\"end\":{\"line\":6,\"character\":47}},\"kind\":2},{\"range\":{\"start\":{\"line\":7,\"character\":21},\"end\":{\"line\":7,\"character\":24}},\"kind\":2},{\"range\":{\"start\":{\"line\":13,\"character\":27},\"end\":{\"line\":13,\"character\":30}},\"kind\":2}]"},
+    {"jsonpath_id": 4, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":6,\"character\":32},\"end\":{\"line\":6,\"character\":37}},\"kind\":1},{\"range\":{\"start\":{\"line\":6,\"character\":49},\"end\":{\"line\":6,\"character\":54}},\"kind\":2}]"},
+    {"jsonpath_id": 5, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":1,\"character\":15},\"end\":{\"line\":1,\"character\":19}},\"kind\":1},{\"range\":{\"start\":{\"line\":3,\"character\":10},\"end\":{\"line\":3,\"character\":14}},\"kind\":3},{\"range\":{\"start\":{\"line\":3,\"character\":18},\"end\":{\"line\":3,\"character\":22}},\"kind\":2},{\"range\":{\"start\":{\"line\":4,\"character\":4},\"end\":{\"line\":4,\"character\":8}},\"kind\":2}]"},
+    {"jsonpath_id": 6, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":11,\"character\":11},\"end\":{\"line\":11,\"character\":15}},\"kind\":1},{\"range\":{\"start\":{\"line\":13,\"character\":22},\"end\":{\"line\":13,\"character\":26}},\"kind\":2}]"},
     {"jsonpath_id": 7, "json_contains": "\"result\":[]"},
     {"jsonpath_id": 8, "json_contains": "\"result\":[]"},
-    {"jsonpath_id": 9, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":0,\"character\":8},\"end\":{\"line\":0,\"character\":13}},\"kind\":1},{\"range\":{\"start\":{\"line\":0,\"character\":20},\"end\":{\"line\":0,\"character\":25}},\"kind\":1}]"},
-    {"jsonpath_id": 10, "json_contains": "\"result\":null", "jsonpath_result": null}
+    {"jsonpath_id": 9, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 10, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":10,\"character\":8},\"end\":{\"line\":10,\"character\":18}},\"kind\":1}]"},
+    {"jsonpath_id": 11, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 12, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 13, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":1,\"character\":9},\"end\":{\"line\":1,\"character\":13}},\"kind\":1},{\"range\":{\"start\":{\"line\":14,\"character\":22},\"end\":{\"line\":14,\"character\":26}},\"kind\":2}]"},
+    {"jsonpath_id": 14, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":16,\"character\":26},\"end\":{\"line\":16,\"character\":46}},\"kind\":2},{\"range\":{\"start\":{\"line\":17,\"character\":26},\"end\":{\"line\":17,\"character\":46}},\"kind\":2}]"},
+    {"jsonpath_id": 15, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":0,\"character\":40},\"end\":{\"line\":0,\"character\":43}},\"kind\":1},{\"range\":{\"start\":{\"line\":6,\"character\":44},\"end\":{\"line\":6,\"character\":47}},\"kind\":2},{\"range\":{\"start\":{\"line\":7,\"character\":21},\"end\":{\"line\":7,\"character\":24}},\"kind\":2},{\"range\":{\"start\":{\"line\":13,\"character\":27},\"end\":{\"line\":13,\"character\":30}},\"kind\":2}]"},
+    {"jsonpath_id": 16, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 17, "json_contains": "\"result\":null", "jsonpath_result": null}
   ]
 }

@@ -1222,12 +1222,18 @@
 ;; ABI-fixed argument/result uses and instruction-selection temporaries are
 ;; represented by preferences, clobber points, or bounded scratch requirements.
 ;; The default-off path retains XMM0/XMM1 as reserved backend scratch until the
-;; scratch-vreg cutover.
+;; scratch-vreg cutover. XMM14/XMM15 remain reserved in both modes because the
+;; legacy vector spill paths use their YMM/ZMM aliases as fixed temporaries.
 (define (compiler-reg-low-xmm-allocatable?) : bool
   (cfg scratch-vreg true false))
 
 (define (compiler-reg-xmm-class-register [reg : i64] [vector : bool]) : i64
   (cabi.compiler-abi-register-with-vector-class reg vector))
+
+(define (compiler-reg-xmm-fixed-spill-scratch? [reg : i64]) : bool
+  (let
+    [family : i64 (cabi.compiler-abi-register-vector-family-index reg)]
+    (or (= family 14) (= family 15))))
 
 (define (compiler-reg-xmm-caller-registers-for-abi-range
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -1247,19 +1253,20 @@
           0))]
     (begin
       (while (< index limit)
-        (begin
-          (if (and (not (compiler-reg-low-xmm-allocatable?)) (< index 2))
-            unit
-            (set!
-              out
-              (compiler-reg-id-seq-push
+        (let
+          [reg : i64
+            (cabi.compiler-abi-caller-saved-xmm-register-id target-abi index)]
+          (begin
+            (if (or
+              (compiler-reg-xmm-fixed-spill-scratch? reg)
+              (and (not (compiler-reg-low-xmm-allocatable?)) (< index 2)))
+              unit
+              (set!
                 out
-                (compiler-reg-xmm-class-register
-                  (cabi.compiler-abi-caller-saved-xmm-register-id
-                    target-abi
-                    index)
-                  vector))))
-          (set! index (+ index 1))))
+                (compiler-reg-id-seq-push
+                  out
+                  (compiler-reg-xmm-class-register reg vector))))
+            (set! index (+ index 1)))))
       out)))
 
 (define (compiler-reg-xmm-caller-registers-for-abi-from
@@ -1286,17 +1293,18 @@
           0))]
     (begin
       (while (< index count)
-        (begin
-          (set!
-            out
-            (compiler-reg-id-seq-push
-              out
-              (compiler-reg-xmm-class-register
-                (cabi.compiler-abi-callee-saved-xmm-register-id
-                  target-abi
-                  index)
-                vector)))
-          (set! index (+ index 1))))
+        (let
+          [reg : i64
+            (cabi.compiler-abi-callee-saved-xmm-register-id target-abi index)]
+          (begin
+            (if (compiler-reg-xmm-fixed-spill-scratch? reg)
+              unit
+              (set!
+                out
+                (compiler-reg-id-seq-push
+                  out
+                  (compiler-reg-xmm-class-register reg vector))))
+            (set! index (+ index 1)))))
       out)))
 
 (define (compiler-reg-xmm-registers-for-abi-build
@@ -1311,7 +1319,8 @@
     [(cabi.CompilerRegTargetAbi.Linux)
       ;; Preserve the established high-register vector preference, then use
       ;; XMM2-XMM5 as overflow capacity. XMM0/XMM1 stay out of the vector class
-      ;; until every vector lowering has explicit scratch.
+      ;; until every vector lowering has explicit scratch; XMM14/XMM15 stay out
+      ;; while their YMM/ZMM aliases are fixed spill temporaries.
       (compiler-reg-id-seq-append
         (compiler-reg-xmm-caller-registers-for-abi-range
           target-abi
@@ -1320,7 +1329,8 @@
           true)
         (compiler-reg-xmm-caller-registers-for-abi-range target-abi 2 6 true))]
     [(cabi.CompilerRegTargetAbi.Windows)
-      ;; Keep XMM2-XMM5 as the volatile prefix before XMM6-XMM15.
+      ;; Keep XMM2-XMM5 as the volatile prefix before XMM6-XMM13. The final two
+      ;; physical families are fixed vector spill temporaries.
       (compiler-reg-id-seq-append
         (compiler-reg-xmm-caller-registers-for-abi-range target-abi 2 6 true)
         (compiler-reg-xmm-callee-registers-for-abi-from target-abi 0 true))]))
@@ -1387,20 +1397,24 @@
       (compiler-reg-global-shared-view
         compiler-reg-linux-vector-callee-registers)]
     [(cabi.CompilerRegTargetAbi.Windows)
-      (compiler-reg-global-shared-view
-        compiler-reg-windows-vector-callee-registers)]))
+      ;; Win64 preserves only the low 128 bits of XMM6-XMM15. A 256-bit YMM
+      ;; value therefore has no nonvolatile physical home: a callee may retain
+      ;; the low half while clobbering or zeroing the upper half. Keep scalar
+      ;; XMM values on the ordinary nonvolatile suffix, but spill every vector
+      ;; whose interval crosses a call.
+      (compiler-reg-id-seq-empty)]))
 
 (define (compiler-reg-xmm-caller-register-count-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : i64
-  (-
-    (cabi.compiler-abi-caller-saved-xmm-register-count target-abi)
-    (if (compiler-reg-low-xmm-allocatable?)
-      0
-      2)))
+  (compiler-reg-id-seq-count
+    (compiler-reg-xmm-caller-registers-for-abi-from target-abi 0 false)))
 
 (define (compiler-reg-vector-caller-register-count-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : i64
-  (- (cabi.compiler-abi-caller-saved-xmm-register-count target-abi) 2))
+  ;; Full-width YMM values are volatile under both supported ABIs. On Win64
+  ;; this deliberately includes the XMM6-XMM15-family suffix whose low halves
+  ;; alone are nonvolatile.
+  (compiler-reg-id-seq-count (compiler-reg-vector-registers-for-abi target-abi)))
 
 (define (compiler-reg-xmm-registers) : CompilerRegIdSeq
   (compiler-reg-xmm-registers-for-abi cabi.CompilerRegTargetAbi.Linux))
@@ -10700,9 +10714,9 @@
     [(ir.CompilerIrInstr.TailCall _ _ _) 0]
     [(ir.CompilerIrInstr.TailCallIndirect _ _ _) 0]
     [(ir.CompilerIrInstr.Switch _ _ cases _)
-      (+ 1 (ir.compiler-ir-switch-case-list-count cases))]
+      (+ 1 (ir.compiler-ir-switch-case-seq-count cases))]
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases _ _)
-      (+ 2 (ir.compiler-ir-switch-case-list-count cases))]
+      (+ 2 (ir.compiler-ir-switch-case-seq-count cases))]
     ;; Not a terminator: one unnamed fall-through edge.
     [_ 1]))
 
@@ -22352,13 +22366,11 @@
 ;; aborts, so nothing is live into it -- but the refusal is what makes that a
 ;; fact about the code rather than about the optimizer.)
 (define (compiler-reg-loop-park-cases-name?
-  [cases : ir.CompilerIrSwitchCaseList]
+  [cases : ir.CompilerIrSwitchCaseSeq]
   [target-label : i64]) : bool
   (let
-    [seq : ir.CompilerIrSwitchCaseSeq
-      (ir.compiler-ir-switch-case-seq-from-list cases)]
-    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) seq.slots]
-    [count : i64 seq.len]
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cases.slots]
+    [count : i64 cases.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -22428,12 +22440,10 @@
   [pk : CompilerRegLoopParkPlan]
   [seq : ir.CompilerIrBlockSeq]
   [b : i64]
-  [cases : ir.CompilerIrSwitchCaseList]) : ir.CompilerIrSwitchCaseList
+  [cases : ir.CompilerIrSwitchCaseSeq]) : ir.CompilerIrSwitchCaseSeq
   (let
-    [cseq : ir.CompilerIrSwitchCaseSeq
-      (ir.compiler-ir-switch-case-seq-from-list cases)]
-    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cseq.slots]
-    [count : i64 cseq.len]
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cases.slots]
+    [count : i64 cases.len]
     [out : (__tl_dyn-array ir.CompilerIrSwitchCase)
       (array.make-array ir.CompilerIrSwitchCase count)]
     [index : i64 0]
@@ -22448,7 +22458,7 @@
                   tag
                   (compiler-reg-loop-park-subst-label pk seq b label)))])
           (set! index (+ index 1))))
-      (ir.CompilerIrSwitchCaseList.Array (ir.CompilerIrSwitchCaseSeq out count)))))
+      (ir.CompilerIrSwitchCaseSeq out count))))
 
 (define (compiler-reg-loop-park-redirect-instr
   [pk : CompilerRegLoopParkPlan]
@@ -39297,13 +39307,13 @@
 (define (compiler-reg-scratch-switch-phi-registers
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentTable]
-  [cases : ir.CompilerIrSwitchCaseList]
+  [cases : ir.CompilerIrSwitchCaseSeq]
   [default-label : i64]) : CompilerRegIdSeq
   (compiler-reg-id-seq-push-all
     (compiler-reg-scratch-switch-phi-registers-seq-from
       policy
       assignments
-      (ir.compiler-ir-switch-case-seq-from-list cases)
+      cases
       0
       (compiler-reg-id-seq-empty))
     (compiler-reg-scratch-phi-dst-registers-label

@@ -12,6 +12,67 @@
 (defmacro (intern-structural-key-raw [key : Expr]) : i64
   `(__tl-project-field-name ,key "value"))
 
+(defstruct InternStructuralRecord
+  (kind i64)
+  (left-id i64)
+  (middle-id i64)
+  (right-id i64))
+
+(defenum InternMaybeStructuralRecord
+  (No)
+  (Some InternStructuralRecord))
+
+;; Hygienic identities cross raw i64 AST/environment fields only at compatibility
+;; boundaries. Inside the structural API each family has a nominal one-word key,
+;; and decoding always proves both session ownership and record kind.
+(defstruct InternMacroDefinitionIdentity
+  (value i64))
+
+(defmacro (intern-macro-definition-identity-raw [identity : Expr]) : i64
+  `(__tl-project-field-name ,identity "value"))
+
+(defstruct InternMacroGlobalIdentity
+  (value i64))
+
+(defmacro (intern-macro-global-identity-raw [identity : Expr]) : i64
+  `(__tl-project-field-name ,identity "value"))
+
+(defstruct InternMacroLocalIdentity
+  (value i64))
+
+(defmacro (intern-macro-local-identity-raw [identity : Expr]) : i64
+  `(__tl-project-field-name ,identity "value"))
+
+(defenum InternMacroGlobalRole
+  (Legacy)
+  (Context))
+
+(defstruct InternMacroDefinitionRecord
+  (definition-module-id i64)
+  (macro-name-id i64))
+
+(defstruct InternMacroGlobalRecord
+  (role InternMacroGlobalRole)
+  (definition-module-id i64)
+  (source-name-id i64))
+
+(defstruct InternMacroLocalRecord
+  (macro-definition InternMacroDefinitionIdentity)
+  (lexical-depth i64)
+  (source-name-id i64))
+
+(defenum InternMaybeMacroDefinitionRecord
+  (No)
+  (Some InternMacroDefinitionRecord))
+
+(defenum InternMaybeMacroGlobalRecord
+  (No)
+  (Some InternMacroGlobalRecord))
+
+(defenum InternMaybeMacroLocalRecord
+  (No)
+  (Some InternMacroLocalRecord))
+
 ;; Arena-phase identities are internal structural records, never renderable
 ;; source-name ids. Each variant names both the role and the components that
 ;; participate in canonicalization, so consumers cannot accidentally decode a
@@ -51,20 +112,48 @@
   (if (<= handle.address 0)
     false
     (let
-      [session : ci.InternSourceNameSession
-        (intern-structural-session-handle-session handle)]
-      (if (not (= (array-ref session.table-id-cell 0) session.table-id))
-        false
-        (if (not
-          (=
-            (array-ref session.reset-generation-cell 0)
-            session.reset-generation))
-          false
-          (=
-            (__tl-project-field
-              (array-ref session.structural-table-cell 0)
-              owner)
-            session.structural-owner))))))
+      [session-ptr : (Ptr ci.InternSourceNameSession)
+        (unsafe
+          (int->ptr
+            (cast handle.address : u64)
+            : (Ptr ci.InternSourceNameSession)))]
+      [table-id-cell : (__tl_dyn-array i64)
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) table-id-cell))]
+      [reset-generation-cell : (__tl_dyn-array i64)
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) reset-generation-cell))]
+      [structural-table-cell : (__tl_dyn-array ci.InternStructuralTable)
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) structural-table-cell))]
+      [table-id : i64
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) table-id))]
+      [reset-generation : i64
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) reset-generation))]
+      [structural-owner : i64
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) structural-owner))]
+      [current-table-id : i64
+        (unsafe
+          (ptr-read (ptr-cast (__tl_array-data table-id-cell) : (Ptr i64))))]
+      [current-reset-generation : i64
+        (unsafe
+          (ptr-read
+            (ptr-cast (__tl_array-data reset-generation-cell) : (Ptr i64))))]
+      [table-ptr : (Ptr ci.InternStructuralTable)
+        (unsafe
+          (ptr-cast
+            (__tl_array-data structural-table-cell)
+            : (Ptr ci.InternStructuralTable)))]
+      [table-owner : i64
+        (unsafe
+          (__tl-project-field (ptr-read table-ptr) owner))]
+      (and
+        (= current-table-id table-id)
+        (= current-reset-generation reset-generation)
+        (= table-owner structural-owner)))))
 
 (define (intern-structural-session-owner
   [handle : InternStructuralSessionHandle]) : i64
@@ -89,72 +178,150 @@
   [left-id : i64]
   [middle-id : i64]
   [right-id : i64]) : InternStructuralKey
-  (if (or
-    (not (intern-structural-session-valid? handle))
-    (not (ci.intern-structural-kind-valid? kind)))
+  (if (or (<= handle.address 0) (not (ci.intern-structural-kind-valid? kind)))
     (ci.tl_oob_abort)
     (let
-      [session : ci.InternSourceNameSession
-        (intern-structural-session-handle-session handle)]
-      [raw : i64
-        (ci.intern-structural-table-intern
-          (&mut session.structural-table-cell)
-          (array-ref session.persistent-arena-cell 0)
-          kind
-          left-id
-          middle-id
-          right-id)]
-      (begin
-        ;; An explicitly owned session can also be the installed compatibility
-        ;; owner. Keep that owner's scalar/address snapshot coherent without
-        ;; touching an unrelated installed table.
-        (if (= (ci.intern-active-table-id) session.table-id)
-          (ci.intern-active-structural-sync! (& session.structural-table-cell))
-          unit)
-        (InternStructuralKey raw)))))
+      [session-ptr : (Ptr ci.InternSourceNameSession)
+        (unsafe
+          (int->ptr
+            (cast handle.address : u64)
+            : (Ptr ci.InternSourceNameSession)))]
+      [table-id-cell : (__tl_dyn-array i64)
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) table-id-cell))]
+      [reset-generation-cell : (__tl_dyn-array i64)
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) reset-generation-cell))]
+      [persistent-arena-cell : (__tl_dyn-array i64)
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) persistent-arena-cell))]
+      [structural-table-cell : (__tl_dyn-array ci.InternStructuralTable)
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) structural-table-cell))]
+      [table-id : i64
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) table-id))]
+      [reset-generation : i64
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) reset-generation))]
+      [structural-owner : i64
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) structural-owner))]
+      [current-table-id : i64
+        (unsafe
+          (ptr-read (ptr-cast (__tl_array-data table-id-cell) : (Ptr i64))))]
+      [current-reset-generation : i64
+        (unsafe
+          (ptr-read
+            (ptr-cast (__tl_array-data reset-generation-cell) : (Ptr i64))))]
+      [table-ptr : (Ptr ci.InternStructuralTable)
+        (unsafe
+          (ptr-cast
+            (__tl_array-data structural-table-cell)
+            : (Ptr ci.InternStructuralTable)))]
+      [table-owner : i64
+        (unsafe
+          (__tl-project-field (ptr-read table-ptr) owner))]
+      (if (or
+        (not (= current-table-id table-id))
+        (not (= current-reset-generation reset-generation))
+        (not (= table-owner structural-owner)))
+        (ci.tl_oob_abort)
+        (let
+          [persistent-arena : i64
+            (unsafe
+              (ptr-read
+                (ptr-cast (__tl_array-data persistent-arena-cell) : (Ptr i64))))]
+          [raw : i64
+            (ci.intern-structural-table-intern
+              structural-table-cell
+              persistent-arena
+              kind
+              left-id
+              middle-id
+              right-id)]
+          (begin
+            ;; An explicitly owned session can also be the installed
+            ;; compatibility owner. Keep that owner's scalar/address snapshot
+            ;; coherent without touching an unrelated installed table.
+            (if (= (ci.intern-active-table-id) table-id)
+              (ci.intern-active-structural-sync! structural-table-cell)
+              unit)
+            (InternStructuralKey raw)))))))
 
 (define (intern-structural-session-composite-pair-key
   [handle : InternStructuralSessionHandle]
   [left-id : i64]
   [right-id : i64]) : InternStructuralKey
-  (intern-structural-session-key
-    handle
-    (ci.intern-structural-kind-pair)
-    left-id
-    0
-    right-id))
+  (if (<= handle.address 0)
+    (ci.tl_oob_abort)
+    (let
+      [session-ptr : (Ptr ci.InternSourceNameSession)
+        (unsafe
+          (int->ptr
+            (cast handle.address : u64)
+            : (Ptr ci.InternSourceNameSession)))]
+      [structural-owner : i64
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) structural-owner))]
+      (if (ci.intern-active-structural-session? structural-owner)
+        (InternStructuralKey (ci.intern-composite-pair-id left-id right-id))
+        (intern-structural-session-key
+          handle
+          (ci.intern-structural-kind-pair)
+          left-id
+          0
+          right-id)))))
 
 (define (intern-structural-session-composite-triple-key
   [handle : InternStructuralSessionHandle]
   [left-id : i64]
   [middle-id : i64]
   [right-id : i64]) : InternStructuralKey
-  (intern-structural-session-key
-    handle
-    (ci.intern-structural-kind-triple)
-    left-id
-    middle-id
-    right-id))
+  (if (<= handle.address 0)
+    (ci.tl_oob_abort)
+    (let
+      [session-ptr : (Ptr ci.InternSourceNameSession)
+        (unsafe
+          (int->ptr
+            (cast handle.address : u64)
+            : (Ptr ci.InternSourceNameSession)))]
+      [structural-owner : i64
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) structural-owner))]
+      (if (ci.intern-active-structural-session? structural-owner)
+        (InternStructuralKey
+          (ci.intern-composite-triple-id left-id middle-id right-id))
+        (intern-structural-session-key
+          handle
+          (ci.intern-structural-kind-triple)
+          left-id
+          middle-id
+          right-id)))))
 
 (define (intern-structural-session-key-owned?
   [handle : InternStructuralSessionHandle]
   [key : InternStructuralKey]) : bool
-  (if (not (intern-structural-session-valid? handle))
+  ;; Ordinary renderable, fresh-local, and other pre-table identities dominate
+  ;; mixed AST/name fields. Reject them before dereferencing the session; kind
+  ;; and components for every possible table handle still come from its owned
+  ;; record rather than a numeric subrange.
+  (if (< (intern-structural-key-raw key) (ci.intern-structural-key-base))
     false
-    (let
-      [session : ci.InternSourceNameSession
-        (intern-structural-session-handle-session handle)]
-      [table : ci.InternStructuralTable
-        (owned_view.compiler-owned-array-element-shared-view
-          session.structural-table-cell
-          0)]
-      [raw : i64 (intern-structural-key-raw key)]
-      [prefix : i64
-        (+
-          (ci.intern-structural-key-base)
-          (* session.structural-owner (ci.intern-structural-key-owner-stride)))]
-      [encoded-index : i64 (- raw prefix)]
-      (and (> encoded-index 0) (<= encoded-index table.len)))))
+    (if (not (intern-structural-session-valid? handle))
+      false
+      (let
+        [session : ci.InternSourceNameSession
+          (intern-structural-session-handle-session handle)]
+        [table : ci.InternStructuralTable
+          (array-ref session.structural-table-cell 0)]
+        [raw : i64 (intern-structural-key-raw key)]
+        [prefix : i64
+          (+
+            (ci.intern-structural-key-base)
+            (* session.structural-owner (ci.intern-structural-key-owner-stride)))]
+        [encoded-index : i64 (- raw prefix)]
+        (and (> encoded-index 0) (<= encoded-index table.len))))))
 
 (define (intern-structural-session-key-index [key : InternStructuralKey]) : i64
   (-
@@ -162,6 +329,264 @@
       (intern-structural-key-raw key)
       (ci.intern-structural-key-index-mask))
     1))
+
+(define (intern-structural-session-record-for-raw
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]) : InternMaybeStructuralRecord
+  ;; This is the pervasive mixed-name boundary. Keep all safety checks, but do
+  ;; them in one pass: layering record -> ownership -> validity repeatedly
+  ;; materialized the large session value and table record at every level.
+  (if (or (< raw (ci.intern-structural-key-base)) (<= handle.address 0))
+    InternMaybeStructuralRecord.No
+    (let
+      [session-ptr : (Ptr ci.InternSourceNameSession)
+        (unsafe
+          (int->ptr
+            (cast handle.address : u64)
+            : (Ptr ci.InternSourceNameSession)))]
+      ;; Focused projections from the handle avoid copying the combined
+      ;; source-name session (ten arrays) and structural table (nine arrays).
+      [structural-owner : i64
+        (unsafe
+          (__tl-project-field (ptr-read session-ptr) structural-owner))]
+      (if (ci.intern-active-structural-session? structural-owner)
+        (let
+          [kind : i64 (ci.intern-active-structural-record-kind-or raw -1)]
+          (if (< kind 0)
+            InternMaybeStructuralRecord.No
+            (InternMaybeStructuralRecord.Some
+              (InternStructuralRecord
+                kind
+                (ci.intern-composite-left-id-unchecked raw)
+                (ci.intern-composite-middle-id-unchecked raw)
+                (ci.intern-composite-right-id-unchecked raw)))))
+        (let
+          [table-cell : (__tl_dyn-array ci.InternStructuralTable)
+            (unsafe
+              (__tl-project-field (ptr-read session-ptr) structural-table-cell))]
+          [table-ptr : (Ptr ci.InternStructuralTable)
+            (unsafe
+              (ptr-cast
+                (__tl_array-data table-cell)
+                : (Ptr ci.InternStructuralTable)))]
+          [table-owner : i64
+            (unsafe
+              (__tl-project-field (ptr-read table-ptr) owner))]
+          [table-len : i64
+            (unsafe
+              (__tl-project-field (ptr-read table-ptr) len))]
+          [prefix : i64
+            (+
+              (ci.intern-structural-key-base)
+              (* structural-owner (ci.intern-structural-key-owner-stride)))]
+          [encoded-index : i64 (- raw prefix)]
+          (if (or
+            ;; A reset always re-owners the retained table. The globally unique
+            ;; owner is also encoded into every key, so this proves the same
+            ;; stale generation and wrong-session facts without two
+            ;; bounds-checked loads.
+            (not (= table-owner structural-owner))
+            (<= encoded-index 0)
+            (> encoded-index table-len))
+            InternMaybeStructuralRecord.No
+            (let
+              [index : i64 (- encoded-index 1)]
+              [kinds : (__tl_dyn-array u8)
+                (unsafe
+                  (__tl-project-field (ptr-read table-ptr) kinds))]
+              [lefts : (__tl_dyn-array i64)
+                (unsafe
+                  (__tl-project-field (ptr-read table-ptr) lefts))]
+              [middles : (__tl_dyn-array i64)
+                (unsafe
+                  (__tl-project-field (ptr-read table-ptr) middles))]
+              [rights : (__tl_dyn-array i64)
+                (unsafe
+                  (__tl-project-field (ptr-read table-ptr) rights))]
+              (InternMaybeStructuralRecord.Some
+                (InternStructuralRecord
+                  (cast
+                    (unsafe
+                      (ptr-read
+                        (ptr-offset
+                          (ptr-cast (__tl_array-data kinds) : (Ptr u8))
+                          index)))
+                    : i64)
+                  (unsafe
+                    (ptr-read
+                      (ptr-offset
+                        (ptr-cast (__tl_array-data lefts) : (Ptr i64))
+                        index)))
+                  (unsafe
+                    (ptr-read
+                      (ptr-offset
+                        (ptr-cast (__tl_array-data middles) : (Ptr i64))
+                        index)))
+                  (unsafe
+                    (ptr-read
+                      (ptr-offset
+                        (ptr-cast (__tl_array-data rights) : (Ptr i64))
+                        index))))))))))))
+
+(define (intern-structural-session-record
+  [handle : InternStructuralSessionHandle]
+  [key : InternStructuralKey]) : InternMaybeStructuralRecord
+  (intern-structural-session-record-for-raw
+    handle
+    (intern-structural-key-raw key)))
+
+;; The caller has just decoded `raw` through the explicit session and checked
+;; that its record is a pair or triple. These cache projections deliberately do
+;; not repeat ownership/kind validation; keeping that proof adjacent in the
+;; renderer avoids a second pervasive table lookup on every diagnostic name.
+(define (intern-structural-session-composite-rendered-name-unchecked
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]) : String
+  (let
+    [session-ptr : (Ptr ci.InternSourceNameSession)
+      (unsafe
+        (int->ptr
+          (cast handle.address : u64)
+          : (Ptr ci.InternSourceNameSession)))]
+    [table-cell : (__tl_dyn-array ci.InternStructuralTable)
+      (unsafe
+        (__tl-project-field (ptr-read session-ptr) structural-table-cell))]
+    [table-ptr : (Ptr ci.InternStructuralTable)
+      (unsafe
+        (ptr-cast (__tl_array-data table-cell) : (Ptr ci.InternStructuralTable)))]
+    [rendered-names : (__tl_dyn-array String)
+      (unsafe
+        (__tl-project-field (ptr-read table-ptr) rendered-names))]
+    [index : i64 (- (bit-and raw (ci.intern-structural-key-index-mask)) 1)]
+    (unsafe
+      (ptr-read
+        (ptr-offset
+          (ptr-cast (__tl_array-data rendered-names) : (Ptr String))
+          index)))))
+
+(define (intern-structural-session-composite-rendered-name-record-unchecked!
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]
+  [name : String]) : String
+  (let
+    [cached : String
+      (intern-structural-session-composite-rendered-name-unchecked handle raw)]
+    (if (> (__tl_string_length cached) 0)
+      cached
+      (let
+        [session-ptr : (Ptr ci.InternSourceNameSession)
+          (unsafe
+            (int->ptr
+              (cast handle.address : u64)
+              : (Ptr ci.InternSourceNameSession)))]
+        [persistent-arena-cell : (__tl_dyn-array i64)
+          (unsafe
+            (__tl-project-field (ptr-read session-ptr) persistent-arena-cell))]
+        [persistent-arena : i64
+          (unsafe
+            (ptr-read
+              (ptr-cast (__tl_array-data persistent-arena-cell) : (Ptr i64))))]
+        [table-cell : (__tl_dyn-array ci.InternStructuralTable)
+          (unsafe
+            (__tl-project-field (ptr-read session-ptr) structural-table-cell))]
+        [table-ptr : (Ptr ci.InternStructuralTable)
+          (unsafe
+            (ptr-cast
+              (__tl_array-data table-cell)
+              : (Ptr ci.InternStructuralTable)))]
+        [rendered-names : (__tl_dyn-array String)
+          (unsafe
+            (__tl-project-field (ptr-read table-ptr) rendered-names))]
+        [index : i64 (- (bit-and raw (ci.intern-structural-key-index-mask)) 1)]
+        [persistent : String
+          (ci.intern-persistent-copy-in-arena persistent-arena name)]
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset
+                (ptr-cast (__tl_array-data rendered-names) : (MutPtr String))
+                index)
+              persistent))
+          persistent)))))
+
+;; Classification-only paths should not materialize all four record lanes.
+;; The hot form accepts a value already proven to be in the table-backed
+;; structural range; ownership is still proven from the explicit session and
+;; its re-owned table.
+(defmacro (intern-structural-session-record-kind-for-structural-or
+  [handle : Expr]
+  [raw : Expr]
+  [fallback : Expr]) : i64
+  `(let
+    [kind-session-address : i64 (__tl-project-field-name ,handle "address")]
+    [kind-raw : i64 ,raw]
+    [kind-fallback : i64 ,fallback]
+    (if (<= kind-session-address 0)
+      kind-fallback
+      (let
+        [session-ptr : (Ptr ci.InternSourceNameSession)
+          (unsafe
+            (int->ptr
+              (cast kind-session-address : u64)
+              : (Ptr ci.InternSourceNameSession)))]
+        [structural-owner : i64
+          (unsafe
+            (__tl-project-field (ptr-read session-ptr) structural-owner))]
+        (if (ci.intern-active-structural-session? structural-owner)
+          (ci.intern-active-structural-record-kind-or kind-raw kind-fallback)
+          (let
+            [table-cell : (__tl_dyn-array ci.InternStructuralTable)
+              (unsafe
+                (__tl-project-field
+                  (ptr-read session-ptr)
+                  structural-table-cell))]
+            [table-ptr : (Ptr ci.InternStructuralTable)
+              (unsafe
+                (ptr-cast
+                  (__tl_array-data table-cell)
+                  : (Ptr ci.InternStructuralTable)))]
+            [table-owner : i64
+              (unsafe
+                (__tl-project-field (ptr-read table-ptr) owner))]
+            [table-len : i64
+              (unsafe
+                (__tl-project-field (ptr-read table-ptr) len))]
+            [encoded-index : i64
+              (-
+                kind-raw
+                (+
+                  (ci.intern-structural-key-base)
+                  (* structural-owner (ci.intern-structural-key-owner-stride))))]
+            (if (or
+              (not (= table-owner structural-owner))
+              (<= encoded-index 0)
+              (> encoded-index table-len))
+              kind-fallback
+              (let
+                [kinds : (__tl_dyn-array u8)
+                  (unsafe
+                    (__tl-project-field (ptr-read table-ptr) kinds))]
+                (cast
+                  (unsafe
+                    (ptr-read
+                      (ptr-offset
+                        (ptr-cast (__tl_array-data kinds) : (Ptr u8))
+                        (- encoded-index 1))))
+                  : i64)))))))))
+
+;; Total mixed-id adapter for callers that have not already classified the raw
+;; identity. Hot compiler name paths use the proven form above so they do not
+;; repeat the structural-range branch for every lookup.
+(define (intern-structural-session-record-kind-or
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]
+  [fallback : i64]) : i64
+  (if (< raw (ci.intern-structural-key-base))
+    fallback
+    (intern-structural-session-record-kind-for-structural-or
+      handle
+      raw
+      fallback)))
 
 (define (intern-structural-session-key-middle
   [handle : InternStructuralSessionHandle]
@@ -176,6 +601,229 @@
           0)]
       (array-ref table.middles (intern-structural-session-key-index key)))
     (ci.tl_oob_abort)))
+
+;; Measurement/test boundary: report exact retained records by structural kind
+;; without exposing table storage or making callers classify raw handles.
+(define (intern-structural-session-kind-count
+  [handle : InternStructuralSessionHandle]
+  [kind : i64]) : i64
+  (if (or
+    (not (intern-structural-session-valid? handle))
+    (not (ci.intern-structural-kind-valid? kind)))
+    0
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      [table : ci.InternStructuralTable
+        (array-ref session.structural-table-cell 0)]
+      [index : i64 0]
+      [count : i64 0]
+      (begin
+        (while (< index table.len)
+          (begin
+            (if (= (cast (array-ref table.kinds index) : i64) kind)
+              (set! count (+ count 1))
+              unit)
+            (set! index (+ index 1))))
+        count))))
+
+(define (intern-structural-session-macro-definition-identity
+  [handle : InternStructuralSessionHandle]
+  [definition-module-id : i64]
+  [macro-name-id : i64]) : InternMacroDefinitionIdentity
+  (InternMacroDefinitionIdentity
+    (intern-structural-key-raw
+      (intern-structural-session-key
+        handle
+        (ci.intern-structural-kind-macro-definition)
+        definition-module-id
+        0
+        macro-name-id))))
+
+(define (intern-structural-session-macro-definition-record
+  [handle : InternStructuralSessionHandle]
+  [identity : InternMacroDefinitionIdentity]) : InternMaybeMacroDefinitionRecord
+  (match (intern-structural-session-record-for-raw
+    handle
+    (intern-macro-definition-identity-raw identity))
+    [(InternMaybeStructuralRecord.No) InternMaybeMacroDefinitionRecord.No]
+    [(InternMaybeStructuralRecord.Some record)
+      (if (= record.kind (ci.intern-structural-kind-macro-definition))
+        (InternMaybeMacroDefinitionRecord.Some
+          (InternMacroDefinitionRecord record.left-id record.right-id))
+        InternMaybeMacroDefinitionRecord.No)]))
+
+(define (intern-structural-session-macro-definition-record-for-raw
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]) : InternMaybeMacroDefinitionRecord
+  (if (< raw (ci.intern-structural-key-base))
+    InternMaybeMacroDefinitionRecord.No
+    (intern-structural-session-macro-definition-record
+      handle
+      (InternMacroDefinitionIdentity raw))))
+
+(define (intern-macro-global-role-code [role : InternMacroGlobalRole]) : i64
+  (match role
+    [(InternMacroGlobalRole.Legacy) 0]
+    [(InternMacroGlobalRole.Context) 1]))
+
+(define (intern-structural-session-macro-global-identity
+  [handle : InternStructuralSessionHandle]
+  [role : InternMacroGlobalRole]
+  [definition-module-id : i64]
+  [source-name-id : i64]) : InternMacroGlobalIdentity
+  (InternMacroGlobalIdentity
+    (intern-structural-key-raw
+      (intern-structural-session-key
+        handle
+        (ci.intern-structural-kind-macro-global)
+        (intern-macro-global-role-code role)
+        definition-module-id
+        source-name-id))))
+
+(define (intern-structural-session-macro-global-record
+  [handle : InternStructuralSessionHandle]
+  [identity : InternMacroGlobalIdentity]) : InternMaybeMacroGlobalRecord
+  (let
+    [raw : i64 (intern-macro-global-identity-raw identity)]
+    (if (or (< raw (ci.intern-structural-key-base)) (<= handle.address 0))
+      InternMaybeMacroGlobalRecord.No
+      (let
+        [session-ptr : (Ptr ci.InternSourceNameSession)
+          (unsafe
+            (int->ptr
+              (cast handle.address : u64)
+              : (Ptr ci.InternSourceNameSession)))]
+        [structural-owner : i64
+          (unsafe
+            (__tl-project-field (ptr-read session-ptr) structural-owner))]
+        (if (ci.intern-active-structural-session? structural-owner)
+          (let
+            [kind : i64 (ci.intern-active-structural-record-kind-or raw -1)]
+            (if (not (= kind (ci.intern-structural-kind-macro-global)))
+              InternMaybeMacroGlobalRecord.No
+              (let
+                [role : i64 (ci.intern-composite-left-id-unchecked raw)]
+                [definition-module-id : i64
+                  (ci.intern-composite-middle-id-unchecked raw)]
+                [source-name-id : i64
+                  (ci.intern-composite-right-id-unchecked raw)]
+                (cond
+                  [(= role 0)
+                    (InternMaybeMacroGlobalRecord.Some
+                      (InternMacroGlobalRecord
+                        InternMacroGlobalRole.Legacy
+                        definition-module-id
+                        source-name-id))]
+                  [(= role 1)
+                    (InternMaybeMacroGlobalRecord.Some
+                      (InternMacroGlobalRecord
+                        InternMacroGlobalRole.Context
+                        definition-module-id
+                        source-name-id))]
+                  [else InternMaybeMacroGlobalRecord.No]))))
+          (match (intern-structural-session-record-for-raw handle raw)
+            [(InternMaybeStructuralRecord.No) InternMaybeMacroGlobalRecord.No]
+            [(InternMaybeStructuralRecord.Some record)
+              (if (not (= record.kind (ci.intern-structural-kind-macro-global)))
+                InternMaybeMacroGlobalRecord.No
+                (cond
+                  [(= record.left-id 0)
+                    (InternMaybeMacroGlobalRecord.Some
+                      (InternMacroGlobalRecord
+                        InternMacroGlobalRole.Legacy
+                        record.middle-id
+                        record.right-id))]
+                  [(= record.left-id 1)
+                    (InternMaybeMacroGlobalRecord.Some
+                      (InternMacroGlobalRecord
+                        InternMacroGlobalRole.Context
+                        record.middle-id
+                        record.right-id))]
+                  [else InternMaybeMacroGlobalRecord.No]))]))))))
+
+(defmacro (intern-structural-session-macro-global-record-for-raw
+  [handle : Expr]
+  [raw : Expr]) : InternMaybeMacroGlobalRecord
+  ;; The typed decoder is already total over mixed raw ids. Do not perform the
+  ;; same structural-range check in both this compatibility adapter and it.
+  `(intern-structural-session-macro-global-record
+    ,handle
+    (InternMacroGlobalIdentity ,raw)))
+
+(define (intern-structural-session-macro-local-identity
+  [handle : InternStructuralSessionHandle]
+  [macro-definition : InternMacroDefinitionIdentity]
+  [lexical-depth : i64]
+  [source-name-id : i64]) : InternMacroLocalIdentity
+  (if (or
+    (< lexical-depth 0)
+    (match (intern-structural-session-macro-definition-record
+      handle
+      macro-definition)
+      [(InternMaybeMacroDefinitionRecord.No) true]
+      [(InternMaybeMacroDefinitionRecord.Some _) false]))
+    (ci.tl_oob_abort)
+    (InternMacroLocalIdentity
+      (intern-structural-key-raw
+        (intern-structural-session-key
+          handle
+          (ci.intern-structural-kind-macro-local)
+          (intern-macro-definition-identity-raw macro-definition)
+          lexical-depth
+          source-name-id)))))
+
+(define (intern-structural-session-macro-local-record
+  [handle : InternStructuralSessionHandle]
+  [identity : InternMacroLocalIdentity]) : InternMaybeMacroLocalRecord
+  (match (intern-structural-session-record-for-raw
+    handle
+    (intern-macro-local-identity-raw identity))
+    [(InternMaybeStructuralRecord.No) InternMaybeMacroLocalRecord.No]
+    [(InternMaybeStructuralRecord.Some record)
+      (let
+        [definition : InternMacroDefinitionIdentity
+          (InternMacroDefinitionIdentity record.left-id)]
+        (if (or
+          (not (= record.kind (ci.intern-structural-kind-macro-local)))
+          (match (intern-structural-session-macro-definition-record
+            handle
+            definition)
+            [(InternMaybeMacroDefinitionRecord.No) true]
+            [(InternMaybeMacroDefinitionRecord.Some _) false]))
+          InternMaybeMacroLocalRecord.No
+          (InternMaybeMacroLocalRecord.Some
+            (InternMacroLocalRecord definition record.middle-id record.right-id))))]))
+
+(define (intern-structural-session-macro-local-record-for-raw
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]) : InternMaybeMacroLocalRecord
+  (if (< raw (ci.intern-structural-key-base))
+    InternMaybeMacroLocalRecord.No
+    (intern-structural-session-macro-local-record
+      handle
+      (InternMacroLocalIdentity raw))))
+
+;; Render boundary for mixed source/syntax ids. Arithmetic structural families
+;; remain self-describing through compiler_intern; table-backed macro identities
+;; must prove ownership in the explicit session before exposing their source
+;; spelling. Unknown, stale, and wrong-owner handles remain total.
+(define (intern-structural-session-syntax-source-name-id-or
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]
+  [fallback : i64]) : i64
+  (let
+    [direct : i64 (ci.intern-syntax-source-name-id-or raw -1)]
+    (if (>= direct 0)
+      direct
+      (match (intern-structural-session-macro-global-record-for-raw handle raw)
+        [(InternMaybeMacroGlobalRecord.Some record) record.source-name-id]
+        [(InternMaybeMacroGlobalRecord.No)
+          (match (intern-structural-session-macro-local-record-for-raw
+            handle
+            raw)
+            [(InternMaybeMacroLocalRecord.Some record) record.source-name-id]
+            [(InternMaybeMacroLocalRecord.No) fallback])]))))
 
 (define (intern-structural-session-arena-phase-identity-for-components
   [handle : InternStructuralSessionHandle]

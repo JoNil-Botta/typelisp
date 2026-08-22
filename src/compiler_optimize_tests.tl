@@ -4,6 +4,7 @@
 (import compiler_owned_view as owned_view)
 (import compiler_ast_types)
 (import compiler_intern as ci)
+(import compiler_intern_state)
 (import compiler_float)
 (import compiler_profile_state as profile_state)
 (import stdlib.io)
@@ -67262,6 +67263,7 @@
     [home : arena.Arena (arena.current)]
     [_configure : unit
       (compiler_optimize.compiler-opt-debug-configure!
+        (compiler_intern_state.InternStructuralSessionHandle 0)
         false
         "owned-state"
         false)]
@@ -67306,7 +67308,11 @@
         (= (array-length retired.multiblock-ok-memo) 0)
         (arena.eq? (arena.current) home))]
     [_reset-debug : unit
-      (compiler_optimize.compiler-opt-debug-configure! false "" false)]
+      (compiler_optimize.compiler-opt-debug-configure!
+        (compiler_intern_state.InternStructuralSessionHandle 0)
+        false
+        ""
+        false)]
     (cond [(not debug-ok) 1] [(not live-ok) 2] [(not retired-ok) 3] [else 42])))
 
 (test

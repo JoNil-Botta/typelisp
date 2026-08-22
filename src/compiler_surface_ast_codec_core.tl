@@ -5,6 +5,7 @@
 ;; nominal is repacked through compiler_surface_identity. No arena address,
 ;; pointer, Box address, or producer-generation intern id is serialized.
 (import compiler_ast_types as ast)
+(import compiler_intern_state as cis)
 (import compiler_surface_identity as identity)
 (import compiler_surface_binary as binary)
 (cfg
@@ -24,6 +25,7 @@
   (defstruct SurfaceAstWriteContext
     (valid (__tl_dyn-array bool))
     (invalid-name (__tl_dyn-array i64))
+    (structural-session cis.InternStructuralSessionHandle)
     (source-identity-count i64)
     (identity-count i64)))
 
@@ -32,6 +34,7 @@
   (offset (__tl_dyn-array i64))
   (valid (__tl_dyn-array bool))
   (message (__tl_dyn-array String))
+  (structural-session cis.InternStructuralSessionHandle)
   (identity-remap (__tl_dyn-array i64)))
 
 (define surface-ast-max-count : i64
@@ -44,6 +47,7 @@
     compiler-build-identity
     embedded-stdlib-tlci)
   (define (surface-ast-write-context-new
+    [structural-session : cis.InternStructuralSessionHandle]
     [source-identity-count : i64]
     [identity-count : i64]) : SurfaceAstWriteContext
     (let
@@ -55,6 +59,7 @@
         (SurfaceAstWriteContext
           valid
           invalid-name
+          structural-session
           source-identity-count
           identity-count)))))
 
@@ -139,6 +144,7 @@
     (let
       [portable : i64
         (identity.surface-identity-portable-id
+          context.structural-session
           name
           context.source-identity-count
           context.identity-count)]
@@ -169,6 +175,7 @@
 
 (define (surface-ast-reader-new
   [bytes : (__tl_dyn-array u8)]
+  [structural-session : cis.InternStructuralSessionHandle]
   [identity-remap : (__tl_dyn-array i64)]) : SurfaceAstReader
   (let
     [offset : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -178,7 +185,13 @@
       (set! (array-ref offset 0) 0)
       (set! (array-ref valid 0) true)
       (set! (array-ref message 0) "")
-      (SurfaceAstReader bytes offset valid message identity-remap))))
+      (SurfaceAstReader
+        bytes
+        offset
+        valid
+        message
+        structural-session
+        identity-remap))))
 
 (define (surface-ast-reader-valid? [reader : (& reader SurfaceAstReader)]) : bool
   (array-ref reader.valid 0))
@@ -259,6 +272,7 @@
     [portable : i64 (surface-ast-read-i64! reader)]
     [resolved : i64
       (identity.surface-identity-resolve-portable-id
+        reader.structural-session
         portable
         reader.identity-remap)]
     (if (< resolved 0)

@@ -17,6 +17,7 @@
 
 ;; lint-allow: unused-import -- used by compiler-surface-selftest builds.
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 
 ;; lint-allow: unused-import -- used by compiler-surface-selftest builds.
 (import compiler_surface_identity as surface_identity)
@@ -62,10 +63,6 @@
         "surface ast: template-source identity is not portable"]
       [(ci.intern-structural-local-id? name)
         "surface ast: structural-local identity is not portable"]
-      [(ci.intern-macro-global-structural-id? name)
-        "surface ast: macro-global structural identity is not portable"]
-      [(ci.intern-macro-local-structural-id? name)
-        "surface ast: macro-local structural identity is not portable"]
       [(ci.intern-generated-id-active? name)
         "surface ast: generated identity is outside the captured package table"]
       [(ci.intern-renderable-id? name)
@@ -1598,6 +1595,7 @@
     compiler-build-identity
     embedded-stdlib-tlci)
   (define (surface-ast-encode
+    [structural-session : cis.InternStructuralSessionHandle]
     [decls : ast.AstDeclList]
     [paths : ast.AstDeclPathList]
     [modules : ast.AstDeclModuleList]
@@ -1619,6 +1617,7 @@
           (ast.ast-program decls))]
       [context : codec.SurfaceAstWriteContext
         (codec.surface-ast-write-context-new
+          structural-session
           source-identity-count
           identity-count)]
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
@@ -1686,18 +1685,19 @@
 
 (define (surface-ast-decode
   [bytes : (__tl_dyn-array u8)]
+  [structural-session : cis.InternStructuralSessionHandle]
   [identity-remap : (__tl_dyn-array i64)]
   [pools : ast.AstNodePoolContext]) : ResultSurfaceAstHydration
   (let
     [byte-count : i64 (array-length bytes)]
     [expected-identity-count : i64 (array-length identity-remap)]
     [reader : codec.SurfaceAstReader
-      (codec.surface-ast-reader-new bytes identity-remap)]
-    [magic : i64 (codec.surface-ast-read-i64! (& reader))]
-    [schema : i64 (codec.surface-ast-read-i64! (& reader))]
-    [identity-count : i64 (codec.surface-ast-read-i64! (& reader))]
-    [type-count : i64 (codec.surface-ast-read-count! (& reader))]
-    [expr-count : i64 (codec.surface-ast-read-count! (& reader))]
+      (codec.surface-ast-reader-new bytes structural-session identity-remap)]
+    [magic : i64 (codec.surface-ast-read-i64! reader)]
+    [schema : i64 (codec.surface-ast-read-i64! reader)]
+    [identity-count : i64 (codec.surface-ast-read-i64! reader)]
+    [type-count : i64 (codec.surface-ast-read-count! reader)]
+    [expr-count : i64 (codec.surface-ast-read-count! reader)]
     (if (or
       (not (= magic surface-ast-magic))
       (not (= schema surface-ast-schema-version))
@@ -1758,6 +1758,7 @@
 (cfg
   compiler-surface-selftest
   (define (surface-ast-encode-deterministic
+    [structural-session : cis.InternStructuralSessionHandle]
     [decls : ast.AstDeclList]
     [paths : ast.AstDeclPathList]
     [modules : ast.AstDeclModuleList]
@@ -1766,16 +1767,18 @@
     [source-count : i64]
     [identity-count : i64]) : ResultSurfaceAstBytes
     (match (surface-ast-encode
-      (owned_view.compiler-owned-shared-view decls)
-      (owned_view.compiler-owned-shared-view paths)
-      (owned_view.compiler-owned-shared-view modules)
-      (owned_view.compiler-owned-shared-view seen)
-      (owned_view.compiler-owned-shared-view source-pools)
+      structural-session
+      decls
+      paths
+      modules
+      seen
+      source-pools
       source-count
       identity-count)
       [(ResultSurfaceAstBytes.Err message) (ResultSurfaceAstBytes.Err message)]
       [(ResultSurfaceAstBytes.Ok first)
         (match (surface-ast-encode
+          structural-session
           decls
           paths
           modules
@@ -1961,10 +1964,16 @@
           [source-count : i64 (array-length identity-payload.source-names)]
           [identity-count : i64
             (+ source-count (array-length identity-payload.generated))]
+          [intern-state : ci.InternCompatState
+            (ci.intern-compat-state-capture-active)]
+          [structural-session : cis.InternStructuralSessionHandle
+            (cis.intern-structural-session-handle-from-source-names
+              (ci.intern-source-name-session-handle-from-state intern-state))]
           (match (surface_identity.surface-identity-encode identity-payload)
             [(surface_identity.ResultSurfaceIdentityBytes.Err _) false]
             [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
               (match (surface-ast-encode-deterministic
+                structural-session
                 decls
                 paths
                 modules
@@ -1993,8 +2002,15 @@
                               (ast.ast-node-pool-context-new-with-capacities
                                 8
                                 8)]
+                            [hydrated-intern-state : ci.InternCompatState
+                              (ci.intern-compat-state-capture-active)]
+                            [hydrated-session : cis.InternStructuralSessionHandle
+                              (cis.intern-structural-session-handle-from-source-names
+                                (ci.intern-source-name-session-handle-from-state
+                                  hydrated-intern-state))]
                             (match (surface-ast-decode
                               ast-bytes
+                              hydrated-session
                               identity-hydration.remap
                               dest-pools)
                               [(ResultSurfaceAstHydration.Err _) false]

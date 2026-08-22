@@ -5,6 +5,7 @@
 (import compiler_ir_types)
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_builtin_ids as cbi)
 (import compiler_owned_view as owned_view)
 
@@ -653,6 +654,7 @@
     (and
       (string.eq
         (compiler_ir_types.compiler-ir-instr-render
+          (cis.InternStructuralSessionHandle 0)
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler_ir_types.compiler-ir-global-shared-view instr))
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) : varying i64")
@@ -679,11 +681,13 @@
         2)
       (string.eq
         (compiler_ir_types.compiler-ir-instr-render
+          (cis.InternStructuralSessionHandle 0)
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler_ir_types.compiler-ir-clone-instr
             (ast.ast-node-pool-reader-context-current)
             (compiler_ir_types.compiler-ir-global-shared-view instr)))
         (compiler_ir_types.compiler-ir-instr-render
+          (cis.InternStructuralSessionHandle 0)
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler_ir_types.compiler-ir-global-shared-view instr)))
       (match (compiler_ir_types.compiler-source-spans-lookup-instr
@@ -810,12 +814,14 @@
         (compiler_ir_types.compiler-ir-global-shared-view borrowed))]
     [render-original : String
       (compiler_ir_types.compiler-ir-type-render
+        (cis.InternStructuralSessionHandle 0)
         bases
-        (compiler_ir_types.compiler-ir-global-shared-view borrowed))]
+        borrowed)]
     [render-original-again : String
       (compiler_ir_types.compiler-ir-type-render
+        (cis.InternStructuralSessionHandle 0)
         bases
-        (compiler_ir_types.compiler-ir-global-shared-view borrowed))]
+        borrowed)]
     [name-original : String
       (compiler_ir_types.compiler-ir-type-name
         bases
@@ -826,12 +832,10 @@
         (compiler_ir_types.compiler-ir-global-shared-view borrowed))]
     [render-clone : String
       (compiler_ir_types.compiler-ir-type-render
+        (cis.InternStructuralSessionHandle 0)
         bases
-        (compiler_ir_types.compiler-ir-global-shared-view clone))]
-    [name-clone : String
-      (compiler_ir_types.compiler-ir-type-name
-        bases
-        (compiler_ir_types.compiler-ir-global-shared-view clone))]
+        clone)]
+    [name-clone : String (compiler_ir_types.compiler-ir-type-name bases clone)]
     (and
       (string.eq render-original "(& ir-slice (Slice i64))")
       (string.eq render-original-again render-original)
@@ -856,12 +860,35 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [source : i64 (ci.intern "macro-local-life")]
-    [lifetime : i64 (+ (ci.intern-macro-local-structural-base) source)]
+    [module-id : i64 (ci.intern "macro-local-module")]
+    [macro-name-id : i64 (ci.intern "macro-local-definition")]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state
+          (ci.intern-compat-state-capture-active)))]
+    [definition : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity
+        session
+        module-id
+        macro-name-id)]
+    [lifetime : i64
+      (cis.intern-macro-local-identity-raw
+        (cis.intern-structural-session-macro-local-identity
+          session
+          definition
+          7
+          source))]
     [borrowed : ast.AstType
+      (ast.ast-ty-ref-with-pools pools lifetime ast.AstType.I64)]
+    [arithmetic-borrowed : ast.AstType
       (ast.ast-ty-ref-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
-        lifetime
+        pools
+        (ci.intern-structural-local-id 8 source)
         ast.AstType.I64)]
+    [other-session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state
+          (ci.intern-compat-state-new)))]
     [invalid : ast.AstType
       (ast.ast-ty-ref-with-pools
         (compiler_ir_types.compiler-ir-global-shared-view pools)
@@ -870,19 +897,18 @@
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases (& pools))]
     (and
       (string.eq
-        (compiler_ir_types.compiler-ir-type-render
-          bases
-          (compiler_ir_types.compiler-ir-global-shared-view borrowed))
+        (compiler_ir_types.compiler-ir-type-render session bases borrowed)
         "(& macro-local-life i64)")
       (string.eq
-        (compiler_ir_types.compiler-ir-type-name
-          bases
-          (compiler_ir_types.compiler-ir-global-shared-view borrowed))
+        (compiler_ir_types.compiler-ir-type-name bases arithmetic-borrowed)
         "(& macro-local-life i64)")
+      ;; Equal-looking record indexes from another owner never decode this
+      ;; compile's table-backed lifetime.
       (string.eq
-        (compiler_ir_types.compiler-ir-type-render
-          bases
-          (compiler_ir_types.compiler-ir-global-shared-view invalid))
+        (compiler_ir_types.compiler-ir-type-render other-session bases borrowed)
+        (str_cat.str-cat "(& <id:" (string.int->string lifetime) "> i64)"))
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-render session bases invalid)
         (str_cat.str-cat
           "(& <id:"
           (string.int->string (ci.intern-capacity))

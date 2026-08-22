@@ -429,8 +429,8 @@ assert_fired_decl_attribution_in() {
     # superseded allocation on the Windows selfhost; batch 32 retained 36.1%.
     # Keep a proportional ceiling so source growth cannot silently restore the
     # old fixed-batch retention. The generation counter includes copy-out
-    # boundaries outside the declaration arena, hence the narrow 4..6 cadence
-    # band instead of an equality against four.
+    # boundaries outside the declaration arena, hence the narrow 2..3 cadence
+    # band instead of an equality against two.
     _fda_nonoutput_limit=$((_fda_walk_decl_fire_superseded_alloc_bytes / 4))
     [ "$_fda_walk_decl_fire_nonoutput_live_bytes" -le "$_fda_nonoutput_limit" ] || {
         show_failure_logs "$_fda_stdout" "$_fda_stderr"
@@ -440,12 +440,12 @@ assert_fired_decl_attribution_in() {
         show_failure_logs "$_fda_stdout" "$_fda_stderr"
         fail "missing fired-declaration generation count"
     }
-    _fda_rotation_lower=$((_fda_walk_decl_generation_rotations * 4))
-    _fda_rotation_upper=$((_fda_walk_decl_generation_rotations * 6))
+    _fda_rotation_lower=$((_fda_walk_decl_generation_rotations * 2))
+    _fda_rotation_upper=$((_fda_walk_decl_generation_rotations * 3))
     [ "$_fda_rotation_lower" -le "$_fda_walk_decl_generations" ] &&
         [ "$_fda_rotation_upper" -ge "$_fda_walk_decl_generations" ] || {
         show_failure_logs "$_fda_stdout" "$_fda_stderr"
-        fail "declaration-generation rotation cadence left the batch-4 band: generations=$_fda_walk_decl_generations rotations=$_fda_walk_decl_generation_rotations"
+        fail "declaration-generation rotation cadence left the batch-2 band: generations=$_fda_walk_decl_generations rotations=$_fda_walk_decl_generation_rotations"
     }
 
 }

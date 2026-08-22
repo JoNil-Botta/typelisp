@@ -1,6 +1,7 @@
 ;; Reverse mixed-source nominal identity regression.
 (import compiler_typecheck_core)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_symbols as csym)
 (import compiler_ast_types as ast)
 (import compiler_parse_core as parser)
@@ -8,6 +9,7 @@
 (import stdlib.io)
 
 (define (tc-qualified-variant-member-lookup-smoke?
+  [session : cis.InternStructuralSessionHandle]
   [module-id : i64]
   [enum-id : i64]) : bool
   (let
@@ -17,6 +19,7 @@
       (ci.intern-generated-canonical-name "ReverseMixedItem.Value")]
     [hygienic-variant-id : i64
       (compiler_typecheck_core.macro-hygiene-global-id
+        session
         (csym.compiler-symbol-root-module-id)
         generated-variant-id
         false)]
@@ -39,6 +42,7 @@
       (and
         (not (= variant-id generated-variant-id))
         (match (compiler_typecheck_core.tc-variant-handle-in-list-at
+          session
           enum-handle
           variant-id
           (& qualified-variants)
@@ -46,6 +50,7 @@
           [(option_i64.Some _) true]
           [(option_i64.None) false])
         (match (compiler_typecheck_core.tc-variant-handle-in-list-at
+          session
           enum-handle
           dotted-pattern-id
           (& qualified-variants)
@@ -53,6 +58,7 @@
           [(option_i64.Some _) true]
           [(option_i64.None) false])
         (match (compiler_typecheck_core.tc-variant-handle-in-list-at
+          session
           enum-handle
           (ci.intern "Missing")
           (& qualified-variants)
@@ -262,7 +268,10 @@
                     "missing constructor")
                     [(compiler_typecheck_core.ResultTcType.Ok _) false]
                     [(compiler_typecheck_core.ResultTcType.Err _) true])
-                  (tc-qualified-variant-member-lookup-smoke? module-id flat-id)))]
+                  (tc-qualified-variant-member-lookup-smoke?
+                    (compiler_typecheck_core.tc-context-structural-session ctx)
+                    module-id
+                    flat-id)))]
             [(csym.ResultCompilerRegistries.Err _) false])]
         [(csym.ResultCompilerSymbols.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))

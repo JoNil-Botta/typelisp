@@ -10,6 +10,7 @@
 (import lex as lexer)
 (import read as reader)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_cfg_core as cfg_core)
 (import compiler_build_identity as build_identity)
 (import compiler_surface_facts as surface_facts)
@@ -1602,7 +1603,8 @@
 (define (compiler-load-dependency-surface-hydrate-entry
   [_owner : i64]
   [entry : CompilerLoadDependencyCatalogEntry]
-  [configuration : String]) : CompilerLoadDependencySurfaceFragment
+  [configuration : String]
+  [structural-session : cis.InternStructuralSessionHandle]) : CompilerLoadDependencySurfaceFragment
   (match entry.status
     [(CompilerLoadDependencyCatalogStatus.Unavailable _)
       CompilerLoadDependencySurfaceFragment.Unavailable]
@@ -1648,7 +1650,8 @@
                       (surface_hydrate.compiler-surface-hydrate
                         image.rodata
                         key
-                        (owned_view.compiler-owned-shared-view pools)))]
+                        structural-session
+                        pools))]
                   (match hydrated
                     [(surface_hydrate.ResultCompilerSurfaceHydration.Ok
                         hydration)
@@ -1666,6 +1669,14 @@
                             (arena.tl_arena_destroy base-arena))
                           CompilerLoadDependencySurfaceFragment.Unavailable))])))])])]))
 
+(define (compiler-load-session-state-structural-session
+  [state : CompilerLoadSessionState]) : cis.InternStructuralSessionHandle
+  (if (array-ref state.intern-state-ready 0)
+    (cis.intern-structural-session-handle-from-source-names
+      (ci.intern-source-name-session-handle-from-state
+        (array-ref state.intern-state 0)))
+    (cis.InternStructuralSessionHandle 0)))
+
 (define (compiler-load-dependency-surfaces-build-cache!
   [state : CompilerLoadSessionState]
   [configuration : String]) : bool
@@ -1678,9 +1689,9 @@
         0)]
     [owner : i64 (compiler-load-dependency-catalog-owner-arena-ensure! state)]
     [prior : CompilerLoadDependencySurfaceList
-      (owned_view.compiler-owned-array-element-shared-view
-        surface-state.fragments
-        0)]
+      (array-ref surface-state.fragments 0)]
+    [structural-session : cis.InternStructuralSessionHandle
+      (compiler-load-session-state-structural-session state)]
     [verify-reject-last : bool
       (cfg
         dependency-tlci-verification
@@ -1709,10 +1720,9 @@
                     CompilerLoadDependencySurfaceFragment.Unavailable
                     (compiler-load-dependency-surface-hydrate-entry
                       owner
-                      (owned_view.compiler-owned-array-element-shared-view
-                        catalog.slots
-                        index)
-                      (owned_view.compiler-owned-shared-view configuration)))]
+                      (array-ref catalog.slots index)
+                      configuration
+                      structural-session))]
                 (begin
                   (set! (array-ref slots index) fragment)
                   (match fragment

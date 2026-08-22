@@ -7,6 +7,7 @@
 ;; identities are still live. Only relocatable encoded bytes escape that
 ;; boundary.
 (import compiler_ast_types as ast)
+(import compiler_intern_state as cis)
 (import compiler_builtin_ids as cbi)
 (import compiler_owned_view as owned_view)
 (import compiler_prelude_surface_producer as prelude_surface)
@@ -33,6 +34,7 @@
   (Pending surface_identity.SurfaceIdentityKey sym_i64_env.SymI64Env i64)
   (Expanded
     surface_identity.SurfaceIdentityKey
+    cis.InternStructuralSessionHandle
     sym_i64_env.SymI64Env
     ast.AstProgram
     ast.AstDeclPathList
@@ -144,27 +146,25 @@
           (ast.AstDeclModuleList slots 0 count true)))]))
 
 (define (package-surface-capture-expanded!
+  [structural-session : cis.InternStructuralSessionHandle]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [pools : ast.AstNodePoolContext]) : unit
   (match (package-surface-capture-state-shared-view)
     [(PackageSurfaceCaptureState.Pending key seen result-arena)
-      (let
-        [macro-decl-count : i64
-          (package-surface-program-decl-count
-            (owned_view.compiler-owned-shared-view program))]
-        (begin
-          (surface_facts.surface-typecheck-facts-recording-start! result-arena)
-          (set!
-            package-surface-capture-state
-            (PackageSurfaceCaptureState.Expanded
-              key
-              seen
-              program
-              paths
-              pools
-              macro-decl-count
-              result-arena))))]
+      (begin
+        (surface_facts.surface-typecheck-facts-recording-start! result-arena)
+        (set!
+          package-surface-capture-state
+          (PackageSurfaceCaptureState.Expanded
+            key
+            structural-session
+            seen
+            program
+            paths
+            pools
+            (package-surface-program-decl-count program)
+            result-arena)))]
     [(PackageSurfaceCaptureState.Inactive) unit]
     [(PackageSurfaceCaptureState.Err _) unit]
     [_
@@ -177,6 +177,7 @@
 
 (define (package-surface-capture-store-encoded!
   [key : surface_identity.SurfaceIdentityKey]
+  [structural-session : cis.InternStructuralSessionHandle]
   [seen : sym_i64_env.SymI64Env]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
@@ -199,7 +200,8 @@
         (match program
           [(ast.AstProgram.Program decls-box)
             (match (surface_ast.surface-ast-encode
-              (owned_view.compiler-owned-box-shared-view decls-box)
+              structural-session
+              (__tl-box-place decls-box)
               paths
               modules
               seen
@@ -213,6 +215,7 @@
               [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
                 (match (surface_facts.surface-typecheck-facts-encode
                   facts
+                  structural-session
                   source-count
                   identity-count)
                   [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
@@ -236,6 +239,7 @@
   (match (package-surface-capture-state-shared-view)
     [(PackageSurfaceCaptureState.Expanded
         key
+        structural-session
         seen
         program
         paths
@@ -254,6 +258,7 @@
               summary-externs)]
           (package-surface-capture-store-encoded!
             key
+            structural-session
             seen
             program
             paths

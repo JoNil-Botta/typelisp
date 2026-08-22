@@ -3,6 +3,7 @@
 (import compiler_surface_ast as surface_ast)
 (import compiler_surface_identity as surface_identity)
 (import compiler_surface_facts as surface_facts)
+(import compiler_intern_state as cis)
 (import compiler_ast_types as ast)
 (import compiler_owned_view as owned_view)
 (import tlci_core as tlci)
@@ -68,6 +69,7 @@
   [ast-bytes : (__tl_dyn-array u8)]
   [fact-bytes : (__tl_dyn-array u8)]
   [expected-key : surface_identity.SurfaceIdentityKey]
+  [structural-session : cis.InternStructuralSessionHandle]
   [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
   (match (surface_identity.surface-identity-hydrate identity-bytes expected-key)
     [(surface_identity.ResultSurfaceIdentityHydration.Err message)
@@ -77,14 +79,16 @@
     [(surface_identity.ResultSurfaceIdentityHydration.Ok identity)
       (match (surface_ast.surface-ast-decode
         ast-bytes
-        (owned_view.compiler-owned-shared-view identity.remap)
+        structural-session
+        identity.remap
         pools)
         [(surface_ast.ResultSurfaceAstHydration.Err message)
           (ResultCompilerSurfaceHydration.Err message)]
         [(surface_ast.ResultSurfaceAstHydration.Ok hydration)
           (match (surface_facts.surface-typecheck-facts-decode
             fact-bytes
-            (owned_view.compiler-owned-shared-view identity.remap))
+            structural-session
+            identity.remap)
             [(surface_facts.ResultSurfaceTypecheckFacts.Err message)
               (ResultCompilerSurfaceHydration.Err message)]
             [(surface_facts.ResultSurfaceTypecheckFacts.Ok facts)
@@ -94,6 +98,7 @@
 (define (compiler-surface-hydrate
   [rodata : (__tl_dyn-array u8)]
   [expected-key : surface_identity.SurfaceIdentityKey]
+  [structural-session : cis.InternStructuralSessionHandle]
   [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
   (match (compiler-surface-identity-bytes
     (owned_view.compiler-owned-shared-view rodata))
@@ -133,6 +138,7 @@
                       ast-bytes
                       fact-bytes
                       expected-key
+                      structural-session
                       pools))]))]))]))
 
 (cfg
@@ -144,6 +150,11 @@
       [root-id : i64 (ci.intern "root")]
       [package-modules : (__tl_dyn-array String) (__tl_make-array String 1)]
       [source-names : (__tl_dyn-array String) (__tl_make-array String 2)]
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [structural-session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
       [key : surface_identity.SurfaceIdentityKey
         (begin
           (set! (array-ref package-modules 0) "pkg/main.tl")
@@ -190,6 +201,7 @@
           (ResultCompilerSurfaceHydrateTestPayloads.Err message)]
         [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
           (match (surface_ast.surface-ast-encode
+            structural-session
             decls
             paths
             decl-modules
@@ -200,13 +212,18 @@
             [(surface_ast.ResultSurfaceAstBytes.Err message)
               (ResultCompilerSurfaceHydrateTestPayloads.Err message)]
             [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
-              (match (surface_facts.surface-typecheck-facts-encode first 2 2)
+              (match (surface_facts.surface-typecheck-facts-encode
+                first
+                structural-session
+                2
+                2)
                 [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
                   (ResultCompilerSurfaceHydrateTestPayloads.Err message)]
                 [(surface_facts.ResultSurfaceTypecheckFactBytes.Ok
                     fact-one-bytes)
                   (match (surface_facts.surface-typecheck-facts-encode
                     second
+                    structural-session
                     2
                     2)
                     [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
@@ -236,6 +253,11 @@
             (surface_facts.surface-typecheck-facts-empty)]
           [pools : ast.AstNodePoolContext
             (ast.ast-node-pool-context-new-with-capacities 1 1)]
+          [intern-state : ci.InternCompatState
+            (ci.intern-compat-state-capture-active)]
+          [structural-session : cis.InternStructuralSessionHandle
+            (cis.intern-structural-session-handle-from-source-names
+              (ci.intern-source-name-session-handle-from-state intern-state))]
           [ok : bool true]
           (begin
             (surface_facts.surface-typecheck-facts-clear!)
@@ -244,11 +266,12 @@
               unit
               (set! ok false))
             (match (compiler-surface-hydrate-payloads
-              (owned_view.compiler-owned-shared-view payloads.identity-bytes)
-              (owned_view.compiler-owned-shared-view payloads.ast-bytes)
-              (owned_view.compiler-owned-shared-view payloads.fact-one-bytes)
-              (owned_view.compiler-owned-shared-view payloads.key)
-              (owned_view.compiler-owned-shared-view pools))
+              payloads.identity-bytes
+              payloads.ast-bytes
+              payloads.fact-one-bytes
+              payloads.key
+              structural-session
+              pools)
               [(ResultCompilerSurfaceHydration.Ok hydration)
                 (set! first-hydrated hydration.facts)]
               [_ (set! ok false)])
@@ -271,8 +294,9 @@
               (owned_view.compiler-owned-shared-view payloads.identity-bytes)
               (owned_view.compiler-owned-shared-view payloads.ast-bytes)
               (__tl_make-array u8 0)
-              (owned_view.compiler-owned-shared-view payloads.key)
-              (owned_view.compiler-owned-shared-view pools))
+              payloads.key
+              structural-session
+              pools)
               [(ResultCompilerSurfaceHydration.Err _) unit]
               [_ (set! ok false)])
             (if (and
@@ -283,11 +307,12 @@
               unit
               (set! ok false))
             (match (compiler-surface-hydrate-payloads
-              (owned_view.compiler-owned-shared-view payloads.identity-bytes)
-              (owned_view.compiler-owned-shared-view payloads.ast-bytes)
-              (owned_view.compiler-owned-shared-view payloads.fact-two-bytes)
-              (owned_view.compiler-owned-shared-view payloads.key)
-              (owned_view.compiler-owned-shared-view pools))
+              payloads.identity-bytes
+              payloads.ast-bytes
+              payloads.fact-two-bytes
+              payloads.key
+              structural-session
+              pools)
               [(ResultCompilerSurfaceHydration.Ok hydration)
                 (begin
                   (set! second-hydrated hydration.facts)
@@ -298,8 +323,9 @@
               [_ (set! ok false)])
             (match (compiler-surface-hydrate
               (__tl_make-array u8 0)
-              (owned_view.compiler-owned-shared-view payloads.key)
-              (owned_view.compiler-owned-shared-view pools))
+              payloads.key
+              structural-session
+              pools)
               [(ResultCompilerSurfaceHydration.Missing) unit]
               [_ (set! ok false)])
             (if (and

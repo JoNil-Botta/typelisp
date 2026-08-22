@@ -190,18 +190,10 @@
 ;: Capacity must stay a power of two so the bucket index is a mask, not a modulo.
 ;: It also bounds one compile's live ids: source ids grow up from 0 and generated
 ;: ids grow down from capacity-1, so the two lanes together must fit.
-;: It CANNOT simply be raised. Every structural symbol range is a polynomial in
-;: this capacity, and the widest of them --
-;: `tc_core.macro-hygiene-local-id`, which spans 1024*capacity^3 -- already uses
-;: 2^61 of the 3*2^60 window below `intern-structural-local-base`. Doubling the
-;: capacity multiplies that span by eight, past the whole positive i64 range, and
-;: the symptom is silent: hygiene ids decode into the pool range and
-;: `intern-str` bounds-aborts three build stages later. See
-;: `intern-id-space-capacity-tests-ok?` here and
-;: `tc_core.macro-hygiene-id-space-budget-ok?`, which fail fast on that attempt.
-;: Growing the budget means making a symbol lane cheaper (derived symbols are the
-;: bulk of the generated lane) or making the hygiene macro identity dense, not
-;: moving this number. Refs #6258.
+;: It CANNOT simply be raised. The remaining arithmetic structural symbol ranges
+;: are polynomials in this capacity and share one positive-i64 window. See
+;: `intern-id-space-capacity-tests-ok?`, which fails fast before one range can
+;: silently decode as another. Refs #6258.
 (define (intern-capacity) : i64
   131072)
 
@@ -403,8 +395,8 @@
 
 ;; Compiler rewrites sometimes need a fresh lexical identity while retaining a
 ;; parsed binding's spelling. Encode that identity structurally instead of
-;; allocating another string-pool entry. This range is above every macro-local
-;; identity and below the quasiquoted-source range.
+;; allocating another string-pool entry. This range is below the
+;; quasiquoted-source range.
 (define (intern-structural-local-base) : i64
   (let
     [stride : i64 (intern-capacity)]
@@ -438,55 +430,6 @@
       (> (intern-private-string-length text) 1)
       (= (intern-private-string-ref text 0) ':'))))
 
-;; Macro-captured globals are structural symbol identities, not entries in the
-;; string interner. Keep their range and source-id decoder beside the interner's
-;; other structural symbol ranges so downstream consumers can cross the AST
-;; boundary without attempting to interpret a structural id as an intern id.
-(define (intern-macro-global-structural-base) : i64
-  (let
-    [stride : i64 (intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    (+ (+ (+ stride stride2) (* stride2 stride)) (* 4 stride2))))
-
-(define (intern-macro-global-structural-id? [id : i64]) : bool
-  (let
-    [stride : i64 (intern-capacity)]
-    [base : i64 (intern-macro-global-structural-base)]
-    (and (>= id base) (< id (+ base (* 2 (* stride stride)))))))
-
-(define (intern-macro-global-source-name-id [id : i64]) : i64
-  (% (- id (intern-macro-global-structural-base)) (intern-capacity)))
-
-(define (intern-macro-global-source-name-id-or [id : i64] [fallback : i64]) : i64
-  (if (intern-macro-global-structural-id? id)
-    (intern-macro-global-source-name-id id)
-    fallback))
-
-;; Hygienic macro locals occupy the structural lane immediately above macro
-;; globals. The typechecker owns the full packing scheme (macro, lexical depth,
-;; and source name), while every consumer only needs the range predicate and
-;; the source-name remainder in order to render the identity safely.
-(define (intern-macro-local-structural-base) : i64
-  (let
-    [stride : i64 (intern-capacity)]
-    (+ (intern-macro-global-structural-base) (* 2 (* stride stride)))))
-
-(define (intern-macro-local-structural-top) : i64
-  (let
-    [stride : i64 (intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    (+
-      (intern-macro-local-structural-base)
-      (* 1024 (* stride (+ stride2 (+ stride 1)))))))
-
-(define (intern-macro-local-structural-id? [id : i64]) : bool
-  (and
-    (>= id (intern-macro-local-structural-base))
-    (< id (intern-macro-local-structural-top))))
-
-(define (intern-macro-local-source-name-id [id : i64]) : i64
-  (% (- id (intern-macro-local-structural-base)) (intern-capacity)))
-
 ;; Name-bearing AST fields accept pool ids plus several structural syntax-id
 ;; families. Collapse any documented family to its renderable source spelling;
 ;; callers retain the original integer wherever identity, rather than display,
@@ -498,10 +441,6 @@
     [(intern-template-source-id? id) (intern-template-source-name-id id)]
     [(intern-structural-local-id? id)
       (intern-structural-local-source-name-id id)]
-    [(intern-macro-global-structural-id? id)
-      (intern-macro-global-source-name-id id)]
-    [(intern-macro-local-structural-id? id)
-      (intern-macro-local-source-name-id id)]
     [else fallback]))
 
 (define (intern-syntax-name-text-or [id : i64] [fallback : String]) : String
@@ -748,6 +687,12 @@
 (define (intern-structural-kind-arena-phase) : i64
   8)
 
+;; A hygienic local names its macro definition by a nested structural record.
+;; Keep this separate from the global/local name records: the definition key is
+;; canonical once and remains stable when declaration-list indices move.
+(define (intern-structural-kind-macro-definition) : i64
+  9)
+
 (define (intern-structural-kind-valid? [kind : i64]) : bool
   (and (> kind 0) (<= kind 255)))
 
@@ -837,6 +782,32 @@
     (__tl-project-field
       (array-ref intern-structural-table-cell 0)
       structural-cache-raws)))
+
+;; Explicit sessions normally name the installed compatibility owner. A
+;; structural owner is allocated once process-wide for every table generation,
+;; so equality with the installed owner alone proves both table identity and
+;; generation. This lets the adapter reuse the synchronized scalar/address
+;; snapshot without reloading the session's table id on every name lookup. An
+;; isolated or stale session falls back to its own table and never observes
+;; this view.
+(defmacro (intern-active-structural-session? [structural-owner : Expr]) : bool
+  `(= ,structural-owner intern-active-structural-owner))
+
+(defmacro (intern-active-structural-record-kind-or
+  [raw : Expr]
+  [fallback : Expr]) : i64
+  `(let
+    [structural-id : i64 ,raw]
+    [encoded-index : i64 (- structural-id intern-active-structural-prefix)]
+    (if (and
+      (> encoded-index 0)
+      (<= encoded-index intern-active-structural-len))
+      (cast
+        (intern-active-u8-ref
+          intern-active-structural-kinds-address
+          (- encoded-index 1))
+        : i64)
+      ,fallback)))
 
 (define (intern-active-structural-sync!
   [cell : (& cell (__tl_dyn-array InternStructuralTable))]) : unit
@@ -2392,6 +2363,16 @@
 
 (define (intern-persistent-copy [text : (& text str)]) : String
   (intern-persistent-substring text 0 (__tl_string_length text)))
+
+;; Explicit structural-session caches share the source-name session's
+;; persistent arena. Keep this small boundary here so the structural adapter
+;; does not need to duplicate arena switching and byte-copy details.
+(define (intern-persistent-copy-in-arena [arena-handle : i64] [text : String]) : String
+  (if (= (tl_arena_current) arena-handle)
+    text
+    (in-arena
+      (arena.Arena arena-handle)
+      (intern-substring text 0 (__tl_string_length text)))))
 
 (define (intern-composite-rendered-name [id : i64]) : String
   (if (or (intern-composite-pair-id? id) (intern-composite-triple-id? id))
@@ -4294,12 +4275,6 @@
         (intern-syntax-id-from-raw (intern-template-source-id source-raw))]
       [local : InternSyntaxId
         (intern-syntax-id-from-raw (intern-structural-local-id 7 source-raw))]
-      [macro-global : InternSyntaxId
-        (intern-syntax-id-from-raw
-          (+ (intern-macro-global-structural-base) source-raw))]
-      [macro-local : InternSyntaxId
-        (intern-syntax-id-from-raw
-          (+ (intern-macro-local-structural-base) source-raw))]
       [ok : bool
         (and
           (= (intern-syntax-id-value source-syntax) source-raw)
@@ -4310,13 +4285,7 @@
             (intern-syntax-id-text (intern-syntax-id-from-renderable generated))
             "generated-name")
           (intern-private-string-eq (intern-syntax-id-text template) "pkg/name")
-          (intern-private-string-eq (intern-syntax-id-text local) "pkg/name")
-          (intern-private-string-eq
-            (intern-syntax-id-text macro-global)
-            "pkg/name")
-          (intern-private-string-eq
-            (intern-syntax-id-text macro-local)
-            "pkg/name"))]
+          (intern-private-string-eq (intern-syntax-id-text local) "pkg/name"))]
       (begin
         (intern-reset!)
         ok))))
@@ -4336,9 +4305,6 @@
       [capacity : i64 (intern-capacity)]
       [template-base : i64 (intern-template-source-base)]
       [local-base : i64 (intern-structural-local-base)]
-      [macro-base : i64 (intern-macro-global-structural-base)]
-      [macro-local-base : i64 (intern-macro-local-structural-base)]
-      [macro-local-top : i64 (intern-macro-local-structural-top)]
       [ok : bool true]
       (begin
         ;; A power of two, so `intern-bucket` masks instead of dividing.
@@ -4352,16 +4318,9 @@
           (set! ok false))
         (unless (>= intern-generated-map-capacity capacity) (set! ok false))
         ;; No base overflowed into a negative i64 ...
-        (unless (> macro-base 0) (set! ok false))
         (unless (> local-base 0) (set! ok false))
         (unless (> template-base 0) (set! ok false))
-        ;; ... the ranges stay ordered, with the macro-global lane followed by
-        ;; the wider macro-local lane before compiler structural locals ...
-        (unless
-          (= (+ macro-base (* 2 (* capacity capacity))) macro-local-base)
-          (set! ok false))
-        (unless (< macro-local-base macro-local-top) (set! ok false))
-        (unless (<= macro-local-top local-base) (set! ok false))
+        ;; ... the arithmetic syntax ranges stay ordered ...
         (unless (< local-base template-base) (set! ok false))
         ;; ... the quasiquoted range stays below the first composite structural
         ;; key, whose owner ids start at one ...
@@ -4376,8 +4335,6 @@
         ;; the remainder-based decoders recover a source name id.
         (unless (= (% template-base capacity) 0) (set! ok false))
         (unless (= (% local-base capacity) 0) (set! ok false))
-        (unless (= (% macro-base capacity) 0) (set! ok false))
-        (unless (= (% macro-local-base capacity) 0) (set! ok false))
         ;; The range predicates hold at both edges and reject one past each.
         (unless (intern-template-source-id? template-base) (set! ok false))
         (unless
@@ -4414,31 +4371,9 @@
         (unless
           (intern-structural-local-id? (intern-structural-local-id 7 3))
           (set! ok false))
-        (unless
-          (= (intern-macro-global-source-name-id (+ macro-base 3)) 3)
-          (set! ok false))
-        (unless
-          (intern-macro-global-structural-id? (+ macro-base 3))
-          (set! ok false))
-        (unless
-          (intern-macro-local-structural-id? macro-local-base)
-          (set! ok false))
-        (unless
-          (intern-macro-local-structural-id? (- macro-local-top 1))
-          (set! ok false))
-        (unless
-          (not (intern-macro-local-structural-id? (- macro-local-base 1)))
-          (set! ok false))
-        (unless
-          (not (intern-macro-local-structural-id? macro-local-top))
-          (set! ok false))
-        (unless
-          (= (intern-macro-local-source-name-id (+ macro-local-base 3)) 3)
-          (set! ok false))
         ;; A renderable id is a pool id and nothing else.
         (unless (intern-renderable-id? (- capacity 1)) (set! ok false))
         (unless (not (intern-renderable-id? capacity)) (set! ok false))
-        (unless (not (intern-renderable-id? macro-base)) (set! ok false))
         (unless (not (intern-renderable-id? local-base)) (set! ok false))
         (unless (not (intern-renderable-id? template-base)) (set! ok false))
         ;; Both lanes address the one pool: source ids grow up from zero and
@@ -4458,17 +4393,6 @@
               (intern-structural-local-id 7 0)
               -1)
             0)
-          (set! ok false))
-        (unless
-          (= (intern-syntax-source-name-id-or macro-base -1) 0)
-          (set! ok false))
-        (unless
-          (= (intern-syntax-source-name-id-or macro-local-base -1) 0)
-          (set! ok false))
-        (unless
-          (intern-private-string-eq
-            (intern-syntax-name-text-or macro-local-base "missing")
-            "id-space-lane-probe")
           (set! ok false))
         (unless
           (intern-private-string-eq

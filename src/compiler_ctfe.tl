@@ -18,6 +18,7 @@
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_diagnostic as cdiag)
 (import compiler_float as cfloat)
 (import stdlib.string)
@@ -166,6 +167,7 @@
   (module-macro-export-keys ctfe_key_map.Map)
   (module-value-type-ids ctfe_key_map.Map)
   (module-value-reflection-enabled bool)
+  (source-names ci.InternSourceNameSessionHandle)
   ;; Hash-table backing arrays outlive per-file scratch arenas. Growth switches
   ;; to this owning compiler-job arena before publishing a replacement array.
   (map-storage-arena i64))
@@ -187,6 +189,7 @@
           (ctfe_key_map.with-capacity 1)
           (ctfe_key_map.with-capacity 1)
           false
+          (ci.InternSourceNameSessionHandle 0)
           (arena.tl_arena_current)))
       (CompilerCtfeMacroState
         (cast
@@ -211,6 +214,20 @@
         (cast state.address : u64)
         : (MutPtr CompilerCtfeMacroStateData))
       data)))
+
+(define (compiler-ctfe-macro-state-bind-source-names!
+  [state : CompilerCtfeMacroState]
+  [source-names : ci.InternSourceNameSessionHandle]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (begin
+      (set! data.source-names source-names)
+      (compiler-ctfe-macro-state-data-set! state data))))
+
+(define (compiler-ctfe-macro-state-structural-session
+  [state : CompilerCtfeMacroState]) : cis.InternStructuralSessionHandle
+  (cis.intern-structural-session-handle-from-source-names
+    (__tl-project-field (compiler-ctfe-macro-state-data state) source-names)))
 
 (define (compiler-ctfe-key-map-grow-for-state-if-needed!
   [state : CompilerCtfeMacroState]
@@ -329,7 +346,9 @@
 (define (ctfe-result-may-contain-macro?) : bool
   (ctfe-result-may-contain-macro-for-state? (compiler-ctfe-serial-macro-state)))
 
-(define (ctfe-macro-provenance-callee-base-name-id [name-id : i64]) : i64
+(define (ctfe-macro-provenance-callee-base-name-id
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
   (cond
     [(ci.intern-composite-triple-id? name-id)
       (ci.intern-composite-right-id-unchecked name-id)]
@@ -340,7 +359,14 @@
         [source-id : i64
           (if (ci.intern-template-source-id? name-id)
             (ci.intern-template-source-name-id name-id)
-            (ci.intern-macro-global-source-name-id-or name-id name-id))]
+            (if (cis.intern-structural-session-valid? session)
+              (match (cis.intern-structural-session-macro-global-record-for-raw
+                session
+                name-id)
+                [(cis.InternMaybeMacroGlobalRecord.Some record)
+                  record.source-name-id]
+                [(cis.InternMaybeMacroGlobalRecord.No) name-id])
+              name-id))]
         [base-id : i64
           (if (and
             (ci.intern-renderable-id? source-id)
@@ -360,7 +386,10 @@
     (ast.ast-node-pool-context-expr-get pools callee-node))
     [(ast.AstExpr.Var name-id)
       (let
-        [base-id : i64 (ctfe-macro-provenance-callee-base-name-id name-id)]
+        [base-id : i64
+          (ctfe-macro-provenance-callee-base-name-id
+            (compiler-ctfe-macro-state-structural-session state)
+            name-id)]
         [data : CompilerCtfeMacroStateData
           (compiler-ctfe-macro-state-data state)]
         (or
@@ -786,85 +815,51 @@
   (TypeVariant String ast.AstTypeList)
   (TypeVariantList CtfeReflectVariantList))
 
-;; CTFE environments own copied values, but captured syntax pool contexts are
-;; identity-bearing shared state cells. The compiler-generated aggregate clone
-;; recursively clones those cells (and the type-pool dedup table) into the
-;; current macro arena, leaving captured syntax pointed at storage that is
-;; destroyed with the generation. Keep ordinary payload cloning while sharing
-;; only the captured pool owners.
-(define (ctfe-value-owned-copy [value : (& value CompilerCtfeValue)]) : CompilerCtfeValue
-  (match (owned_view.compiler-owned-reference-shared-view value)
-    [(CompilerCtfeValue.I64 n) (CompilerCtfeValue.I64 n)]
-    [(CompilerCtfeValue.F64 n) (CompilerCtfeValue.F64 n)]
-    [(CompilerCtfeValue.F32 n) (CompilerCtfeValue.F32 n)]
-    [(CompilerCtfeValue.Bool enabled) (CompilerCtfeValue.Bool enabled)]
-    [(CompilerCtfeValue.Char ch) (CompilerCtfeValue.Char ch)]
-    [(CompilerCtfeValue.String text identity)
-      (CompilerCtfeValue.String (clone text) identity)]
-    [(CompilerCtfeValue.Name text identity)
-      (CompilerCtfeValue.Name (clone text) identity)]
-    [(CompilerCtfeValue.Unit) CompilerCtfeValue.Unit]
-    [(CompilerCtfeValue.Type ty) (CompilerCtfeValue.Type (clone ty))]
-    [(CompilerCtfeValue.Expr node ty) (CompilerCtfeValue.Expr node (clone ty))]
-    [(CompilerCtfeValue.CapturedExpr node ty pools)
-      (CompilerCtfeValue.CapturedExpr
-        node
-        (clone ty)
-        (ast.ast-node-pool-context-shared-view (& pools)))]
-    [(CompilerCtfeValue.ExprList items)
-      (CompilerCtfeValue.ExprList (clone items))]
-    [(CompilerCtfeValue.CapturedExprList items pools)
-      (CompilerCtfeValue.CapturedExprList
-        (clone items)
-        (ast.ast-node-pool-context-shared-view (& pools)))]
-    [(CompilerCtfeValue.ExprClause clause)
-      (CompilerCtfeValue.ExprClause (clone clause))]
-    [(CompilerCtfeValue.CapturedExprClause clause pools)
-      (CompilerCtfeValue.CapturedExprClause
-        (clone clause)
-        (ast.ast-node-pool-context-shared-view (& pools)))]
-    [(CompilerCtfeValue.ExprClauseList clauses)
-      (CompilerCtfeValue.ExprClauseList (clone clauses))]
-    [(CompilerCtfeValue.CapturedExprClauseList clauses pools)
-      (CompilerCtfeValue.CapturedExprClauseList
-        (clone clauses)
-        (ast.ast-node-pool-context-shared-view (& pools)))]
-    [(CompilerCtfeValue.ExprBindingClause binding)
-      (CompilerCtfeValue.ExprBindingClause (clone binding))]
-    [(CompilerCtfeValue.ExprBindingClauseList bindings)
-      (CompilerCtfeValue.ExprBindingClauseList (clone bindings))]
-    [(CompilerCtfeValue.Pattern pattern)
-      (CompilerCtfeValue.Pattern (clone pattern))]
-    [(CompilerCtfeValue.PatternList patterns)
-      (CompilerCtfeValue.PatternList (clone patterns))]
-    [(CompilerCtfeValue.MatchArm arm) (CompilerCtfeValue.MatchArm (clone arm))]
-    [(CompilerCtfeValue.MatchArmList arms)
-      (CompilerCtfeValue.MatchArmList (clone arms))]
-    [(CompilerCtfeValue.LetBinding binding)
-      (CompilerCtfeValue.LetBinding (clone binding))]
-    [(CompilerCtfeValue.LetBindingList bindings)
-      (CompilerCtfeValue.LetBindingList (clone bindings))]
-    [(CompilerCtfeValue.TypeInfo ty) (CompilerCtfeValue.TypeInfo (clone ty))]
-    [(CompilerCtfeValue.TypeInfoBox ty)
-      (CompilerCtfeValue.TypeInfoBox (clone ty))]
-    [(CompilerCtfeValue.TypeInfoList types)
-      (CompilerCtfeValue.TypeInfoList (clone types))]
-    [(CompilerCtfeValue.TypeField name ty)
-      (CompilerCtfeValue.TypeField (clone name) (clone ty))]
-    [(CompilerCtfeValue.TypeFieldList fields)
-      (CompilerCtfeValue.TypeFieldList (clone fields))]
-    [(CompilerCtfeValue.TypeVariantPayload ty)
-      (CompilerCtfeValue.TypeVariantPayload (clone ty))]
-    [(CompilerCtfeValue.TypeVariantPayloadList types)
-      (CompilerCtfeValue.TypeVariantPayloadList (clone types))]
-    [(CompilerCtfeValue.TypeVariant name payloads)
-      (CompilerCtfeValue.TypeVariant (clone name) (clone payloads))]
-    [(CompilerCtfeValue.TypeVariantList variants)
-      (CompilerCtfeValue.TypeVariantList (clone variants))]))
+(define (ctfe-name-source-id-for-session
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
+  (if (ci.intern-renderable-id? name-id)
+    name-id
+    (match (cis.intern-structural-session-macro-global-record-for-raw
+      session
+      name-id)
+      [(cis.InternMaybeMacroGlobalRecord.Some record) record.source-name-id]
+      [(cis.InternMaybeMacroGlobalRecord.No)
+        (match (cis.intern-structural-session-macro-local-record-for-raw
+          session
+          name-id)
+          [(cis.InternMaybeMacroLocalRecord.Some record) record.source-name-id]
+          [(cis.InternMaybeMacroLocalRecord.No)
+            (cond
+              [(ci.intern-structural-local-id? name-id)
+                (ci.intern-structural-local-source-name-id name-id)]
+              [(ci.intern-template-source-id? name-id)
+                (ci.intern-template-source-name-id name-id)]
+              [else -1])])])))
 
+(define (ctfe-name-value-for-session
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : CompilerCtfeValue
+  (let
+    [source-id : i64 (ctfe-name-source-id-for-session session name-id)]
+    (CompilerCtfeValue.Name
+      (if (ci.intern-renderable-id? source-id)
+        (ci.intern-str source-id)
+        "<structural-name>")
+      name-id)))
+
+(define (ctfe-name-value-for-source-names
+  [source-names : ci.InternSourceNameSessionHandle]
+  [name-id : i64]) : CompilerCtfeValue
+  (ctfe-name-value-for-session
+    (cis.intern-structural-session-handle-from-source-names source-names)
+    name-id))
+
+;; Standalone CTFE APIs and direct tests use the installed source-name owner.
+;; Production evaluation passes its job-owned structural session explicitly.
 (define (ctfe-name-value [name-id : i64]) : CompilerCtfeValue
-  (CompilerCtfeValue.Name
-    (ci.intern-syntax-name-text-or name-id "<structural-name>")
+  (ctfe-name-value-for-source-names
+    (ci.intern-source-name-session-capture-active-handle)
     name-id))
 
 (define (ctfe-generated-string-value [text : String]) : CompilerCtfeValue
@@ -1265,6 +1260,7 @@
   [macro-state : CompilerCtfeMacroState]) : CtfeEnv
   (begin
     (cfg compile-profile (ctfe-env-profile-note-arena-root!) unit)
+    (compiler-ctfe-macro-state-bind-source-names! macro-state source-names)
     (CtfeEnv
       (box (ctfe-env-arena-new))
       -1
@@ -1761,76 +1757,12 @@
       (ctfe-env-metadata-box-shared-view view.metadata)]
     metadata.reflections))
 
-;; Pool contexts are mutable state cells, not owned values. Keep this accessor
-;; syntax-level so its explicit shallow read reaches the consumer directly;
-;; returning an `AstNodePoolContext` through a function's owned-value boundary
-;; would detach the cells under by-value ownership.
-(define (ctfe-env-pools-address [env : (& env CtfeEnv)]) : u64
-  (let
-    [cell : (CtfeEnvRef env) (CtfeEnvRef env)]
-    [env-address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    ;; CtfeEnv word 6 is the metadata box pointer, and `pools` is the first
-    ;; field of that boxed payload.
-    (unsafe
-      (ptr-read (ptr-offset (int->ptr env-address : (Ptr u64)) 6)))))
+(define (ctfe-env-structural-session [env : CtfeEnv]) : cis.InternStructuralSessionHandle
+  (cis.intern-structural-session-handle-from-source-names
+    (ctfe-env-source-names env)))
 
-(defmacro (ctfe-env-pools [env : Expr]) : ast.AstNodePoolContext
-  `(unsafe
-    (ptr-read
-      (int->ptr (ctfe-env-pools-address ,env) : (Ptr ast.AstNodePoolContext)))))
-
-;; A caller pool can be a newer snapshot of the transformer's backing tables.
-;; Advance the owning context before appending provenance wrappers, while the
-;; pool primitive's storage check keeps unrelated syntax domains isolated.
-(define (ctfe-env-adopt-active-pools! [env : (& env CtfeEnv)]) : unit
-  (let
-    [owner-address : u64 (ctfe-env-pools-address env)]
-    [syntax-address : u64 (ctfe-env-syntax-pool-context-address-live env)]
-    (begin
-      (ast.ast-node-pool-context-adopt-newer-cells!
-        (ctfe-pool-context-cell-address-at owner-address 0)
-        (ctfe-pool-context-cell-address-at owner-address 1)
-        (ctfe-pool-context-cell-address-at syntax-address 0)
-        (ctfe-pool-context-cell-address-at syntax-address 1))
-      (if (ast.ast-node-pool-has-active-context?)
-        (ast.ast-node-pool-context-adopt-newer-cells!
-          (ctfe-pool-context-cell-address-at owner-address 0)
-          (ctfe-pool-context-cell-address-at owner-address 1)
-          (ast.ast-node-pool-active-context-expr-cell-address)
-          (ast.ast-node-pool-active-context-type-cell-address))
-        unit))))
-
-(define (ctfe-env-publish-owning-pools! [env : (& env CtfeEnv)]) : unit
-  (let
-    [owner-address : u64 (ctfe-env-pools-address env)]
-    [syntax-address : u64 (ctfe-env-syntax-pool-context-address-live env)]
-    (begin
-      (ast.ast-node-pool-context-adopt-newer-cells!
-        (ctfe-pool-context-cell-address-at syntax-address 0)
-        (ctfe-pool-context-cell-address-at syntax-address 1)
-        (ctfe-pool-context-cell-address-at owner-address 0)
-        (ctfe-pool-context-cell-address-at owner-address 1))
-      (if (ast.ast-node-pool-has-active-context?)
-        (ast.ast-node-pool-context-adopt-newer-cells!
-          (ast.ast-node-pool-active-context-expr-cell-address)
-          (ast.ast-node-pool-active-context-type-cell-address)
-          (ctfe-pool-context-cell-address-at owner-address 0)
-          (ctfe-pool-context-cell-address-at owner-address 1))
-        unit))))
-
-(define (ctfe-env-source-names [env : (& env CtfeEnv)]) : ci.InternSourceNameSessionHandle
-  (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
-    [metadata : CtfeEnvMetadata
-      (ctfe-env-metadata-box-shared-view view.metadata)]
-    metadata.source-names))
-
-(define (ctfe-env-macro-state [env : (& env CtfeEnv)]) : CompilerCtfeMacroState
-  (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
-    view.macro-state))
+(define (ctfe-env-macro-state [env : CtfeEnv]) : CompilerCtfeMacroState
+  env.macro-state)
 
 ;; A transformer reads its definition body from `ctfe-env-pools`, but syntax
 ;; selected from a variadic caller argument may belong to a newer pool. Carry
@@ -5185,7 +5117,8 @@
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (ResultCtfe.Ok
-                      (ctfe-name-value
+                      (ctfe-name-value-for-session
+                        (ctfe-env-structural-session env)
                         (ctfe-reflect-info-nominal-module-id info))
                       arg-fuel)]
                   [(CtfeMaybeReflectInfo.None)
@@ -5201,7 +5134,9 @@
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (ResultCtfe.Ok
-                      (ctfe-name-value (ctfe-reflect-info-nominal-name-id info))
+                      (ctfe-name-value-for-session
+                        (ctfe-env-structural-session env)
+                        (ctfe-reflect-info-nominal-name-id info))
                       arg-fuel)]
                   [(CtfeMaybeReflectInfo.None)
                     (ResultCtfe.Err
@@ -5397,6 +5332,7 @@
   [name : String]
   [fields : CtfeReflectFieldList]
   [pools : ast.AstNodePoolContext]
+  [session : cis.InternStructuralSessionHandle]
   [infos : CtfeReflectInfoList]
   [index : i64]
   [expr : ast.AstExpr]
@@ -5404,7 +5340,7 @@
   (if (string.eq name "struct-field-name")
     (match (ctfe-reflect-field-name-at fields index)
       [(ResultCtfeNameLookup.Ok field-name)
-        (ResultCtfe.Ok (ctfe-name-value field-name) fuel)]
+        (ResultCtfe.Ok (ctfe-name-value-for-session session field-name) fuel)]
       [(ResultCtfeNameLookup.Err message)
         (ResultCtfe.Err
           (box
@@ -5437,6 +5373,7 @@
               name
               fields
               (ctfe-env-pools env)
+              (ctfe-env-structural-session env)
               infos
               index
               expr
@@ -5488,13 +5425,14 @@
 (define (ctfe-eval-enum-variant-from-variants
   [name : String]
   [variants : CtfeReflectVariantList]
+  [session : cis.InternStructuralSessionHandle]
   [index : i64]
   [expr : ast.AstExpr]
   [fuel : i64]) : ResultCtfe
   (if (string.eq name "enum-variant-name")
     (match (ctfe-reflect-variant-name-at variants index)
       [(ResultCtfeNameLookup.Ok variant-name)
-        (ResultCtfe.Ok (ctfe-name-value variant-name) fuel)]
+        (ResultCtfe.Ok (ctfe-name-value-for-session session variant-name) fuel)]
       [(ResultCtfeNameLookup.Err message)
         (ResultCtfe.Err
           (box
@@ -5522,7 +5460,13 @@
       [(CtfeMaybeReflectInfo.Some info)
         (match info
           [(CtfeReflectInfo.Enum _ _ _ _ _ variants)
-            (ctfe-eval-enum-variant-from-variants name variants index expr fuel)]
+            (ctfe-eval-enum-variant-from-variants
+              name
+              variants
+              (ctfe-env-structural-session env)
+              index
+              expr
+              fuel)]
           [_ (ctfe-enum-variant-kind-error name expr)])]
       [(CtfeMaybeReflectInfo.None) (ctfe-enum-variant-kind-error name expr)])))
 
@@ -7757,7 +7701,9 @@
               (cond
                 [(string.eq name "expr-binding-clause-name")
                   (ResultCtfe.Ok
-                    (ctfe-name-value (ctfe-expr-binding-clause-name-id clause))
+                    (ctfe-name-value-for-session
+                      (ctfe-env-structural-session env)
+                      (ctfe-expr-binding-clause-name-id clause))
                     arg-fuel)]
                 [(string.eq name "expr-binding-clause-has-type?")
                   (ResultCtfe.Ok
@@ -9777,7 +9723,13 @@
         (ctfe-eval-call inner args expr env fuel))]
     [(ast.AstExpr.Var name)
       (let
-        [raw-id : i64 (ci.intern-macro-global-source-name-id-or name name)]
+        [raw-id : i64
+          (match (cis.intern-structural-session-macro-global-record-for-raw
+            (ctfe-env-structural-session env)
+            name)
+            [(cis.InternMaybeMacroGlobalRecord.Some record)
+              record.source-name-id]
+            [(cis.InternMaybeMacroGlobalRecord.No) name])]
         [call-id : i64 (ctfe-comptime-helper-call-name-id raw-id)]
         (cond
           [(= call-id (ctfe-builtin-ref 27))
@@ -10129,7 +10081,11 @@
     [source-id : i64
       (if (ci.intern-template-source-id? name-id)
         (ci.intern-template-source-name-id name-id)
-        (ci.intern-macro-global-source-name-id-or name-id name-id))]
+        (match (cis.intern-structural-session-macro-global-record-for-raw
+          (ctfe-env-structural-session env)
+          name-id)
+          [(cis.InternMaybeMacroGlobalRecord.Some record) record.source-name-id]
+          [(cis.InternMaybeMacroGlobalRecord.No) name-id]))]
     (if (and
       (ci.intern-renderable-id? source-id)
       (not (ci.intern-qualified? source-id))
@@ -10253,6 +10209,7 @@
   [field : i64]
   [expr : ast.AstExpr]
   [pools : ast.AstNodePoolContext]
+  [session : cis.InternStructuralSessionHandle]
   [fuel : i64]) : ResultCtfe
   (let
     [field-kind : i64 field]
@@ -10333,7 +10290,9 @@
         (cond
           [(= field-kind cbi.compiler-builtin-id-fix-name)
             (ResultCtfe.Ok
-              (ctfe-name-value (ctfe-expr-binding-clause-name-id clause))
+              (ctfe-name-value-for-session
+                session
+                (ctfe-expr-binding-clause-name-id clause))
               fuel)]
           [(= field-kind cbi.compiler-builtin-id-fix-has_type)
             (ResultCtfe.Ok
@@ -10469,6 +10428,8 @@
     field
     expr
     (ast.ast-node-pool-context-capture-active)
+    (cis.intern-structural-session-handle-from-source-names
+      (ci.intern-source-name-session-capture-active-handle))
     fuel))
 
 (define (ctfe-eval-struct-get
@@ -10479,19 +10440,13 @@
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval inner env fuel)
     [(ResultCtfe.Ok value next-fuel)
-      (begin
-        (ctfe-env-adopt-active-pools! (& env))
-        (let
-          [result : ResultCtfe
-            (ctfe-eval-struct-get-value-with-pools
-              value
-              field
-              expr
-              (ctfe-env-pools env)
-              next-fuel)]
-          (begin
-            (ctfe-env-publish-owning-pools! (& env))
-            result)))]
+      (ctfe-eval-struct-get-value-with-pools
+        value
+        field
+        expr
+        (ctfe-env-pools env)
+        (ctfe-env-structural-session env)
+        next-fuel)]
     [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 (define (ctfe-comptime-array-index-error [expr : ast.AstExpr]) : ResultCtfe
@@ -10994,7 +10949,8 @@
       (if (ctfe-pattern-variant-name? variant "Var")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (ctfe-name-value name))
+          (ctfe-value-list1
+            (ctfe-name-value-for-session (ctfe-env-structural-session env) name))
           env)
         (CtfePatternMatch.No))]
     [(ast.AstExpr.If cond then-branch else-branch)

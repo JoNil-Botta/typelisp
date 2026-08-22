@@ -571,20 +571,32 @@
   [fuel : i64]
   [cookie : i64]
   [reflections : ctfe_support.CtfeReflectInfoList]) : unit
-  (compiler-comptime-host-session-open-with-macro-state!
-    pools
-    (& operands)
-    operand-count
-    fuel
-    cookie
-    reflections
-    (ci.intern-source-name-session-capture-active-handle)
-    (ctfe_support.compiler-ctfe-serial-macro-state)))
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-capture-active-handle)]
+    [macro-state : ctfe_support.CompilerCtfeMacroState
+      (ctfe_support.compiler-ctfe-serial-macro-state)]
+    (begin
+      (ctfe_support.compiler-ctfe-macro-state-bind-source-names!
+        macro-state
+        source-names)
+      (compiler-comptime-host-session-open-with-macro-state!
+        pools
+        operands
+        operand-count
+        fuel
+        cookie
+        reflections
+        source-names
+        macro-state))))
 
 (defmacro (compiler-comptime-host-session-macro-state-value) : Expr
   `(compiler-comptime-host-array-element-shared-view
     compiler-comptime-host-session-macro-state
     0))
+
+(define (compiler-comptime-host-session-source-names-value) : ci.InternSourceNameSessionHandle
+  (array-ref compiler-comptime-host-session-source-names 0))
 
 ;; Rebuild the lightweight CTFE adapter used by native callbacks with the
 ;; source-name capability of the transformer being evaluated. In particular,
@@ -1304,7 +1316,9 @@
                           compiler-comptime-host-stack-len
                           (- compiler-comptime-host-stack-len 1))
                         (compiler-comptime-host-push!
-                          (ctfe_support.ctfe-name-value name)))]
+                          (ctfe_support.ctfe-name-value-for-source-names
+                            (compiler-comptime-host-session-source-names-value)
+                            name)))]
                     [(ctfe_support.ResultCtfeNameLookup.Err _)
                       tlci.tlci-host-callback-status-bad-request])
                   tlci.tlci-host-callback-status-bad-request)]
@@ -1319,7 +1333,9 @@
                           compiler-comptime-host-stack-len
                           (- compiler-comptime-host-stack-len 1))
                         (compiler-comptime-host-push!
-                          (ctfe_support.ctfe-name-value name)))]
+                          (ctfe_support.ctfe-name-value-for-source-names
+                            (compiler-comptime-host-session-source-names-value)
+                            name)))]
                     [(ctfe_support.ResultCtfeNameLookup.Err _)
                       tlci.tlci-host-callback-status-bad-request])
                   tlci.tlci-host-callback-status-bad-request)])]
@@ -7424,7 +7440,9 @@
           (match (compiler-comptime-host-local-expr arg-a)
             [(CompilerCtfeMaybeExpr.Some (ast.AstExpr.Var name-id))
               (compiler-comptime-host-push!
-                (ctfe_support.ctfe-name-value name-id))]
+                (ctfe_support.ctfe-name-value-for-source-names
+                  (compiler-comptime-host-session-source-names-value)
+                  name-id))]
             [_ tlci.tlci-host-callback-status-bad-request])]
         (begin
           (when
@@ -7746,7 +7764,9 @@
             (match (compiler-comptime-host-operand-expr arg-a)
               [(ast.AstExpr.Var name-id)
                 (compiler-comptime-host-push!
-                  (ctfe_support.ctfe-name-value name-id))]
+                  (ctfe_support.ctfe-name-value-for-source-names
+                    (compiler-comptime-host-session-source-names-value)
+                    name-id))]
               [_ tlci.tlci-host-callback-status-bad-request]))]
         (begin
           (when

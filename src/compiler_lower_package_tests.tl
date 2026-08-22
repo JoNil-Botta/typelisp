@@ -4,7 +4,7 @@
 (import compiler_ast_types)
 (import compiler_diagnostic)
 (import compiler_intern as ci)
-(import compiler_owned_view as owned_view)
+(import compiler_intern_state as cis)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -118,6 +118,7 @@
             "__tl_spmd_ret_uniform___tl_spmd_pkg_"
             0)
             (compiler_ir_types.compiler-ir-function-render
+              (cis.InternStructuralSessionHandle 0)
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
               function)
             (compiler-lower-spmd-package-uniform-helper-render

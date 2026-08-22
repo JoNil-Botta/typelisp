@@ -24,6 +24,7 @@
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_diagnostic)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_load)
 (cfg embedded-stdlib-tlci (import compiler_build_identity as build_identity))
 (cfg
@@ -279,15 +280,10 @@
 ;; provenance and are discarded at the post-load bind.
 (define (compiler-driver-state-bind-owned-source-names!
   [state : CompilerDriverState]) : unit
-  (let
-    [intern-state : ci.InternCompatState
-      (compiler-driver-state-owned-interns
-        (owned_view.compiler-owned-shared-view state))]
-    (compiler_typecheck_core.tc-macro-state-bind-source-names!
-      (compiler_typecheck_core.tc-job-state-macro-state
-        (compiler-driver-state-typecheck
-          (owned_view.compiler-owned-shared-view state)))
-      (ci.intern-source-name-session-handle-from-state intern-state))))
+  (compiler_typecheck_core.tc-macro-state-bind-source-names!
+    (compiler_typecheck_core.tc-job-state-macro-state
+      (compiler-driver-state-typecheck state))
+    (compiler-driver-state-source-name-session-in-current state)))
 
 (define (compiler-driver-state-prefix-cache-enable!
   [state : CompilerDriverState]) : unit
@@ -771,10 +767,80 @@
 (define (compiler-driver-state-owned-interns [state : CompilerDriverState]) : ci.InternCompatState
   (array-ref state.intern-state 0))
 
-(define (compiler-driver-state-owned-interns-mut [state : CompilerDriverState]) : (&mut
+;; Allocate an immutable source-name snapshot in an explicit owner. Production
+;; batch entries keep their snapshot in the rotating entry scratch arena; only
+;; callers that explicitly request a retained driver capability use the
+;; process-lived surface arena below.
+(define (compiler-driver-state-source-name-session-in-arena
+  [state : CompilerDriverState]
+  [owner : i64]) : ci.InternSourceNameSessionHandle
+  (in-arena
+    (arena.Arena owner)
+    (ci.intern-source-name-session-handle-from-state
+      (compiler-driver-state-owned-interns state))))
+
+(define (compiler-driver-state-source-name-session-in-current
+  [state : CompilerDriverState]) : ci.InternSourceNameSessionHandle
+  (compiler-driver-state-source-name-session-in-arena
     state
-    ci.InternCompatState)
-  (&mut (array-ref state.intern-state 0)))
+    (arena.tl_arena_current)))
+
+;; Opt1/2 parsing runs in a disposable frontend arena, but the capability must
+;; survive through lower reachability and backend emission. Route that one
+;; snapshot into the saved entry arena instead of accumulating it in the
+;; driver's process-lived surface arena across batch entries.
+(define (compiler-driver-state-entry-source-name-session
+  [state : CompilerDriverState]) : ci.InternSourceNameSessionHandle
+  (compiler-driver-state-source-name-session-in-arena
+    state
+    (if (= compiler-driver-pending-frontend-return-arena 0)
+      (arena.tl_arena_current)
+      compiler-driver-pending-frontend-return-arena)))
+
+(define (compiler-driver-state-entry-structural-session
+  [state : CompilerDriverState]) : cis.InternStructuralSessionHandle
+  (cis.intern-structural-session-handle-from-source-names
+    (compiler-driver-state-entry-source-name-session state)))
+
+;; Retained adapter for callers whose capability must survive an arbitrary
+;; caller arena. Per-entry compiler paths use the rotating adapter above.
+(define (compiler-driver-state-source-name-session
+  [state : CompilerDriverState]) : ci.InternSourceNameSessionHandle
+  (compiler-driver-state-source-name-session-in-arena
+    state
+    (compiler-driver-state-surface-arena state)))
+
+(define (compiler-driver-state-structural-session [state : CompilerDriverState]) : cis.InternStructuralSessionHandle
+  (cis.intern-structural-session-handle-from-source-names
+    (compiler-driver-state-source-name-session state)))
+
+(cfg
+  test
+  (test
+    compiler-driver-source-name-session-retained-owner
+    (let
+      [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
+      [return-arena : i64 (arena.tl_arena_current)]
+      [transient-arena : i64 (arena.tl_arena_make)]
+      [source-names : ci.InternSourceNameSessionHandle
+        (begin
+          (unsafe
+            (arena.tl_arena_set transient-arena))
+          (let
+            [session : ci.InternSourceNameSessionHandle
+              (compiler-driver-state-source-name-session state)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set return-arena))
+              session)))]
+      (begin
+        (unsafe
+          (arena.tl_arena_destroy transient-arena))
+        (test.assert-i64-eq
+          (ci.intern-source-name-session-handle-table-id source-names)
+          (ci.intern-compat-state-table-id
+            (compiler-driver-state-owned-interns state))
+          "source-name capability survives retirement of the caller arena")))))
 
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
@@ -3205,6 +3271,7 @@
 (cfg
   embedded-stdlib-tlci
   (define (compiler-driver-hydrate-prelude-rodata
+    [load-state : compiler_load.CompilerLoadSessionState]
     [outer-build : String]
     [expected-source-hash : String]
     [rodata : (__tl_dyn-array u8)]
@@ -3231,6 +3298,8 @@
               (match (compiler_surface_hydrate.compiler-surface-hydrate
                 rodata
                 key
+                (compiler_load.compiler-load-session-state-structural-session
+                  load-state)
                 pools)
                 [(compiler_surface_hydrate.ResultCompilerSurfaceHydration.Missing)
                   CompilerDriverPreludeSurface.Missing]
@@ -3258,6 +3327,7 @@
 (cfg
   embedded-stdlib-tlci
   (define (compiler-driver-try-hydrate-runtime-prelude
+    [load-state : compiler_load.CompilerLoadSessionState]
     [stdlib-roots : svec.Vec]
     [cfgs : sym_i64_env.SymI64Env]
     [pools : compiler_ast_types.AstNodePoolContext]
@@ -3280,6 +3350,7 @@
                 source-hash
                 rodata)
               (compiler-driver-hydrate-prelude-rodata
+                load-state
                 outer-build
                 source-hash
                 rodata
@@ -3641,9 +3712,10 @@
           unit)]
       [surface : CompilerDriverPreludeSurface
         (compiler-driver-try-hydrate-runtime-prelude
-          (owned_view.compiler-owned-shared-view stdlib-roots)
-          (owned_view.compiler-owned-shared-view cfgs)
-          (owned_view.compiler-owned-shared-view pools)
+          load-state
+          stdlib-roots
+          cfgs
+          pools
           surface-arena)]
       [_surface-end : unit
         (cfg
@@ -4137,8 +4209,7 @@
               (compiler-driver-state-owned-interns
                 (owned_view.compiler-owned-shared-view state))]
             [source-names : ci.InternSourceNameSessionHandle
-              (ci.intern-source-name-session-handle
-                (ci.intern-source-name-session-from-state intern-state))]
+              (compiler-driver-state-entry-source-name-session state)]
             [dest-pools : compiler_ast_types.AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -5217,6 +5288,7 @@
     opt-level))
 
 (define (compiler-driver-ir-text-result
+  [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [optimized : compiler_ir_types.CompilerIrProgram]
   [dump-pass : String]) : ResultCompilerDriver
@@ -5234,6 +5306,7 @@
           (if (> (string.string-length dump-pass) 0)
             (compiler_optimize.compiler-opt-debug-dump-result)
             (compiler_ir_types.compiler-ir-program-render
+              structural-session
               type-segment-bases
               optimized))]
         (if (and
@@ -5274,6 +5347,10 @@
               (ResultCompilerDriver.Err
                 (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
               (compiler-driver-ir-text-result
+                (cis.intern-structural-session-handle-from-source-names
+                  (compiler_typecheck_core.tc-macro-state-source-names
+                    (compiler_typecheck_core.tc-job-state-macro-state
+                      typecheck-state)))
                 (compiler_ast_types.ast-node-pool-context-type-segment-bases
                   pools)
                 optimized

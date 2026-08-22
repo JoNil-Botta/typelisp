@@ -110,11 +110,7 @@
 ;; module/base ids in the interner metadata; dotted names remain atomic.
 (define (clone-name-key-id-in-module [module-id : i64] [name-id : i64]) : i64
   (cond
-    [(or
-        (ci.intern-composite-pair-id? name-id)
-        (ci.intern-composite-triple-id? name-id)
-        (ci.intern-macro-global-structural-id? name-id))
-      name-id]
+    [(not (ci.intern-renderable-id? name-id)) name-id]
     [(and (ci.intern-renderable-id? name-id) (ci.intern-qualified? name-id))
       (clone-name-pair-key-id
         (ci.intern-qualified-module-id name-id)

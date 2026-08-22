@@ -992,8 +992,6 @@
 ;; (`:unknown`, typed `...T`, retired name families), and dotted import paths.
 (define (compiler-parse-name-text [name-id : i64]) : String
   (cond
-    [(ci.intern-macro-global-structural-id? name-id)
-      (ci.intern-str (ci.intern-macro-global-source-name-id name-id))]
     [(ci.intern-composite-pair-id? name-id)
       (str_cat.str-cat
         (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
@@ -10185,27 +10183,31 @@
 (define (parse-ast-removed-declaration-name? [name : i64]) : bool
   ;; Preserve the shared diagnostic for the retired prefix family
   ;; comptime-decl/comptime-decls without interning more accepted syntax.
-  (let
-    [text : String (compiler-parse-name-text name)]
-    [n : i64 (string.string-length text)]
-    (and
-      (or (= n 13) (= n 14))
-      (= (string.string-ref text 0) 'c')
-      (= (string.string-ref text 1) 'o')
-      (= (string.string-ref text 2) 'm')
-      (= (string.string-ref text 3) 'p')
-      (= (string.string-ref text 4) 't')
-      (= (string.string-ref text 5) 'i')
-      (= (string.string-ref text 6) 'm')
-      (= (string.string-ref text 7) 'e')
-      (= (string.string-ref text 8) '-')
-      (= (string.string-ref text 9) 'd')
-      (= (string.string-ref text 10) 'e')
-      (= (string.string-ref text 11) 'c')
-      (= (string.string-ref text 12) 'l')
-      (if (= n 14)
-        (= (string.string-ref text 13) 's')
-        true))))
+  ;; Structural AST identities are intentionally valid unknown call heads, but
+  ;; they are not source-pool indexes and cannot match this textual family.
+  (if (or (< name 0) (>= name (ci.intern-capacity)))
+    false
+    (let
+      [text : String (compiler-parse-name-text name)]
+      [n : i64 (string.string-length text)]
+      (and
+        (or (= n 13) (= n 14))
+        (= (string.string-ref text 0) 'c')
+        (= (string.string-ref text 1) 'o')
+        (= (string.string-ref text 2) 'm')
+        (= (string.string-ref text 3) 'p')
+        (= (string.string-ref text 4) 't')
+        (= (string.string-ref text 5) 'i')
+        (= (string.string-ref text 6) 'm')
+        (= (string.string-ref text 7) 'e')
+        (= (string.string-ref text 8) '-')
+        (= (string.string-ref text 9) 'd')
+        (= (string.string-ref text 10) 'e')
+        (= (string.string-ref text 11) 'c')
+        (= (string.string-ref text 12) 'l')
+        (if (= n 14)
+          (= (string.string-ref text 13) 's')
+          true)))))
 
 (define (parse-ast-unsafe-decl
   [dispatch : sym_i64_env.SymI64Env]
@@ -14543,19 +14545,12 @@
   [text : String]
   [fixed-id : i64]) : bool
   (let
-    [source-id : i64
-      (reader.stable-symbol-id (compiler-parse-place-shared-view text))]
-    [generated-id : i64
-      (ci.intern-generated-canonical-name
-        (compiler-parse-place-shared-view text))]
-    [macro-global-id : i64
-      (+ (ci.intern-macro-global-structural-base) source-id)]
+    [source-id : i64 (reader.stable-symbol-id text)]
+    [generated-id : i64 (ci.intern-generated-canonical-name text)]
     (and
       (= source-id fixed-id)
       (not (= generated-id fixed-id))
-      (ci.intern-macro-global-structural-id? macro-global-id)
-      (string.eq (compiler-parse-name-text macro-global-id) text)
-      (not (= macro-global-id fixed-id)))))
+      (string.eq (compiler-parse-name-text generated-id) text))))
 
 (define (compiler-parse-fixed-syntax-name-provenance-ok?) : bool
   (let

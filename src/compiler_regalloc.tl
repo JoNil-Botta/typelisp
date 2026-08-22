@@ -42646,9 +42646,9 @@
   [default-label : i64]) : CompilerRegIdSeq
   (compiler-reg-id-seq-push-all
     (compiler-reg-scratch-switch-phi-registers-seq-from
-      policy
-      assignments
-      cases
+      (compiler-reg-global-shared-view policy)
+      (compiler-reg-global-shared-view assignments)
+      (compiler-reg-global-shared-view cases)
       0
       (compiler-reg-id-seq-empty))
     (compiler-reg-scratch-phi-dst-registers-label

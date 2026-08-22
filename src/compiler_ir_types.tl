@@ -1409,13 +1409,14 @@
       (set! (array-ref slots 2) c)
       (CompilerIrSwitchCaseSeq slots 3))))
 
-(define (compiler-ir-switch-case-seq-count [cases : CompilerIrSwitchCaseSeq]) : i64
+(define (compiler-ir-switch-case-seq-count
+  [cases : (& cases CompilerIrSwitchCaseSeq)]) : i64
   cases.len)
 
 (define (compiler-ir-switch-case-seq-ref
-  [cases : CompilerIrSwitchCaseSeq]
+  [cases : (& cases CompilerIrSwitchCaseSeq)]
   [index : i64]) : CompilerIrSwitchCase
-  (array-ref cases.slots index))
+  (compiler-ir-array-shared-view cases.slots index))
 
 (define (compiler-ir-switch-case-builder-with-capacity [capacity : i64]) : CompilerIrSwitchCaseBuilder
   (CompilerIrSwitchCaseBuilder
@@ -10082,15 +10083,25 @@
         [cases : CompilerIrSwitchCaseSeq
           (compiler-ir-switch-case-builder-to-seq builder)]
         [cloned : CompilerIrSwitchCaseSeq
-          (compiler-ir-clone-switch-case-seq cases)]
+          (compiler-ir-clone-switch-case-seq
+            (compiler-ir-global-shared-view cases))]
         (and
           (= (compiler-ir-switch-case-seq-count cases) 2)
           (string.eq
-            (compiler-ir-switch-case-seq-render cases)
+            (compiler-ir-switch-case-seq-render
+              (compiler-ir-global-shared-view cases))
             "4:four, 5:five")
-          (compiler-ir-switch-case-seq-entry-tag-label? cases 0 4 "four")
+          (compiler-ir-switch-case-seq-entry-tag-label?
+            (compiler-ir-global-shared-view cases)
+            0
+            4
+            "four")
           (compiler-ir-switch-case-seq-entry-tag-label? cases 1 5 "five")
-          (compiler-ir-switch-case-seq-entry-tag-label? cloned 0 4 "four")
+          (compiler-ir-switch-case-seq-entry-tag-label?
+            (compiler-ir-global-shared-view cloned)
+            0
+            4
+            "four")
           (compiler-ir-switch-case-seq-entry-tag-label? cloned 1 5 "five"))))))
 
 (define (compiler-ir-instr-seq-roundtrip-ok?) : bool

@@ -4179,7 +4179,7 @@
       (compiler-semantic-name-span-in-range
         (owned_view.compiler-owned-shared-view state.path)
         (owned_view.compiler-owned-shared-view state.source)
-        name
+        (owned_view.compiler-owned-shared-view name)
         (compiler-semantic-form-head-end
           (owned_view.compiler-owned-shared-view state.source)
           form-start)
@@ -4192,8 +4192,8 @@
       (if (>= preferred-span.start-byte 0)
         preferred-span
         (compiler-semantic-name-span-in-range
-          state.path
-          state.source
+          (owned_view.compiler-owned-shared-view state.path)
+          (owned_view.compiler-owned-shared-view state.source)
           name
           form-start
           value-start))]

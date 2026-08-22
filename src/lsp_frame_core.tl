@@ -12950,7 +12950,9 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]) : unit
-  (match (lsp-get-semantic-document params docs)
+  (match (lsp-get-semantic-document
+    (owned_view.compiler-owned-shared-view params)
+    docs)
     [(LspSemanticDocumentLookup.Found doc)
       (let
         [position-key : String "position"]

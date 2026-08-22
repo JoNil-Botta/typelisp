@@ -1160,8 +1160,8 @@
       "[{\"range\":{\"start\":{\"line\":11,\"character\":11},\"end\":{\"line\":11,\"character\":15}},\"kind\":1},{\"range\":{\"start\":{\"line\":12,\"character\":22},\"end\":{\"line\":12,\"character\":26}},\"kind\":2}]"]
     [capability : String "\"documentHighlightProvider\":true"]
     (match (semantic_index.compiler-check-source-index-with-roots
-      path
-      source
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
       (lsp_svec.new))
       [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
         (begin
@@ -1175,9 +1175,9 @@
             (lsp_frame_core.lsp-documents-set-semantic-index
               (lsp_frame_core.lsp-documents-set-versioned
                 (lsp_document_vec.new)
-                uri
-                path
-                source
+                (owned_view.compiler-owned-shared-view uri)
+                (owned_view.compiler-owned-shared-view path)
+                (owned_view.compiler-owned-shared-view source)
                 1
                 (lsp_frame_core.lsp-diagnostic-uris-empty))
               uri
@@ -1191,27 +1191,45 @@
           [top-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 7 22))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                7
+                22))]
           [local-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 6 33))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                6
+                33))]
           [slot-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 1 16))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                1
+                16))]
           [wrap-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 12 23))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                12
+                23))]
           [comment-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 8 3))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                8
+                3))]
           [string-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 9 24))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                9
+                24))]
           [record-count : i64
             (semantic_index.compiler-semantic-source-index-len
               (& doc.semantic.index))]

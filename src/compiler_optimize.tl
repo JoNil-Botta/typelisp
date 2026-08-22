@@ -18683,8 +18683,9 @@
 (define (opt-cfg-switch-case-successors-hashed
   [set : OptLabelSet]
   [cases : ir.CompilerIrSwitchCaseSeq]
-  [seen : opt_string_i64_map.Map (:consume)]) : OptLabelSet
+  [seen-input : opt_string_i64_map.Map]) : OptLabelSet
   (let
+    [seen : opt_string_i64_map.Map (compiler-opt-global-shared-view seen-input)]
     [index : i64 0]
     [out : OptLabelSet set]
     (begin
@@ -25245,7 +25246,11 @@
         (begin
           (match (ir.compiler-ir-switch-case-seq-ref cases index)
             [(ir.CompilerIrSwitchCase.Case _ label)
-              (unless (opt-label-contains body label) (return true))])
+              (unless
+                (opt-label-contains
+                  (compiler-opt-global-shared-view body)
+                  label)
+                (return true))])
           (set! index (+ index 1))))
       false)))
 
@@ -25440,7 +25445,10 @@
           (match (ir.compiler-ir-switch-case-seq-ref cases index)
             [(ir.CompilerIrSwitchCase.Case _ label)
               (unless
-                (opt-licm-branch-exit-return-shaped? blocks body label)
+                (opt-licm-branch-exit-return-shaped?
+                  (compiler-opt-global-shared-view blocks)
+                  (compiler-opt-global-shared-view body)
+                  label)
                 (return false))])
           (set! index (+ index 1))))
       true)))
@@ -27114,7 +27122,9 @@
                 (array-ref slots index)
                 (ir.CompilerIrSwitchCase.Case
                   tag
-                  (opt-licm-unswitch-clone-label body-labels label)))])
+                  (opt-licm-unswitch-clone-label
+                    (compiler-opt-global-shared-view body-labels)
+                    label)))])
           (set! index (+ index 1))))
       (ir.CompilerIrSwitchCaseSeq slots cases.len))))
 
@@ -41553,7 +41563,9 @@
               (array-ref slots index)
               (ir.CompilerIrSwitchCase.Case
                 tag
-                (match (opt-switch-candidate-label-for-tag items tag)
+                (match (opt-switch-candidate-label-for-tag
+                  (compiler-opt-global-shared-view items)
+                  tag)
                   [(OptSwitchMaybeLabel.SomeLabel label) label]
                   [(OptSwitchMaybeLabel.NoLabel) default-label])))
             (set! index (+ index 1)))))
@@ -75330,7 +75342,9 @@
                 (array-ref slots index)
                 (ir.CompilerIrSwitchCase.Case
                   tag
-                  (opt-bce-mb-fast-label body-labels label)))])
+                  (opt-bce-mb-fast-label
+                    (compiler-opt-global-shared-view body-labels)
+                    label)))])
           (set! index (+ index 1))))
       (ir.CompilerIrSwitchCaseSeq slots cases.len))))
 
@@ -93930,7 +93944,9 @@
                 (array-ref slots index)
                 (ir.CompilerIrSwitchCase.Case
                   tag
-                  (opt-inline-prefix-label prefix label)))])
+                  (opt-inline-prefix-label
+                    (compiler-opt-global-shared-view prefix)
+                    label)))])
           (set! index (+ index 1))))
       (ir.CompilerIrSwitchCaseSeq slots cases.len))))
 

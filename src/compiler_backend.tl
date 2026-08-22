@@ -50794,7 +50794,9 @@
           (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
             [(compiler_ir_types.CompilerIrSwitchCase.Case _ label)
               (when
-                (compiler-backend-symbol-list-contains-id? targets label)
+                (compiler-backend-symbol-list-contains-id?
+                  (compiler-backend-global-shared-view targets)
+                  label)
                 (return true))])
           (set! index (+ index 1))))
       false)))
@@ -50881,33 +50883,33 @@
           (if (compiler-backend-symbol-list-contains-id? targets label)
             (match (compiler-backend-emit-phi-edge-copies
               type-segment-bases
-              assignments
-              blocks
+              (compiler-backend-global-shared-view assignments)
+              (compiler-backend-global-shared-view blocks)
               label
               current-label
-              program-index
+              (compiler-backend-global-shared-view program-index)
               vars
-              planned-cycle
-              planned-stage
+              (compiler-backend-global-shared-view planned-cycle)
+              (compiler-backend-global-shared-view planned-stage)
               "")
               [(ResultCompilerBackend.Ok copies)
                 (match (compiler-backend-emit-switch-case-edge-blocks-from
                   type-segment-bases
-                  function
+                  (compiler-backend-global-shared-view function)
                   current-label
-                  cases
+                  (compiler-backend-global-shared-view cases)
                   (+ index 1)
-                  assignments
-                  blocks
-                  program-index
+                  (compiler-backend-global-shared-view assignments)
+                  (compiler-backend-global-shared-view blocks)
+                  (compiler-backend-global-shared-view program-index)
                   vars
-                  planned-cycle
-                  planned-stage)
+                  (compiler-backend-global-shared-view planned-cycle)
+                  (compiler-backend-global-shared-view planned-stage))
                   [(ResultCompilerBackend.Ok rest-blocks)
                     (ResultCompilerBackend.Ok
                       (str_cat.str-cat
                         (compiler-backend-emit-switch-edge-block
-                          function
+                          (compiler-backend-global-shared-view function)
                           (compiler-backend-switch-case-edge-label
                             current-label
                             tag)
@@ -50920,16 +50922,16 @@
                 (ResultCompilerBackend.Err message)])
             (compiler-backend-emit-switch-case-edge-blocks-from
               type-segment-bases
-              function
+              (compiler-backend-global-shared-view function)
               current-label
-              cases
+              (compiler-backend-global-shared-view cases)
               (+ index 1)
-              assignments
-              blocks
-              program-index
+              (compiler-backend-global-shared-view assignments)
+              (compiler-backend-global-shared-view blocks)
+              (compiler-backend-global-shared-view program-index)
               vars
-              planned-cycle
-              planned-stage))]))))
+              (compiler-backend-global-shared-view planned-cycle)
+              (compiler-backend-global-shared-view planned-stage)))]))))
 
 (define (compiler-backend-emit-switch-case-edge-blocks
   [type-segment-bases : i64]
@@ -50987,11 +50989,11 @@
                   (text_buf.append
                     (text_buf.append out "    .quad ")
                     (compiler-backend-asm-label
-                      function
+                      (compiler-backend-global-shared-view function)
                       (if (and
                         retarget-phi-edges
                         (compiler-backend-symbol-list-contains-id?
-                          targets
+                          (compiler-backend-global-shared-view targets)
                           label))
                         (compiler-backend-switch-case-edge-label
                           current-label
@@ -79766,17 +79768,23 @@
       [(compiler_ir_types.CompilerIrSwitchCase.Case _ label)
         (let
           [entry-label : String
-            (compiler-backend-object-switch-entry-label table-label index)]
-          [target : String (compiler-backend-asm-label label-scope label)]
+            (compiler-backend-object-switch-entry-label
+              (compiler-backend-global-shared-view table-label)
+              index)]
+          [target : String
+            (compiler-backend-asm-label
+              (compiler-backend-global-shared-view label-scope)
+              label)]
           (compiler-backend-object-switch-table-cases
             (object_target.compiler-backend-object-add-rodata
               (object_target.compiler-backend-object-add-rodata-relocation
                 (object_target.compiler-backend-object-add-rodata
                   parts
-                  (cobj.CompilerObjectDataRecord.Label entry-label))
-                entry-label
+                  (cobj.CompilerObjectDataRecord.Label
+                    (compiler-backend-global-shared-view entry-label)))
+                (compiler-backend-global-shared-view entry-label)
                 (cobj.CompilerObjectRelocationKind.Abs64)
-                target)
+                (compiler-backend-global-shared-view target))
               (cobj.CompilerObjectDataRecord.SymbolAddress target))
             label-scope
             table-label

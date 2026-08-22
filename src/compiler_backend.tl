@@ -1511,12 +1511,14 @@
       (ci.intern-compat-state-str (compiler-backend-state-intern state) id)
       "")))
 
-;; Per-job memo cell backing compiler-backend-call-symbol-index (see its
-;; comment).  Exactly one value lives in a one-element dynamic-array lane of
-;; CompilerBackendProgramIndex: dynamic arrays are heap references, so every
-;; borrowed copy of the index observes the same mutable cell without unsafe
-;; pointers, while the value itself follows the language's copy-out /
-;; mutate / publish-back struct rules on each access.
+;; Per-job memo value backing compiler-backend-call-symbol-index (see its
+;; comment).  It never lives in a struct-typed array lane: reading such an
+;; element deep-copies the aggregate (including the embedded key map), which
+;; costs more than the resolution it caches.  Instead a one-element i64 lane on
+;; CompilerBackendProgramIndex holds the raw address of one memo value allocated
+;; in the backend state owner arena, and accesses go through ptr-read /
+;; ptr-write!, the same mechanism CompilerBackendStateData uses behind its
+;; opaque handle.
 (defstruct CompilerBackendCallSymbolMemo
   ;; name-id -> slot into `values`, following the backend_i64_i64_map pattern.
   (keys backend_i64_i64_map.Map)
@@ -1558,10 +1560,11 @@
   ;; Exact backend job owner.  All emission paths use this capability rather
   ;; than consulting the active compatibility intern table.
   (backend-state CompilerBackendState)
-  ;; Call-symbol resolution memo cell; see CompilerBackendCallSymbolMemo.  The
-  ;; memo is filled lazily during emission and dies with this index: no state
+  ;; Call-symbol resolution memo cell: element 0 holds the raw address of the
+  ;; CompilerBackendCallSymbolMemo value (0 = not allocated yet).  The memo is
+  ;; filled lazily during emission and dies with this index's job: no state
   ;; escapes the job or outlives it.
-  (call-symbol-memo (__tl_dyn-array CompilerBackendCallSymbolMemo)))
+  (call-symbol-memo (__tl_dyn-array i64)))
 
 (define (compiler-backend-symbol-text-index
   [index : CompilerBackendProgramIndex]
@@ -17072,7 +17075,8 @@
           1024
           0))]))
 
-;; Resolved assembly symbol for an emitted CALL target, memoized per job.;;
+;; Resolved assembly symbol for an emitted CALL target, memoized per job.
+;;
 ;; The backend resolves the same callee names over and over across ~800k
 ;; emitted instructions: every resolution refetches symbol text, re-probes the
 ;; extern maps, and re-runs the runtime-plan provided predicates.  `plan` and
@@ -17087,7 +17091,7 @@
 ;; filled under; any mismatch - a differently flagged plan, or a switched
 ;; intern table - discards it and refills from scratch, which keeps results
 ;; identical to the uncached path in every case.  Emission drives this from a
-;; single thread, so the copy-out / publish-back cell needs no synchronization.
+;; single thread, so the raw-pointer cell needs no synchronization.
 ;; The memo outlives individual function emissions, so every allocation it
 ;; retains -- the key map, the value vector, and each resolved symbol string --
 ;; goes into the backend state's owner arena.  That is the same non-rewinding
@@ -17098,12 +17102,66 @@
   (arena.Arena
     (__tl-project-field (compiler-backend-state-data state) owner-arena)))
 
+;; Raw-pointer access to the shared memo value.  Copies of the wide program
+;; index must observe one cell without deep-copying the embedded map on every
+;; read, so the cell carries an address and these helpers move the value.
+(define (compiler-backend-call-symbol-memo-load
+  [index : CompilerBackendProgramIndex]) : CompilerBackendCallSymbolMemo
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (array-ref index.call-symbol-memo 0) : u64)
+        : (Ptr CompilerBackendCallSymbolMemo)))))
+
+(define (compiler-backend-call-symbol-memo-store!
+  [index : CompilerBackendProgramIndex]
+  [memo : CompilerBackendCallSymbolMemo]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (array-ref index.call-symbol-memo 0) : u64)
+        : (MutPtr CompilerBackendCallSymbolMemo))
+      memo)))
+
+;; Allocate the memo value in the owner arena and publish its address through
+;; the index's cell, following the compiler-backend-state-new construction.
+(define (compiler-backend-call-symbol-memo-allocate!
+  [index : CompilerBackendProgramIndex]
+  [flags : i64]) : unit
+  (let
+    [owner : arena.Arena
+      (compiler-backend-call-symbol-memo-owner index.backend-state)]
+    (in-arena
+      owner
+      (let
+        [cell : (__tl_dyn-array CompilerBackendCallSymbolMemo)
+          (array.make-array CompilerBackendCallSymbolMemo 1)]
+        (begin
+          (set!
+            (array-ref cell 0)
+            (CompilerBackendCallSymbolMemo
+              (backend_i64_i64_map.new)
+              (array.make-array String 0)
+              flags
+              (compiler-backend-state-intern-generation index.backend-state)
+              (compiler-backend-state-intern-table-id index.backend-state)))
+          (set!
+            (array-ref index.call-symbol-memo 0)
+            (cast
+              (unsafe
+                (ptr->int
+                  (ptr-cast
+                    (__tl_array-data cell)
+                    : (Ptr CompilerBackendCallSymbolMemo))))
+              : i64)))))))
+
 (define (compiler-backend-call-symbol-index
   [name : i64]
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : String
   (let
-    [memo : CompilerBackendCallSymbolMemo (array-ref index.call-symbol-memo 0)]
+    [memo : CompilerBackendCallSymbolMemo
+      (compiler-backend-call-symbol-memo-load index)]
     [flags : i64 (compiler-backend-call-symbol-plan-flags plan)]
     (if (and
       (= memo.plan-flags flags)
@@ -17133,24 +17191,25 @@
                     name
                     (array-length memo.values))
                   (array.push! memo.values stable)))
-              ;; Publish the mutated header back into the shared cell.
-              (set! (array-ref index.call-symbol-memo 0) memo)
+              ;; Publish the mutated value back into the shared cell.
+              (compiler-backend-call-symbol-memo-store! index memo)
               stable))])
-      (let
-        [owner : arena.Arena
-          (compiler-backend-call-symbol-memo-owner index.backend-state)]
-        [fresh : CompilerBackendCallSymbolMemo
-          (in-arena
-            owner
+      (begin
+        ;; Fresh cell: allocate the value.  Existing cell: reset it in place.
+        ;; Both stamp the current fingerprint so the retry below hits the memo
+        ;; path (a differently flagged plan or a switched intern table
+        ;; invalidates every entry at once).
+        (if (= (array-ref index.call-symbol-memo 0) 0)
+          (compiler-backend-call-symbol-memo-allocate! index flags)
+          (compiler-backend-call-symbol-memo-store!
+            index
             (CompilerBackendCallSymbolMemo
               (backend_i64_i64_map.new)
               (array.make-array String 0)
               flags
               (compiler-backend-state-intern-generation index.backend-state)
-              (compiler-backend-state-intern-table-id index.backend-state)))]
-        (begin
-          (set! (array-ref index.call-symbol-memo 0) fresh)
-          (compiler-backend-call-symbol-index name plan index))))))
+              (compiler-backend-state-intern-table-id index.backend-state))))
+        (compiler-backend-call-symbol-index name plan index)))))
 
 (define (compiler-backend-function-label-scope
   [index : CompilerBackendProgramIndex]
@@ -36285,17 +36344,8 @@
         type-segment-bases
         functions
         externs)]
-    [call-symbol-memo : (__tl_dyn-array CompilerBackendCallSymbolMemo)
-      (array.make-array CompilerBackendCallSymbolMemo 1)]
-    [_call-symbol-memo-init : unit
-      (set!
-        (array-ref call-symbol-memo 0)
-        (CompilerBackendCallSymbolMemo
-          (backend_i64_i64_map.new)
-          (array.make-array String 0)
-          -1
-          -1
-          -1))]
+    [call-symbol-memo : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [_call-symbol-memo-init : unit (set! (array-ref call-symbol-memo 0) 0)]
     (CompilerBackendProgramIndex
       function-ids
       function-names

@@ -11026,14 +11026,17 @@
           first.start-col
           first.end-line
           first.end-col)]
+      [run-start : i64 (reader.sp-node-pool-reserve! (+ count 2))]
       [index : i64 0]
       (begin
-        (reader.sp-node-push
+        (set!
+          (array-ref reader.sp-node-pool-slots run-start)
           (reader.SpannedSexpr.Int
             (compiler-parse-decl-list-storage-key decls)
             "__tl_semantic_origin"
             marker-span))
-        (reader.sp-node-push
+        (set!
+          (array-ref reader.sp-node-pool-slots (+ run-start 1))
           (reader.SpannedSexpr.Int
             (+ decls.offset slot)
             "__tl_semantic_origin_start"
@@ -11043,7 +11046,8 @@
             [origin : ParseSemanticOriginRecord
               (array-ref origins.items (+ start index))]
             (begin
-              (reader.sp-node-push
+              (set!
+                (array-ref reader.sp-node-pool-slots (+ (+ run-start 2) index))
                 (reader.SpannedSexpr.Int
                   origin.written-name
                   (compiler-parse-semantic-origin-kind-marker

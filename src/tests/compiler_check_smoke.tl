@@ -489,6 +489,10 @@
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               0)]
+          [slot-write-record : semantic_index.CompilerSemanticRecord
+            (semantic_index.compiler-semantic-source-index-get
+              (& index)
+              slot-write)]
           [slot-rhs-read : i64
             (semantic_index.compiler-semantic-source-index-find-name-occurrence
               (& index)
@@ -617,6 +621,14 @@
                 slot-definition
                 0)
               (compiler-check-semantic-record-access? (& index) slot-write 2)
+              (string.eq
+                (string.substring
+                  source
+                  slot-write-record.span.start-byte
+                  (-
+                    slot-write-record.span.end-byte
+                    slot-write-record.span.start-byte))
+                "slot")
               (compiler-check-semantic-record-access? (& index) slot-rhs-read 1)
               (compiler-check-semantic-record-access?
                 (& index)

@@ -137,6 +137,12 @@
   (Found String String lsp_vector_families.LspDiagnosticUris)
   (Missing))
 
+;; Narrow lookup for providers that must inspect the retained semantic owner.
+;; Keeping this separate avoids widening the common text-only lookup contract.
+(defenum LspSemanticDocumentLookup
+  (Found lsp_vector_families.LspDocument)
+  (Missing))
+
 (defenum LspDocumentDeclsLookup
   (Found String String lsp_vector_families.LspDiagnosticUris lsp_decl_vec.Vec)
   (Missing))
@@ -174,6 +180,24 @@
   (offset i64)
   (line i64)
   (col i64))
+
+(defstruct LspDocumentHighlightCandidate
+  (start-byte i64)
+  (end-byte i64)
+  (start-line i64)
+  (start-col i64)
+  (end-line i64)
+  (end-col i64)
+  (utf16-start-col i64)
+  (utf16-end-col i64)
+  (kind i64))
+
+(defstruct LspDocumentHighlightResults
+  (slots (__tl_dyn-array LspDocumentHighlightCandidate))
+  (len i64)
+  ;; Exposed to tests and measurements so the provider's single occurrence
+  ;; pass remains observable without production counters.
+  (record-visits i64))
 
 ;; Pure lexical context used by signature-help providers. Every offset is a
 ;; byte offset into the current document; position conversion happens only at
@@ -1726,6 +1750,18 @@
                         (not (string.eq definition.span.path path)))
                       (set! query-ok false))]
                   [(LspSemanticSymbolQuery.Missing) (set! query-ok false)])
+                (let
+                  [highlights : LspDocumentHighlightResults
+                    (lsp-document-highlights-at (& doc) use-byte)]
+                  (unless
+                    (and
+                      (= highlights.len 1)
+                      (=
+                        highlights.record-visits
+                        (compiler_semantic_index.compiler-semantic-source-index-len
+                          (& index)))
+                      (= (array-ref highlights.slots 0).kind 2))
+                    (set! query-ok false)))
                 (set! iteration (+ iteration 1))))
             (and
               (if complete
@@ -1876,10 +1912,14 @@
                       (& docs)
                       stale-doc-index
                       (lsp-document-fallback))]
+                  [stale-highlights : LspDocumentHighlightResults
+                    (lsp-document-highlights-at (& stale-doc) 1)]
                   [stale-ok : bool
                     (and
                       (lsp-semantic-smoke-stale? (& stale-doc) 1)
                       (= (lsp-document-semantic-record-at (& stale-doc) 0) -1)
+                      (= stale-highlights.len 0)
+                      (= stale-highlights.record-visits 0)
                       (=
                         (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)
                         (+ baseline 1)))]
@@ -9737,6 +9777,24 @@
           [(LspJsonText.Missing) LspDocumentLookup.Missing])]
       [(json.JsonMissing) LspDocumentLookup.Missing])))
 
+(define (lsp-get-semantic-document
+  [params : json.Json]
+  [docs : lsp_document_vec.Vec]) : LspSemanticDocumentLookup
+  (let
+    [key : String "textDocument"]
+    (match (json.object-get params (& key))
+      [(json.JsonMissing) LspSemanticDocumentLookup.Missing]
+      [(json.JsonFound document)
+        (match (lsp-json-string-field document "uri")
+          [(LspJsonText.Missing) LspSemanticDocumentLookup.Missing]
+          [(LspJsonText.Ok uri)
+            (let
+              [index : i64 (lsp-documents-find-index docs uri)]
+              (if (>= index 0)
+                (LspSemanticDocumentLookup.Found
+                  (lsp-document-refresh-from-disk docs index))
+                LspSemanticDocumentLookup.Missing))])])))
+
 (define (lsp-get-document-decls
   [params : json.Json]
   [docs : lsp_document_vec.Vec]) : LspDocumentDeclsLookup
@@ -11495,58 +11553,189 @@
               [else (set! i (+ i 1))])))
         ""))))
 
-(define (lsp-document-highlight-range [line : i64] [col : i64] [len : i64]) : json.Json
+(define (lsp-document-highlight-range
+  [candidate : (& candidate LspDocumentHighlightCandidate)]) : json.Json
   (lsp-json-object2
     "start"
-    (lsp-position line col)
+    (lsp-position
+      candidate.start-line
+      (if lsp-position-encoding-utf8
+        candidate.start-col
+        candidate.utf16-start-col))
     "end"
-    (lsp-position line (+ col len))))
+    (lsp-position
+      candidate.end-line
+      (if lsp-position-encoding-utf8
+        candidate.end-col
+        candidate.utf16-end-col))))
 
-(define (lsp-document-highlight [line : i64] [col : i64] [len : i64]) : json.Json
+(define (lsp-document-highlight
+  [candidate : (& candidate LspDocumentHighlightCandidate)]) : json.Json
   (lsp-json-object2
     "range"
-    (lsp-document-highlight-range line col len)
+    (lsp-document-highlight-range candidate)
     "kind"
-    (lsp-json-number 1)))
+    (lsp-json-number candidate.kind)))
 
-;; Source-ordered exact-token highlights. The scanner shares the lexical skip
-;; rules used by definition/document-symbol discovery.
-(define (lsp-document-highlights-in-text [text : String] [name : String]) : json.JsonSeq
+(define (lsp-document-highlight-kind
+  [access : compiler_semantic_index.CompilerSemanticAccess]) : i64
+  (match access
+    [(compiler_semantic_index.CompilerSemanticAccess.None) 1]
+    [(compiler_semantic_index.CompilerSemanticAccess.Read) 2]
+    [(compiler_semantic_index.CompilerSemanticAccess.Write) 3]
+    ;; LSP has no combined read/write highlight. Prefer the stronger write
+    ;; classification when a future semantic producer proves both.
+    [(compiler_semantic_index.CompilerSemanticAccess.ReadWrite) 3]))
+
+(define (lsp-document-highlight-candidate-less?
+  [left : (& left LspDocumentHighlightCandidate)]
+  [right : (& right LspDocumentHighlightCandidate)]) : bool
+  (cond
+    [(< left.start-byte right.start-byte) true]
+    [(> left.start-byte right.start-byte) false]
+    [else (< left.end-byte right.end-byte)]))
+
+(define (lsp-document-highlight-results-insert!
+  [results : (&mut results LspDocumentHighlightResults)]
+  [candidate : LspDocumentHighlightCandidate]) : unit
   (let
-    [n : i64 (string.string-length text)]
-    [name-len : i64 (string.string-length name)]
-    [name-units : i64 (lsp-string-position-units name)]
-    [i : i64 0]
-    [lc-cache : LspLineColCache (LspLineColCache -1 1 1)]
-    [acc : json.JsonSeq (json.list-empty)]
+    [index : i64 0]
+    [duplicate : i64 -1]
     (begin
-      (while (< i n)
+      (while (and (< index results.len) (< duplicate 0))
         (let
-          [c : char (string.string-ref text i)]
-          (cond
-            [(= c ';') (set! i (lsp-skip-line text i n))]
-            [(= c '"') (set! i (lsp-skip-string text i n))]
-            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
-            [(lsp-ident-char? c)
-              (let
-                [end : i64 (lsp-scan-ident text i n)]
+          [existing : LspDocumentHighlightCandidate
+            (array-ref results.slots index)]
+          (begin
+            (if (and
+              (= candidate.start-byte existing.start-byte)
+              (= candidate.end-byte existing.end-byte))
+              (set! duplicate index)
+              unit)
+            (set! index (+ index 1)))))
+      (if (>= duplicate 0)
+        (if (> candidate.kind (array-ref results.slots duplicate).kind)
+          (set! (array-ref results.slots duplicate).kind candidate.kind)
+          unit)
+        (begin
+          (if (>= results.len (array-length results.slots))
+            (let
+              [old-capacity : i64 (array-length results.slots)]
+              [new-capacity : i64
+                (if (< old-capacity 8)
+                  8
+                  (* old-capacity 2))]
+              [bigger : (__tl_dyn-array LspDocumentHighlightCandidate)
+                (__tl_make-array LspDocumentHighlightCandidate new-capacity)]
+              [copy-index : i64 0]
+              (begin
+                (while (< copy-index results.len)
+                  (begin
+                    (unsafe
+                      (ptr-write!
+                        (ptr-offset (__tl_array-data bigger) copy-index)
+                        (array-ref results.slots copy-index)))
+                    (set! copy-index (+ copy-index 1))))
+                (set! results.slots bigger)))
+            unit)
+          (let
+            [position : i64 0]
+            [write : i64 results.len]
+            (begin
+              (while (and
+                (< position results.len)
+                (not
+                  (lsp-document-highlight-candidate-less?
+                    (& candidate)
+                    (& (array-ref results.slots position)))))
+                (set! position (+ position 1)))
+              (while (> write position)
                 (begin
+                  (set!
+                    (array-ref results.slots write)
+                    (array-ref results.slots (- write 1)))
+                  (set! write (- write 1))))
+              (set! (array-ref results.slots position) candidate)
+              (set! results.len (+ results.len 1)))))))))
+
+(define (lsp-document-highlights-at
+  [doc : (& doc lsp_vector_families.LspDocument)]
+  [byte-position : i64]) : LspDocumentHighlightResults
+  (let
+    [results : LspDocumentHighlightResults
+      (LspDocumentHighlightResults
+        (__tl_make-array LspDocumentHighlightCandidate 0)
+        0
+        0)]
+    [cursor-index : i64 (lsp-document-semantic-record-at doc byte-position)]
+    (if (< cursor-index 0)
+      results
+      (let
+        [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex
+          doc.semantic.index]
+        [cursor : compiler_semantic_index.CompilerSemanticRecord
+          (compiler_semantic_index.compiler-semantic-source-index-get
+            (& semantic-index)
+            cursor-index)]
+        [document-path : String
+          (lsp-normalized-absolute-path (string.copy (& doc.path)))]
+        [record-index : i64 0]
+        (if (not (lsp-semantic-record-exact-editable? cursor))
+          results
+          (begin
+            (while (<
+              record-index
+              (compiler_semantic_index.compiler-semantic-source-index-len
+                (& semantic-index)))
+              (let
+                [record : compiler_semantic_index.CompilerSemanticRecord
+                  (compiler_semantic_index.compiler-semantic-source-index-get
+                    (& semantic-index)
+                    record-index)]
+                (begin
+                  (set! results.record-visits (+ results.record-visits 1))
                   (if (and
-                    (> name-len 0)
-                    (= (- end i) name-len)
-                    (string.is-string-prefix-at (& text) (& name) i))
-                    (set!
-                      acc
+                    (compiler_semantic_index.compiler-semantic-symbol-id-eq?
+                      cursor.symbol
+                      record.symbol)
+                    (lsp-semantic-record-exact-editable? record)
+                    (string.eq
+                      (lsp-normalized-absolute-path
+                        (string.copy (& record.span.path)))
+                      document-path))
+                    (lsp-document-highlight-results-insert!
+                      (&mut results)
                       (let
-                        [lc : LspLineCol
-                          (lsp-line-col-cache-at-offset! (&mut lc-cache) text i)]
-                        (lsp-json-list-cons
-                          (lsp-document-highlight lc.line lc.col name-units)
-                          acc)))
+                        [source : ast.AstSourceSpan record.span.source]
+                        (LspDocumentHighlightCandidate
+                          record.span.start-byte
+                          record.span.end-byte
+                          (ast.ast-source-span-start-line source)
+                          (ast.ast-source-span-start-col source)
+                          (ast.ast-source-span-end-line source)
+                          (ast.ast-source-span-end-col source)
+                          record.span.utf16-start-col
+                          record.span.utf16-end-col
+                          (lsp-document-highlight-kind record.access))))
                     unit)
-                  (set! i end)))]
-            [else (set! i (+ i 1))])))
-      (json.list-reverse acc))))
+                  (set! record-index (+ record-index 1)))))
+            results))))))
+
+(define (lsp-document-highlight-results-json
+  [results : (& results LspDocumentHighlightResults)]) : json.Json
+  (let
+    [index : i64 (- results.len 1)]
+    [items : json.JsonSeq (json.list-empty)]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set!
+            items
+            (lsp-json-list-cons
+              (lsp-document-highlight (& (array-ref results.slots index)))
+              items))
+          (set! index (- index 1))))
+      (lsp-json-array items))))
 
 (define (lsp-json-int-field-usable? [value : json.Json] [key : String]) : bool
   (match (json.object-get value (& key))
@@ -11563,8 +11752,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]) : unit
-  (match (lsp-get-document params docs)
-    [(LspDocumentLookup.Found _ text _)
+  (match (lsp-get-semantic-document params docs)
+    [(LspSemanticDocumentLookup.Found doc)
       (let
         [position-key : String "position"]
         (match (json.object-get params (& position-key))
@@ -11575,25 +11764,27 @@
               (let
                 [line : i64 (lsp-json-int-field-default position "line" 0)]
                 [col : i64 (lsp-json-int-field-default position "character" 0)]
-                [off : i64 (lsp-offset-at-position text line col)]
-                [name : String (lsp-code-symbol-at-offset text off)]
-                (lsp-write-response
-                  id
-                  (lsp-json-array
-                    (if (string.eq name "")
-                      (json.list-empty)
-                      (lsp-document-highlights-in-text text name)))))
+                (match (lsp-offset-at-position-checked doc.text line col)
+                  [(LspOffsetLookup.Missing)
+                    (lsp-write-response id (lsp-json-array (json.list-empty)))]
+                  [(LspOffsetLookup.Found off)
+                    (let
+                      [results : LspDocumentHighlightResults
+                        (lsp-document-highlights-at (& doc) off)]
+                      (lsp-write-response
+                        id
+                        (lsp-document-highlight-results-json (& results))))]))
               (lsp-write-response id (lsp-json-array (json.list-empty))))]
           [(json.JsonMissing)
             (lsp-write-response id (lsp-json-array (json.list-empty)))]))]
-    [(LspDocumentLookup.Missing)
+    [(LspSemanticDocumentLookup.Missing)
       (lsp-write-response id (lsp-json-array (json.list-empty)))]))
 
 ;; --------------------------------------------------------------------------
 ;; Folding ranges (textDocument/foldingRange).
 ;;
 ;; One linear lexical pass over the document, sharing the skip rules used by
-;; definition/document-symbol/highlight discovery, so delimiters inside
+;; definition/document-symbol discovery, so delimiters inside
 ;; strings, character literals, and comments never open or close a fold.
 ;;
 ;; A multiline `(`/`[` form folds from just after its opening delimiter to just

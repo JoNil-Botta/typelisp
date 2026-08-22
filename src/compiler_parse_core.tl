@@ -285,35 +285,49 @@
         (let
           [current : i64 written-name]
           [start-col : i64 (token.span-start-col span)]
-          [done : bool false]
-          (while (not done)
+          [first-dot : i64 (ci.intern-first-dot current)]
+          (if (< first-dot 0)
             (let
-              [dot : i64 (ci.intern-first-dot current)]
-              (if (>= dot 0)
-                (begin
-                  (compiler-parse-semantic-origin-push-active!
-                    prefix-kind
-                    (ci.intern-leading-dot-id current)
-                    (token.SourceSpan
-                      (token.span-start-line span)
-                      start-col
-                      (token.span-end-line span)
-                      (+ start-col dot)))
-                  (set! start-col (+ (+ start-col dot) 1))
-                  (set! current (ci.intern-dotted-tail-id current)))
+              [text : String (ci.intern-str current)]
+              [n : i64 (string.string-length text)]
+              (compiler-parse-semantic-origin-push-active!
+                final-kind
+                current
+                (token.SourceSpan
+                  (token.span-start-line span)
+                  start-col
+                  (token.span-end-line span)
+                  (+ start-col n))))
+            (let
+              [done : bool false]
+              (while (not done)
                 (let
-                  [text : String (ci.intern-str current)]
-                  [n : i64 (string.string-length text)]
-                  (begin
-                    (compiler-parse-semantic-origin-push-active!
-                      final-kind
-                      current
-                      (token.SourceSpan
-                        (token.span-start-line span)
-                        start-col
-                        (token.span-end-line span)
-                        (+ start-col n)))
-                    (set! done true)))))))))
+                  [dot : i64 (ci.intern-first-dot current)]
+                  (if (>= dot 0)
+                    (begin
+                      (compiler-parse-semantic-origin-push-active!
+                        prefix-kind
+                        (ci.intern-leading-dot-id current)
+                        (token.SourceSpan
+                          (token.span-start-line span)
+                          start-col
+                          (token.span-end-line span)
+                          (+ start-col dot)))
+                      (set! start-col (+ (+ start-col dot) 1))
+                      (set! current (ci.intern-dotted-tail-id current)))
+                    (let
+                      [text : String (ci.intern-str current)]
+                      [n : i64 (string.string-length text)]
+                      (begin
+                        (compiler-parse-semantic-origin-push-active!
+                          final-kind
+                          current
+                          (token.SourceSpan
+                            (token.span-start-line span)
+                            start-col
+                            (token.span-end-line span)
+                            (+ start-col n)))
+                        (set! done true)))))))))))
     unit))
 
 (define (compiler-parse-decl-list-storage-key

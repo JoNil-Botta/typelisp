@@ -40,6 +40,12 @@
 (import lex as lexer)
 (import token)
 
+(unsafe
+  (extern (read-runtime-copy-bytes!
+    [dst : (MutPtr u8)]
+    [src : (Ptr u8)]
+    [count : i64]) : unit (:symbol "tl_memcpy")))
+
 ;; --------------------------------------------------------------------------
 ;; Dense s-expression node and child storage.
 ;; --------------------------------------------------------------------------
@@ -206,12 +212,14 @@
         [new-slots : (__tl_dyn-array SpannedSexpr)
           (__tl_make-array SpannedSexpr new-cap)]
         [len : i64 sp-node-pool-count]
-        [i : i64 0]
         (begin
-          (while (< i len)
-            (begin
-              (set! (array-ref new-slots i) (array-ref sp-node-pool-slots i))
-              (set! i (+ i 1))))
+          (if (> len 0)
+            (unsafe
+              (read-runtime-copy-bytes!
+                (ptr-cast (__tl_array-data new-slots) : (MutPtr u8))
+                (ptr-cast (__tl_array-data sp-node-pool-slots) : (Ptr u8))
+                (* len (comptime (size-of (type SpannedSexpr))))))
+            unit)
           (set! sp-node-pool-base-arena storage-root)
           (set! sp-node-pool-slots new-slots))))))
 

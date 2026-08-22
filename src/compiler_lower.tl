@@ -76099,6 +76099,20 @@
                   (let
                     [decls : ast.AstDeclList (lower-box-shared-view decls-box)]
                     (ast.ast-decl-list-len (& decls)))])]
+            [_finish-package-surface : unit
+              (cfg
+                (any
+                  compiler-surface-producer
+                  compiler-build-identity
+                  embedded-stdlib-tlci)
+                (match summary
+                  [(tc_core.CompilerTypecheckSummary values functions externs)
+                    (package_surface.package-surface-capture-finish!
+                      source-decl-count
+                      values
+                      functions
+                      externs)])
+                unit)]
             [checked-keep-plan : LowerDeclKeepPlan
               (lower-decl-keep-plan-add-clone-roots
                 keep-plan

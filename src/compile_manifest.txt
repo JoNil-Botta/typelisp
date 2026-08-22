@@ -525,6 +525,8 @@ contains|_tl_opt_cfg_dominators:
 contains|_tl_opt_verify_function:
 end
 
+decision|src/compiler_owned_view.tl|unsafe ownership-view reconstruction bridge imported by selfhost modules for explicit sharing under by-value semantics (#6215); exercised transitively by compiler bootstrap and integration gates
+
 case|selfhost_compiler_parse_core|src/compiler_parse_core.tl|assembly|skip|direct
 contains|_tl_parse_ast_source:
 contains|_tl_parse_ast_source_with_cfg:

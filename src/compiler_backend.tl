@@ -36,6 +36,7 @@
 ;; Block labels are interned ids, so their maps are integer-keyed (refs #5718).
 (import (hashmap.hashmap i64 i64) as backend_label_i64_map)
 (import (hashmap.hashmap i64 i64) as backend_i64_i64_map)
+(import (hashmap.hashmap i64 String) as backend_i64_string_map)
 (import stdlib.string)
 (import stdlib.byte_buf_core)
 (import stdlib.str_cat_runtime as str_cat)
@@ -1511,6 +1512,27 @@
       (ci.intern-compat-state-str (compiler-backend-state-intern state) id)
       "")))
 
+;; Per-job memo value backing compiler-backend-call-symbol-index (see its
+;; comment).  It never lives in a struct-typed array lane: reading such an
+;; element deep-copies the aggregate (including the embedded key map), which
+;; costs more than the resolution it caches.  Instead a one-element i64 lane on
+;; CompilerBackendProgramIndex holds the raw address of one memo value allocated
+;; in the backend state owner arena, and accesses go through ptr-read /
+;; ptr-write!, the same mechanism CompilerBackendStateData uses behind its
+;; opaque handle.
+(defstruct CompilerBackendCallSymbolMemo
+  ;; callee name-id -> resolved assembly symbol, held in one integer-keyed
+  ;; hashmap so growth is amortized internal to the map.
+  (symbols backend_i64_string_map.Map)
+  ;; Fingerprint of the emission context this memo was filled under: every
+  ;; plan-dependent branch of call-symbol-index flows through the runtime-plan
+  ;; provided predicates, which these eleven packed plan bits fully determine,
+  ;; and the intern identity guards the symbol-text inputs.  A plan-flags value
+  ;; of -1 marks an unfilled cell.
+  (plan-flags i64)
+  (generation i64)
+  (table-id i64))
+
 (defstruct CompilerBackendProgramIndex
   (functions backend_i64_i64_map.Map)
   (function-names (__tl_dyn-array String))
@@ -1538,7 +1560,12 @@
   (profile-state profile_state.CompilerProfileState)
   ;; Exact backend job owner.  All emission paths use this capability rather
   ;; than consulting the active compatibility intern table.
-  (backend-state CompilerBackendState))
+  (backend-state CompilerBackendState)
+  ;; Call-symbol resolution memo cell: element 0 holds the raw address of the
+  ;; CompilerBackendCallSymbolMemo value (0 = not allocated yet).  The memo is
+  ;; filled lazily during emission and dies with this index's job: no state
+  ;; escapes the job or outlives it.
+  (call-symbol-memo (__tl_dyn-array i64)))
 
 (define (compiler-backend-symbol-text-index
   [index : CompilerBackendProgramIndex]
@@ -16914,6 +16941,17 @@
 (define (compiler-backend-closure-entry-label [name : String]) : String
   (str_cat.str-cat ".L_tl_fn_entry_" (compiler-backend-asm-safe-symbol name)))
 
+;; Cheap rejection band for the fixed-fault text fallback below.  Every
+;; fixed-fault runtime spelling ("tl_memcpy" through
+;; "tl_tlci_call_macro_entry") starts with 't' and carries between 9 and 24
+;; characters, so a callee outside the 8..30 band cannot match any of them and
+;; skips the nine string comparisons entirely.
+(define (compiler-backend-fixed-fault-text-band? [name : String]) : bool
+  (and
+    (>= (string.string-length name) 8)
+    (<= (string.string-length name) 30)
+    (= (string.string-ref name 0) 't')))
+
 (define (compiler-backend-fixed-fault-symbol-id?
   [backend-state : CompilerBackendState]
   [name-id : i64]) : bool
@@ -16921,16 +16959,18 @@
     (cbi.compiler-builtin-backend-fixed-fault-id? name-id)
     (let
       [name : String (compiler-backend-symbol-text-state backend-state name-id)]
-      (or
-        (string.eq name "tl_memcpy")
-        (string.eq name "tl_memcpy_fresh")
-        (string.eq name "tl_memchr")
-        (string.eq name "tl_array_zero")
-        (string.eq name "tl_mem_fill8")
-        (string.eq name "tl_mem_copy_fwd")
-        (string.eq name "tl_abort_string")
-        (string.eq name "tl_tlci_call_image_entry")
-        (string.eq name "tl_tlci_call_macro_entry")))))
+      (if (compiler-backend-fixed-fault-text-band? name)
+        (or
+          (string.eq name "tl_memcpy")
+          (string.eq name "tl_memcpy_fresh")
+          (string.eq name "tl_memchr")
+          (string.eq name "tl_array_zero")
+          (string.eq name "tl_mem_fill8")
+          (string.eq name "tl_mem_copy_fwd")
+          (string.eq name "tl_abort_string")
+          (string.eq name "tl_tlci_call_image_entry")
+          (string.eq name "tl_tlci_call_macro_entry"))
+        false))))
 
 (define (compiler-backend-call-raw-symbol-id?
   [plan : CompilerBackendRuntimePlan]
@@ -16949,7 +16989,10 @@
     (compiler-backend-asm-safe-symbol
       (compiler-backend-symbol-text-state backend-state name-id))))
 
-(define (compiler-backend-call-symbol-index
+;; Uncached call-symbol resolution.  `plan` and the program index are immutable
+;; while a program is emitted, so this is a pure function of `name` within one
+;; emission; compiler-backend-call-symbol-index wraps it with a per-job memo.
+(define (compiler-backend-call-symbol-index-uncached
   [name : i64]
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : String
@@ -16976,6 +17019,221 @@
           (not (compiler-backend-index-function-defines? index name)))
         name-text]
       [else (compiler-backend-function-symbol-index index name)])))
+
+;; Packed fingerprint of the plan bits that can influence call-symbol
+;; resolution.  Every plan-dependent branch runs through
+;; compiler-backend-plan-provides-rest-id?, whose outcome depends only on the
+;; seven plan flags plus the profile and arena-debug tail bits; the two
+;; remaining tail bits ride along so the fingerprint fully identifies the
+;; queried plan.  WithScratch wrappers resolve to their boxed base exactly as
+;; they do for the raw predicates.
+(define (compiler-backend-call-symbol-plan-flags
+  [plan : CompilerBackendRuntimePlan]) : i64
+  (match plan
+    [(CompilerBackendRuntimePlan.WithScratch base _)
+      (compiler-backend-call-symbol-plan-flags (__tl-box-place base))]
+    [(CompilerBackendRuntimePlan.Plan
+        alloc
+        substring
+        str-view
+        concat
+        provides-int-to-string
+        region-mark
+        region-reset
+        provides-tail)
+      (+
+        (if alloc
+          1
+          0)
+        (if substring
+          2
+          0)
+        (if str-view
+          4
+          0)
+        (if concat
+          8
+          0)
+        (if provides-int-to-string
+          16
+          0)
+        (if region-mark
+          32
+          0)
+        (if region-reset
+          64
+          0)
+        (if (compiler-backend-runtime-tail-profile? provides-tail)
+          128
+          0)
+        (if (compiler-backend-runtime-tail-tlci-macro-entry? provides-tail)
+          256
+          0)
+        (if (compiler-backend-runtime-tail-arena-debug? provides-tail)
+          512
+          0)
+        (if (compiler-backend-runtime-tail-startup-profile? provides-tail)
+          1024
+          0))]))
+
+;; Resolved assembly symbol for an emitted CALL target, memoized per job.
+;;
+;; The backend resolves the same callee names over and over across ~800k
+;; emitted instructions: every resolution refetches symbol text, re-probes the
+;; extern maps, and re-runs the runtime-plan provided predicates.  `plan` and
+;; the program index are immutable during emission, so results are pure
+;; functions of the callee name-id within one process run; this wrapper keeps
+;; one lazily-filled name-id -> symbol memo inside the program index (rustc
+;; query shaped, never persisted) and falls back to a full re-resolution only
+;; on a memo miss.
+;;
+;; The memo is consulted only while its own program-index is active and is
+;; stamped with the plan flag bits and intern generation/table id it was
+;; filled under; any mismatch - a differently flagged plan, or a switched
+;; intern table - discards it and refills from scratch, which keeps results
+;; identical to the uncached path in every case.  Emission drives this from a
+;; single thread, so the raw-pointer cell needs no synchronization.
+;; The memo outlives individual function emissions, so every allocation it
+;; retains -- the key map, the value vector, and each resolved symbol string --
+;; goes into the backend state's owner arena.  That is the same non-rewinding
+;; home the user-symbol cache uses; emission otherwise rewinds per-function
+;; regions whose strings would dangle (see the prefix-rewind cache resets in
+;; the function emitter).
+(define (compiler-backend-call-symbol-memo-arena
+  [index : CompilerBackendProgramIndex]) : i64
+  (if (= (array-ref index.call-symbol-memo 1) 0)
+    (let
+      [handle : i64 (arena.tl_arena_make_small)]
+      (begin
+        (set! (array-ref index.call-symbol-memo 1) handle)
+        handle))
+    (array-ref index.call-symbol-memo 1)))
+
+;; Raw-pointer access to the shared memo value.  Copies of the wide program
+;; index must observe one cell without deep-copying the embedded map on every
+;; read, so the cell carries an address and these helpers move the value.
+(define (compiler-backend-call-symbol-memo-load
+  [index : CompilerBackendProgramIndex]) : CompilerBackendCallSymbolMemo
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (array-ref index.call-symbol-memo 0) : u64)
+        : (Ptr CompilerBackendCallSymbolMemo)))))
+
+(define (compiler-backend-call-symbol-memo-store!
+  [index : CompilerBackendProgramIndex]
+  [memo : CompilerBackendCallSymbolMemo]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (array-ref index.call-symbol-memo 0) : u64)
+        : (MutPtr CompilerBackendCallSymbolMemo))
+      memo)))
+
+;; Allocate the memo value in the dedicated memo arena and publish its address
+;; through the index cell, following the compiler-backend-state-new
+;; construction.
+(define (compiler-backend-call-symbol-memo-allocate!
+  [index : CompilerBackendProgramIndex]
+  [flags : i64]) : unit
+  (let
+    [arena-handle : i64 (compiler-backend-call-symbol-memo-arena index)]
+    (in-arena
+      (arena.Arena arena-handle)
+      (let
+        [memo-cell : (__tl_dyn-array CompilerBackendCallSymbolMemo)
+          (array.make-array CompilerBackendCallSymbolMemo 1)]
+        (begin
+          (set!
+            (array-ref memo-cell 0)
+            (CompilerBackendCallSymbolMemo
+              (backend_i64_string_map.new)
+              flags
+              (compiler-backend-state-intern-generation index.backend-state)
+              (compiler-backend-state-intern-table-id index.backend-state)))
+          (set!
+            (array-ref index.call-symbol-memo 0)
+            (cast
+              (unsafe
+                (ptr->int
+                  (ptr-cast
+                    (__tl_array-data memo-cell)
+                    : (Ptr CompilerBackendCallSymbolMemo))))
+              : i64)))))))
+
+;; Hit: return the retained symbol.  Miss: resolve once, copy the result into
+;; the memo arena (the uncached result may name a transient region), retain it,
+;; and publish the mutated value back through the shared cell.
+(define (compiler-backend-call-symbol-memo-lookup-or-fill
+  [name : i64]
+  [plan : CompilerBackendRuntimePlan]
+  [index : CompilerBackendProgramIndex]
+  [memo-address : i64]) : String
+  (let
+    [memo : CompilerBackendCallSymbolMemo
+      (unsafe
+        (ptr-read
+          (int->ptr
+            (cast memo-address : u64)
+            : (Ptr CompilerBackendCallSymbolMemo))))]
+    (match (backend_i64_string_map.get (& memo.symbols) name)
+      [(backend_i64_string_map.LookupFound symbol) symbol]
+      [(backend_i64_string_map.LookupMissing)
+        (let
+          [owner : arena.Arena
+            (arena.Arena (compiler-backend-call-symbol-memo-arena index))]
+          [resolved : String
+            (compiler-backend-call-symbol-index-uncached name plan index)]
+          [stable : String (in-arena owner (str_cat.str-cat resolved ""))]
+          (begin
+            (in-arena
+              owner
+              (backend_i64_string_map.insert-ref!
+                (&mut memo.symbols)
+                name
+                stable))
+            (compiler-backend-call-symbol-memo-store! index memo)
+            stable))])))
+
+(define (compiler-backend-call-symbol-index
+  [name : i64]
+  [plan : CompilerBackendRuntimePlan]
+  [index : CompilerBackendProgramIndex]) : String
+  (let
+    [flags : i64 (compiler-backend-call-symbol-plan-flags plan)]
+    ;; Allocate before the first load: the cell starts at address 0.
+    (begin
+      (if (= (array-ref index.call-symbol-memo 0) 0)
+        (compiler-backend-call-symbol-memo-allocate! index flags)
+        unit)
+      (let
+        [memo : CompilerBackendCallSymbolMemo
+          (compiler-backend-call-symbol-memo-load index)]
+        (if (and
+          (= memo.plan-flags flags)
+          (=
+            memo.generation
+            (compiler-backend-state-intern-generation index.backend-state))
+          (=
+            memo.table-id
+            (compiler-backend-state-intern-table-id index.backend-state)))
+          (compiler-backend-call-symbol-memo-lookup-or-fill
+            name
+            plan
+            index
+            (array-ref index.call-symbol-memo 0))
+          (begin
+            ;; A differently flagged plan or a switched intern table
+            ;; invalidates every entry at once: reset in place, stamped with
+            ;; the current fingerprint so the retry below takes the memo path.
+            (compiler-backend-call-symbol-memo-store!
+              index
+              (CompilerBackendCallSymbolMemo
+                (backend_i64_string_map.new)
+                flags
+                (compiler-backend-state-intern-generation index.backend-state)
+                (compiler-backend-state-intern-table-id index.backend-state)))
+            (compiler-backend-call-symbol-index name plan index)))))))
 
 (define (compiler-backend-function-label-scope
   [index : CompilerBackendProgramIndex]
@@ -36110,6 +36368,11 @@
         type-segment-bases
         functions
         externs)]
+    [call-symbol-memo : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [_call-symbol-memo-init : unit
+      (begin
+        (set! (array-ref call-symbol-memo 0) 0)
+        (set! (array-ref call-symbol-memo 1) 0))]
     (CompilerBackendProgramIndex
       function-ids
       function-names
@@ -36125,7 +36388,8 @@
       representations
       type-segment-bases
       profile-state
-      backend-state)))
+      backend-state
+      call-symbol-memo)))
 
 (define (compiler-backend-program-index-build-with-profile-state
   [type-segment-bases : i64]
@@ -71794,13 +72058,347 @@
 ;; First-class arena runtime helpers and the arena poison debug toggle
 ;; are always emitted, so they are provided runtime symbols (resolve to
 ;; their raw names, not the mangled `_tl_tl_arena_*`).
+;; Precomputed runtime-plan provided-set.
+;;
+;; compiler-backend-runtime-plan-with-index-for-with-backend-state finalizes
+;; exactly which builtin ids a plan provides; the predicates below used to
+;; re-derive that answer on every query with up to ~35 intern-id comparisons
+;; behind repeated compiler-builtin-refresh! checks.  The plan flags and the
+;; intern table are immutable between finalizations, so the finalization step
+;; computes the set once into these process-lifetime lanes, and the predicate
+;; bodies consult the table only when its fingerprint -- intern
+;; generation/table id plus every queried plan bit -- matches exactly.  Any
+;; mismatch (hand-built plans in tests, a switched intern table, an id spread
+;; too wide to table) falls back to the original derivation verbatim, so
+;; behavior stays identical in every case.  Nothing here outlives the process;
+;; emission drives it from a single thread.
+(define compiler-backend-plan-provides-generation : i64
+  -1)
+(define compiler-backend-plan-provides-table-id : i64
+  -1)
+(define compiler-backend-plan-provides-plan-flags : i64
+  -1)
+(define compiler-backend-plan-provides-base-id : i64
+  0)
+(define compiler-backend-plan-provides-span : i64
+  -1)
+(define compiler-backend-plan-provides-bits : (__tl_dyn-array i64)
+  (array.make-array i64 0))
+
+;; Packed identity of the plan bits the provided predicates can observe: the
+;; seven Plan flags plus all four CompilerBackendRuntimeTailPlan bits.
+(define (compiler-backend-plan-provides-pack-flags
+  [alloc : bool]
+  [substring : bool]
+  [str-view : bool]
+  [concat : bool]
+  [int-to-string : bool]
+  [region-mark : bool]
+  [region-reset : bool]
+  [tail : CompilerBackendRuntimeTailPlan]) : i64
+  (+
+    (if alloc
+      1
+      0)
+    (if substring
+      2
+      0)
+    (if str-view
+      4
+      0)
+    (if concat
+      8
+      0)
+    (if int-to-string
+      16
+      0)
+    (if region-mark
+      32
+      0)
+    (if region-reset
+      64
+      0)
+    (if (compiler-backend-runtime-tail-profile? tail)
+      128
+      0)
+    (if (compiler-backend-runtime-tail-tlci-macro-entry? tail)
+      256
+      0)
+    (if (compiler-backend-runtime-tail-arena-debug? tail)
+      512
+      0)
+    (if (compiler-backend-runtime-tail-startup-profile? tail)
+      1024
+      0)))
+
+(define (compiler-backend-plan-provides-snapshot-current? [flags : i64]) : bool
+  (and
+    (>= compiler-backend-plan-provides-plan-flags 0)
+    (= compiler-backend-plan-provides-plan-flags flags)
+    (= compiler-backend-plan-provides-generation (ci.intern-generation))
+    (= compiler-backend-plan-provides-table-id (ci.intern-active-table-id))))
+
+;; Bit `which` (0 = provides-rest under the fingerprinted plan flags, 1 =
+;; unconditionally provided) of `name-id` in the installed table.  Ids outside
+;; the tabulated span are none of the consulted builtins, so both predicates
+;; answer false for them.
+(define (compiler-backend-plan-provides-snapshot-bit?
+  [name-id : i64]
+  [which : i64]) : bool
+  (let
+    [offset : i64 (- name-id compiler-backend-plan-provides-base-id)]
+    (if (and (>= offset 0) (< offset compiler-backend-plan-provides-span))
+      (let
+        [p : i64 (+ (* offset 2) which)]
+        (not
+          (=
+            0
+            (bit-and
+              (array-ref compiler-backend-plan-provides-bits (/ p 64))
+              (shl 1 (% p 64))))))
+      false)))
+
+(define (compiler-backend-plan-provides-snapshot-rest? [name-id : i64]) : bool
+  (compiler-backend-plan-provides-snapshot-bit? name-id 0))
+
+(define (compiler-backend-plan-provides-snapshot-provided? [name-id : i64]) : bool
+  (or
+    (compiler-backend-plan-provides-snapshot-bit? name-id 1)
+    (compiler-backend-plan-provides-snapshot-bit? name-id 0)))
+
+(define (compiler-backend-plan-provides-min-id-of [ids : (__tl_dyn-array i64)]) : i64
+  (let
+    [min-so-far : i64 (array-ref ids 0)]
+    [i : i64 1]
+    (begin
+      (while (< i (array-length ids))
+        (begin
+          (if (< (array-ref ids i) min-so-far)
+            (set! min-so-far (array-ref ids i))
+            unit)
+          (set! i (+ i 1))))
+      min-so-far)))
+
+(define (compiler-backend-plan-provides-max-id-of [ids : (__tl_dyn-array i64)]) : i64
+  (let
+    [max-so-far : i64 (array-ref ids 0)]
+    [i : i64 1]
+    (begin
+      (while (< i (array-length ids))
+        (begin
+          (if (> (array-ref ids i) max-so-far)
+            (set! max-so-far (array-ref ids i))
+            unit)
+          (set! i (+ i 1))))
+      max-so-far)))
+
+;; Compute and publish the provided-set table for one finalized plan.  Each
+;; consulted builtin id carries a class: classes 0..8 contribute their `rest`
+;; bit when the corresponding plan flag is set, and class 9 ids are
+;; unconditionally provided (the always-provided core plus the
+;; always-provided-tail arena destroy).
+(define (compiler-backend-plan-provides-snapshot-install!
+  [alloc : bool]
+  [substring : bool]
+  [str-view : bool]
+  [concat : bool]
+  [int-to-string : bool]
+  [region-mark : bool]
+  [region-reset : bool]
+  [tail : CompilerBackendRuntimeTailPlan]) : unit
+  (let
+    [profile (compiler-backend-runtime-tail-profile? tail)]
+    [arena-debug (compiler-backend-runtime-tail-arena-debug? tail)]
+    [ids : (__tl_dyn-array i64) (array.make-array i64 35)]
+    [classes : (__tl_dyn-array i64) (array.make-array i64 35)]
+    [_seed : unit
+      (begin
+        (set! (array-ref ids 0) cbi.compiler-builtin-id-tl-alloc)
+        (set! (array-ref classes 0) 0)
+        (set! (array-ref ids 1) cbi.compiler-builtin-id-tl-region-mark)
+        (set! (array-ref classes 1) 1)
+        (set! (array-ref ids 2) cbi.compiler-builtin-id-tl-region-reset)
+        (set! (array-ref classes 2) 2)
+        (set! (array-ref ids 3) cbi.compiler-builtin-id-tl-substring)
+        (set! (array-ref classes 3) 3)
+        (set! (array-ref ids 4) cbi.compiler-builtin-id-tl-str-view)
+        (set! (array-ref classes 4) 4)
+        (set! (array-ref ids 5) cbi.compiler-builtin-id-tl-string-concat)
+        (set! (array-ref classes 5) 5)
+        (set! (array-ref ids 6) cbi.compiler-builtin-id-tl-string-concat3)
+        (set! (array-ref classes 6) 5)
+        (set! (array-ref ids 7) cbi.compiler-builtin-id-tl-string-concat4)
+        (set! (array-ref classes 7) 5)
+        (set! (array-ref ids 8) cbi.compiler-builtin-id-tl-string-concat5)
+        (set! (array-ref classes 8) 5)
+        (set! (array-ref ids 9) cbi.compiler-builtin-id-tl-int-to-string)
+        (set! (array-ref classes 9) 6)
+        (set! (array-ref ids 10) cbi.compiler-builtin-id-tl-profile-alloc-total)
+        (set! (array-ref classes 10) 7)
+        (set! (array-ref ids 11) cbi.compiler-builtin-id-tl-profile-alloc-live)
+        (set! (array-ref classes 11) 7)
+        (set! (array-ref ids 12) cbi.compiler-builtin-id-tl-profile-alloc-peak)
+        (set! (array-ref classes 12) 7)
+        (set!
+          (array-ref ids 13)
+          cbi.compiler-builtin-id-tl-profile-alloc-reset-peak)
+        (set! (array-ref classes 13) 7)
+        (set!
+          (array-ref ids 14)
+          cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset)
+        (set! (array-ref classes 14) 8)
+        (set!
+          (array-ref ids 15)
+          cbi.compiler-builtin-id-tl-arena-debug-assert-pool-install)
+        (set! (array-ref classes 15) 8)
+        (set! (array-ref ids 16) cbi.compiler-builtin-id-tl-arena-poison-enable)
+        (set! (array-ref classes 16) 9)
+        (set! (array-ref ids 17) cbi.compiler-builtin-id-tl-arena-make)
+        (set! (array-ref classes 17) 9)
+        (set! (array-ref ids 18) cbi.compiler-builtin-id-tl-arena-make-small)
+        (set! (array-ref classes 18) 9)
+        (set! (array-ref ids 19) cbi.compiler-builtin-id-tl-arena-make-atomic)
+        (set! (array-ref classes 19) 9)
+        (set! (array-ref ids 20) cbi.compiler-builtin-id-tl-arena-current)
+        (set! (array-ref classes 20) 9)
+        (set! (array-ref ids 21) cbi.compiler-builtin-id-tl-arena-set)
+        (set! (array-ref classes 21) 9)
+        (set! (array-ref ids 22) cbi.compiler-builtin-id-tl-thread-entry-ptr)
+        (set! (array-ref classes 22) 9)
+        (set! (array-ref ids 23) cbi.compiler-builtin-id-tl-thread-init)
+        (set! (array-ref classes 23) 9)
+        (set! (array-ref ids 24) cbi.compiler-builtin-id-tl-atomic-i64-load-ptr)
+        (set! (array-ref classes 24) 9)
+        (set!
+          (array-ref ids 25)
+          cbi.compiler-builtin-id-tl-atomic-i64-store-ptr)
+        (set! (array-ref classes 25) 9)
+        (set! (array-ref ids 26) cbi.compiler-builtin-id-tl-atomic-i64-add-ptr)
+        (set! (array-ref classes 26) 9)
+        (set!
+          (array-ref ids 27)
+          cbi.compiler-builtin-id-tl-atomic-i64-fetch-add-ptr)
+        (set! (array-ref classes 27) 9)
+        (set! (array-ref ids 28) cbi.compiler-builtin-id-tl-atomic-i64-cas-ptr)
+        (set! (array-ref classes 28) 9)
+        (set! (array-ref ids 29) cbi.compiler-builtin-id-tl-atomic-i32-load-ptr)
+        (set! (array-ref classes 29) 9)
+        (set!
+          (array-ref ids 30)
+          cbi.compiler-builtin-id-tl-atomic-i32-store-ptr)
+        (set! (array-ref classes 30) 9)
+        (set! (array-ref ids 31) cbi.compiler-builtin-id-tl-atomic-i32-add-ptr)
+        (set! (array-ref classes 31) 9)
+        (set!
+          (array-ref ids 32)
+          cbi.compiler-builtin-id-tl-atomic-i32-fetch-add-ptr)
+        (set! (array-ref classes 32) 9)
+        (set! (array-ref ids 33) cbi.compiler-builtin-id-tl-atomic-i32-cas-ptr)
+        (set! (array-ref classes 33) 9)
+        (set! (array-ref ids 34) cbi.compiler-builtin-id-tl-arena-destroy)
+        (set! (array-ref classes 34) 9))]
+    [min-id : i64 (compiler-backend-plan-provides-min-id-of ids)]
+    [max-id : i64 (compiler-backend-plan-provides-max-id-of ids)]
+    (if (> (- max-id min-id) 4096)
+      ;; Degenerate id spread: invalidate the fingerprint instead of building a
+      ;; huge direct-map table, so every query keeps the original derivation.
+      (begin
+        (set! compiler-backend-plan-provides-plan-flags -1)
+        (set! compiler-backend-plan-provides-span -1))
+      (let
+        [span : i64 (+ (- max-id min-id) 1)]
+        [bits : (__tl_dyn-array i64)
+          (array.make-array i64 (/ (+ (* span 2) 63) 64))]
+        [i : i64 0]
+        (begin
+          (while (< i 35)
+            (begin
+              (let
+                [class : i64 (array-ref classes i)]
+                [slot : i64 (- (array-ref ids i) min-id)]
+                [p : i64 (* slot 2)]
+                [rest-on : bool
+                  (cond
+                    [(= class 0) alloc]
+                    [(= class 1) region-mark]
+                    [(= class 2) region-reset]
+                    [(= class 3) substring]
+                    [(= class 4) str-view]
+                    [(= class 5) concat]
+                    [(= class 6) int-to-string]
+                    [(= class 7) profile]
+                    [(= class 8) arena-debug]
+                    [else false])]
+                (begin
+                  (if rest-on
+                    (set!
+                      (array-ref bits (/ p 64))
+                      (bit-or (array-ref bits (/ p 64)) (shl 1 (% p 64))))
+                    unit)
+                  (if (>= class 9)
+                    (set!
+                      (array-ref bits (/ (+ p 1) 64))
+                      (bit-or
+                        (array-ref bits (/ (+ p 1) 64))
+                        (shl 1 (% (+ p 1) 64))))
+                    unit)))
+              (set! i (+ i 1))))
+          ;; Publish last-to-first so a partially written table never validates.
+          (set! compiler-backend-plan-provides-base-id min-id)
+          (set! compiler-backend-plan-provides-span span)
+          (set! compiler-backend-plan-provides-bits bits)
+          (set!
+            compiler-backend-plan-provides-plan-flags
+            (compiler-backend-plan-provides-pack-flags
+              alloc
+              substring
+              str-view
+              concat
+              int-to-string
+              region-mark
+              region-reset
+              tail))
+          (set!
+            compiler-backend-plan-provides-table-id
+            (ci.intern-active-table-id))
+          (set!
+            compiler-backend-plan-provides-generation
+            (ci.intern-generation)))))))
+
+;; First-class arena runtime helpers and the arena poison debug toggle
+;; are always emitted, so they are provided runtime symbols (resolve to
+;; their raw names, not the mangled `_tl_tl_arena_*`).
 (define (compiler-backend-plan-provides-id?
   [plan : CompilerBackendRuntimePlan]
   [name-id : i64]) : bool
-  (or
-    (cbi.compiler-builtin-backend-runtime-always-provided-id? name-id)
-    (cbi.compiler-builtin-backend-runtime-always-provided-tail-id? name-id)
-    (compiler-backend-plan-provides-rest-id? plan name-id)))
+  (match plan
+    [(CompilerBackendRuntimePlan.WithScratch base _)
+      (compiler-backend-plan-provides-id? (__tl-box-place base) name-id)]
+    [(CompilerBackendRuntimePlan.Plan
+        alloc
+        substring
+        str-view
+        concat
+        provides-int-to-string
+        region-mark
+        region-reset
+        provides-tail)
+      (if (compiler-backend-plan-provides-snapshot-current?
+        (compiler-backend-plan-provides-pack-flags
+          alloc
+          substring
+          str-view
+          concat
+          provides-int-to-string
+          region-mark
+          region-reset
+          provides-tail))
+        (compiler-backend-plan-provides-snapshot-provided? name-id)
+        (or
+          (cbi.compiler-builtin-backend-runtime-always-provided-id? name-id)
+          (cbi.compiler-builtin-backend-runtime-always-provided-tail-id?
+            name-id)
+          (compiler-backend-plan-provides-rest-id? plan name-id)))]))
 
 (define (compiler-backend-plan-provides-rest-id?
   [plan : CompilerBackendRuntimePlan]
@@ -71817,29 +72415,44 @@
         region-mark
         region-reset
         provides-tail)
-      (or
-        (backend-or8
-          (and alloc (cbi.compiler-builtin-backend-tl-alloc-id? name-id))
+      (if (compiler-backend-plan-provides-snapshot-current?
+        (compiler-backend-plan-provides-pack-flags
+          alloc
+          substring
+          str-view
+          concat
+          provides-int-to-string
+          region-mark
+          region-reset
+          provides-tail))
+        (compiler-backend-plan-provides-snapshot-rest? name-id)
+        (or
+          (backend-or8
+            (and alloc (cbi.compiler-builtin-backend-tl-alloc-id? name-id))
+            (and
+              region-mark
+              (cbi.compiler-builtin-backend-tl-region-mark-id? name-id))
+            (and
+              region-reset
+              (cbi.compiler-builtin-backend-tl-region-reset-id? name-id))
+            (and
+              substring
+              (cbi.compiler-builtin-backend-tl-substring-id? name-id))
+            (and
+              str-view
+              (cbi.compiler-builtin-backend-tl-str-view-id? name-id))
+            (and
+              concat
+              (cbi.compiler-builtin-backend-runtime-concat-id? name-id))
+            (and
+              provides-int-to-string
+              (cbi.compiler-builtin-backend-tl-int-to-string-id? name-id))
+            (and
+              (compiler-backend-runtime-tail-profile? provides-tail)
+              (cbi.compiler-builtin-backend-runtime-profile-id? name-id)))
           (and
-            region-mark
-            (cbi.compiler-builtin-backend-tl-region-mark-id? name-id))
-          (and
-            region-reset
-            (cbi.compiler-builtin-backend-tl-region-reset-id? name-id))
-          (and
-            substring
-            (cbi.compiler-builtin-backend-tl-substring-id? name-id))
-          (and str-view (cbi.compiler-builtin-backend-tl-str-view-id? name-id))
-          (and concat (cbi.compiler-builtin-backend-runtime-concat-id? name-id))
-          (and
-            provides-int-to-string
-            (cbi.compiler-builtin-backend-tl-int-to-string-id? name-id))
-          (and
-            (compiler-backend-runtime-tail-profile? provides-tail)
-            (cbi.compiler-builtin-backend-runtime-profile-id? name-id)))
-        (and
-          (compiler-backend-runtime-tail-arena-debug? provides-tail)
-          (cbi.compiler-builtin-backend-runtime-arena-debug-id? name-id)))]))
+            (compiler-backend-runtime-tail-arena-debug? provides-tail)
+            (cbi.compiler-builtin-backend-runtime-arena-debug-id? name-id))))]))
 
 (define (compiler-backend-runtime-plan-with-index-for-with-backend-state
   [backend-state : CompilerBackendState]
@@ -72065,22 +72678,38 @@
           (>= call-id 0)
           (compiler-backend-runtime-index-calls? index call-id)))]
     [needs-startup-profile : bool index.startup-profile]
-    (ResultBackendRuntimePlanWithIndex.Ok
-      (CompilerBackendRuntimePlanWithIndex
-        (CompilerBackendRuntimePlan.Plan
-          needs-alloc
-          needs-substring
-          needs-str-view
-          needs-concat
-          needs-int-to-string
-          needs-region-mark
-          needs-region-reset
-          (CompilerBackendRuntimeTailPlan
-            needs-profile
-            needs-tlci-macro-entry
-            needs-arena-debug
-            needs-startup-profile))
-        index))))
+    ;; Finalization is the one point where the plan's provided builtin set is
+    ;; fully known; publish it for the provided predicates (see their comment).
+    (begin
+      (compiler-backend-plan-provides-snapshot-install!
+        needs-alloc
+        needs-substring
+        needs-str-view
+        needs-concat
+        needs-int-to-string
+        needs-region-mark
+        needs-region-reset
+        (CompilerBackendRuntimeTailPlan
+          needs-profile
+          needs-tlci-macro-entry
+          needs-arena-debug
+          needs-startup-profile))
+      (ResultBackendRuntimePlanWithIndex.Ok
+        (CompilerBackendRuntimePlanWithIndex
+          (CompilerBackendRuntimePlan.Plan
+            needs-alloc
+            needs-substring
+            needs-str-view
+            needs-concat
+            needs-int-to-string
+            needs-region-mark
+            needs-region-reset
+            (CompilerBackendRuntimeTailPlan
+              needs-profile
+              needs-tlci-macro-entry
+              needs-arena-debug
+              needs-startup-profile))
+          index)))))
 
 (define (compiler-backend-runtime-plan-for-with-backend-state
   [backend-state : CompilerBackendState]

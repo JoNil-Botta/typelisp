@@ -13,6 +13,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
+(import compiler_owned_view as owned_view)
 (import compiler_surface_facts as surface_facts)
 (import compiler_surface_identity as surface_identity)
 (import stdlib.arena)

@@ -785,8 +785,11 @@ argument is evaluated once in source order.
 `match-arm-list-empty`, `match-arm-list-cons`, and `expr-match` build
 generated match expressions from computed pattern names and payload bindings.
 `pattern-binding-typed` adds captured type syntax to a binding pattern.
-`expr-resource-scope`, `expr-let-scope`, and `expr-set-var` build scopes and
-assignments whose binding identity is supplied at macro time.
+`expr-resource-scope`, `expr-let-scope`, `expr-shared-let-scope`, and
+`expr-set-var` build scopes and assignments whose binding identity is supplied
+at macro time. `expr-shared-let-scope` binds a shared reference to a caller
+place without moving it; for an rvalue it first evaluates the expression once
+into a hidden owner whose lifetime encloses the shared-reference binding.
 `expr-begin-unit`, `expr-not`, and `expr-while` provide the remaining generic
 statement-loop composition used by source macros. `syntax-name-fresh` gives
 computed text a reusable fresh syntax identity: builders that bind or refer to
@@ -6325,8 +6328,29 @@ conversion. `stdlib.io` depends on that module: `io.print-format` writes the
 result of the same formatter unchanged and `io.println` writes that result plus
 one newline. `stdlib.format` must not import `stdlib.io`.
 
-Templates accept positional `{}` placeholders and `{{` / `}}` escapes. The
-built-in placeholder types are `String`, `i64`, `bool`, `char`, `f64`, and
+Templates accept implicit `{}`, zero-based indexed `{0}`, and named `{name}`
+placeholders plus `{{` / `}}` escapes. Each `{}` selects and advances an
+independent implicit positional iterator; indexed and named selections do not
+advance it, so `"{1} {} {0} {}"` with arguments `"1"`, `"2"` renders
+`"2 1 1 2"`. Decimal indices allow leading zeroes, may be reused, and are
+limited to the deterministic signed-`i64` range rather than the host's
+`usize` range.
+
+Explicit named values use `(format.named name value)`, must follow every
+positional value, and may be reused. A named placeholder with no explicit
+value captures the same-spelled lexical variable at the macro call site.
+Every supplied positional or named value must be selected, duplicate explicit
+names are rejected, and every supplied expression is evaluated exactly once in
+source order before the flat final concatenation. Placeholder names use
+TypeLisp identifier spelling, including contextual keyword spellings. Rust
+`r#name` is written `name` in both the placeholder and TypeLisp binding; bare
+`_` is rejected. The byte-oriented string inspection API supports Rust's
+trailing-placeholder-whitespace rule for ASCII tab, newline, vertical tab,
+form feed, carriage return, and space. Non-ASCII Unicode whitespace is a
+diagnosed non-equivalence until compile-time string inspection exposes Unicode
+scalar values. Interior whitespace and format specifiers remain unsupported.
+
+The built-in placeholder types are `String`, `i64`, `bool`, `char`, `f64`, and
 `f32`. A struct or enum instead delegates to a function in the type's canonical
 owner module. The owner may define either:
 
@@ -8056,10 +8080,11 @@ every element zero-initialized per section 5.12.1, and `array-ref` reads and
 ```
 
 `format.format`, `io.print-format`, and `io.println` are the public
-value-formatting conveniences. The output macros' first argument
-is a Rust-style literal template using `{}` placeholders and `{{` / `}}`
-escapes; `print-format` writes exactly the formatted text and `println` performs
-one additional newline write. `print-error` remains the direct borrowed-text
+value-formatting conveniences. The output macros' first argument is the same
+Rust-style literal template accepted by `format.format`, including implicit,
+indexed, named, and call-site-captured selections plus `{{` / `}}` escapes;
+`print-format` writes exactly the formatted text and `println` performs one
+additional newline write. `print-error` remains the direct borrowed-text
 diagnostic helper, and `stdout-write` / `stderr-write` remain the low-level
 borrowed-byte output surface. All placeholder conversion, including the canonical
 owner-module nominal display protocol specified in section 6.1, is therefore

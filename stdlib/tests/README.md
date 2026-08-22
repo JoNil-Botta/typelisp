@@ -193,12 +193,16 @@ Inline stdlib coverage:
   variable-operand, nested `str-cat` expansion, and generated helper hygiene.
   `tests/inline/str_cat_hashmap_declaration_ordering.tl` keeps the declaration-
   family ordering check beside a generated hashmap module.
-- `format_api.tl` covers literal placeholders, escaped braces, and String,
-  integer, boolean, char, and float formatting; `comptime_string_literal_reject.tl`
-  keeps non-literal syntax inspection rejected at macro expansion. The
-  `format_*_reject.tl` fixtures cover non-literal templates, unsupported
-  specifiers, both placeholder-count mismatches, missing or wrongly typed
-  canonical owner hooks, and ambiguous plain-plus-nominal hook definitions.
+- `format_api.tl` covers implicit, indexed, repeated, mixed, explicit named,
+  and nested lexical capture selection; leading-zero indices; trailing ASCII
+  whitespace; source-order, exactly-once evaluation; owned values; escaped
+  braces; and String, integer, boolean, char, float, and nominal formatting.
+  `comptime_string_literal_reject.tl` keeps non-literal syntax inspection
+  rejected at macro expansion. The `format_*_reject.tl` fixtures cover
+  non-literal templates, unsupported specifiers, both placeholder-count
+  mismatches, invalid/overflowed indices, malformed/captured/raw/bare names,
+  named ordering/duplication/unused cases, the documented non-ASCII whitespace
+  limitation, and missing or wrongly typed canonical owner hooks.
   `tests/integration/format_owner_*` covers positive struct/enum/nested hooks,
   multi-type owner modules, same-named types from distinct owners, single
   evaluation, non-consuming formatting, shared formatter/output dispatch, and

@@ -55,18 +55,44 @@ reject_diag() {
             printf 'is missing protocol function into-iterator' ;;
         stdlib/tests/format_nonliteral_template_reject.tl)
             printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_bare_capture_reject.tl)
+            printf "format: bare '_' is not a captured identifier" ;;
+        stdlib/tests/format_duplicate_named_reject.tl)
+            printf 'format: duplicate named argument name' ;;
+        stdlib/tests/format_index_out_of_range_reject.tl)
+            printf 'format: positional argument index is out of range: 2' ;;
+        stdlib/tests/format_index_overflow_reject.tl)
+            printf 'format: positional argument index overflow' ;;
+        stdlib/tests/format_inner_whitespace_reject.tl)
+            printf "format: whitespace is only allowed immediately before '}'" ;;
+        stdlib/tests/format_malformed_capture_reject.tl)
+            printf 'format: malformed captured argument identifier' ;;
+        stdlib/tests/format_malformed_index_reject.tl)
+            printf 'format: malformed positional argument index' ;;
+        stdlib/tests/format_named_nonidentifier_reject.tl)
+            printf 'format: named argument name must be an identifier' ;;
+        stdlib/tests/format_non_ascii_whitespace_reject.tl)
+            printf 'format: placeholder names and whitespace are ASCII-only' ;;
         stdlib/tests/format_owner_ambiguous_reject.tl)
             printf 'format: ambiguous owner hooks for' ;;
         stdlib/tests/format_owner_missing_reject.tl)
             printf 'format: unsupported nominal type' ;;
         stdlib/tests/format_owner_wrong_signature_reject.tl)
             printf 'format: owner hook has wrong signature for' ;;
+        stdlib/tests/format_positional_after_named_reject.tl)
+            printf 'format: positional argument follows named argument' ;;
+        stdlib/tests/format_raw_capture_reject.tl)
+            printf "format: Rust raw identifiers use the TypeLisp spelling without 'r#'" ;;
         stdlib/tests/format_specifier_reject.tl)
             printf 'format: format specifiers are not supported' ;;
         stdlib/tests/format_too_few_args_reject.tl)
             printf 'format: not enough arguments for placeholders' ;;
         stdlib/tests/format_too_many_args_reject.tl)
             printf 'format: not enough placeholders for arguments' ;;
+        stdlib/tests/format_unknown_capture_reject.tl)
+            printf 'typecheck: unbound name missing' ;;
+        stdlib/tests/format_unused_named_reject.tl)
+            printf 'format: unused named argument unused' ;;
         stdlib/tests/io_caller_result_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/math_sqrt_non_float_reject.tl)

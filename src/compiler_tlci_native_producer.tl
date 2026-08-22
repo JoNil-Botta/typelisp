@@ -3425,6 +3425,20 @@
                   ops-count)]
               [(and
                   (or
+                    (string.eq head "comptime.expr-shared-let-scope")
+                    (string.eq head "expr-shared-let-scope"))
+                  (= argc 3))
+                (embedded-native-computed-ternary-ops
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 2 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-shared-let-scope)
+                  ops
+                  ops-count)]
+              [(and
+                  (or
                     (string.eq head "comptime.expr-set-var")
                     (string.eq head "expr-set-var"))
                   (= argc 2))
@@ -5411,6 +5425,17 @@
     ;; #6552.
     [(compiler_ast_types.AstExpr.Let _)
       (embedded-native-computed-let-code params node final)]
+    ;; A mutation can be the selected value of an if/match even though its
+    ;; language result is unit. Preserve any diagnostic status from evaluating
+    ;; the assignment, then continue with the caller's unit continuation.
+    ;; Refs #6644.
+    [(compiler_ast_types.AstExpr.Set _ _)
+      (let
+        [statement : String
+          (embedded-native-computed-statement-code params node)]
+        (if (string.eq statement "")
+          ""
+          (embedded-native-status-sequence-code statement final)))]
     [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
         [(compiler_ast_types.AstExpr.Var head-id)
@@ -5763,20 +5788,33 @@
           (embedded-native-computed-statement-code params then-node)]
         [else-code : String
           (embedded-native-computed-statement-code params else-node)]
-        (if (or
-          (string.eq condition.text "")
-          (string.eq then-code "")
-          (string.eq else-code ""))
-          ""
-          (str_cat.str-cat
-            condition.open
-            "  (if (= "
-            condition.text
-            " 1)\n"
-            then-code
-            else-code
-            ")\n"
-            (embedded-native-closing-parens (* 2 condition.opens)))))]
+        ;; Preserve the first precise blocker reason in normal lowering.
+        ;; lint-allow: nested-if-ladder
+        (if (string.eq condition.text "")
+          (embedded-native-fallback-code "statement-if:condition")
+          (if (string.eq then-code "")
+            (embedded-native-fallback-code "statement-if:then")
+            (if (string.eq else-code "")
+              (embedded-native-fallback-code "statement-if:else")
+              (str_cat.str-cat
+                condition.open
+                "  (if (= "
+                condition.text
+                " 1)\n"
+                then-code
+                else-code
+                ")\n"
+                (embedded-native-closing-parens (* 2 condition.opens)))))))]
+    ;; Statement-position matches use the same status continuation as calls:
+    ;; mutations and diagnostics in the selected arm are preserved, while an
+    ;; ordinary unit result is discarded. Format-plan validation exercises
+    ;; this shape inside compile-time loops. Refs #6644.
+    [(compiler_ast_types.AstExpr.Match _)
+      (let
+        [code : String (embedded-native-computed-expr-code params node "  0\n")]
+        (if (string.eq code "")
+          (embedded-native-fallback-code "statement-match:lowering")
+          code))]
     ;; Diagnostic calls ignore this final and retain their interpreted status.
     [(compiler_ast_types.AstExpr.Call _ _)
       (embedded-native-computed-expr-code params node "  0\n")]
@@ -5799,7 +5837,14 @@
           params
           (compiler_ast_types.ast-expr-list-get exprs index 0))]
       (if (string.eq head "")
-        ""
+        (embedded-native-fallback-code
+          (str_cat.str-cat
+            "statement-list:item-"
+            (string.int->string index)
+            ":"
+            (embedded-native-expr-kind-name
+              (embedded-stdlib-tlci-unwrap-expr
+                (compiler_ast_types.ast-expr-list-get exprs index 0)))))
         (let
           [rest : String
             (embedded-native-computed-statement-list-code
@@ -6387,6 +6432,119 @@
                       [_ ""])))]
               [_ ""])])])))
 
+;; Stage a computed Expr and destructure a two-arm `Expr.Int`/wildcard match.
+;; Unlike Expr.Begin/Expr.Var payloads, the integer binds as generated i64 data
+;; so arithmetic and list indexing in the selected arm retain their normal
+;; native lowering. Refs #6644.
+(define (embedded-native-computed-local-int-match-code
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [scrutinee : i64]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
+  [final : String]) : String
+  (if (not (= arms.len 2))
+    ""
+    (match (array-ref arms.slots 0)
+      [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
+        (match (array-ref arms.slots 1)
+          [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
+            (match first-pattern
+              [(compiler_ast_types.AstPattern.Variant name-id args-box)
+                (let
+                  [args : compiler_ast_types.AstPatternList
+                    (__tl-box-place args-box)]
+                  (if (or
+                    (not
+                      (string.eq
+                        (embedded-native-expr-variant-name name-id)
+                        "Int"))
+                    (not (= args.len 1))
+                    (not
+                      (match second-pattern
+                        [(compiler_ast_types.AstPattern.Wildcard) true]
+                        [_ false])))
+                    ""
+                    (let
+                      [saved : i64 (array-ref embedded-native-local-len 0)]
+                      [scrut-slot : i64
+                        (embedded-native-local-push! "__tlci_int_match")]
+                      [data-saved : i64
+                        (array-ref embedded-native-data-local-len 0)]
+                      [probe : String (embedded-native-temp-name!)]
+                      [value : String (embedded-native-temp-name!)]
+                      [bound : bool
+                        (match (compiler_ast_types.ast-pattern-list-get
+                          (& args)
+                          0
+                          (compiler_ast_types.ast-pattern-fallback))
+                          [(compiler_ast_types.AstPattern.Wildcard) true]
+                          [(compiler_ast_types.AstPattern.Binding bind-id)
+                            (embedded-native-data-local-push!
+                              (ci.intern-str bind-id)
+                              value)]
+                          [_ false])]
+                      [then-code : String
+                        (if (or (< scrut-slot 0) (not bound))
+                          ""
+                          (embedded-native-computed-expr-code
+                            params
+                            first-body
+                            final))]
+                      [_restore-data : unit
+                        (set!
+                          (array-ref embedded-native-data-local-len 0)
+                          data-saved)]
+                      [else-code : String
+                        (if (< scrut-slot 0)
+                          ""
+                          (embedded-native-computed-expr-code
+                            params
+                            second-body
+                            final))]
+                      [scrut-code : String
+                        (if (< scrut-slot 0)
+                          ""
+                          (embedded-native-computed-expr-code
+                            params
+                            scrutinee
+                            (embedded-native-local-set-final scrut-slot)))]
+                      [_restore : unit
+                        (set! (array-ref embedded-native-local-len 0) saved)]
+                      (if (or
+                        (string.eq scrut-code "")
+                        (string.eq then-code "")
+                        (string.eq else-code ""))
+                        ""
+                        (str_cat.str-cat
+                          "  (let [im"
+                          (string.int->string scrut-slot)
+                          " : i64\n"
+                          scrut-code
+                          "] (if (not (= im"
+                          (string.int->string scrut-slot)
+                          " 0)) im"
+                          (string.int->string scrut-slot)
+                          "\n  (let ["
+                          probe
+                          " : i64 (comptime-host-local-expr-int? host session "
+                          (string.int->string scrut-slot)
+                          " 0 0)]\n  (if (< "
+                          probe
+                          " 0)\n  "
+                          (string.int->string
+                            tlci_core.tlci-host-callback-status-bad-request)
+                          "\n  (if (= "
+                          probe
+                          " 1)\n  (let ["
+                          value
+                          " : i64 (comptime-host-local-expr-int-value host session "
+                          (string.int->string scrut-slot)
+                          " 0 0)]\n"
+                          then-code
+                          ")\n"
+                          else-code
+                          ")))))\n")))))]
+              [_ ""])])])))
+
 ;; Match an i64-valued compile-time expression against integer literal arms.
 ;; Each selected body keeps the enclosing continuation, including diagnostic
 ;; arms; a wildcard is the terminal default.
@@ -6493,19 +6651,28 @@
             (if (not (string.eq payload-text ""))
               payload-text
               (let
-                [int-text : String
-                  (embedded-native-computed-int-match-code
+                [local-int-text : String
+                  (embedded-native-computed-local-int-match-code
                     params
                     scrutinee
                     (& arms)
                     final)]
-                (if (not (string.eq int-text ""))
-                  int-text
-                  (embedded-native-computed-string-match-code
-                    params
-                    scrutinee
-                    (& arms)
-                    final)))))))]))
+                (if (not (string.eq local-int-text ""))
+                  local-int-text
+                  (let
+                    [int-text : String
+                      (embedded-native-computed-int-match-code
+                        params
+                        scrutinee
+                        (& arms)
+                        final)]
+                    (if (not (string.eq int-text ""))
+                      int-text
+                      (embedded-native-computed-string-match-code
+                        params
+                        scrutinee
+                        (& arms)
+                        final)))))))))]))
 
 (define (embedded-native-computed-string-match-code
   [params : (& params compiler_ast_types.AstMacroParamList)]
@@ -7894,6 +8061,8 @@
     "(extern comptime-host-local-expr-list-length (:symbol \"_tl_comptime_host_local-expr-list-length\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-local-expr-list-nth (:symbol \"_tl_comptime_host_local-expr-list-nth\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-local-expr-string? (:symbol \"_tl_comptime_host_local-expr-string?\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-local-expr-int? (:symbol \"_tl_comptime_host_local-expr-int?\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-local-expr-int-value (:symbol \"_tl_comptime_host_local-expr-int-value\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-local-expr-var? (:symbol \"_tl_comptime_host_local-expr-var?\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-local-expr-var-name (:symbol \"_tl_comptime_host_local-expr-var-name\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-local-expr-begin? (:symbol \"_tl_comptime_host_local-expr-begin?\") : (-> i64 i64 i64 i64 i64 i64))\n"
@@ -7914,6 +8083,7 @@
     "(extern comptime-host-expr-set-var (:symbol \"_tl_comptime_host_expr-set-var\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-resource-scope (:symbol \"_tl_comptime_host_expr-resource-scope\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-let-scope (:symbol \"_tl_comptime_host_expr-let-scope\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-shared-let-scope (:symbol \"_tl_comptime_host_expr-shared-let-scope\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-for-owned (:symbol \"_tl_comptime_host_expr-for-owned\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-not (:symbol \"_tl_comptime_host_expr-not\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-while (:symbol \"_tl_comptime_host_expr-while\") : (-> i64 i64 i64 i64 i64 i64))\n"

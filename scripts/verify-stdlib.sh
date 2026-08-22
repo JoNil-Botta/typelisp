@@ -42,7 +42,7 @@ if ! grep -Fxq '(import stdlib.format)' stdlib/io.tl; then
     echo "stdlib.io must import stdlib.format for print-format/println" >&2
     exit 1
 fi
-if grep -Eq '^\(defmacro \((format|format-value|format-from|format-push|format-finish)([ )]|$)' stdlib/io.tl; then
+if grep -Eq '^\(defmacro \((format|named|format-value|format-expand|format-expand-call)([ )]|$)' stdlib/io.tl; then
     echo "stdlib.io must not define a second formatting dispatch path" >&2
     exit 1
 fi
@@ -298,12 +298,25 @@ stdlib/tests/args_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-
 stdlib/tests/env_api.tl|pass|-
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
+stdlib/tests/format_bare_capture_reject.tl|fail|format: bare '_' is not a captured identifier
+stdlib/tests/format_duplicate_named_reject.tl|fail|format: duplicate named argument name
+stdlib/tests/format_index_out_of_range_reject.tl|fail|format: positional argument index is out of range: 2
+stdlib/tests/format_index_overflow_reject.tl|fail|format: positional argument index overflow
+stdlib/tests/format_inner_whitespace_reject.tl|fail|format: whitespace is only allowed immediately before '}'
+stdlib/tests/format_malformed_capture_reject.tl|fail|format: malformed captured argument identifier
+stdlib/tests/format_malformed_index_reject.tl|fail|format: malformed positional argument index
+stdlib/tests/format_named_nonidentifier_reject.tl|fail|format: named argument name must be an identifier
+stdlib/tests/format_non_ascii_whitespace_reject.tl|fail|format: placeholder names and whitespace are ASCII-only
 stdlib/tests/format_owner_ambiguous_reject.tl|fail|format: ambiguous owner hooks for
 stdlib/tests/format_owner_missing_reject.tl|fail|format: unsupported nominal type
 stdlib/tests/format_owner_wrong_signature_reject.tl|fail|format: owner hook has wrong signature for
+stdlib/tests/format_positional_after_named_reject.tl|fail|format: positional argument follows named argument
+stdlib/tests/format_raw_capture_reject.tl|fail|format: Rust raw identifiers use the TypeLisp spelling without 'r#'
 stdlib/tests/format_specifier_reject.tl|fail|format: format specifiers are not supported
 stdlib/tests/format_too_few_args_reject.tl|fail|format: not enough arguments for placeholders
 stdlib/tests/format_too_many_args_reject.tl|fail|format: not enough placeholders for arguments
+stdlib/tests/format_unknown_capture_reject.tl|fail|typecheck: unbound name missing
+stdlib/tests/format_unused_named_reject.tl|fail|format: unused named argument unused
 stdlib/tests/fs_api.tl|pass|-
 stdlib/tests/core_macros_cond_flat_reject.tl|fail|typecheck: ExprClause macro operand expects bracket syntax
 stdlib/tests/core_macros_cond_missing_else.tl|fail|core-cond-missing-else

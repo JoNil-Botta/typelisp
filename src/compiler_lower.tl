@@ -1300,6 +1300,7 @@
 ;; more than one scalar type even though every operation has the same lane
 ;; count. Array entries hold dynamic-sequence data pointers, not lane loads.
 (defstruct LowerMaskedPreheaderCacheData
+  (uniform-instrs ir.CompilerIrInstrBuilder)
   (uniform-values (__tl_dyn-array ir.CompilerIrValue))
   (uniform-types (__tl_dyn-array ast.AstType))
   (uniform-vectors (__tl_dyn-array ir.CompilerIrValue))
@@ -14927,6 +14928,7 @@
 (define (lower-masked-preheader-cache-new) : (Box LowerMaskedPreheaderCacheData)
   (box
     (LowerMaskedPreheaderCacheData
+      (ir.compiler-ir-instr-builder-new)
       (__tl_make-array ir.CompilerIrValue 0)
       (__tl_make-array ast.AstType 0)
       (__tl_make-array ir.CompilerIrValue 0)
@@ -14968,32 +14970,30 @@
       (let
         [index : i64 0]
         [count : i64 (__tl-project-field (__tl-box-place cache) uniform-count)]
-        [found : LowerMaybeIrValue (LowerMaybeIrValue.No)]
         (begin
-          (while (and
-            (< index count)
-            (match found
-              [(LowerMaybeIrValue.No) true]
-              [(LowerMaybeIrValue.Some _) false]))
-            (if (and
-              (lower-vector-map-ir-value-eq?
-                value
-                (array-ref
-                  (__tl-project-field (__tl-box-place cache) uniform-values)
-                  index))
-              (tc_core.tc-type-eq
-                elem-ty
-                (array-ref
-                  (__tl-project-field (__tl-box-place cache) uniform-types)
-                  index)))
-              (set!
-                found
-                (LowerMaybeIrValue.Some
-                  (array-ref
-                    (__tl-project-field (__tl-box-place cache) uniform-vectors)
-                    index)))
+          (while (< index count)
+            (begin
+              (when
+                (and
+                  (lower-vector-map-ir-value-eq?
+                    value
+                    (array-ref
+                      (__tl-project-field (__tl-box-place cache) uniform-values)
+                      index))
+                  (tc_core.tc-type-eq
+                    elem-ty
+                    (array-ref
+                      (__tl-project-field (__tl-box-place cache) uniform-types)
+                      index)))
+                (return
+                  (LowerMaybeIrValue.Some
+                    (array-ref
+                      (__tl-project-field
+                        (__tl-box-place cache)
+                        uniform-vectors)
+                      index))))
               (set! index (+ index 1))))
-          found))]))
+          (LowerMaybeIrValue.No)))]))
 
 (define (lower-masked-preheader-uniform-add!
   [state : LowerState]
@@ -15020,16 +15020,19 @@
             uniform-count
             (+ count 1))))]))
 
-;; Windows AVX2 has six volatile vector registers. Keep four available for
-;; masked expression and shift-guard temporaries: forcing more than two
-;; loop-wide vectors through the current allocator can corrupt nested masked
-;; recurrences under the Windows calling convention.
+;; Windows AVX2 has six volatile vector registers. The current allocator can
+;; corrupt masked calls and nested recurrences when a loop-wide vector crosses
+;; branch-state clones; keep pointer hoists there, but leave uniform-vector
+;; hoisting disabled until #6761 fixes those live ranges.
+;; Linux has sixteen vector registers, but the same allocator still needs a
+;; two-vector bound for high-pressure varying enum matches.
 (define (lower-masked-preheader-uniform-can-add? [state : LowerState]) : bool
   (match (lower-state-masked-preheader-cache state)
     [(LowerMaybeMaskedPreheaderCache.No) false]
     [(LowerMaybeMaskedPreheaderCache.Some cache)
       (match (lower-state-mode state)
-        [(CompilerLowerMode.WindowsAvx2)
+        [(CompilerLowerMode.WindowsAvx2) false]
+        [(CompilerLowerMode.LinuxAvx2)
           (< (__tl-project-field (__tl-box-place cache) uniform-count) 2)]
         [_ true])]))
 
@@ -15042,26 +15045,22 @@
       (let
         [index : i64 0]
         [count : i64 (__tl-project-field (__tl-box-place cache) array-count)]
-        [found : LowerMaybeIrValue (LowerMaybeIrValue.No)]
         (begin
-          (while (and
-            (< index count)
-            (match found
-              [(LowerMaybeIrValue.No) true]
-              [(LowerMaybeIrValue.Some _) false]))
-            (if (=
-              array-var
-              (array-ref
-                (__tl-project-field (__tl-box-place cache) array-vars)
-                index))
-              (set!
-                found
-                (LowerMaybeIrValue.Some
+          (while (< index count)
+            (begin
+              (when
+                (=
+                  array-var
                   (array-ref
-                    (__tl-project-field (__tl-box-place cache) array-data)
-                    index)))
+                    (__tl-project-field (__tl-box-place cache) array-vars)
+                    index))
+                (return
+                  (LowerMaybeIrValue.Some
+                    (array-ref
+                      (__tl-project-field (__tl-box-place cache) array-data)
+                      index))))
               (set! index (+ index 1))))
-          found))]))
+          (LowerMaybeIrValue.No)))]))
 
 (define (lower-masked-preheader-array-data-add!
   [state : LowerState]
@@ -50264,15 +50263,19 @@
 (define (lower-sequence-data-pointer-value
   [state : LowerState]
   [sequence-var : i64]) : LowerExpr
-  (if (lower-sequence-var-slice? sequence-var)
-    (lower-emit-word
-      state
-      (lower-sequence-ir-value sequence-var)
-      0
-      (ast.AstType.U64))
-    (lower-array-data-pointer-value
-      state
-      (lower-sequence-ir-value sequence-var))))
+  (match (lower-masked-preheader-array-data-get state sequence-var)
+    [(LowerMaybeIrValue.Some data-ptr)
+      (LowerExpr.Expr state data-ptr (ast.AstType.U64))]
+    [(LowerMaybeIrValue.No)
+      (if (lower-sequence-var-slice? sequence-var)
+        (lower-emit-word
+          state
+          (lower-sequence-ir-value sequence-var)
+          0
+          (ast.AstType.U64))
+        (lower-array-data-pointer-value
+          state
+          (lower-sequence-ir-value sequence-var)))]))
 
 (define (lower-sequence-element-addr
   [ctx : tc_core.TcContext]
@@ -50544,7 +50547,29 @@
   [elem-ty : ast.AstType]) : LowerExpr
   (match (lower-masked-preheader-uniform-get state value elem-ty)
     [(LowerMaybeIrValue.Some cached) (LowerExpr.Expr state cached elem-ty)]
-    [(LowerMaybeIrValue.No) (lower-emit-splat state value lanes elem-ty)]))
+    [(LowerMaybeIrValue.No)
+      (if (lower-masked-preheader-uniform-can-add? state)
+        (match (lower-state-alloc-var state)
+          [(LowerAlloc.Alloc next-state vector-var)
+            (let
+              [vector : ir.CompilerIrValue (ir.CompilerIrValue.Var vector-var)]
+              (begin
+                (match (lower-state-masked-preheader-cache next-state)
+                  [(LowerMaybeMaskedPreheaderCache.Some cache)
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut
+                        (__tl-project-field
+                          (__tl-box-place cache)
+                          uniform-instrs))
+                      (ir.CompilerIrInstr.Splat vector-var value lanes elem-ty))]
+                  [(LowerMaybeMaskedPreheaderCache.No) unit])
+                (lower-masked-preheader-uniform-add!
+                  next-state
+                  value
+                  elem-ty
+                  vector)
+                (LowerExpr.Expr next-state vector elem-ty)))])
+        (lower-emit-splat state value lanes elem-ty))]))
 
 (define (lower-emit-lane-id
   [state : LowerState]
@@ -54527,53 +54552,24 @@
   (if (lower-type-bool? elem-ty)
     (match (lower-masked-active-mask-value state active-mask lanes)
       [(LowerExpr.Expr mask-state mask _)
-        (match (lower-masked-preheader-array-data-get mask-state sequence-var)
-          [(LowerMaybeIrValue.Some data-ptr)
-            (lower-emit-predicated-load-data
-              mask-state
-              data-ptr
-              index
-              mask
-              lanes
-              elem-ty)]
-          [(LowerMaybeIrValue.No)
-            (lower-emit-sequence-predicated-load
-              mask-state
-              sequence-var
-              index
-              mask
-              lanes
-              elem-ty)])])
+        (lower-emit-sequence-predicated-load
+          mask-state
+          sequence-var
+          index
+          mask
+          lanes
+          elem-ty)])
     (match active-mask
       [(ir.CompilerIrMaybeValue.No)
-        (match (lower-masked-preheader-array-data-get state sequence-var)
-          [(LowerMaybeIrValue.Some data-ptr)
-            (lower-emit-vector-load-data state data-ptr index lanes elem-ty)]
-          [(LowerMaybeIrValue.No)
-            (lower-emit-sequence-vector-load
-              state
-              sequence-var
-              index
-              lanes
-              elem-ty)])]
+        (lower-emit-sequence-vector-load state sequence-var index lanes elem-ty)]
       [(ir.CompilerIrMaybeValue.Some mask)
-        (match (lower-masked-preheader-array-data-get state sequence-var)
-          [(LowerMaybeIrValue.Some data-ptr)
-            (lower-emit-predicated-load-data
-              state
-              data-ptr
-              index
-              mask
-              lanes
-              elem-ty)]
-          [(LowerMaybeIrValue.No)
-            (lower-emit-sequence-predicated-load
-              state
-              sequence-var
-              index
-              mask
-              lanes
-              elem-ty)])])))
+        (lower-emit-sequence-predicated-load
+          state
+          sequence-var
+          index
+          mask
+          lanes
+          elem-ty)])))
 
 (define (lower-emit-active-store
   [state : LowerState]
@@ -54586,64 +54582,32 @@
   (if (lower-type-bool? elem-ty)
     (match (lower-masked-active-mask-value state active-mask lanes)
       [(LowerExpr.Expr mask-state mask _)
-        (match (lower-masked-preheader-array-data-get mask-state sequence-var)
-          [(LowerMaybeIrValue.Some data-ptr)
-            (lower-emit-predicated-store-data
-              mask-state
-              data-ptr
-              index
-              value
-              mask
-              lanes
-              elem-ty)]
-          [(LowerMaybeIrValue.No)
-            (lower-emit-sequence-predicated-store
-              mask-state
-              sequence-var
-              index
-              value
-              mask
-              lanes
-              elem-ty)])])
+        (lower-emit-sequence-predicated-store
+          mask-state
+          sequence-var
+          index
+          value
+          mask
+          lanes
+          elem-ty)])
     (match active-mask
       [(ir.CompilerIrMaybeValue.No)
-        (match (lower-masked-preheader-array-data-get state sequence-var)
-          [(LowerMaybeIrValue.Some data-ptr)
-            (lower-emit-vector-store-data
-              state
-              data-ptr
-              index
-              value
-              lanes
-              elem-ty)]
-          [(LowerMaybeIrValue.No)
-            (lower-emit-sequence-vector-store
-              state
-              sequence-var
-              index
-              value
-              lanes
-              elem-ty)])]
+        (lower-emit-sequence-vector-store
+          state
+          sequence-var
+          index
+          value
+          lanes
+          elem-ty)]
       [(ir.CompilerIrMaybeValue.Some mask)
-        (match (lower-masked-preheader-array-data-get state sequence-var)
-          [(LowerMaybeIrValue.Some data-ptr)
-            (lower-emit-predicated-store-data
-              state
-              data-ptr
-              index
-              value
-              mask
-              lanes
-              elem-ty)]
-          [(LowerMaybeIrValue.No)
-            (lower-emit-sequence-predicated-store
-              state
-              sequence-var
-              index
-              value
-              mask
-              lanes
-              elem-ty)])])))
+        (lower-emit-sequence-predicated-store
+          state
+          sequence-var
+          index
+          value
+          mask
+          lanes
+          elem-ty)])))
 
 (define (lower-avx512-masked-index-value
   [ctx : tc_core.TcContext]
@@ -60402,598 +60366,6 @@
           s))]
     [(LowerMaybeVectorMap.No) state]))
 
-(define (lower-masked-preheader-cache-plan-uniforms
-  [state : LowerState]
-  [lanes : i64]
-  [elem-ty : ast.AstType]
-  [plan : LowerVectorMapValue]) : LowerState
-  (if (lower-masked-preheader-uniform-can-add? state)
-    (match plan
-      [(LowerVectorMapValue.Uniform value)
-        (match (lower-masked-preheader-uniform-get state value elem-ty)
-          [(LowerMaybeIrValue.Some _) state]
-          [(LowerMaybeIrValue.No)
-            (match (lower-emit-splat state value lanes elem-ty)
-              [(LowerExpr.Expr next-state vector _)
-                (begin
-                  (lower-masked-preheader-uniform-add!
-                    next-state
-                    value
-                    elem-ty
-                    vector)
-                  next-state)])])]
-      [(LowerVectorMapValue.LaneCount)
-        (let
-          [value : ir.CompilerIrValue (ir.CompilerIrValue.I64 lanes)]
-          (match (lower-masked-preheader-uniform-get state value elem-ty)
-            [(LowerMaybeIrValue.Some _) state]
-            [(LowerMaybeIrValue.No)
-              (match (lower-emit-splat state value lanes elem-ty)
-                [(LowerExpr.Expr next-state vector _)
-                  (begin
-                    (lower-masked-preheader-uniform-add!
-                      next-state
-                      value
-                      elem-ty
-                      vector)
-                    next-state)])]))]
-      [(LowerVectorMapValue.BinOp _ lhs rhs)
-        (lower-masked-preheader-cache-plan-uniforms
-          (lower-masked-preheader-cache-plan-uniforms
-            state
-            lanes
-            elem-ty
-            (__tl-box-place lhs))
-          lanes
-          elem-ty
-          (__tl-box-place rhs))]
-      ;; Shuffle selectors can have a different lane type from their values.
-      ;; Their masked emitter retains ownership of that materialization.
-      [_ state])
-    state))
-
-(define (lower-masked-preheader-cache-expr
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lanes : i64]
-  [expr : ast.AstExpr]) : LowerState
-  (match (lower-expr-result-type-or-check
-    ctx
-    env
-    type-env
-    (lower-state-type-cache state)
-    (lower-state-function-state state)
-    expr)
-    [(tc_core.ResultTcType.Ok found-ty)
-      (let
-        [elem-ty : ast.AstType
-          (tc_core.tc-type-without-regions
-            (tc_core.tc-resolve-type ctx found-ty))]
-        (if (and
-          (not (lower-type-bool? elem-ty))
-          (= (lower-simd-lanes-for-elem (lower-state-mode state) elem-ty) lanes))
-          (match (lower-simple-vector-map-value
-            ctx
-            (lower-state-mode state)
-            env
-            type-env
-            index
-            elem-ty
-            expr)
-            [(LowerMaybeVectorMapValue.Some plan)
-              (lower-masked-preheader-cache-plan-uniforms
-                state
-                lanes
-                elem-ty
-                plan)]
-            [(LowerMaybeVectorMapValue.No)
-              (lower-masked-preheader-cache-expr-children
-                ctx
-                state
-                env
-                type-env
-                index
-                lanes
-                expr)])
-          (lower-masked-preheader-cache-expr-children
-            ctx
-            state
-            env
-            type-env
-            index
-            lanes
-            expr)))]
-    [(tc_core.ResultTcType.Err _)
-      (lower-masked-preheader-cache-expr-children
-        ctx
-        state
-        env
-        type-env
-        index
-        lanes
-        expr)]))
-
-(define (lower-masked-preheader-cache-expr-expected
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lanes : i64]
-  [expected-ty : ast.AstType]
-  [expr : ast.AstExpr]) : LowerState
-  (let
-    [elem-ty : ast.AstType
-      (tc_core.tc-type-without-regions
-        (tc_core.tc-resolve-type ctx expected-ty))]
-    (if (and
-      (not (lower-type-bool? elem-ty))
-      (= (lower-simd-lanes-for-elem (lower-state-mode state) elem-ty) lanes))
-      (match (lower-simple-vector-map-value
-        ctx
-        (lower-state-mode state)
-        env
-        type-env
-        index
-        elem-ty
-        expr)
-        [(LowerMaybeVectorMapValue.Some plan)
-          (lower-masked-preheader-cache-plan-uniforms state lanes elem-ty plan)]
-        [(LowerMaybeVectorMapValue.No)
-          (lower-masked-preheader-cache-expr
-            ctx
-            state
-            env
-            type-env
-            index
-            lanes
-            expr)])
-      (lower-masked-preheader-cache-expr
-        ctx
-        state
-        env
-        type-env
-        index
-        lanes
-        expr))))
-
-(define (lower-masked-preheader-cache-expr-list-at
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lanes : i64]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : LowerState
-  (if (>= expr-index exprs.len)
-    state
-    (lower-masked-preheader-cache-expr-list-at
-      ctx
-      (lower-masked-preheader-cache-expr
-        ctx
-        state
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      env
-      type-env
-      index
-      lanes
-      exprs
-      (+ expr-index 1))))
-
-(define (lower-masked-preheader-cache-expr-list
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lanes : i64]
-  [exprs : ast.AstExprList]) : LowerState
-  (lower-masked-preheader-cache-expr-list-at
-    ctx
-    state
-    env
-    type-env
-    index
-    lanes
-    (& exprs)
-    0))
-
-(define (lower-masked-preheader-cache-let-bindings-at
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lanes : i64]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : LowerState
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    state
-    (match (ast.ast-let-binding-list-get
-      bindings
-      binding-index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ _ init-box)
-        (lower-masked-preheader-cache-let-bindings-at
-          ctx
-          (lower-masked-preheader-cache-expr
-            ctx
-            state
-            env
-            type-env
-            index
-            lanes
-            (lower-context-expr-get ctx init-box))
-          env
-          type-env
-          index
-          lanes
-          bindings
-          (+ binding-index 1))])))
-
-(define (lower-masked-preheader-cache-let-type-env-at
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : tc_core.TcTypeEnv
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    type-env
-    (match (ast.ast-let-binding-list-get
-      bindings
-      binding-index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding name maybe-ty init-box)
-        (let
-          [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-          (match (lower-expr-result-type-or-check
-            ctx
-            env
-            type-env
-            (lower-state-type-cache state)
-            (lower-state-function-state state)
-            init)
-            [(tc_core.ResultTcType.Ok init-ty)
-              (lower-masked-preheader-cache-let-type-env-at
-                ctx
-                state
-                env
-                (tc_core.tc-bind-id
-                  type-env
-                  name
-                  (lower-let-binding-type ctx maybe-ty init-ty))
-                bindings
-                (+ binding-index 1))]
-            [(tc_core.ResultTcType.Err _) type-env]))])))
-
-(define (lower-masked-preheader-cache-match-arms-at
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lanes : i64]
-  [arms : (& arms ast.AstMatchArmList)]
-  [arm-index : i64]) : LowerState
-  (if (>= arm-index arms.len)
-    state
-    (match (ast.ast-match-arm-list-get
-      arms
-      arm-index
-      (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm _ body-box)
-        (lower-masked-preheader-cache-match-arms-at
-          ctx
-          (lower-masked-preheader-cache-expr
-            ctx
-            state
-            env
-            type-env
-            index
-            lanes
-            (lower-context-expr-get ctx body-box))
-          env
-          type-env
-          index
-          lanes
-          arms
-          (+ arm-index 1))])))
-
-(define (lower-masked-preheader-cache-expr-children
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lanes : i64]
-  [expr : ast.AstExpr]) : LowerState
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (lower-masked-preheader-cache-expr
-        ctx
-        state
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Ann inner-box _)
-      (lower-masked-preheader-cache-expr
-        ctx
-        state
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Cast inner-box _)
-      (lower-masked-preheader-cache-expr
-        ctx
-        state
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (lower-masked-preheader-cache-expr
-        ctx
-        state
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Binary op left-box right-box)
-      (let
-        [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (match (tc_core.tc-binop-expr-types ctx type-env op left right)
-          [(tc_core.ResultTcBinOpTypes.Ok binop-types)
-            (match binop-types
-              [(tc_core.TcBinOpTypes left-ty right-ty _)
-                (lower-masked-preheader-cache-expr-expected
-                  ctx
-                  (lower-masked-preheader-cache-expr-expected
-                    ctx
-                    state
-                    env
-                    type-env
-                    index
-                    lanes
-                    left-ty
-                    left)
-                  env
-                  type-env
-                  index
-                  lanes
-                  right-ty
-                  right)])]
-          [(tc_core.ResultTcBinOpTypes.Err _)
-            (lower-masked-preheader-cache-expr
-              ctx
-              (lower-masked-preheader-cache-expr
-                ctx
-                state
-                env
-                type-env
-                index
-                lanes
-                left)
-              env
-              type-env
-              index
-              lanes
-              right)]))]
-    [(ast.AstExpr.Call func-box args)
-      (lower-masked-preheader-cache-expr-list
-        ctx
-        (lower-masked-preheader-cache-expr
-          ctx
-          state
-          env
-          type-env
-          index
-          lanes
-          (lower-context-expr-get ctx func-box))
-        env
-        type-env
-        index
-        lanes
-        args)]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [bound-type-env : tc_core.TcTypeEnv
-              (lower-masked-preheader-cache-let-type-env-at
-                ctx
-                state
-                env
-                type-env
-                (& bindings)
-                0)]
-            (lower-masked-preheader-cache-expr
-              ctx
-              (lower-masked-preheader-cache-let-bindings-at
-                ctx
-                state
-                env
-                type-env
-                index
-                lanes
-                (& bindings)
-                0)
-              env
-              bound-type-env
-              index
-              lanes
-              (lower-context-expr-get ctx body-box)))])]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (lower-masked-preheader-cache-expr
-        ctx
-        (lower-masked-preheader-cache-expr
-          ctx
-          (lower-masked-preheader-cache-expr
-            ctx
-            state
-            env
-            type-env
-            index
-            lanes
-            (lower-context-expr-get ctx cond-box))
-          env
-          type-env
-          index
-          lanes
-          (lower-context-expr-get ctx then-box))
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx else-box))]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
-          (lower-masked-preheader-cache-match-arms-at
-            ctx
-            (lower-masked-preheader-cache-expr
-              ctx
-              state
-              env
-              type-env
-              index
-              lanes
-              (lower-context-expr-get ctx scrutinee-box))
-            env
-            type-env
-            index
-            lanes
-            (& arms)
-            0)])]
-    [(ast.AstExpr.While cond-box body-box)
-      (lower-masked-preheader-cache-expr
-        ctx
-        (lower-masked-preheader-cache-expr
-          ctx
-          state
-          env
-          type-env
-          index
-          lanes
-          (lower-context-expr-get ctx cond-box))
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx body-box))]
-    [(ast.AstExpr.Begin exprs)
-      (lower-masked-preheader-cache-expr-list
-        ctx
-        state
-        env
-        type-env
-        index
-        lanes
-        exprs)]
-    [(ast.AstExpr.ArrayRef arr-box idx-box)
-      (lower-masked-preheader-cache-expr
-        ctx
-        (lower-masked-preheader-cache-expr
-          ctx
-          state
-          env
-          type-env
-          index
-          lanes
-          (lower-context-expr-get ctx arr-box))
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx idx-box))]
-    [(ast.AstExpr.ArraySet arr-box idx-box value-box)
-      (lower-masked-preheader-cache-expr
-        ctx
-        (lower-masked-preheader-cache-expr
-          ctx
-          (lower-masked-preheader-cache-expr
-            ctx
-            state
-            env
-            type-env
-            index
-            lanes
-            (lower-context-expr-get ctx arr-box))
-          env
-          type-env
-          index
-          lanes
-          (lower-context-expr-get ctx idx-box))
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx value-box))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (lower-masked-preheader-cache-expr
-        ctx
-        (lower-masked-preheader-cache-expr
-          ctx
-          state
-          env
-          type-env
-          index
-          lanes
-          (lower-context-expr-get ctx receiver-box))
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx value-box))]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (lower-masked-preheader-cache-expr
-        ctx
-        (lower-masked-preheader-cache-expr
-          ctx
-          state
-          env
-          type-env
-          index
-          lanes
-          (lower-context-expr-get ctx value-box))
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx lane-box))]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (lower-masked-preheader-cache-expr
-        ctx
-        (lower-masked-preheader-cache-expr
-          ctx
-          state
-          env
-          type-env
-          index
-          lanes
-          (lower-context-expr-get ctx value-box))
-        env
-        type-env
-        index
-        lanes
-        (lower-context-expr-get ctx lane-box))]
-    [_ state]))
-
 (define (lower-masked-preheader-cache-array-data
   [state : LowerState]
   [arrays : LowerArrayVarSet]) : LowerState
@@ -61080,6 +60452,8 @@
             [tail-mask-label : i64 (ir.compiler-ir-label-none)]
             [tail-body-label : i64 (ir.compiler-ir-label-none)]
             [exit-label : i64 (ir.compiler-ir-label-none)]
+            [preheader-label : i64 (ir.compiler-ir-label-none)]
+            [preheader-block-index : i64 (- 0 1)]
             [vector-limit : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             [vector-start-ok : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             [next-index : ir.CompilerIrValue ir.CompilerIrValue.Unit]
@@ -61123,6 +60497,11 @@
                   (begin
                     (set! s next-s)
                     (set! exit-label label))])
+              (match (lower-state-fresh-label s "foreach_mask_preheader")
+                [(LowerLabel.Label next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! preheader-label label))])
               (match (lower-vector-loop-limit s end-value arrays lanes)
                 [(LowerExpr.Expr next-s value _)
                   (begin
@@ -61137,14 +60516,16 @@
               (set! s (lower-masked-preheader-cache-array-data s arrays))
               (set!
                 s
-                (lower-masked-preheader-cache-expr
-                  ctx
-                  s
-                  body-env
-                  body-type-env
-                  index
-                  lanes
-                  body))
+                (lower-state-finish-block
+                  (lower-state-emit s (ir.CompilerIrInstr.Jump preheader-label))
+                  preheader-label))
+              (match s
+                [(LowerState.State data)
+                  (set!
+                    preheader-block-index
+                    (__tl-project-field
+                      (__tl-project-field (__tl-box-place data) blocks)
+                      len))])
               (set!
                 s
                 (lower-state-finish-block
@@ -61274,6 +60655,32 @@
                           tail-body-label))])]
                 [(ResultLowerExpr.Err message)
                   (return (ResultLowerExpr.Err message))])
+              (match (lower-state-masked-preheader-cache s)
+                [(LowerMaybeMaskedPreheaderCache.Some cache)
+                  (begin
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut
+                        (__tl-project-field
+                          (__tl-box-place cache)
+                          uniform-instrs))
+                      (ir.CompilerIrInstr.Branch
+                        vector-start-ok
+                        header-label
+                        tail-header-label))
+                    (match s
+                      [(LowerState.State data)
+                        (let
+                          [blocks : ir.CompilerIrBlockBuilder
+                            (__tl-project-field (__tl-box-place data) blocks)]
+                          (set!
+                            (array-ref blocks.slots preheader-block-index)
+                            (ir.CompilerIrBlock.Block
+                              preheader-label
+                              (ir.compiler-ir-instr-builder-to-seq
+                                (__tl-project-field
+                                  (__tl-box-place cache)
+                                  uniform-instrs)))))]))]
+                [(LowerMaybeMaskedPreheaderCache.No) unit])
               (lower-masked-preheader-cache-disable! s)
               (match (lower-expr ctx s body-env body-type-env body)
                 [(ResultLowerExpr.Ok scalar-tail-lowered)

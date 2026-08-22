@@ -10390,7 +10390,7 @@
       [(compiler_lower.ResultCompilerLower.Err _) false])
     (match (compiler_lower.lower-compiler-source-with-mode
       (compiler-lower-masked-preheader-windows-avx2-cap-source)
-      (compiler_lower.CompilerLowerMode.WindowsAvx2))
+      (compiler_lower.CompilerLowerMode.LinuxAvx2))
       [(compiler_lower.ResultCompilerLower.Ok program _)
         (match program
           [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
@@ -10402,6 +10402,22 @@
                 8
                 (compiler_ast_types.AstType.I32))
               8)])]
+      [(compiler_lower.ResultCompilerLower.Err _) false])
+    (match (compiler_lower.lower-compiler-source-with-mode
+      (compiler-lower-masked-preheader-windows-avx2-cap-source)
+      (compiler_lower.CompilerLowerMode.WindowsAvx2))
+      [(compiler_lower.ResultCompilerLower.Ok program _)
+        (match program
+          [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+            ;; Windows AVX2 keeps six source splats (including repeated `a`)
+            ;; local in both vector paths.
+            (=
+              (lower-test-function-splat-shape-count
+                functions
+                "fill"
+                8
+                (compiler_ast_types.AstType.I32))
+              12)])]
       [(compiler_lower.ResultCompilerLower.Err _) false])))
 
 (define (compiler-lower-masked-preheader-unsafe-rejected?

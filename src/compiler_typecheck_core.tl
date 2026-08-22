@@ -229,6 +229,20 @@
 (defstruct TcUnusedUnsafeState
   (address i64))
 
+;; The immutable type-node resolution predicate is memoized per compiler job.
+;; Numeric type ids are meaningful only within one type-pool segment table, so
+;; the owner identity travels with the cache instead of following whichever
+;; compatibility pool is currently installed in the process.
+(defstruct TcTypeResolutionCacheStateData
+  (owner-arena i64)
+  (slots (__tl_dyn-array i64))
+  (epoch i64)
+  (type-pool-owner-id i64)
+  (type-segment-bases i64))
+
+(defstruct TcTypeResolutionCacheState
+  (address i64))
+
 ;; Aggregate scalar layout accelerators are retained for the lifetime of one
 ;; compiler job. Their fixed arrays stay lazy because ordinary tooling requests
 ;; may never lower an aggregate; the identity fields reject equal numeric name
@@ -274,7 +288,10 @@
   ;; Explicit source-name/structural-intern session owned by this environment.
   ;; Arena-phase marker handles resolve only through this capability; snapshots
   ;; share the store, so the hot three-word TcTypeEnv ABI stays unchanged.
-  (structural-session-address i64))
+  (structural-session-address i64)
+  ;; Job-owned memo used while explicit cache layers collect signatures that
+  ;; still contain unresolved type variables.
+  (type-resolution-cache-state-address i64))
 
 ;; Structural index over one store's explicit top-env layer forest. `map` sends
 ;; a binding key to the packed reference of the newest layer that binds it;
@@ -448,6 +465,7 @@
   (macro-call-sites TcMacroCallSiteState)
   (scratch-arenas TcScratchArenaState)
   (unused-unsafe TcUnusedUnsafeState)
+  (type-resolution-cache TcTypeResolutionCacheState)
   (agg-scalar-caches TcAggScalarCacheState)
   ;; Lazily points into the expansion scratch arena while one macro walk owns
   ;; a segmented declaration/path view. Zero outside that structural scope, so
@@ -613,6 +631,28 @@
               (ptr-cast (__tl_array-data cell) : (Ptr TcUnusedUnsafeStateData))))
           : i64)))))
 
+(define (tc-type-resolution-cache-state-new) : TcTypeResolutionCacheState
+  (let
+    [cell : (__tl_dyn-array TcTypeResolutionCacheStateData)
+      (array.make-array TcTypeResolutionCacheStateData 1)]
+    (begin
+      (set!
+        (array-ref cell 0)
+        (TcTypeResolutionCacheStateData
+          (arena.tl_arena_current)
+          (array.make-array i64 0)
+          1
+          0
+          0))
+      (TcTypeResolutionCacheState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast
+                (__tl_array-data cell)
+                : (Ptr TcTypeResolutionCacheStateData))))
+          : i64)))))
+
 (define (tc-agg-scalar-cache-state-new) : TcAggScalarCacheState
   (let
     [cell : (__tl_dyn-array TcAggScalarCacheStateData)
@@ -663,6 +703,7 @@
           (tc-macro-call-site-state-new)
           (tc-scratch-arena-state-new)
           (tc-unused-unsafe-state-new)
+          (tc-type-resolution-cache-state-new)
           (tc-agg-scalar-cache-state-new)
           0))
       (TcJobState
@@ -777,6 +818,9 @@
 (define (tc-job-state-unused-unsafe [state : TcJobState]) : TcUnusedUnsafeState
   (tc-job-state-field state unused-unsafe TcUnusedUnsafeState))
 
+(define (tc-job-state-type-resolution-cache [state : TcJobState]) : TcTypeResolutionCacheState
+  (tc-job-state-field state type-resolution-cache TcTypeResolutionCacheState))
+
 (define (tc-job-state-agg-scalar-caches [state : TcJobState]) : TcAggScalarCacheState
   (tc-job-state-field state agg-scalar-caches TcAggScalarCacheState))
 
@@ -888,6 +932,24 @@
       (int->ptr (cast state.address : u64) : (MutPtr TcThreadNameKindStateData))
       data)))
 
+(define (tc-type-resolution-cache-state-data
+  [state : TcTypeResolutionCacheState]) : TcTypeResolutionCacheStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast state.address : u64)
+        : (Ptr TcTypeResolutionCacheStateData)))))
+
+(define (tc-type-resolution-cache-state-data-set!
+  [state : TcTypeResolutionCacheState]
+  [data : TcTypeResolutionCacheStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast state.address : u64)
+        : (MutPtr TcTypeResolutionCacheStateData))
+      data)))
+
 (define (tc-agg-scalar-cache-state-data [state : TcAggScalarCacheState]) : TcAggScalarCacheStateData
   (unsafe
     (ptr-read
@@ -942,6 +1004,17 @@
       (set! data.intern-table-id -1)
       (set! data.intern-generation -1)
       (tc-thread-name-kind-state-data-set! state data))))
+
+(define (tc-type-resolution-cache-state-reset!
+  [state : TcTypeResolutionCacheState]) : unit
+  (let
+    [data : TcTypeResolutionCacheStateData
+      (tc-type-resolution-cache-state-data state)]
+    (begin
+      (set! data.epoch (+ data.epoch 1))
+      (set! data.type-pool-owner-id 0)
+      (set! data.type-segment-bases 0)
+      (tc-type-resolution-cache-state-data-set! state data))))
 
 (define (tc-source-key-cache-state-reset! [state : TcSourceKeyCacheState]) : unit
   (begin
@@ -1299,7 +1372,9 @@
   (begin
     (tc-source-key-cache-state-reset! (tc-job-state-source-key-cache state))
     (tc-topenv-membership-state-reset! (tc-job-state-topenv-membership state))
-    (tc-thread-name-kind-state-reset! (tc-job-state-thread-name-kind state))))
+    (tc-thread-name-kind-state-reset! (tc-job-state-thread-name-kind state))
+    (tc-type-resolution-cache-state-reset!
+      (tc-job-state-type-resolution-cache state))))
 
 (define (tc-job-state-reset-file-state! [state : TcJobState]) : unit
   (begin
@@ -1424,16 +1499,18 @@
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
   [job-state : TcJobState]) : TcContext
-  (TcContext
-    program
-    symbols
-    registries
-    module
-    module-id
-    module-id
-    pools
-    source-names
-    (tc-body-state-new-with-job-state-and-source-names job-state source-names)))
+  (begin
+    (tc-type-resolution-cache-bind-pools-for-job! job-state pools)
+    (TcContext
+      program
+      symbols
+      registries
+      module
+      module-id
+      module-id
+      pools
+      source-names
+      (tc-body-state-new-with-job-state-and-source-names job-state source-names))))
 
 (define (tc-context-new-with-source-names
   [program : ast.AstProgram]
@@ -1462,16 +1539,18 @@
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
   [body-state : TcBodyState]) : TcContext
-  (TcContext
-    program
-    symbols
-    registries
-    module
-    module-id
-    module-id
-    pools
-    source-names
-    body-state))
+  (begin
+    (tc-type-resolution-cache-bind-pools-for-job! body-state.job-state pools)
+    (TcContext
+      program
+      symbols
+      registries
+      module
+      module-id
+      module-id
+      pools
+      source-names
+      body-state)))
 
 (define (tc-context-new
   [program : ast.AstProgram]
@@ -2533,24 +2612,22 @@
   (Empty)
   (Full i64 TcInlineAggregateLayout))
 
-;; Transitional owner for the remaining process-global type-resolution and
-;; complete aggregate-layout tables. Both tables are mutable and still require
-;; explicit job ownership; they are not immutable exceptions. Keeping their
-;; arenas beside the dependent views makes that later move a whole-state swap
-;; instead of a protocol over unrelated globals. Refs #6257 and #4960.
+;; Transitional owner for the remaining process-global complete
+;; aggregate-layout table. The table is mutable and still requires explicit
+;; job ownership; it is not an immutable exception. Keeping its payload arena
+;; beside the dependent views makes that later move a whole-state swap instead
+;; of a protocol over unrelated globals. Refs #6257 and #4960.
 (defstruct TcLazyGlobalTableState
   (owner arena.Arena)
   ;; Complete aggregate layouts contain retained field/payload/variant arrays.
   ;; Keep their owner in the same state as the slots that publish those views.
   (agg-layout-storage-owner arena.Arena)
-  (type-needs-resolution-slots (__tl_dyn-array i64))
   (agg-layout-cache (__tl_dyn-array TcAggLayoutCacheSlot)))
 
 (define tc-lazy-global-table-state : TcLazyGlobalTableState
   (TcLazyGlobalTableState
     (arena.Arena 0)
     (arena.Arena 0)
-    (array.make-array i64 0)
     (array.make-array TcAggLayoutCacheSlot 0)))
 
 (define (tc-agg-layout-cache-storage-arena-handle-value) : i64
@@ -8853,7 +8930,8 @@
 
 (define (tc-type-env-store-new-with-topenv-state-address
   [topenv-state-address : i64]
-  [structural-session-address : i64]) : TcTypeEnvStore
+  [structural-session-address : i64]
+  [type-resolution-cache-state-address : i64]) : TcTypeEnvStore
   (TcTypeEnvStore
     (array.make-array TcTypeEnvBinding 1)
     0
@@ -8864,11 +8942,13 @@
     (arena.tl_arena_current)
     topenv-state-address
     0
-    structural-session-address))
+    structural-session-address
+    type-resolution-cache-state-address))
 
 (define (tc-type-env-store-handle-new-with-topenv-state-address
   [topenv-state-address : i64]
-  [structural-session-address : i64]) : i64
+  [structural-session-address : i64]
+  [type-resolution-cache-state-address : i64]) : i64
   (let
     [cell : (__tl_dyn-array TcTypeEnvStore) (array.make-array TcTypeEnvStore 1)]
     (begin
@@ -8877,7 +8957,8 @@
         (array-ref cell 0)
         (tc-type-env-store-new-with-topenv-state-address
           topenv-state-address
-          structural-session-address))
+          structural-session-address
+          type-resolution-cache-state-address))
       (unsafe
         (cast (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr u8))) : i64)))))
 
@@ -8885,9 +8966,12 @@
   (let
     [source-names : ci.InternSourceNameSessionHandle
       (ci.intern-source-name-session-capture-active-handle)]
+    [resolution-state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache (tc-serial-job-state))]
     (tc-type-env-store-handle-new-with-topenv-state-address
       0
-      source-names.address)))
+      source-names.address
+      resolution-state.address)))
 
 (define (tc-type-env-store-read [handle : i64]) : TcTypeEnvStore
   (unsafe
@@ -8907,7 +8991,8 @@
     (TcTypeEnv
       (tc-type-env-store-handle-new-with-topenv-state-address
         (__tl-project-field (tc-job-state-topenv-membership state) address)
-        source-names.address)
+        source-names.address
+        (__tl-project-field (tc-job-state-type-resolution-cache state) address))
       -1
       0)))
 
@@ -8920,6 +9005,11 @@
   (TcTopEnvMembershipState
     (unsafe
       (ptr-read (ptr-offset (int->ptr env.store : (Ptr i64)) 7)))))
+
+(define (tc-type-env-type-resolution-cache-state [env : TcTypeEnv]) : TcTypeResolutionCacheState
+  (TcTypeResolutionCacheState
+    (unsafe
+      (ptr-read (ptr-offset (int->ptr env.store : (Ptr i64)) 10)))))
 
 (define (tc-type-env-set-topenv-membership-state!
   [env : TcTypeEnv]
@@ -11978,6 +12068,12 @@
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
     [store-handle : i64 env.store]
+    [resolution-state : TcTypeResolutionCacheState
+      (tc-type-env-type-resolution-cache-state env)]
+    [_resolution-owner : unit
+      (if track-resolution
+        (tc-type-resolution-cache-ensure-bound-for-state! resolution-state)
+        unit)]
     [head : i64 env.head]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
@@ -12032,7 +12128,9 @@
                     atomic-arena-marker-id)
                   position)
                   (begin
-                    (if (and track-resolution (tc-type-needs-resolution? ty))
+                    (if (and
+                      track-resolution
+                      (tc-type-needs-resolution-for-state? resolution-state ty))
                       (begin
                         (set!
                           (array-ref
@@ -12098,6 +12196,12 @@
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
     [store-handle : i64 env.store]
+    [resolution-state : TcTypeResolutionCacheState
+      (tc-type-env-type-resolution-cache-state env)]
+    [_resolution-owner : unit
+      (if track-resolution
+        (tc-type-resolution-cache-ensure-bound-for-state! resolution-state)
+        unit)]
     [head : i64 env.head]
     [left : i64 remaining]
     [cur-ids : tc_i64_i64_map.Map ids]
@@ -12150,7 +12254,9 @@
                     atomic-arena-marker-id)
                   position)
                   (begin
-                    (if (and track-resolution (tc-type-needs-resolution? ty))
+                    (if (and
+                      track-resolution
+                      (tc-type-needs-resolution-for-state? resolution-state ty))
                       (begin
                         (set!
                           (array-ref
@@ -20423,7 +20529,11 @@
   [types : ast.AstTypeList]) : ast.AstTypeList
   (let
     [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
-    (if (tc-type-list-needs-resolution-for-pools? pools type-bases types)
+    (if (tc-type-list-needs-resolution-for-job-and-pools?
+      (tc-context-job-state ctx)
+      pools
+      type-bases
+      types)
       (tc-resolve-type-list-at-with-pools ctx pools (& types) 0)
       types)))
 
@@ -20444,29 +20554,12 @@
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
       (tc-resolve-type-list-at-with-pools ctx pools types (+ index 1)))))
 
-(define (tc-type-list-needs-resolution? [types : ast.AstTypeList]) : bool
-  (tc-type-list-needs-resolution-at? (& types) 0))
-
-(define (tc-type-list-needs-resolution-at?
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
-    (if (tc-type-needs-resolution-id?
-      (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-      true
-      (tc-type-list-needs-resolution-at? types (+ index 1)))))
-
 ;; Per-type-node memo for the resolution predicate: type nodes are immutable
-;; and hash-consed, so the answer is a pure function of the node id within
-;; one pool generation. One slot packs the fill epoch with the answer bit;
-;; the epoch bumps when the pool generation changes (truncation or a pool
-;; swap), and growth drops warm entries, which the epoch guard treats as
-;; unfilled.
-;; Fixed persistent capacity: the slots are allocated on first use in the
-;; dedicated lazy-global table state (allocating under a caller's transient
-;; arena would leave the table dangling), and ids beyond it fall back to the
-;; uncached walk.
+;; and hash-consed, so the answer is a pure function of the node id within one
+;; pool owner. One slot packs the owning job's fill epoch with the answer bit;
+;; rebinding or resetting only that job advances its epoch. Fixed storage is
+;; allocated lazily in the job owner arena, and ids beyond it fall back to the
+;; uncached walk over the same explicitly bound segment table.
 (define (tc-lazy-global-table-arena-ensure!) : arena.Arena
   (let
     [owner : arena.Arena (__tl-project-field tc-lazy-global-table-state owner)]
@@ -20478,103 +20571,180 @@
           fresh))
       owner)))
 
-(define tc-type-needs-resolution-epoch : i64
-  1)
-(define tc-type-needs-resolution-generation : i64
-  -1)
+(define tc-type-resolution-cache-capacity : i64
+  131072)
 
-(define (tc-type-needs-resolution-storage-ensure!) : unit
-  (if (=
-    (array-length
-      (__tl-project-field
-        tc-lazy-global-table-state
-        type-needs-resolution-slots))
-    131072)
-    unit
-    (let
-      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+(define (tc-type-resolution-cache-storage-ensure-for-state!
+  [state : TcTypeResolutionCacheState]) : unit
+  (let
+    [data : TcTypeResolutionCacheStateData
+      (tc-type-resolution-cache-state-data state)]
+    (if (= (array-length data.slots) tc-type-resolution-cache-capacity)
+      unit
       (in-arena
-        owner
-        (__tl-project-set-field
-          tc-lazy-global-table-state
-          type-needs-resolution-slots
-          (array.make-array i64 131072))))))
+        (arena.Arena data.owner-arena)
+        (begin
+          (set!
+            data.slots
+            (array.make-array i64 tc-type-resolution-cache-capacity))
+          (tc-type-resolution-cache-state-data-set! state data))))))
 
-(define (tc-type-needs-resolution-ensure-current!) : unit
+(define (tc-type-needs-resolution-storage-ensure-for-job!
+  [job-state : TcJobState]) : unit
+  (tc-type-resolution-cache-storage-ensure-for-state!
+    (tc-job-state-type-resolution-cache job-state)))
+
+(define (tc-type-resolution-cache-bind!
+  [state : TcTypeResolutionCacheState]
+  [type-pool-owner-id : i64]
+  [type-segment-bases : i64]) : unit
+  (let
+    [data : TcTypeResolutionCacheStateData
+      (tc-type-resolution-cache-state-data state)]
+    (if (and
+      (= data.type-pool-owner-id type-pool-owner-id)
+      (= data.type-segment-bases type-segment-bases))
+      unit
+      (begin
+        (set! data.epoch (+ data.epoch 1))
+        (set! data.type-pool-owner-id type-pool-owner-id)
+        (set! data.type-segment-bases type-segment-bases)
+        (tc-type-resolution-cache-state-data-set! state data)))))
+
+(define (tc-type-resolution-cache-bind-pools-for-job!
+  [job-state : TcJobState]
+  [pools : ast.AstNodePoolContext]) : unit
+  (tc-type-resolution-cache-bind!
+    (tc-job-state-type-resolution-cache job-state)
+    (ast.ast-node-pool-context-type-cell-address pools)
+    (ast.ast-node-pool-context-type-segment-bases pools)))
+
+(define (tc-type-resolution-cache-bind-active-for-state!
+  [state : TcTypeResolutionCacheState]) : unit
+  (let
+    [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (tc-type-resolution-cache-bind! state type-segment-bases type-segment-bases)))
+
+(define (tc-type-resolution-cache-ensure-bound-for-state!
+  [state : TcTypeResolutionCacheState]) : unit
   (if (=
-    tc-type-needs-resolution-generation
-    (ast.ty-node-pool-generation-value))
-    unit
-    (begin
-      (set! tc-type-needs-resolution-epoch (+ tc-type-needs-resolution-epoch 1))
-      (set!
-        tc-type-needs-resolution-generation
-        (ast.ty-node-pool-generation-value)))))
+    (__tl-project-field
+      (tc-type-resolution-cache-state-data state)
+      type-segment-bases)
+    0)
+    (tc-type-resolution-cache-bind-active-for-state! state)
+    unit))
 
-(define (tc-type-needs-resolution-id? [ty-id : i64]) : bool
+(define (tc-type-list-needs-resolution-for-state?
+  [state : TcTypeResolutionCacheState]
+  [types : ast.AstTypeList]) : bool
+  (tc-type-list-needs-resolution-at-for-state? state (& types) 0))
+
+(define (tc-type-list-needs-resolution-at-for-state?
+  [state : TcTypeResolutionCacheState]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len types))
+    false
+    (if (tc-type-needs-resolution-id-for-state?
+      state
+      (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+      true
+      (tc-type-list-needs-resolution-at-for-state? state types (+ index 1)))))
+
+(define (tc-type-needs-resolution-id-for-state?
+  [state : TcTypeResolutionCacheState]
+  [ty-id : i64]) : bool
   (begin
-    (tc-type-needs-resolution-storage-ensure!)
-    (tc-type-needs-resolution-ensure-current!)
-    (when
-      (>=
-        ty-id
-        (array-length
-          (__tl-project-field
-            tc-lazy-global-table-state
-            type-needs-resolution-slots)))
-      (return (tc-type-needs-resolution? (ast.ty-node-get ty-id))))
+    (tc-type-resolution-cache-storage-ensure-for-state! state)
     (let
-      [slot : i64
-        (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            type-needs-resolution-slots)
-          ty-id)]
-      (if (= (shr slot 1) tc-type-needs-resolution-epoch)
-        (= (bit-and slot 1) 1)
-        (let
-          [answer : bool (tc-type-needs-resolution? (ast.ty-node-get ty-id))]
-          (begin
-            (set!
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  type-needs-resolution-slots)
-                ty-id)
-              (bit-or
-                (shl tc-type-needs-resolution-epoch 1)
-                (if answer
-                  1
-                  0)))
-            answer))))))
+      [data : TcTypeResolutionCacheStateData
+        (tc-type-resolution-cache-state-data state)]
+      (when
+        (>= ty-id (array-length data.slots))
+        (return
+          (tc-type-needs-resolution-for-state?
+            state
+            (ast.ast-type-segment-bases-get data.type-segment-bases ty-id))))
+      (let
+        [slot : i64 (array-ref data.slots ty-id)]
+        (if (= (shr slot 1) data.epoch)
+          (= (bit-and slot 1) 1)
+          (let
+            [answer : bool
+              (tc-type-needs-resolution-for-state?
+                state
+                (ast.ast-type-segment-bases-get data.type-segment-bases ty-id))]
+            (begin
+              (set!
+                (array-ref data.slots ty-id)
+                (bit-or
+                  (shl data.epoch 1)
+                  (if answer
+                    1
+                    0)))
+              answer)))))))
 
-(define (tc-type-needs-resolution? [ty : ast.AstType]) : bool
+(define (tc-type-needs-resolution-for-state?
+  [state : TcTypeResolutionCacheState]
+  [ty : ast.AstType]) : bool
   (match ty
     [(ast.AstType.Func args ret)
-      (if (tc-type-list-needs-resolution? (__tl-box-place args))
+      (if (tc-type-list-needs-resolution-for-state? state (__tl-box-place args))
         true
-        (tc-type-needs-resolution-id? ret))]
+        (tc-type-needs-resolution-id-for-state? state ret))]
     [(ast.AstType.Tuple elems)
-      (tc-type-list-needs-resolution? (__tl-box-place elems))]
-    [(ast.AstType.Array elem _) (tc-type-needs-resolution-id? elem)]
-    [(ast.AstType.DynArray elem) (tc-type-needs-resolution-id? elem)]
-    [(ast.AstType.Slice elem) (tc-type-needs-resolution-id? elem)]
-    [(ast.AstType.Box elem) (tc-type-needs-resolution-id? elem)]
-    [(ast.AstType.Ptr elem) (tc-type-needs-resolution-id? elem)]
-    [(ast.AstType.MutPtr elem) (tc-type-needs-resolution-id? elem)]
-    [(ast.AstType.Ref _ inner) (tc-type-needs-resolution-id? inner)]
-    [(ast.AstType.MutRef _ inner) (tc-type-needs-resolution-id? inner)]
-    [(ast.AstType.Region _ inner) (tc-type-needs-resolution-id? inner)]
-    [(ast.AstType.Consume inner) (tc-type-needs-resolution-id? inner)]
+      (tc-type-list-needs-resolution-for-state? state (__tl-box-place elems))]
+    [(ast.AstType.Array elem _)
+      (tc-type-needs-resolution-id-for-state? state elem)]
+    [(ast.AstType.DynArray elem)
+      (tc-type-needs-resolution-id-for-state? state elem)]
+    [(ast.AstType.Slice elem)
+      (tc-type-needs-resolution-id-for-state? state elem)]
+    [(ast.AstType.Box elem) (tc-type-needs-resolution-id-for-state? state elem)]
+    [(ast.AstType.Ptr elem) (tc-type-needs-resolution-id-for-state? state elem)]
+    [(ast.AstType.MutPtr elem)
+      (tc-type-needs-resolution-id-for-state? state elem)]
+    [(ast.AstType.Ref _ inner)
+      (tc-type-needs-resolution-id-for-state? state inner)]
+    [(ast.AstType.MutRef _ inner)
+      (tc-type-needs-resolution-id-for-state? state inner)]
+    [(ast.AstType.Region _ inner)
+      (tc-type-needs-resolution-id-for-state? state inner)]
+    [(ast.AstType.Consume inner)
+      (tc-type-needs-resolution-id-for-state? state inner)]
     [(ast.AstType.VarArgs _ _) true]
     [(ast.AstType.Var _) true]
     [_ false]))
 
-;; Explicit-pool twin of the installed-pool predicate above. The serial memo is
-;; deliberately not shared here: its epoch is keyed to the process-global pool
-;; generation, while an explicit context can hold the same numeric id in a
-;; different pool. The resolver hoists `type-bases`, so this uncached walk still
-;; avoids both the global load and a context-struct copy at every child.
+;; Standalone helpers retain their serial compatibility surface. Production
+;; typecheck paths use the explicit job/pool or context variants below.
+(define (tc-type-needs-resolution-id? [ty-id : i64]) : bool
+  (let
+    [state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache (tc-serial-job-state))]
+    (begin
+      (tc-type-resolution-cache-bind-active-for-state! state)
+      (tc-type-needs-resolution-id-for-state? state ty-id))))
+
+(define (tc-type-needs-resolution? [ty : ast.AstType]) : bool
+  (let
+    [state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache (tc-serial-job-state))]
+    (begin
+      (tc-type-resolution-cache-bind-active-for-state! state)
+      (tc-type-needs-resolution-for-state? state ty))))
+
+(define (tc-type-list-needs-resolution? [types : ast.AstTypeList]) : bool
+  (let
+    [state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache (tc-serial-job-state))]
+    (begin
+      (tc-type-resolution-cache-bind-active-for-state! state)
+      (tc-type-list-needs-resolution-for-state? state types))))
+
+;; Uncached explicit-pool compatibility twin. Production contexts use the
+;; job-owned memo below; standalone pool-isolation tests retain this raw worker.
 (define (tc-type-list-needs-resolution-with-bases?
   [type-bases : i64]
   [types : ast.AstTypeList]) : bool
@@ -20640,21 +20810,46 @@
     [(ast.AstType.Var _) true]
     [_ false]))
 
-(define (tc-type-list-needs-resolution-for-pools?
+(define (tc-type-list-needs-resolution-for-job-and-pools?
+  [job-state : TcJobState]
   [pools : ast.AstNodePoolContext]
   [type-bases : i64]
   [types : ast.AstTypeList]) : bool
-  (if (ast.ast-node-pool-context-type-installed? pools)
-    (tc-type-list-needs-resolution? types)
-    (tc-type-list-needs-resolution-with-bases? type-bases types)))
+  (let
+    [state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache job-state)]
+    (begin
+      (tc-type-resolution-cache-bind!
+        state
+        (ast.ast-node-pool-context-type-cell-address pools)
+        type-bases)
+      (tc-type-list-needs-resolution-for-state? state types))))
 
-(define (tc-type-needs-resolution-for-pools?
+(define (tc-type-needs-resolution-for-job-and-pools?
+  [job-state : TcJobState]
   [pools : ast.AstNodePoolContext]
   [type-bases : i64]
   [ty : ast.AstType]) : bool
-  (if (ast.ast-node-pool-context-type-installed? pools)
-    (tc-type-needs-resolution? ty)
-    (tc-type-needs-resolution-with-bases? type-bases ty)))
+  (let
+    [state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache job-state)]
+    (begin
+      (tc-type-resolution-cache-bind!
+        state
+        (ast.ast-node-pool-context-type-cell-address pools)
+        type-bases)
+      (tc-type-needs-resolution-for-state? state ty))))
+
+(define (tc-type-needs-resolution-for-context?
+  [ctx : TcContext]
+  [ty : ast.AstType]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (tc-context-type-resolution-pools ctx)]
+    (tc-type-needs-resolution-for-job-and-pools?
+      (tc-context-job-state ctx)
+      pools
+      (ast.ast-node-pool-context-type-segment-bases pools)
+      ty)))
 
 ;; id-keyed variant: reads the O(1) precomputed "contains-'/'" metadata slot
 ;; instead of re-hashing the name. The hygiene check needs the string, which
@@ -24962,7 +25157,11 @@
   [ty : ast.AstType]) : ast.AstType
   (let
     [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
-    (if (tc-type-needs-resolution-for-pools? pools type-bases ty)
+    (if (tc-type-needs-resolution-for-job-and-pools?
+      (tc-context-job-state ctx)
+      pools
+      type-bases
+      ty)
       (match ty
         [(ast.AstType.Func args ret)
           (ast.ast-ty-func-with-pools
@@ -30219,6 +30418,10 @@
     (=
       (comptime (offset-of (type TcTypeEnvStore) structural-session-address))
       72)
+    (=
+      (comptime
+        (offset-of (type TcTypeEnvStore) type-resolution-cache-state-address))
+      80)
     ;; The structural top-env index reads these four through raw word offsets,
     ;; so they must stay first and stay one word wide.
     (= (comptime (offset-of (type TcTypeEnvCache) chain-depth)) 0)
@@ -99233,6 +99436,8 @@
     [scratch : arena.Arena (arena.make)]
     [job-state : TcJobState (tc-serial-job-state)]
     [proof-state : TcMacroState (tc-job-state-macro-state job-state)]
+    [resolution-state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache job-state)]
     [scalar-state : TcAggScalarCacheState
       (tc-job-state-agg-scalar-caches job-state)]
     [initially-lazy? : bool
@@ -99244,8 +99449,8 @@
         (=
           (array-length
             (__tl-project-field
-              tc-lazy-global-table-state
-              type-needs-resolution-slots))
+              (tc-type-resolution-cache-state-data resolution-state)
+              slots))
           0)
         (=
           (array-length
@@ -99273,12 +99478,15 @@
     [_set-scratch : unit
       (unsafe
         (arena.set! scratch))]
-    [_resolution : unit (tc-type-needs-resolution-storage-ensure!)]
+    [_resolution : unit
+      (tc-type-needs-resolution-storage-ensure-for-job! job-state)]
     [_size : unit (tc-agg-size-cache-storage-ensure!)]
     [_align : unit (tc-agg-align-cache-storage-ensure!)]
     [_regwords : unit (tc-agg-regwords-cache-storage-ensure!)]
     [scalar-data : TcAggScalarCacheStateData
       (tc-agg-scalar-cache-state-data scalar-state)]
+    [resolution-data : TcTypeResolutionCacheStateData
+      (tc-type-resolution-cache-state-data resolution-state)]
     [_layout : unit (tc-agg-layout-cache-table-storage-ensure!)]
     [_macro-proof : unit
       (tc-macro-abstract-proof-qualified-key-storage-ensure! proof-state)]
@@ -99286,11 +99494,8 @@
     [exact-capacities? : bool
       (and
         (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              type-needs-resolution-slots))
-          131072)
+          (array-length resolution-data.slots)
+          tc-type-resolution-cache-capacity)
         (= (array-length scalar-data.size-cache) tc-agg-scalar-cache-capacity)
         (= (array-length scalar-data.align-cache) tc-agg-scalar-cache-capacity)
         (=
@@ -99308,13 +99513,7 @@
         (arena.set! caller))
       (unsafe
         (arena.destroy scratch))
-      (set!
-        (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            type-needs-resolution-slots)
-          0)
-        17)
+      (set! (array-ref resolution-data.slots 0) 17)
       (set! (array-ref scalar-data.size-cache 0) 29)
       (set! (array-ref scalar-data.align-cache 0) 31)
       (set! (array-ref scalar-data.regwords-cache 0) 37)
@@ -99329,13 +99528,7 @@
       (let
         [survived? : bool
           (and
-            (=
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  type-needs-resolution-slots)
-                0)
-              17)
+            (= (array-ref resolution-data.slots 0) 17)
             (= (array-ref scalar-data.size-cache 0) 29)
             (= (array-ref scalar-data.align-cache 0) 31)
             (= (array-ref scalar-data.regwords-cache 0) 37)
@@ -99348,13 +99541,7 @@
               (array-ref (tc-macro-proof-field proof-state qualified-keys) 0)
               "tc-lazy-table-storage"))]
         (begin
-          (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                type-needs-resolution-slots)
-              0)
-            0)
+          (set! (array-ref resolution-data.slots 0) 0)
           (set! (array-ref scalar-data.size-cache 0) 0)
           (set! (array-ref scalar-data.align-cache 0) 0)
           (set! (array-ref scalar-data.regwords-cache 0) 0)
@@ -99373,6 +99560,134 @@
               survived?
               unused-unsafe-lifetime?
               unused-unsafe-isolation?)))))))
+
+(cfg
+  test
+  (test
+    type-resolution-cache-state-isolation
+    (let
+      [caller : arena.Arena (arena.current)]
+      [owner-a : arena.Arena (arena.make)]
+      [owner-b : arena.Arena (arena.make)]
+      [job-a-address : i64
+        (in-arena owner-a (__tl-project-field (tc-job-state-new) address))]
+      [job-b-address : i64
+        (in-arena owner-b (__tl-project-field (tc-job-state-new) address))]
+      [job-a : TcJobState (TcJobState job-a-address)]
+      [job-b : TcJobState (TcJobState job-b-address)]
+      [state-a : TcTypeResolutionCacheState
+        (tc-job-state-type-resolution-cache job-a)]
+      [state-b : TcTypeResolutionCacheState
+        (tc-job-state-type-resolution-cache job-b)]
+      [pools-a : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 4 4)]
+      [pools-b : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 4 4)]
+      [child-a : i64
+        (ast.ast-node-pool-context-type-push pools-a (ast.AstType.I64))]
+      [parent-a : i64
+        (ast.ast-node-pool-context-type-push
+          pools-a
+          (ast.AstType.Array child-a 3))]
+      [child-b : i64
+        (ast.ast-node-pool-context-type-push
+          pools-b
+          (ast.AstType.Var (ci.intern "resolution-owner-b")))]
+      [parent-b : i64
+        (ast.ast-node-pool-context-type-push
+          pools-b
+          (ast.AstType.Array child-b 3))]
+      [initially-lazy? : bool
+        (and
+          (=
+            (array-length (tc-type-resolution-cache-state-data state-a).slots)
+            0)
+          (=
+            (array-length (tc-type-resolution-cache-state-data state-b).slots)
+            0))]
+      [scratch : arena.Arena (arena.make)]
+      (begin
+        (unsafe
+          (arena.set! scratch))
+        (let
+          [answer-a : bool
+            (tc-type-needs-resolution-for-job-and-pools?
+              job-a
+              pools-a
+              (ast.ast-node-pool-context-type-segment-bases pools-a)
+              (ast.ast-node-pool-context-type-get pools-a parent-a))]
+          [answer-b : bool
+            (tc-type-needs-resolution-for-job-and-pools?
+              job-b
+              pools-b
+              (ast.ast-node-pool-context-type-segment-bases pools-b)
+              (ast.ast-node-pool-context-type-get pools-b parent-b))]
+          [hit-a : bool
+            (tc-type-needs-resolution-id-for-state? state-a parent-a)]
+          [hit-b : bool
+            (tc-type-needs-resolution-id-for-state? state-b parent-b)]
+          [data-a : TcTypeResolutionCacheStateData
+            (tc-type-resolution-cache-state-data state-a)]
+          [data-b : TcTypeResolutionCacheStateData
+            (tc-type-resolution-cache-state-data state-b)]
+          [slot-a : i64 (array-ref data-a.slots parent-a)]
+          [slot-b : i64 (array-ref data-b.slots parent-b)]
+          [restored-scratch? : bool (arena.eq? (arena.current) scratch)]
+          (begin
+            (unsafe
+              (arena.set! caller))
+            (unsafe
+              (arena.destroy scratch))
+            (tc-job-state-reset-derived-caches! job-a)
+            (let
+              [reset-a : TcTypeResolutionCacheStateData
+                (tc-type-resolution-cache-state-data state-a)]
+              [intact-b : TcTypeResolutionCacheStateData
+                (tc-type-resolution-cache-state-data state-b)]
+              [b-after-a-reset? : bool
+                (tc-type-needs-resolution-id-for-state? state-b parent-b)]
+              [isolated? : bool
+                (and
+                  initially-lazy?
+                  (not (= state-a.address state-b.address))
+                  (= child-a child-b)
+                  (= parent-a parent-b)
+                  (not answer-a)
+                  answer-b
+                  (not hit-a)
+                  hit-b
+                  restored-scratch?
+                  (=
+                    (array-length data-a.slots)
+                    tc-type-resolution-cache-capacity)
+                  (=
+                    (array-length data-b.slots)
+                    tc-type-resolution-cache-capacity)
+                  (= (shr slot-a 1) data-a.epoch)
+                  (= (bit-and slot-a 1) 0)
+                  (= (shr slot-b 1) data-b.epoch)
+                  (= (bit-and slot-b 1) 1)
+                  (= reset-a.type-pool-owner-id 0)
+                  (= reset-a.type-segment-bases 0)
+                  (> reset-a.epoch data-a.epoch)
+                  (= intact-b.type-pool-owner-id data-b.type-pool-owner-id)
+                  (= intact-b.type-segment-bases data-b.type-segment-bases)
+                  (= intact-b.epoch data-b.epoch)
+                  (= (array-ref intact-b.slots parent-b) slot-b)
+                  b-after-a-reset?)]
+              (begin
+                (unsafe
+                  (arena.destroy owner-a))
+                (let
+                  [b-after-a-destroy? : bool
+                    (tc-type-needs-resolution-id-for-state? state-b parent-b)]
+                  (begin
+                    (unsafe
+                      (arena.destroy owner-b))
+                    (if (and isolated? b-after-a-destroy?)
+                      unit
+                      (io.panic
+                        "typecheck: type-resolution cache state isolation failed"))))))))))))
 
 (cfg
   test
@@ -102387,14 +102702,14 @@
         (tc-context-pools ctx)
         infos
         ty)]
-    (if (tc-type-needs-resolution? reflected)
+    (if (tc-type-needs-resolution-for-context? ctx reflected)
       (let
         [qualified-reflected : ast.AstType
           (ctfe_support.ctfe-reflect-resolve-type-with-pools
             (tc-context-pools ctx)
             infos
             (macro-type-arg-module-qualify ctx reflected))]
-        (if (tc-type-needs-resolution? qualified-reflected)
+        (if (tc-type-needs-resolution-for-context? ctx qualified-reflected)
           reflected
           qualified-reflected))
       reflected)))
@@ -102405,11 +102720,11 @@
   [ty : ast.AstType]) : ast.AstType
   (let
     [resolved : ast.AstType (tc-resolve-type ctx ty)]
-    (if (tc-type-needs-resolution? resolved)
+    (if (tc-type-needs-resolution-for-context? ctx resolved)
       (let
         [reflected : ast.AstType
           (macro-type-arg-reflect-resolve ctx decls resolved)]
-        (if (tc-type-needs-resolution? reflected)
+        (if (tc-type-needs-resolution-for-context? ctx reflected)
           (macro-type-arg-module-qualify ctx reflected)
           reflected))
       resolved)))
@@ -111095,7 +111410,7 @@
             (if (and (>= value-slot 0) (< value-slot (array.length values)))
               (let
                 [before : ast.AstType (array-ref values value-slot)]
-                (if (tc-type-needs-resolution? before)
+                (if (tc-type-needs-resolution-for-context? ctx before)
                   (let
                     [binding-ctx : TcContext
                       (tc-top-env-binding-context ctx name-id)]
@@ -111117,7 +111432,7 @@
                               (+
                                 compiler-tc-walk-splice-env-reresolve-updates
                                 1)))))
-                      (if (tc-type-needs-resolution? after)
+                      (if (tc-type-needs-resolution-for-context? ctx after)
                         (begin
                           (set!
                             (array-ref sidecar (+ capacity 1 write-index))

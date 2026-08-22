@@ -280,32 +280,44 @@
     (let
       [text : String (ci.intern-syntax-id-text name)]
       [n : i64 (string.string-length text)]
-      [start : i64 0]
-      [cursor : i64 0]
-      (while (<= cursor n)
-        (if (or
-          (= cursor n)
-          (string.char-eq (string.string-ref text cursor) '.'))
-          (let
-            [len : i64 (- cursor start)]
-            (begin
-              (if (> len 0)
+      [written-name : i64
+        (ci.intern-id-value (ci.intern-syntax-id-renderable name))]
+      (if (< (ci.intern-first-dot written-name) 0)
+        (compiler-parse-semantic-origin-push-active!
+          final-kind
+          written-name
+          (token.SourceSpan
+            (token.span-start-line span)
+            (token.span-start-col span)
+            (token.span-end-line span)
+            (+ (token.span-start-col span) n)))
+        (let
+          [start : i64 0]
+          [cursor : i64 0]
+          (while (<= cursor n)
+            (if (or
+              (= cursor n)
+              (string.char-eq (string.string-ref text cursor) '.'))
+              (let
+                [len : i64 (- cursor start)]
                 (begin
-                  (compiler-parse-semantic-origin-push-active!
-                    (if (= cursor n)
-                      final-kind
-                      prefix-kind)
-                    (ci.intern-slice text start len)
-                    (token.SourceSpan
-                      (token.span-start-line span)
-                      (+ (token.span-start-col span) start)
-                      (token.span-end-line span)
-                      (+ (token.span-start-col span) cursor)))
-                  unit)
-                unit)
-              (set! start (+ cursor 1))))
-          unit)
-        (set! cursor (+ cursor 1))))
+                  (if (> len 0)
+                    (begin
+                      (compiler-parse-semantic-origin-push-active!
+                        (if (= cursor n)
+                          final-kind
+                          prefix-kind)
+                        (ci.intern-slice text start len)
+                        (token.SourceSpan
+                          (token.span-start-line span)
+                          (+ (token.span-start-col span) start)
+                          (token.span-end-line span)
+                          (+ (token.span-start-col span) cursor)))
+                      unit)
+                    unit)
+                  (set! start (+ cursor 1))))
+              unit)
+            (set! cursor (+ cursor 1))))))
     unit))
 
 (define (compiler-parse-decl-list-storage-key
@@ -10856,7 +10868,7 @@
     (ParseAstDeclVec
       (__tl_make-array ast.AstDecl cap)
       (__tl_make-array ast.AstSourceSpan cap)
-      (parse-semantic-origin-vec-with-capacity cap)
+      (parse-semantic-origin-vec-with-capacity (* cap 8))
       0)))
 
 (define (parse-ast-decl-vec-new) : ParseAstDeclVec

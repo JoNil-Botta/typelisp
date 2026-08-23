@@ -32254,10 +32254,11 @@
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 ;; `OptBoolBranchDef.No` is the fieldless tag-0 variant, so its representation is
-;; all-zero bytes and `make-array` already produces it for every slot -- see
+;; all-zero bytes and `array.make-array` already produces it for every slot -- see
 ;; `lower-make-array-zero-fill-enum-supported?`, which admits exactly the enums
-;; whose first variant carries no fields. Every `(Array E)` in this file built
-;; by `make-array` for such an `E` therefore starts out uniformly tag-0, and a
+;; whose first variant carries no fields. Every private `(__tl_dyn-array E)` in
+;; this file built by `array.make-array` for such an `E` therefore starts out
+;; uniformly tag-0, and a
 ;; pass that writes that same variant over the whole array is a pure repeat of
 ;; the allocation's own fill.
 (define (opt-bool-branch-defs [frame : i64] [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array

@@ -49754,7 +49754,7 @@
       (compiler_ir_types.compiler-ir-instr-seq-count instrs))
     instrs))
 
-;; Run with header-typed handle params (vars 0 and 1 are (Array i64)
+;; Run with header-typed handle params (vars 0 and 1 are (__tl_dyn-array i64)
 ;; descriptors) so the descriptor/element granularity rules can be exercised.
 (define (opt-load-cse-run-with-array-param
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq

@@ -143,7 +143,7 @@
 
 ;: Build an opaque binary-data expression from compile-time bytes.
 ;:
-;: The expanded expression has type `(Array u8)` and lowers directly to static
+;: The expanded expression has private type `(__tl_dyn-array u8)` and lowers directly to static
 ;: binary data, without constructing or parsing an array literal.
 (define (expr-binary-data [value : String]) : Expr
   (expr-binary-data value))

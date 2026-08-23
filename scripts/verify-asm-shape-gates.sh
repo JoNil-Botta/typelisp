@@ -1238,7 +1238,7 @@ check_word_merge_unroll() {
         word-merge-unroll-k4
     assert_contains "$_or_group" 'addq $4,' word-merge-unroll-k4-step
     # The refusal that keeps the K=2 pin two-sided: the byte-wide twin is the
-    # SAME loop written over `(Array u8)`. It is still the load-and-store class,
+    # SAME loop written over `(__tl_dyn-array u8)`. It is still the load-and-store class,
     # so it still unrolls -- at the class default of 2, with a counter step of
     # 2. Raising the class instead of adding a tier would move this one too.
     _bytes=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_bytes)

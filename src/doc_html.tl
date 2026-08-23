@@ -343,7 +343,7 @@
 
 (define (doc-html-syntax-builtin? [token : String]) : bool
   (doc-html-syntax-list-member?
-    "|ptr-addr-of|ptr-offset|ptr-write!|ptr-null?|ptr-null|ptr-read|ptr-cast|ptr->int|int->ptr|array-push!|array-data|array-ref|make-array|tuple-ref|deref|string-from-bytes|string-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|syscall|box|array|tuple|"
+    "|ptr-addr-of|ptr-offset|ptr-write!|ptr-null?|ptr-null|ptr-read|ptr-cast|ptr->int|int->ptr|array-ref|tuple-ref|deref|string-from-bytes|string-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|syscall|box|array|tuple|"
     token))
 
 (define (doc-html-syntax-operator? [token : String]) : bool

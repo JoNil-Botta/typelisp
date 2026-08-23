@@ -65231,7 +65231,7 @@
 ;; Soundness ledger (conservative-by-class; when in doubt the store stays):
 ;;  * Only functions that passed an rsp-rebase audit participate.
 ;;    emit-function records (symbol, lo, hi, disp) into POINTER-FREE global
-;;    tables (an `(Array String)` global dangles by peephole time -- the
+;;    tables (an `(__tl_dyn-array String)` global dangles by peephole time -- the
 ;;    carry-safe lesson) where [lo, hi] is the VAR-REGION slot-start span in
 ;;    canonical (delta-0, rsp-relative) bytes: lo = bias_neg - 8*slot-vars,
 ;;    hi = bias_neg - 8 with bias_neg = sub-s (push mode) / frame -- exactly

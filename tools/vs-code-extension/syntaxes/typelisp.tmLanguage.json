@@ -84,7 +84,7 @@
     "builtins": {
       "comment": "Built-in intrinsic operations and constructors, recognised in head position.",
       "name": "support.function.builtin.typelisp",
-      "match": "(?<=\\()(ptr-addr-of|ptr-offset|ptr-write!|ptr-null\\?|ptr-null|ptr-read|ptr-cast|ptr->int|int->ptr|array-push!|array-set!|array-data|array-ref|make-array|tuple-ref|struct-get|string-from-bytes|string-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|syscall|box-get|box|array|tuple)(?=[\\s)])"
+      "match": "(?<=\\()(ptr-addr-of|ptr-offset|ptr-write!|ptr-null\\?|ptr-null|ptr-read|ptr-cast|ptr->int|int->ptr|array-set!|array-ref|tuple-ref|struct-get|string-from-bytes|string-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|syscall|box-get|box|array|tuple)(?=[\\s)])"
     },
     "operators": {
       "patterns": [

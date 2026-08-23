@@ -89652,7 +89652,7 @@
         n
         cap
         (unsafe
-          (array-data starts)))]
+          (__tl_array-data starts)))]
     (begin
       ;; The estimate is generous for emitted assembly; a text that beats it is
       ;; served by doubling and splitting again. This second call site is also
@@ -89677,25 +89677,25 @@
               n
               cap
               (unsafe
-                (array-data starts))))))
+                (__tl_array-data starts))))))
       (when
         classify?
         (let
           [flags-out : (MutPtr i64)
             (unsafe
-              (array-data flags))]
+              (__tl_array-data flags))]
           (begin
             (compiler-backend-layout-classify-lines!
               data
               lines
               (unsafe
-                (array-data starts))
+                (__tl_array-data starts))
               flags-out)
             (compiler-backend-layout-list-lines!
               lines
               flags-out
               (unsafe
-                (array-data labels))
+                (__tl_array-data labels))
               (unsafe
                 (array-data flow))
               (compiler-backend-global-shared-view counts)))))
@@ -89721,7 +89721,7 @@
             [sites : (__tl_dyn-array i64) (array.make-array i64 (* 8 jumps))]
             [sites-raw : (MutPtr i64)
               (unsafe
-                (array-data sites))]
+                (__tl_array-data sites))]
             [sink-p-raw : (MutPtr i64) sites-raw]
             [sink-q-raw : (MutPtr i64)
               (unsafe
@@ -89746,31 +89746,31 @@
                 (ptr-offset sites-raw (* 7 jumps)))]
             [starts-raw : (MutPtr i64)
               (unsafe
-                (array-data starts))]
+                (__tl_array-data starts))]
             [flags-raw : (MutPtr i64)
               (unsafe
-                (array-data flags))]
+                (__tl_array-data flags))]
             [flow-raw : (MutPtr i64)
               (unsafe
-                (array-data flow))]
+                (__tl_array-data flow))]
             [target-raw : (MutPtr i64)
               (unsafe
-                (array-data target))]
+                (__tl_array-data target))]
             [pred-raw : (MutPtr i64)
               (unsafe
-                (array-data pred))]
+                (__tl_array-data pred))]
             [refs-raw : (MutPtr i64)
               (unsafe
-                (array-data refs))]
+                (__tl_array-data refs))]
             [table-raw : (MutPtr i64)
               (unsafe
-                (array-data table))]
+                (__tl_array-data table))]
             [_table : unit
               (compiler-backend-layout-build-table!
                 data
                 starts-raw
                 (unsafe
-                  (array-data labels))
+                  (__tl_array-data labels))
                 label-count
                 table-raw
                 table-cap)]
@@ -89893,7 +89893,7 @@
                     dup-to-raw
                     dups
                     (unsafe
-                      (array-data plan)))]
+                      (__tl_array-data plan)))]
                 (CompilerBackendLayoutPlan starts plan lines len)))))))))
 
 ;; Render a non-identity plan. Consecutive entries that are also consecutive
@@ -89929,7 +89929,7 @@
           [out : (__tl_dyn-array u8) (array.make-array u8 total)]
           [dst : (MutPtr u8)
             (unsafe
-              (array-data out))]
+              (__tl_array-data out))]
           [pos : i64 0]
           [run-start : i64 0]
           [run-end : i64 0]
@@ -90147,10 +90147,10 @@
               drop-fallthrough?)]
           [lay-starts : (MutPtr i64)
             (unsafe
-              (array-data laid-out.starts))]
+              (__tl_array-data laid-out.starts))]
           [lay-plan : (MutPtr i64)
             (unsafe
-              (array-data laid-out.plan))]
+              (__tl_array-data laid-out.plan))]
           [lay-len : i64 laid-out.len]
           [steps : i64
             (if (= lay-len 0)

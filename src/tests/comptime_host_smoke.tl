@@ -5,8 +5,8 @@
 ;; asserts the committed result is the same AST shape the interpreted
 ;; builders produce. It also checks macro-call provenance, fold hygiene-marker
 ;; parity, and the status contract for stale cookies, empty-stack and duplicate
-;; commits, and fuel exhaustion. Refs #5212, #5475, #5503,
-;; #4870.
+;; commits, fuel exhaustion, and native panic/abort without partial commit.
+;; Refs #5212, #5475, #5503, #4870, #6609.
 (import compiler_embedded_stdlib_tlci)
 (import tlci_core)
 (import compiler_ast_types)
@@ -2360,6 +2360,49 @@
         (not
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?))))))
 
+;; The fixed abort-table callback latches status 3 after an entry has staged a
+;; value but before commit. The attempted commit must return that status and
+;; leave the public result slot empty.
+(define (comptime-host-smoke-abort-no-commit-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    [message : String "native comptime abort control"]
+    (begin
+      (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        8
+        comptime-host-smoke-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (and
+        (=
+          (comptime-host-smoke-invoke
+            compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+            0
+            0)
+          tlci_core.tlci-host-callback-status-ok)
+        (=
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-abort
+            comptime-host-smoke-cookie
+            7
+            (comptime-host-smoke-name-ptr message)
+            (string.string-length message)
+            0)
+          tlci_core.tlci-host-callback-status-ok)
+        (=
+          (comptime-host-smoke-invoke
+            compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-commit-result
+            0
+            0)
+          tlci_core.tlci-host-callback-status-abort)
+        (not
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?))))))
+
 (define (comptime-host-smoke-closed-session-ok?) : bool
   (begin
     (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
@@ -2416,6 +2459,8 @@
       (io.panic "comptime host smoke: single result commit")]
     [(not (comptime-host-smoke-status-ok?))
       (io.panic "comptime host smoke: status contract")]
+    [(not (comptime-host-smoke-abort-no-commit-ok?))
+      (io.panic "comptime host smoke: abort no-partial-commit contract")]
     [(not (comptime-host-smoke-closed-session-ok?))
       (io.panic "comptime host smoke: closed session")]
     [(not (comptime-host-smoke-table-ok?))

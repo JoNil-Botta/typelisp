@@ -130,6 +130,11 @@ ENVELOPE_B=$IMAGE_B.tlch
 FULL_BLOCKER_IMAGE=$WORKDIR/stdlib-full-blockers.tlci
 FULL_BLOCKER_STDOUT=$WORKDIR/full-blockers.stdout
 FULL_BLOCKER_STDERR=$WORKDIR/full-blockers.stderr
+IDENTITY_IMAGE=$WORKDIR/stdlib-identity-manifest.tlci
+IDENTITY_STDOUT=$WORKDIR/identity-manifest.stdout
+IDENTITY_ACTUAL=$WORKDIR/identity-manifest.actual.tsv
+IDENTITY_EXPECTED=$WORKDIR/identity-manifest.expected.tsv
+IDENTITY_FIXTURES=tools/embedded-stdlib-tlci/identity-fixtures.tsv
 MUTATED_ROOT=$WORKDIR/stdlib-mutated
 MUTATED_IMAGE=$WORKDIR/stdlib-mutated.tlci
 MUTATED_SURFACE=$WORKDIR/stdlib-mutated-surface.rodata
@@ -275,6 +280,60 @@ if ! cmp -s "$COVERAGE_LOG" "$FULL_BLOCKER_STDOUT"; then
     echo "full-blocker diagnostics changed the coverage output" >&2
     exit 1
 fi
+
+# #6609: derive identity, declared-parameter shape, and result kind from the
+# exact parsed producer inputs, then require the reviewed fixture manifest to
+# match it byte-for-byte. This makes catalog additions/removals and declaration
+# changes fail before the route corpus can become stale or vacuous.
+"$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$MANIFEST" stdlib "$IDENTITY_IMAGE" "$HOST_TARGET" \
+    "$PRODUCER_IDENTITY" "$SURFACE" --identity-manifest \
+    > "$IDENTITY_STDOUT" 2> "$IDENTITY_ACTUAL"
+"$COMPILER" run tools/embedded-stdlib-tlci/encode-envelope.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$IDENTITY_IMAGE" "$IDENTITY_IMAGE.tlch"
+if ! cmp -s "$IMAGE_A" "$IDENTITY_IMAGE"; then
+    echo "identity-manifest diagnostics changed the embedded stdlib tlci image" >&2
+    exit 1
+fi
+if ! cmp -s "$ENVELOPE_A" "$IDENTITY_IMAGE.tlch"; then
+    echo "identity-manifest diagnostics changed the embedded stdlib tlci envelope" >&2
+    exit 1
+fi
+if ! cmp -s "$COVERAGE_LOG" "$IDENTITY_STDOUT"; then
+    echo "identity-manifest diagnostics changed the coverage output" >&2
+    exit 1
+fi
+if ! awk -F '\t' '
+    NF != 4 { bad = 1; next }
+    $1 !~ /^stdlib\.[^/]+\/[^/]+$/ { bad = 1 }
+    $2 !~ /^[0-9]+$/ { bad = 1 }
+    $3 != "fixed" && $3 != "variadic" { bad = 1 }
+    $4 != "expr" && $4 != "module" && $4 != "decls" { bad = 1 }
+    seen[$1]++ { duplicate = 1 }
+    END { exit bad || duplicate || NR == 0 }
+' "$IDENTITY_ACTUAL"; then
+    echo "identity-manifest diagnostics emitted a malformed or duplicate row" >&2
+    exit 1
+fi
+if [ ! -f "$IDENTITY_FIXTURES" ]; then
+    echo "embedded stdlib tlci identity fixture manifest is missing" >&2
+    exit 1
+fi
+awk -F '\t' '!/^#/ && NF { print $1 "\t" $2 "\t" $3 "\t" $4 }' \
+    "$IDENTITY_FIXTURES" > "$IDENTITY_EXPECTED"
+if ! cmp -s "$IDENTITY_EXPECTED" "$IDENTITY_ACTUAL"; then
+    echo "embedded stdlib tlci identity fixture inventory is out of date" >&2
+    diff -u "$IDENTITY_EXPECTED" "$IDENTITY_ACTUAL" >&2 || true
+    exit 1
+fi
+IDENTITY_ROWS=$(wc -l < "$IDENTITY_ACTUAL" | tr -d ' ')
+if [ "$IDENTITY_ROWS" -ne "$NATIVE_ENTRIES" ]; then
+    echo "identity manifest reports $IDENTITY_ROWS rows, coverage reports $NATIVE_ENTRIES native entries" >&2
+    exit 1
+fi
+
 if ! awk -F '\t' '
     NF != 3 || ($2 != "blocked" && $2 != "walked") { bad = 1 }
     END { exit bad }

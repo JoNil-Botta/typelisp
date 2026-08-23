@@ -31993,19 +31993,52 @@
     [(ir.CompilerIrPhiInputList.Cons _ _ rest)
       (+ 1 (opt-phi-input-count (__tl-box-place rest)))]))
 
-(define (opt-phi-single-value [inputs : ir.CompilerIrPhiInputList]) : ir.CompilerIrMaybeValue
+;; A phi collapses when every input that is not the phi's own destination names
+;; the SAME value -- LLVM's `simplifyPHINode` rule (llvm/lib/Analysis/
+;; InstructionSimplify.cpp): "If all of the PHI's incoming values are the same
+;; then the PHI is that value", with self-references skipped so a loop-carried
+;; phi that only ever passes one value round still folds. The single-input case
+;; is the degenerate instance of the same rule, so this subsumes it.
+;;
+;; Neither kind of value needs a dominance argument. A literal has no definition
+;; site at all. A `Var` shared by every surviving input already dominates the end
+;; of every surviving predecessor (SSA), and every path into this block runs
+;; through one of them, so it dominates this block too -- which is why LLVM
+;; consults `valueDominatesPHI` only for the undef/poison arm.
+;;
+;; `found` doubles as "nothing seen yet" (`No` before the first non-self input)
+;; and as the answer; a disagreement returns `No` immediately, so the two never
+;; overlap. All-self-reference inputs leave `No`, which keeps the phi.
+(define (opt-phi-uniform-agrees?
+  [found : ir.CompilerIrMaybeValue]
+  [value : ir.CompilerIrValue]) : bool
+  (match found
+    [(ir.CompilerIrMaybeValue.No) true]
+    [(ir.CompilerIrMaybeValue.Some seen) (opt-value-eq seen value)]))
+
+(define (opt-phi-uniform-value-from
+  [inputs : ir.CompilerIrPhiInputList]
+  [dst : i64]
+  [found : ir.CompilerIrMaybeValue]) : ir.CompilerIrMaybeValue
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) found]
     [(ir.CompilerIrPhiInputList.Array seq)
-      (opt-phi-single-value (ir.compiler-ir-phi-input-seq-to-list seq))]
+      (opt-phi-uniform-value-from
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        dst
+        found)]
     [(ir.CompilerIrPhiInputList.Cons value _ rest)
-      (match (ir.compiler-ir-phi-input-list-force-cons (__tl-box-place rest))
-        [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrMaybeValue.Some value)]
-        [(ir.CompilerIrPhiInputList.Array seq)
-          (if (= seq.len 0)
-            (ir.CompilerIrMaybeValue.Some value)
-            (ir.CompilerIrMaybeValue.No))]
-        [_ (ir.CompilerIrMaybeValue.No)])]
-    [_ (ir.CompilerIrMaybeValue.No)]))
+      (if (opt-value-is-var? value dst)
+        (opt-phi-uniform-value-from (__tl-box-place rest) dst found)
+        (if (opt-phi-uniform-agrees? found value)
+          (opt-phi-uniform-value-from
+            (__tl-box-place rest)
+            dst
+            (ir.CompilerIrMaybeValue.Some value))
+          (ir.CompilerIrMaybeValue.No)))]))
+
+(define (opt-phi-uniform-value [inputs : ir.CompilerIrPhiInputList] [dst : i64]) : ir.CompilerIrMaybeValue
+  (opt-phi-uniform-value-from inputs dst (ir.CompilerIrMaybeValue.No)))
 
 (define (opt-cfg-clean-instr
   [index : OptCfgIndex]
@@ -32016,15 +32049,72 @@
       (let
         [kept : ir.CompilerIrPhiInputList
           (opt-cfg-filter-phi-inputs index block-id inputs)]
-        (if (= (opt-phi-input-count kept) 1)
-          (match (opt-phi-single-value kept)
-            [(ir.CompilerIrMaybeValue.Some value)
-              (if (opt-value-is-var? value dst)
-                (ir.CompilerIrInstr.Phi dst kept ty)
-                (ir.CompilerIrInstr.Mov dst value ty))]
-            [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrInstr.Phi dst kept ty)])
-          (ir.CompilerIrInstr.Phi dst kept ty)))]
+        (match (opt-phi-uniform-value kept dst)
+          [(ir.CompilerIrMaybeValue.Some value)
+            (ir.CompilerIrInstr.Mov dst value ty)]
+          [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrInstr.Phi dst kept ty)]))]
     [_ instr]))
+
+;; Folding one phi of a block and leaving another would leave a `Mov` INSIDE the
+;; block's phi prefix, and the backend's edge-copy emitter walks a block from
+;; instruction 0 and stops at the first non-phi
+;; (`compiler-backend-leading-phi-copies-seq-from`, src/compiler_backend.tl):
+;; every phi below the mov would silently lose its incoming copies. Until this
+;; fold arrived the question could not come up -- all phis of a block carry one
+;; input per predecessor, so the one-input rewrite either fired for all of them
+;; or for none -- and `opt-flag-exit-const-inputs` records the same rule.
+;;
+;; Keep the prefix contiguous by hoisting the phis that survived above the movs
+;; the fold produced. Any order among the two groups is correct: a phi input
+;; must dominate its predecessor's terminator, so the value a fold substitutes
+;; is defined OUTSIDE this block, and no phi can name a var this block defines,
+;; so no mov reads another mov's or a phi's destination.
+(define (opt-cfg-clean-instr-phi? [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Phi _ _ _) true]
+    [_ false]))
+
+;; Both facts the hoist needs -- how long the block's phi run was, and whether
+;; the rewrite left a phi below a mov inside it -- are decided by the rewrite
+;; loop itself, one borrow per instruction it is already writing. A separate
+;; measuring scan would be two more walks of every block of every function on
+;; every CFG pass, for a fold that is rare and a split that is rarer still.
+;;
+;; `state` is that running fact, folded into one i64 so the loop carries no
+;; extra locals: 0 still inside the untouched phi run, 1 a mov has been produced
+;; inside it, 2 a phi follows that mov -- the only state that needs the hoist.
+;; Once the input leaves its phi run the loop stops updating it.
+(define (opt-cfg-clean-prefix-state
+  [state : i64]
+  [rewritten : (& rewritten ir.CompilerIrInstr)]) : i64
+  (if (opt-cfg-clean-instr-phi? rewritten)
+    (if (= state 1)
+      2
+      state)
+    (if (= state 0)
+      1
+      state)))
+
+(define (opt-cfg-clean-hoist-phis!
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [limit : i64]) : unit
+  (let
+    [read : i64 0]
+    [write : i64 0]
+    (while (< read limit)
+      (begin
+        (when
+          (opt-cfg-clean-instr-phi? (& (array-ref slots read)))
+          (begin
+            (when
+              (> read write)
+              (let
+                [displaced : ir.CompilerIrInstr (clone (array-ref slots write))]
+                (begin
+                  (set! (array-ref slots write) (clone (array-ref slots read)))
+                  (set! (array-ref slots read) displaced))))
+            (set! write (+ write 1))))
+        (set! read (+ read 1))))))
 
 ;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). refs #5726
 (define (opt-cfg-clean-instr-seq
@@ -32041,13 +32131,25 @@
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (array.make-array ir.CompilerIrInstr count)]
     [pos : i64 0]
+    [prefix : i64 0]
+    [state : i64 0]
     (begin
       (while (< pos count)
         (begin
           (set!
             (array-ref out pos)
             (opt-cfg-clean-instr index block-id (array-ref slots pos)))
+          (when
+            (and
+              (= prefix pos)
+              (opt-cfg-clean-instr-phi? (& (array-ref slots pos))))
+            (begin
+              (set! prefix (+ prefix 1))
+              (set!
+                state
+                (opt-cfg-clean-prefix-state state (& (array-ref out pos))))))
           (set! pos (+ pos 1))))
+      (when (= state 2) (opt-cfg-clean-hoist-phis! out prefix))
       (ir.CompilerIrInstrSeq out count))))
 
 (define (opt-cfg-clean-block [index : OptCfgIndex] [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
@@ -32091,17 +32193,32 @@
         [(option_i64.None) (- 0 1)])]
     [pos : i64 0]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (while (< pos count)
-      (let
-        [cleaned : ir.CompilerIrInstr
-          (opt-cfg-clean-instr
-            index
-            block-id
-            (ir.compiler-ir-instr-seq-ref instrs pos))]
-        (begin
-          (ir.compiler-ir-instr-seq-set! instrs pos cleaned)
-          (opt-collect-instr-uses-array used cleaned)
-          (set! pos (+ pos 1)))))))
+    [prefix : i64 0]
+    [state : i64 0]
+    (begin
+      (while (< pos count)
+        (let
+          [phi-input? : bool
+            (opt-cfg-clean-instr-phi? (& (array-ref instrs.slots pos)))]
+          [cleaned : ir.CompilerIrInstr
+            (opt-cfg-clean-instr
+              index
+              block-id
+              (ir.compiler-ir-instr-seq-ref instrs pos))]
+          (begin
+            (ir.compiler-ir-instr-seq-set! instrs pos cleaned)
+            (opt-collect-instr-uses-array used cleaned)
+            (when
+              (and (= prefix pos) phi-input?)
+              (begin
+                (set! prefix (+ prefix 1))
+                (set!
+                  state
+                  (opt-cfg-clean-prefix-state
+                    state
+                    (& (array-ref instrs.slots pos))))))
+            (set! pos (+ pos 1)))))
+      (when (= state 2) (opt-cfg-clean-hoist-phis! instrs.slots prefix)))))
 
 (define (opt-cfg-filter-clean-block-seq-rewrite!
   [index : OptCfgIndex]
@@ -103402,15 +103519,724 @@
                 (OptLateRewriteResult.Result func false))]))
         (OptLateRewriteResult.Result func false))]))
 
+;; --- late uniform-phi collapse (post-prune) ----------------------------------
+;;
+;; `opt-cfg-clean-instr` applies this rule wherever the CFG pass runs, but at
+;; level 2 that pass sits ABOVE the whole loop cluster, and the passes below it
+;; are the ones that MAKE a phi uniform:
+;;
+;;   * `flag_exit` pins every surviving edge of a retired flag to one literal
+;;     and deliberately leaves the phi standing, because until the phi-prefix
+;;     hoist above existed a `Mov` among the phis would have cost the block's
+;;     remaining phis their incoming copies (`opt-flag-exit-const-inputs`);
+;;   * every edge a loop pass retires leaves the phis of the block it fed with
+;;     one input, which is the degenerate case of the same rule.
+;;
+;; Nothing folded them again before the backend, so `phi [false, latch],
+;; [false, entry]` reached instruction selection and cost a `xor` per iteration
+;; in every loop carrying a retired flag. `benchmarks/gvn_table` is -3,526,292
+;; Ir (-0.37%) on this alone, most of it the flag loops in
+;; `gvn-table-invalidate-var`, `gvn-facts-insert` and `gvn-facts-remove`.
+;;
+;; POSITION. The obvious place is inside the pipeline, above the cross-block
+;; copy propagation. It cannot go there: `opt-inline-checked-plan-cost-at`
+;; prices an inline plan by running `optimize-function-with-level ... 2` over
+;; the candidate, so anything added to that pipeline moves every priced cost,
+;; and measurement showed the two-sided accept window flipping
+;; `intern_table`'s `it-slice-eq?` site from inlined to called: +5.56% on that
+;; row from a rewrite that only ever removes instructions. This stage runs after
+;; the inliner has finished and after the whole program is optimized, so no
+;; verdict can move.
+;;
+;; That position also means nothing runs below to clean up after it, so the pass
+;; does its own forwarding: it binds each collapsed definition's literal in an
+;; sccp environment, reuses the sccp operand rewrite to substitute it into every
+;; reader (phi inputs included), and drops the definition the substitution left
+;; dead -- so the phi prefix simply gets shorter and never needs the hoist.
+;; Rounds let a chain collapse: the phi a folded phi fed becomes literal-uniform
+;; once its input is substituted.
+;;
+;; COST. This runs over every function in the program, so the walks are staged
+;; from cheapest to dearest and each stage is a gate on the next:
+;;
+;;   0. does any block open with a phi? -- one borrow per block, no clones;
+;;   1. the phi prefixes and the terminators only -- clones the phis (a small
+;;      minority of instructions) and one instruction per block. This is where
+;;      the phi rule is decided, where `phi-uses` comes from, and where the
+;;      terminator conditions are recorded, because a branch is always a
+;;      block's last instruction;
+;;   2. the whole instruction stream -- clones everything, and runs only when
+;;      stage 1 found a var reaching a phi input, which is the sole precondition
+;;      for the mov rule below.
+;;
+;; And the CFG simplify + DCE + verify underneath run only when a folded value
+;; decides a terminator (`marked` slot 1), which is the only way this rewrite
+;; can change control flow. Without that the rewrite substitutes literals and
+;; deletes definitions that are dead by construction: no block, edge, or
+;; terminator moves, no operand loses its definition, and nothing new becomes
+;; dead, because every input of a collapsed definition is itself a literal.
+(define (opt-late-uniform-phi-rounds) : i64
+  3)
+
+;; Only the values a reader can take as an immediate. A String/Bytes/Global
+;; literal is a materialisation of its own, so forwarding one to N readers
+;; would trade one instruction for N.
+(define (opt-late-uniform-phi-literal? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Bool _) true]
+    [(ir.CompilerIrValue.I64 _) true]
+    [(ir.CompilerIrValue.Char _) true]
+    [(ir.CompilerIrValue.Unit) true]
+    [_ false]))
+
+;; `folded` slots: 0 unbound, 1 bound, 2 bound on approval -- a literal mov that
+;; is kept only if stage 2 finds no reader outside a phi input.
+(define (opt-late-uniform-phi-bind!
+  [dst : i64]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [state : i64]
+  [env-slots : (__tl_dyn-array OptSccpValue)]
+  [folded : (__tl_dyn-array i64)]
+  [bound : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]) : unit
+  (if (and
+    (opt-late-uniform-phi-literal? value)
+    (>= dst 0)
+    (< dst (array-length folded)))
+    (begin
+      (set! (array-ref folded dst) state)
+      (set! (array-ref env-slots dst) (OptSccpValue.Const value ty))
+      (set! (array-ref bound (array-ref marked 2)) dst)
+      (set! (array-ref marked 2) (+ (array-ref marked 2) 1))
+      (set! (array-ref marked 0) (+ (array-ref marked 0) 1)))
+    unit))
+
+;; The sole precondition for the mov rule, and therefore for paying stage 2: a
+;; var has to reach a phi input at all. Answered on the input list stage 1 is
+;; already holding, so the alternative -- sweeping the whole `phi-uses` tally,
+;; which is sized by the function frame -- is not paid on functions that fold
+;; nothing.
+(define (opt-late-uniform-phi-inputs-have-var?
+  [inputs : ir.CompilerIrPhiInputList]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) false]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-late-uniform-phi-inputs-have-var?
+        (ir.compiler-ir-phi-input-seq-to-list seq))]
+    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+      (match value
+        [(ir.CompilerIrValue.Var _) true]
+        [_ (opt-late-uniform-phi-inputs-have-var? (__tl-box-place rest))])]))
+
+;; Only a folded value that decides a terminator can change the CFG, and only
+;; `Branch`/`TotalEnumBranch` are rewritten into a `Jump` by the sccp operand
+;; rewrite. The switches are included anyway: the CFG fold underneath also
+;; retires a switch on a literal, and being wrong in this direction only costs a
+;; simplify that finds nothing.
+(define (opt-late-uniform-phi-terminator-condition-var
+  [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Branch cond _ _)
+      (match cond
+        [(ir.CompilerIrValue.Var id) id]
+        [_ (- 0 1)])]
+    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
+      (match cond
+        [(ir.CompilerIrValue.Var id) id]
+        [_ (- 0 1)])]
+    [(ir.CompilerIrInstr.Switch index _ _ _)
+      (match index
+        [(ir.CompilerIrValue.Var id) id]
+        [_ (- 0 1)])]
+    [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
+      (match index
+        [(ir.CompilerIrValue.Var id) id]
+        [_ (- 0 1)])]
+    [_ (- 0 1)]))
+
+;; --- stage 0: does any block open with a phi? -------------------------------
+;;
+;; A phi is always the head of its block, so this is one borrow per block and no
+;; clones at all. Nothing below can fire without one: not the phi rule, and not
+;; the mov rule either, whose whole condition is that every reader of the mov is
+;; a phi input.
+(define (opt-late-uniform-phi-instrs-open-with-phi?
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (if (<= instrs.len 0)
+    false
+    (opt-cfg-clean-instr-phi? (& (array-ref instrs.slots 0)))))
+
+(define (opt-late-uniform-phi-block-seq-have-phi?
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    false
+    (if (match (ir.compiler-ir-block-seq-ref blocks index)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (opt-late-uniform-phi-instrs-open-with-phi? instrs)])
+      true
+      (opt-late-uniform-phi-block-seq-have-phi? blocks (+ index 1)))))
+
+(define (opt-late-uniform-phi-blocks-have-phi?
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-late-uniform-phi-instrs-open-with-phi? instrs)])
+        true
+        (opt-late-uniform-phi-blocks-have-phi? (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-late-uniform-phi-block-seq-have-phi? seq 0)]))
+
+;; --- stage 1: the phi prefixes and the terminators ---------------------------
+(define (opt-late-uniform-phi-scan-phi!
+  [instr : ir.CompilerIrInstr]
+  [env-slots : (__tl_dyn-array OptSccpValue)]
+  [folded : (__tl_dyn-array i64)]
+  [bound : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]
+  [phi-uses : (__tl_dyn-array i64)]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.Phi dst inputs ty)
+      (begin
+        (when
+          (opt-late-uniform-phi-inputs-have-var? inputs)
+          (set! (array-ref marked 3) 1))
+        (opt-collect-phi-uses-array phi-uses inputs)
+        (match (opt-phi-uniform-value inputs dst)
+          [(ir.CompilerIrMaybeValue.No) unit]
+          [(ir.CompilerIrMaybeValue.Some value)
+            (opt-late-uniform-phi-bind!
+              dst
+              value
+              ty
+              1
+              env-slots
+              folded
+              bound
+              marked)]))]
+    [_ unit]))
+
+(define (opt-late-uniform-phi-scan-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [env-slots : (__tl_dyn-array OptSccpValue)]
+  [folded : (__tl_dyn-array i64)]
+  [bound : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]
+  [phi-uses : (__tl_dyn-array i64)]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [pos : i64 0]
+    [scanning : bool true]
+    (while (and scanning (< pos count))
+      (if (opt-cfg-clean-instr-phi? (& (array-ref slots pos)))
+        (begin
+          (opt-late-uniform-phi-scan-phi!
+            (ir.compiler-ir-instr-seq-ref instrs pos)
+            env-slots
+            folded
+            bound
+            marked
+            phi-uses)
+          (set! pos (+ pos 1)))
+        (set! scanning false)))))
+
+(define (opt-late-uniform-phi-scan-block-seq!
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [env-slots : (__tl_dyn-array OptSccpValue)]
+  [folded : (__tl_dyn-array i64)]
+  [bound : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]
+  [phi-uses : (__tl_dyn-array i64)]) : unit
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    unit
+    (begin
+      (match (ir.compiler-ir-block-seq-ref blocks index)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-late-uniform-phi-scan-instrs!
+            instrs
+            env-slots
+            folded
+            bound
+            marked
+            phi-uses)])
+      (opt-late-uniform-phi-scan-block-seq!
+        blocks
+        (+ index 1)
+        env-slots
+        folded
+        bound
+        marked
+        phi-uses))))
+
+(define (opt-late-uniform-phi-scan-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [env-slots : (__tl_dyn-array OptSccpValue)]
+  [folded : (__tl_dyn-array i64)]
+  [bound : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]
+  [phi-uses : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-late-uniform-phi-scan-instrs!
+              instrs
+              env-slots
+              folded
+              bound
+              marked
+              phi-uses)])
+        (opt-late-uniform-phi-scan-blocks!
+          (__tl-box-place rest)
+          env-slots
+          folded
+          bound
+          marked
+          phi-uses))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-late-uniform-phi-scan-block-seq!
+        seq
+        0
+        env-slots
+        folded
+        bound
+        marked
+        phi-uses)]))
+
+;; --- stage 2: the whole instruction stream ----------------------------------
+;;
+;; Substituting a literal into a phi input is free: the backend already plants
+;; that incoming value on that ONE edge, so a mov whose every reader is a phi
+;; input can hand its literal over and go. A reader anywhere else would have to
+;; re-materialise it, and trading one mov for N immediates is the deal this
+;; refuses -- which is what the `other-uses` tally decides, once the walk that
+;; builds it has finished.
+(define (opt-late-uniform-phi-scan-mov!
+  [instr : ir.CompilerIrInstr]
+  [env-slots : (__tl_dyn-array OptSccpValue)]
+  [folded : (__tl_dyn-array i64)]
+  [bound : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]
+  [phi-uses : (__tl_dyn-array i64)]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.Mov dst value ty)
+      (if (opt-used-array-contains phi-uses dst)
+        (opt-late-uniform-phi-bind!
+          dst
+          value
+          ty
+          2
+          env-slots
+          folded
+          bound
+          marked)
+        unit)]
+    [_ unit]))
+
+(define (opt-late-uniform-phi-mov-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [env-slots : (__tl_dyn-array OptSccpValue)]
+  [folded : (__tl_dyn-array i64)]
+  [bound : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]
+  [phi-uses : (__tl_dyn-array i64)]
+  [other-uses : (__tl_dyn-array i64)]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [pos : i64 0]
+    (while (< pos count)
+      (begin
+        ;; The phis were priced in stage 1 and contribute no `other-uses`, so
+        ;; the borrow keeps them out of this walk without a clone.
+        (if (opt-cfg-clean-instr-phi? (& (array-ref slots pos)))
+          unit
+          (let
+            [instr : ir.CompilerIrInstr
+              (ir.compiler-ir-instr-seq-ref instrs pos)]
+            (begin
+              (opt-collect-instr-uses-array other-uses instr)
+              (opt-late-uniform-phi-scan-mov!
+                instr
+                env-slots
+                folded
+                bound
+                marked
+                phi-uses))))
+        (set! pos (+ pos 1))))))
+
+(define (opt-late-uniform-phi-mov-block-seq!
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [env-slots : (__tl_dyn-array OptSccpValue)]
+  [folded : (__tl_dyn-array i64)]
+  [bound : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]
+  [phi-uses : (__tl_dyn-array i64)]
+  [other-uses : (__tl_dyn-array i64)]) : unit
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    unit
+    (begin
+      (match (ir.compiler-ir-block-seq-ref blocks index)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-late-uniform-phi-mov-instrs!
+            instrs
+            env-slots
+            folded
+            bound
+            marked
+            phi-uses
+            other-uses)])
+      (opt-late-uniform-phi-mov-block-seq!
+        blocks
+        (+ index 1)
+        env-slots
+        folded
+        bound
+        marked
+        phi-uses
+        other-uses))))
+
+(define (opt-late-uniform-phi-mov-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [env-slots : (__tl_dyn-array OptSccpValue)]
+  [folded : (__tl_dyn-array i64)]
+  [bound : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]
+  [phi-uses : (__tl_dyn-array i64)]
+  [other-uses : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-late-uniform-phi-mov-instrs!
+              instrs
+              env-slots
+              folded
+              bound
+              marked
+              phi-uses
+              other-uses)])
+        (opt-late-uniform-phi-mov-blocks!
+          (__tl-box-place rest)
+          env-slots
+          folded
+          bound
+          marked
+          phi-uses
+          other-uses))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-late-uniform-phi-mov-block-seq!
+        seq
+        0
+        env-slots
+        folded
+        bound
+        marked
+        phi-uses
+        other-uses)]))
+
+;; Approve or withdraw every mov stage 2 bound on approval. Walks the bound
+;; destinations, not the frame: a function with two thousand vars and one folded
+;; phi settles in one step.
+(define (opt-late-uniform-phi-settle!
+  [env-slots : (__tl_dyn-array OptSccpValue)]
+  [folded : (__tl_dyn-array i64)]
+  [bound : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]
+  [other-uses : (__tl_dyn-array i64)]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (array-ref marked 2)]
+    (while (< index count)
+      (let
+        [dst : i64 (array-ref bound index)]
+        (begin
+          (when
+            (= (array-ref folded dst) 2)
+            (if (opt-used-array-contains other-uses dst)
+              (begin
+                (set! (array-ref folded dst) 0)
+                (set! (array-ref env-slots dst) (OptSccpValue.Unknown))
+                (set! (array-ref marked 0) (- (array-ref marked 0) 1)))
+              (set! (array-ref folded dst) 1)))
+          (set! index (+ index 1)))))))
+
+;; Does anything that survived settling decide a terminator? Deferred to here on
+;; purpose: a terminator is a block's last instruction, so answering it costs one
+;; clone per block, and only a function that actually folded something has to
+;; pay it. The answer gates the CFG simplify, the DCE and the verify below.
+(define (opt-late-uniform-phi-terminator-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [folded : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (when
+      (> count 0)
+      (let
+        [dst : i64
+          (opt-late-uniform-phi-terminator-condition-var
+            (ir.compiler-ir-instr-seq-ref instrs (- count 1)))]
+        (when
+          (and
+            (>= dst 0)
+            (< dst (array-length folded))
+            (= (array-ref folded dst) 1))
+          (set! (array-ref marked 1) 1))))))
+
+(define (opt-late-uniform-phi-terminator-block-seq!
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [folded : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]) : unit
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    unit
+    (if (= (array-ref marked 1) 1)
+      unit
+      (begin
+        (match (ir.compiler-ir-block-seq-ref blocks index)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-late-uniform-phi-terminator-instrs! instrs folded marked)])
+        (opt-late-uniform-phi-terminator-block-seq!
+          blocks
+          (+ index 1)
+          folded
+          marked)))))
+
+(define (opt-late-uniform-phi-terminator-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [folded : (__tl_dyn-array i64)]
+  [marked : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (= (array-ref marked 1) 1)
+        unit
+        (begin
+          (match block
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (opt-late-uniform-phi-terminator-instrs! instrs folded marked)])
+          (opt-late-uniform-phi-terminator-blocks!
+            (__tl-box-place rest)
+            folded
+            marked)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-late-uniform-phi-terminator-block-seq! seq 0 folded marked)]))
+
+;; The sccp rewrite turned each marked phi into `Mov dst <literal>` and left each
+;; marked mov as it was, and every reader now names the literal directly, so the
+;; definition is dead by construction.
+(define (opt-late-uniform-phi-dead-mov?
+  [instr : ir.CompilerIrInstr]
+  [folded : (__tl_dyn-array i64)]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov dst _ _)
+      (and
+        (>= dst 0)
+        (< dst (array-length folded))
+        (= (array-ref folded dst) 1))]
+    [_ false]))
+
+(define (opt-late-uniform-phi-drop-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [folded : (__tl_dyn-array i64)]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [out : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs read)]
+          (begin
+            (when
+              (not (opt-late-uniform-phi-dead-mov? instr folded))
+              (begin
+                (set! (array-ref out write) instr)
+                (set! write (+ write 1))))
+            (set! read (+ read 1)))))
+      (ir.CompilerIrInstrSeq out write))))
+
+(define (opt-late-uniform-phi-drop-block
+  [block : ir.CompilerIrBlock]
+  [folded : (__tl_dyn-array i64)]) : ir.CompilerIrBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (ir.CompilerIrBlock.Block
+        label
+        (opt-late-uniform-phi-drop-instrs instrs folded))]))
+
+(define (opt-late-uniform-phi-drop-block-seq
+  [blocks : ir.CompilerIrBlockSeq]
+  [folded : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
+    [slots : (__tl_dyn-array ir.CompilerIrBlock)
+      (array.make-array ir.CompilerIrBlock count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref slots index)
+            (opt-late-uniform-phi-drop-block
+              (ir.compiler-ir-block-seq-ref blocks index)
+              folded))
+          (set! index (+ index 1))))
+      (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count)))))
+
+(define (opt-late-uniform-phi-drop-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [folded : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (opt-late-uniform-phi-drop-block block folded)
+        (opt-late-uniform-phi-drop-blocks (__tl-box-place rest) folded))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-late-uniform-phi-drop-block-seq seq folded)]))
+
+;; `marked` is the round's four running facts, kept in one array so the walks
+;; carry one argument instead of four: slot 0 how many definitions are bound
+;; and still approved, slot 1 whether one of them decides a terminator -- the
+;; only way this rewrite can change control flow, and therefore the only reason
+;; to pay for the CFG simplify, the DCE that cleans up after it, and the verify
+;; that gates the pair -- slot 2 how many entries `bound` holds, and slot 3
+;; whether any var reached a phi input, which is the mov rule's precondition.
+(define (opt-late-uniform-phi-round [func : ir.CompilerIrFunction]) : OptLateRewriteResult
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (not (opt-late-uniform-phi-blocks-have-phi? blocks))
+        (OptLateRewriteResult.Result func false)
+        (let
+          [cap : i64
+            (if (< frame 1)
+              1
+              frame)]
+          [env-slots : (__tl_dyn-array OptSccpValue)
+            (array.make-array OptSccpValue cap)]
+          [folded : (__tl_dyn-array i64) (array.make-array i64 cap)]
+          [bound : (__tl_dyn-array i64) (array.make-array i64 cap)]
+          [marked : (__tl_dyn-array i64) (array.make-array i64 4)]
+          [phi-uses : (__tl_dyn-array i64) (opt-used-array-new cap)]
+          [other-uses : (__tl_dyn-array i64) (opt-used-array-new cap)]
+          [_fill : unit (opt-sccp-env-fill-unknown! env-slots cap 0)]
+          [_phis : unit
+            (opt-late-uniform-phi-scan-blocks!
+              blocks
+              env-slots
+              folded
+              bound
+              marked
+              phi-uses)]
+          [_movs : unit
+            (if (= (array-ref marked 3) 1)
+              (opt-late-uniform-phi-mov-blocks!
+                blocks
+                env-slots
+                folded
+                bound
+                marked
+                phi-uses
+                other-uses)
+              unit)]
+          [_settle : unit
+            (opt-late-uniform-phi-settle!
+              env-slots
+              folded
+              bound
+              marked
+              other-uses)]
+          [_terminators : unit
+            (if (= (array-ref marked 0) 0)
+              unit
+              (opt-late-uniform-phi-terminator-blocks! blocks folded marked))]
+          (if (= (array-ref marked 0) 0)
+            (OptLateRewriteResult.Result func false)
+            (let
+              [rewritten : ir.CompilerIrBlockList
+                (opt-late-uniform-phi-drop-blocks
+                  (opt-sccp-rewrite-blocks
+                    (OptSccpEnv.Env cap env-slots)
+                    blocks)
+                  folded)]
+              (if (= (array-ref marked 1) 0)
+                ;; No terminator moved. Every block, edge and instruction other
+                ;; than the deleted definitions is where it was, every deleted
+                ;; definition read only literals, and every reader of one now
+                ;; names that literal -- so there is nothing for a CFG simplify
+                ;; to find, nothing new for DCE to retire, and nothing the
+                ;; verifier could see that it would not have seen on the input.
+                (OptLateRewriteResult.Result
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    frame
+                    rewritten)
+                  true)
+                (let
+                  [next : ir.CompilerIrFunction
+                    (ir.CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      frame
+                      (opt-dce-block-list-array-fixpoint
+                        frame
+                        (opt-cfg-simplify-blocks rewritten)
+                        8))]
+                  ;; Fail-closed on the verifier -- but only against an input
+                  ;; that verified. This stage sits below `if_convert`,
+                  ;; `cmp_dup` and `load_sink`, and a function those left in a
+                  ;; shape the optimizer verifier declines would otherwise
+                  ;; refuse every rewrite here for a defect that is not this
+                  ;; one's.
+                  (if (or
+                    (opt-verify-ok? (opt-verify-function next))
+                    (not (opt-verify-ok? (opt-verify-function func))))
+                    (OptLateRewriteResult.Result next true)
+                    (OptLateRewriteResult.Result func false))))))))]))
+
+(define (opt-late-uniform-phi-rounds-from
+  [func : ir.CompilerIrFunction]
+  [remaining : i64]
+  [changed : bool]) : OptLateRewriteResult
+  (if (<= remaining 0)
+    (OptLateRewriteResult.Result func changed)
+    (match (opt-late-uniform-phi-round func)
+      [(OptLateRewriteResult.Result next round-changed)
+        (if round-changed
+          (opt-late-uniform-phi-rounds-from next (- remaining 1) true)
+          (OptLateRewriteResult.Result next changed))])))
+
+(define (opt-late-uniform-phi-function-rewrite [func : ir.CompilerIrFunction]) : OptLateRewriteResult
+  (opt-late-uniform-phi-rounds-from func (opt-late-uniform-phi-rounds) false))
+
 ;; --- fused late (post-prune) function pass -----------------------------------
 ;;
-;; The three post-prune rewrites -- scratch-reset, paired bounds and total
-;; switch -- are independent per-function maps: none of them reads another
-;; function, keeps state between functions, or observes an intermediate whole
-;; program list. Run as three whole-program traversals they left three complete
-;; generations of rewritten functions plus all of their CFG/loop/verify analysis
-;; in the compiler-entry arena, none of it reachable once the next traversal had
-;; run.
+;; The post-prune rewrites -- scratch-reset, paired bounds, total switch and the
+;; uniform-phi collapse above -- are independent per-function maps: none of them
+;; reads another function, keeps state between functions, or observes an
+;; intermediate whole program list. Run as separate whole-program traversals they
+;; left a complete generation of rewritten functions per traversal, plus all of
+;; their CFG/loop/verify analysis, in the compiler-entry arena, none of it
+;; reachable once the next traversal had run.
 ;;
 ;; So compose them per function instead, inside one reusable scratch arena that
 ;; is rewound after every function. Only a function some rewrite actually
@@ -103442,29 +104268,37 @@
                   type-segment-bases
                   paired-func)
                   [(OptLateRewriteResult.Result switched-func switched-changed)
-                    (let
-                      [changed : bool
-                        (or reset-changed paired-changed switched-changed)]
-                      (begin
-                        (unsafe
-                          (arena.tl_arena_set enclosing))
+                    (match (opt-late-uniform-phi-function-rewrite switched-func)
+                      [(OptLateRewriteResult.Result
+                          uniform-func
+                          uniform-changed)
                         (let
-                          ;; The rewritten function is built from a mix of
-                          ;; scratch nodes and shared input nodes, so escaping
-                          ;; it is a full deep clone. An unchanged function
-                          ;; never entered the scratch generation at all.
-                          [escaped : ir.CompilerIrFunction
-                            (if changed
-                              (ir.compiler-ir-clone-function
-                                pools
-                                switched-func)
-                              func)]
-                          [_restore : unit
+                          [changed : bool
+                            (or
+                              reset-changed
+                              paired-changed
+                              switched-changed
+                              uniform-changed)]
+                          (begin
                             (unsafe
-                              (arena.tl_arena_set scratch)
-                              (arena.tl_region_reset mark)
-                              (arena.tl_arena_set enclosing))]
-                          escaped)))])])])))))
+                              (arena.tl_arena_set enclosing))
+                            (let
+                              ;; The rewritten function is built from a mix of
+                              ;; scratch nodes and shared input nodes, so escaping
+                              ;; it is a full deep clone. An unchanged function
+                              ;; never entered the scratch generation at all.
+                              [escaped : ir.CompilerIrFunction
+                                (if changed
+                                  (ir.compiler-ir-clone-function
+                                    pools
+                                    uniform-func)
+                                  func)]
+                              [_restore : unit
+                                (unsafe
+                                  (arena.tl_arena_set scratch)
+                                  (arena.tl_region_reset mark)
+                                  (arena.tl_arena_set enclosing))]
+                              escaped)))])])])])))))
 
 (define (opt-late-function-list-escaping
   [pools : ast.AstNodePoolContext]

@@ -3091,6 +3091,10 @@
       (compiler_optimize_tests.compiler-optimize-cfg-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-uniform-phi-self-test"
+      (compiler_optimize_tests.compiler-optimize-uniform-phi-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-switch-form-self-test"
       (compiler-optimize-switch-form-self-test)
       42)

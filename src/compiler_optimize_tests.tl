@@ -24265,6 +24265,447 @@
                 (compiler_ir_types.CompilerIrValue.Var 1)))))
         (compiler_ir_types.CompilerIrBlockList.Nil)))))
 
+;; --- rule (uniform phi): every incoming value names the same value ----------
+;;
+;; `%1 = phi [c, then], [c, else]` is `%1 = mov c` whatever `c` is (LLVM's
+;; `simplifyPHINode`), a self-reference on a back edge does not count against
+;; the rule, and a phi whose inputs disagree keeps its phi.
+(define (opt-uniform-phi-diamond-blocks
+  [left : compiler_ir_types.CompilerIrValue]
+  [right : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "then")
+          (compiler_ir_types.compiler-ir-label "else"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "then")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "else")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "join")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                1
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  left
+                  (compiler_ir_types.compiler-ir-label "then")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    right
+                    (compiler_ir_types.compiler-ir-label "else")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                ty)
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 1)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; `%1 = phi [5, entry], [carried, latch]`: with `carried` the phi itself the
+;; loop only ever passes 5 round, so the phi is 5. With any other value the
+;; inputs disagree and it stays a phi.
+(define (opt-uniform-phi-loop-blocks
+  [carried : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "header"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            1
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 5)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                carried
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "latch")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "header"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 1)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; Two stacked diamonds over one opaque call result: `%2` is uniform in `%1`
+;; and `%3` is uniform in `%2`. Neither is a constant, so sccp cannot reach
+;; either; the chain has to collapse on the uniform rule alone, and both links
+;; must go in the same sweep.
+(define (opt-uniform-phi-chain-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Call
+          1
+          (opt-test-symbol "opaque")
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "then")
+          (compiler_ir_types.compiler-ir-label "else"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "then")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "else")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "join")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                2
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.compiler-ir-label "then")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Var 1)
+                    (compiler_ir_types.compiler-ir-label "else")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "then2")
+                (compiler_ir_types.compiler-ir-label "else2"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "then2")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join2"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "else2")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "join2"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "join2")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      3
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 2)
+                        (compiler_ir_types.compiler-ir-label "then2")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Var 2)
+                          (compiler_ir_types.compiler-ir-label "else2")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 3)))))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+;; A join whose first phi folds and whose second does not. The `Mov` may not
+;; land inside the phi prefix: the backend's edge-copy emitter walks a block
+;; from instruction 0 and stops at the first non-phi, so a phi left below the
+;; mov would silently lose every incoming copy.
+(define (opt-uniform-phi-mixed-join-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "then")
+          (compiler_ir_types.compiler-ir-label "else"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "then")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "else")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "join")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                1
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.I64 7)
+                  (compiler_ir_types.compiler-ir-label "then")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.I64 7)
+                    (compiler_ir_types.compiler-ir-label "else")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Phi
+                2
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ir_types.compiler-ir-label "then")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.I64 2)
+                    (compiler_ir_types.compiler-ir-label "else")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                3
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; Replica of `gvn-table-invalidate-var`'s settled loop, as the post-prune stage
+;; receives it: an i64 cursor phi, a bool flag phi that `flag_exit` already
+;; pinned to `false` on both edges, and an exit phi that reads the flag.
+;;
+;; It also carries the two mov shapes the late rule decides between. `%3` is a
+;; literal whose only reader is an exit phi input, so handing the literal over
+;; costs nothing and the mov goes. `%4` is a literal read by an ordinary
+;; instruction as well, so forwarding it would trade one mov for an immediate
+;; at every reader, and it stays.
+(define (opt-uniform-phi-flag-loop-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          1
+          (compiler_ir_types.CompilerIrValue.I64 100)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          4
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          5
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "header"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            6
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ir_types.compiler-ir-label "cont")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Phi
+            8
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Bool false)
+              (compiler_ir_types.compiler-ir-label "cont")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Bool false)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Ge)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Call
+              10
+              (opt-test-symbol "opaque")
+              (compiler_ir_types.CompilerIrCallArgs.One
+                (compiler_ir_types.CompilerIrValue.Var 6))
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 10)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (compiler_ir_types.compiler-ir-label "cont"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "hit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "exit"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "cont")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  7
+                  (compiler_ir_types.CompilerIrBinOp.Sub)
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    11
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Var 3)
+                      (compiler_ir_types.compiler-ir-label "hit")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 8)
+                        (compiler_ir_types.compiler-ir-label "header")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    12
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Var 4)
+                      (compiler_ir_types.compiler-ir-label "hit")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 5)
+                        (compiler_ir_types.compiler-ir-label "header")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Call
+                    13
+                    (opt-test-symbol "sink")
+                    (compiler_ir_types.CompilerIrCallArgs.Two
+                      (compiler_ir_types.CompilerIrValue.Var 11)
+                      (compiler_ir_types.CompilerIrValue.Var 12))
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 13)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-uniform-phi-flag-loop-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "uniform-phi-flag-loop")
+    (compiler_ir_types.CompilerIrParamList.Nil)
+    (compiler_ast_types.AstType.Bool)
+    32
+    (opt-uniform-phi-flag-loop-blocks)))
+
+(define (opt-uniform-phi-block-of
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : compiler_ir_types.CompilerIrBlock
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.Some block) block]
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.CompilerIrBlock.Block
+        label
+        (compiler_ir_types.compiler-ir-instr-seq-empty))]))
+
+(define (opt-uniform-phi-instr-phi-dst?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Phi phi-dst _ _) (= phi-dst dst)]
+    [_ false]))
+
+(define (opt-uniform-phi-instr-mov-dst?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]
+  [want : compiler_ir_types.CompilerIrValue]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov mov-dst value _)
+      (and (= mov-dst dst) (compiler_optimize.opt-value-eq want value))]
+    [_ false]))
+
+(define (opt-uniform-phi-chain-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "uniform-phi-chain")
+    (opt-sccp-cond-params)
+    (compiler_ast_types.AstType.I64)
+    16
+    (opt-uniform-phi-chain-blocks)))
+
+(define (opt-uniform-phi-folded-instr-seq?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]
+  [want : compiler_ir_types.CompilerIrValue]) : bool
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    false
+    (if (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Mov mov-dst value _)
+        (and (= mov-dst dst) (compiler_optimize.opt-value-eq want value))]
+      [_ false])
+      true
+      (opt-uniform-phi-folded-instr-seq? instrs (+ index 1) dst want))))
+
+(define (opt-uniform-phi-folded?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dst : i64]
+  [want : compiler_ir_types.CompilerIrValue]) : bool
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (if (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-uniform-phi-folded-instr-seq? instrs 0 dst want)])
+        true
+        (opt-uniform-phi-folded? (__tl-box-place rest) dst want))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-uniform-phi-folded?
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        dst
+        want)]))
+
 (define (opt-cfg-trap-path-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.CompilerIrBlock.Block
@@ -48489,6 +48930,178 @@
         59]
       [else 42])))
 
+;; Returns 42 only when a phi whose surviving inputs all name one value folds to
+;; a `Mov` of that value, a self-reference on the back edge does not block it,
+;; disagreeing inputs keep the phi, and a chain of such phis collapses whole in
+;; a single cleanup sweep and a single pipeline run.
+(define (compiler-optimize-uniform-phi-self-test) : i64
+  (let
+    [bool-uniform : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-cfg-simplify-blocks
+        (opt-uniform-phi-diamond-blocks
+          (compiler_ir_types.CompilerIrValue.Bool false)
+          (compiler_ir_types.CompilerIrValue.Bool false)
+          (compiler_ast_types.AstType.Bool)))]
+    [i64-uniform : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-cfg-simplify-blocks
+        (opt-uniform-phi-diamond-blocks
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64)))]
+    [i64-mixed : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-cfg-simplify-blocks
+        (opt-uniform-phi-diamond-blocks
+          (compiler_ir_types.CompilerIrValue.I64 10)
+          (compiler_ir_types.CompilerIrValue.I64 20)
+          (compiler_ast_types.AstType.I64)))]
+    [bool-mixed : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-cfg-simplify-blocks
+        (opt-uniform-phi-diamond-blocks
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ir_types.CompilerIrValue.Bool false)
+          (compiler_ast_types.AstType.Bool)))]
+    [self-uniform : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-cfg-simplify-blocks
+        (opt-uniform-phi-loop-blocks (compiler_ir_types.CompilerIrValue.Var 1)))]
+    [self-mixed : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-cfg-simplify-blocks
+        (opt-uniform-phi-loop-blocks (compiler_ir_types.CompilerIrValue.I64 6)))]
+    [chain-cleanup : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-cfg-simplify-blocks (opt-uniform-phi-chain-blocks))]
+    [mixed-join : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-cfg-simplify-blocks
+        (opt-uniform-phi-mixed-join-blocks))]
+    [mixed-join-block : compiler_ir_types.CompilerIrBlock
+      (opt-uniform-phi-block-of
+        mixed-join
+        (compiler_ir_types.compiler-ir-label "join"))]
+    [chain-pipeline : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.optimize-function
+        (compiler_ast_types.ast-node-pool-reader-context-current)
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-uniform-phi-chain-function))]
+    [chain-pipeline-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks chain-pipeline)]
+    [late-probe : compiler_optimize.OptLateRewriteResult
+      (compiler_optimize.opt-late-uniform-phi-function-rewrite
+        (compiler_ir_types.CompilerIrFunction.Function
+          (opt-test-symbol "uniform-phi-late")
+          (opt-sccp-cond-params)
+          (compiler_ast_types.AstType.Bool)
+          16
+          (opt-uniform-phi-diamond-blocks
+            (compiler_ir_types.CompilerIrValue.Bool false)
+            (compiler_ir_types.CompilerIrValue.Bool false)
+            (compiler_ast_types.AstType.Bool))))]
+    [flag-loop-probe : compiler_optimize.OptLateRewriteResult
+      (compiler_optimize.opt-late-uniform-phi-function-rewrite
+        (opt-uniform-phi-flag-loop-function))]
+    [flag-loop-changed : bool
+      (match flag-loop-probe
+        [(compiler_optimize.OptLateRewriteResult.Result _ changed) changed])]
+    [flag-loop-blocks : compiler_ir_types.CompilerIrBlockList
+      (match flag-loop-probe
+        [(compiler_optimize.OptLateRewriteResult.Result func _)
+          (compiler_optimize.opt-function-blocks func)])]
+    [late-changed : bool
+      (match late-probe
+        [(compiler_optimize.OptLateRewriteResult.Result _ changed) changed])]
+    [late-blocks : compiler_ir_types.CompilerIrBlockList
+      (match late-probe
+        [(compiler_optimize.OptLateRewriteResult.Result func _)
+          (compiler_optimize.opt-function-blocks func)])]
+    (cond
+      ;; (a) both arms the same literal, bool and i64.
+      [(not (= (opt-count-phi-blocks bool-uniform) 0)) 1]
+      [(not
+          (opt-uniform-phi-folded?
+            bool-uniform
+            1
+            (compiler_ir_types.CompilerIrValue.Bool false)))
+        2]
+      [(not (= (opt-count-phi-blocks i64-uniform) 0)) 3]
+      [(not
+          (opt-uniform-phi-folded?
+            i64-uniform
+            1
+            (compiler_ir_types.CompilerIrValue.I64 7)))
+        4]
+      ;; (c) two different constants: the phi stays, and no `Mov` replaces it.
+      [(not (= (opt-count-phi-blocks i64-mixed) 1)) 5]
+      [(not (= (opt-count-mov-dst-blocks i64-mixed 1) 0)) 6]
+      [(not (= (opt-count-phi-blocks bool-mixed) 1)) 7]
+      [(not (= (opt-count-mov-dst-blocks bool-mixed 1) 0)) 8]
+      ;; (b) a self-reference is skipped, so the entry constant carries.
+      [(not (= (opt-count-phi-blocks self-uniform) 0)) 9]
+      [(not
+          (opt-uniform-phi-folded?
+            self-uniform
+            1
+            (compiler_ir_types.CompilerIrValue.I64 5)))
+        10]
+      [(not (= (opt-count-phi-blocks self-mixed) 1)) 11]
+      [(not (= (opt-count-mov-dst-blocks self-mixed 1) 0)) 12]
+      ;; (d) both links of a chain go in one sweep, and the pipeline leaves the
+      ;; function with no phi at all.
+      [(not (= (opt-count-phi-blocks chain-cleanup) 0)) 13]
+      [(not
+          (opt-uniform-phi-folded?
+            chain-cleanup
+            2
+            (compiler_ir_types.CompilerIrValue.Var 1)))
+        14]
+      [(not
+          (opt-uniform-phi-folded?
+            chain-cleanup
+            3
+            (compiler_ir_types.CompilerIrValue.Var 2)))
+        15]
+      [(not (= (opt-count-phi-blocks chain-pipeline-blocks) 0)) 16]
+      ;; The settled loop shape: the pinned flag phi goes, and so does every
+      ;; literal mov whose only readers are phi inputs. The one literal an
+      ;; ordinary instruction also reads stays.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-uniform-phi-flag-loop-function))))
+        33]
+      [(not flag-loop-changed) 34]
+      [(not (= (opt-count-phi-blocks flag-loop-blocks) 3)) 35]
+      [(not (= (opt-count-mov-dst-blocks flag-loop-blocks 8) 0)) 36]
+      [(not (= (opt-count-mov-dst-blocks flag-loop-blocks 3) 0)) 37]
+      [(not (= (opt-count-mov-dst-blocks flag-loop-blocks 1) 0)) 38]
+      [(not (= (opt-count-mov-dst-blocks flag-loop-blocks 4) 1)) 39]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (match flag-loop-probe
+                [(compiler_optimize.OptLateRewriteResult.Result func _) func]))))
+        40]
+      [(not late-changed) 30]
+      [(not (= (opt-count-phi-blocks late-blocks) 0)) 31]
+      [(not (= (opt-count-mov-dst-blocks late-blocks 1) 0)) 32]
+      ;; One phi of a block folds and the other does not: the survivor stays at
+      ;; the head of the block so the backend still finds the whole phi prefix,
+      ;; and the fold's `Mov` follows it.
+      [(not (= (opt-block-instr-count mixed-join-block) 4)) 18]
+      [(not
+          (opt-uniform-phi-instr-phi-dst?
+            (opt-block-instr-at mixed-join-block 0)
+            2))
+        19]
+      [(not
+          (opt-uniform-phi-instr-mov-dst?
+            (opt-block-instr-at mixed-join-block 1)
+            1
+            (compiler_ir_types.CompilerIrValue.I64 7)))
+        20]
+      [(not (= (opt-count-phi-blocks mixed-join) 1)) 21]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function chain-pipeline)))
+        17]
+      [else 42])))
+
 (define (compiler-optimize-cfg-self-test) : i64
   (let
     [constant-if : compiler_ir_types.CompilerIrBlockList
@@ -48941,18 +49554,25 @@
             (compiler_ir_types.compiler-ir-label "no"))
           1)
         (return 34))
-      (unless (= (opt-count-phi-blocks constant-phi-blocks) 1) (return 35))
+      ;; The repair records the merge's incoming edge under each rethreaded
+      ;; predecessor, so `yes` receives `phi [11, true-left], [11, true-right]`
+      ;; and `no` receives `phi [22, false-middle]`. Both name one value on
+      ;; every arm, so the same cleanup sweep that dropped `merge` also folds
+      ;; them to their `Mov` -- the two edges into `yes` are pinned by the jump
+      ;; count above, and a repair that named a block which is not a
+      ;; predecessor would leave an input-less phi and no `Mov` at all.
+      (unless (= (opt-count-phi-blocks constant-phi-blocks) 0) (return 35))
       (unless
-        (opt-bool-branch-first-phi-has-label?
+        (opt-uniform-phi-folded?
           constant-phi-blocks
-          (compiler_ir_types.compiler-ir-label "yes")
-          (compiler_ir_types.compiler-ir-label "true-left"))
+          5
+          (compiler_ir_types.CompilerIrValue.I64 11))
         (return 36))
       (unless
-        (opt-bool-branch-first-phi-has-label?
+        (opt-uniform-phi-folded?
           constant-phi-blocks
-          (compiler_ir_types.compiler-ir-label "yes")
-          (compiler_ir_types.compiler-ir-label "true-right"))
+          6
+          (compiler_ir_types.CompilerIrValue.I64 22))
         (return 37))
       (unless
         (compiler_optimize.opt-verify-ok?
@@ -49026,17 +49646,21 @@
               (compiler_ir_types.compiler-ir-label "no"))
             1))
         (return 71))
-      (unless (= (opt-count-phi-blocks chain-merge-blocks) 1) (return 72))
+      ;; As in the single-block case above: `yes` is repaired to
+      ;; `phi [11, true-left], [11, true-right]` and `no` to
+      ;; `phi [22, false-middle]`, and the cleanup that retires the chain folds
+      ;; both to their `Mov` because every arm names one value.
+      (unless (= (opt-count-phi-blocks chain-merge-blocks) 0) (return 72))
       (unless
         (and
-          (opt-bool-branch-first-phi-has-label?
+          (opt-uniform-phi-folded?
             chain-merge-blocks
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "true-left"))
-          (opt-bool-branch-first-phi-has-label?
+            5
+            (compiler_ir_types.CompilerIrValue.I64 11))
+          (opt-uniform-phi-folded?
             chain-merge-blocks
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "true-right")))
+            6
+            (compiler_ir_types.CompilerIrValue.I64 22)))
         (return 73))
       (unless
         (compiler_optimize.opt-verify-ok?
@@ -62758,3 +63382,10 @@
     (compiler-optimize-bounds-group-refusal-self-test)
     42
     "a body-defined length, a loopless block and an already-split block are refused"))
+
+(test
+  uniform-phi-collapse
+  (test.assert-i64-eq
+    (compiler-optimize-uniform-phi-self-test)
+    42
+    "a phi whose surviving inputs all name one value (literal or var, self-references skipped) folds to a Mov of it, disagreeing inputs keep the phi, and a chain collapses in one sweep"))

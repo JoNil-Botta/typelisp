@@ -724,6 +724,7 @@
                                           (comptime.expr-type argument-value))]
                                       [borrow-mode : i64
                                         (match value-kind
+                                          ["string" 1]
                                           ["struct" 1]
                                           ["enum" 1]
                                           ["region" 1]
@@ -771,6 +772,7 @@
                                     (type-kind (comptime.expr-type argument))]
                                   [borrow-mode : i64
                                     (match value-kind
+                                      ["string" 1]
                                       ["struct" 1]
                                       ["enum" 1]
                                       ["region" 1]

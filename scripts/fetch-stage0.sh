@@ -18,7 +18,7 @@ the script prefers the bundled stage0 asset and falls back to the legacy
 single-file asset when the bundle is not present.
 
 Defaults:
-  tag:        ${TYPELISP_STAGE0_TAG:-stage0-latest}
+  tag:        ${TYPELISP_STAGE0_TAG:-stage0-20260822-184622-r32590855062}
   output-dir: ${TYPELISP_STAGE0_DIR:-target/stage0}
   repo:       ${TYPELISP_STAGE0_REPO:-JoNil-Botta/typelisp}
 
@@ -38,7 +38,11 @@ if [ "$#" -gt 2 ]; then
     exit 2
 fi
 
-TAG=${1:-${TYPELISP_STAGE0_TAG:-stage0-latest}}
+# #6785 recovery pin: stage0-latest published from #6767 crashes while loading
+# dotted stdlib imports, before it can compile the source repair. Both PR CI and
+# the self-publication workflow use this default. Explicit tags are unchanged.
+# Remove the pin after a healthy successor has replaced stage0-latest.
+TAG=${1:-${TYPELISP_STAGE0_TAG:-stage0-20260822-184622-r32590855062}}
 OUT_DIR=${2:-${TYPELISP_STAGE0_DIR:-target/stage0}}
 REPO=${TYPELISP_STAGE0_REPO:-JoNil-Botta/typelisp}
 

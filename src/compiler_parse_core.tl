@@ -369,27 +369,45 @@
     unit))
 
 (define (compiler-parse-semantic-dotted-field-origins!
+  [dispatch : sym_i64_env.SymI64Env]
   [name : ci.InternSyntaxId]
   [span : token.SourceSpan]) : unit
   (let
-    [name-id : i64 (ci.intern-syntax-id-value name)]
-    (if (or (< name-id 0) (>= name-id (ci.intern-capacity)))
+    [intern-state : ci.InternCompatState
+      (compiler-parse-dispatch-intern-state dispatch)]
+    [syntax-name : i64 (ci.intern-syntax-id-value name)]
+    [resolved-name : i64
+      (if (ci.intern-renderable-id? syntax-name)
+        syntax-name
+        (ci.intern-syntax-source-name-id-or syntax-name -1))]
+    [written-name : i64
+      (if (and
+        (>= resolved-name 0)
+        (ci.intern-compat-state-qualified? intern-state resolved-name))
+        (ci.intern-compat-state-qualified-base-id intern-state resolved-name)
+        resolved-name)]
+    (if (< written-name 0)
       unit
       (let
-        [first-dot : i64 (ci.intern-first-dot name-id)]
+        [first-dot : i64
+          (ci.intern-compat-state-first-dot intern-state written-name)]
         (if (< first-dot 0)
           unit
           (let
-            [fields-id : i64 (ci.intern-dotted-tail-id name-id)]
-            [fields-text : String (ci.intern-str fields-id)]
+            [fields-id : i64
+              (ci.intern-compat-state-dotted-tail-id intern-state written-name)]
+            [fields-text : String
+              (ci.intern-compat-state-str intern-state fields-id)]
             [start-col : i64 (+ (token.span-start-col span) first-dot 1)]
             (begin
               (compiler-parse-semantic-origin-push-components!
+                dispatch
                 name
                 span
                 (CompilerParseSemanticOriginKind.ValueQualifier)
                 (CompilerParseSemanticOriginKind.ValueName))
               (compiler-parse-semantic-origin-push-components!
+                dispatch
                 (ci.intern-syntax-id-from-raw fields-id)
                 (token.SourceSpan
                   (token.span-start-line span)
@@ -5717,6 +5735,7 @@
           (= tag (compiler-parse-tag-lit-false)))
           unit
           (compiler-parse-semantic-origin-push-components!
+            dispatch
             name
             span
             (CompilerParseSemanticOriginKind.ModulePath)
@@ -6146,6 +6165,7 @@
                     [(reader.SpannedSexprView.Sym name target-span)
                       (begin
                         (compiler-parse-semantic-dotted-field-origins!
+                          dispatch
                           name
                           target-span)
                         (ResultAstExpr.Ok
@@ -8657,7 +8677,10 @@
                   ;; This is a source candidate, not a claimed field use. The
                   ;; helper rejects generated syntax identities and plain
                   ;; names before reading dotted-name metadata.
-                  (compiler-parse-semantic-dotted-field-origins! name span)
+                  (compiler-parse-semantic-dotted-field-origins!
+                    dispatch
+                    name
+                    span)
                   (ResultAstExpr.Ok
                     (ast-expr-wrap-span
                       pools

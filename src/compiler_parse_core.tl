@@ -363,10 +363,10 @@
       unit
       (let
         [first-dot : i64 (ci.intern-first-dot name-id)]
-        [fields-id : i64 (ci.intern-dotted-tail-id name-id)]
         (if (< first-dot 0)
           unit
           (let
+            [fields-id : i64 (ci.intern-dotted-tail-id name-id)]
             [fields-text : String (ci.intern-str fields-id)]
             [start-col : i64 (+ (token.span-start-col span) first-dot 1)]
             (begin

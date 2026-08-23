@@ -20786,7 +20786,7 @@
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
-  [words : compiler_ir_types.CompilerIrValueList]
+  [words : compiler_ir_types.CompilerIrValueSeq]
   [ty : compiler_ast_types.AstType]
   [vars : i64]
   [program-index : CompilerBackendProgramIndex]
@@ -20794,142 +20794,107 @@
   [planned1 : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match words
-    [(compiler_ir_types.CompilerIrValueList.Array seq)
-      (compiler-backend-emit-pack
-        type-segment-bases
-        assignments
-        dst
-        (compiler_ir_types.compiler-ir-value-seq-to-list seq)
-        ty
-        vars
-        program-index
-        planned0
-        planned1
-        instr-diag
-        backend-state)]
-    [(compiler_ir_types.CompilerIrValueList.Cons w0 rest0)
-      (match (compiler_ir_types.compiler-ir-box-shared-view rest0)
-        [(compiler_ir_types.CompilerIrValueList.Array seq)
-          (compiler-backend-emit-pack
-            type-segment-bases
-            assignments
-            dst
-            (compiler_ir_types.compiler-ir-value-cons-linked
-              w0
-              (compiler_ir_types.compiler-ir-value-seq-to-list seq))
-            ty
-            vars
-            (compiler-backend-global-shared-view program-index)
-            planned0
-            planned1
-            instr-diag
-            backend-state)]
-        [(compiler_ir_types.CompilerIrValueList.Cons w1 _)
-          (let
-            [w0-sse : bool
-              (compiler-backend-group-word-sse?
+  (if (= words.len 2)
+    (let
+      [w0 : compiler_ir_types.CompilerIrValue
+        (compiler_ir_types.compiler-ir-value-seq-ref
+          (compiler-backend-global-shared-view words)
+          0)]
+      [w1 : compiler_ir_types.CompilerIrValue
+        (compiler_ir_types.compiler-ir-value-seq-ref words 1)]
+      [w0-sse : bool
+        (compiler-backend-group-word-sse?
+          type-segment-bases
+          (compiler-backend-global-shared-view program-index)
+          (compiler-backend-global-shared-view ty)
+          0)]
+      [w1-sse : bool
+        (compiler-backend-group-word-sse?
+          type-segment-bases
+          (compiler-backend-global-shared-view program-index)
+          (compiler-backend-global-shared-view ty)
+          1)]
+      (match (compiler-backend-emit-assignment-lookup
+        backend-state
+        (compiler-backend-global-shared-view assignments)
+        dst)
+        [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+          (match location
+            [(compiler_regalloc.CompilerRegLocation.RegisterPair reg-a reg-b)
+              (compiler-backend-emit-pack-words
                 type-segment-bases
-                (compiler-backend-global-shared-view program-index)
-                (compiler-backend-global-shared-view ty)
-                0)]
-            [w1-sse : bool
-              (compiler-backend-group-word-sse?
-                type-segment-bases
-                (compiler-backend-global-shared-view program-index)
-                (compiler-backend-global-shared-view ty)
-                1)]
-            (match (compiler-backend-emit-assignment-lookup
-              backend-state
-              (compiler-backend-global-shared-view assignments)
-              dst)
-              [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
-                (match location
-                  [(compiler_regalloc.CompilerRegLocation.RegisterPair
-                      reg-a
-                      reg-b)
-                    (compiler-backend-emit-pack-words
-                      type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
-                      w0
-                      w1
-                      (compiler_abi.compiler-abi-register-spelling reg-a)
-                      (compiler_abi.compiler-abi-register-spelling reg-b)
-                      w0-sse
-                      w1-sse
-                      planned0
-                      planned1
-                      instr-diag
-                      backend-state)]
-                  [(compiler_regalloc.CompilerRegLocation.Spill offset)
-                    ;; spilled group: words at [offset] and [offset-8].
-                    (compiler-backend-emit-pack-words
-                      type-segment-bases
-                      (compiler-backend-global-shared-view assignments)
-                      w0
-                      w1
-                      (compiler-backend-frame-offset-with-backend-state
-                        backend-state
-                        offset)
-                      (compiler-backend-frame-offset-with-backend-state
-                        backend-state
-                        (- offset 8))
-                      w0-sse
-                      w1-sse
-                      planned0
-                      planned1
-                      instr-diag
-                      backend-state)]
-                  [_
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-with-message
-                          instr-diag
-                          "backend: CompilerIrInstr.Pack dst is not a register-group location")))])]
-              [(compiler_regalloc.CompilerRegMaybeLocation.No)
-                ;; stack-only: the group var lives in two stack slots.
-                (match (compiler-backend-group-word-operand-with-backend-state
-                  (compiler-backend-global-shared-view assignments)
-                  dst
-                  0
-                  vars
-                  backend-state)
-                  [(ResultCompilerBackend.Ok dst0)
-                    (match (compiler-backend-group-word-operand-with-backend-state
-                      (compiler-backend-global-shared-view assignments)
-                      dst
-                      1
-                      vars
-                      backend-state)
-                      [(ResultCompilerBackend.Ok dst1)
-                        (compiler-backend-emit-pack-words
-                          type-segment-bases
-                          (compiler-backend-global-shared-view assignments)
-                          w0
-                          w1
-                          dst0
-                          dst1
-                          w0-sse
-                          w1-sse
-                          planned0
-                          planned1
-                          instr-diag
-                          backend-state)]
-                      [(ResultCompilerBackend.Err m)
-                        (ResultCompilerBackend.Err m)])]
-                  [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]))]
-        [(compiler_ir_types.CompilerIrValueList.Nil)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
+                (compiler-backend-global-shared-view assignments)
+                w0
+                w1
+                (compiler_abi.compiler-abi-register-spelling reg-a)
+                (compiler_abi.compiler-abi-register-spelling reg-b)
+                w0-sse
+                w1-sse
+                planned0
+                planned1
                 instr-diag
-                "backend: CompilerIrInstr.Pack requires exactly two words")))])]
-    [(compiler_ir_types.CompilerIrValueList.Nil)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-with-message
-            instr-diag
-            "backend: CompilerIrInstr.Pack requires exactly two words")))]))
+                backend-state)]
+            [(compiler_regalloc.CompilerRegLocation.Spill offset)
+              ;; spilled group: words at [offset] and [offset-8].
+              (compiler-backend-emit-pack-words
+                type-segment-bases
+                (compiler-backend-global-shared-view assignments)
+                w0
+                w1
+                (compiler-backend-frame-offset-with-backend-state
+                  backend-state
+                  offset)
+                (compiler-backend-frame-offset-with-backend-state
+                  backend-state
+                  (- offset 8))
+                w0-sse
+                w1-sse
+                planned0
+                planned1
+                instr-diag
+                backend-state)]
+            [_
+              (ResultCompilerBackend.Err
+                (box
+                  (compiler_diagnostic.compiler-diagnostic-with-message
+                    instr-diag
+                    "backend: CompilerIrInstr.Pack dst is not a register-group location")))])]
+        [(compiler_regalloc.CompilerRegMaybeLocation.No)
+          ;; stack-only: the group var lives in two stack slots.
+          (match (compiler-backend-group-word-operand-with-backend-state
+            (compiler-backend-global-shared-view assignments)
+            dst
+            0
+            vars
+            backend-state)
+            [(ResultCompilerBackend.Ok dst0)
+              (match (compiler-backend-group-word-operand-with-backend-state
+                (compiler-backend-global-shared-view assignments)
+                dst
+                1
+                vars
+                backend-state)
+                [(ResultCompilerBackend.Ok dst1)
+                  (compiler-backend-emit-pack-words
+                    type-segment-bases
+                    (compiler-backend-global-shared-view assignments)
+                    w0
+                    w1
+                    dst0
+                    dst1
+                    w0-sse
+                    w1-sse
+                    planned0
+                    planned1
+                    instr-diag
+                    backend-state)]
+                [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]
+            [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]))
+    (ResultCompilerBackend.Err
+      (box
+        (compiler_diagnostic.compiler-diagnostic-with-message
+          instr-diag
+          "backend: CompilerIrInstr.Pack requires exactly two words")))))
 
 ;; Extract word `index` of a register-group value into `dst`'s home.
 (define (compiler-backend-emit-word
@@ -38348,12 +38313,23 @@
         types
         (+ idx 1)))))
 
-(define (compiler-backend-var-value-list [count : i64] [idx : i64]) : compiler_ir_types.CompilerIrValueList
-  (if (>= idx count)
-    compiler_ir_types.CompilerIrValueList.Nil
-    (compiler_ir_types.compiler-ir-value-cons
-      (compiler_ir_types.CompilerIrValue.Var idx)
-      (compiler-backend-var-value-list count (+ idx 1)))))
+(define (compiler-backend-var-value-seq [count : i64] [idx : i64]) : compiler_ir_types.CompilerIrValueSeq
+  (let
+    [remaining : i64
+      (if (< idx count)
+        (- count idx)
+        0)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (array.make-array compiler_ir_types.CompilerIrValue remaining)]
+    [offset : i64 0]
+    (begin
+      (while (< offset remaining)
+        (begin
+          (set!
+            (array-ref slots offset)
+            (compiler_ir_types.CompilerIrValue.Var (+ idx offset)))
+          (set! offset (+ offset 1))))
+      (compiler_ir_types.CompilerIrValueSeq slots remaining))))
 
 (define (compiler-backend-function-list-count
   [functions : compiler_ir_types.CompilerIrFunctionList]) : i64
@@ -49294,30 +49270,45 @@
     [(compiler_ir_types.CompilerIrSpmdValueClass.Mask) true]
     [_ false]))
 
-(define (compiler-backend-spmd-call-values-from
+(define (compiler-backend-spmd-call-values-into!
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
   [index : i64]
-  [uniform-only : bool]) : compiler_ir_types.CompilerIrValueList
+  [uniform-only : bool]
+  [builder : (&mut builder compiler_ir_types.CompilerIrValueBuilder)]) : unit
   (if (>=
     index
     (compiler_ir_types.compiler-ir-spmd-call-arg-seq-count
       (compiler-backend-global-shared-view args)))
-    compiler_ir_types.CompilerIrValueList.Nil
+    unit
     (match (compiler-backend-spmd-call-arg-at
       (compiler-backend-global-shared-view args)
       index)
       [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value _)
-        (let
-          [rest : compiler_ir_types.CompilerIrValueList
-            (compiler-backend-spmd-call-values-from
-              args
-              (+ index 1)
-              uniform-only)]
+        (begin
           (if (or
             (not uniform-only)
             (compiler-backend-spmd-class-uniform? class))
-            (compiler_ir_types.compiler-ir-value-cons value rest)
-            rest))])))
+            (compiler_ir_types.compiler-ir-value-builder-push! builder value)
+            unit)
+          (compiler-backend-spmd-call-values-into!
+            (compiler-backend-global-shared-view args)
+            (+ index 1)
+            uniform-only
+            builder))])))
+
+(define (compiler-backend-spmd-call-values
+  [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
+  [uniform-only : bool]) : compiler_ir_types.CompilerIrValueSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrValueBuilder
+      (compiler_ir_types.compiler-ir-value-builder-with-capacity args.len)]
+    (begin
+      (compiler-backend-spmd-call-values-into!
+        (compiler-backend-global-shared-view args)
+        0
+        uniform-only
+        (&mut builder))
+      (compiler_ir_types.compiler-ir-value-builder-to-seq builder))))
 
 (define (compiler-backend-spmd-call-types-from
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]
@@ -49840,15 +49831,14 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [values : compiler_ir_types.CompilerIrValueList
-      (compiler_ir_types.compiler-ir-value-cons
+    [values : compiler_ir_types.CompilerIrValueSeq
+      (compiler_ir_types.compiler-ir-value-seq-prepend
         active-mask
-        (compiler-backend-spmd-call-values-from
+        (compiler-backend-spmd-call-values
           (compiler-backend-global-shared-view args)
-          0
           false))]
     [call-args : compiler_ir_types.CompilerIrCallArgs
-      (compiler_ir_types.compiler-ir-call-args-from-list values)]
+      (compiler_ir_types.compiler-ir-call-args-from-seq values)]
     [param-types : compiler_ast_types.AstTypeList
       (compiler_ast_types.ast-type-cons
         (compiler_ast_types.AstType.Bool)
@@ -49918,13 +49908,12 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [uniform-values : compiler_ir_types.CompilerIrValueList
-      (compiler-backend-spmd-call-values-from
+    [uniform-values : compiler_ir_types.CompilerIrValueSeq
+      (compiler-backend-spmd-call-values
         (compiler-backend-global-shared-view args)
-        0
         true)]
     [uniform-args : compiler_ir_types.CompilerIrCallArgs
-      (compiler_ir_types.compiler-ir-call-args-from-list uniform-values)]
+      (compiler_ir_types.compiler-ir-call-args-from-seq uniform-values)]
     [uniform-types : compiler_ast_types.AstTypeList
       (compiler-backend-spmd-call-types-from
         (compiler-backend-global-shared-view args)
@@ -50053,13 +50042,12 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [uniform-values : compiler_ir_types.CompilerIrValueList
-      (compiler-backend-spmd-call-values-from
+    [uniform-values : compiler_ir_types.CompilerIrValueSeq
+      (compiler-backend-spmd-call-values
         (compiler-backend-global-shared-view args)
-        0
         true)]
     [uniform-args : compiler_ir_types.CompilerIrCallArgs
-      (compiler_ir_types.compiler-ir-call-args-from-list uniform-values)]
+      (compiler_ir_types.compiler-ir-call-args-from-seq uniform-values)]
     [uniform-types : compiler_ast_types.AstTypeList
       (compiler-backend-spmd-call-types-from
         (compiler-backend-global-shared-view args)
@@ -53176,23 +53164,27 @@
       (compiler-backend-use-count-inc counts id)]
     [_ unit]))
 
-(define (compiler-backend-count-value-list-uses
+(define (compiler-backend-count-value-seq-uses-from
   [counts : (__tl_dyn-array i64)]
-  [values : compiler_ir_types.CompilerIrValueList]) : unit
-  (match values
-    [(compiler_ir_types.CompilerIrValueList.Nil) unit]
-    [(compiler_ir_types.CompilerIrValueList.Array seq)
-      (compiler-backend-count-value-list-uses
+  [values : compiler_ir_types.CompilerIrValueSeq]
+  [index : i64]) : unit
+  (if (>= index values.len)
+    unit
+    (begin
+      (compiler-backend-count-value-use
+        (compiler-backend-global-shared-view counts)
+        (compiler_ir_types.compiler-ir-value-seq-ref
+          (compiler-backend-global-shared-view values)
+          index))
+      (compiler-backend-count-value-seq-uses-from
         counts
-        (compiler_ir_types.compiler-ir-value-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrValueList.Cons value rest)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          value)
-        (compiler-backend-count-value-list-uses
-          counts
-          (compiler_ir_types.compiler-ir-box-shared-view rest)))]))
+        (compiler-backend-global-shared-view values)
+        (+ index 1)))))
+
+(define (compiler-backend-count-value-seq-uses
+  [counts : (__tl_dyn-array i64)]
+  [values : compiler_ir_types.CompilerIrValueSeq]) : unit
+  (compiler-backend-count-value-seq-uses-from counts values 0))
 
 (define (compiler-backend-count-call-args-array-uses
   [counts : (__tl_dyn-array i64)]
@@ -53591,7 +53583,7 @@
     ;; Pack/Word still reads (-O2 copy-prop substitutes vars directly into
     ;; Pack/Word operands).
     [(compiler_ir_types.CompilerIrInstr.Pack _ words _)
-      (compiler-backend-count-value-list-uses
+      (compiler-backend-count-value-seq-uses
         (compiler-backend-global-shared-view counts)
         words)]
     [(compiler_ir_types.CompilerIrInstr.Word _ src _ _)
@@ -75395,8 +75387,8 @@
       (compiler-backend-type-list-count
         (compiler-backend-global-shared-view param-types))]
     [args : compiler_ir_types.CompilerIrCallArgs
-      (compiler_ir_types.compiler-ir-call-args-from-list
-        (compiler-backend-var-value-list
+      (compiler_ir_types.compiler-ir-call-args-from-seq
+        (compiler-backend-var-value-seq
           (compiler-backend-type-list-count
             (compiler-backend-global-shared-view param-types))
           0))]
@@ -75863,19 +75855,25 @@
     [(compiler_ir_types.CompilerIrMaybeValue.Some inner)
       (compiler-backend-collect-value-collections collections inner)]))
 
-(define (compiler-backend-collect-value-list-collections
+(define (compiler-backend-collect-value-seq-collections-from
   [collections : CompilerBackendProgramCollections]
-  [values : compiler_ir_types.CompilerIrValueList]) : CompilerBackendProgramCollections
-  (match values
-    [(compiler_ir_types.CompilerIrValueList.Nil) collections]
-    [(compiler_ir_types.CompilerIrValueList.Array seq)
-      (compiler-backend-collect-value-list-collections
+  [values : compiler_ir_types.CompilerIrValueSeq]
+  [index : i64]) : CompilerBackendProgramCollections
+  (if (>= index values.len)
+    collections
+    (compiler-backend-collect-value-seq-collections-from
+      (compiler-backend-collect-value-collections
         collections
-        (compiler_ir_types.compiler-ir-value-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrValueList.Cons value rest)
-      (compiler-backend-collect-value-list-collections
-        (compiler-backend-collect-value-collections collections value)
-        (compiler_ir_types.compiler-ir-box-shared-view rest))]))
+        (compiler_ir_types.compiler-ir-value-seq-ref
+          (compiler-backend-global-shared-view values)
+          index))
+      (compiler-backend-global-shared-view values)
+      (+ index 1))))
+
+(define (compiler-backend-collect-value-seq-collections
+  [collections : CompilerBackendProgramCollections]
+  [values : compiler_ir_types.CompilerIrValueSeq]) : CompilerBackendProgramCollections
+  (compiler-backend-collect-value-seq-collections-from collections values 0))
 
 (define (compiler-backend-collect-call-args-array-collections
   [collections : CompilerBackendProgramCollections]
@@ -76161,7 +76159,7 @@
     [(compiler_ir_types.CompilerIrInstr.Syscall _ args)
       (compiler-backend-collect-call-args-collections collections args)]
     [(compiler_ir_types.CompilerIrInstr.Pack _ words _)
-      (compiler-backend-collect-value-list-collections collections words)]
+      (compiler-backend-collect-value-seq-collections collections words)]
     [(compiler_ir_types.CompilerIrInstr.Word _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
     [(compiler_ir_types.CompilerIrInstr.TailCallIndirect func args _)
@@ -78910,29 +78908,33 @@
           (set! i (+ i 1))))
       out)))
 
-(define (compiler-backend-object-value-list-ref
+(define (compiler-backend-object-value-seq-ref-from
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
-  [values : compiler_ir_types.CompilerIrValueList]
-  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match values
-    [(compiler_ir_types.CompilerIrValueList.Nil) parts]
-    [(compiler_ir_types.CompilerIrValueList.Array seq)
-      (compiler-backend-object-value-list-ref
+  [values : compiler_ir_types.CompilerIrValueSeq]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
+  (if (>= index values.len)
+    parts
+    (compiler-backend-object-value-seq-ref-from
+      (compiler-backend-object-value-ref
         parts
-        site
-        (compiler_ir_types.compiler-ir-value-seq-to-list seq)
-        program-index)]
-    [(compiler_ir_types.CompilerIrValueList.Cons value rest)
-      (compiler-backend-object-value-list-ref
-        (compiler-backend-object-value-ref
-          parts
-          (compiler-backend-global-shared-view site)
-          value
-          (compiler-backend-global-shared-view program-index))
         (compiler-backend-global-shared-view site)
-        (compiler_ir_types.compiler-ir-box-shared-view rest)
-        (compiler-backend-global-shared-view program-index))]))
+        (compiler_ir_types.compiler-ir-value-seq-ref
+          (compiler-backend-global-shared-view values)
+          index)
+        (compiler-backend-global-shared-view program-index))
+      (compiler-backend-global-shared-view site)
+      (compiler-backend-global-shared-view values)
+      (compiler-backend-global-shared-view program-index)
+      (+ index 1))))
+
+(define (compiler-backend-object-value-seq-ref
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [site : String]
+  [values : compiler_ir_types.CompilerIrValueSeq]
+  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
+  (compiler-backend-object-value-seq-ref-from parts site values program-index 0))
 
 (define (compiler-backend-object-byte [value : i64]) : u8
   (cast (bit-and value 0xff) : u8))
@@ -79560,47 +79562,33 @@
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
-  [words : compiler_ir_types.CompilerIrValueList]
+  [words : compiler_ir_types.CompilerIrValueSeq]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match (compiler_ir_types.compiler-ir-value-list-force-cons
-    (compiler-backend-global-shared-view words))
-    [(compiler_ir_types.CompilerIrValueList.Cons word0 rest0)
-      (match (compiler_ir_types.compiler-ir-value-list-force-cons
-        (compiler_ir_types.compiler-ir-box-shared-view rest0))
-        [(compiler_ir_types.CompilerIrValueList.Cons word1 _)
-          (compiler-backend-object-store-reg-to-group-word
-            program-index.backend-state
-            (compiler-backend-object-store-reg-to-group-word
-              program-index.backend-state
-              (compiler-backend-object-load-value-to-reg
-                (compiler-backend-object-load-value-to-reg
-                  parts
-                  (compiler-backend-global-shared-view site)
-                  word0
-                  "%rax"
-                  (compiler-backend-global-shared-view program-index))
-                (compiler-backend-global-shared-view site)
-                word1
-                "%rdx"
-                (compiler-backend-global-shared-view program-index))
-              dst
-              0
-              "%rax")
-            dst
-            1
-            "%rdx")]
-        [_
-          (compiler-backend-object-value-list-ref
+  (if (>= words.len 2)
+    (compiler-backend-object-store-reg-to-group-word
+      program-index.backend-state
+      (compiler-backend-object-store-reg-to-group-word
+        program-index.backend-state
+        (compiler-backend-object-load-value-to-reg
+          (compiler-backend-object-load-value-to-reg
             parts
             (compiler-backend-global-shared-view site)
-            (compiler-backend-global-shared-view words)
-            (compiler-backend-global-shared-view program-index))])]
-    [_
-      (compiler-backend-object-value-list-ref
-        parts
-        (compiler-backend-global-shared-view site)
-        (compiler-backend-global-shared-view words)
-        (compiler-backend-global-shared-view program-index))]))
+            (compiler_ir_types.compiler-ir-value-seq-ref
+              (compiler-backend-global-shared-view words)
+              0)
+            "%rax"
+            (compiler-backend-global-shared-view program-index))
+          (compiler-backend-global-shared-view site)
+          (compiler_ir_types.compiler-ir-value-seq-ref words 1)
+          "%rdx"
+          (compiler-backend-global-shared-view program-index))
+        dst
+        0
+        "%rax")
+      dst
+      1
+      "%rdx")
+    (compiler-backend-object-value-seq-ref parts site words program-index)))
 
 (define (compiler-backend-object-word-to-var
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -91617,28 +91605,21 @@
               (compiler_ir_types.CompilerIrInstr.Call
                 1
                 cbi.compiler-builtin-id-tl-substring
-                (compiler_ir_types.compiler-ir-call-args-from-list
-                  (compiler_ir_types.compiler-ir-value-cons
+                (compiler_ir_types.compiler-ir-call-args-from-seq
+                  (compiler_ir_types.compiler-ir-value-seq3
                     (compiler_ir_types.CompilerIrValue.I64 0)
-                    (compiler_ir_types.compiler-ir-value-cons
-                      (compiler_ir_types.CompilerIrValue.I64 0)
-                      (compiler_ir_types.compiler-ir-value-cons
-                        (compiler_ir_types.CompilerIrValue.I64 0)
-                        compiler_ir_types.CompilerIrValueList.Nil))))
+                    (compiler_ir_types.CompilerIrValue.I64 0)
+                    (compiler_ir_types.CompilerIrValue.I64 0)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Call
                 2
                 cbi.compiler-builtin-id-tl-string-concat
-                (compiler_ir_types.compiler-ir-call-args-from-list
-                  (compiler_ir_types.compiler-ir-value-cons
+                (compiler_ir_types.compiler-ir-call-args-from-seq
+                  (compiler_ir_types.compiler-ir-value-seq4
                     (compiler_ir_types.CompilerIrValue.I64 0)
-                    (compiler_ir_types.compiler-ir-value-cons
-                      (compiler_ir_types.CompilerIrValue.I64 0)
-                      (compiler_ir_types.compiler-ir-value-cons
-                        (compiler_ir_types.CompilerIrValue.I64 0)
-                        (compiler_ir_types.compiler-ir-value-cons
-                          (compiler_ir_types.CompilerIrValue.I64 0)
-                          compiler_ir_types.CompilerIrValueList.Nil)))))
+                    (compiler_ir_types.CompilerIrValue.I64 0)
+                    (compiler_ir_types.CompilerIrValue.I64 0)
+                    (compiler_ir_types.CompilerIrValue.I64 0)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -92576,14 +92557,11 @@
                 (compiler_ir_types.CompilerIrInstr.Call
                   1
                   cbi.compiler-builtin-id-tl-substring
-                  (compiler_ir_types.compiler-ir-call-args-from-list
-                    (compiler_ir_types.compiler-ir-value-cons
+                  (compiler_ir_types.compiler-ir-call-args-from-seq
+                    (compiler_ir_types.compiler-ir-value-seq3
                       (compiler_ir_types.CompilerIrValue.I64 0)
-                      (compiler_ir_types.compiler-ir-value-cons
-                        (compiler_ir_types.CompilerIrValue.I64 0)
-                        (compiler_ir_types.compiler-ir-value-cons
-                          (compiler_ir_types.CompilerIrValue.I64 0)
-                          compiler_ir_types.CompilerIrValueList.Nil))))
+                      (compiler_ir_types.CompilerIrValue.I64 0)
+                      (compiler_ir_types.CompilerIrValue.I64 0)))
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some

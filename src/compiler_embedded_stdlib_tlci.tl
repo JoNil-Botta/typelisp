@@ -422,9 +422,13 @@
   tlci.tlci-host-callback-status-ok)
 (define compiler-comptime-host-pools : (__tl_dyn-array ast.AstNodePoolContext)
   (array.make-array ast.AstNodePoolContext 1))
+(define compiler-comptime-host-operand-cap : i64
+  16)
 (define compiler-comptime-host-operands : (__tl_dyn-array
     ctfe_support.CompilerCtfeValue)
-  (array.make-array ctfe_support.CompilerCtfeValue 8))
+  (array.make-array
+    ctfe_support.CompilerCtfeValue
+    compiler-comptime-host-operand-cap))
 (define compiler-comptime-host-operand-count : i64
   0)
 (define compiler-comptime-host-reflections : (__tl_dyn-array
@@ -546,7 +550,9 @@
     (set! (array-ref compiler-comptime-host-session-macro-state 0) macro-state)
     (let
       [index : i64 0]
-      (while (and (< index operand-count) (< index 8))
+      (while (and
+        (< index operand-count)
+        (< index compiler-comptime-host-operand-cap))
         (begin
           (set!
             (array-ref compiler-comptime-host-operands index)
@@ -1632,6 +1638,40 @@
             (not (= result tlci.tlci-host-callback-status-ok))
             (set! compiler-comptime-host-session-status result))
           result)))))
+
+;; Native traps and explicit aborts use the fixed table slot rather than the
+;; named callback registry. The callback follows the same first-failure rule
+;; as status-returning helpers: it records status 3 without committing the
+;; value stack, and a later commit observes the latched abort. The raw ABI
+;; supplies host context through the hidden-environment register, leaving the
+;; five explicit arguments below.
+(define (compiler-comptime-host-callback-abort
+  [session : i64]
+  [_reason : i64]
+  [message-address : i64]
+  [message-length : i64]
+  [_symbol : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (begin
+      (when
+        (and (> message-address 0) (>= message-length 0))
+        (set!
+          (array-ref compiler-comptime-host-diagnostic 0)
+          (unsafe
+            (string-from-bytes
+              (int->ptr message-address : (Ptr u8))
+              message-length))))
+      (when
+        (=
+          compiler-comptime-host-session-status
+          tlci.tlci-host-callback-status-ok)
+        (set!
+          compiler-comptime-host-session-status
+          tlci.tlci-host-callback-status-abort))
+      tlci.tlci-host-callback-status-ok)))
 
 ;; Scratch lifecycle ops: the compiler-owned session builds results on its
 ;; value stack, not through host scratch, so these are no-ops. Registration
@@ -8962,13 +9002,22 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
-;; The abort slot keeps the validation sentinel until the native-abort slice
-;; wires a real handler; no callback sequence emitted by the current producer
-;; can reach it. Extract the raw code pointer from a top-level TypeLisp function
-;; value. Generated image calls provide the host context in the
-;; hidden-environment register, so no per-callback trampoline is needed.
+;; Extract the raw code pointer from a top-level TypeLisp function value.
+;; Generated image calls provide the host context in the hidden-environment
+;; register, so no per-callback trampoline is needed.
 (define (compiler-comptime-host-function-address
   [callback : (-> i64 i64 i64 i64 i64)]) : i64
+  (let
+    [descriptor : i64
+      (cast
+        (unsafe
+          (cast callback : u64))
+        : i64)]
+    (unsafe
+      (ptr-read (int->ptr descriptor : (Ptr i64))))))
+
+(define (compiler-comptime-host-abort-function-address
+  [callback : (-> i64 i64 i64 i64 i64 i64)]) : i64
   (let
     [descriptor : i64
       (cast
@@ -9901,7 +9950,8 @@
         0
         0
         0
-        8192
+        (compiler-comptime-host-abort-function-address
+          compiler-comptime-host-callback-abort)
         registry.names
         registry.callbacks
         registry.len))))

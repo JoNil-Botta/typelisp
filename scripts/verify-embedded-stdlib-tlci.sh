@@ -8,10 +8,95 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-build-provenance.sh"
 
+required_native_identities() {
+    printf '%s\n' \
+        stdlib.clone/synthesize-helpers \
+        stdlib.serialize/serialize \
+        stdlib.sort/vec \
+        stdlib.text_buf/append! \
+        stdlib.vector/vector \
+        stdlib.hashmap/hashmap
+}
+
+verify_required_native_identities() {
+    native_image=$1
+    blocker_status=$2
+    for native_identity in $(required_native_identities); do
+        if ! grep -aFq "$native_identity" "$native_image"; then
+            echo "embedded stdlib tlci image is missing $native_identity" >&2
+            return 1
+        fi
+        if awk -F '\t' -v identity="$native_identity" '
+            $1 == identity && $2 == "blocked" { found = 1 }
+            END { exit !found }
+        ' "$blocker_status"; then
+            echo "$native_identity regressed to a fallback shell" >&2
+            return 1
+        fi
+    done
+}
+
+run_native_identity_self_test() {
+    selftest_dir=target/embedded-stdlib-tlci-native-identities-self-test
+    selftest_image=$selftest_dir/image.txt
+    selftest_blockers=$selftest_dir/blockers.tsv
+    selftest_stderr=$selftest_dir/stderr.txt
+    mkdir -p "$selftest_dir"
+
+    required_native_identities > "$selftest_image"
+    required_native_identities |
+        awk '{ print $0 "\twalked\tself-test" }' > "$selftest_blockers"
+    verify_required_native_identities "$selftest_image" "$selftest_blockers"
+
+    required_native_identities |
+        grep -v '^stdlib.hashmap/hashmap$' > "$selftest_image"
+    if verify_required_native_identities \
+        "$selftest_image" "$selftest_blockers" \
+        > /dev/null 2> "$selftest_stderr"; then
+        echo "native identity self-test accepted a missing hashmap identity" >&2
+        return 1
+    fi
+    grep -F "image is missing stdlib.hashmap/hashmap" \
+        "$selftest_stderr" > /dev/null || {
+        cat "$selftest_stderr" >&2
+        echo "missing hashmap identity diagnostic mismatch" >&2
+        return 1
+    }
+
+    required_native_identities > "$selftest_image"
+    required_native_identities |
+        awk -v blocked='stdlib.hashmap/hashmap' '
+            { status = ($0 == blocked ? "blocked" : "walked") }
+            { print $0 "\t" status "\tself-test" }
+        ' > "$selftest_blockers"
+    if verify_required_native_identities \
+        "$selftest_image" "$selftest_blockers" \
+        > /dev/null 2> "$selftest_stderr"; then
+        echo "native identity self-test accepted a blocked hashmap identity" >&2
+        return 1
+    fi
+    grep -F "stdlib.hashmap/hashmap regressed to a fallback shell" \
+        "$selftest_stderr" > /dev/null || {
+        cat "$selftest_stderr" >&2
+        echo "blocked hashmap identity diagnostic mismatch" >&2
+        return 1
+    }
+
+    rm -f "$selftest_image" "$selftest_blockers" "$selftest_stderr"
+    rmdir "$selftest_dir"
+}
+
+if [ "$#" -eq 1 ] && [ "$1" = "--self-test-native-identities" ]; then
+    run_native_identity_self_test
+    echo "embedded stdlib tlci native identity self-test passed"
+    exit 0
+fi
 if [ "$#" -ne 0 ]; then
-    echo "usage: scripts/verify-embedded-stdlib-tlci.sh" >&2
+    echo "usage: scripts/verify-embedded-stdlib-tlci.sh [--self-test-native-identities]" >&2
     exit 2
 fi
+
+run_native_identity_self_test
 
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
@@ -45,6 +130,11 @@ ENVELOPE_B=$IMAGE_B.tlch
 FULL_BLOCKER_IMAGE=$WORKDIR/stdlib-full-blockers.tlci
 FULL_BLOCKER_STDOUT=$WORKDIR/full-blockers.stdout
 FULL_BLOCKER_STDERR=$WORKDIR/full-blockers.stderr
+IDENTITY_IMAGE=$WORKDIR/stdlib-identity-manifest.tlci
+IDENTITY_STDOUT=$WORKDIR/identity-manifest.stdout
+IDENTITY_ACTUAL=$WORKDIR/identity-manifest.actual.tsv
+IDENTITY_EXPECTED=$WORKDIR/identity-manifest.expected.tsv
+IDENTITY_FIXTURES=tools/embedded-stdlib-tlci/identity-fixtures.tsv
 MUTATED_ROOT=$WORKDIR/stdlib-mutated
 MUTATED_IMAGE=$WORKDIR/stdlib-mutated.tlci
 MUTATED_SURFACE=$WORKDIR/stdlib-mutated-surface.rodata
@@ -190,6 +280,60 @@ if ! cmp -s "$COVERAGE_LOG" "$FULL_BLOCKER_STDOUT"; then
     echo "full-blocker diagnostics changed the coverage output" >&2
     exit 1
 fi
+
+# #6609: derive identity, declared-parameter shape, and result kind from the
+# exact parsed producer inputs, then require the reviewed fixture manifest to
+# match it byte-for-byte. This makes catalog additions/removals and declaration
+# changes fail before the route corpus can become stale or vacuous.
+"$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$MANIFEST" stdlib "$IDENTITY_IMAGE" "$HOST_TARGET" \
+    "$PRODUCER_IDENTITY" "$SURFACE" --identity-manifest \
+    > "$IDENTITY_STDOUT" 2> "$IDENTITY_ACTUAL"
+"$COMPILER" run tools/embedded-stdlib-tlci/encode-envelope.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$IDENTITY_IMAGE" "$IDENTITY_IMAGE.tlch"
+if ! cmp -s "$IMAGE_A" "$IDENTITY_IMAGE"; then
+    echo "identity-manifest diagnostics changed the embedded stdlib tlci image" >&2
+    exit 1
+fi
+if ! cmp -s "$ENVELOPE_A" "$IDENTITY_IMAGE.tlch"; then
+    echo "identity-manifest diagnostics changed the embedded stdlib tlci envelope" >&2
+    exit 1
+fi
+if ! cmp -s "$COVERAGE_LOG" "$IDENTITY_STDOUT"; then
+    echo "identity-manifest diagnostics changed the coverage output" >&2
+    exit 1
+fi
+if ! awk -F '\t' '
+    NF != 4 { bad = 1; next }
+    $1 !~ /^stdlib\.[^/]+\/[^/]+$/ { bad = 1 }
+    $2 !~ /^[0-9]+$/ { bad = 1 }
+    $3 != "fixed" && $3 != "variadic" { bad = 1 }
+    $4 != "expr" && $4 != "module" && $4 != "decls" { bad = 1 }
+    seen[$1]++ { duplicate = 1 }
+    END { exit bad || duplicate || NR == 0 }
+' "$IDENTITY_ACTUAL"; then
+    echo "identity-manifest diagnostics emitted a malformed or duplicate row" >&2
+    exit 1
+fi
+if [ ! -f "$IDENTITY_FIXTURES" ]; then
+    echo "embedded stdlib tlci identity fixture manifest is missing" >&2
+    exit 1
+fi
+awk -F '\t' '!/^#/ && NF { print $1 "\t" $2 "\t" $3 "\t" $4 }' \
+    "$IDENTITY_FIXTURES" > "$IDENTITY_EXPECTED"
+if ! cmp -s "$IDENTITY_EXPECTED" "$IDENTITY_ACTUAL"; then
+    echo "embedded stdlib tlci identity fixture inventory is out of date" >&2
+    diff -u "$IDENTITY_EXPECTED" "$IDENTITY_ACTUAL" >&2 || true
+    exit 1
+fi
+IDENTITY_ROWS=$(wc -l < "$IDENTITY_ACTUAL" | tr -d ' ')
+if [ "$IDENTITY_ROWS" -ne "$NATIVE_ENTRIES" ]; then
+    echo "identity manifest reports $IDENTITY_ROWS rows, coverage reports $NATIVE_ENTRIES native entries" >&2
+    exit 1
+fi
+
 if ! awk -F '\t' '
     NF != 3 || ($2 != "blocked" && $2 != "walked") { bad = 1 }
     END { exit bad }
@@ -211,25 +355,9 @@ fi
 # Pin the landed families, not just the aggregate ratchet. Each identity must
 # exist in the catalog and, because every shell is accounted for by the blocked
 # relation above, must not be one of those blocked identities. Refs #6550,
-# #6552, #6554, #6555, #6556.
-for NATIVE_IDENTITY in \
-    stdlib.clone/synthesize-helpers \
-    stdlib.serialize/serialize \
-    stdlib.sort/vec \
-    stdlib.text_buf/append! \
-    stdlib.vector/vector; do
-    if ! grep -aFq "$NATIVE_IDENTITY" "$IMAGE_A"; then
-        echo "embedded stdlib tlci image is missing $NATIVE_IDENTITY" >&2
-        exit 1
-    fi
-    if awk -F '\t' -v identity="$NATIVE_IDENTITY" '
-        $1 == identity && $2 == "blocked" { found = 1 }
-        END { exit !found }
-    ' "$FULL_BLOCKER_STDERR"; then
-        echo "$NATIVE_IDENTITY regressed to a fallback shell" >&2
-        exit 1
-    fi
-done
+# #6552, #6553, #6554, #6555, #6556. The same assertion has deterministic
+# missing and blocked identity coverage in run_native_identity_self_test.
+verify_required_native_identities "$IMAGE_A" "$FULL_BLOCKER_STDERR"
 if [ "$SHELL_ENTRIES" -gt 0 ] &&
     ! grep -q "$(printf '\twalked\t')" "$FULL_BLOCKER_STDERR"; then
     echo "full-blocker diagnostics did not report any walked capability" >&2

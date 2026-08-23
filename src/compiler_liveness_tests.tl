@@ -416,11 +416,11 @@
         (&mut builder)
         (ir.CompilerIrInstr.Pack
           5
-          (ir.compiler-ir-value-cons
+          (ir.compiler-ir-value-seq-prepend
             (ir.CompilerIrValue.Var 42)
-            (ir.compiler-ir-value-cons
+            (ir.compiler-ir-value-seq-prepend
               (ir.CompilerIrValue.Var 43)
-              ir.CompilerIrValueList.Nil))
+              (ir.compiler-ir-value-seq-empty)))
           (compiler-live-i64-ty)))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)

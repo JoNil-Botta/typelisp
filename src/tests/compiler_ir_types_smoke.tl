@@ -1182,24 +1182,24 @@
         (ast.ast-node-pool-context-shared-view (& pools))
         (ast.ast-global-shared-view group-ty))]
     [region-ty : ast.AstType (ast.AstType.Region 77 group-id)]
-    [words-gp-sse : compiler_ir_types.CompilerIrValueList
-      (compiler_ir_types.compiler-ir-value-cons
+    [words-gp-sse : compiler_ir_types.CompilerIrValueSeq
+      (compiler_ir_types.compiler-ir-value-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 1)
-        (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.compiler-ir-value-seq-prepend
           (compiler_ir_types.CompilerIrValue.F64 0)
-          compiler_ir_types.CompilerIrValueList.Nil))]
-    [words-gp-gp : compiler_ir_types.CompilerIrValueList
-      (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.compiler-ir-value-seq-empty)))]
+    [words-gp-gp : compiler_ir_types.CompilerIrValueSeq
+      (compiler_ir_types.compiler-ir-value-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 1)
-        (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.compiler-ir-value-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 2)
-          compiler_ir_types.CompilerIrValueList.Nil))]
-    [words-sse-gp : compiler_ir_types.CompilerIrValueList
-      (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.compiler-ir-value-seq-empty)))]
+    [words-sse-gp : compiler_ir_types.CompilerIrValueSeq
+      (compiler_ir_types.compiler-ir-value-seq-prepend
         (compiler_ir_types.CompilerIrValue.F64 0)
-        (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.compiler-ir-value-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 2)
-          compiler_ir_types.CompilerIrValueList.Nil))]
+          (compiler_ir_types.compiler-ir-value-seq-empty)))]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (compiler_ir_types.compiler-ir-instr-seq-from-list
         (compiler_ir_types.compiler-ir-instr-cons

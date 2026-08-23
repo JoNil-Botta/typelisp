@@ -70,21 +70,15 @@
   (Bind i64 i64 i64 LowerNameEnv))
 
 (define (lower-name-store-new) : LowerNameStore
-  (begin
-    (cfg
-      compile-profile
-      (set!
-        compiler-lower-profile-name-env-stores
-        (+ compiler-lower-profile-name-env-stores 1)))
-    (let
-      [segments : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
-        (__tl_make-array (__tl_dyn-array LowerNameBinding) 4)]
-      [first : (__tl_dyn-array LowerNameBinding)
-        (__tl_make-array LowerNameBinding 16)]
-      [owner : i64 (arena.tl_arena_current)]
-      (begin
-        (set! (array-ref segments 0) first)
-        (LowerNameStore segments 1 0 owner)))))
+  (let
+    [segments : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
+      (__tl_make-array (__tl_dyn-array LowerNameBinding) 4)]
+    [first : (__tl_dyn-array LowerNameBinding)
+      (__tl_make-array LowerNameBinding 16)]
+    [owner : i64 (arena.tl_arena_current)]
+    (begin
+      (set! (array-ref segments 0) first)
+      (LowerNameStore segments 1 0 owner))))
 
 (define (lower-name-store-segments-copy-range!
   [dst : (&mut dst (__tl_dyn-array (__tl_dyn-array LowerNameBinding)))]
@@ -102,34 +96,28 @@
     [count : i64 store.segment-count]
     [capacity : i64 (array-length store.segments)]
     [owner : i64 store.arena]
-    (begin
-      (cfg
-        compile-profile
+    (in-arena
+      (arena.Arena owner)
+      (begin
+        (if (< count capacity)
+          unit
+          (let
+            [bigger : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
+              (__tl_make-array
+                (__tl_dyn-array LowerNameBinding)
+                (if (< capacity 1)
+                  4
+                  (* capacity 2)))]
+            (begin
+              (lower-name-store-segments-copy-range!
+                (&mut bigger)
+                (& store.segments)
+                count)
+              (set! store.segments bigger))))
         (set!
-          compiler-lower-profile-name-env-store-grows
-          (+ compiler-lower-profile-name-env-store-grows 1)))
-      (in-arena
-        (arena.Arena owner)
-        (begin
-          (if (< count capacity)
-            unit
-            (let
-              [bigger : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
-                (__tl_make-array
-                  (__tl_dyn-array LowerNameBinding)
-                  (if (< capacity 1)
-                    4
-                    (* capacity 2)))]
-              (begin
-                (lower-name-store-segments-copy-range!
-                  (&mut bigger)
-                  (& store.segments)
-                  count)
-                (set! store.segments bigger))))
-          (set!
-            (array-ref store.segments count)
-            (__tl_make-array LowerNameBinding 16))
-          (set! store.segment-count (+ count 1)))))))
+          (array-ref store.segments count)
+          (__tl_make-array LowerNameBinding 16))
+        (set! store.segment-count (+ count 1))))))
 
 (define (lower-name-store-ensure-index!
   [store : (&mut store LowerNameStore)]
@@ -210,13 +198,7 @@
   [logical-id : i64]
   [symbol-id : i64]
   [rest : LowerNameEnv]) : LowerNameEnv
-  (begin
-    (cfg
-      compile-profile
-      (set!
-        compiler-lower-profile-name-env-binds
-        (+ compiler-lower-profile-name-env-binds 1)))
-    (lower-name-env-bind-ids-raw source-id logical-id symbol-id rest)))
+  (lower-name-env-bind-ids-raw source-id logical-id symbol-id rest))
 
 (define (lower-name-env-view [names : LowerNameEnv]) : LowerNameEnvView
   (match names
@@ -1674,7 +1656,7 @@
   (selected ast.AstImportedSpmdSpecialization))
 
 (defenum ResultLowerArgs
-  (Ok LowerState ir.CompilerIrValueList)
+  (Ok LowerState ir.CompilerIrValueSeq)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum LowerArgWriteback
@@ -1698,7 +1680,7 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultLowerCallArgs
-  (Ok LowerState ir.CompilerIrValueList LowerArgWritebacks)
+  (Ok LowerState ir.CompilerIrValueSeq LowerArgWritebacks)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum LowerCAbiEightbyteClass
@@ -2439,7 +2421,7 @@
   (Some i64 i64))
 
 (defenum ResultLowerStringValues
-  (Ok LowerState ir.CompilerIrValueList i64)
+  (Ok LowerState i64)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defstruct LowerCleanupStack
@@ -2536,80 +2518,80 @@
     59))
 (cfg
   (any compile-profile test)
-  (define compiler-lower-profile-metric-end : i64
+  (define compiler-lower-profile-name-env-binds-metric : i64
     60))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-binds : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-lookups-metric : i64
+    61))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-lookups : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-lookup-steps-metric : i64
+    62))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-lookup-steps : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-stores-metric : i64
+    63))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-stores : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-store-grows-metric : i64
+    64))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-store-grows : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-materializations-metric : i64
+    65))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-materializations : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-materialized-entries-metric : i64
+    66))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-materialized-entries : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-builds-metric : i64
+    67))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-cache-builds : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-entries-metric : i64
+    68))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-cache-entries : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-lookups-metric : i64
+    69))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-cache-lookups : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-local-hits-metric : i64
+    70))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-cache-local-hits : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-local-misses-metric : i64
+    71))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-cache-local-misses : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-name-cache-lookups-metric : i64
+    72))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-name-cache-lookups : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-name-cache-hits-metric : i64
+    73))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-name-cache-hits : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-name-cache-entries-metric : i64
+    74))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-name-cache-entries : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-local-view-lookups-metric : i64
+    75))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-local-view-lookups : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-local-view-hits-metric : i64
+    76))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-local-view-hits : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-local-view-entries-metric : i64
+    77))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-local-view-entries : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-metric-end : i64
+    78))
 
 ;; Non-resetting stage snapshots inside lower.typecheck: the checked-program
 ;; build's retention decomposes across the walk / clone augmentation / context
@@ -2659,6 +2641,10 @@
       _metric
       _value)
     unit))
+
+(defmacro (compiler-lower-profile-metrics-view [_state : Expr]) : Expr
+  `(profile_state.compiler-profile-state-metrics
+    (compiler-lower-state-profile ,_state)))
 
 (cfg
   compile-profile
@@ -3154,101 +3140,344 @@
           compiler-lower-profile-string-concat-runtime-calls-metric)))))
 
 (cfg
-  compile-profile
-  (define (compiler-lower-profile-name-reset) : unit
-    (begin
-      (set! compiler-lower-profile-name-env-binds 0)
-      (set! compiler-lower-profile-name-env-lookups 0)
-      (set! compiler-lower-profile-name-env-lookup-steps 0)
-      (set! compiler-lower-profile-name-env-stores 0)
-      (set! compiler-lower-profile-name-env-store-grows 0)
-      (set! compiler-lower-profile-name-env-materializations 0)
-      (set! compiler-lower-profile-name-env-materialized-entries 0)
-      (set! compiler-lower-profile-name-cache-builds 0)
-      (set! compiler-lower-profile-name-cache-entries 0)
-      (set! compiler-lower-profile-name-cache-lookups 0)
-      (set! compiler-lower-profile-name-cache-local-hits 0)
-      (set! compiler-lower-profile-name-cache-local-misses 0)
-      (set! compiler-lower-profile-module-name-cache-lookups 0)
-      (set! compiler-lower-profile-module-name-cache-hits 0)
-      (set! compiler-lower-profile-module-name-cache-entries 0)
-      (set! compiler-lower-profile-module-local-view-lookups 0)
-      (set! compiler-lower-profile-module-local-view-hits 0)
-      (set! compiler-lower-profile-module-local-view-entries 0))))
+  (any compile-profile test)
+  (define (compiler-lower-profile-name-reset [state : CompilerLowerState]) : unit
+    (profile_state.compiler-profile-state-metric-reset-range!
+      (compiler-lower-state-profile state)
+      compiler-lower-profile-name-env-binds-metric
+      compiler-lower-profile-metric-end)))
+
+(cfg
+  test
+  (define (compiler-lower-name-profile-job-isolation-tests-ok?) : bool
+    (let
+      [left-profile : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [right-profile : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [left : CompilerLowerState
+        (compiler-lower-state-new-with-intern-state-and-profile-state
+          (ci.intern-compat-state-new)
+          left-profile)]
+      [right : CompilerLowerState
+        (compiler-lower-state-new-with-intern-state-and-profile-state
+          (ci.intern-compat-state-new)
+          right-profile)]
+      [left-names : LowerNameEnv LowerNameEnv.Nil]
+      [bind-id : i64 0]
+      (begin
+        (compiler-lower-profile-name-reset left)
+        (compiler-lower-profile-name-reset right)
+        ;; Equal IDs deliberately flow through two owners. A reset is allowed to
+        ;; affect only the exact profile state passed to it.
+        (while (< bind-id 17)
+          (begin
+            (set!
+              left-names
+              (lower-name-env-bind-ids-profile
+                left
+                bind-id
+                bind-id
+                bind-id
+                left-names))
+            (set! bind-id (+ bind-id 1))))
+        (let
+          [_left-env-hit : i64
+            (lower-name-env-lookup-symbol-id-profile
+              left
+              (lower-global-shared-view left-names)
+              0
+              -1)]
+          [_copy : LowerNameEnv
+            (lower-name-env-materialize-two-profile
+              left
+              (lower-global-shared-view left-names)
+              LowerNameEnv.Nil)]
+          [left-cache : LowerNameCache
+            (lower-name-cache-from-env left left-names)]
+          [_left-name-hit : i64
+            (lower-name-cache-lookup-symbol-id (& left-cache) 0 -1)]
+          [_left-module-miss : LowerMaybeModuleNameCache
+            (lower-active-module-name-cache-lookup left 7)]
+          [_left-module-insert : unit
+            (lower-active-module-name-cache-insert!
+              left
+              7
+              (lower-global-shared-view left-cache))]
+          [_left-module-hit : LowerMaybeModuleNameCache
+            (lower-active-module-name-cache-lookup left 7)]
+          [left-view : LowerModuleLocalView
+            (LowerModuleLocalView
+              (tc_core.tc-empty-env)
+              left-cache
+              (LowerTypeCache.No))]
+          [_left-view-miss : LowerMaybeModuleLocalView
+            (lower-active-module-local-view-lookup left 7)]
+          [_left-view-insert : unit
+            (lower-active-module-local-view-insert! left 7 left-view)]
+          [_left-view-hit : LowerMaybeModuleLocalView
+            (lower-active-module-local-view-lookup left 7)]
+          [right-names : LowerNameEnv
+            (lower-name-env-bind-ids-profile right 0 0 0 LowerNameEnv.Nil)]
+          [_right-env-hit : i64
+            (lower-name-env-lookup-symbol-id-profile
+              right
+              (lower-global-shared-view right-names)
+              0
+              -1)]
+          [right-cache : LowerNameCache
+            (lower-name-cache-from-env right right-names)]
+          [_right-name-miss : i64
+            (lower-name-cache-lookup-symbol-id (& right-cache) 1 -1)]
+          [_right-module-insert : unit
+            (lower-active-module-name-cache-insert!
+              right
+              7
+              (lower-global-shared-view right-cache))]
+          [right-view : LowerModuleLocalView
+            (LowerModuleLocalView
+              (tc_core.tc-empty-env)
+              right-cache
+              (LowerTypeCache.No))]
+          [_right-view-insert : unit
+            (lower-active-module-local-view-insert! right 7 right-view)]
+          [right-recorded : bool
+            (and
+              (=
+                (compiler-lower-profile-value
+                  right
+                  compiler-lower-profile-name-env-binds-metric)
+                1)
+              (=
+                (compiler-lower-profile-value
+                  right
+                  compiler-lower-profile-module-name-cache-entries-metric)
+                1)
+              (=
+                (compiler-lower-profile-value
+                  right
+                  compiler-lower-profile-module-local-view-entries-metric)
+                1))]
+          (begin
+            (compiler-lower-profile-name-reset right)
+            (let
+              [metric : i64 compiler-lower-profile-name-env-binds-metric]
+              [right-reset : bool true]
+              (begin
+                (while (< metric compiler-lower-profile-metric-end)
+                  (begin
+                    (when
+                      (not (= (compiler-lower-profile-value right metric) 0))
+                      (set! right-reset false))
+                    (set! metric (+ metric 1))))
+                (and
+                  right-recorded
+                  right-reset
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-binds-metric)
+                    17)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-lookups-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-lookup-steps-metric)
+                    17)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-stores-metric)
+                    2)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-store-grows-metric)
+                    2)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-materializations-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-materialized-entries-metric)
+                    17)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-cache-builds-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-cache-entries-metric)
+                    17)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-cache-lookups-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-cache-local-hits-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-cache-local-misses-metric)
+                    0)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-name-cache-lookups-metric)
+                    2)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-name-cache-hits-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-name-cache-entries-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-local-view-lookups-metric)
+                    2)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-local-view-hits-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-local-view-entries-metric)
+                    1))))))))))
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-name-finish) : unit
+  (define (compiler-lower-profile-name-finish [state : CompilerLowerState]) : unit
     (begin
       (compiler-lower-profile-counter
         "name_env.binds"
-        compiler-lower-profile-name-env-binds)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-binds-metric))
       (compiler-lower-profile-counter
         "name_env.lookups"
-        compiler-lower-profile-name-env-lookups)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-lookups-metric))
       (compiler-lower-profile-counter
         "name_env.lookup_steps"
-        compiler-lower-profile-name-env-lookup-steps)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-lookup-steps-metric))
       (compiler-lower-profile-counter
         "name_env.stores"
-        compiler-lower-profile-name-env-stores)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-stores-metric))
       (compiler-lower-profile-counter
         "name_env.store_grows"
-        compiler-lower-profile-name-env-store-grows)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-store-grows-metric))
       (compiler-lower-profile-counter
         "name_env.materializations"
-        compiler-lower-profile-name-env-materializations)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-materializations-metric))
       (compiler-lower-profile-counter
         "name_env.materialized_entries"
-        compiler-lower-profile-name-env-materialized-entries)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-materialized-entries-metric))
       (compiler-lower-profile-counter
         "name_cache.builds"
-        compiler-lower-profile-name-cache-builds)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-builds-metric))
       (compiler-lower-profile-counter
         "name_cache.entries"
-        compiler-lower-profile-name-cache-entries)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-entries-metric))
       (compiler-lower-profile-counter
         "name_cache.lookups"
-        compiler-lower-profile-name-cache-lookups)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-lookups-metric))
       (compiler-lower-profile-counter
         "name_cache.local_hits"
-        compiler-lower-profile-name-cache-local-hits)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-local-hits-metric))
       (compiler-lower-profile-counter
         "name_cache.local_misses"
-        compiler-lower-profile-name-cache-local-misses)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-local-misses-metric))
       (compiler-lower-profile-counter
         "module_name_cache.lookups"
-        compiler-lower-profile-module-name-cache-lookups)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-name-cache-lookups-metric))
       (compiler-lower-profile-counter
         "module_name_cache.hits"
-        compiler-lower-profile-module-name-cache-hits)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-name-cache-hits-metric))
       (compiler-lower-profile-counter
         "module_name_cache.entries"
-        compiler-lower-profile-module-name-cache-entries)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-name-cache-entries-metric))
       (compiler-lower-profile-counter
         "module_local_view.lookups"
-        compiler-lower-profile-module-local-view-lookups)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-local-view-lookups-metric))
       (compiler-lower-profile-counter
         "module_local_view.hits"
-        compiler-lower-profile-module-local-view-hits)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-local-view-hits-metric))
       (compiler-lower-profile-counter
         "module_local_view.entries"
-        compiler-lower-profile-module-local-view-entries))))
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-local-view-entries-metric)))))
 
 (cfg
-  compile-profile
-  (define (compiler-lower-profile-name-cache-lookup [hit : bool]) : unit
+  (any compile-profile test)
+  (define (compiler-lower-profile-name-cache-lookup
+    [metrics : profile_state.CompilerProfileMetrics]
+    [hit : bool]) : unit
     (begin
-      (set!
-        compiler-lower-profile-name-cache-lookups
-        (+ compiler-lower-profile-name-cache-lookups 1))
+      (profile_state.compiler-profile-metrics-add!
+        (profile_state.compiler-profile-state-shared-view metrics)
+        compiler-lower-profile-name-cache-lookups-metric
+        1)
       (if hit
-        (set!
-          compiler-lower-profile-name-cache-local-hits
-          (+ compiler-lower-profile-name-cache-local-hits 1))
-        (set!
-          compiler-lower-profile-name-cache-local-misses
-          (+ compiler-lower-profile-name-cache-local-misses 1))))))
+        (profile_state.compiler-profile-metrics-add!
+          (profile_state.compiler-profile-state-shared-view metrics)
+          compiler-lower-profile-name-cache-local-hits-metric
+          1)
+        (profile_state.compiler-profile-metrics-add!
+          (profile_state.compiler-profile-state-shared-view metrics)
+          compiler-lower-profile-name-cache-local-misses-metric
+          1)))))
 
 (cfg
   compile-profile
@@ -3675,46 +3904,28 @@
   [names : LowerNameEnv]
   [source-id : i64]
   [fallback : i64]) : i64
-  (begin
-    (cfg
-      compile-profile
-      (set!
-        compiler-lower-profile-name-env-lookups
-        (+ compiler-lower-profile-name-env-lookups 1)))
-    (if (< source-id 0)
-      fallback
-      (match names
-        [(LowerNameEnv.Nil) fallback]
-        [(LowerNameEnv.Inline bind-id _ symbol-id)
+  (if (< source-id 0)
+    fallback
+    (match names
+      [(LowerNameEnv.Nil) fallback]
+      [(LowerNameEnv.Inline bind-id _ symbol-id)
+        (if (= bind-id source-id)
+          symbol-id
+          fallback)]
+      [(LowerNameEnv.Dense store head _)
+        (let
+          [cursor : i64 head]
           (begin
-            (cfg
-              compile-profile
-              (set!
-                compiler-lower-profile-name-env-lookup-steps
-                (+ compiler-lower-profile-name-env-lookup-steps 1)))
-            (if (= bind-id source-id)
-              symbol-id
-              fallback))]
-        [(LowerNameEnv.Dense store head _)
-          (let
-            [cursor : i64 head]
-            (begin
-              (while (>= cursor 0)
-                (let
-                  [binding : LowerNameBinding
-                    (lower-name-store-binding-at
-                      (& (__tl-box-place store))
-                      cursor)]
-                  (begin
-                    (cfg
-                      compile-profile
-                      (set!
-                        compiler-lower-profile-name-env-lookup-steps
-                        (+ compiler-lower-profile-name-env-lookup-steps 1)))
-                    (if (= binding.source-id source-id)
-                      (return binding.symbol-id)
-                      (set! cursor binding.parent)))))
-              fallback))]))))
+            (while (>= cursor 0)
+              (let
+                [binding : LowerNameBinding
+                  (lower-name-store-binding-at
+                    (& (__tl-box-place store))
+                    cursor)]
+                (if (= binding.source-id source-id)
+                  (return binding.symbol-id)
+                  (set! cursor binding.parent))))
+            fallback))])))
 
 (define (lower-name-env-lookup-logical-id
   [names : LowerNameEnv]
@@ -3797,16 +4008,6 @@
     (if (< count 1)
       LowerNameEnv.Nil
       (let
-        [_profile : unit
-          (cfg
-            compile-profile
-            (begin
-              (set!
-                compiler-lower-profile-name-env-materializations
-                (+ compiler-lower-profile-name-env-materializations 1))
-              (set!
-                compiler-lower-profile-name-env-materialized-entries
-                (+ compiler-lower-profile-name-env-materialized-entries count))))]
         [last-index : i64
           (if (< count 1)
             0
@@ -3876,6 +4077,297 @@
         [(LowerNameEnv.Nil)
           (lower-name-env-materialize-two left LowerNameEnv.Nil)]
         [_ (lower-name-env-rebuild-over left right)])]))
+
+;; Profile builds route name-environment operations through the exact lowering
+;; job owner. Ordinary builds expand the macros below to the original raw calls,
+;; so they neither pass an extra hot-path argument nor allocate metrics storage.
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-bind-ids-profile-storage-note!
+    [metrics : profile_state.CompilerProfileMetrics]
+    [rest : LowerNameEnv]) : unit
+    (match (lower-global-shared-view rest)
+      [(LowerNameEnv.Nil) unit]
+      [(LowerNameEnv.Inline _ _ _)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          compiler-lower-profile-name-env-stores-metric
+          1)]
+      [(LowerNameEnv.Dense store _ _)
+        (let
+          [storage : LowerNameStore (lower-box-shared-view store)]
+          (when
+            (>= storage.len (* storage.segment-count 16))
+            (profile_state.compiler-profile-metrics-add!
+              metrics
+              compiler-lower-profile-name-env-store-grows-metric
+              1)))])))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-bind-ids-profile-storage
+    [metrics : profile_state.CompilerProfileMetrics]
+    [source-id : i64]
+    [logical-id : i64]
+    [symbol-id : i64]
+    [rest : LowerNameEnv]) : LowerNameEnv
+    (begin
+      (lower-name-env-bind-ids-profile-storage-note!
+        metrics
+        (lower-global-shared-view rest))
+      (lower-name-env-bind-ids-raw source-id logical-id symbol-id rest))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-bind-ids-profile
+    [state : CompilerLowerState]
+    [source-id : i64]
+    [logical-id : i64]
+    [symbol-id : i64]
+    [rest : LowerNameEnv]) : LowerNameEnv
+    (let
+      [metrics : profile_state.CompilerProfileMetrics
+        (compiler-lower-profile-metrics-view state)]
+      (begin
+        (profile_state.compiler-profile-metrics-add!
+          (profile_state.compiler-profile-state-shared-view metrics)
+          compiler-lower-profile-name-env-binds-metric
+          1)
+        (lower-name-env-bind-ids-profile-storage
+          metrics
+          source-id
+          logical-id
+          symbol-id
+          rest)))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-lookup-symbol-id-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [source-id : i64]
+    [fallback : i64]) : i64
+    (let
+      [metrics : profile_state.CompilerProfileMetrics
+        (compiler-lower-profile-metrics-view state)]
+      (begin
+        (profile_state.compiler-profile-metrics-add!
+          (profile_state.compiler-profile-state-shared-view metrics)
+          compiler-lower-profile-name-env-lookups-metric
+          1)
+        (if (< source-id 0)
+          fallback
+          (match (lower-global-shared-view names)
+            [(LowerNameEnv.Nil) fallback]
+            [(LowerNameEnv.Inline bind-id _ symbol-id)
+              (begin
+                (profile_state.compiler-profile-metrics-add!
+                  (profile_state.compiler-profile-state-shared-view metrics)
+                  compiler-lower-profile-name-env-lookup-steps-metric
+                  1)
+                (if (= bind-id source-id)
+                  symbol-id
+                  fallback))]
+            [(LowerNameEnv.Dense store head _)
+              (let
+                [cursor : i64 head]
+                [storage : LowerNameStore (lower-box-shared-view store)]
+                (begin
+                  (while (>= cursor 0)
+                    (let
+                      [binding : LowerNameBinding
+                        (lower-name-store-binding-at (& storage) cursor)]
+                      (begin
+                        (profile_state.compiler-profile-metrics-add!
+                          (profile_state.compiler-profile-state-shared-view
+                            metrics)
+                          compiler-lower-profile-name-env-lookup-steps-metric
+                          1)
+                        (if (= binding.source-id source-id)
+                          (return binding.symbol-id)
+                          (set! cursor binding.parent)))))
+                  fallback))]))))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-lookup-with-id-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [source-id : i64]) : tc_core.TcMaybeString
+    (let
+      [symbol-id : i64
+        (lower-name-env-lookup-symbol-id-profile state names source-id -1)]
+      (if (>= symbol-id 0)
+        (tc_core.TcMaybeString.Some (ir.compiler-ir-symbol-text symbol-id))
+        (tc_core.TcMaybeString.No)))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-materialize-two-profile
+    [state : CompilerLowerState]
+    [left : LowerNameEnv]
+    [right : LowerNameEnv]) : LowerNameEnv
+    (let
+      [count : i64
+        (+
+          (lower-name-env-count (lower-global-shared-view left))
+          (lower-name-env-count (lower-global-shared-view right)))]
+      [metrics : profile_state.CompilerProfileMetrics
+        (compiler-lower-profile-metrics-view state)]
+      (begin
+        (when
+          (> count 0)
+          (begin
+            (profile_state.compiler-profile-metrics-add!
+              (profile_state.compiler-profile-state-shared-view metrics)
+              compiler-lower-profile-name-env-materializations-metric
+              1)
+            (profile_state.compiler-profile-metrics-add!
+              (profile_state.compiler-profile-state-shared-view metrics)
+              compiler-lower-profile-name-env-materialized-entries-metric
+              count)
+            (profile_state.compiler-profile-metrics-add!
+              (profile_state.compiler-profile-state-shared-view metrics)
+              compiler-lower-profile-name-env-stores-metric
+              1)
+            (profile_state.compiler-profile-metrics-add!
+              metrics
+              compiler-lower-profile-name-env-store-grows-metric
+              (/ (- count 1) 16))))
+        (lower-name-env-materialize-two left right)))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-rebuild-over-profile
+    [state : CompilerLowerState]
+    [left : LowerNameEnv]
+    [right : LowerNameEnv]) : LowerNameEnv
+    (let
+      [append-count : i64
+        (lower-name-env-count (lower-global-shared-view left))]
+      [metrics : profile_state.CompilerProfileMetrics
+        (compiler-lower-profile-metrics-view state)]
+      (begin
+        (match (lower-global-shared-view right)
+          [(LowerNameEnv.Nil) unit]
+          [(LowerNameEnv.Inline _ _ _)
+            (begin
+              (profile_state.compiler-profile-metrics-add!
+                (profile_state.compiler-profile-state-shared-view metrics)
+                compiler-lower-profile-name-env-stores-metric
+                1)
+              (profile_state.compiler-profile-metrics-add!
+                metrics
+                compiler-lower-profile-name-env-store-grows-metric
+                (/ append-count 16)))]
+          [(LowerNameEnv.Dense store _ _)
+            (let
+              [storage : LowerNameStore (lower-box-shared-view store)]
+              [needed : i64 (+ storage.len append-count)]
+              [needed-segments : i64
+                (if (< needed 1)
+                  0
+                  (+ (/ (- needed 1) 16) 1))]
+              (when
+                (> needed-segments storage.segment-count)
+                (profile_state.compiler-profile-metrics-add!
+                  metrics
+                  compiler-lower-profile-name-env-store-grows-metric
+                  (- needed-segments storage.segment-count))))])
+        (lower-name-env-rebuild-over left right)))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-append-profile
+    [state : CompilerLowerState]
+    [left : LowerNameEnv]
+    [right : LowerNameEnv]) : LowerNameEnv
+    (match (lower-global-shared-view left)
+      [(LowerNameEnv.Nil) right]
+      [_
+        (match (lower-global-shared-view right)
+          [(LowerNameEnv.Nil)
+            (lower-name-env-materialize-two-profile state left LowerNameEnv.Nil)]
+          [_ (lower-name-env-rebuild-over-profile state left right)])])))
+
+(defmacro (lower-name-env-bind-ids-owned
+  [_state : Expr]
+  [source-id : Expr]
+  [logical-id : Expr]
+  [symbol-id : Expr]
+  [rest : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-bind-ids-profile
+      ,_state
+      ,source-id
+      ,logical-id
+      ,symbol-id
+      ,rest)
+    `(lower-name-env-bind-ids ,source-id ,logical-id ,symbol-id ,rest)))
+
+(defmacro (lower-name-env-lookup-symbol-id-owned
+  [_state : Expr]
+  [names : Expr]
+  [source-id : Expr]
+  [fallback : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-lookup-symbol-id-profile
+      ,_state
+      ,names
+      ,source-id
+      ,fallback)
+    `(lower-name-env-lookup-symbol-id ,names ,source-id ,fallback)))
+
+(defmacro (lower-name-env-lookup-with-id-owned
+  [_state : Expr]
+  [names : Expr]
+  [source-id : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-lookup-with-id-profile ,_state ,names ,source-id)
+    `(lower-name-env-lookup-with-id ,names ,source-id)))
+
+(defmacro (lower-name-env-append-owned
+  [_state : Expr]
+  [left : Expr]
+  [right : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-append-profile ,_state ,left ,right)
+    `(lower-name-env-append ,left ,right)))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-copy-active-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]) : LowerNameEnv
+    (match (lower-global-shared-view names)
+      [(LowerNameEnv.Nil) LowerNameEnv.Nil]
+      [(LowerNameEnv.Inline source-id logical-id symbol-id)
+        (LowerNameEnv.Inline source-id logical-id symbol-id)]
+      [_ (lower-name-env-materialize-two-profile state names LowerNameEnv.Nil)])))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-copy-into-pools-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [pools : ast.AstNodePoolContext]) : LowerNameEnv
+    (let
+      [base-arena : arena.Arena
+        (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
+      (in-arena base-arena (lower-name-env-copy-active-profile state names)))))
+
+(defmacro (lower-name-env-copy-into-pools-owned
+  [_state : Expr]
+  [names : Expr]
+  [pools : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-copy-into-pools-profile ,_state ,names ,pools)
+    `(lower-name-env-copy-into-pools ,names ,pools)))
 
 (define (lower-name-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -3997,6 +4489,67 @@
   [rest : LowerNameEnv]) : LowerNameEnv
   (lower-name-env-bind-ids source-id logical-id symbol-id rest))
 
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-bind-logical-id-profile
+    [state : CompilerLowerState]
+    [source-id : i64]
+    [logical-name : String]
+    [logical-id : i64]
+    [rest : LowerNameEnv]) : LowerNameEnv
+    (lower-name-env-bind-ids-profile
+      state
+      source-id
+      logical-id
+      (lower-derived-symbol-id logical-name)
+      rest)))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-bind-logical-symbol-id-profile
+    [state : CompilerLowerState]
+    [source-id : i64]
+    [logical-id : i64]
+    [symbol-id : i64]
+    [rest : LowerNameEnv]) : LowerNameEnv
+    (lower-name-env-bind-ids-profile state source-id logical-id symbol-id rest)))
+
+(defmacro (lower-name-env-bind-logical-id-owned
+  [_state : Expr]
+  [source-id : Expr]
+  [logical-name : Expr]
+  [logical-id : Expr]
+  [rest : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-bind-logical-id-profile
+      ,_state
+      ,source-id
+      ,logical-name
+      ,logical-id
+      ,rest)
+    `(lower-name-env-bind-logical-id ,source-id ,logical-name ,logical-id ,rest)))
+
+(defmacro (lower-name-env-bind-logical-symbol-id-owned
+  [_state : Expr]
+  [source-id : Expr]
+  [logical-id : Expr]
+  [symbol-id : Expr]
+  [rest : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-bind-logical-symbol-id-profile
+      ,_state
+      ,source-id
+      ,logical-id
+      ,symbol-id
+      ,rest)
+    `(lower-name-env-bind-logical-symbol-id
+      ,source-id
+      ,logical-id
+      ,symbol-id
+      ,rest)))
+
 (define (lower-extern-logical-symbol-id
   [logical-id : i64]
   [logical-name : String]
@@ -4100,10 +4653,12 @@
                           -1)]))))]
             (begin
               (cfg
-                compile-profile
-                (set!
-                  compiler-lower-profile-name-cache-entries
-                  (+ compiler-lower-profile-name-cache-entries 1)))
+                (any compile-profile test)
+                (profile_state.compiler-profile-metrics-add!
+                  (compiler-lower-profile-metrics-view
+                    (lower-name-cache-owner-state cache))
+                  compiler-lower-profile-name-cache-entries-metric
+                  1))
               (when (< symbol-id 0) (set! symbol-id fallback-symbol-id))
               (set! (array-ref logical-ids next) logical-id)
               (set! (array-ref symbol-ids next) symbol-id)
@@ -4151,10 +4706,11 @@
   [names : LowerNameEnv]) : LowerNameCache
   (begin
     (cfg
-      compile-profile
-      (set!
-        compiler-lower-profile-name-cache-builds
-        (+ compiler-lower-profile-name-cache-builds 1)))
+      (any compile-profile test)
+      (profile_state.compiler-profile-metrics-add!
+        (compiler-lower-profile-metrics-view lower-state)
+        compiler-lower-profile-name-cache-builds-metric
+        1))
     (let
       [count : i64 (lower-name-env-count (lower-global-shared-view names))]
       (lower-name-cache-from-env-into
@@ -4179,10 +4735,11 @@
   [module-id : i64]) : LowerNameCache
   (begin
     (cfg
-      compile-profile
-      (set!
-        compiler-lower-profile-name-cache-builds
-        (+ compiler-lower-profile-name-cache-builds 1)))
+      (any compile-profile test)
+      (profile_state.compiler-profile-metrics-add!
+        (compiler-lower-profile-metrics-view lower-state)
+        compiler-lower-profile-name-cache-builds-metric
+        1))
     (let
       [count : i64 (lower-name-env-count (lower-global-shared-view names))]
       (lower-name-cache-from-env-into
@@ -4255,10 +4812,12 @@
           (set! (array-ref ready.values slot) cache)
           (lower_i64_i64_map.insert-ref! (&mut modules) module-id slot)
           (cfg
-            compile-profile
-            (set!
-              compiler-lower-profile-module-name-cache-entries
-              (+ compiler-lower-profile-module-name-cache-entries 1)))
+            (any compile-profile test)
+            (profile_state.compiler-profile-metrics-add!
+              (compiler-lower-profile-metrics-view
+                (lower-name-cache-owner-state (& cache)))
+              compiler-lower-profile-module-name-cache-entries-metric
+              1))
           (LowerModuleNameCacheStore modules ready.values (+ slot 1))))]))
 
 (define (lower-active-module-name-cache-lookup
@@ -4274,16 +4833,18 @@
         module-id)]
     (begin
       (cfg
-        compile-profile
+        (any compile-profile test)
         (begin
-          (set!
-            compiler-lower-profile-module-name-cache-lookups
-            (+ compiler-lower-profile-module-name-cache-lookups 1))
+          (profile_state.compiler-profile-metrics-add!
+            (compiler-lower-profile-metrics-view lower-state)
+            compiler-lower-profile-module-name-cache-lookups-metric
+            1)
           (match (lower-global-shared-view result)
             [(LowerMaybeModuleNameCache.Some _)
-              (set!
-                compiler-lower-profile-module-name-cache-hits
-                (+ compiler-lower-profile-module-name-cache-hits 1))]
+              (profile_state.compiler-profile-metrics-add!
+                (compiler-lower-profile-metrics-view lower-state)
+                compiler-lower-profile-module-name-cache-hits-metric
+                1)]
             [(LowerMaybeModuleNameCache.No) unit])))
       result)))
 
@@ -4378,8 +4939,11 @@
     [index : i64 (lower_i64_i64_map.get-value-or (& cache.ids) source-id -1)]
     (begin
       (cfg
-        compile-profile
-        (compiler-lower-profile-name-cache-lookup (>= index 0)))
+        (any compile-profile test)
+        (compiler-lower-profile-name-cache-lookup
+          (compiler-lower-profile-metrics-view
+            (lower-name-cache-owner-state (& cache)))
+          (>= index 0)))
       (if (>= index 0)
         (tc_core.TcMaybeString.Some
           (ir.compiler-ir-symbol-text (array-ref cache.symbol-ids index)))
@@ -4398,8 +4962,11 @@
     [index : i64 (lower_i64_i64_map.get-value-or (& cache.ids) source-id -1)]
     (begin
       (cfg
-        compile-profile
-        (compiler-lower-profile-name-cache-lookup (>= index 0)))
+        (any compile-profile test)
+        (compiler-lower-profile-name-cache-lookup
+          (compiler-lower-profile-metrics-view
+            (lower-name-cache-owner-state cache))
+          (>= index 0)))
       (if (>= index 0)
         (array-ref cache.logical-ids index)
         (match cache.parent
@@ -4415,8 +4982,11 @@
     [index : i64 (lower_i64_i64_map.get-value-or (& cache.ids) source-id -1)]
     (begin
       (cfg
-        compile-profile
-        (compiler-lower-profile-name-cache-lookup (>= index 0)))
+        (any compile-profile test)
+        (compiler-lower-profile-name-cache-lookup
+          (compiler-lower-profile-metrics-view
+            (lower-name-cache-owner-state cache))
+          (>= index 0)))
       (if (>= index 0)
         (array-ref cache.symbol-ids index)
         (let
@@ -5276,7 +5846,8 @@
           (return (lower-global-shared-view names)))
         (lower-alias-overlay-record! lower-state source-id logical-id))
       (return
-        (lower-name-env-bind-logical-symbol-id
+        (lower-name-env-bind-logical-symbol-id-owned
+          lower-state
           source-id
           logical-id
           symbol-id
@@ -5286,12 +5857,14 @@
     (when
       (not (compiler-lower-state-read lower-state bool alias-overlay-valid))
       (return
-        (match (lower-name-env-lookup-with-id
+        (match (lower-name-env-lookup-with-id-owned
+          lower-state
           (lower-global-shared-view names)
           source-id)
           [(tc_core.TcMaybeString.Some _) names]
           [(tc_core.TcMaybeString.No)
-            (lower-name-env-bind-logical-symbol-id
+            (lower-name-env-bind-logical-symbol-id-owned
+              lower-state
               source-id
               logical-id
               symbol-id
@@ -5302,7 +5875,12 @@
       (lower-alias-overlay-contains? lower-state source-id)
       (return (lower-global-shared-view names)))
     (lower-alias-overlay-record! lower-state source-id logical-id)
-    (lower-name-env-bind-logical-symbol-id source-id logical-id symbol-id names)))
+    (lower-name-env-bind-logical-symbol-id-owned
+      lower-state
+      source-id
+      logical-id
+      symbol-id
+      names)))
 
 (define (lower-name-env-add-decl-import-alias-binding-base-id
   [lower-state : CompilerLowerState]
@@ -5433,7 +6011,8 @@
             (return (lower-global-shared-view names)))
           (lower-alias-overlay-record! lower-state source-id logical-id))
         (return
-          (lower-name-env-bind-logical-symbol-id
+          (lower-name-env-bind-logical-symbol-id-owned
+            lower-state
             source-id
             logical-id
             symbol-id
@@ -5449,12 +6028,14 @@
       (when
         (not (compiler-lower-state-read lower-state bool alias-overlay-valid))
         (return
-          (match (lower-name-env-lookup-with-id
+          (match (lower-name-env-lookup-with-id-owned
+            lower-state
             (lower-global-shared-view names)
             source-id)
             [(tc_core.TcMaybeString.Some _) names]
             [(tc_core.TcMaybeString.No)
-              (lower-name-env-bind-logical-symbol-id
+              (lower-name-env-bind-logical-symbol-id-owned
+                lower-state
                 source-id
                 logical-id
                 symbol-id
@@ -5464,7 +6045,8 @@
         (lower-alias-overlay-contains? lower-state source-id)
         (return (lower-global-shared-view names)))
       (lower-alias-overlay-record! lower-state source-id logical-id)
-      (lower-name-env-bind-logical-symbol-id
+      (lower-name-env-bind-logical-symbol-id-owned
+        lower-state
         source-id
         logical-id
         symbol-id
@@ -5561,6 +6143,72 @@
         symbol-id
         names))))
 
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-add-module-binding-id-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [_module : String]
+    [module-id : i64]
+    [_ : String]
+    [source-id : i64]
+    [logical-name : String]
+    [logical-id : i64]
+    [direct : bool]) : LowerNameEnv
+    (let
+      [symbol-id : i64
+        (lower-logical-symbol-id-select
+          logical-name
+          (if direct
+            source-id
+            logical-id)
+          direct)]
+      (if (csym.compiler-symbol-root-module-id? module-id)
+        (lower-name-env-bind-logical-symbol-id-profile
+          state
+          source-id
+          logical-id
+          symbol-id
+          names)
+        (lower-name-env-bind-logical-symbol-id-profile
+          state
+          logical-id
+          logical-id
+          symbol-id
+          names)))))
+
+(defmacro (lower-name-env-add-module-binding-id-owned
+  [_state : Expr]
+  [names : Expr]
+  [module : Expr]
+  [module-id : Expr]
+  [source-name : Expr]
+  [source-id : Expr]
+  [logical-name : Expr]
+  [logical-id : Expr]
+  [direct : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-add-module-binding-id-profile
+      ,_state
+      ,names
+      ,module
+      ,module-id
+      ,source-name
+      ,source-id
+      ,logical-name
+      ,logical-id
+      ,direct)
+    `(lower-name-env-add-module-binding-id
+      ,names
+      ,module
+      ,module-id
+      ,source-name
+      ,source-id
+      ,logical-name
+      ,logical-id
+      ,direct)))
+
 (define (lower-name-env-add-decl-module-binding-id
   [lower-state : CompilerLowerState]
   [names : LowerNameEnv]
@@ -5580,7 +6228,8 @@
         module-id
         source-id
         (lower-global-shared-view source-name))]
-    (lower-name-env-add-module-binding-id
+    (lower-name-env-add-module-binding-id-owned
+      lower-state
       names
       (lower-global-shared-view module)
       module-id
@@ -5619,6 +6268,59 @@
       logical-id
       symbol-id
       names)))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-add-module-extern-binding-id-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [_module : String]
+    [module-id : i64]
+    [source-name : String]
+    [source-id : i64]
+    [metadata : ast.AstExternMetadata]) : LowerNameEnv
+    (let
+      [logical-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
+      [symbol-id : i64
+        (lower-extern-logical-symbol-id
+          logical-id
+          source-name
+          source-id
+          metadata)]
+      (lower-name-env-bind-ids-profile
+        state
+        (if (csym.compiler-symbol-root-module-id? module-id)
+          source-id
+          logical-id)
+        logical-id
+        symbol-id
+        names))))
+
+(defmacro (lower-name-env-add-module-extern-binding-id-owned
+  [_state : Expr]
+  [names : Expr]
+  [module : Expr]
+  [module-id : Expr]
+  [source-name : Expr]
+  [source-id : Expr]
+  [metadata : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-add-module-extern-binding-id-profile
+      ,_state
+      ,names
+      ,module
+      ,module-id
+      ,source-name
+      ,source-id
+      ,metadata)
+    `(lower-name-env-add-module-extern-binding-id
+      ,names
+      ,module
+      ,module-id
+      ,source-name
+      ,source-id
+      ,metadata)))
 
 (define (lower-name-env-add-struct-cleanup-in-module
   [lower-state : CompilerLowerState]
@@ -6648,7 +7350,8 @@
       ;; the exact external linker symbol.
       (let
         [name-str : String (lower-name-id-text lower-state name)]
-        (lower-name-env-add-module-extern-binding-id
+        (lower-name-env-add-module-extern-binding-id-owned
+          lower-state
           names
           module
           module-id
@@ -6748,6 +7451,34 @@
           (lower-name-env-bind-ids source-id logical-id symbol-id names)]
         [(LowerNameEnvView.Nil) names])]))
 
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-add-root-alias-from-latest-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [decl : ast.AstDecl]) : LowerNameEnv
+    (match (lower-decl-lexical-binding-id decl)
+      [(LowerNameCacheMaybeId.No) names]
+      [(LowerNameCacheMaybeId.Some source-id)
+        (match (lower-name-env-view (lower-global-shared-view names))
+          [(LowerNameEnvView.Bind _ logical-id symbol-id _)
+            (lower-name-env-bind-ids-profile
+              state
+              source-id
+              logical-id
+              symbol-id
+              names)]
+          [(LowerNameEnvView.Nil) names])])))
+
+(defmacro (lower-name-env-add-root-alias-from-latest-owned
+  [_state : Expr]
+  [names : Expr]
+  [decl : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-add-root-alias-from-latest-profile ,_state ,names ,decl)
+    `(lower-name-env-add-root-alias-from-latest ,names ,decl)))
+
 (define (lower-name-env-from-decls-with-state
   [lower-state : CompilerLowerState]
   [decls : ast.AstDeclList]
@@ -6844,7 +7575,8 @@
                       (csym.compiler-symbol-root-module-id? cur-module-id)
                       (not
                         (csym.compiler-symbol-root-module-id? logical-module-id)))
-                      (lower-name-env-add-root-alias-from-latest
+                      (lower-name-env-add-root-alias-from-latest-owned
+                        lower-state
                         owner-names
                         decl)
                       owner-names)))])
@@ -6939,7 +7671,8 @@
                       syntax-key-id
                       -1)]
                   [symbol-id : i64
-                    (lower-name-env-lookup-symbol-id
+                    (lower-name-env-lookup-symbol-id-owned
+                      lower-state
                       (lower-global-shared-view with-syntax-id)
                       syntax-key-id
                       -1)]
@@ -6947,7 +7680,8 @@
                   ;; logical/symbol identity. Recomputing from helper-id would
                   ;; create a second IR symbol for the same helper.
                   (if (and (>= logical-id 0) (>= symbol-id 0))
-                    (lower-name-env-bind-logical-symbol-id
+                    (lower-name-env-bind-logical-symbol-id-owned
+                      lower-state
                       (lower-module-name-key-id-by-id module-id helper-id)
                       logical-id
                       symbol-id
@@ -7827,7 +8561,8 @@
         target-key
         -1)]
     [symbol-id : i64
-      (lower-name-env-lookup-symbol-id
+      (lower-name-env-lookup-symbol-id-owned
+        lower-state
         (lower-global-shared-view names)
         target-key
         -1)]
@@ -8086,13 +8821,17 @@
         (lower-global-shared-view decls)
         decls
         LowerNameEnv.Nil
-        base-cache
+        (lower-global-shared-view base-cache)
         dedup-base
         module-id
         cbi.compiler-builtin-id-fix-empty)]
     (match (lower-global-shared-view names)
       [(LowerNameEnv.Nil) overlay]
-      [_ (lower-name-env-append overlay names)])))
+      [_
+        (lower-name-env-append-owned
+          (compiler-lower-state-from-name-cache base-cache)
+          overlay
+          names)])))
 
 (define (lower-module-local-type-envs-bind-qualified
   [top-env : tc_core.TcTypeEnv]
@@ -8481,10 +9220,12 @@
           (set! (array-ref ready.values slot) view)
           (lower_i64_i64_map.insert-ref! (&mut modules) module-id slot)
           (cfg
-            compile-profile
-            (set!
-              compiler-lower-profile-module-local-view-entries
-              (+ compiler-lower-profile-module-local-view-entries 1)))
+            (any compile-profile test)
+            (profile_state.compiler-profile-metrics-add!
+              (compiler-lower-profile-metrics-view
+                (compiler-lower-state-from-name-cache view.name-cache))
+              compiler-lower-profile-module-local-view-entries-metric
+              1))
           (LowerModuleLocalViewStore modules ready.values (+ slot 1))))]))
 
 (define (lower-active-module-local-view-lookup
@@ -8500,16 +9241,18 @@
         module-id)]
     (begin
       (cfg
-        compile-profile
+        (any compile-profile test)
         (begin
-          (set!
-            compiler-lower-profile-module-local-view-lookups
-            (+ compiler-lower-profile-module-local-view-lookups 1))
+          (profile_state.compiler-profile-metrics-add!
+            (compiler-lower-profile-metrics-view lower-state)
+            compiler-lower-profile-module-local-view-lookups-metric
+            1)
           (match (lower-global-shared-view result)
             [(LowerMaybeModuleLocalView.Some _)
-              (set!
-                compiler-lower-profile-module-local-view-hits
-                (+ compiler-lower-profile-module-local-view-hits 1))]
+              (profile_state.compiler-profile-metrics-add!
+                (compiler-lower-profile-metrics-view lower-state)
+                compiler-lower-profile-module-local-view-hits-metric
+                1)]
             [(LowerMaybeModuleLocalView.No) unit])))
       result)))
 
@@ -10190,7 +10933,7 @@
               function-state
               env
               type-env
-              index
+              (lower-global-shared-view index)
               (lower-global-shared-view subst)
               shadowed)
               [(ResultLowerAstExpr.Ok rewritten-index)
@@ -10229,7 +10972,7 @@
               function-state
               env
               type-env
-              index
+              (lower-global-shared-view index)
               (lower-global-shared-view subst)
               (lower-global-shared-view shadowed))
               [(ResultLowerAstExpr.Ok rewritten-index)
@@ -17917,14 +18660,11 @@
                 (ir.CompilerIrInstr.Call
                   call-var
                   (lower-derived-symbol-id "tl_memcpy")
-                  (ir.compiler-ir-call-args-from-list
-                    (ir.compiler-ir-value-cons
+                  (ir.compiler-ir-call-args-from-seq
+                    (ir.compiler-ir-value-seq3
                       dst-addr
-                      (ir.compiler-ir-value-cons
-                        src-addr
-                        (ir.compiler-ir-value-cons
-                          (ir.CompilerIrValue.I64 size)
-                          (ir.CompilerIrValueList.Nil)))))
+                      src-addr
+                      (ir.CompilerIrValue.I64 size)))
                   (ast.AstType.Unit)))])])]))
 
 (define (lower-emit-memcpy-value
@@ -17945,14 +18685,8 @@
                 (ir.CompilerIrInstr.Call
                   call-var
                   (lower-derived-symbol-id "tl_memcpy")
-                  (ir.compiler-ir-call-args-from-list
-                    (ir.compiler-ir-value-cons
-                      dst-addr
-                      (ir.compiler-ir-value-cons
-                        src-addr
-                        (ir.compiler-ir-value-cons
-                          size
-                          (ir.CompilerIrValueList.Nil)))))
+                  (ir.compiler-ir-call-args-from-seq
+                    (ir.compiler-ir-value-seq3 dst-addr src-addr size))
                   (ast.AstType.Unit)))])])]))
 
 (define (lower-copy-bytes
@@ -18421,7 +19155,7 @@
   [state : LowerState]
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]
   [layout : tc_core.TcInlineAggregateLayout]) : ResultLowerExpr
   (lower-pack-inline-struct-values-at
@@ -18439,72 +19173,62 @@
   [state : LowerState]
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : (& fields ast.AstFieldDefList)]
   [field-index : i64]
   [layout : tc_core.TcInlineAggregateLayout]) : ResultLowerExpr
-  (match (ir.compiler-ir-value-list-force-cons values)
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= field-index fields.len)
-        (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
-        (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-pack-inline-struct-values-at
-        ctx
-        state
-        acc
-        acc-ty
-        (ir.compiler-ir-value-seq-to-list seq)
+  (if (>= field-index values.len)
+    (if (>= field-index fields.len)
+      (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= field-index fields.len)
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (match (ast.ast-field-def-list-get
         fields
         field-index
-        layout)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index fields.len)
-        (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (match (ast.ast-field-def-list-get
-          fields
-          field-index
-          (ast.ast-field-def-fallback))
-          [(ast.AstFieldDef.Def name ty _)
-            (let
-              [name-str : String (tc_core.tc-env-key-name-text name)]
-              [resolved : ast.AstType
-                (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)]
-              [offset : i64
-                (tc_core.tc-inline-aggregate-layout-field-offset-id
-                  (lower-global-shared-view layout)
-                  name)]
-              (if (< offset 0)
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic
-                      (str_cat.str-cat
-                        "lower: inline struct layout missing field "
-                        name-str))))
-                (match (lower-pack-word-field
-                  (lower-global-shared-view ctx)
-                  state
-                  acc
-                  value
-                  offset
-                  resolved)
-                  [(LowerExpr.Expr packed-state packed-acc packed-ty)
-                    (lower-pack-inline-struct-values-at
-                      ctx
-                      packed-state
-                      packed-acc
-                      packed-ty
-                      (lower-box-shared-view rest-values)
-                      fields
-                      (+ field-index 1)
-                      layout)])))]))]))
+        (ast.ast-field-def-fallback))
+        [(ast.AstFieldDef.Def name ty _)
+          (let
+            [name-str : String (tc_core.tc-env-key-name-text name)]
+            [resolved : ast.AstType
+              (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)]
+            [offset : i64
+              (tc_core.tc-inline-aggregate-layout-field-offset-id
+                (lower-global-shared-view layout)
+                name)]
+            (if (< offset 0)
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic
+                    (str_cat.str-cat
+                      "lower: inline struct layout missing field "
+                      name-str))))
+              (match (lower-pack-word-field
+                (lower-global-shared-view ctx)
+                state
+                acc
+                (ir.compiler-ir-value-seq-ref
+                  (lower-global-shared-view values)
+                  field-index)
+                offset
+                resolved)
+                [(LowerExpr.Expr packed-state packed-acc packed-ty)
+                  (lower-pack-inline-struct-values-at
+                    (lower-global-shared-view ctx)
+                    packed-state
+                    packed-acc
+                    packed-ty
+                    (lower-global-shared-view values)
+                    fields
+                    (+ field-index 1)
+                    layout)])))]))))
 
 ;; Emit an CompilerIrInstr.Pack forming a register-group value from its word values.
 (define (lower-emit-pack
   [state : LowerState]
-  [words : ir.CompilerIrValueList]
+  [words : ir.CompilerIrValueSeq]
   [ty : ast.AstType]) : LowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc allocated var-id)
@@ -18756,12 +19480,7 @@
         8
         (lower-register-word-type ctx (lower-global-shared-view ty) 1))
         [(LowerExpr.Expr s1 w1 _)
-          (lower-emit-pack
-            s1
-            (ir.compiler-ir-value-cons
-              w0
-              (ir.compiler-ir-value-cons w1 ir.CompilerIrValueList.Nil))
-            ty)])]))
+          (lower-emit-pack s1 (ir.compiler-ir-value-seq2 w0 w1) ty)])]))
 
 ;; Internal descriptor-pair transport. Source String/DynArray values remain
 ;; one-word pointers; only values built by this helper become structural
@@ -18794,7 +19513,7 @@
   [state : LowerState]
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]
   [layout : tc_core.TcInlineAggregateLayout]
   [word-index : i64]) : ResultLowerExpr
@@ -18814,88 +19533,77 @@
   [state : LowerState]
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : (& fields ast.AstFieldDefList)]
   [field-index : i64]
   [layout : tc_core.TcInlineAggregateLayout]
   [word-index : i64]) : ResultLowerExpr
-  (match (ir.compiler-ir-value-list-force-cons values)
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= field-index fields.len)
-        (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
-        (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-pack-inline-struct-word-at
-        ctx
-        state
-        acc
-        acc-ty
-        (ir.compiler-ir-value-seq-to-list seq)
+  (if (>= field-index values.len)
+    (if (>= field-index fields.len)
+      (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= field-index fields.len)
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (match (ast.ast-field-def-list-get
         fields
         field-index
-        layout
-        word-index)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index fields.len)
-        (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (match (ast.ast-field-def-list-get
-          fields
-          field-index
-          (ast.ast-field-def-fallback))
-          [(ast.AstFieldDef.Def name ty _)
-            (let
-              [name-str : String (tc_core.tc-env-key-name-text name)]
-              [resolved : ast.AstType
-                (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)]
-              [offset : i64
-                (tc_core.tc-inline-aggregate-layout-field-offset-id
-                  (lower-global-shared-view layout)
-                  name)]
-              (if (< offset 0)
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic
-                      (str_cat.str-cat
-                        "lower: inline struct layout missing field "
-                        name-str))))
-                (if (= (/ offset 8) word-index)
-                  (match (lower-pack-word-field
-                    (lower-global-shared-view ctx)
-                    state
-                    acc
-                    value
-                    (- offset (* word-index 8))
-                    resolved)
-                    [(LowerExpr.Expr packed-state packed-acc packed-ty)
-                      (lower-pack-inline-struct-word-at
-                        ctx
-                        packed-state
-                        packed-acc
-                        packed-ty
-                        (lower-box-shared-view rest-values)
-                        fields
-                        (+ field-index 1)
-                        layout
-                        word-index)])
-                  (lower-pack-inline-struct-word-at
-                    ctx
-                    state
-                    acc
-                    acc-ty
-                    (lower-box-shared-view rest-values)
-                    fields
-                    (+ field-index 1)
-                    layout
-                    word-index))))]))]))
+        (ast.ast-field-def-fallback))
+        [(ast.AstFieldDef.Def name ty _)
+          (let
+            [name-str : String (tc_core.tc-env-key-name-text name)]
+            [resolved : ast.AstType
+              (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)]
+            [offset : i64
+              (tc_core.tc-inline-aggregate-layout-field-offset-id
+                (lower-global-shared-view layout)
+                name)]
+            (if (< offset 0)
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic
+                    (str_cat.str-cat
+                      "lower: inline struct layout missing field "
+                      name-str))))
+              (if (= (/ offset 8) word-index)
+                (match (lower-pack-word-field
+                  (lower-global-shared-view ctx)
+                  state
+                  acc
+                  (ir.compiler-ir-value-seq-ref
+                    (lower-global-shared-view values)
+                    field-index)
+                  (- offset (* word-index 8))
+                  resolved)
+                  [(LowerExpr.Expr packed-state packed-acc packed-ty)
+                    (lower-pack-inline-struct-word-at
+                      (lower-global-shared-view ctx)
+                      packed-state
+                      packed-acc
+                      packed-ty
+                      (lower-global-shared-view values)
+                      fields
+                      (+ field-index 1)
+                      layout
+                      word-index)])
+                (lower-pack-inline-struct-word-at
+                  ctx
+                  state
+                  acc
+                  acc-ty
+                  values
+                  fields
+                  (+ field-index 1)
+                  layout
+                  word-index))))]))))
 
 ;; Construct a register-group struct value: pack each machine word and
 ;; combine them with IrInstrPack. Two-word integer-class structs only.
 (define (lower-construct-struct-register-group
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]
   [layout : tc_core.TcInlineAggregateLayout]
   [struct-ty : ast.AstType]) : ResultLowerExpr
@@ -18939,11 +19647,7 @@
                 [(LowerExpr.Expr w1-state word1 _)
                   (match (lower-emit-pack
                     w1-state
-                    (ir.compiler-ir-value-cons
-                      word0
-                      (ir.compiler-ir-value-cons
-                        word1
-                        ir.CompilerIrValueList.Nil))
+                    (ir.compiler-ir-value-seq2 word0 word1)
                     (lower-global-shared-view struct-ty))
                     [(LowerExpr.Expr ps pv _)
                       (ResultLowerExpr.Ok (LowerExpr.Expr ps pv struct-ty))])])]
@@ -18959,54 +19663,66 @@
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
   [cursor : i64]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstTypeList]) : ResultLowerExpr
-  (match (ir.compiler-ir-value-list-force-cons values)
-    [(ir.CompilerIrValueList.Nil)
-      (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-pack-enum-payload-word
-        ctx
-        state
-        acc
-        acc-ty
-        cursor
-        (ir.compiler-ir-value-seq-to-list seq)
-        fields)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (ast.ast-type-list-empty? (& fields))
-        (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: enum payload arity mismatch")))
-        (let
-          [ty-id : i64
-            (ast.ast-type-list-get (& fields) 0 (ast.ast-type-id-fallback))]
-          [rest-fields : ast.AstTypeList (ast.ast-type-list-slice fields 1)]
-          [resolved : ast.AstType
-            (tc_core.tc-resolve-type
-              (lower-global-shared-view ctx)
-              (tc_core.tc-context-type-get (lower-global-shared-view ctx) ty-id))]
-          [offset : i64
-            (lower-align-up
-              cursor
-              (lower-type-align
-                (lower-global-shared-view ctx)
-                (lower-global-shared-view resolved)))]
-          (match (lower-pack-word-field
+  (lower-pack-enum-payload-word-at
+    ctx
+    state
+    acc
+    acc-ty
+    cursor
+    values
+    (& fields)
+    0))
+
+(define (lower-pack-enum-payload-word-at
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [acc : ir.CompilerIrValue]
+  [acc-ty : ast.AstType]
+  [cursor : i64]
+  [values : ir.CompilerIrValueSeq]
+  [fields : (& fields ast.AstTypeList)]
+  [index : i64]) : ResultLowerExpr
+  (if (>= index values.len)
+    (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
+    (if (>= index (ast.ast-type-list-len fields))
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: enum payload arity mismatch")))
+      (let
+        [ty-id : i64
+          (ast.ast-type-list-get fields index (ast.ast-type-id-fallback))]
+        [resolved : ast.AstType
+          (tc_core.tc-resolve-type
             (lower-global-shared-view ctx)
-            state
-            acc
-            value
-            offset
-            (lower-global-shared-view resolved))
-            [(LowerExpr.Expr packed-state packed-acc packed-ty)
-              (lower-pack-enum-payload-word
-                (lower-global-shared-view ctx)
-                packed-state
-                packed-acc
-                packed-ty
-                (+ offset (lower-type-size ctx resolved))
-                (lower-box-shared-view rest-values)
-                rest-fields)])))]))
+            (tc_core.tc-context-type-get (lower-global-shared-view ctx) ty-id))]
+        [offset : i64
+          (lower-align-up
+            cursor
+            (lower-type-align
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view resolved)))]
+        (match (lower-pack-word-field
+          (lower-global-shared-view ctx)
+          state
+          acc
+          (ir.compiler-ir-value-seq-ref (lower-global-shared-view values) index)
+          offset
+          (lower-global-shared-view resolved))
+          [(LowerExpr.Expr packed-state packed-acc packed-ty)
+            (lower-pack-enum-payload-word-at
+              (lower-global-shared-view ctx)
+              packed-state
+              packed-acc
+              packed-ty
+              (+
+                offset
+                (lower-type-size
+                  (lower-global-shared-view ctx)
+                  (lower-global-shared-view resolved)))
+              (lower-global-shared-view values)
+              fields
+              (+ index 1))])))))
 
 ;; Construct a register-group enum value: word0 = discriminant tag, word1 =
 ;; the variant's packed (word-class) payload (0 for a nullary variant).
@@ -19014,7 +19730,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [handle : i64]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstTypeList]
   [enum-ty : ast.AstType]) : ResultLowerExpr
   (match (lower-pack-enum-payload-word
@@ -19034,10 +19750,10 @@
         [(LowerExpr.Expr w1-state word1 _)
           (match (lower-emit-pack
             w1-state
-            (ir.compiler-ir-value-cons
+            (ir.compiler-ir-value-seq2
               (ir.CompilerIrValue.I64
                 (csym.compiler-registry-handle-child-index handle))
-              (ir.compiler-ir-value-cons word1 ir.CompilerIrValueList.Nil))
+              word1)
             (lower-global-shared-view enum-ty))
             [(LowerExpr.Expr ps pv _)
               (ResultLowerExpr.Ok (LowerExpr.Expr ps pv enum-ty))])])]
@@ -19152,12 +19868,7 @@
             (+ offset 8)
             (lower-register-word-type ctx (lower-global-shared-view ty) 1))
             [(LowerExpr.Expr s1 w1 _)
-              (lower-emit-pack
-                s1
-                (ir.compiler-ir-value-cons
-                  w0
-                  (ir.compiler-ir-value-cons w1 ir.CompilerIrValueList.Nil))
-                ty)])])]
+              (lower-emit-pack s1 (ir.compiler-ir-value-seq2 w0 w1) ty)])])]
     [(lower-type-register-resident?
         (lower-global-shared-view ctx)
         (lower-global-shared-view ty))
@@ -19399,11 +20110,7 @@
                 [(LowerExpr.Expr second-state second-value _)
                   (match (lower-emit-pack
                     second-state
-                    (ir.compiler-ir-value-cons
-                      first-value
-                      (ir.compiler-ir-value-cons
-                        second-value
-                        ir.CompilerIrValueList.Nil))
+                    (ir.compiler-ir-value-seq2 first-value second-value)
                     (lower-internal-transport-type
                       (lower-global-shared-view ctx)
                       (lower-global-shared-view ret-ty)
@@ -19904,7 +20611,7 @@
       [(= count 5) cbi.compiler-builtin-id-tl-string-concat5]
       [else cbi.compiler-builtin-id-tl-string-concat])))
 
-(define (lower-string-concat-values-rev-at
+(define (lower-string-concat-values-at!
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -19912,10 +20619,10 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [end : i64]
-  [acc : ir.CompilerIrValueList]
+  [builder : (&mut builder ir.CompilerIrValueBuilder)]
   [count : i64]) : ResultLowerStringValues
   (if (>= index end)
-    (ResultLowerStringValues.Ok state acc count)
+    (ResultLowerStringValues.Ok state count)
     (let
       [expr : ast.AstExpr
         (tc_core.tc-context-expr-get
@@ -19935,18 +20642,19 @@
                 expr-ty)
                 (match (lower-string-fields expr-state value)
                   [(LowerStringFields.Fields field-state ptr len)
-                    (lower-string-concat-values-rev-at
-                      ctx
-                      field-state
-                      env
-                      type-env
-                      exprs
-                      (+ index 1)
-                      end
-                      (ir.compiler-ir-value-cons-linked
-                        len
-                        (ir.compiler-ir-value-cons-linked ptr acc))
-                      (+ count 1))])
+                    (begin
+                      (ir.compiler-ir-value-builder-push! builder ptr)
+                      (ir.compiler-ir-value-builder-push! builder len)
+                      (lower-string-concat-values-at!
+                        ctx
+                        field-state
+                        env
+                        type-env
+                        exprs
+                        (+ index 1)
+                        end
+                        builder
+                        (+ count 1)))])
                 (ResultLowerStringValues.Err
                   (box
                     (lower-diagnostic-at-expr
@@ -19956,7 +20664,7 @@
 
 (define (lower-string-concat-emit
   [state : LowerState]
-  [values-rev : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [count : i64]) : LowerExpr
   (begin
     (cfg
@@ -19971,10 +20679,7 @@
             (ir.CompilerIrInstr.Call
               var-id
               (lower-string-concat-runtime-name count)
-              (ir.compiler-ir-call-args-from-list
-                (ir.compiler-ir-value-list-reverse-onto
-                  values-rev
-                  ir.CompilerIrValueList.Nil))
+              (ir.compiler-ir-call-args-from-seq values)
               (ast.AstType.String)))
           (ir.CompilerIrValue.Var var-id)
           (ast.AstType.String))])))
@@ -19987,30 +20692,39 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [end : i64]
-  [acc : ir.CompilerIrValueList]
+  [prefix : ir.CompilerIrValueSeq]
   [count : i64]) : ResultLowerExpr
-  (match (lower-string-concat-values-rev-at
-    (lower-global-shared-view ctx)
-    state
-    (lower-global-shared-view env)
-    type-env
-    exprs
-    index
-    end
-    acc
-    count)
-    [(ResultLowerStringValues.Ok values-state values-rev value-count)
-      (match (lower-string-concat-emit values-state values-rev value-count)
-        [(LowerExpr.Expr call-state call-value _)
-          (lower-string-concat-exprs-batched
-            ctx
-            call-state
-            env
-            type-env
-            exprs
-            end
-            (LowerMaybeIrValue.Some call-value))])]
-    [(ResultLowerStringValues.Err message) (ResultLowerExpr.Err message)]))
+  (let
+    [builder : ir.CompilerIrValueBuilder
+      (ir.compiler-ir-value-builder-with-capacity
+        (+ prefix.len (* (- end index) 2)))]
+    [_prefix : unit
+      (ir.compiler-ir-value-builder-append-seq! (&mut builder) prefix)]
+    (match (lower-string-concat-values-at!
+      (lower-global-shared-view ctx)
+      state
+      (lower-global-shared-view env)
+      type-env
+      exprs
+      index
+      end
+      (&mut builder)
+      count)
+      [(ResultLowerStringValues.Ok values-state value-count)
+        (match (lower-string-concat-emit
+          values-state
+          (ir.compiler-ir-value-builder-to-seq builder)
+          value-count)
+          [(LowerExpr.Expr call-state call-value _)
+            (lower-string-concat-exprs-batched
+              ctx
+              call-state
+              env
+              type-env
+              exprs
+              end
+              (LowerMaybeIrValue.Some call-value))])]
+      [(ResultLowerStringValues.Err message) (ResultLowerExpr.Err message)])))
 
 (define (lower-string-concat-exprs-batched
   [ctx : tc_core.TcContext]
@@ -20044,7 +20758,7 @@
               exprs
               index
               (+ index take)
-              ir.CompilerIrValueList.Nil
+              (ir.compiler-ir-value-seq-empty)
               0))]
         [(LowerMaybeIrValue.Some value)
           (match (lower-string-fields state value)
@@ -20062,11 +20776,7 @@
                   exprs
                   index
                   (+ index take)
-                  (ir.compiler-ir-value-cons-linked
-                    len
-                    (ir.compiler-ir-value-cons-linked
-                      ptr
-                      ir.CompilerIrValueList.Nil))
+                  (ir.compiler-ir-value-seq2 ptr len)
                   1))])]))))
 
 (define (lower-string-concat-exprs
@@ -21384,7 +22094,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : ast.AstTypeList]
   [cursor : i64]) : ResultLowerState
   (lower-store-values-at ctx state base values (& types) 0 cursor))
@@ -21393,64 +22103,58 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : (& types ast.AstTypeList)]
   [type-index : i64]
   [cursor : i64]) : ResultLowerState
-  (match values
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= type-index (ast.ast-type-list-len types))
-        (ResultLowerState.Ok state)
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-store-values-at
-        ctx
-        state
-        base
-        (ir.compiler-ir-value-seq-to-list seq)
-        types
-        type-index
-        cursor)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= type-index (ast.ast-type-list-len types))
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (let
-          [ty : ast.AstType
-            (tc_core.tc-context-type-get
-              (lower-global-shared-view ctx)
-              (ast.ast-type-list-get
-                types
-                type-index
-                (ast.ast-type-id-fallback)))]
-          [resolved : ast.AstType
-            (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)]
-          [offset : i64
-            (lower-align-up
-              cursor
-              (lower-type-align
-                (lower-global-shared-view ctx)
-                (lower-global-shared-view resolved)))]
-          (lower-store-values-at
+  (if (>= type-index values.len)
+    (if (>= type-index (ast.ast-type-list-len types))
+      (ResultLowerState.Ok state)
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= type-index (ast.ast-type-list-len types))
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (let
+        [ty : ast.AstType
+          (tc_core.tc-context-type-get
             (lower-global-shared-view ctx)
-            (lower-store-at-offset
-              state
-              (lower-global-shared-view base)
-              offset
-              value
-              (lower-global-shared-view resolved))
-            base
-            (lower-box-shared-view rest-values)
-            types
-            (+ type-index 1)
-            (+ offset (lower-type-size ctx resolved)))))]))
+            (ast.ast-type-list-get types type-index (ast.ast-type-id-fallback)))]
+        [resolved : ast.AstType
+          (tc_core.tc-resolve-type
+            (lower-global-shared-view ctx)
+            (lower-global-shared-view ty))]
+        [offset : i64
+          (lower-align-up
+            cursor
+            (lower-type-align
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view resolved)))]
+        (lower-store-values-at
+          (lower-global-shared-view ctx)
+          (lower-store-at-offset
+            state
+            (lower-global-shared-view base)
+            offset
+            (ir.compiler-ir-value-seq-ref
+              (lower-global-shared-view values)
+              type-index)
+            (lower-global-shared-view resolved))
+          base
+          (lower-global-shared-view values)
+          types
+          (+ type-index 1)
+          (+
+            offset
+            (lower-type-size
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view resolved))))))))
 
 (define (lower-store-repr-c-values
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : tc_core.TcReprCFieldLayoutList]) : ResultLowerState
   (lower-store-repr-c-values-at ctx state base values fields 0))
 
@@ -21458,62 +22162,56 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : tc_core.TcReprCFieldLayoutList]
   [field-index : i64]) : ResultLowerState
-  (match values
-    [(ir.CompilerIrValueList.Nil)
-      (if (= field-index (tc_core.tc-repr-c-field-layout-list-count fields))
-        (ResultLowerState.Ok state)
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-store-repr-c-values-at
-        ctx
-        state
-        base
-        (ir.compiler-ir-value-seq-to-list seq)
-        fields
-        field-index)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index (tc_core.tc-repr-c-field-layout-list-count fields))
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (match (tc_core.tc-repr-c-field-layout-list-ref fields field-index)
-          [(tc_core.TcReprCFieldLayout.Field _ field-ty offset)
-            (let
-              [stored-state : LowerState
-                (if (lower-repr-c-inline-field?
-                  (lower-global-shared-view ctx)
-                  (lower-global-shared-view field-ty))
-                  (lower-copy-bytes
-                    state
-                    (lower-global-shared-view base)
-                    offset
-                    value
-                    0
-                    (lower-repr-c-field-size
-                      (lower-global-shared-view ctx)
-                      field-ty))
-                  (lower-store-at-offset
-                    state
-                    (lower-global-shared-view base)
-                    offset
-                    value
-                    field-ty))]
-              (lower-store-repr-c-values-at
-                ctx
-                stored-state
-                base
-                (lower-box-shared-view rest-values)
-                fields
-                (+ field-index 1)))]))]))
+  (if (>= field-index values.len)
+    (if (= field-index (tc_core.tc-repr-c-field-layout-list-count fields))
+      (ResultLowerState.Ok state)
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= field-index (tc_core.tc-repr-c-field-layout-list-count fields))
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (match (tc_core.tc-repr-c-field-layout-list-ref fields field-index)
+        [(tc_core.TcReprCFieldLayout.Field _ field-ty offset)
+          (let
+            [value : ir.CompilerIrValue
+              (ir.compiler-ir-value-seq-ref
+                (lower-global-shared-view values)
+                field-index)]
+            [stored-state : LowerState
+              (if (lower-repr-c-inline-field?
+                (lower-global-shared-view ctx)
+                (lower-global-shared-view field-ty))
+                (lower-copy-bytes
+                  state
+                  (lower-global-shared-view base)
+                  offset
+                  value
+                  0
+                  (lower-repr-c-field-size
+                    (lower-global-shared-view ctx)
+                    (lower-global-shared-view field-ty)))
+                (lower-store-at-offset
+                  state
+                  (lower-global-shared-view base)
+                  offset
+                  value
+                  field-ty))]
+            (lower-store-repr-c-values-at
+              ctx
+              stored-state
+              base
+              values
+              fields
+              (+ field-index 1)))]))))
 
 (define (lower-store-inline-struct-values
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]
   [layout : tc_core.TcInlineAggregateLayout]) : ResultLowerState
   (lower-store-inline-struct-values-at
@@ -21529,81 +22227,72 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : (& fields ast.AstFieldDefList)]
   [field-index : i64]
   [layout : tc_core.TcInlineAggregateLayout]) : ResultLowerState
-  (match values
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= field-index fields.len)
-        (ResultLowerState.Ok state)
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-store-inline-struct-values-at
-        ctx
-        state
-        base
-        (ir.compiler-ir-value-seq-to-list seq)
+  (if (>= field-index values.len)
+    (if (>= field-index fields.len)
+      (ResultLowerState.Ok state)
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= field-index fields.len)
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (match (ast.ast-field-def-list-get
         fields
         field-index
-        layout)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index fields.len)
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (match (ast.ast-field-def-list-get
-          fields
-          field-index
-          (ast.ast-field-def-fallback))
-          [(ast.AstFieldDef.Def name ty _)
-            (let
-              [name-str : String (tc_core.tc-env-key-name-text name)]
-              [resolved : ast.AstType
-                (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)]
-              [offset : i64
-                (tc_core.tc-inline-aggregate-layout-field-offset-id
-                  (lower-global-shared-view layout)
-                  name)]
-              (if (< offset 0)
-                (ResultLowerState.Err
-                  (box
-                    (lower-diagnostic
-                      (str_cat.str-cat
-                        "lower: inline struct layout missing field "
-                        name-str))))
-                (match (tc_core.tc-inline-aggregate-type-layout
-                  (lower-global-shared-view ctx)
-                  (lower-global-shared-view resolved))
-                  [(tc_core.ResultTcLayoutInfo.Ok info)
-                    (let
-                      [stored-state : LowerState
-                        (if (<= (tc_core.tc-layout-info-size info) 0)
+        (ast.ast-field-def-fallback))
+        [(ast.AstFieldDef.Def name ty _)
+          (let
+            [name-str : String (tc_core.tc-env-key-name-text name)]
+            [resolved : ast.AstType
+              (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)]
+            [offset : i64
+              (tc_core.tc-inline-aggregate-layout-field-offset-id
+                (lower-global-shared-view layout)
+                name)]
+            (if (< offset 0)
+              (ResultLowerState.Err
+                (box
+                  (lower-diagnostic
+                    (str_cat.str-cat
+                      "lower: inline struct layout missing field "
+                      name-str))))
+              (match (tc_core.tc-inline-aggregate-type-layout
+                (lower-global-shared-view ctx)
+                (lower-global-shared-view resolved))
+                [(tc_core.ResultTcLayoutInfo.Ok info)
+                  (let
+                    [stored-state : LowerState
+                      (if (<= (tc_core.tc-layout-info-size info) 0)
+                        state
+                        (lower-store-inline-value-at-offset
+                          (lower-global-shared-view ctx)
                           state
-                          (lower-store-inline-value-at-offset
-                            (lower-global-shared-view ctx)
-                            state
-                            (lower-global-shared-view base)
-                            offset
-                            value
-                            resolved
-                            (tc_core.tc-layout-info-size info)))]
-                      (lower-store-inline-struct-values-at
-                        ctx
-                        stored-state
-                        base
-                        (lower-box-shared-view rest-values)
-                        fields
-                        (+ field-index 1)
-                        layout))]
-                  [(tc_core.ResultTcLayoutInfo.Err message)
-                    (ResultLowerState.Err (box (lower-diagnostic message)))])))]))]))
+                          (lower-global-shared-view base)
+                          offset
+                          (ir.compiler-ir-value-seq-ref
+                            (lower-global-shared-view values)
+                            field-index)
+                          (lower-global-shared-view resolved)
+                          (tc_core.tc-layout-info-size info)))]
+                    (lower-store-inline-struct-values-at
+                      (lower-global-shared-view ctx)
+                      stored-state
+                      (lower-global-shared-view base)
+                      (lower-global-shared-view values)
+                      fields
+                      (+ field-index 1)
+                      layout))]
+                [(tc_core.ResultTcLayoutInfo.Err message)
+                  (ResultLowerState.Err (box (lower-diagnostic message)))])))]))))
 
 (define (lower-store-inline-payload-values
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : ast.AstTypeList]
   [layout : tc_core.TcInlineAggregateLayout]
   [variant-name : String]
@@ -21624,77 +22313,68 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : (& types ast.AstTypeList)]
   [layout : tc_core.TcInlineAggregateLayout]
   [variant-name : String]
   [variant-name-id : i64]
   [index : i64]) : ResultLowerState
-  (match values
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= index (ast.ast-type-list-len types))
-        (ResultLowerState.Ok state)
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-store-inline-payload-values-at
-        ctx
-        state
-        base
-        (ir.compiler-ir-value-seq-to-list seq)
-        types
-        layout
-        variant-name
-        variant-name-id
-        index)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= index (ast.ast-type-list-len types))
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (let
-          [ty : ast.AstType
-            (tc_core.tc-context-type-get
-              (lower-global-shared-view ctx)
-              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-          [resolved : ast.AstType
-            (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)]
-          [offset : i64
-            (tc_core.tc-inline-aggregate-layout-variant-payload-offset-id
-              (lower-global-shared-view layout)
-              variant-name-id
-              index)]
-          (if (< offset 0)
-            (ResultLowerState.Err
-              (box
-                (lower-diagnostic
-                  (str_cat.str-cat
-                    "lower: inline enum layout missing payload for "
-                    variant-name))))
-            (match (tc_core.tc-inline-aggregate-type-layout
-              (lower-global-shared-view ctx)
-              (lower-global-shared-view resolved))
-              [(tc_core.ResultTcLayoutInfo.Ok info)
-                (lower-store-inline-payload-values-at
-                  (lower-global-shared-view ctx)
-                  (if (<= (tc_core.tc-layout-info-size info) 0)
+  (if (>= index values.len)
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultLowerState.Ok state)
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (let
+        [ty : ast.AstType
+          (tc_core.tc-context-type-get
+            (lower-global-shared-view ctx)
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+        [resolved : ast.AstType
+          (tc_core.tc-resolve-type
+            (lower-global-shared-view ctx)
+            (lower-global-shared-view ty))]
+        [offset : i64
+          (tc_core.tc-inline-aggregate-layout-variant-payload-offset-id
+            (lower-global-shared-view layout)
+            variant-name-id
+            index)]
+        (if (< offset 0)
+          (ResultLowerState.Err
+            (box
+              (lower-diagnostic
+                (str_cat.str-cat
+                  "lower: inline enum layout missing payload for "
+                  variant-name))))
+          (match (tc_core.tc-inline-aggregate-type-layout
+            (lower-global-shared-view ctx)
+            (lower-global-shared-view resolved))
+            [(tc_core.ResultTcLayoutInfo.Ok info)
+              (lower-store-inline-payload-values-at
+                (lower-global-shared-view ctx)
+                (if (<= (tc_core.tc-layout-info-size info) 0)
+                  state
+                  (lower-store-inline-value-at-offset
+                    (lower-global-shared-view ctx)
                     state
-                    (lower-store-inline-value-at-offset
-                      ctx
-                      state
-                      (lower-global-shared-view base)
-                      offset
-                      value
-                      resolved
-                      (tc_core.tc-layout-info-size info)))
-                  base
-                  (lower-box-shared-view rest-values)
-                  types
-                  layout
-                  variant-name
-                  variant-name-id
-                  (+ index 1))]
-              [(tc_core.ResultTcLayoutInfo.Err message)
-                (ResultLowerState.Err (box (lower-diagnostic message)))]))))]))
+                    (lower-global-shared-view base)
+                    offset
+                    (ir.compiler-ir-value-seq-ref
+                      (lower-global-shared-view values)
+                      index)
+                    (lower-global-shared-view resolved)
+                    (tc_core.tc-layout-info-size info)))
+                (lower-global-shared-view base)
+                (lower-global-shared-view values)
+                types
+                layout
+                variant-name
+                variant-name-id
+                (+ index 1))]
+            [(tc_core.ResultTcLayoutInfo.Err message)
+              (ResultLowerState.Err (box (lower-diagnostic message)))]))))))
 
 (define (lower-literal-payload-supported? [lit : ast.AstLiteral]) : bool
   (match lit
@@ -26615,7 +27295,7 @@
     (lower-runtime-call-values
       state
       (lower-arena-builtin-symbol-id name-id)
-      ir.CompilerIrValueList.Nil
+      (ir.compiler-ir-value-seq-empty)
       result-ty)
     (if (= args.len 1)
       (let
@@ -26636,9 +27316,7 @@
                     (lower-runtime-call-values
                       cast-state
                       (lower-arena-builtin-symbol-id name-id)
-                      (ir.compiler-ir-value-cons
-                        cast-value
-                        ir.CompilerIrValueList.Nil)
+                      (ir.compiler-ir-value-seq1 cast-value)
                       result-ty)])])]
           [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
       (ResultLowerExpr.Err
@@ -26652,7 +27330,7 @@
     (lower-runtime-call-values
       state
       cbi.compiler-builtin-id-tl-tls-current-arena-load
-      ir.CompilerIrValueList.Nil
+      (ir.compiler-ir-value-seq-empty)
       result-ty)
     (ResultLowerExpr.Err
       (box (lower-diagnostic "lower: tls-current-arena expects no arguments")))))
@@ -26683,9 +27361,7 @@
                   (lower-runtime-call-values
                     cast-state
                     cbi.compiler-builtin-id-tl-tls-current-arena-store
-                    (ir.compiler-ir-value-cons
-                      cast-value
-                      ir.CompilerIrValueList.Nil)
+                    (ir.compiler-ir-value-seq1 cast-value)
                     result-ty)])])]
         [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
     (ResultLowerExpr.Err
@@ -26933,7 +27609,7 @@
       (match (lower-call-append-sret-arg
         ctx
         state
-        (ir.compiler-ir-value-cons value ir.CompilerIrValueList.Nil)
+        (ir.compiler-ir-value-seq1 value)
         (lower-global-shared-view ty))
         [(ResultLowerArgs.Ok sret-state sret-values)
           (match (lower-state-alloc-var sret-state)
@@ -26951,7 +27627,7 @@
                       (ir.CompilerIrInstr.Call
                         var-id
                         call-name
-                        (ir.compiler-ir-call-args-from-list sret-values)
+                        (ir.compiler-ir-call-args-from-seq sret-values)
                         (lower-global-shared-view ty)))
                     (ir.CompilerIrValue.Var var-id)
                     ty)))])]
@@ -27719,11 +28395,9 @@
                   (ResultLowerExpr.Ok
                     (lower-emit-pack
                       cast-state
-                      (ir.compiler-ir-value-cons
+                      (ir.compiler-ir-value-seq2
                         ptr
-                        (ir.compiler-ir-value-cons
-                          (ir.CompilerIrValue.I64 array-len)
-                          ir.CompilerIrValueList.Nil))
+                        (ir.CompilerIrValue.I64 array-len))
                       (tc_core.tc-type-without-regions expected)))])])]
         [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))))
 
@@ -28008,7 +28682,7 @@
     (if (>= index (ast.ast-type-list-len types))
       (ResultLowerCallArgs.Ok
         state
-        ir.CompilerIrValueList.Nil
+        (ir.compiler-ir-value-seq-empty)
         (LowerArgWritebacks.Some writebacks))
       (ResultLowerCallArgs.Err
         (box (lower-diagnostic "lower: constructor arity mismatch"))))
@@ -28064,7 +28738,7 @@
                           rest-writebacks)
                         (ResultLowerCallArgs.Ok
                           rest-state
-                          (ir.compiler-ir-value-cons value rest-values)
+                          (ir.compiler-ir-value-seq-prepend value rest-values)
                           rest-writebacks)]
                       [(ResultLowerCallArgs.Err message)
                         (ResultLowerCallArgs.Err message)])))])]
@@ -28142,7 +28816,7 @@
   [index : i64]) : ResultLowerArgs
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len types))
-      (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+      (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
       (ResultLowerArgs.Err
         (box (lower-diagnostic "lower: constructor arity mismatch"))))
     (if (>= index (ast.ast-type-list-len types))
@@ -28195,7 +28869,7 @@
                       [(ResultLowerArgs.Ok rest-state rest-values)
                         (ResultLowerArgs.Ok
                           rest-state
-                          (ir.compiler-ir-value-cons value rest-values))]
+                          (ir.compiler-ir-value-seq-prepend value rest-values))]
                       [(ResultLowerArgs.Err message)
                         (ResultLowerArgs.Err message)])])]
               [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)])]
@@ -28252,7 +28926,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [struct-name : String]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]
   [struct-ty : ast.AstType]) : ResultLowerExpr
   (match (tc_core.tc-inline-aggregate-layout-for-id
@@ -28358,7 +29032,7 @@
   [dst : ir.CompilerIrValue]
   [struct-id : i64]
   [struct-name : String]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]) : ResultLowerState
   (match (tc_core.tc-inline-aggregate-layout-for-id
     (lower-global-shared-view ctx)
@@ -28382,7 +29056,7 @@
   [state : LowerState]
   [variant-name : String]
   [handle : i64]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstTypeList]
   [enum-name : String]
   [enum-ty : ast.AstType]) : ResultLowerExpr
@@ -28472,7 +29146,7 @@
   [dst : ir.CompilerIrValue]
   [variant-name : String]
   [handle : i64]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstTypeList]
   [enum-id : i64]
   [enum-name : String]) : ResultLowerState
@@ -35414,12 +36088,7 @@
   [ptr : ir.CompilerIrValue]
   [len-value : ir.CompilerIrValue]
   [result-ty : ast.AstType]) : LowerExpr
-  (lower-emit-pack
-    state
-    (ir.compiler-ir-value-cons
-      ptr
-      (ir.compiler-ir-value-cons len-value ir.CompilerIrValueList.Nil))
-    result-ty))
+  (lower-emit-pack state (ir.compiler-ir-value-seq2 ptr len-value) result-ty))
 
 (define (lower-slice-view-finish-after-len-check
   [ctx : tc_core.TcContext]
@@ -35970,14 +36639,8 @@
             (ir.CompilerIrInstr.Call
               var-id
               (lower-tl-substring-symbol)
-              (ir.compiler-ir-call-args-from-list
-                (ir.compiler-ir-value-cons
-                  src-ptr
-                  (ir.compiler-ir-value-cons
-                    start-value
-                    (ir.compiler-ir-value-cons
-                      len-value
-                      ir.CompilerIrValueList.Nil))))
+              (ir.compiler-ir-call-args-from-seq
+                (ir.compiler-ir-value-seq3 src-ptr start-value len-value))
               (ast.AstType.String)))
           (ir.CompilerIrValue.Var var-id)
           (ast.AstType.String)))]))
@@ -37576,7 +38239,7 @@
   [index : i64]) : ResultLowerArgs
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len types))
-      (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+      (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
       (ResultLowerArgs.Err
         (box (lower-diagnostic "lower: constructor arity mismatch"))))
     (if (>= index (ast.ast-type-list-len types))
@@ -37623,7 +38286,7 @@
                       [(ResultLowerArgs.Ok rest-state rest-values)
                         (ResultLowerArgs.Ok
                           rest-state
-                          (ir.compiler-ir-value-cons value rest-values))]
+                          (ir.compiler-ir-value-seq-prepend value rest-values))]
                       [(ResultLowerArgs.Err message)
                         (ResultLowerArgs.Err message)])]
                   [(LowerCAbiAggregate.Integer scalar-ty size)
@@ -37658,7 +38321,7 @@
                           [(ResultLowerArgs.Ok rest-state rest-values)
                             (ResultLowerArgs.Ok
                               rest-state
-                              (ir.compiler-ir-value-cons
+                              (ir.compiler-ir-value-seq-prepend
                                 scalar-value
                                 rest-values))]
                           [(ResultLowerArgs.Err message)
@@ -37682,7 +38345,7 @@
                           [(ResultLowerArgs.Ok rest-state rest-values)
                             (ResultLowerArgs.Ok
                               rest-state
-                              (lower-value-list-append slot-values rest-values))]
+                              (lower-value-seq-append slot-values rest-values))]
                           [(ResultLowerArgs.Err message)
                             (ResultLowerArgs.Err message)])]
                       [(ResultLowerArgs.Err message)
@@ -37700,13 +38363,12 @@
                       [(ResultLowerArgs.Ok rest-state rest-values)
                         (ResultLowerArgs.Ok
                           rest-state
-                          (ir.compiler-ir-value-cons
-                            value
-                            (ir.compiler-ir-value-cons
+                          (lower-value-seq-append
+                            (ir.compiler-ir-value-seq3
+                              value
                               (ir.CompilerIrValue.I64 size)
-                              (ir.compiler-ir-value-cons
-                                (ir.CompilerIrValue.Unit)
-                                rest-values))))]
+                              (ir.CompilerIrValue.Unit))
+                            rest-values))]
                       [(ResultLowerArgs.Err message)
                         (ResultLowerArgs.Err message)])]
                   [(LowerCAbiAggregate.ByRef _)
@@ -37734,7 +38396,7 @@
                               [(ResultLowerArgs.Ok rest-state rest-values)
                                 (ResultLowerArgs.Ok
                                   rest-state
-                                  (ir.compiler-ir-value-cons
+                                  (ir.compiler-ir-value-seq-prepend
                                     copy-value
                                     rest-values))]
                               [(ResultLowerArgs.Err message)
@@ -37762,7 +38424,7 @@
   [slots : LowerCAbiSlotList]
   [index : i64]) : ResultLowerArgs
   (if (>= index (lower-c-abi-slot-list-count (lower-global-shared-view slots)))
-    (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+    (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
     (match (lower-c-abi-slot-list-ref (lower-global-shared-view slots) index)
       [(LowerCAbiSlot.Slot scalar-ty offset)
         (match (if (lower-type-register-resident?
@@ -37793,7 +38455,7 @@
               [(ResultLowerArgs.Ok rest-state rest-values)
                 (ResultLowerArgs.Ok
                   rest-state
-                  (ir.compiler-ir-value-cons slot-value rest-values))]
+                  (ir.compiler-ir-value-seq-prepend slot-value rest-values))]
               [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])])])))
 
 (define (lower-c-abi-register-arg-slot-values
@@ -37804,17 +38466,10 @@
   [slots : LowerCAbiSlotList]) : ResultLowerArgs
   (lower-c-abi-register-arg-slot-values-from ctx state value arg-ty slots 0))
 
-(define (lower-value-list-append
-  [values : ir.CompilerIrValueList]
-  [tail : ir.CompilerIrValueList]) : ir.CompilerIrValueList
-  (match values
-    [(ir.CompilerIrValueList.Nil) tail]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-value-list-append (ir.compiler-ir-value-seq-to-list seq) tail)]
-    [(ir.CompilerIrValueList.Cons head rest)
-      (ir.compiler-ir-value-cons
-        head
-        (lower-value-list-append (lower-box-shared-view rest) tail))]))
+(define (lower-value-seq-append
+  [values : ir.CompilerIrValueSeq]
+  [tail : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
+  (ir.compiler-ir-value-seq-append values tail))
 
 (define (lower-c-abi-ir-return-slots-from
   [slots : LowerCAbiSlotList]
@@ -38003,7 +38658,7 @@
                       env
                       name-id
                       name)
-                    (ir.compiler-ir-call-args-from-list values)
+                    (ir.compiler-ir-call-args-from-seq values)
                     (lower-global-shared-view result-ty))]
                 (lower-c-abi-finish-call-result
                   ctx
@@ -38027,7 +38682,7 @@
                       env
                       name-id
                       name)
-                    (ir.compiler-ir-call-args-from-list values)
+                    (ir.compiler-ir-call-args-from-seq values)
                     (lower-global-shared-view scalar-ty))]
                 (lower-c-abi-finish-call-result
                   ctx
@@ -38060,7 +38715,7 @@
                                 env
                                 name-id
                                 name)
-                              (ir.compiler-ir-call-args-from-list values)
+                              (ir.compiler-ir-call-args-from-seq values)
                               scalar-ty)]
                           (lower-c-abi-finish-call-result
                             ctx
@@ -38095,7 +38750,7 @@
                             env
                             name-id
                             name)
-                          (ir.compiler-ir-call-args-from-list values)
+                          (ir.compiler-ir-call-args-from-seq values)
                           (lower-c-abi-ir-return-slots slots))]
                       (match (lower-c-abi-materialize-stored-register-result
                         ctx
@@ -38143,8 +38798,8 @@
                           env
                           name-id
                           name)
-                        (ir.compiler-ir-call-args-from-list
-                          (ir.compiler-ir-value-cons
+                        (ir.compiler-ir-call-args-from-seq
+                          (ir.compiler-ir-value-seq-prepend
                             (lower-global-shared-view base)
                             values))
                         (ast.AstType.U64))]
@@ -38164,7 +38819,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [func-value : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-c-abi-return-aggregate-class
@@ -38181,7 +38836,7 @@
               (ir.CompilerIrInstr.CallIndirectC
                 var-id
                 func-value
-                (ir.compiler-ir-call-args-from-list values)
+                (ir.compiler-ir-call-args-from-seq values)
                 (lower-global-shared-view result-ty))]
             (lower-c-abi-finish-call-result
               ctx
@@ -38201,7 +38856,7 @@
               (ir.CompilerIrInstr.CallIndirectC
                 var-id
                 func-value
-                (ir.compiler-ir-call-args-from-list values)
+                (ir.compiler-ir-call-args-from-seq values)
                 (lower-global-shared-view scalar-ty))]
             (lower-c-abi-finish-call-result
               ctx
@@ -38230,7 +38885,7 @@
                         (ir.CompilerIrInstr.CallIndirectC
                           var-id
                           func-value
-                          (ir.compiler-ir-call-args-from-list values)
+                          (ir.compiler-ir-call-args-from-seq values)
                           scalar-ty)]
                       (lower-c-abi-finish-call-result
                         ctx
@@ -38261,7 +38916,7 @@
                     (ir.ir-instr-call-indirect-cabi-store-result
                       (lower-global-shared-view base)
                       func-value
-                      (ir.compiler-ir-call-args-from-list values)
+                      (ir.compiler-ir-call-args-from-seq values)
                       (lower-c-abi-ir-return-slots slots))]
                   (match (lower-c-abi-materialize-stored-register-result
                     ctx
@@ -38296,8 +38951,8 @@
                   (ir.CompilerIrInstr.CallIndirectC
                     var-id
                     func-value
-                    (ir.compiler-ir-call-args-from-list
-                      (ir.compiler-ir-value-cons
+                    (ir.compiler-ir-call-args-from-seq
+                      (ir.compiler-ir-value-seq-prepend
                         (lower-global-shared-view base)
                         values))
                     (ast.AstType.U64))]
@@ -38359,18 +39014,10 @@
 
 ;; sret ABI caller side: append the sret pointer as the trailing arg to a
 ;; value list (matching the callee's `__sret` param).
-(define (lower-value-list-append-one
-  [values : ir.CompilerIrValueList]
-  [extra : ir.CompilerIrValue]) : ir.CompilerIrValueList
-  (match values
-    [(ir.CompilerIrValueList.Nil)
-      (ir.compiler-ir-value-cons extra ir.CompilerIrValueList.Nil)]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-value-list-append-one (ir.compiler-ir-value-seq-to-list seq) extra)]
-    [(ir.CompilerIrValueList.Cons head rest)
-      (ir.compiler-ir-value-cons
-        head
-        (lower-value-list-append-one (lower-box-shared-view rest) extra))]))
+(define (lower-value-seq-append-one
+  [values : ir.CompilerIrValueSeq]
+  [extra : ir.CompilerIrValue]) : ir.CompilerIrValueSeq
+  (ir.compiler-ir-value-seq-append-one values extra))
 
 ;; For a call whose result is an inline aggregate, allocate the result slot on
 ;; the caller's stack and append its pointer as the hidden trailing arg. Uses
@@ -38380,7 +39027,7 @@
 (define (lower-call-append-sret-arg
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]) : ResultLowerArgs
   ;; Structural Tuple/Array sret is a leading ABI argument handled by the
   ;; internal call path below. This legacy helper is nominal Struct/Enum only.
@@ -38400,15 +39047,15 @@
           [(LowerExpr.Expr slot-state slot-ptr _)
             (ResultLowerArgs.Ok
               slot-state
-              (lower-value-list-append-one values slot-ptr))])]
+              (lower-value-seq-append-one values slot-ptr))])]
       [(ResultLowerSize.Err message)
         (ResultLowerArgs.Err (box (lower-diagnostic message)))])
     (ResultLowerArgs.Ok state values)))
 
-(define (lower-value-list-prepend-one
+(define (lower-value-seq-prepend-one
   [head : ir.CompilerIrValue]
-  [tail : ir.CompilerIrValueList]) : ir.CompilerIrValueList
-  (ir.compiler-ir-value-cons head tail))
+  [tail : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
+  (ir.compiler-ir-value-seq-prepend head tail))
 
 (define (lower-internal-return-class-for-symbol
   [ctx : tc_core.TcContext]
@@ -38436,32 +39083,23 @@
     (lower-global-shared-view source-ty)
     slots)
     [(ResultLowerArgs.Ok slot-state slot-values)
-      (match (ir.compiler-ir-value-list-force-cons slot-values)
-        [(ir.CompilerIrValueList.Cons first-value rest)
-          (match (ir.compiler-ir-value-list-force-cons
-            (lower-box-shared-view rest))
-            [(ir.CompilerIrValueList.Cons second-value _)
-              (match (lower-emit-pack
-                slot-state
-                (ir.compiler-ir-value-cons
-                  first-value
-                  (ir.compiler-ir-value-cons
-                    second-value
-                    ir.CompilerIrValueList.Nil))
-                (lower-internal-transport-type ctx source-ty classification))
-                [(LowerExpr.Expr packed-state packed-value _)
-                  (ResultLowerArgs.Ok
-                    packed-state
-                    (ir.compiler-ir-value-cons
-                      packed-value
-                      ir.CompilerIrValueList.Nil))])]
-            [_
-              (ResultLowerArgs.Err
-                (box
-                  (lower-diagnostic "lower: structural register group arity")))])]
-        [_
-          (ResultLowerArgs.Err
-            (box (lower-diagnostic "lower: structural register group arity")))])]
+      (if (= slot-values.len 2)
+        (match (lower-emit-pack
+          slot-state
+          (ir.compiler-ir-value-seq2
+            (ir.compiler-ir-value-seq-ref
+              (lower-global-shared-view slot-values)
+              0)
+            (ir.compiler-ir-value-seq-ref
+              (lower-global-shared-view slot-values)
+              1))
+          (lower-internal-transport-type ctx source-ty classification))
+          [(LowerExpr.Expr packed-state packed-value _)
+            (ResultLowerArgs.Ok
+              packed-state
+              (ir.compiler-ir-value-seq1 packed-value))])
+        (ResultLowerArgs.Err
+          (box (lower-diagnostic "lower: structural register group arity"))))]
     [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)]))
 
 (define (lower-internal-call-arg-one
@@ -38473,15 +39111,11 @@
   [origin : ast.AstExpr]) : ResultLowerArgs
   (match (lower-global-shared-view classification)
     [(LowerCAbiAggregate.No)
-      (ResultLowerArgs.Ok
-        state
-        (ir.compiler-ir-value-cons value ir.CompilerIrValueList.Nil))]
+      (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq1 value))]
     [(LowerCAbiAggregate.Integer scalar-ty _)
       (match (lower-load-at-offset state value 0 scalar-ty)
         [(LowerExpr.Expr loaded loaded-value _)
-          (ResultLowerArgs.Ok
-            loaded
-            (ir.compiler-ir-value-cons loaded-value ir.CompilerIrValueList.Nil))])]
+          (ResultLowerArgs.Ok loaded (ir.compiler-ir-value-seq1 loaded-value))])]
     [(LowerCAbiAggregate.Register slots _)
       (if (= (lower-c-abi-slot-list-count (lower-global-shared-view slots)) 1)
         (match (lower-c-abi-slot-list-ref slots 0)
@@ -38490,9 +39124,7 @@
               [(LowerExpr.Expr loaded loaded-value _)
                 (ResultLowerArgs.Ok
                   loaded
-                  (ir.compiler-ir-value-cons
-                    loaded-value
-                    ir.CompilerIrValueList.Nil))])])
+                  (ir.compiler-ir-value-seq1 loaded-value))])])
         (lower-internal-call-register-two
           ctx
           state
@@ -38510,9 +39142,7 @@
               (lower-state-emit
                 allocated
                 (ir.CompilerIrInstr.Mov var-id value physical-ty))
-              (ir.compiler-ir-value-cons
-                (ir.CompilerIrValue.Var var-id)
-                ir.CompilerIrValueList.Nil))]))]
+              (ir.compiler-ir-value-seq1 (ir.CompilerIrValue.Var var-id)))]))]
     [(LowerCAbiAggregate.ByRef size)
       (match (lower-reserve-inline-storage
         state
@@ -38536,7 +39166,7 @@
               [(LowerExpr.Expr cast-state pointer _)
                 (ResultLowerArgs.Ok
                   cast-state
-                  (ir.compiler-ir-value-cons pointer ir.CompilerIrValueList.Nil))]))])]
+                  (ir.compiler-ir-value-seq1 pointer))]))])]
     [(LowerCAbiAggregate.Unsupported message)
       (ResultLowerArgs.Err (box (lower-diagnostic-at-expr origin message)))]
     [(LowerCAbiAggregate.Sret _)
@@ -38550,65 +39180,54 @@
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [state : LowerState]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : (& types ast.AstTypeList)]
   [index : i64]
   [origin : ast.AstExpr]) : ResultLowerArgs
-  (match (ir.compiler-ir-value-list-force-cons values)
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= index (ast.ast-type-list-len types))
-        (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
-        (ResultLowerArgs.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-internal-call-args-at
-        ctx
-        mode
-        state
-        (ir.compiler-ir-value-seq-to-list seq)
-        types
-        index
-        origin)]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (if (>= index (ast.ast-type-list-len types))
-        (ResultLowerArgs.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (let
-          [source-ty : ast.AstType
-            (tc_core.tc-context-type-get
-              (lower-global-shared-view ctx)
-              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-          (match (lower-internal-call-arg-one
+  (if (>= index values.len)
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
+      (ResultLowerArgs.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultLowerArgs.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (let
+        [source-ty : ast.AstType
+          (tc_core.tc-context-type-get
             (lower-global-shared-view ctx)
-            state
-            value
-            (lower-global-shared-view source-ty)
-            (lower-internal-param-class
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+        (match (lower-internal-call-arg-one
+          (lower-global-shared-view ctx)
+          state
+          (ir.compiler-ir-value-seq-ref (lower-global-shared-view values) index)
+          (lower-global-shared-view source-ty)
+          (lower-internal-param-class
+            (lower-global-shared-view ctx)
+            mode
+            (lower-global-shared-view source-ty))
+          (lower-global-shared-view origin))
+          [(ResultLowerArgs.Ok arg-state arg-values)
+            (match (lower-internal-call-args-at
               (lower-global-shared-view ctx)
               mode
-              source-ty)
-            (lower-global-shared-view origin))
-            [(ResultLowerArgs.Ok arg-state arg-values)
-              (match (lower-internal-call-args-at
-                ctx
-                mode
-                arg-state
-                (lower-box-shared-view rest)
-                types
-                (+ index 1)
-                origin)
-                [(ResultLowerArgs.Ok rest-state rest-values)
-                  (ResultLowerArgs.Ok
-                    rest-state
-                    (lower-value-list-append arg-values rest-values))]
-                [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])]
-            [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])))]))
+              arg-state
+              (lower-global-shared-view values)
+              types
+              (+ index 1)
+              (lower-global-shared-view origin))
+              [(ResultLowerArgs.Ok rest-state rest-values)
+                (ResultLowerArgs.Ok
+                  rest-state
+                  (lower-value-seq-append arg-values rest-values))]
+              [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])]
+          [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])))))
 
 (define (lower-internal-call-args
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [state : LowerState]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : ast.AstTypeList]
   [origin : ast.AstExpr]) : ResultLowerArgs
   (if (lower-internal-structural-resolved-type-list?
@@ -38716,7 +39335,7 @@
   [env : sym_i64_env.SymI64Env]
   [source-id : i64]
   [name : String]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [param-types : ast.AstTypeList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
@@ -38767,8 +39386,8 @@
                                     (ir.CompilerIrInstr.Call
                                       call-var
                                       callee
-                                      (ir.compiler-ir-call-args-from-list
-                                        (lower-value-list-prepend-one
+                                      (ir.compiler-ir-call-args-from-seq
+                                        (lower-value-seq-prepend-one
                                           sret-pointer
                                           physical-values))
                                       (ast.AstType.U64))
@@ -38810,7 +39429,7 @@
                                 (ir.CompilerIrInstr.Call
                                   call-var
                                   callee
-                                  (ir.compiler-ir-call-args-from-list
+                                  (ir.compiler-ir-call-args-from-seq
                                     call-values)
                                   (lower-one-word-register-storage-type
                                     (lower-global-shared-view ctx)
@@ -38852,7 +39471,7 @@
                       (ir.CompilerIrInstr.Call
                         call-var
                         callee
-                        (ir.compiler-ir-call-args-from-list physical-values)
+                        (ir.compiler-ir-call-args-from-seq physical-values)
                         physical-ret)
                       origin)]
                   (match (lower-internal-materialize-call-result
@@ -38869,7 +39488,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [func-value : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [param-types : ast.AstTypeList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
@@ -38913,8 +39532,8 @@
                                   (ir.CompilerIrInstr.CallIndirect
                                     call-var
                                     func-value
-                                    (ir.compiler-ir-call-args-from-list
-                                      (lower-value-list-prepend-one
+                                    (ir.compiler-ir-call-args-from-seq
+                                      (lower-value-seq-prepend-one
                                         sret-pointer
                                         physical-values))
                                     (ast.AstType.U64))
@@ -38954,7 +39573,7 @@
                       (ir.CompilerIrInstr.CallIndirect
                         call-var
                         func-value
-                        (ir.compiler-ir-call-args-from-list physical-values)
+                        (ir.compiler-ir-call-args-from-seq physical-values)
                         physical-ret)
                       origin)]
                   (lower-internal-materialize-call-result
@@ -38970,7 +39589,7 @@
   [env : sym_i64_env.SymI64Env]
   [source-id : i64]
   [name : String]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-call-append-sret-arg
@@ -38996,7 +39615,7 @@
               (ir.CompilerIrInstr.Call
                 var-id
                 callee
-                (ir.compiler-ir-call-args-from-list sret-values)
+                (ir.compiler-ir-call-args-from-seq sret-values)
                 result-ir-ty)]
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
@@ -39047,14 +39666,11 @@
                   (ir.CompilerIrInstr.Call
                     call-var
                     (lower-tl-str-view-symbol)
-                    (ir.compiler-ir-call-args-from-list
-                      (ir.compiler-ir-value-cons
+                    (ir.compiler-ir-call-args-from-seq
+                      (ir.compiler-ir-value-seq3
                         base-value
-                        (ir.compiler-ir-value-cons
-                          (ir.CompilerIrValue.I64 0)
-                          (ir.compiler-ir-value-cons
-                            len-value
-                            ir.CompilerIrValueList.Nil))))
+                        (ir.CompilerIrValue.I64 0)
+                        len-value))
                     (lower-one-word-register-storage-type
                       ctx
                       (lower-global-shared-view result-ty)))
@@ -39069,53 +39685,19 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match args-result
     [(ResultLowerArgs.Ok args-state values)
-      (match (ir.compiler-ir-value-list-force-cons values)
-        [(ir.CompilerIrValueList.Array seq)
-          (lower-bytes-view-from-parts-values
-            ctx
-            (ResultLowerArgs.Ok
-              args-state
-              (ir.compiler-ir-value-seq-to-list seq))
-            result-ty
-            origin)]
-        [(ir.CompilerIrValueList.Cons data-value rest0)
-          (match (__tl-box-place rest0)
-            [(ir.CompilerIrValueList.Cons len-value rest1)
-              (match (__tl-box-place rest1)
-                [(ir.CompilerIrValueList.Cons _ rest2)
-                  (match (__tl-box-place rest2)
-                    [(ir.CompilerIrValueList.Nil)
-                      (lower-bytes-view-from-parts-result
-                        ctx
-                        args-state
-                        data-value
-                        len-value
-                        result-ty
-                        origin)]
-                    [_
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            origin
-                            "lower: bytes view helper expects data, length, owner")))])]
-                [_
-                  (ResultLowerExpr.Err
-                    (box
-                      (lower-diagnostic-at-expr
-                        origin
-                        "lower: bytes view helper expects data, length, owner")))])]
-            [_
-              (ResultLowerExpr.Err
-                (box
-                  (lower-diagnostic-at-expr
-                    origin
-                    "lower: bytes view helper expects data, length, owner")))])]
-        [_
-          (ResultLowerExpr.Err
-            (box
-              (lower-diagnostic-at-expr
-                origin
-                "lower: bytes view helper expects data, length, owner")))])]
+      (if (= values.len 3)
+        (lower-bytes-view-from-parts-result
+          ctx
+          args-state
+          (ir.compiler-ir-value-seq-ref (lower-global-shared-view values) 0)
+          (ir.compiler-ir-value-seq-ref values 1)
+          result-ty
+          origin)
+        (ResultLowerExpr.Err
+          (box
+            (lower-diagnostic-at-expr
+              origin
+              "lower: bytes view helper expects data, length, owner"))))]
     [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-bytes-view-from-parts-call
@@ -39359,7 +39941,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [func-value : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-call-append-sret-arg
@@ -39379,7 +39961,7 @@
               (ir.CompilerIrInstr.CallIndirect
                 var-id
                 func-value
-                (ir.compiler-ir-call-args-from-list sret-values)
+                (ir.compiler-ir-call-args-from-seq sret-values)
                 result-ir-ty)]
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
@@ -39646,7 +40228,7 @@
 (define (lower-runtime-call-values
   [state : LowerState]
   [name : i64]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc allocated var-id)
@@ -39657,7 +40239,7 @@
             (ir.CompilerIrInstr.Call
               var-id
               name
-              (ir.compiler-ir-call-args-from-list values)
+              (ir.compiler-ir-call-args-from-seq values)
               (lower-global-shared-view result-ty)))
           (ir.CompilerIrValue.Var var-id)
           result-ty))]))
@@ -41047,7 +41629,7 @@
   [index : String]
   [args : ast.AstExprList]
   [params : ast.AstParamList]
-  [values : ir.CompilerIrValueList]) : ir.CompilerIrSpmdCallArgSeq
+  [values : ir.CompilerIrValueSeq]) : ir.CompilerIrSpmdCallArgSeq
   (let
     [builder : ir.CompilerIrSpmdCallArgBuilder
       (ir.compiler-ir-spmd-call-arg-builder-with-capacity
@@ -41061,7 +41643,7 @@
         index
         (& args)
         (& params)
-        (ir.compiler-ir-value-list-force-cons values)
+        values
         0
         (&mut builder))
       (ir.compiler-ir-spmd-call-arg-builder-to-seq builder))))
@@ -41074,71 +41656,54 @@
   [index : String]
   [args : (& args ast.AstExprList)]
   [params : (& params ast.AstParamList)]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [arg-index : i64]
   [builder : (&mut builder ir.CompilerIrSpmdCallArgBuilder)]) : unit
   (if (or
     (>= arg-index args.len)
-    (>= arg-index (ast.ast-param-list-len params)))
+    (>= arg-index (ast.ast-param-list-len params))
+    (>= arg-index values.len))
     unit
-    (match values
-      [(ir.CompilerIrValueList.Array seq)
-        (lower-spmd-call-args-from-values-at
-          ctx
-          function-state
-          env
-          type-env
-          index
-          args
-          params
-          (ir.compiler-ir-value-seq-to-list seq)
-          arg-index
-          builder)]
-      [(ir.CompilerIrValueList.Cons value rest)
-        (match (ast.ast-param-list-get
-          params
-          arg-index
-          (ast.ast-param-fallback))
-          [(ast.AstParam.Param _ param-ty _)
-            (let
-              [resolved-ty : ast.AstType
-                (tc_core.tc-type-without-regions
-                  (tc_core.tc-resolve-type
-                    (lower-global-shared-view ctx)
-                    param-ty))]
-              [arg : ast.AstExpr
-                (lower-context-expr-get
-                  (lower-global-shared-view ctx)
-                  (ast.ast-expr-list-get args arg-index 0))]
-              [varying : bool
-                (lower-spmd-scalar-arg-varying?
-                  (lower-global-shared-view ctx)
-                  function-state
-                  env
-                  type-env
-                  (lower-global-shared-view index)
-                  arg)]
-              (begin
-                (ir.compiler-ir-spmd-call-arg-builder-push!
-                  builder
-                  (ir.CompilerIrSpmdCallArg.Arg
-                    (lower-spmd-ir-value-class
-                      (lower-global-shared-view resolved-ty)
-                      varying)
-                    value
-                    resolved-ty))
-                (lower-spmd-call-args-from-values-at
-                  ctx
-                  function-state
-                  env
-                  type-env
-                  index
-                  args
-                  params
-                  (ir.compiler-ir-box-shared-view rest)
-                  (+ arg-index 1)
-                  builder)))])]
-      [(ir.CompilerIrValueList.Nil) unit])))
+    (match (ast.ast-param-list-get params arg-index (ast.ast-param-fallback))
+      [(ast.AstParam.Param _ param-ty _)
+        (let
+          [resolved-ty : ast.AstType
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-resolve-type (lower-global-shared-view ctx) param-ty))]
+          [arg : ast.AstExpr
+            (lower-context-expr-get
+              (lower-global-shared-view ctx)
+              (ast.ast-expr-list-get args arg-index 0))]
+          [varying : bool
+            (lower-spmd-scalar-arg-varying?
+              (lower-global-shared-view ctx)
+              function-state
+              env
+              type-env
+              (lower-global-shared-view index)
+              arg)]
+          (begin
+            (ir.compiler-ir-spmd-call-arg-builder-push!
+              builder
+              (ir.CompilerIrSpmdCallArg.Arg
+                (lower-spmd-ir-value-class
+                  (lower-global-shared-view resolved-ty)
+                  varying)
+                (ir.compiler-ir-value-seq-ref
+                  (lower-global-shared-view values)
+                  arg-index)
+                resolved-ty))
+            (lower-spmd-call-args-from-values-at
+              (lower-global-shared-view ctx)
+              function-state
+              (lower-global-shared-view env)
+              type-env
+              (lower-global-shared-view index)
+              args
+              params
+              (lower-global-shared-view values)
+              (+ arg-index 1)
+              builder)))])))
 
 (define (lower-imported-spmd-scalar-call
   [ctx : tc_core.TcContext]
@@ -42995,14 +43560,8 @@
             (ir.CompilerIrInstr.Call
               var-id
               (lower-atomic-pointer-raw-symbol name elem-ty)
-              (ir.compiler-ir-call-args-from-list
-                (ir.compiler-ir-value-cons
-                  ptr
-                  (ir.compiler-ir-value-cons
-                    expected
-                    (ir.compiler-ir-value-cons
-                      new-value
-                      (ir.CompilerIrValueList.Nil)))))
+              (ir.compiler-ir-call-args-from-seq
+                (ir.compiler-ir-value-seq3 ptr expected new-value))
               (lower-one-word-register-storage-type
                 ctx
                 (lower-global-shared-view result-ty)))
@@ -43997,11 +44556,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-array-fill8-symbol)
-    (ir.compiler-ir-value-cons
-      buf-value
-      (ir.compiler-ir-value-cons
-        len-i64
-        (ir.compiler-ir-value-cons init-value ir.CompilerIrValueList.Nil)))
+    (ir.compiler-ir-value-seq3 buf-value len-i64 init-value)
     (ast.AstType.Unit))
     [(ResultLowerExpr.Ok lowered)
       (match lowered
@@ -44157,9 +44712,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-array-zero-symbol)
-    (ir.compiler-ir-value-cons
-      buf-value
-      (ir.compiler-ir-value-cons byte-count ir.CompilerIrValueList.Nil))
+    (ir.compiler-ir-value-seq2 buf-value byte-count)
     (ast.AstType.Unit))
     [(ResultLowerExpr.Ok lowered)
       (match lowered
@@ -46949,7 +47502,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]) : ResultLowerArgs
   (if (>= index args.len)
-    (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+    (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
     (let
       [arg : ast.AstExpr
         (lower-context-expr-get
@@ -46980,7 +47533,9 @@
                     [(ResultLowerArgs.Ok rest-state rest-values)
                       (ResultLowerArgs.Ok
                         rest-state
-                        (ir.compiler-ir-value-cons cast-value rest-values))]
+                        (ir.compiler-ir-value-seq-prepend
+                          cast-value
+                          rest-values))]
                     [(ResultLowerArgs.Err message)
                       (ResultLowerArgs.Err message)])])])]
         [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))))
@@ -47001,7 +47556,7 @@
                 allocated
                 (ir.CompilerIrInstr.Syscall
                   var-id
-                  (ir.compiler-ir-call-args-from-list values)))
+                  (ir.compiler-ir-call-args-from-seq values)))
               (ir.CompilerIrValue.Var var-id)
               (ast.AstType.I64)))])]
     [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
@@ -47022,7 +47577,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]) : ResultLowerArgs
   (if (>= index args.len)
-    (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+    (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
     (let
       [arg : ast.AstExpr
         (lower-context-expr-get
@@ -47041,7 +47596,7 @@
                 [(ResultLowerArgs.Ok rest-state rest-values)
                   (ResultLowerArgs.Ok
                     rest-state
-                    (ir.compiler-ir-value-cons value rest-values))]
+                    (ir.compiler-ir-value-seq-prepend value rest-values))]
                 [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])])]
         [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))))
 
@@ -47645,9 +48200,7 @@
                 (match (lower-runtime-call-values
                   arena-state
                   (lower-tl-arena-set-symbol)
-                  (ir.compiler-ir-value-cons
-                    arena-value
-                    ir.CompilerIrValueList.Nil)
+                  (ir.compiler-ir-value-seq1 arena-value)
                   (ast.AstType.Unit))
                   [(ResultLowerExpr.Ok set-lowered)
                     (match set-lowered
@@ -47680,9 +48233,8 @@
                                     (match (lower-runtime-call-values
                                       body-state
                                       (lower-tl-arena-set-symbol)
-                                      (ir.compiler-ir-value-cons
-                                        (ir.CompilerIrValue.Var saved-var)
-                                        ir.CompilerIrValueList.Nil)
+                                      (ir.compiler-ir-value-seq1
+                                        (ir.CompilerIrValue.Var saved-var))
                                       (ast.AstType.Unit))
                                       [(ResultLowerExpr.Ok restore-lowered)
                                         (match restore-lowered
@@ -47716,7 +48268,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-region-reset-symbol)
-    (ir.compiler-ir-value-cons mark-value ir.CompilerIrValueList.Nil)
+    (ir.compiler-ir-value-seq1 mark-value)
     (ast.AstType.Unit))
     [(ResultLowerExpr.Ok rewind-lowered)
       (match rewind-lowered
@@ -47724,9 +48276,7 @@
           (match (lower-runtime-call-values
             rewind-state
             (lower-tl-arena-set-symbol)
-            (ir.compiler-ir-value-cons
-              new-enclosing-value
-              ir.CompilerIrValueList.Nil)
+            (ir.compiler-ir-value-seq1 new-enclosing-value)
             (ast.AstType.Unit))
             [(ResultLowerExpr.Ok final-lowered)
               (lower-with-escape-final final-lowered escaped-value escaped-ty)]
@@ -47742,7 +48292,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-arena-current-symbol)
-    ir.CompilerIrValueList.Nil
+    (ir.compiler-ir-value-seq-empty)
     (ast.AstType.I64))
     [(ResultLowerExpr.Ok new-enclosing-lowered)
       (match new-enclosing-lowered
@@ -47750,9 +48300,7 @@
           (match (lower-runtime-call-values
             new-enclosing-state
             (lower-tl-arena-set-symbol)
-            (ir.compiler-ir-value-cons
-              scratch-head-value
-              ir.CompilerIrValueList.Nil)
+            (ir.compiler-ir-value-seq1 scratch-head-value)
             (ast.AstType.Unit))
             [(ResultLowerExpr.Ok restore-scratch-lowered)
               (match restore-scratch-lowered
@@ -47807,7 +48355,7 @@
           (match (lower-runtime-call-values
             body-state
             (lower-tl-arena-current-symbol)
-            ir.CompilerIrValueList.Nil
+            (ir.compiler-ir-value-seq-empty)
             (ast.AstType.I64))
             [(ResultLowerExpr.Ok scratch-head-lowered)
               (match scratch-head-lowered
@@ -47815,9 +48363,7 @@
                   (match (lower-runtime-call-values
                     scratch-head-state
                     (lower-tl-arena-set-symbol)
-                    (ir.compiler-ir-value-cons
-                      enclosing-value
-                      ir.CompilerIrValueList.Nil)
+                    (ir.compiler-ir-value-seq1 enclosing-value)
                     (ast.AstType.Unit))
                     [(ResultLowerExpr.Ok restore-enclosing-lowered)
                       (match restore-enclosing-lowered
@@ -47846,7 +48392,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-arena-current-symbol)
-    ir.CompilerIrValueList.Nil
+    (ir.compiler-ir-value-seq-empty)
     (ast.AstType.I64))
     [(ResultLowerExpr.Ok enclosing-lowered)
       (match enclosing-lowered
@@ -47864,9 +48410,7 @@
                   (match (lower-runtime-call-values
                     scratch-state
                     (lower-tl-arena-set-symbol)
-                    (ir.compiler-ir-value-cons
-                      scratch-value
-                      ir.CompilerIrValueList.Nil)
+                    (ir.compiler-ir-value-seq1 scratch-value)
                     (ast.AstType.Unit))
                     [(ResultLowerExpr.Ok set-scratch-lowered)
                       (match set-scratch-lowered
@@ -47874,7 +48418,7 @@
                           (match (lower-runtime-call-values
                             set-scratch-state
                             (lower-tl-region-mark-symbol)
-                            ir.CompilerIrValueList.Nil
+                            (ir.compiler-ir-value-seq-empty)
                             (ast.AstType.U64))
                             [(ResultLowerExpr.Ok mark-lowered)
                               (match mark-lowered
@@ -47902,7 +48446,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-arena-set-symbol)
-    (ir.compiler-ir-value-cons new-enclosing-value ir.CompilerIrValueList.Nil)
+    (ir.compiler-ir-value-seq1 new-enclosing-value)
     (ast.AstType.Unit))
     [(ResultLowerExpr.Ok final-lowered)
       (lower-with-escape-final final-lowered escaped-value escaped-ty)]
@@ -47916,7 +48460,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-arena-current-symbol)
-    ir.CompilerIrValueList.Nil
+    (ir.compiler-ir-value-seq-empty)
     (ast.AstType.I64))
     [(ResultLowerExpr.Ok new-enclosing-lowered)
       (match new-enclosing-lowered
@@ -47924,9 +48468,7 @@
           (match (lower-runtime-call-values
             new-enclosing-state
             (lower-tl-arena-destroy-symbol)
-            (ir.compiler-ir-value-cons
-              scratch-head-value
-              ir.CompilerIrValueList.Nil)
+            (ir.compiler-ir-value-seq1 scratch-head-value)
             (ast.AstType.Unit))
             [(ResultLowerExpr.Ok destroy-lowered)
               (match destroy-lowered
@@ -47977,7 +48519,7 @@
           (match (lower-runtime-call-values
             body-state
             (lower-tl-arena-current-symbol)
-            ir.CompilerIrValueList.Nil
+            (ir.compiler-ir-value-seq-empty)
             (ast.AstType.I64))
             [(ResultLowerExpr.Ok scratch-head-lowered)
               (match scratch-head-lowered
@@ -47985,9 +48527,7 @@
                   (match (lower-runtime-call-values
                     scratch-head-state
                     (lower-tl-arena-set-symbol)
-                    (ir.compiler-ir-value-cons
-                      enclosing-value
-                      ir.CompilerIrValueList.Nil)
+                    (ir.compiler-ir-value-seq1 enclosing-value)
                     (ast.AstType.Unit))
                     [(ResultLowerExpr.Ok restore-enclosing-lowered)
                       (match restore-enclosing-lowered
@@ -48014,7 +48554,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-arena-current-symbol)
-    ir.CompilerIrValueList.Nil
+    (ir.compiler-ir-value-seq-empty)
     (ast.AstType.I64))
     [(ResultLowerExpr.Ok enclosing-lowered)
       (match enclosing-lowered
@@ -48022,7 +48562,7 @@
           (match (lower-runtime-call-values
             enclosing-state
             (lower-tl-arena-make-symbol)
-            ir.CompilerIrValueList.Nil
+            (ir.compiler-ir-value-seq-empty)
             (ast.AstType.I64))
             [(ResultLowerExpr.Ok scratch-lowered)
               (match scratch-lowered
@@ -48030,9 +48570,7 @@
                   (match (lower-runtime-call-values
                     scratch-state
                     (lower-tl-arena-set-symbol)
-                    (ir.compiler-ir-value-cons
-                      scratch-value
-                      ir.CompilerIrValueList.Nil)
+                    (ir.compiler-ir-value-seq1 scratch-value)
                     (ast.AstType.Unit))
                     [(ResultLowerExpr.Ok set-scratch-lowered)
                       (match set-scratch-lowered
@@ -70563,7 +71101,7 @@
                             tail-state
                             (ir.CompilerIrInstr.TailCallIndirect
                               func-value
-                              (ir.compiler-ir-call-args-from-list tail-values)
+                              (ir.compiler-ir-call-args-from-seq tail-values)
                               (lower-one-word-register-storage-type ctx ret-ty))
                             origin))]
                       [(ResultLowerArgs.Err message)
@@ -71212,8 +71750,8 @@
                               (lower-one-word-register-storage-type
                                 (lower-global-shared-view ctx)
                                 (lower-global-shared-view ret-ty))]
-                            [sret-values : ir.CompilerIrValueList
-                              (lower-value-list-append-one
+                            [sret-values : ir.CompilerIrValueSeq
+                              (lower-value-seq-append-one
                                 values
                                 (ir.CompilerIrValue.Var sret-var))]
                             [call-name : i64
@@ -71228,7 +71766,7 @@
                                 (ir.CompilerIrInstr.Call
                                   call-var
                                   call-name
-                                  (ir.compiler-ir-call-args-from-list
+                                  (ir.compiler-ir-call-args-from-seq
                                     sret-values)
                                   result-ir-ty)
                                 origin)]
@@ -71633,7 +72171,7 @@
 (define (lower-tail-call-append-current-sret-arg
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [ret-ty : ast.AstType]
   [sret-var : i64]) : ResultLowerArgs
   (if (and
@@ -71647,7 +72185,7 @@
       ret-ty))
     (ResultLowerArgs.Ok
       state
-      (lower-value-list-append-one values (ir.CompilerIrValue.Var sret-var)))
+      (lower-value-seq-append-one values (ir.CompilerIrValue.Var sret-var)))
     (ResultLowerArgs.Ok state values)))
 
 (define (lower-tail-call
@@ -71742,7 +72280,7 @@
                           tail-state
                           (ir.CompilerIrInstr.TailCall
                             target-id
-                            (ir.compiler-ir-call-args-from-list tail-values)
+                            (ir.compiler-ir-call-args-from-seq tail-values)
                             (lower-one-word-register-storage-type ctx ret-ty))
                           origin)))]
                   [(ResultLowerArgs.Err message) (ResultLowerState.Err message)])]
@@ -75020,12 +75558,23 @@
           (+ index 1)
           (+ idx 1))))))
 
-(define (lower-dispatch-physical-param-values [count : i64] [idx : i64]) : ir.CompilerIrValueList
-  (if (>= idx count)
-    ir.CompilerIrValueList.Nil
-    (ir.compiler-ir-value-cons
-      (ir.CompilerIrValue.Var idx)
-      (lower-dispatch-physical-param-values count (+ idx 1)))))
+(define (lower-dispatch-physical-param-values [count : i64] [idx : i64]) : ir.CompilerIrValueSeq
+  (let
+    [len : i64
+      (if (>= idx count)
+        0
+        (- count idx))]
+    [slots : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue len)]
+    [cursor : i64 0]
+    (begin
+      (while (< cursor len)
+        (begin
+          (set!
+            (array-ref slots cursor)
+            (ir.CompilerIrValue.Var (+ idx cursor)))
+          (set! cursor (+ cursor 1))))
+      (ir.CompilerIrValueSeq slots len))))
 
 (define (lower-dispatch-find-internal-name-from
   [variants : (& variants ast.AstDispatchVariantList)]
@@ -75400,7 +75949,7 @@
             mode
             ret-ty)]
         [args : ir.CompilerIrCallArgs
-          (ir.compiler-ir-call-args-from-list
+          (ir.compiler-ir-call-args-from-seq
             (lower-dispatch-physical-param-values param-count 0))]
         [maybe-avx2 : LowerMaybeIrSymbol
           (lower-dispatch-find-internal-name
@@ -77123,7 +77672,7 @@
                                   lower-state))
                               (cfg
                                 compile-profile
-                                (compiler-lower-profile-name-finish))
+                                (compiler-lower-profile-name-finish lower-state))
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-finish
@@ -77146,7 +77695,7 @@
                                   lower-state))
                               (cfg
                                 compile-profile
-                                (compiler-lower-profile-name-finish))
+                                (compiler-lower-profile-name-finish lower-state))
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-finish
@@ -77299,7 +77848,7 @@
       (any compile-profile test)
       (compiler-lower-profile-reset! lower-state)
       unit)
-    (cfg compile-profile (compiler-lower-profile-name-reset))
+    (cfg compile-profile (compiler-lower-profile-name-reset lower-state))
     (cfg
       (any compile-profile test)
       (spec.spec-profile-reset! (compiler-lower-state-profile lower-state))
@@ -77447,7 +77996,8 @@
                             reach-keep-plan)]
                         [escaped-names : LowerNameEnv
                           (if (and detach-source? needs-specialization)
-                            (lower-name-env-copy-into-pools
+                            (lower-name-env-copy-into-pools-owned
+                              lower-state
                               names
                               (lower-global-shared-view source-pools))
                             names)]

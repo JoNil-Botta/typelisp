@@ -4176,7 +4176,7 @@
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
   (match decl
-    [(ast.AstDecl.DefMacro decl-meta name params _ body)
+    [(ast.AstDecl.DefMacro decl-meta name params ret body)
       (if (= (string.string-length owned-path) 0)
         unit
         (let
@@ -4195,6 +4195,8 @@
               (compiler_tlci_native_producer.TlciNativeMacroCapture
                 identity
                 params
+                (compiler_tlci_native_producer.embedded-native-macro-result-kind
+                  ret)
                 body)))))]
     [(ast.AstDecl.Unsafe inner-box)
       (build-package-tlci-collect-decl-macro!

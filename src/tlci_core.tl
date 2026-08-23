@@ -515,6 +515,8 @@
   1)
 (define tlci-host-callback-status-fuel-exhausted : i64
   2)
+(define tlci-host-callback-status-abort : i64
+  3)
 (define tlci-host-callback-status-bad-request : i64
   4)
 (define tlci-host-callback-name-fuel-check : String
@@ -3637,6 +3639,11 @@
     (string.eq tlci-image-entry-symbol "tlci_image_entry")
     (= tlci-image-entry-param-count 2)
     (= tlci-image-entry-success 0)
+    (= tlci-host-callback-status-ok 0)
+    (= tlci-host-callback-status-diagnostic 1)
+    (= tlci-host-callback-status-fuel-exhausted 2)
+    (= tlci-host-callback-status-abort 3)
+    (= tlci-host-callback-status-bad-request 4)
     (= tlci-host-callback-table-header-size 48)
     (= tlci-host-callback-table-size 64)
     (= tlci-image-registration-header-size 48)

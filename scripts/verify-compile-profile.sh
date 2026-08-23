@@ -743,6 +743,9 @@ if [ -n "${TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE:-}" ]; then
     printf '%s\n' "$PROFILE_BIN" > "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE"
 fi
 
+echo "[compile-profile] verify exhaustive stdlib tlci identity differential (#6609)"
+sh scripts/verify-stdlib-tlci-identity-differential.sh "$PROFILE_BIN"
+
 # This profile selfhost also compiles the extracted poison-name helpers that
 # exposed dotted-constructor cache poisoning in #6324 before #6451 fixed it.
 echo "[compile-profile] verify dense macro profile storage and helper layout"

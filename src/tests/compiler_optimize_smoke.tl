@@ -3412,6 +3412,10 @@
       (compiler_optimize_tests.compiler-optimize-licm-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-profitability-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-profitability-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-licm-word-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-word-self-test)
       42)
@@ -5112,7 +5116,7 @@
   (test.assert-i64-eq
     (compiler_optimize_tests.compiler-optimize-bce-version-fold-refusal-self-test)
     42
-    "guard-dominated compare folding refuses everything past its two rules"))
+    "guard-dominated compare folding refuses everything past its three rules"))
 
 (test
   bce-version-multiblock-loop-nest

@@ -9,7 +9,7 @@
 (cfg test (import stdlib.test))
 
 (define compiler-profile-state-metric-capacity : i64
-  (cfg (any compile-profile test) 64 0))
+  (cfg (any compile-profile test) 78 0))
 (define compiler-profile-state-summary-row-capacity : i64
   (cfg (any compile-profile-summary test) 40 0))
 (define compiler-profile-state-summary-scope-capacity : i64
@@ -72,8 +72,7 @@
   [state : Expr]
   [field : Expr]) : Expr
   `(let
-    [storage : CompilerProfileStateStorage
-      (compiler-profile-state-storage ,state)]
+    [storage (compiler-profile-state-storage ,state)]
     (compiler-profile-state-shared-view (__tl-project-field storage ,field))))
 
 (define (compiler-profile-state-new) : CompilerProfileState

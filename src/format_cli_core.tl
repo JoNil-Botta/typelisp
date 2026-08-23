@@ -132,6 +132,35 @@
       unit
       (io.panic (string.copy diff)))))
 
+(test
+  fmt-check-diff-splits-distant-changes-into-separate-hunks
+  (let
+    [diff : String
+      (fmt-unified-diff
+        "t.tl"
+        "(a)\n(b   c)\n(c)\n(d)\n(e)\n(f)\n(g)\n(h)\n(i)\n(j   k)\n(l)\n(m)\n(n)\n"
+        "(a)\n(b c)\n(c)\n(d)\n(e)\n(f)\n(g)\n(h)\n(i)\n(j k)\n(l)\n(m)\n(n)\n")]
+    (if (string.eq
+      diff
+      "--- a/t.tl\n+++ b/t.tl\n@@ -1,5 +1,5 @@\n (a)\n-(b   c)\n+(b c)\n (c)\n (d)\n (e)\n@@ -7,8 +7,8 @@\n (g)\n (h)\n (i)\n-(j   k)\n+(j k)\n (l)\n (m)\n (n)\n \n")
+      unit
+      (io.panic (string.copy diff)))))
+
+(test
+  fmt-check-diff-resynchronizes-after-an-inserted-line
+  (let
+    [diff : String
+      (fmt-unified-diff
+        "t.tl"
+        "(a)\n(b)\n(c)\n(d)\n(e)\n"
+        "(a)\n(b)\n(inserted)\n(c)\n(d)\n(e)\n")]
+    (if (and
+      (string.contains (& diff) "+(inserted)\n")
+      (not (string.contains (& diff) "-(c)\n"))
+      (not (string.contains (& diff) "+(c)\n")))
+      unit
+      (io.panic (string.copy diff)))))
+
 (define (fmt-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
@@ -250,14 +279,35 @@
 ;; formatted text is already in memory at the point of the report, so rendering
 ;; the diff needs no extra formatting work.
 ;;
-;; The hunk is coalesced: common leading and trailing lines are trimmed and
-;; everything between them is emitted as one `-` run followed by one `+` run.
-;; That is a valid and deterministic unified diff, but it is not minimal -- two
-;; distant edits in one file print as a single hunk spanning both. Formatter
-;; edits are normally local, and a minimal diff would need an LCS pass over
-;; files that reach tens of thousands of lines.
+;; Diffing is deliberately bounded rather than using a whole-file LCS. Local
+;; edits resynchronize on a short run of equal lines, and equal runs longer than
+;; two context windows split hunks. Work is therefore linear in unchanged spans
+;; and bounded by a small lookahead around each changed span; two distant edits
+;; never materialize the compiler-sized interval between them.
 (define (fmt-diff-context) : i64
   3)
+
+(define (fmt-diff-lookahead) : i64
+  64)
+
+(define (fmt-diff-anchor-lines) : i64
+  3)
+
+(defenum FmtDiffSync
+  (Found i64 i64)
+  (Missing))
+
+(defstruct FmtDiffHunk
+  (src-start i64)
+  (src-end i64)
+  (dst-start i64)
+  (dst-end i64)
+  (next-src i64)
+  (next-dst i64))
+
+(defenum FmtDiffHunkStep
+  (Done)
+  (Found FmtDiffHunk))
 
 (define (fmt-split-lines-into
   [source : String]
@@ -265,54 +315,245 @@
   [lines : fmt_svec.Vec]) : fmt_svec.Vec
   (let
     [len : i64 (string.string-length source)]
-    [out : fmt_svec.Vec (owned_view.compiler-owned-shared-view lines)]
-    (if (> start len)
-      out
-      (let
-        [nl : i64 (string.index-of-byte source start (cast 10 : u8))]
-        (if (< nl 0)
-          (begin
-            (fmt_svec.push-ref!
-              (&mut out)
-              (string.substring source start (- len start)))
-            out)
-          (begin
-            (fmt_svec.push-ref!
-              (&mut out)
-              (string.substring source start (- nl start)))
-            (fmt-split-lines-into source (+ nl 1) out)))))))
+    [cursor : i64 start]
+    (begin
+      (while (<= cursor len)
+        (let
+          [nl : i64 (string.index-of-byte source cursor (cast 10 : u8))]
+          (if (< nl 0)
+            (begin
+              (fmt_svec.push-ref!
+                (&mut lines)
+                (string.substring source cursor (- len cursor)))
+              (set! cursor (+ len 1)))
+            (begin
+              (fmt_svec.push-ref!
+                (&mut lines)
+                (string.substring source cursor (- nl cursor)))
+              (set! cursor (+ nl 1))))))
+      lines)))
 
-(define (fmt-common-prefix-lines
-  [a : fmt_svec.Vec]
-  [b : fmt_svec.Vec]
-  [idx : i64]) : i64
-  (if (or (>= idx (fmt_svec.len (& a))) (>= idx (fmt_svec.len (& b))))
-    idx
-    (if (string.eq (fmt_svec.get (& a) idx "") (fmt_svec.get (& b) idx ""))
-      (fmt-common-prefix-lines a b (+ idx 1))
-      idx)))
+(define (fmt-diff-line-eq?
+  [src : (& source fmt_svec.Vec)]
+  [src-index : i64]
+  [src-end : i64]
+  [dst : (& formatted fmt_svec.Vec)]
+  [dst-index : i64]
+  [dst-end : i64]) : bool
+  (if (and (< src-index src-end) (< dst-index dst-end))
+    (string.eq (fmt_svec.get src src-index "") (fmt_svec.get dst dst-index ""))
+    false))
 
-;; Counts matching trailing lines, never letting the suffix run back into the
-;; prefix -- otherwise an all-identical tail would double-count lines already
-;; claimed by the prefix and produce a negative-length hunk.
-(define (fmt-common-suffix-lines
-  [a : fmt_svec.Vec]
-  [b : fmt_svec.Vec]
-  [prefix : i64]
-  [count : i64]) : i64
+;; Require three equal lines for an interior anchor so repeated blank or
+;; delimiter-only lines do not resynchronize the streams spuriously. A shorter
+;; run is sufficient only when it consumes both remaining tails.
+(define (fmt-diff-sync-run?
+  [src : (& source fmt_svec.Vec)]
+  [src-index : i64]
+  [src-end : i64]
+  [dst : (& formatted fmt_svec.Vec)]
+  [dst-index : i64]
+  [dst-end : i64]) : bool
   (let
-    [alen : i64 (fmt_svec.len (& a))]
-    [blen : i64 (fmt_svec.len (& b))]
-    (if (or (>= (+ prefix count) alen) (>= (+ prefix count) blen))
-      count
-      (if (string.eq
-        (fmt_svec.get (& a) (- alen (+ count 1)) "")
-        (fmt_svec.get (& b) (- blen (+ count 1)) ""))
-        (fmt-common-suffix-lines a b prefix (+ count 1))
-        count))))
+    [src-left : i64 (- src-end src-index)]
+    [dst-left : i64 (- dst-end dst-index)]
+    [available : i64
+      (if (< src-left dst-left)
+        src-left
+        dst-left)]
+    [anchor : i64 (fmt-diff-anchor-lines)]
+    [count : i64
+      (if (< available anchor)
+        available
+        anchor)]
+    [terminal-short : bool
+      (and
+        (> count 0)
+        (< count anchor)
+        (= (+ src-index count) src-end)
+        (= (+ dst-index count) dst-end))]
+    [offset : i64 0]
+    [same : bool (or (= count anchor) terminal-short)]
+    (begin
+      (while (and same (< offset count))
+        (begin
+          (if (string.eq
+            (fmt_svec.get src (+ src-index offset) "")
+            (fmt_svec.get dst (+ dst-index offset) ""))
+            unit
+            (set! same false))
+          (set! offset (+ offset 1))))
+      same)))
+
+;; Search edit distance first, so a one-line insertion/deletion wins over a
+;; larger replacement. The search area is capped independently of file size.
+(define (fmt-diff-find-sync
+  [src : (& source fmt_svec.Vec)]
+  [src-index : i64]
+  [src-end : i64]
+  [dst : (& formatted fmt_svec.Vec)]
+  [dst-index : i64]
+  [dst-end : i64]) : FmtDiffSync
+  (let
+    [lookahead : i64 (fmt-diff-lookahead)]
+    [src-left : i64 (- src-end src-index)]
+    [dst-left : i64 (- dst-end dst-index)]
+    [max-src : i64
+      (if (< src-left lookahead)
+        src-left
+        lookahead)]
+    [max-dst : i64
+      (if (< dst-left lookahead)
+        dst-left
+        lookahead)]
+    [distance : i64 1]
+    [found : bool false]
+    [found-src : i64 0]
+    [found-dst : i64 0]
+    (begin
+      (while (and (not found) (<= distance (+ max-src max-dst)))
+        (let
+          [src-skip : i64
+            (if (> distance max-dst)
+              (- distance max-dst)
+              0)]
+          [src-limit : i64
+            (if (< distance max-src)
+              distance
+              max-src)]
+          (begin
+            (while (and (not found) (<= src-skip src-limit))
+              (let
+                [dst-skip : i64 (- distance src-skip)]
+                (begin
+                  (if (fmt-diff-sync-run?
+                    src
+                    (+ src-index src-skip)
+                    src-end
+                    dst
+                    (+ dst-index dst-skip)
+                    dst-end)
+                    (begin
+                      (set! found true)
+                      (set! found-src src-skip)
+                      (set! found-dst dst-skip))
+                    unit)
+                  (set! src-skip (+ src-skip 1)))))
+            (set! distance (+ distance 1)))))
+      (if found
+        (FmtDiffSync.Found found-src found-dst)
+        (FmtDiffSync.Missing)))))
+
+(define (fmt-diff-next-hunk
+  [src : (& source fmt_svec.Vec)]
+  [dst : (& formatted fmt_svec.Vec)]
+  [scan-src : i64]
+  [scan-dst : i64]) : FmtDiffHunkStep
+  (let
+    [slen : i64 (fmt_svec.len src)]
+    [dlen : i64 (fmt_svec.len dst)]
+    [src-index : i64 scan-src]
+    [dst-index : i64 scan-dst]
+    [ctx : i64 (fmt-diff-context)]
+    (begin
+      (while (fmt-diff-line-eq? src src-index slen dst dst-index dlen)
+        (begin
+          (set! src-index (+ src-index 1))
+          (set! dst-index (+ dst-index 1))))
+      (if (and (>= src-index slen) (>= dst-index dlen))
+        (FmtDiffHunkStep.Done)
+        (let
+          [src-start : i64
+            (if (> src-index ctx)
+              (- src-index ctx)
+              0)]
+          [dst-start : i64
+            (if (> dst-index ctx)
+              (- dst-index ctx)
+              0)]
+          [finished : bool false]
+          [split : bool false]
+          [src-end : i64 slen]
+          [dst-end : i64 dlen]
+          [next-src : i64 slen]
+          [next-dst : i64 dlen]
+          (begin
+            (while (not finished)
+              (if (fmt-diff-line-eq? src src-index slen dst dst-index dlen)
+                (let
+                  [common-src : i64 src-index]
+                  [common-dst : i64 dst-index]
+                  (begin
+                    (while (fmt-diff-line-eq?
+                      src
+                      src-index
+                      slen
+                      dst
+                      dst-index
+                      dlen)
+                      (begin
+                        (set! src-index (+ src-index 1))
+                        (set! dst-index (+ dst-index 1))))
+                    (if (> (- src-index common-src) (* 2 ctx))
+                      (begin
+                        (set! src-end (+ common-src ctx))
+                        (set! dst-end (+ common-dst ctx))
+                        (set! next-src (+ common-src ctx))
+                        (set! next-dst (+ common-dst ctx))
+                        (set! split true)
+                        (set! finished true))
+                      (if (and (>= src-index slen) (>= dst-index dlen))
+                        (set! finished true)
+                        unit))))
+                (match (fmt-diff-find-sync
+                  src
+                  src-index
+                  slen
+                  dst
+                  dst-index
+                  dlen)
+                  [(FmtDiffSync.Found src-skip dst-skip)
+                    (begin
+                      (set! src-index (+ src-index src-skip))
+                      (set! dst-index (+ dst-index dst-skip)))]
+                  [(FmtDiffSync.Missing)
+                    (let
+                      [src-left : i64 (- slen src-index)]
+                      [dst-left : i64 (- dlen dst-index)]
+                      [lookahead : i64 (fmt-diff-lookahead)]
+                      (begin
+                        (set!
+                          src-index
+                          (+
+                            src-index
+                            (if (< src-left lookahead)
+                              src-left
+                              lookahead)))
+                        (set!
+                          dst-index
+                          (+
+                            dst-index
+                            (if (< dst-left lookahead)
+                              dst-left
+                              lookahead)))
+                        (if (and (>= src-index slen) (>= dst-index dlen))
+                          (set! finished true)
+                          unit)))])))
+            (FmtDiffHunkStep.Found
+              (FmtDiffHunk
+                src-start
+                src-end
+                dst-start
+                dst-end
+                (if split
+                  next-src
+                  slen)
+                (if split
+                  next-dst
+                  dlen)))))))))
 
 (define (fmt-diff-emit-range-into!
-  [lines : fmt_svec.Vec]
+  [lines : (& lines fmt_svec.Vec)]
   [marker : String]
   [from : i64]
   [to : i64]
@@ -324,9 +565,79 @@
         (fmt_buf.fmt-render-buf-append
           buf
           (owned_view.compiler-owned-shared-view marker))
-        (fmt_buf.fmt-render-buf-append buf (fmt_svec.get (& lines) index ""))
+        (fmt_buf.fmt-render-buf-append buf (fmt_svec.get lines index ""))
         (fmt_buf.fmt-render-buf-append buf "\n")
         (set! index (+ index 1))))))
+
+(define (fmt-diff-emit-hunk-into!
+  [src : (& source fmt_svec.Vec)]
+  [dst : (& formatted fmt_svec.Vec)]
+  [hunk : FmtDiffHunk]
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : unit
+  (let
+    [src-index : i64 hunk.src-start]
+    [dst-index : i64 hunk.dst-start]
+    (while (or (< src-index hunk.src-end) (< dst-index hunk.dst-end))
+      (if (fmt-diff-line-eq?
+        src
+        src-index
+        hunk.src-end
+        dst
+        dst-index
+        hunk.dst-end)
+        (begin
+          (fmt-diff-emit-range-into! src " " src-index (+ src-index 1) buf)
+          (set! src-index (+ src-index 1))
+          (set! dst-index (+ dst-index 1)))
+        (match (fmt-diff-find-sync
+          src
+          src-index
+          hunk.src-end
+          dst
+          dst-index
+          hunk.dst-end)
+          [(FmtDiffSync.Found src-skip dst-skip)
+            (begin
+              (fmt-diff-emit-range-into!
+                src
+                "-"
+                src-index
+                (+ src-index src-skip)
+                buf)
+              (fmt-diff-emit-range-into!
+                dst
+                "+"
+                dst-index
+                (+ dst-index dst-skip)
+                buf)
+              (set! src-index (+ src-index src-skip))
+              (set! dst-index (+ dst-index dst-skip)))]
+          [(FmtDiffSync.Missing)
+            (let
+              [src-left : i64 (- hunk.src-end src-index)]
+              [dst-left : i64 (- hunk.dst-end dst-index)]
+              [lookahead : i64 (fmt-diff-lookahead)]
+              [src-next : i64
+                (+
+                  src-index
+                  (if (< src-left lookahead)
+                    src-left
+                    lookahead))]
+              [dst-next : i64
+                (+
+                  dst-index
+                  (if (< dst-left lookahead)
+                    dst-left
+                    lookahead))]
+              (begin
+                ;; Keep probing after a bounded unmatched window. A whole-file
+                ;; line-ending change can otherwise hide a short equal tail
+                ;; beyond the first lookahead and render it as remove/add text
+                ;; instead of the hunk's final unchanged context.
+                (fmt-diff-emit-range-into! src "-" src-index src-next buf)
+                (fmt-diff-emit-range-into! dst "+" dst-index dst-next buf)
+                (set! src-index src-next)
+                (set! dst-index dst-next)))])))))
 
 (define (fmt-diff-hunk-header
   [src-start : i64]
@@ -351,34 +662,9 @@
   (let
     [src : fmt_svec.Vec (fmt-split-lines-into source 0 (fmt_svec.new))]
     [dst : fmt_svec.Vec (fmt-split-lines-into formatted 0 (fmt_svec.new))]
-    [slen : i64 (fmt_svec.len (& src))]
-    [dlen : i64 (fmt_svec.len (& dst))]
-    [prefix : i64
-      (fmt-common-prefix-lines
-        (owned_view.compiler-owned-shared-view src)
-        (owned_view.compiler-owned-shared-view dst)
-        0)]
-    [suffix : i64
-      (fmt-common-suffix-lines
-        (owned_view.compiler-owned-shared-view src)
-        (owned_view.compiler-owned-shared-view dst)
-        prefix
-        0)]
-    [ctx : i64 (fmt-diff-context)]
-    [start : i64
-      (if (> (- prefix ctx) 0)
-        (- prefix ctx)
-        0)]
-    [src-end : i64 (- slen suffix)]
-    [dst-end : i64 (- dlen suffix)]
-    [src-ctx-end : i64
-      (if (< (+ src-end ctx) slen)
-        (+ src-end ctx)
-        slen)]
-    [dst-ctx-end : i64
-      (if (< (+ dst-end ctx) dlen)
-        (+ dst-end ctx)
-        dlen)]
+    [scan-src : i64 0]
+    [scan-dst : i64 0]
+    [finished : bool false]
     [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
     (begin
       (fmt_buf.fmt-render-buf-append (&mut buf) "--- a/")
@@ -388,28 +674,91 @@
       (fmt_buf.fmt-render-buf-append (&mut buf) "\n+++ b/")
       (fmt_buf.fmt-render-buf-append (&mut buf) path)
       (fmt_buf.fmt-render-buf-append (&mut buf) "\n")
-      (fmt_buf.fmt-render-buf-append
-        (&mut buf)
-        (fmt-diff-hunk-header
-          (+ start 1)
-          (- src-ctx-end start)
-          (+ start 1)
-          (- dst-ctx-end start)))
-      (fmt-diff-emit-range-into!
-        (owned_view.compiler-owned-shared-view src)
-        " "
-        start
-        prefix
-        (&mut buf))
-      (fmt-diff-emit-range-into!
-        (owned_view.compiler-owned-shared-view src)
-        "-"
-        prefix
-        src-end
-        (&mut buf))
-      (fmt-diff-emit-range-into! dst "+" prefix dst-end (&mut buf))
-      (fmt-diff-emit-range-into! src " " src-end src-ctx-end (&mut buf))
+      (while (not finished)
+        (match (fmt-diff-next-hunk (& src) (& dst) scan-src scan-dst)
+          [(FmtDiffHunkStep.Done) (set! finished true)]
+          [(FmtDiffHunkStep.Found hunk)
+            (begin
+              (fmt_buf.fmt-render-buf-append
+                (&mut buf)
+                (fmt-diff-hunk-header
+                  (+ hunk.src-start 1)
+                  (- hunk.src-end hunk.src-start)
+                  (+ hunk.dst-start 1)
+                  (- hunk.dst-end hunk.dst-start)))
+              (fmt-diff-emit-hunk-into! (& src) (& dst) hunk (&mut buf))
+              (set! scan-src hunk.next-src)
+              (set! scan-dst hunk.next-dst))]))
       (fmt_buf.fmt-render-buf-string buf))))
+
+(define (fmt-diff-large-fixture [formatted : bool]) : String
+  (let
+    [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
+    [index : i64 0]
+    (begin
+      (while (< index 4096)
+        (begin
+          (fmt_buf.fmt-render-buf-append
+            (&mut buf)
+            (if (and (not formatted) (or (= index 8) (= index 4088)))
+              (str_cat.str-cat
+                "(define  value-"
+                (string.int->string index)
+                "  0)\n")
+              (str_cat.str-cat
+                "(define value-"
+                (string.int->string index)
+                " 0)\n")))
+          (set! index (+ index 1))))
+      (fmt_buf.fmt-render-buf-string buf))))
+
+(test
+  fmt-check-diff-output-is-bounded-by-changes-not-distance
+  (let
+    [diff : String
+      (fmt-unified-diff
+        "large.tl"
+        (fmt-diff-large-fixture false)
+        (fmt-diff-large-fixture true))]
+    (if (and
+      (< (string.string-length diff) 4096)
+      (string.contains (& diff) "-(define  value-8  0)\n")
+      (string.contains (& diff) "-(define  value-4088  0)\n")
+      (not (string.contains (& diff) "value-2048")))
+      unit
+      (io.panic (string.copy diff)))))
+
+(define (fmt-diff-long-replacement-fixture [prefix : String]) : String
+  (let
+    [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
+    [index : i64 0]
+    (begin
+      (while (< index 70)
+        (begin
+          (fmt_buf.fmt-render-buf-append
+            (&mut buf)
+            (str_cat.str-cat
+              (owned_view.compiler-owned-shared-view prefix)
+              (string.int->string index)
+              "\n"))
+          (set! index (+ index 1))))
+      (fmt_buf.fmt-render-buf-append (&mut buf) "tail\n")
+      (fmt_buf.fmt-render-buf-string buf))))
+
+(test
+  fmt-check-diff-resynchronizes-after-a-long-replacement
+  (let
+    [diff : String
+      (fmt-unified-diff
+        "long.tl"
+        (fmt-diff-long-replacement-fixture "old-")
+        (fmt-diff-long-replacement-fixture "new-"))]
+    (if (and
+      (string.contains (& diff) " tail\n")
+      (not (string.contains (& diff) "-tail\n"))
+      (not (string.contains (& diff) "+tail\n")))
+      unit
+      (io.panic (string.copy diff)))))
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let

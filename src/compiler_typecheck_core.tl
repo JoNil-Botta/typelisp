@@ -111962,8 +111962,9 @@
 ;; walker deliberately mirrors `macro-bind-params-at`; the shared capture
 ;; helpers above own all validation and value construction, while this layer
 ;; owns only arity, mixed-prefix traversal, and syntax-pool selection. The
-;; caller has already enforced the eight-operand ABI limit, so the declared
-;; parameter count is both the required live prefix and the exact capacity.
+;; caller has already enforced the compiler-host operand ABI limit, so the
+;; declared parameter count is both the required live prefix and the exact
+;; capacity.
 (define (macro-capture-params-direct
   [ctx : TcContext]
   [decls : ast.AstDeclList]
@@ -112482,11 +112483,55 @@
     macro-name
     (csym.compiler-symbol-module-key definition-module macro-name)))
 
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-identity-differential-requested?) : bool
+    (let
+      [name : String "TYPELISP_TLCI_IDENTITY_DIFFERENTIAL"]
+      (match (stress_env.get (& name))
+        [(stress_env.EnvSomeString value) (string.eq value "1")]
+        [(stress_env.EnvNoString) false]))))
+
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-identity-result-kind [ret : ast.AstType]) : String
+    (if (tc-macro-result-module? ret)
+      "module"
+      (if (tc-macro-result-decls? ret)
+        "decls"
+        "expr"))))
+
+;; Runtime-gated, identity-specific evidence for #6609's required differential.
+;; Ordinary compiler builds omit this code; ordinary profile runs do not emit
+;; records unless the focused environment gate is enabled.
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-identity-route-emit!
+    [route : String]
+    [result-kind : String]
+    [identity : String]
+    [definition-module : String]) : unit
+    (if (compiler-tc-tlci-identity-differential-requested?)
+      (io.print-error
+        (str_cat.str-cat
+          "tlci-identity-route|"
+          route
+          "|"
+          result-kind
+          "|"
+          identity
+          "|"
+          definition-module
+          "\n"))
+      unit)))
+
 (define (macro-note-stdlib-tlci-route
   [state : TcMacroState]
   [definition-module : String]
   ;; lint-allow: unused-variable -- used by embedded-stdlib-tlci builds.
-  [macro-name : String]) : unit
+  [macro-name : String]
+  ;; lint-allow: unused-variable -- used by the focused differential build.
+  [ret : ast.AstType]) : unit
   (if (or
     (ctfe_support.ctfe-string-prefix?
       (tc-global-shared-view definition-module)
@@ -112495,6 +112540,13 @@
       (tc-global-shared-view macro-name)
       "stdlib."))
     (begin
+      (cfg
+        (all embedded-stdlib-tlci tlci-native-route-stress)
+        (compiler-tc-tlci-identity-route-emit!
+          "source"
+          (compiler-tc-tlci-identity-result-kind ret)
+          (macro-tlci-catalog-identity definition-module macro-name)
+          definition-module))
       (cfg
         tlci-bootstrap-mutation-witness
         (macro-tlci-bootstrap-mutation-witness-emit!
@@ -112827,7 +112879,7 @@
           (if prepared
             count
             0)]
-        [ok : bool (<= count 8)]
+        [ok : bool (<= count embedded_tlci.compiler-comptime-host-operand-cap)]
         (begin
           (while (and (not prepared) ok (< index count))
             (match (array-ref params.slots index)
@@ -112919,6 +112971,15 @@
                                   (all
                                     embedded-stdlib-tlci
                                     tlci-native-route-stress)
+                                  (compiler-tc-tlci-identity-route-emit!
+                                    "native"
+                                    (compiler-tc-tlci-identity-result-kind ret)
+                                    identity
+                                    ""))
+                                (cfg
+                                  (all
+                                    embedded-stdlib-tlci
+                                    tlci-native-route-stress)
                                   (compiler-tc-tlci-native-stress-catalog-dispatch!
                                     host-pools
                                     (tc-global-shared-view catalog)
@@ -113000,6 +113061,15 @@
                                     (all
                                       embedded-stdlib-tlci
                                       tlci-native-route-stress)
+                                    (compiler-tc-tlci-identity-route-emit!
+                                      "native"
+                                      "shell"
+                                      identity
+                                      ""))
+                                  (cfg
+                                    (all
+                                      embedded-stdlib-tlci
+                                      tlci-native-route-stress)
                                     (compiler-tc-tlci-native-stress-catalog-dispatch!
                                       host-pools
                                       (tc-global-shared-view catalog)
@@ -113071,6 +113141,15 @@
                                   (all
                                     embedded-stdlib-tlci
                                     tlci-native-route-stress)
+                                  (compiler-tc-tlci-identity-route-emit!
+                                    "native"
+                                    "error"
+                                    identity
+                                    ""))
+                                (cfg
+                                  (all
+                                    embedded-stdlib-tlci
+                                    tlci-native-route-stress)
                                   (compiler-tc-tlci-native-stress-catalog-dispatch!
                                     host-pools
                                     catalog
@@ -113116,7 +113195,9 @@
             ret
             env
             call-expr
-            (array.make-array ctfe_support.CompilerCtfeValue 8)
+            (array.make-array
+              ctfe_support.CompilerCtfeValue
+              embedded_tlci.compiler-comptime-host-operand-cap)
             params.len
             false)]
         [(MacroTlciCatalogSelection.Shell catalog)
@@ -113255,7 +113336,7 @@
         (tc-macro-walk-field
           (tc-context-macro-state (tc-global-shared-view ctx))
           macro-expand-stdlib-tlci-route-active))
-      (> params.len 8))
+      (> params.len embedded_tlci.compiler-comptime-host-operand-cap))
       MacroDirectStdlibTlciResult.No
       (let
         [dependency-slot : i64
@@ -113669,7 +113750,8 @@
               (macro-note-stdlib-tlci-route
                 (tc-context-macro-state (tc-global-shared-view ctx))
                 (tc-global-shared-view fallback-module)
-                (tc-global-shared-view macro-name))
+                (tc-global-shared-view macro-name)
+                ret)
               (macro-eval-transformer-interpreted-with-env
                 (tc-global-shared-view ctx)
                 fallback-module-id
@@ -113689,7 +113771,8 @@
               (macro-note-stdlib-tlci-route
                 (tc-context-macro-state (tc-global-shared-view ctx))
                 (tc-global-shared-view fallback-module)
-                (tc-global-shared-view macro-name))
+                (tc-global-shared-view macro-name)
+                ret)
               (macro-eval-transformer-interpreted-with-env
                 (tc-global-shared-view ctx)
                 fallback-module-id

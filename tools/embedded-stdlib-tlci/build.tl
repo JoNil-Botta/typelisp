@@ -100,7 +100,7 @@
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
   (match decl
-    [(ast.AstDecl.DefMacro decl-meta name params _ body)
+    [(ast.AstDecl.DefMacro decl-meta name params ret body)
       (begin
         (embedded-stdlib-tlci-push-name! names module name)
         (compiler_tlci_native_producer.tlci-native-macro-captures-push!
@@ -110,6 +110,8 @@
               (string.copy module)
               name)
             params
+            (compiler_tlci_native_producer.embedded-native-macro-result-kind
+              ret)
             body)))]
     [(ast.AstDecl.Unsafe inner)
       (embedded-stdlib-tlci-collect-decl!
@@ -211,6 +213,76 @@
           names
           captures)))))
 
+(define (embedded-stdlib-tlci-params-variadic?
+  [params : (& params ast.AstMacroParamList)]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index params.len))
+        (match (array-ref params.slots index)
+          [(ast.AstMacroParam.Param _ _ variadic _)
+            (if variadic
+              (set! found true)
+              (set! index (+ index 1)))]))
+      found)))
+
+(define (embedded-stdlib-tlci-result-kind [result-kind : i64]) : String
+  (cond [(= result-kind 1) "module"] [(= result-kind 2) "decls"] [else "expr"]))
+
+;; Machine-readable, source-derived census used by the checked exhaustive
+;; differential. The image catalog remains the authority for ordering and the
+;; captured declarations provide the reviewed arity/result contract. Refs
+;; #6609.
+(define (embedded-stdlib-tlci-identity-manifest
+  [names : (& names (__tl_dyn-array String))]
+  [captures
+    : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : String
+  (let
+    [out : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length names))
+        (begin
+          (let
+            [identity : String (array-ref names index)]
+            [slot : i64
+              (compiler_tlci_native_producer.tlci-native-macro-capture-slot
+                captures
+                identity)]
+            (if (< slot 0)
+              (set!
+                embedded-stdlib-tlci-build-error
+                (str_cat.str-cat
+                  "missing source capture for stdlib macro identity: "
+                  identity))
+              (let
+                [params : ast.AstMacroParamList
+                  (__tl-project-field (array-ref captures.slots slot) params)]
+                [result-kind-code : i64
+                  (__tl-project-field
+                    (array-ref captures.slots slot)
+                    result-kind)]
+                [result-kind : String
+                  (embedded-stdlib-tlci-result-kind result-kind-code)]
+                [owned-result-kind : String (string.copy (& result-kind))]
+                (set!
+                  out
+                  (str_cat.str-cat
+                    out
+                    identity
+                    "\t"
+                    (string.int->string params.len)
+                    "\t"
+                    (if (embedded-stdlib-tlci-params-variadic? (& params))
+                      "variadic"
+                      "fixed")
+                    "\t"
+                    owned-result-kind
+                    "\n")))))
+          (set! index (+ index 1))))
+      out)))
+
 (define (embedded-native-write
   [output : String]
   [build-hash : String]
@@ -218,6 +290,7 @@
   [rodata : (__tl_dyn-array u8)]
   [names : (__tl_dyn-array String)]
   [full-blockers : bool]
+  [identity-manifest : bool]
   [captures
     : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : i64
   (match (compiler_tlci_native_producer.embedded-native-emit-package
@@ -264,9 +337,11 @@
               (array-ref
                 compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-full-reasons
                 0)
-              (array-ref
-                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
-                0)))
+              (if identity-manifest
+                (embedded-stdlib-tlci-identity-manifest (& names) captures)
+                (array-ref
+                  compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
+                  0))))
           (io.print-format
             "{}"
             (str_cat.str-cat
@@ -299,7 +374,7 @@
   (if (and (!= (io.arg-count) 7) (!= (io.arg-count) 8))
     (begin
       (io.print-error
-        "usage: build <module-manifest> <stdlib-root> <output.tlci> <linux|windows> <build-hash> <surface-rodata> [--full-blockers]\n")
+        "usage: build <module-manifest> <stdlib-root> <output.tlci> <linux|windows> <build-hash> <surface-rodata> [--full-blockers|--identity-manifest]\n")
       2)
     (let
       [manifest-path : String (io.arg 1)]
@@ -308,7 +383,11 @@
       [target : String (io.arg 4)]
       [build-hash : String (io.arg 5)]
       [rodata-path : String (io.arg 6)]
-      [full-blockers : bool (= (io.arg-count) 8)]
+      [diagnostics-mode : bool (= (io.arg-count) 8)]
+      [full-blockers : bool
+        (and diagnostics-mode (string.eq (io.arg 7) "--full-blockers"))]
+      [identity-manifest : bool
+        (and diagnostics-mode (string.eq (io.arg 7) "--identity-manifest"))]
       [_report-mode : unit
         (compiler_tlci_native_producer.embedded-native-full-blocker-report-set!
           full-blockers)]
@@ -316,7 +395,7 @@
       [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
         (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
       (cond
-        [(and full-blockers (not (string.eq (io.arg 7) "--full-blockers")))
+        [(and diagnostics-mode (not (or full-blockers identity-manifest)))
           (begin
             (io.print-error
               (str_cat.str-cat
@@ -382,4 +461,5 @@
                       rodata
                       name-array
                       full-blockers
+                      identity-manifest
                       (& captures)))))))]))))

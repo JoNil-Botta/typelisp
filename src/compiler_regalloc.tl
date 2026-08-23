@@ -39365,21 +39365,25 @@
         (compiler-reg-remap-id (compiler-reg-global-shared-view remap) id))]
     [_ value]))
 
-(define (compiler-reg-remap-value-list
+(define (compiler-reg-remap-value-seq
   [remap : (__tl_dyn-array i64)]
-  [values : ir.CompilerIrValueList]) : ir.CompilerIrValueList
-  (match (ir.compiler-ir-value-list-force-cons values)
-    [(ir.CompilerIrValueList.Nil) ir.CompilerIrValueList.Nil]
-    [(ir.CompilerIrValueList.Array seq)
-      (compiler-reg-remap-value-list
-        remap
-        (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons head rest)
-      (ir.compiler-ir-value-cons
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) head)
-        (compiler-reg-remap-value-list
-          (compiler-reg-global-shared-view remap)
-          (compiler-reg-box-shared-view rest)))]))
+  [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrValue)
+      (array.make-array ir.CompilerIrValue values.len)]
+    [index : i64 0]
+    (begin
+      (while (< index values.len)
+        (begin
+          (set!
+            (array-ref slots index)
+            (compiler-reg-remap-value
+              (compiler-reg-global-shared-view remap)
+              (ir.compiler-ir-value-seq-ref
+                (compiler-reg-global-shared-view values)
+                index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrValueSeq slots values.len))))
 
 (define (compiler-reg-remap-params
   [remap : (__tl_dyn-array i64)]
@@ -39960,7 +39964,7 @@
     [(ir.CompilerIrInstr.Pack dst words ty)
       (ir.CompilerIrInstr.Pack
         (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
-        (compiler-reg-remap-value-list
+        (compiler-reg-remap-value-seq
           (compiler-reg-global-shared-view remap)
           words)
         ty)]
@@ -42317,23 +42321,27 @@
       instr)
     cabi.compiler-reg-id-invalid))
 
+(define (compiler-reg-scratch-pack-registers-from
+  [assignments : CompilerRegAssignmentTable]
+  [words : ir.CompilerIrValueSeq]
+  [index : i64]) : CompilerRegIdSeq
+  (if (>= index words.len)
+    (compiler-reg-id-seq-empty)
+    (compiler-reg-id-seq-append
+      (compiler-reg-scratch-value-registers
+        (compiler-reg-global-shared-view assignments)
+        (ir.compiler-ir-value-seq-ref
+          (compiler-reg-global-shared-view words)
+          index))
+      (compiler-reg-scratch-pack-registers-from
+        (compiler-reg-global-shared-view assignments)
+        (compiler-reg-global-shared-view words)
+        (+ index 1)))))
+
 (define (compiler-reg-scratch-pack-registers
   [assignments : CompilerRegAssignmentTable]
-  [words : ir.CompilerIrValueList]) : CompilerRegIdSeq
-  (match words
-    [(ir.CompilerIrValueList.Nil) (compiler-reg-id-seq-empty)]
-    [(ir.CompilerIrValueList.Cons word rest)
-      (compiler-reg-id-seq-append
-        (compiler-reg-scratch-value-registers
-          (compiler-reg-global-shared-view assignments)
-          word)
-        (compiler-reg-scratch-pack-registers
-          (compiler-reg-global-shared-view assignments)
-          (compiler-reg-box-shared-view rest)))]
-    [(ir.CompilerIrValueList.Array seq)
-      (compiler-reg-scratch-pack-registers
-        (compiler-reg-global-shared-view assignments)
-        (ir.compiler-ir-value-seq-to-list seq))]))
+  [words : ir.CompilerIrValueSeq]) : CompilerRegIdSeq
+  (compiler-reg-scratch-pack-registers-from assignments words 0))
 
 (define (compiler-reg-scratch-phi-constraint
   [_policy : CompilerRegScratchPolicy]

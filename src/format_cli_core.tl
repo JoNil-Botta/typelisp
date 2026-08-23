@@ -605,11 +605,31 @@
               (set! src-index (+ src-index src-skip))
               (set! dst-index (+ dst-index dst-skip)))]
           [(FmtDiffSync.Missing)
-            (begin
-              (fmt-diff-emit-range-into! src "-" src-index hunk.src-end buf)
-              (fmt-diff-emit-range-into! dst "+" dst-index hunk.dst-end buf)
-              (set! src-index hunk.src-end)
-              (set! dst-index hunk.dst-end))])))))
+            (let
+              [src-left : i64 (- hunk.src-end src-index)]
+              [dst-left : i64 (- hunk.dst-end dst-index)]
+              [lookahead : i64 (fmt-diff-lookahead)]
+              [src-next : i64
+                (+
+                  src-index
+                  (if (< src-left lookahead)
+                    src-left
+                    lookahead))]
+              [dst-next : i64
+                (+
+                  dst-index
+                  (if (< dst-left lookahead)
+                    dst-left
+                    lookahead))]
+              (begin
+                ;; Keep probing after a bounded unmatched window. A whole-file
+                ;; line-ending change can otherwise hide a short equal tail
+                ;; beyond the first lookahead and render it as remove/add text
+                ;; instead of the hunk's final unchanged context.
+                (fmt-diff-emit-range-into! src "-" src-index src-next buf)
+                (fmt-diff-emit-range-into! dst "+" dst-index dst-next buf)
+                (set! src-index src-next)
+                (set! dst-index dst-next)))])))))
 
 (define (fmt-diff-hunk-header
   [src-start : i64]
@@ -695,6 +715,35 @@
       (string.contains (& diff) "-(define  value-8  0)\n")
       (string.contains (& diff) "-(define  value-4088  0)\n")
       (not (string.contains (& diff) "value-2048")))
+      unit
+      (io.panic (string.copy diff)))))
+
+(define (fmt-diff-long-replacement-fixture [prefix : String]) : String
+  (let
+    [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
+    [index : i64 0]
+    (begin
+      (while (< index 70)
+        (begin
+          (fmt_buf.fmt-render-buf-append
+            (&mut buf)
+            (str_cat.str-cat prefix (string.int->string index) "\n"))
+          (set! index (+ index 1))))
+      (fmt_buf.fmt-render-buf-append (&mut buf) "tail\n")
+      (fmt_buf.fmt-render-buf-string buf))))
+
+(test
+  fmt-check-diff-resynchronizes-after-a-long-replacement
+  (let
+    [diff : String
+      (fmt-unified-diff
+        "long.tl"
+        (fmt-diff-long-replacement-fixture "old-")
+        (fmt-diff-long-replacement-fixture "new-"))]
+    (if (and
+      (string.contains (& diff) " tail\n")
+      (not (string.contains (& diff) "-tail\n"))
+      (not (string.contains (& diff) "+tail\n")))
       unit
       (io.panic (string.copy diff)))))
 

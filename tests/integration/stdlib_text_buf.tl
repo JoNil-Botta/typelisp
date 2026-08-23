@@ -343,6 +343,40 @@
       (string.eq readback "file-out")
       false)))
 
+(define (text-buf-large-text [rounds : i64]) : String
+  (let
+    [text : String "x"]
+    [index : i64 0]
+    (begin
+      (while (< index rounds)
+        (begin
+          (set! text (string.append (& text) (& text)))
+          (set! index (+ index 1))))
+      text)))
+
+(define (text-buf-batched-write-file-integration-ok?) : bool
+  (let
+    [path : String "target/stdlib-text-buf-batched-write-file.txt"]
+    [chunk : String (text-buf-large-text 19)]
+    [buf : text_buf.TextBuf
+      (text_buf.append
+        (text_buf.append
+          (text_buf.append (text_buf.empty) (string.copy (& chunk)))
+          (string.copy (& chunk)))
+        chunk)]
+    [status : i64 (text_buf.write-file path buf)]
+    [readback : String (byte_buf.to-string (io.read-file path))]
+    (and (= status io.io-status-ok) (= (string-length (& readback)) 1572864))))
+
+(define (text-buf-oversized-chunk-write-file-integration-ok?) : bool
+  (let
+    [path : String "target/stdlib-text-buf-oversized-chunk-write-file.txt"]
+    [buf : text_buf.TextBuf
+      (text_buf.append (text_buf.empty) (text-buf-large-text 21))]
+    [status : i64 (text_buf.write-file path buf)]
+    [readback : String (byte_buf.to-string (io.read-file path))]
+    (and (= status io.io-status-ok) (= (string-length (& readback)) 2097152))))
+
 (define (main) : i64
   (begin
     (unless (text-buf-integration-ok?) (return 2))
@@ -358,4 +392,6 @@
     (unless (text-buf-borrowed-replay-integration-ok?) (return 12))
     (unless (text-buf-borrowed-merge-persistence-integration-ok?) (return 13))
     (unless (text-buf-owned-clone-out-integration-ok?) (return 14))
+    (unless (text-buf-batched-write-file-integration-ok?) (return 15))
+    (unless (text-buf-oversized-chunk-write-file-integration-ok?) (return 16))
     42))

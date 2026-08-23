@@ -559,26 +559,49 @@
                       (begin
                         (set! bytes (+ bytes chunk-len))
                         (set! index (+ index 1))))))
-                (let
-                  [rendered : String
-                    (stdlib.text_buf.chunks-render-array-range
+                (if (and (= (- index start) 1) (> bytes batch-limit))
+                  (let
+                    [chunk : String
                       (unsafe
-                        (ptr-read (ptr-addr-of items)))
-                      start
-                      index)]
-                  (set!
-                    status
-                    (io.file-write-status
-                      raw
-                      (byte_buf.str-as-bytes (& rendered))))))))
+                        (ptr-read (ptr-offset (array-data items) start)))]
+                    (set!
+                      status
+                      (io.file-write-status
+                        raw
+                        (byte_buf.str-as-bytes (& chunk)))))
+                  (let
+                    [rendered : String
+                      (stdlib.text_buf.chunks-render-array-range
+                        (unsafe
+                          (ptr-read (ptr-addr-of items)))
+                        start
+                        index)]
+                    (set!
+                      status
+                      (io.file-write-status
+                        raw
+                        (byte_buf.str-as-bytes (& rendered)))))))))
           status)))
     (define (write-chunks-batched
       [raw : i64]
       [write-chunks-list : TextBufChunkList]) : i64
-      ;; The compiler's ownership-correct opt0 output can contain individual
-      ;; chunks larger than the batching threshold. Reuse the allocation-free
-      ;; ordered writer until batching can split one chunk without flattening.
-      (stdlib.text_buf.write-chunks-rev raw write-chunks-list))
+      (let
+        [count : i64
+          (stdlib.text_buf.chunk-count
+            (unsafe
+              (ptr-read (ptr-addr-of write-chunks-list)))
+            0)]
+        [items : (__tl_dyn-array String) (make-array String count)]
+        (begin
+          (stdlib.text_buf.chunks-fill-array-rev
+            write-chunks-list
+            (&mut items)
+            (- count 1))
+          (stdlib.text_buf.write-array-batches
+            raw
+            items
+            count
+            (stdlib.text_buf.batched-write-threshold)))))
     (define (write-file [path : (& path str)] [buf : (& buf TextBuf)]) : i64
       (let
         [open-result : io.ResultIoFile

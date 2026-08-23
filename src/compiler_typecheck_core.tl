@@ -1588,7 +1588,9 @@
   [source-names : ci.InternSourceNameSessionHandle]
   [job-state : TcJobState]) : TcContext
   (begin
-    (tc-type-resolution-cache-bind-pools-for-job! job-state pools)
+    (tc-type-resolution-cache-bind-pools-for-job!
+      job-state
+      (tc-global-shared-view pools))
     (TcContext
       program
       symbols
@@ -1628,7 +1630,9 @@
   [source-names : ci.InternSourceNameSessionHandle]
   [body-state : TcBodyState]) : TcContext
   (begin
-    (tc-type-resolution-cache-bind-pools-for-job! body-state.job-state pools)
+    (tc-type-resolution-cache-bind-pools-for-job!
+      body-state.job-state
+      (tc-global-shared-view pools))
     (TcContext
       program
       symbols

@@ -130,21 +130,43 @@
       [(compiler_backend.ResultCompilerBackend.Err diagnostic)
         (compiler_backend.ResultCompilerBackend.Err diagnostic)])))
 
-;; Fixture-side dense prepend. Each result owns fresh backing storage, so
-;; independently built fixtures never share mutable instruction slots.
+;; Fixture-side dense consuming prepend. `rest` is moved into this helper, so
+;; spare backing storage is exclusively owned and may be reused; independent
+;; fixture chains still begin with distinct empty sequences and never share
+;; mutable instruction slots. Seeding eight slots avoids an allocation for
+;; every nested prepend while retaining dense forward instruction order.
 (define (compiler-backend-test-instr-seq-prepend
   [instr : compiler_ir_types.CompilerIrInstr]
   [rest : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
   (let
+    [count : i64 rest.len]
+    [capacity : i64 (array-length rest.slots)]
     [builder : compiler_ir_types.CompilerIrInstrBuilder
-      (compiler_ir_types.compiler-ir-instr-builder-with-capacity (+ rest.len 1))]
+      (if (< count capacity)
+        (compiler_ir_types.CompilerIrInstrBuilder rest.slots count)
+        (let
+          [fresh : compiler_ir_types.CompilerIrInstrBuilder
+            (compiler_ir_types.compiler-ir-instr-builder-with-capacity
+              (if (< capacity 8)
+                8
+                (* capacity 2)))]
+          (begin
+            (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
+              (&mut fresh)
+              rest
+              0
+              count)
+            fresh)))]
+    [index : i64 builder.len]
     (begin
-      (compiler_ir_types.compiler-ir-instr-builder-push! (&mut builder) instr)
-      (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
-        (&mut builder)
-        rest
-        0
-        rest.len)
+      (while (> index 0)
+        (begin
+          (set!
+            (array-ref builder.slots index)
+            (array-ref builder.slots (- index 1)))
+          (set! index (- index 1))))
+      (set! (array-ref builder.slots 0) instr)
+      (set! builder.len (+ count 1))
       (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))
 
 ;; String-returning shim for instruction-sequence emission. Emission appends

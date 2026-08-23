@@ -21775,6 +21775,80 @@
 ;; is late-only for the established reason: before BCE, moving a descriptor
 ;; length can hide the shared bound identity bounds-check elimination still
 ;; needs.
+(define (opt-licm-block-guaranteed?
+  [context : OptCfgContext]
+  [latch-id : i64]
+  [label : i64]) : bool
+  (if (< latch-id 0)
+    true
+    (match (opt-cfg-index-id context.index label)
+      [(option_i64.Some id)
+        (opt-dom-info-dominates-id? context.doms id latch-id)]
+      [(option_i64.None) true])))
+
+;; A consumer inside a loop nested in the one being processed can execute many
+;; times per iteration of the outer loop, so it pays for an outer-loop hoist
+;; even when its block does not dominate the outer latch.
+(define (opt-licm-label-in-nested-loop?
+  [loops : OptNaturalLoopList]
+  [header : i64]
+  [body : OptLabelSet]
+  [label : i64]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons inner rest)
+      (if (and
+        (not (= (opt-natural-loop-header inner) header))
+        (opt-label-contains body (opt-natural-loop-header inner))
+        (opt-label-contains (opt-natural-loop-body inner) label))
+        true
+        (opt-licm-label-in-nested-loop? (__tl-box-place rest) header body label))]))
+
+;; Collect consumers whose frequency can pay for an arithmetic value's longer
+;; live range. Uses outside the loop must remain available, blocks dominating
+;; the latch execute on every continuing iteration, and nested-loop uses can be
+;; repeated. When `gate?` is false every use is collected, preserving LICM's
+;; established behavior for non-entry preheaders.
+(define (opt-licm-hot-use-vars
+  [context : OptCfgContext]
+  [latch-id : i64]
+  [loops : OptNaturalLoopList]
+  [header : i64]
+  [body : OptLabelSet]
+  [gate? : bool]
+  [blocks : ir.CompilerIrBlockList]
+  [set : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) set]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (opt-licm-hot-use-vars
+            context
+            latch-id
+            loops
+            header
+            body
+            gate?
+            (__tl-box-place rest)
+            (if (or
+              (not gate?)
+              (not (opt-label-contains body label))
+              (opt-licm-block-guaranteed? context latch-id label)
+              (opt-licm-label-in-nested-loop? loops header body label))
+              (opt-collect-instr-seq-uses set instrs)
+              set))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-licm-hot-use-vars
+        context
+        latch-id
+        loops
+        header
+        body
+        gate?
+        (ir.compiler-ir-block-seq-to-list seq)
+        set)]))
+
 (define (opt-licm-candidate?
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
@@ -21793,6 +21867,7 @@
   ;; load of that global's cell. See OptLicmGlobalFacts,
   ;; opt-licm-value-invariant? and opt-licm-globals-clean?.
   [globals : OptLicmGlobalFacts]
+  [hot-uses : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _)
@@ -21834,12 +21909,15 @@
     ;; source is invariant; unlike a memory Load this needs no alias proof.
     [(ir.CompilerIrInstr.Word _ src _ _)
       (opt-licm-global-value-invariant? globals loop-defs hoisted src)]
-    [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
       (and
+        (opt-used-contains hot-uses dst)
         (not (opt-binop-traps? op))
         (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs))]
-    [(ir.CompilerIrInstr.UnOp _ _ src _)
-      (opt-licm-global-value-invariant? globals loop-defs hoisted src)]
+    [(ir.CompilerIrInstr.UnOp dst _ src _)
+      (and
+        (opt-used-contains hot-uses dst)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (and
         (opt-gvn-stable-var? sources dst)
@@ -22022,6 +22100,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals : OptLicmGlobalFacts]
+  [hot-uses : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -22053,6 +22132,7 @@
               licm-mode
               descriptor-header-hoist?
               globals
+              hot-uses
               instr)
               (begin
                 (ir.compiler-ir-instr-builder-push! (&mut moved) instr)
@@ -22083,6 +22163,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals : OptLicmGlobalFacts]
+  [hot-uses : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     type-segment-bases
@@ -22100,6 +22181,7 @@
     licm-mode
     descriptor-header-hoist?
     globals
+    hot-uses
     hoisted))
 
 (define (opt-licm-filter-body-blocks
@@ -22117,6 +22199,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals : OptLicmGlobalFacts]
+  [hot-uses : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmBlocksResult
   (match blocks
     [(ir.CompilerIrBlockList.Nil)
@@ -22143,6 +22226,7 @@
             licm-mode
             descriptor-header-hoist?
             globals
+            hot-uses
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
@@ -22160,6 +22244,7 @@
                 licm-mode
                 descriptor-header-hoist?
                 globals
+                hot-uses
                 next-hoisted)
                 [(OptLicmBlocksResult.Result
                     rest-blocks
@@ -22189,6 +22274,7 @@
         licm-mode
         descriptor-header-hoist?
         globals
+        hot-uses
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -23054,6 +23140,10 @@
   [global-cells : OptGlobalCellSummary]
   [frame-cell : (__tl_dyn-array i64)]
   [late? : bool]
+  ;; Valid for `blocks`: LICM only inserts into existing preheaders, so the
+  ;; original dominance relation remains valid throughout this loop walk.
+  [context : OptCfgContext]
+  [all-loops : OptNaturalLoopList]
   [blocks : ir.CompilerIrBlockList]
   [loop : OptNaturalLoop]) : OptBlockListPassResult
   (match (opt-natural-loop-preheader loop)
@@ -23084,6 +23174,20 @@
         [raw-rooted-summary : OptLicmStoreSummary store-state.rooted-summary]
         [raw-legacy-summary : OptLicmStoreSummary
           (opt-licm-store-summary-merge raw-summary raw-rooted-summary)]
+        [hot-uses : opt_i64_i64_map.Map
+          (opt-licm-hot-use-vars
+            context
+            (match (opt-cfg-index-id
+              context.index
+              (opt-natural-loop-latch loop))
+              [(option_i64.Some latch-id) latch-id]
+              [(option_i64.None) -1])
+            all-loops
+            (opt-natural-loop-header loop)
+            (opt-natural-loop-body loop)
+            (= preheader context.entry-label)
+            blocks
+            (opt_i64_i64_map.with-capacity map-capacity))]
         [side-exit-kind : i64
           (opt-licm-loop-side-exit-kind
             blocks
@@ -23211,6 +23315,7 @@
             0)
           descriptor-header-hoist?
           globals
+          hot-uses
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             ;; Loop-scope global operand promotion runs on what the hoist
@@ -23275,6 +23380,8 @@
   [global-cells : OptGlobalCellSummary]
   [frame-cell : (__tl_dyn-array i64)]
   [late? : bool]
+  [context : OptCfgContext]
+  [all-loops : OptNaturalLoopList]
   [loops : OptNaturalLoopList]
   [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   (match loops
@@ -23289,6 +23396,8 @@
         global-cells
         frame-cell
         late?
+        context
+        all-loops
         blocks
         loop)
         [(OptBlockListPassResult.Result loop-blocks loop-changed)
@@ -23301,6 +23410,8 @@
             global-cells
             frame-cell
             late?
+            context
+            all-loops
             (__tl-box-place rest)
             loop-blocks)
             [(OptBlockListPassResult.Result rest-blocks rest-changed)
@@ -23481,6 +23592,8 @@
                   global-cells
                   frame-cell
                   late?
+                  context
+                  loops
                   loops
                   blocks)
                   [(OptBlockListPassResult.Result hoisted-blocks licm-changed?)

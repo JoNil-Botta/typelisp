@@ -68,8 +68,8 @@ contextual `(init)` works where an expected type is known.
 ```
 i64 i32 i16 i8   u64 u32 u16 u8   f64 f32   bool   char   unit   String
 ByteBuf           ; owned mutable byte buffer
-(Array t n)       ; fixed-size array (public Array end state)
-(Array t)         ; compatibility runtime-sized buffer during migration
+(Array t n)       ; fixed-size array
+(__tl_dyn-array t); compiler-private runtime-sized buffer
 (Slice t)          ; unsized borrowed referent (never a bare runtime value)
 (Tuple t1 t2 ...) ; tuple (by-value params/returns supported)
 (Box t)           ; arena-owned indirection for recursive aggregates
@@ -113,8 +113,9 @@ field, or ordinary parameter. At an exact typed call boundary, an explicit
 fixed-array borrow unsizes to the same-mutability Slice parameter (`(& items)`
 to `& Slice`, or `(&mut items)` to `&mut Slice`); a bare array is never
 auto-borrowed for this conversion. The checked `slice-view` and
-`slice-mut-view` builtins accept fixed/compatibility arrays, suitable references,
-or existing Slice views and return allocation-free, provenance-tied subviews.
+`slice-mut-view` builtins accept fixed arrays or private dynamic buffers,
+suitable references, or existing Slice views and return allocation-free,
+provenance-tied subviews.
 `length`/`array-length` and `array-ref` operate on these views, with mutable
 element writes expressed as `set!` of an `array-ref` place. Ranges and indices
 are checked; zero-length views are valid. For example:
@@ -270,9 +271,8 @@ use the end-state forms:
 - Build strings with `str-cat` or `text_buf`; do not add
   `string-append`/`string-concat` chains.
 - Use `ByteBuf` and borrowed `bytes` views for mutable binary storage, not
-  mutable `str` or `(Array u8)`.
+  mutable `str` or compiler-private dynamic buffers.
 - Use fixed `(Array T N)` values for fixed storage and vector/slice APIs for
-  runtime-sized collections. Unsized `(Array T)` remains only as a migration
-  compatibility surface.
+  runtime-sized collections. Public unsized `(Array T)` is rejected.
 - Mutate places in place with `set!`, including struct fields and boxed
   storage, instead of copy-on-update helpers.

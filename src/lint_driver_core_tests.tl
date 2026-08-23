@@ -465,7 +465,7 @@ end
 (define (selfhost-lint-single-element-array-dynamic-source) : String
   "(define (main) : i64
   (let
-    [cur : (__tl_dyn-array i64) (make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref cur 0) 3)
       (array-ref cur 0))))")
@@ -487,7 +487,7 @@ end
 (define (selfhost-lint-single-element-array-dynamic-index-source) : String
   "(define (main [index : i64]) : i64
   (let
-    [cur : (__tl_dyn-array i64) (make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (array-ref cur index)))")
 
 (define (selfhost-lint-single-element-array-escape-source) : String
@@ -495,7 +495,7 @@ end
   (array-length items))
 (define (main) : i64
   (let
-    [cur : (__tl_dyn-array i64) (make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (use-array cur)))")
 
 (define (selfhost-lint-single-element-array-aggregate-source) : String
@@ -521,10 +521,10 @@ end
       (set! (array-ref items 2) c)
       items)))")
 
-(define (selfhost-lint-dynamic-array-literal-bare-source) : String
+(define (selfhost-lint-dynamic-array-literal-private-source) : String
   "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) 4)
       (set! (array-ref items 1) 7)
@@ -533,7 +533,7 @@ end
 (define (selfhost-lint-dynamic-array-literal-return-source) : String
   "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) 4)
       (set! (array-ref items 1) 7)
@@ -542,7 +542,7 @@ end
 (define (selfhost-lint-dynamic-array-literal-assignment-source) : String
   "(define (set-items [result : (__tl_dyn-array i64)]) : unit
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) 4)
       (set! (array-ref items 1) 7)
@@ -551,7 +551,7 @@ end
 (define (selfhost-lint-dynamic-array-literal-ambiguous-two-var-source) : String
   "(define (make-items [first : i64] [second : i64]) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) first)
       (set! (array-ref items 1) second)
@@ -560,7 +560,7 @@ end
 (define (selfhost-lint-dynamic-array-literal-read-before-complete-source) : String
   "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) 4)
       (array-ref items 0)
@@ -570,7 +570,7 @@ end
 (define (selfhost-lint-dynamic-array-literal-computed-index-source) : String
   "(define (make-items [index : i64]) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items index) 4)
       (set! (array-ref items 1) 7)
@@ -579,7 +579,7 @@ end
 (define (selfhost-lint-dynamic-array-literal-duplicate-index-source) : String
   "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 3)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     (begin
       (set! (array-ref items 0) 4)
       (set! (array-ref items 0) 7)
@@ -589,7 +589,7 @@ end
 (define (selfhost-lint-dynamic-array-literal-gapped-index-source) : String
   "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 3)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     (begin
       (set! (array-ref items 0) 4)
       (set! (array-ref items 2) 7)
@@ -599,7 +599,7 @@ end
 (define (selfhost-lint-dynamic-array-literal-partial-source) : String
   "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) 4)
       items)))")
@@ -608,7 +608,7 @@ end
   "(define (consume [items : (__tl_dyn-array i64)]) : unit unit)
 (define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) 4)
       (consume items)
@@ -619,7 +619,7 @@ end
   "(define (make-items) : (__tl_dyn-array i64)
   (let
     ;; lint-allow: prefer-dynamic-array-literal
-    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) 4)
       (set! (array-ref items 1) 7)
@@ -1523,7 +1523,7 @@ end
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-bare-source)
+              (selfhost-lint-dynamic-array-literal-private-source)
               rule)
             1))
         141]

@@ -9461,7 +9461,7 @@
 
 (define (compiler-specialize-type-param-source) : String
   "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64)
-  (make-array T n))
+  (__tl_make-array T n))
 (define (main) : (__tl_dyn-array i64)
   (alloc (type i64) 4))")
 
@@ -10007,7 +10007,7 @@
 ;: must share one generated decl via the specialization cache, not emit two.
 (define (compiler-specialize-reuse-source) : String
   "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64)
-  (make-array T n))
+  (__tl_make-array T n))
 (define (main) : (__tl_dyn-array i64)
   (begin (alloc (type i64) 4) (alloc (type i64) 8)))")
 

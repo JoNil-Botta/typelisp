@@ -65,6 +65,15 @@
         (scanner-counted (&mut state) 1)
         (scanner-counted (&mut state) 2)
         (scanner-counted (&mut state) 3))]
+    [aligned : String (format.format "{:-<5}|{:^5}|{:>5}" "a" "b" "c")]
+    [signed-zero : String (format.format "{:+05}" (cast 12 : i64))]
+    [dynamic-width : String
+      (format.format
+        "{0:1$}:{2:width$}"
+        "a"
+        (cast 4 : i64)
+        "b"
+        (format.named width (cast 3 : i64)))]
     (and
       (string.eq empty-template "")
       (string.eq no-holes "plain text")
@@ -83,6 +92,9 @@
       (string.eq named "L:R:L")
       (string.eq captured "captured:7")
       (string.eq ordered "3:1:2:3")
+      (string.eq aligned "a----|  b  |    c")
+      (string.eq signed-zero "+0012")
+      (string.eq dynamic-width "a   :b  ")
       (= state.value 123))))
 
 ;; The same scanner drives `println`/`print-format`, which reach it through

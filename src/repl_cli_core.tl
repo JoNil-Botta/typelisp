@@ -253,7 +253,10 @@
         (string.int->string count)
         ")")]
     [(ast.AstType.DynArray elem)
-      (str_cat.str-cat "(Array " (repl-type-render (ast.ty-node-get elem)) ")")]
+      (str_cat.str-cat
+        "(__tl_dyn-array "
+        (repl-type-render (ast.ty-node-get elem))
+        ")")]
     [(ast.AstType.Slice elem)
       (str_cat.str-cat "(Slice " (repl-type-render (ast.ty-node-get elem)) ")")]
     [(ast.AstType.Box elem)

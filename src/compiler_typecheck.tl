@@ -49,7 +49,7 @@
 (extern (arg-count) : i64)
 (extern (io.arg [arg0 : i64]) : String)
 (defstruct ByteBuf
-  (slots (Array u8))
+  (slots (__tl_dyn-array u8))
   (len i64))
 (extern (io.read-file [arg0 : String]) : ByteBuf)
 (extern (io.read-file-status [arg0 : String]) : i64)
@@ -578,7 +578,7 @@
   (let
     [fixed : (Array i64 3) (array 1 2 3)]
     [t : (Tuple i64 bool) (tuple 7 true)]
-    [a : (__tl_dyn-array i64) (make-array i64 n)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (set! (array-ref a 0) (cast (__tl_string_ref s 0) : i64))
       (foreach ([i : i64 0 n])
@@ -741,9 +741,9 @@
 (define (compiler-typecheck-foreach-spmd-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
-    [a : (__tl_dyn-array i64) (make-array i64 n)]
-    [b : (__tl_dyn-array i64) (make-array i64 n)]
-    [out : (__tl_dyn-array i64) (make-array i64 n)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (foreach ([i : i64 0 n])
       (let
         [sum : i64 (+ (array-ref a i) (array-ref b i))]
@@ -752,9 +752,9 @@
 (define (compiler-typecheck-foreach-spmd-f32-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
-    [a : (__tl_dyn-array f32) (make-array f32 n)]
-    [b : (__tl_dyn-array f32) (make-array f32 n)]
-    [out : (__tl_dyn-array f32) (make-array f32 n)]
+    [a : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [b : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [out : (__tl_dyn-array f32) (__tl_make-array f32 n)]
     (foreach ([i : i64 0 n])
       (let
         [sum : f32 (+ (array-ref a i) (array-ref b i))]
@@ -2769,7 +2769,7 @@
   "(define (main [n : i64]) : i64
   (with-arena r
     (let
-      [a : (__tl_dyn-array i64) (make-array i64 n)]
+      [a : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       (begin
         (set! (array-ref a 0) 7)
         (array-length a)))))")
@@ -2823,7 +2823,7 @@
     "(define (main) : (__tl_dyn-array i64)
   (let
     [scratch : Arena (arena-make)]
-    (with-escape scratch (make-array i64 4))))"))
+    (with-escape scratch (__tl_make-array i64 4))))"))
 
 (define (compiler-typecheck-with-escape-box-result-source) : String
   (compiler-typecheck-with-arena-source
@@ -2846,7 +2846,7 @@
     [scratch : Arena (arena-make)]
     (with-escape scratch
       (let
-        [items : (__tl_dyn-array String) (make-array String 2)]
+        [items : (__tl_dyn-array String) (__tl_make-array String 2)]
         (begin
           (set! (array-ref items 0) (string.int->string 1))
           (set! (array-ref items 1) (string.int->string 2))
@@ -2916,7 +2916,7 @@
     "(define (main) : (__tl_dyn-array i64)
   (let
     [scratch : Arena (arena-make)]
-    (in-arena scratch (make-array i64 4))))"))
+    (in-arena scratch (__tl_make-array i64 4))))"))
 
 (define (compiler-typecheck-in-arena-box-result-source) : String
   (compiler-typecheck-with-arena-source
@@ -3115,7 +3115,7 @@
     [maybe : Maybe (Some (init))]
     (begin
       (set! (array-ref fixed 0) (init))
-      (array-push! items (init))
+      (__tl_array-push! items (init))
       (+ zero
         (+ n
           (+ (return-init)
@@ -4148,7 +4148,7 @@
       (compiler-typecheck-raw-pointer-addr-of-global-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-dynamic-array-element-source)
-      "typecheck: ptr-addr-of dynamic array elements are not addressable; use array-data plus ptr-offset")
+      "typecheck: ptr-addr-of dynamic array elements are not addressable; use __tl_array-data plus ptr-offset")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-ref-root-source)
       "typecheck: ptr-addr-of reference roots are not addressable")
@@ -4471,7 +4471,7 @@
     [Empty (slot-missing bag)]))
 (define (bad [bag : Bag]) : unit
   (match (lookup (& bag))
-    [(SlotFound value) (set! bag (Bag (make-array Slot 1)))]
+    [(SlotFound value) (set! bag (Bag (__tl_make-array Slot 1)))]
     [SlotMissing unit]))")
 
 (define (compiler-typecheck-returned-borrowed-lookup-array-set-source) : String
@@ -4579,7 +4579,7 @@
 
 (define (compiler-typecheck-reference-mut-array-push-source) : String
   "(define (grow [items : (&mut items (__tl_dyn-array i64))] [v : i64]) : unit
-  (array-push! items v))
+  (__tl_array-push! items v))
 (define (main [items : (__tl_dyn-array i64)]) : unit
   (grow (&mut items) 7))")
 
@@ -4765,7 +4765,7 @@
           (ast.ast-ty-mut-ref
             cbi.compiler-builtin-id-fix-value
             (ast.ast-ty-dyn-array (ast.AstType.I64))))
-        "(&mut value (Array i64))")]
+        "(&mut value (__tl_dyn-array i64))")]
     [structural-lifetime-source : i64 (ci.intern "macro-lifetime")]
     [structural-lifetime-render-ok : bool
       (string.eq
@@ -6380,7 +6380,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-bad-array-source)
-        "typecheck: call `__tl_string_length` argument 1 type mismatch: expected String, (& str), (& bytes), or (&mut bytes), found (Array i64)")
+        "typecheck: call `__tl_string_length` argument 1 type mismatch: expected String, (& str), (& bytes), or (&mut bytes), found (__tl_dyn-array i64)")
         unit
         (set! ok false))
       ok)))
@@ -6475,9 +6475,9 @@
 (define (compiler-typecheck-lambda-capture-dyn-array-source) : String
   "(define (main [n : i64]) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 n)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
-      (array-push! items 5)
+      (__tl_array-push! items 5)
       (let [g : (-> i64) (lambda () : i64 (array-length items))] (g)))))")
 
 (define (compiler-typecheck-lambda-capture-enum-source) : String
@@ -6695,8 +6695,8 @@
       "(define (main [bs : (__tl_dyn-array bool)] [out : (__tl_dyn-array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref bs i) 0))) true))"
       "typecheck: spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred")))
 
-;; array-builtin signature rules: make-array length, array-ref array/index
-;; types, array-set! value-type agreement, and array-push! dynamic-array
+;; Private dynamic-buffer signature rules: __tl_make-array length, array-ref
+;; array/index types, array-set! value-type agreement, and __tl_array-push!
 ;; restrictions, with valid accepts.
 (define (compiler-typecheck-array-builtin-tests-ok?) : bool
   (let
@@ -6707,43 +6707,43 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
-        "(define (f) : i64 (let [a : (__tl_dyn-array i64) (make-array i64 4)] (array-length a)))")
+        "(define (f) : i64 (let [a : (__tl_dyn-array i64) (__tl_make-array i64 4)] (array-length a)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
-    [items : (__tl_dyn-array String) (make-array \"left\" \"right\")]
+    [items : (__tl_dyn-array String) (__tl_make-array \"left\" \"right\")]
     (array-length items)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
-    [items : (__tl_dyn-array u8) (make-array 1 2)]
+    [items : (__tl_dyn-array u8) (__tl_make-array 1 2)]
     (array-length items)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array (init) 7)]
+    [items : (__tl_dyn-array i64) (__tl_make-array (init) 7)]
     (+ (array-ref items 0) (array-ref items 1))))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array)]
+    [items : (__tl_dyn-array i64) (__tl_make-array)]
     (array-length items)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
-    [a : (__tl_dyn-array i64) (make-array i64 0)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     (begin
-      (array-push! a 5)
+      (__tl_array-push! a 5)
       (array-length a))))")
         unit
         (set! ok false))
@@ -6753,19 +6753,19 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f) : i64 (make-array i64 true))"
-        "typecheck: make-array length must be integer")
+        "(define (f) : i64 (__tl_make-array i64 true))"
+        "typecheck: __tl_make-array length must be integer")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f) : i64 (array-length (make-array)))"
+        "(define (f) : i64 (array-length (__tl_make-array)))"
         "typecheck: cannot infer element type of empty dynamic array literal")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (f) : i64
   (let
-    [items : (__tl_dyn-array (-> i64)) (make-array (lambda () : i64 1))]
+    [items : (__tl_dyn-array (-> i64)) (__tl_make-array (lambda () : i64 1))]
     (array-length items)))"
         "typecheck: dynamic array literal element type is not supported")
         unit
@@ -6776,13 +6776,13 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f [a : (__tl_dyn-array i64)]) : unit (array-push! a true))"
-        "typecheck: array-push! value type mismatch: expected i64, found bool")
+        "(define (f [a : (__tl_dyn-array i64)]) : unit (__tl_array-push! a true))"
+        "typecheck: __tl_array-push! value type mismatch: expected i64, found bool")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f [a : (Array i64 2)]) : unit (array-push! a 5))"
-        "typecheck: array-push! requires dynamic array type")
+        "(define (f [a : (Array i64 2)]) : unit (__tl_array-push! a 5))"
+        "typecheck: __tl_array-push! requires dynamic array type")
         unit
         (set! ok false))
       ok)))
@@ -7686,7 +7686,7 @@
   "(import stdlib.comptime)
 (defmacro (fixed-length [T : type]) : i64
   (comptime.expr-int (array-length T)))
-(define (main) : i64 (fixed-length (Array i64)))")
+(define (main) : i64 (fixed-length (__tl_dyn-array i64)))")
 
 (define (compiler-typecheck-macro-type-kind-constraint-source) : String
   "(defmacro (kind-code [T : type (:kind i64 bool)]) : i64
@@ -8227,7 +8227,7 @@
         ;; A make-array element type in expression position is not dependent:
         ;; the produced value is a length-erased dynamic array.
         (if (compiler-typecheck-generated-decl-scan?
-          "(define (scratch) : i64 (begin (make-array (Array i64 2) 3) 0))"
+          "(define (scratch) : i64 (begin (__tl_make-array (Array i64 2) 3) 0))"
           0)
           (set! ok false)
           unit)
@@ -8882,12 +8882,14 @@
          [text-ptr : (Ptr u8) (string-data text)]
          [text-len : i64 (__tl_string_length text)]
          [copied : String (string-from-bytes text-ptr text-len)]
-         [items-ptr : (MutPtr u8) (array-data items)]
+         [items-ptr : (MutPtr u8) (__tl_array-data items)]
          [items-ro : (Ptr u8) (ptr-cast items-ptr : (Ptr u8))]
          [addr : u64 (ptr->int items-ro)]
          [roundtrip : (Ptr u8) (int->ptr addr : (Ptr u8))]
          [first : u8 (ptr-read (ptr-offset roundtrip 0))]
+         [grown : (__tl_dyn-array u8) (__tl_make-array u8 0)]
          (begin
+           (__tl_array-push! grown first)
            (ptr-write! (ptr-offset items-ptr 0) first)
            copied)))))
 (gen)

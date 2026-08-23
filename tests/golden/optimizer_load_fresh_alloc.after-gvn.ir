@@ -1,5 +1,5 @@
 after gvn @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc
-function @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc(values=%0:(Array i64)) -> i64 vars 25 {
+function @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc(values=%0:(__tl_dyn-array i64)) -> i64 vars 25 {
 entry:
   %1 = gep %0, 1 : i64
   %2 = load %1 : i64
@@ -20,12 +20,12 @@ make_array_len_ok.2:
   %8 = mul %4, 8 : i64
   %9 = call tl_alloc(%8) : u64
   %10 = call tl_array_zero(%9, %8) : unit
-  %11 = call tl_alloc(16) : (Array i64)
+  %11 = call tl_alloc(16) : (__tl_dyn-array i64)
   %12 = gep %11, 0 : u8
   store_ptr %12, %9 : u64
   %13 = gep %11, 8 : u8
   store_ptr %13, %4 : i64
-  %14 = mov %11 : (Array i64)
+  %14 = mov %11 : (__tl_dyn-array i64)
   %15 = mov 0 : i64
   %16 = mov 0 : i64
   %17 = gep %11, 1 : i64
@@ -39,7 +39,7 @@ make_array_len_ok.2:
 }
 
 after gvn @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc
-function @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc(values=%0:(Array i64)) -> i64 vars 26 {
+function @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc(values=%0:(__tl_dyn-array i64)) -> i64 vars 26 {
 entry:
   %25 = gep %0, 1 : i64
   %2 = load %25 : i64
@@ -51,7 +51,7 @@ make_array_len_nonneg.0:
 make_array_len_ok.2:
   %9 = call tl_alloc(32) : u64
   %10 = call tl_array_zero(%9, 32) : unit
-  %11 = call tl_alloc(16) : (Array i64)
+  %11 = call tl_alloc(16) : (__tl_dyn-array i64)
   %12 = gep %11, 0 : u8
   store_ptr %12, %9 : u64
   %13 = gep %11, 8 : u8
@@ -81,7 +81,7 @@ make_array_len_ok.2:
   %4 = mul %0, 8 : i64
   %5 = call tl_alloc(%4) : u64
   %6 = call tl_array_zero(%5, %4) : unit
-  %7 = call tl_alloc(16) : (Array i64)
+  %7 = call tl_alloc(16) : (__tl_dyn-array i64)
   %8 = gep %7, 0 : u8
   store_ptr %8, %5 : u64
   %9 = gep %7, 8 : u8
@@ -100,7 +100,7 @@ make_array_len_nonneg.0:
 make_array_len_ok.2:
   %5 = call tl_alloc(16) : u64
   %6 = call tl_array_zero(%5, 16) : unit
-  %7 = call tl_alloc(16) : (Array i64)
+  %7 = call tl_alloc(16) : (__tl_dyn-array i64)
   %8 = gep %7, 0 : u8
   store_ptr %8, %5 : u64
   %9 = gep %7, 8 : u8

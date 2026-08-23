@@ -1,4 +1,4 @@
-;: SPEC borrow contract: compatibility dynamic-array owner mutation during a
+;: SPEC borrow contract: private dynamic-buffer owner mutation during a
 ;: call-argument reservation is rejected (#3581 keeps this surface staged).
 (import stdlib.array)
 

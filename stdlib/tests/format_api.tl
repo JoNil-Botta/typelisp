@@ -31,9 +31,17 @@
       [suffix : String "done"]
       (format.format "{prefix}:{answer}:{suffix}"))))
 
+(define (format-captured-width [value : String]) : String
+  (let
+    ;; Referenced by generated call-site capture syntax.
+    ;; lint-allow: unused-variable
+    [width : i64 5]
+    (format.format "{:width$}" value)))
+
 (define (main) : i64
   (let
     [state : FormatEvalState (FormatEvalState 0)]
+    [width-state : FormatEvalState (FormatEvalState 0)]
     [name : String "Ada"]
     [score : i64 -7]
     [enabled : bool true]
@@ -74,6 +82,37 @@
         (format-counted (&mut state) 2)
         (format-counted (&mut state) 3))]
     [owned-once : String (format.format "{0}-{0}" (format.format "{}" "owned"))]
+    [default-string-width : String (format.format "{:5}" "x")]
+    [default-number-width : String (format.format "{:5}" (cast 12 : i64))]
+    [fill-left : String (format.format "{:-<5}" "x")]
+    [centered : String (format.format "{:^6}" "ab")]
+    [right-aligned : String (format.format "{:>5}" "x")]
+    [explicit-plus : String (format.format "{:+5}" (cast 12 : i64))]
+    [minus-no-op : String (format.format "{:-5}" (cast 12 : i64))]
+    [zero-positive : String (format.format "{:05}" (cast 12 : i64))]
+    [zero-negative : String (format.format "{:05}" (cast -12 : i64))]
+    [zero-plus : String (format.format "{:+05}" (cast 12 : i64))]
+    [zero-width : String (format.format "{:0}" "x")]
+    [equal-width : String (format.format "{:4}" "wide")]
+    [short-width : String (format.format "{:2}" "long")]
+    [alternate-carried : String (format.format "{:#}" (cast 12 : i64))]
+    [dynamic-indexed : String (format.format "{0:1$}" "x" (cast 5 : i64))]
+    [dynamic-no-advance : String
+      (format.format "{:1$}:{}:{}" "a" (cast 4 : i64) "b")]
+    [dynamic-named : String
+      (format.format
+        "{value:width$}"
+        (format.named value "x")
+        (format.named width (cast 4 : i64)))]
+    [dynamic-captured : String (format-captured-width "x")]
+    [owner-padded : String (format.format "{:>8}" (RootDisplay 9))]
+    [dynamic-eval : String
+      (format.format
+        "{0:1$}:{1}"
+        (format-counted (&mut width-state) 1)
+        (format-counted (&mut width-state) 5))]
+    [repeated-count : String
+      (format.format "{0:1$}|{2:1$}|{1}" "a" (cast 3 : i64) "b")]
     (if (and
       (string.eq got "Ada:-7:true:x:1.5:root=9 {ok}")
       (string.eq indexed "c/a/b/c")
@@ -86,6 +125,28 @@
       (string.eq trailing-whitespace "space")
       (string.eq ordered "3:1:2:3")
       (= state.value 123)
-      (string.eq owned-once "owned-owned"))
+      (string.eq owned-once "owned-owned")
+      (string.eq default-string-width "x    ")
+      (string.eq default-number-width "   12")
+      (string.eq fill-left "x----")
+      (string.eq centered "  ab  ")
+      (string.eq right-aligned "    x")
+      (string.eq explicit-plus "  +12")
+      (string.eq minus-no-op "   12")
+      (string.eq zero-positive "00012")
+      (string.eq zero-negative "-0012")
+      (string.eq zero-plus "+0012")
+      (string.eq zero-width "x")
+      (string.eq equal-width "wide")
+      (string.eq short-width "long")
+      (string.eq alternate-carried "12")
+      (string.eq dynamic-indexed "x    ")
+      (string.eq dynamic-no-advance "a   :4:b")
+      (string.eq dynamic-named "x   ")
+      (string.eq dynamic-captured "x    ")
+      (string.eq owner-padded "  root=9")
+      (string.eq dynamic-eval "    1:5")
+      (= width-state.value 15)
+      (string.eq repeated-count "a  |b  |3"))
       42
       1)))

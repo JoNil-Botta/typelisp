@@ -1,85 +1,56 @@
-# Dynamic Array Migration Census
+# Private Dynamic Buffer Census
 
-This census tracks unsized `(Array T)` uses while public `Array` moves toward
-fixed-size-only `(Array T N)`. Update it when a migration changes the category
-of a file or module.
+Public `Array` is fixed-size-only: source code uses `(Array T N)`. Unsized
+`(Array T)` and the bare `make-array`, `array-push!`, and `array-data` forms are
+rejected. This census records the remaining compiler-private
+`(__tl_dyn-array T)` backing storage and the public abstractions that hide it.
 
-## Public Growable Collections
+## Public Collection Boundaries
 
-These are the uses that should move to generated vectors or vector/slice-style
-borrowed APIs.
+- `stdlib/vector.tl` exposes generated vector modules whose reads take `&` and
+  mutators take `&mut`; their backing storage is `__tl_dyn-array`.
+- Generated queue, hashmap, set, and text-buffer families expose wrapper, Vec,
+  or Slice types and keep capacity storage private.
+- Argument parsing, weighted random selection, bulk String concatenation,
+  compiler tooling, and the lexer/parser examples use generated vectors or
+  borrowed Slice views at public boundaries.
+- Binary APIs use `ByteBuf` and borrowed `bytes` views. Thread result APIs move
+  owned wrappers rather than exposing their dynamic backing cells.
 
-- `stdlib/vector.tl`: public growable sequences use generated modules with
-  compiler-private `__tl_dyn-array` backing such as
-  `(import stdlib.vector)` plus
-  `(import (vector.vector i64) as ivec)`, whose reads take `&` and mutators take
-  `&mut`.
-- `stdlib/process.tl`, `stdlib/msvc.tl`, `stdlib/env.tl`, `stdlib/fs.tl`,
-  `stdlib/random.tl`, CLI drivers, doc tooling, and LSP tooling use local
-  generated `(vector T)` aliases or native `Slice` parameters for public or
-  tool-facing sequences.
-- Argument parsing, weighted random selection, and bulk String concatenation
-  accept borrowed Vec/native-Slice views. Their former unsized-array entry
-  points have been removed.
-- Domain collection wrappers and the generated queue/hashmap/set/text-buffer
-  families retain identical capacity storage under compiler-private
-  `__tl_dyn-array`; their public operations expose only wrapper, Vec, or Slice
-  types.
-- `examples/lexer.tl` and `examples/calc.tl` now use generated token vectors
-  instead of exposing token streams as public dynamic arrays.
-- `examples/parser.tl` still uses small dynamic arrays as parser cursor and
-  hand-built token fixtures. Those are not growable collection APIs; they can
-  later become fixed arrays or a generated vector fixture when parser examples
-  are refreshed.
-
-## Intentional Backing Buffers
-
-These unsized arrays should stay isolated until private-buffer or byte-buffer
-surfaces replace them.
+## Intentional Private Storage
 
 - Binary and byte storage in `stdlib/byte_buf.tl`, `stdlib/byte_buf_core.tl`,
-  `stdlib/ffi.tl`,
-  `stdlib/io.tl`, `stdlib/fs.tl`, `stdlib/process_runtime.tl`,
-  `src/tlci_core.tl`, `src/compiler_object_elf.tl`,
-  `src/compiler_object_coff.tl`, and object-byte paths in
-  `src/compiler_backend.tl`.
-- Compiler-internal scratch buffers, dense tables, captured-field lists, codegen
-  byte streams, and serialized metadata in `src/*.tl`. These are not public
-  source APIs and should move only when a private dynamic-buffer abstraction is
-  available.
-- Thread runtime context/result cells that use compiler-private
-  `__tl_dyn-array` storage behind owned public wrappers.
-- Focused thread, synchronization, arena-atomic, byte-buffer, environment, and
-  process-runtime fixtures use private `__tl_dyn-array` buffers when exercising
-  raw storage and compatibility boundaries.
+  `stdlib/ffi.tl`, `stdlib/io.tl`, `stdlib/fs.tl`, and
+  `stdlib/process_runtime.tl`.
+- Compiler scratch buffers, dense tables, captured-field lists, object/codegen
+  byte streams, and serialized metadata in `src/*.tl`.
+- Runtime and thread context/result cells whose public operations expose only
+  owned wrappers, vectors, or borrowed views.
+- Focused compiler, runtime, synchronization, byte-buffer, environment, and
+  process fixtures that exercise private storage and lowering behavior.
 
-## Feature Coverage That Must Remain
+These uses spell the type `__tl_dyn-array` and call private intrinsics such as
+`__tl_make-array`, `__tl_array-push!`, and `__tl_array-data`. The qualified
+`stdlib.array` macro wrappers remain a transitional internal facility while
+their callers migrate to fixed arrays or generated collections.
 
-These files intentionally exercise unsized arrays while generated vectors retain
-array-backed storage.
+## Coverage That Must Remain
 
-- `tests/integration/array_*.tl`, `tests/integration/make_array*.tl`,
-  `tests/integration/mutable_reference_array.tl`,
-  `tests/integration/struct_field_set.tl`,
-  `tests/integration/two_phase_mutable_call_borrow.tl`, and matching
-  `tests/safety/*array*.tl` fixtures cover dynamic-array typing, bounds,
-  borrow, move, and lowering behavior.
-- Most `tests/spmd/*.tl` fixtures intentionally use dynamic arrays to cover the
-  low-level contiguous source/destination surface. The public
-  `native_slice_surface_i64.tl` fixture instead takes Vec/native-Slice values
-  and infers private backing borrows without caller-authored dynamic-array types.
-- `tests/integration/thread_safe_i64_vec.tl` and thread runtime fixtures cover
-  the owned generated `thread.spawn-i64-vec` / `thread.join-i64-vec`
-  aggregate transfer surface.
-- `stdlib/tests/vector_native_slice_*.tl` and `vector_macro_i64.tl` cover
-  Vec-backed native-slice lifetimes, traversal, mutation, growth/alias
-  rejection, and the owned `from-slice` copy boundary without public
-  dynamic-array conversions.
+- Array integration and safety fixtures cover private dynamic-buffer length,
+  initialization, bounds, borrow, move, growth, and lowering behavior, plus
+  rejection of the retired public spellings.
+- SPMD runtime-sized inputs use borrowed native Slice surfaces; fixed-array
+  fixtures retain public `(Array T N)` coverage.
+- Generated-vector tests cover native-Slice lifetimes, traversal, mutation,
+  growth/alias rejection, and owned copy boundaries without exposing private
+  backing types.
+- Thread and synchronization fixtures cover transfer of owned aggregates whose
+  storage is backed by private buffers.
 
-## Follow-Up Rule
+## Maintenance Rule
 
-New public APIs must not expose unsized `(Array T)` as a growable collection.
-Use generated vectors for owned growable storage, borrowed vector/slice views for
-read-only traversal, and explicit byte-buffer/bytes surfaces for binary data.
-When an unsized array remains, keep it documented as an internal backing buffer,
-a compatibility boundary, or targeted feature coverage.
+New public APIs must not expose `__tl_dyn-array` or recreate unsized `(Array T)`.
+Use generated vectors for owned growable storage, borrowed Slice views for
+traversal, fixed `(Array T N)` for statically sized storage, and explicit
+`ByteBuf`/`bytes` surfaces for binary data. Add new private-buffer uses here only
+when a compiler/runtime boundary genuinely requires raw growable backing.

@@ -59,6 +59,10 @@ reject_diag() {
             printf "format: bare '_' is not a captured identifier" ;;
         stdlib/tests/format_duplicate_named_reject.tl)
             printf 'format: duplicate named argument name' ;;
+        stdlib/tests/format_dynamic_width_index_reject.tl)
+            printf 'format: dynamic width argument index is out of range: 2' ;;
+        stdlib/tests/format_dynamic_width_type_reject.tl)
+            printf 'format: dynamic width argument must have exact type i64' ;;
         stdlib/tests/format_index_out_of_range_reject.tl)
             printf 'format: positional argument index is out of range: 2' ;;
         stdlib/tests/format_index_overflow_reject.tl)
@@ -69,6 +73,8 @@ reject_diag() {
             printf 'format: malformed captured argument identifier' ;;
         stdlib/tests/format_malformed_index_reject.tl)
             printf 'format: malformed positional argument index' ;;
+        stdlib/tests/format_multibyte_fill_reject.tl)
+            printf 'format: fill must be exactly one TypeLisp byte before alignment' ;;
         stdlib/tests/format_named_nonidentifier_reject.tl)
             printf 'format: named argument name must be an identifier' ;;
         stdlib/tests/format_non_ascii_whitespace_reject.tl)
@@ -81,10 +87,16 @@ reject_diag() {
             printf 'format: owner hook has wrong signature for' ;;
         stdlib/tests/format_positional_after_named_reject.tl)
             printf 'format: positional argument follows named argument' ;;
+        stdlib/tests/format_precision_unsupported_reject.tl)
+            printf 'format: precision is parsed but not supported yet' ;;
+        stdlib/tests/format_plus_nonnumeric_reject.tl)
+            printf "format: '+' sign requires a numeric argument" ;;
         stdlib/tests/format_raw_capture_reject.tl)
             printf "format: Rust raw identifiers use the TypeLisp spelling without 'r#'" ;;
+        stdlib/tests/format_specifier_order_reject.tl)
+            printf 'format: malformed, duplicated, or out-of-order format specifier' ;;
         stdlib/tests/format_specifier_reject.tl)
-            printf 'format: format specifiers are not supported' ;;
+            printf 'format: type selector is parsed but not supported yet: x' ;;
         stdlib/tests/format_too_few_args_reject.tl)
             printf 'format: not enough arguments for placeholders' ;;
         stdlib/tests/format_too_many_args_reject.tl)
@@ -93,6 +105,8 @@ reject_diag() {
             printf 'typecheck: unbound name missing' ;;
         stdlib/tests/format_unused_named_reject.tl)
             printf 'format: unused named argument unused' ;;
+        stdlib/tests/format_width_overflow_reject.tl)
+            printf 'format: width integer overflow' ;;
         stdlib/tests/io_caller_result_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/math_sqrt_non_float_reject.tl)

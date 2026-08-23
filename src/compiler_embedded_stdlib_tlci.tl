@@ -1163,8 +1163,8 @@
                 (ast.AstType.Expr)))))))))
 
 ;; Pop a type value and push the composite that wraps it: kind 0 is
-;; `(Ptr T)`/`(MutPtr T)` selected by `flag`, 1 is `(Box T)`, 2 is the unsized
-;; `(Array T)`, 3 is `(Array T N)` with `flag` as the count, and 4 is
+;; `(Ptr T)`/`(MutPtr T)` selected by `flag`, 1 is `(Box T)`, 2 is the private
+;; `(__tl_dyn-array T)`, 3 is `(Array T N)` with `flag` as the count, and 4 is
 ;; `(& r T)`/`(&mut r T)` with `flag` selecting mutability and the lifetime name
 ;; arriving as caller bytes, and 5 is `(Slice T)`. The lifetime name is
 ;; interned through the same source-slice path template variable names use.

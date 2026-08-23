@@ -198,6 +198,9 @@
 ;: Cleanup-owning items unwind in reverse acquisition order when a later zipped
 ;: iterator is done or control leaves the body. Moving an item transfers cleanup
 ;: responsibility and disarms its generated resource scope.
+(define (core-for-native-index-in-bounds? [index : i64] [length : i64]) : bool
+  (< index length))
+
 (defmacro (for [bindings : ExprBindingClause ...] [body : Expr ...]) : unit
   (let
     [binding-count : i64 (comptime.expr-binding-clause-list-length bindings)]
@@ -623,7 +626,7 @@
                               (let
                                 [in-bounds : comptime.Expr
                                   (comptime.expr-call
-                                    `<
+                                    `core-for-native-index-in-bounds?
                                     (comptime.expr-list-cons
                                       native-index-var
                                       (comptime.expr-list-cons

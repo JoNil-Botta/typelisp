@@ -112869,9 +112869,9 @@
 (cfg
   (all embedded-stdlib-tlci tlci-native-route-stress)
   (define (compiler-tc-tlci-identity-result-kind [ret : ast.AstType]) : String
-    (if (tc-macro-result-module? ret)
+    (if (tc-macro-result-module? (tc-global-shared-view ret))
       "module"
-      (if (tc-macro-result-decls? ret)
+      (if (tc-macro-result-decls? (tc-global-shared-view ret))
         "decls"
         "expr"))))
 
@@ -112918,9 +112918,11 @@
         (all embedded-stdlib-tlci tlci-native-route-stress)
         (compiler-tc-tlci-identity-route-emit!
           "source"
-          (compiler-tc-tlci-identity-result-kind ret)
-          (macro-tlci-catalog-identity definition-module macro-name)
-          definition-module))
+          (compiler-tc-tlci-identity-result-kind (tc-global-shared-view ret))
+          (macro-tlci-catalog-identity
+            (tc-global-shared-view definition-module)
+            (tc-global-shared-view macro-name))
+          (tc-global-shared-view definition-module)))
       (cfg
         tlci-bootstrap-mutation-witness
         (macro-tlci-bootstrap-mutation-witness-emit!
@@ -113347,8 +113349,9 @@
                                     tlci-native-route-stress)
                                   (compiler-tc-tlci-identity-route-emit!
                                     "native"
-                                    (compiler-tc-tlci-identity-result-kind ret)
-                                    identity
+                                    (compiler-tc-tlci-identity-result-kind
+                                      (tc-global-shared-view ret))
+                                    (tc-global-shared-view identity)
                                     ""))
                                 (cfg
                                   (all

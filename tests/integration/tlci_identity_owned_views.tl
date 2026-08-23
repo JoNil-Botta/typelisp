@@ -1,0 +1,46 @@
+;; Focused semantic witnesses for the shallow-view helpers introduced by the
+;; by-value ownership migration. These macros are part of the embedded stdlib
+;; TLCI inventory, but ordinary discovery does not reach every path together.
+(import stdlib.array)
+(import stdlib.msvc)
+(import stdlib.process)
+(import stdlib.process_runtime)
+
+(defstruct TlciIdentityMsvcWitness
+  (value i64))
+
+(define (main) : i64
+  (let
+    [place : TlciIdentityMsvcWitness (TlciIdentityMsvcWitness 7)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [boxed : (Box i64) (box 29)]
+    [text : String "core"]
+    [core-view : String
+      (__tl-compiler-owned-shared-view-dyn-ref-as (& text) String)]
+    [place-view : TlciIdentityMsvcWitness (msvc.msvc-shared-view place)]
+    [item-view : i64 (msvc.msvc-array-element-shared-view items 0)]
+    [box-view : i64 (msvc.msvc-box-shared-view boxed)]
+    [process-place-view : TlciIdentityMsvcWitness
+      (process.process-place-shared-view place)]
+    [process-item-view : i64 (process.process-array-shared-view items 0)]
+    [runtime-place-view : TlciIdentityMsvcWitness
+      (process_runtime.process-runtime-place-shared-view place)]
+    [runtime-item-view : i64
+      (process_runtime.process-runtime-array-shared-view items 0)]
+    (if (not (= (string-length core-view) 4))
+      2
+      (if (not (= place-view.value 7))
+        3
+        (if (not (= item-view 0))
+          4
+          (if (not (= box-view 29))
+            5
+            (if (not (= process-place-view.value 7))
+              6
+              (if (not (= process-item-view 0))
+                7
+                (if (not (= runtime-place-view.value 7))
+                  8
+                  (if (not (= runtime-item-view 0))
+                    9
+                    42))))))))))

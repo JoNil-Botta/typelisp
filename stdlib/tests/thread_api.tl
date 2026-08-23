@@ -6,9 +6,17 @@
 (import stdlib.str_cat)
 (import stdlib.string)
 
-(define (test-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
+(define (test-array-i64-addr [items : (& items (__tl_dyn-array i64))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
+    (cast
+      (ptr->int
+        (ptr-cast
+          (__tl_array-data
+            (__tl-compiler-owned-shared-view-dyn-ref-as
+              items
+              (__tl_dyn-array i64)))
+          : (Ptr u8)))
+      : i64)))
 
 (define (test-addr->mut-i64 [addr : i64]) : (MutPtr i64)
   (unsafe
@@ -40,7 +48,8 @@
   (thread.Thread
     (thread.spawn-result-handle-or (& spawn) 0)
     (thread.spawn-result-clear-tid-addr-or (& spawn) 0)
-    (thread.spawn-result-result-addr-or (& spawn) 0)))
+    (thread.spawn-result-result-addr-or (& spawn) 0)
+    ""))
 
 (define (thread-api-join-i64-code [result : thread_i64.JoinResult]) : i64
   (thread_i64.join-value-or result -1))
@@ -217,21 +226,21 @@
     [ctx-b : (__tl_dyn-array i64) (array.make-array i64 3)]
     [sem-handle : i64 sem.handle]
     (begin
-      (set! (array-ref ctx-a 0) (test-array-i64-addr out-a))
+      (set! (array-ref ctx-a 0) (test-array-i64-addr (& out-a)))
       (set! (array-ref ctx-a 1) 11)
       (set! (array-ref ctx-a 2) sem-handle)
-      (set! (array-ref ctx-b 0) (test-array-i64-addr out-b))
+      (set! (array-ref ctx-b 0) (test-array-i64-addr (& out-b)))
       (set! (array-ref ctx-b 1) 31)
       (set! (array-ref ctx-b 2) sem-handle)
       (let
         [a-spawn : thread.ThreadSpawnResult
-          (thread.spawn thread-api-worker (test-array-i64-addr ctx-a))]
+          (thread.spawn thread-api-worker (test-array-i64-addr (& ctx-a)))]
         (if (not (thread.spawn-result-ok? (& a-spawn)))
           2
           (let
             [a : thread.Thread (thread-api-thread-or a-spawn)]
             [b-spawn : thread.ThreadSpawnResult
-              (thread.spawn thread-api-worker (test-array-i64-addr ctx-b))]
+              (thread.spawn thread-api-worker (test-array-i64-addr (& ctx-b)))]
             (if (not (thread.spawn-result-ok? (& b-spawn)))
               3
               (thread-api-finish-run

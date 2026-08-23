@@ -245,11 +245,12 @@
       (while (< index (array-length names))
         (begin
           (let
-            [identity : String (array-ref names index)]
+            [identity : String
+              (ast.ast-place-shared-view (array-ref names index))]
             [slot : i64
               (compiler_tlci_native_producer.tlci-native-macro-capture-slot
                 captures
-                identity)]
+                (ast.ast-place-shared-view identity))]
             (if (< slot 0)
               (set!
                 embedded-stdlib-tlci-build-error
@@ -257,8 +258,9 @@
                   "missing source capture for stdlib macro identity: "
                   identity))
               (let
-                [params : ast.AstMacroParamList
-                  (__tl-project-field (array-ref captures.slots slot) params)]
+                [params : (& captures ast.AstMacroParamList)
+                  (&
+                    (__tl-project-field (array-ref captures.slots slot) params))]
                 [result-kind-code : i64
                   (__tl-project-field
                     (array-ref captures.slots slot)
@@ -274,7 +276,7 @@
                     "\t"
                     (string.int->string params.len)
                     "\t"
-                    (if (embedded-stdlib-tlci-params-variadic? (& params))
+                    (if (embedded-stdlib-tlci-params-variadic? params)
                       "variadic"
                       "fixed")
                     "\t"

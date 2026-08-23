@@ -2268,12 +2268,12 @@
       (compiler-ir-function-builder-to-list builder))))
 
 (define (compiler-ir-global-seq-empty) : CompilerIrGlobalSeq
-  (CompilerIrGlobalSeq (make-array CompilerIrGlobal 0) 0))
+  (CompilerIrGlobalSeq (__tl_make-array CompilerIrGlobal 0) 0))
 
 (define (compiler-ir-global-builder-with-capacity [capacity : i64]) : CompilerIrGlobalBuilder
   (let
     [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrGlobalBuilder (make-array CompilerIrGlobal cap) 0)))
+    (CompilerIrGlobalBuilder (__tl_make-array CompilerIrGlobal cap) 0)))
 
 (define (compiler-ir-global-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerIrGlobal))]
@@ -2295,7 +2295,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array CompilerIrGlobal)
-      (make-array CompilerIrGlobal new-cap)]
+      (__tl_make-array CompilerIrGlobal new-cap)]
     (begin
       (compiler-ir-global-builder-copy-range!
         (&mut bigger)
@@ -2335,7 +2335,7 @@
   [builder : (& builder CompilerIrGlobalBuilder)]) : CompilerIrGlobalSeq
   (let
     [slots : (__tl_dyn-array CompilerIrGlobal)
-      (make-array CompilerIrGlobal builder.len)]
+      (__tl_make-array CompilerIrGlobal builder.len)]
     (begin
       (compiler-ir-global-builder-copy-range!
         (&mut slots)
@@ -2344,18 +2344,18 @@
       (CompilerIrGlobalSeq slots builder.len))))
 
 (define (compiler-ir-extern-seq-empty) : CompilerIrExternSeq
-  (CompilerIrExternSeq (make-array CompilerIrExtern 0) 0))
+  (CompilerIrExternSeq (__tl_make-array CompilerIrExtern 0) 0))
 
 (define (compiler-ir-extern-seq1 [a : CompilerIrExtern]) : CompilerIrExternSeq
   (let
-    [slots : (__tl_dyn-array CompilerIrExtern) (make-array CompilerIrExtern 1)]
+    [slots (__tl_make-array CompilerIrExtern 1)]
     (begin
       (set! (array-ref slots 0) a)
       (CompilerIrExternSeq slots 1))))
 
 (define (compiler-ir-extern-seq2 [a : CompilerIrExtern] [b : CompilerIrExtern]) : CompilerIrExternSeq
   (let
-    [slots : (__tl_dyn-array CompilerIrExtern) (make-array CompilerIrExtern 2)]
+    [slots (__tl_make-array CompilerIrExtern 2)]
     (begin
       (set! (array-ref slots 0) a)
       (set! (array-ref slots 1) b)
@@ -2367,7 +2367,7 @@
   [c : CompilerIrExtern]
   [d : CompilerIrExtern]) : CompilerIrExternSeq
   (let
-    [slots : (__tl_dyn-array CompilerIrExtern) (make-array CompilerIrExtern 4)]
+    [slots (__tl_make-array CompilerIrExtern 4)]
     (begin
       (set! (array-ref slots 0) a)
       (set! (array-ref slots 1) b)
@@ -2386,7 +2386,7 @@
 (define (compiler-ir-extern-builder-with-capacity [capacity : i64]) : CompilerIrExternBuilder
   (let
     [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrExternBuilder (make-array CompilerIrExtern cap) 0)))
+    (CompilerIrExternBuilder (__tl_make-array CompilerIrExtern cap) 0)))
 
 (define (compiler-ir-extern-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerIrExtern))]
@@ -2408,7 +2408,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array CompilerIrExtern)
-      (make-array CompilerIrExtern new-cap)]
+      (__tl_make-array CompilerIrExtern new-cap)]
     (begin
       (compiler-ir-extern-builder-copy-range!
         (&mut bigger)
@@ -2448,7 +2448,7 @@
   [builder : (& builder CompilerIrExternBuilder)]) : CompilerIrExternSeq
   (let
     [slots : (__tl_dyn-array CompilerIrExtern)
-      (make-array CompilerIrExtern builder.len)]
+      (__tl_make-array CompilerIrExtern builder.len)]
     (begin
       (compiler-ir-extern-builder-copy-range!
         (&mut slots)
@@ -3417,7 +3417,7 @@
   [globals : CompilerIrGlobalSeq]) : CompilerIrGlobalSeq
   (let
     [slots : (__tl_dyn-array CompilerIrGlobal)
-      (make-array CompilerIrGlobal globals.len)]
+      (__tl_make-array CompilerIrGlobal globals.len)]
     [index : i64 0]
     (begin
       (while (< index globals.len)
@@ -3458,7 +3458,7 @@
   [externs : CompilerIrExternSeq]) : CompilerIrExternSeq
   (let
     [slots : (__tl_dyn-array CompilerIrExtern)
-      (make-array CompilerIrExtern externs.len)]
+      (__tl_make-array CompilerIrExtern externs.len)]
     [index : i64 0]
     (begin
       (while (< index externs.len)

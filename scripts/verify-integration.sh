@@ -2348,8 +2348,8 @@ EOF
     _comptime_source="$_driver_dir/comptime-type.tl"
     _comptime_asm="$_driver_dir/comptime-type.s"
     cat > "$_comptime_source" <<'EOF'
-(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))
-(define (main) : (Array i64) (alloc (type i64) 4))
+(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64) (__tl_make-array T n))
+(define (main) : (__tl_dyn-array i64) (alloc (type i64) 4))
 EOF
     run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" 0 compile \
         "$(cygpath -aw "$_comptime_source")" -o "$(cygpath -aw "$_comptime_asm")"

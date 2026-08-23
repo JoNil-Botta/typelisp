@@ -38693,7 +38693,7 @@
                 (lower-cast-value array-state array-value array-ty result-ty))]
             [_
               (ResultLowerExpr.Err
-                (box (lower-diagnostic "lower: array-data requires array")))])])]
+                (box (lower-diagnostic "lower: __tl_array-data requires array")))])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-string-from-bytes
@@ -39900,7 +39900,7 @@
             idx-off
             elem-ty)])]))
 
-;; `(make-array T len)` -> checked length, `tl_alloc` element buffer, and a
+;; `(__tl_make-array T len)` -> checked length, `tl_alloc` element buffer, and a
 ;; heap-backed dynamic-array fat value `{ ptr, len }`.
 (define (lower-make-array-store-fat
   [state : LowerState]
@@ -40701,7 +40701,7 @@
     type-env
     len
     (ast.AstType.I64)
-    "lower: make-array length must be integer")
+    "lower: __tl_make-array length must be integer")
     [(ResultLowerExpr.Ok lowered)
       (match lowered
         [(LowerExpr.Expr len-state len-value len-ty)
@@ -42894,7 +42894,7 @@
                           elem-ty
                           value-ir)])])]))])]))
 
-;; `(array-push! arr value)` -> allocate a new element buffer in the active
+;; `(__tl_array-push! arr value)` -> allocate a new element buffer in the active
 ;; arena, copy old elements, append `value`, and update the fat `{ptr, len}`.
 (define (lower-array-push
   [ctx : tc_core.TcContext]

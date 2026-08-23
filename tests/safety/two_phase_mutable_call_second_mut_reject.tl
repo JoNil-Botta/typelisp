@@ -1,4 +1,4 @@
-;: SPEC borrow contract: compatibility dynamic-array reservation rejects a
+;: SPEC borrow contract: private dynamic-buffer reservation rejects a
 ;: second overlapping mutable borrow (#3581 keeps this surface staged).
 (import stdlib.array)
 

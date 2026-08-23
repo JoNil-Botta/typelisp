@@ -6607,7 +6607,7 @@
   "define lambda let if begin while set! return match foreach cond when unless and or with-arena with-escape with-scratch try unsafe quote quasiquote unquote ann init cast type defstruct defenum defmacro defdispatch import export extern module comptime include-str include-bin test spmd-reduce spmd-scan spmd-broadcast spmd-shuffle program-index program-count")
 
 (define (lsp-completion-builtins) : String
-  "ptr-null ptr-read ptr-write! ptr-offset ptr-cast ptr->int int->ptr ptr-null? ptr-addr-of make-array array-ref array-push! array-data tuple-ref deref string-data string-from-bytes program-argc program-argv program-envp cpuid-eax cpuid-ebx cpuid-ecx cpuid-edx xgetbv syscall box array tuple")
+  "ptr-null ptr-read ptr-write! ptr-offset ptr-cast ptr->int int->ptr ptr-null? ptr-addr-of array-ref tuple-ref deref string-data string-from-bytes program-argc program-argv program-envp cpuid-eax cpuid-ebx cpuid-ecx cpuid-edx xgetbv syscall box array tuple")
 
 (define (lsp-completion-types) : String
   "i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char String str unit never Array Tuple Box Ptr MutPtr")
@@ -7382,8 +7382,8 @@
         "The empty type, for expressions that never return (e.g. `panic`).")]
     [(string.eq name "Array")
       (lsp-hover-markdown
-        "(Array T)"
-        "Dynamically sized, heap-allocated array of `T`.")]
+        "(Array T N)"
+        "Fixed-size inline array of `N` elements of `T`.")]
     [(string.eq name "Tuple")
       (lsp-hover-markdown
         "(Tuple A B ...)"
@@ -7451,22 +7451,10 @@
       (lsp-hover-markdown
         "string-data : (-> String (Ptr u8))"
         "Pointer to a string's bytes.")]
-    [(string.eq name "make-array")
-      (lsp-hover-markdown
-        "make-array : (-> Type i64 (Array T))"
-        "Allocate a zero-initialized array of the given element type and length.")]
     [(string.eq name "array-ref")
       (lsp-hover-markdown
-        "array-ref : (-> (Array T) i64 T)"
+        "array-ref : (-> (Array T N) i64 T)"
         "Read an array element (bounds-checked).")]
-    [(string.eq name "array-push!")
-      (lsp-hover-markdown
-        "array-push! : (-> (Array T) T unit)"
-        "Append a value to a dynamic array.")]
-    [(string.eq name "array-data")
-      (lsp-hover-markdown
-        "array-data : (-> (Array T) (Ptr T))"
-        "Pointer to an array's storage.")]
     [(string.eq name "tuple-ref")
       (lsp-hover-markdown
         "tuple-ref : (-> Tuple i64 T)"

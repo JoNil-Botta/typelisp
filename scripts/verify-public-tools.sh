@@ -1050,15 +1050,15 @@ EOF
 simd_shape_dir="$CLI_MATRIX/backend-avx512-shape"
 mkdir -p "$simd_shape_dir"
 cat > "$simd_shape_dir/main.tl" <<'EOF'
-(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 17)]
-    [b : (Array i64) (make-array i64 17)]
-    [out : (Array i64) (make-array i64 17)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 17)]
     (begin
       (fill a b out 17)
       42)))
@@ -1400,9 +1400,9 @@ mkdir -p "$SPMD_EXEC"
 cat > "$SPMD_EXEC/spmd.tl" <<'TLEOF'
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 64)]
-    [b : (Array i64) (make-array i64 64)]
-    [out : (Array i64) (make-array i64 64)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 64)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 64)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 64)]
     [i : i64 0]
     (begin
       (while (< i 64)
@@ -1453,15 +1453,15 @@ cat > "$BUILD_MATRIX/typelisp.pkg" <<'EOF'
 EOF
 maybe_strip_manifest_kind "$BUILD_MATRIX/typelisp.pkg"
 cat > "$BUILD_MATRIX/src/main.tl" <<'EOF'
-(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 17)]
-    [b : (Array i64) (make-array i64 17)]
-    [out : (Array i64) (make-array i64 17)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 17)]
     (begin
       (fill a b out 17)
       42)))

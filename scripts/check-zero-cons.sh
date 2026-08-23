@@ -109,7 +109,7 @@ EOF
   (Prefix String (Box FormatCst)))
 
 (defstruct DenseItems
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (len i64))
 EOF
 }

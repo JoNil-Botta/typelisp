@@ -21,7 +21,6 @@
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as clone_id_map)
 (import stdlib.string)
-(import compiler_owned_view as owned_view)
 
 (defmacro (clone-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -856,16 +855,6 @@
       (clone-root-entries-add-id
         (clone-root-entries-add-id (clone-shared-view empty) first-qualified)
         second-qualified)]
-    [first-qualified-helper : i64
-      (clone-root-entries-helper-id-or
-        (clone-shared-view qualified)
-        first-qualified
-        -1)]
-    [second-qualified-helper : i64
-      (clone-root-entries-helper-id-or
-        (clone-shared-view qualified)
-        second-qualified
-        -1)]
     [_materialize-qualified : unit
       (clone-root-entries-materialize-helper-names!
         (clone-shared-view qualified))]
@@ -1137,7 +1126,6 @@
     [current-module-id : i64 module-id]
     [index : i64 0]
     [count : i64 (ast.ast-decl-list-len decls)]
-    [decl-offset : i64 decls.offset]
     (begin
       (while (< index count)
         (begin
@@ -1198,7 +1186,6 @@
     [current-module-id : i64 module-id]
     [index : i64 0]
     [count : i64 (ast.ast-decl-list-len decls)]
-    [decl-offset : i64 decls.offset]
     (begin
       (while (< index count)
         (begin

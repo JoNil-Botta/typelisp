@@ -148,12 +148,7 @@
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first
             (cdiag.compiler-diagnostic-list-box-shared-view diag))]
-        (=
-          (__tl-project-field
-            (cdiag.compiler-diagnostic-fixes
-              first)
-            len)
-          0))]))
+        (= (__tl-project-field (cdiag.compiler-diagnostic-fixes first) len) 0))]))
 
 (define (compiler-check-first-diagnostic-exact?
   [path : String]
@@ -327,7 +322,7 @@
 (define (compiler-check-duplicate-type-location-ok?) : bool
   (match (compiler_check_core.compiler-check-source
     "tests/duplicate_type_location.tl"
-      "(defstruct Point (x i64))
+    "(defstruct Point (x i64))
 (defstruct Point (y i64))
 (define (main) : i64 0)")
     [(compiler_check_core.ResultCompilerCheck.Ok _) false]
@@ -339,9 +334,7 @@
         [message : String (cdiag.compiler-diagnostic-message diag)]
         [diag-path : String (cdiag.compiler-diagnostic-path diag)]
         (and
-          (string.eq
-            message
-            "symbols: duplicate type declaration Point")
+          (string.eq message "symbols: duplicate type declaration Point")
           (string.eq diag-path "tests/duplicate_type_location.tl")
           (= (cdiag.compiler-diagnostic-line diag) 2)
           (= (cdiag.compiler-diagnostic-col diag) 1)))]))
@@ -772,9 +765,7 @@
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (unless
-      (compiler-check-core-self-test-ok?)
-      (return 1))
+    (unless (compiler-check-core-self-test-ok?) (return 1))
     (cond
       [(and
           (compiler-check-near-miss-fix-ok?)

@@ -15,8 +15,7 @@
 (define (eval [e : (& e Expr)]) : i64
   (match e
     [(ENum n) (deref n)]
-    [(EAdd l r)
-      (+ (eval (& (deref (deref l)))) (eval (& (deref (deref r)))))]))
+    [(EAdd l r) (+ (eval (& (deref (deref l)))) (eval (& (deref (deref r)))))]))
 
 (define (main) : i64
   (let

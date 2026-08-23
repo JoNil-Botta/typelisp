@@ -78,6 +78,8 @@
           (set! n (+ n 1))))
       ;; Both spellings must agree; a mis-versioned fast clone that dropped or
       ;; mis-ordered the mask would diverge here rather than only run slower.
-      (if (= (mask-sum (& table) (& buf) 64) (mask-sum-literal (& table) (& buf) 64))
+      (if (=
+        (mask-sum (& table) (& buf) 64)
+        (mask-sum-literal (& table) (& buf) 64))
         0
         1))))

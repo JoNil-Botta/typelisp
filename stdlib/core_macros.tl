@@ -33,6 +33,8 @@
 ;; lint-allow: function-name-case -- private one-epoch bootstrap ABI
 (defmacro (__tl-compiler-owned-shared-view-dyn-ref-as
   [value : Expr]
+  ;; Spliced into the generated pointer element type.
+  ;; lint-allow: unused-variable
   [value-ty : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-cast (array-data (array ,value)) : (Ptr ,value-ty)))))

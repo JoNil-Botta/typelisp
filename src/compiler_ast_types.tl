@@ -1325,13 +1325,12 @@
       [source : (Ptr i64)
         (unsafe
           (int->ptr (ast-place-address node) : (Ptr i64)))]
-      (begin
-        (unsafe
-          (begin
-            (ptr-write! dest (ptr-read source))
-            (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
-            (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
-            (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))))))))
+      (unsafe
+        (begin
+          (ptr-write! dest (ptr-read source))
+          (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+          (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
+          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3))))))))
 
 ;: Truncate the pool back to `mark` nodes (used to discard nodes from a failed
 ;: parse). Reset to 0 between compiles so a fresh compile reuses its segments.

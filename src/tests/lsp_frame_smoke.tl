@@ -19,6 +19,7 @@
 (import lint_core)
 (import lsp_frame_core)
 (import lsp_vector_families)
+(import read as reader)
 (import (vector.vector lsp_vector_families.LspDeclEntry core) as lsp_decl_vec)
 (import (vector.vector lsp_vector_families.LspDocument core) as lsp_document_vec)
 
@@ -548,7 +549,10 @@
       (= missing.status 0)
       (lsp-transcript-result-contains? missing unreadable)
       (not lsp_frame_core.lsp-frame-memory-active)
-      (= lsp_frame_core.lsp-document-cache-arena 0))))
+      (= lsp_frame_core.lsp-document-cache-arena 0)
+      ;; Every transcript retires its standalone compiler arena. Its cold
+      ;; spanned parse sidecars must be truncated before that arena is gone.
+      (= (reader.sp-node-pool-len) 0))))
 
 (define (lsp-multiple-diagnostics-smoke-ok?) : bool
   (let

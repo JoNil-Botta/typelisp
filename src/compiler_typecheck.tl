@@ -4199,6 +4199,11 @@
   "(define (main [r : (&mut r i64)]) : (MutPtr (&mut r i64))
   (unsafe (ptr-addr-of r)))")
 
+(define (compiler-typecheck-raw-pointer-addr-of-ref-projection-source) : String
+  "(defstruct Cell (value i64))
+(define (main [r : (& r Cell)]) : (MutPtr i64)
+  (unsafe (ptr-addr-of r.value)))")
+
 (define (compiler-typecheck-raw-pointer-addr-of-temp-source) : String
   "(define (main [x : i64]) : (MutPtr i64)
   (unsafe (ptr-addr-of (+ x 1))))")
@@ -4338,12 +4343,13 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-dynamic-array-element-source)
       "typecheck: ptr-addr-of dynamic array elements are not addressable; use array-data plus ptr-offset")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-raw-pointer-addr-of-ref-root-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-raw-pointer-addr-of-mut-ref-root-source))
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-raw-pointer-addr-of-ref-root-source)
-      "typecheck: ptr-addr-of reference roots are not addressable")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-raw-pointer-addr-of-mut-ref-root-source)
-      "typecheck: ptr-addr-of reference roots are not addressable")
+      (compiler-typecheck-raw-pointer-addr-of-ref-projection-source)
+      "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-temp-source)
       "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")

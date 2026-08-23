@@ -3500,9 +3500,10 @@
   [cfgs : sym_i64_env.SymI64Env]
   [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   ;; Prepend the implicit prelude (runtime + core macros), then load the entry.
-  (match (compiler-driver-load-runtime-prelude
+  (match (compiler-driver-load-runtime-prelude-and-profile-state
     (owned_view.compiler-owned-shared-view stdlib-roots)
-    (owned_view.compiler-owned-shared-view cfgs))
+    (owned_view.compiler-owned-shared-view cfgs)
+    profile-state)
     [(compiler_load.ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
@@ -4214,9 +4215,6 @@
           (let
             [_capture-source-names : unit
               (compiler-driver-state-capture-active-interns!
-                (owned_view.compiler-owned-shared-view state))]
-            [intern-state : ci.InternCompatState
-              (compiler-driver-state-owned-interns
                 (owned_view.compiler-owned-shared-view state))]
             [source-names : ci.InternSourceNameSessionHandle
               (compiler-driver-state-entry-source-name-session

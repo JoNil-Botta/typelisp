@@ -39,7 +39,11 @@
     [payload (compiler-ir-box-shared-view ,value)]
     (compiler-ir-global-shared-view (__tl-project-field payload ,field))))
 
-(defmacro (compiler-ir-typed-box-shared-view [value : Expr] [inner-ty : Expr]) : Expr
+(defmacro (compiler-ir-typed-box-shared-view
+  [value : Expr]
+  ;; Spliced into the generated pointer element type.
+  ;; lint-allow: unused-variable
+  [inner-ty : Expr]) : Expr
   `(let
     [address : i64
       (unsafe

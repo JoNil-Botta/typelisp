@@ -57,7 +57,10 @@
       (string.eq (array-ref items index) (payload seed (- count index)))
       (items-ok-from? items (+ index 1) count seed))))
 
-(define (items-ok? [items : (& items (__tl_dyn-array String))] [count : i64] [seed : i64]) : bool
+(define (items-ok?
+  [items : (& items (__tl_dyn-array String))]
+  [count : i64]
+  [seed : i64]) : bool
   (and (= (array-length items) count) (items-ok-from? items 0 count seed)))
 
 (define (escape-string [seed : i64]) : String

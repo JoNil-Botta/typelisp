@@ -768,7 +768,8 @@
           unit
           (set! ok false))
         ;; Invalid publication is atomic: the active first fragment survives.
-        (if (surface-typecheck-facts-publish! bad-order)
+        (if (surface-typecheck-facts-publish!
+          (surface-facts-shared-view bad-order))
           (set! ok false)
           unit)
         (if (and
@@ -794,14 +795,20 @@
           unit
           (set! ok false))
         (surface-typecheck-facts-clear!)
-        (match (surface-typecheck-facts-builder-append builder first)
+        (match (surface-typecheck-facts-builder-append
+          (surface-facts-shared-view builder)
+          (surface-facts-shared-view first))
           [(ResultSurfaceTypecheckFactsBuilder.Err _) (set! ok false)]
           [(ResultSurfaceTypecheckFactsBuilder.Ok next) (set! builder next)])
         ;; A rejected fragment leaves the completed prefix reusable.
-        (match (surface-typecheck-facts-builder-append builder bad-order)
+        (match (surface-typecheck-facts-builder-append
+          (surface-facts-shared-view builder)
+          (surface-facts-shared-view bad-order))
           [(ResultSurfaceTypecheckFactsBuilder.Err _) unit]
           [(ResultSurfaceTypecheckFactsBuilder.Ok _) (set! ok false)])
-        (match (surface-typecheck-facts-builder-append builder second)
+        (match (surface-typecheck-facts-builder-append
+          (surface-facts-shared-view builder)
+          (surface-facts-shared-view second))
           [(ResultSurfaceTypecheckFactsBuilder.Err _) (set! ok false)]
           [(ResultSurfaceTypecheckFactsBuilder.Ok next) (set! builder next)])
         (match (surface-typecheck-facts-builder-finish builder)
@@ -815,7 +822,7 @@
                 (= composed.summary-functions 24)
                 (= composed.summary-externs 30)
                 (surface-typecheck-facts-i64-array-eq?
-                  composed.clone-call-indices
+                  (surface-facts-shared-view composed.clone-call-indices)
                   (__tl_make-array 0 0 2 3 4)))
                 unit
                 (set! ok false))
@@ -886,13 +893,13 @@
             (let
               [decl-key : i64
                 (surface_identity.surface-identity-portable-id
-                  structural-session
+                  (surface-facts-shared-view structural-session)
                   (array-ref decl-keys index)
                   source-count
                   identity-count)]
               [root-key : i64
                 (surface_identity.surface-identity-portable-id
-                  structural-session
+                  (surface-facts-shared-view structural-session)
                   (array-ref root-keys index)
                   source-count
                   identity-count)]

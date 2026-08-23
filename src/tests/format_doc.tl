@@ -76,10 +76,7 @@
 ;; work makes it O(width) per group. The total is monotonically non-decreasing,
 ;; so `(<= (flat-width-capped doc 0 r) r)` equals `(<= (flat-width doc) r)` for
 ;; every `doc` and `r` (used by `fits-flat`).
-(define (flat-width-capped
-  [doc : (& doc Doc)]
-  [acc : i64]
-  [limit : i64]) : i64
+(define (flat-width-capped [doc : (& doc Doc)] [acc : i64] [limit : i64]) : i64
   (if (> acc limit)
     acc
     (match doc
@@ -134,13 +131,7 @@
     [(Doc.Concat left right)
       (let
         [left-col : i64
-          (render-doc-into
-            (& (deref (deref left)))
-            width
-            indent
-            col
-            flat
-            buf)]
+          (render-doc-into (& (deref (deref left))) width indent col flat buf)]
         (render-doc-into
           (& (deref (deref right)))
           width
@@ -158,20 +149,8 @@
         buf)]
     [(Doc.Group inner)
       (if (fits-flat (& (deref (deref inner))) (- width col))
-        (render-doc-into
-          (& (deref (deref inner)))
-          width
-          indent
-          col
-          true
-          buf)
-        (render-doc-into
-          (& (deref (deref inner)))
-          width
-          indent
-          col
-          false
-          buf))]))
+        (render-doc-into (& (deref (deref inner))) width indent col true buf)
+        (render-doc-into (& (deref (deref inner))) width indent col false buf))]))
 
 (define (render-doc-width [doc : (& doc Doc)] [width : i64]) : String
   (let
@@ -295,23 +274,15 @@
   (let
     [base : Doc (doc-append (doc-text "a") (doc-text "b"))]
     [with-c : Doc
-      (doc-append
-        (owned_view.compiler-owned-shared-view base)
-        (doc-text "c"))]
+      (doc-append (owned_view.compiler-owned-shared-view base) (doc-text "c"))]
     [with-d : Doc
-      (doc-append
-        (owned_view.compiler-owned-shared-view base)
-        (doc-text "d"))]
+      (doc-append (owned_view.compiler-owned-shared-view base) (doc-text "d"))]
     [tail : Doc
       (doc-append (doc-text "b") (doc-append (doc-text "c") (doc-text "d")))]
     [with-a : Doc
-      (doc-append
-        (doc-text "a")
-        (owned_view.compiler-owned-shared-view tail))]
+      (doc-append (doc-text "a") (owned_view.compiler-owned-shared-view tail))]
     [with-z : Doc
-      (doc-append
-        (doc-text "z")
-        (owned_view.compiler-owned-shared-view tail))]
+      (doc-append (doc-text "z") (owned_view.compiler-owned-shared-view tail))]
     (and
       (fmt-eq? (render-doc-width base 80) "ab")
       (fmt-eq? (render-doc-width with-c 80) "abc")

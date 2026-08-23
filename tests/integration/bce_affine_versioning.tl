@@ -7,7 +7,10 @@
 (import stdlib.io)
 (import stdlib.string)
 
-(define (scaled-sum [items : (& items (__tl_dyn-array i64))] [start : i64] [end : i64]) : i64
+(define (scaled-sum
+  [items : (& items (__tl_dyn-array i64))]
+  [start : i64]
+  [end : i64]) : i64
   (let
     [i : i64 start]
     [sum : i64 0]
@@ -18,7 +21,10 @@
           (set! i (+ i 1))))
       sum)))
 
-(define (offset-sum [items : (& items (__tl_dyn-array i64))] [start : i64] [end : i64]) : i64
+(define (offset-sum
+  [items : (& items (__tl_dyn-array i64))]
+  [start : i64]
+  [end : i64]) : i64
   (let
     [i : i64 start]
     [sum : i64 0]
@@ -38,7 +44,9 @@
       (set! (array-ref items 2) 12)
       (set! (array-ref items 3) 20)
       (set! (array-ref items 6) 12)
-      (if (and (= (scaled-sum (& items) 0 3) 42) (= (offset-sum (& items) 2 5) 42))
+      (if (and
+        (= (scaled-sum (& items) 0 3) 42)
+        (= (offset-sum (& items) 2 5) 42))
         42
         1))))
 

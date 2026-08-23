@@ -145,7 +145,8 @@
     (let
       [portable : i64
         (identity.surface-identity-portable-id
-          (owned_view.compiler-owned-shared-view context.structural-session)
+          (owned_view.compiler-owned-reference-shared-view
+            (& context.structural-session))
           name
           context.source-identity-count
           context.identity-count)]
@@ -273,7 +274,8 @@
     [portable : i64 (surface-ast-read-i64! reader)]
     [resolved : i64
       (identity.surface-identity-resolve-portable-id
-        (owned_view.compiler-owned-shared-view reader.structural-session)
+        (owned_view.compiler-owned-reference-shared-view
+          (& reader.structural-session))
         portable
         (& reader.identity-remap))]
     (if (< resolved 0)

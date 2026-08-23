@@ -445,11 +445,12 @@ dereference, write through, offset, or cast raw pointers.
 
 `(ptr-addr-of place)` is the unsafe source operation for deriving a raw
 pointer from compiler-known storage. The v1 `place` grammar is deliberately
-narrow: whole local or parameter storage, struct-field paths rooted in that
-storage, and fixed-array element paths rooted in that storage. The result is a
-raw pointer value; it carries no checked borrow, lifetime pin, provenance,
-aliasing, or move restriction. The caller is responsible for keeping the owner
-storage live and valid for every later raw-pointer use.
+narrow: whole local or parameter storage (including a slot whose stored value
+is a reference), struct-field paths rooted in owned storage, and fixed-array
+element paths rooted in owned storage. The result is a raw pointer value; it
+carries no checked borrow, lifetime pin, provenance, aliasing, or move
+restriction. The caller is responsible for keeping the owner storage live and
+valid for every later raw-pointer use.
 
 #### 3.4.1 Arena-owned `(Box T)` indirection
 
@@ -6043,7 +6044,7 @@ The unsafe operation set:
 | `(ptr-write! p value)` | Unsafe | `(MutPtr T)` and `T` -> `unit` | Writes `sizeof(T)` bytes; writing through `(Ptr T)` is rejected. |
 | `(ptr-offset p n)` | Unsafe | raw pointer and integer -> same raw pointer type | Adds `n * sizeof(T)` bytes. Negative offsets are allowed but unsafe. |
 | `(ptr-cast p : (Ptr T))` / `(ptr-cast p : (MutPtr T))` | Unsafe | raw pointer -> requested raw pointer type | Includes const/mutable pointer casts; there is no implicit `MutPtr` to `Ptr` coercion. |
-| `(ptr-addr-of place)` | Unsafe | addressable storage place of type `T` -> `(MutPtr T)` for owned local/parameter roots | Produces a raw pointer to compiler-known storage without creating a checked borrow or lifetime pin. |
+| `(ptr-addr-of place)` | Unsafe | addressable storage slot/place of type `T` -> `(MutPtr T)` | Produces a raw pointer to compiler-known storage without creating a checked borrow or lifetime pin. A whole reference-value slot is addressable, but projections through its referent are not. |
 | `(ptr->int p)` | Unsafe | raw pointer -> `u64` | Exposes the target address representation. |
 | `(int->ptr n : (Ptr T))` / `(int->ptr n : (MutPtr T))` | Unsafe | integer -> requested raw pointer type | Address validity is entirely outside the typechecker. |
 | `(atomic-load p)`, `(atomic-store! p v)`, `(atomic-add! p d)`, `(atomic-fetch-add! p d)`, `(atomic-cas! p expected new)` | Unsafe | raw pointer atomics for `T` in `i32`, `i64`, `u32`, or `u64`; update forms require `(MutPtr T)` and matching values | Sequentially consistent x86-64 memory operations. Load returns `T`; store/add return `unit`; fetch-add and CAS return the previous value observed at `p`. |
@@ -6063,8 +6064,10 @@ input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
 
 `ptr-addr-of` addressable places are:
 
-- A whole local or parameter storage slot, including scalar and aggregate
-  locals/parameters.
+- A whole local or parameter storage slot, including scalar, aggregate, and
+  reference-value locals/parameters. For a reference-valued slot, the pointer
+  addresses the slot containing the reference; it does not address the
+  reference's referent.
 - An ordinary global storage slot. This does not constitute a safe by-value
   read: dereferencing the resulting raw pointer to copy a non-Copy handle is an
   explicit unsafe ownership/aliasing operation whose validity is entirely the
@@ -6077,11 +6080,11 @@ input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
   sugar is not addressable in v1. The element index is checked with the same
   bounds policy as fixed-array element access before the pointer is returned.
 
-The operation's result type is `(MutPtr T)` for the selected owned local,
-parameter, or ordinary global storage of type `T`. V1 does not define
-reference-rooted address-of. A later design may
-allow reference roots, in which case immutable roots should produce `(Ptr T)`
-and mutable roots `(MutPtr T)`.
+The operation's result type is `(MutPtr T)` for the selected local, parameter,
+or ordinary global storage slot of type `T`. V1 does not define projections
+through a reference root: if a slot `r` has type `(& r T)` or `(&mut r T)`,
+`(ptr-addr-of r)` addresses the reference value and is valid, while
+`(ptr-addr-of r.field)` and `(ptr-addr-of (array-ref r i))` are rejected.
 
 The checker only verifies that the form appears in an unsafe context and that
 the operand is a storage-backed addressable place. Taking a raw address does
@@ -7372,8 +7375,9 @@ in documentation passes.
   indirect function-value tail calls emitted as jumps.
 - FFI: `extern` with exact-symbol binding, C varargs, unsafe declarations,
   raw pointers with unsafe dereference/write/offset/cast, `ptr-addr-of` for
-  whole local/parameter storage, struct-field paths, and fixed-array element
-  paths (including coherent register-resident aggregate aliases),
+  whole local/parameter/global storage slots (including reference-value slots),
+  owned struct-field paths, and owned fixed-array element paths (including
+  coherent register-resident aggregate aliases),
   sequentially consistent 32/64-bit raw-pointer atomics, and 32/64-bit
   volatile raw pointer access.
 - Safe task threading with structural transfer/share checking, generated
@@ -8249,10 +8253,11 @@ addr-of-place ::= ident
                 | "(" "array-ref" addr-of-place expr ")"
 
 ;; `ptr-addr-of` is unsafe and narrower than `borrow-place`: the root `ident`
-;; must resolve to local or parameter storage, `array-ref` projections must be
-;; fixed-array elements, and temporaries, globals, tuple/box/enum projections,
-;; and compatibility dynamic-array elements are rejected. Local dotted-field
-;; sugar follows the same leading-local rule as borrow places.
+;; must resolve to a local, parameter, or ordinary global storage slot;
+;; `array-ref` projections must be fixed-array elements; and temporaries,
+;; tuple/box/enum projections, projections through reference roots, and
+;; compatibility dynamic-array elements are rejected. Dotted-field sugar
+;; follows the same storage-root rule.
 
 binding       ::= "[" ident [":" type] expr "]"
 resource-binding ::= "[" ident expr expr "]"  ; name init cleanup-fn

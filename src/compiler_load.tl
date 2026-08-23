@@ -2703,6 +2703,10 @@
         (ast.ast-node-pool-reset-to! (compiler-load-session-ast-floor-value))
         (ast.ty-node-pool-reset-to! (compiler-load-session-ty-floor-value)))
       (begin
+        ;; Standalone sessions own no cached AST whose cold parse sidecars must
+        ;; survive. Clear the spanned reader pool before their arena is retired,
+        ;; matching compiler-load-session-state-reset-pools-with-pools! below.
+        (reader.sp-node-pool-reset!)
         (ast.ast-node-pool-reset!)
         (ast.ty-node-pool-reset!)))))
 

@@ -37,9 +37,7 @@
   (if (= index (array-length source))
     unit
     (begin
-      (set!
-        (array-ref target (+ index 1))
-        (clone (array-ref source index)))
+      (set! (array-ref target (+ index 1)) (clone (array-ref source index)))
       (field-list-copy-from source target (+ index 1)))))
 
 (define (field-list-prepend [name : String] [value : Value] [rest : FieldList]) : FieldList
@@ -85,9 +83,7 @@
   (if (= index (array-length source))
     unit
     (begin
-      (set!
-        (array-ref target (+ index 1))
-        (clone (array-ref source index)))
+      (set! (array-ref target (+ index 1)) (clone (array-ref source index)))
       (value-list-copy-from source target (+ index 1)))))
 
 (define (value-list-prepend [value : Value] [rest : ValueList]) : ValueList
@@ -149,10 +145,9 @@
 (defmacro (field-value [object : Expr] [name : Expr] [err-ctor : Expr]) : Expr
   `(match ,object
     [(serialize_toy_format.Object fields)
-      (match
-        (serialize_toy_format.field-list-get
-          (& (__tl-box-place fields))
-          ,name)
+      (match (serialize_toy_format.field-list-get
+        (& (__tl-box-place fields))
+        ,name)
         [(serialize_toy_format.Found found) found]
         [(serialize_toy_format.Missing)
           (return (,err-ctor "toy format: missing field"))])]
@@ -179,10 +174,9 @@
   [err-ctor : Expr]) : Expr
   `(match ,value
     [(serialize_toy_format.Sequence items)
-      (match
-        (serialize_toy_format.value-list-get
-          (& (__tl-box-place items))
-          ,index)
+      (match (serialize_toy_format.value-list-get
+        (& (__tl-box-place items))
+        ,index)
         [(serialize_toy_format.Found found) found]
         [(serialize_toy_format.Missing)
           (return (,err-ctor "toy format: missing sequence element"))])]

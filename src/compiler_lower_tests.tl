@@ -3479,7 +3479,6 @@
 (define (lower-test-instr-seq-spmd-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [count : i64 instrs.len]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
@@ -3858,7 +3857,6 @@
 (define (lower-test-instr-seq-phi-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [count : i64 instrs.len]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [index : i64 0]

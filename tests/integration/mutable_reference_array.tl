@@ -21,7 +21,9 @@
     bag)
   (ArrayBagHandle (&mut bag.items) index))
 
-(define (array-bag-handle-write [handle : (&mut handle (ArrayBagHandle bag))] [value : i64]) : unit
+(define (array-bag-handle-write
+  [handle : (&mut handle (ArrayBagHandle bag))]
+  [value : i64]) : unit
   (set! (array-ref handle.items handle.index) value))
 
 (define (array-bag-handle-read [handle : (& handle (ArrayBagHandle bag))]) : i64

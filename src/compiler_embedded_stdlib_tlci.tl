@@ -7171,8 +7171,8 @@
             (match (compiler-comptime-host-operand-expr arg-a)
               [(ast.AstExpr.Literal (ast.AstLiteral.String string-id))
                 (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.String
-                    (ci.intern-str string-id)
+                  (ctfe_support.ctfe-source-string-value-for-source-names
+                    (compiler-comptime-host-session-source-names-value)
                     string-id))]
               [_ tlci.tlci-host-callback-status-bad-request]))]
         (begin
@@ -7203,8 +7203,8 @@
               compiler-comptime-host-stack-len
               (- compiler-comptime-host-stack-len 1))
             (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.String
-                (ci.intern-str string-id)
+              (ctfe_support.ctfe-source-string-value-for-source-names
+                (compiler-comptime-host-session-source-names-value)
                 string-id)))]
         [_
           (begin

@@ -4835,7 +4835,7 @@
             type-env
             (if (csym.compiler-symbol-root-module-id? module-id)
               ""
-              (tc_core.tc-env-key-name-text module-id))
+              (tc_core.tc-env-key-name-text-for-session session module-id))
             module-id
             name
             source-id)))
@@ -4942,7 +4942,7 @@
               cbi.compiler-builtin-id-fix-empty)
             (tc_core.tc-context-with-module-id
               ctx
-              (tc_core.tc-env-key-name-text module-id)
+              (tc_core.tc-env-key-name-text-for-session session module-id)
               module-id))]
         (if (>= (tc_core.tc-name-first-dot-id session source-id) 0)
           (match (tc_core.tc-source-name-lookup-key-with-field-check-lookup
@@ -5632,7 +5632,7 @@
     [(ast.AstStructCleanup.No) names]
     [(ast.AstStructCleanup.Fn cleanup-name)
       (let
-        [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
+        [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
         (lower-name-env-add-decl-module-binding-id
           lower-state
           (lower-global-shared-view names)
@@ -5655,7 +5655,7 @@
     [(ast.AstEnumCleanup.No) names]
     [(ast.AstEnumCleanup.Fn cleanup-name)
       (let
-        [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
+        [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
         (lower-name-env-add-decl-module-binding-id
           lower-state
           names
@@ -6276,14 +6276,65 @@
     source-module-id
     (ast.ast-decl-path-list-owner-id paths index source-module-id)))
 
+;; Mixed AST/name fields may carry ordinary intern-pool IDs or table-backed
+;; macro-hygiene identities. Lowering owns the explicit source/structural-name
+;; session needed to render either domain without treating an opaque handle as
+;; a pool index.
+(define (lower-name-id-text-for-session
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : String
+  (tc_core.tc-env-key-name-text-for-session session name-id))
+
+(define (lower-name-id-text [lower-state : CompilerLowerState] [name-id : i64]) : String
+  (lower-name-id-text-for-session
+    (compiler-lower-state-structural-session lower-state)
+    name-id))
+
 (define (lower-decl-owner-module-name
+  [lower-state : CompilerLowerState]
   [source-module-id : i64]
   [owner-module-id : i64]) : String
   (if (and
     (not (= source-module-id owner-module-id))
     (ci.intern-generated-id-active? owner-module-id))
     ""
-    (ci.intern-str owner-module-id)))
+    (lower-name-id-text lower-state owner-module-id)))
+
+(cfg
+  test
+  (test
+    lower-decl-owner-module-name-structural
+    (let
+      [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+      [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+      [source-name-id : i64
+        (ci.intern-compat-state-intern
+          (&mut intern-state)
+          "lower-structural-module")]
+      [_install : unit
+        (ci.intern-compat-state-install!
+          (lower-global-shared-view intern-state))]
+      [lower-state : CompilerLowerState
+        (compiler-lower-state-new-with-intern-state intern-state)]
+      [owner-module-id : i64
+        (cis.intern-macro-global-identity-raw
+          (cis.intern-structural-session-macro-global-identity
+            (compiler-lower-state-structural-session lower-state)
+            cis.InternMacroGlobalRole.Context
+            cbi.compiler-builtin-id-fix-empty
+            source-name-id))]
+      [ok : bool
+        (string.eq
+          (lower-decl-owner-module-name
+            lower-state
+            cbi.compiler-builtin-id-fix-empty
+            owner-module-id)
+          "lower-structural-module")]
+      (begin
+        (ci.intern-compat-state-install! installed)
+        (if ok
+          unit
+          (io.panic "lower: structural owner module name smoke failed"))))))
 
 (define (lower-entry-main-decl? [decl : ast.AstDecl]) : bool
   (match decl
@@ -6361,7 +6412,7 @@
               rest-paths
               entry-path
               scan
-              (tc_core.tc-env-key-name-text next-module)
+              (lower-name-id-text lower-state next-module)
               next-module)]
           [_
             (lower-entry-main-scan-decls-in-module
@@ -6558,7 +6609,7 @@
   (match decl
     [(ast.AstDecl.Def decl-meta name _ _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String (lower-name-id-text lower-state name)]
         (lower-name-env-add-decl-module-binding-id
           lower-state
           names
@@ -6570,7 +6621,7 @@
           name))]
     [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String (lower-name-id-text lower-state name)]
         (lower-name-env-add-decl-module-binding-id
           lower-state
           names
@@ -6582,7 +6633,7 @@
           name))]
     [(ast.AstDecl.DefDispatch decl-meta name _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String (lower-name-id-text lower-state name)]
         (lower-name-env-add-decl-module-binding-id
           lower-state
           names
@@ -6596,7 +6647,7 @@
       ;; Calls resolve through the local declaration name; backend metadata owns
       ;; the exact external linker symbol.
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String (lower-name-id-text lower-state name)]
         (lower-name-env-add-module-extern-binding-id
           names
           module
@@ -6782,6 +6833,7 @@
                       (lower-global-shared-view entry-path)
                       decl-path
                       (lower-decl-owner-module-name
+                        lower-state
                         cur-module-id
                         logical-module-id)
                       logical-module-id
@@ -6812,7 +6864,7 @@
   (match decl
     [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String (lower-name-id-text lower-state name)]
         (if (lower-name-has-clone-prefix? (lower-global-shared-view name-str))
           (lower-name-env-add-decl-module-binding-id
             lower-state
@@ -6964,7 +7016,7 @@
                     bind-syntax?
                     (lower-global-shared-view entry-path)
                     decl-path
-                    (ci.intern-str cur-module-id)
+                    (lower-name-id-text lower-state cur-module-id)
                     cur-module-id
                     (lower-global-array-element-shared-view
                       decl-slots
@@ -7044,7 +7096,7 @@
   (match decl
     [(ast.AstDecl.Def decl-meta name _ _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String (lower-name-id-text lower-state name)]
         (lower-name-env-add-decl-import-alias-binding-base-id
           lower-state
           names
@@ -7060,7 +7112,7 @@
           path-aware))]
     [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String (lower-name-id-text lower-state name)]
         (lower-name-env-add-decl-import-alias-binding-base-id
           lower-state
           names
@@ -7076,7 +7128,7 @@
           path-aware))]
     [(ast.AstDecl.DefDispatch decl-meta name _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String (lower-name-id-text lower-state name)]
         (lower-name-env-add-decl-import-alias-binding-base-id
           lower-state
           names
@@ -7092,7 +7144,7 @@
           path-aware))]
     [(ast.AstDecl.Extern decl-meta name _ metadata _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String (lower-name-id-text lower-state name)]
         [logical-id : i64 (lower-module-name-key-id-by-id module-id name)]
         (lower-name-env-add-import-alias-binding-base-symbol-id
           lower-state
@@ -7113,7 +7165,7 @@
         [(ast.AstEnumCleanup.No) names]
         [(ast.AstEnumCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
+            [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               lower-state
               names
@@ -7132,7 +7184,7 @@
         [(ast.AstEnumCleanup.No) names]
         [(ast.AstEnumCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
+            [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               lower-state
               names
@@ -7151,7 +7203,7 @@
         [(ast.AstStructCleanup.No) names]
         [(ast.AstStructCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
+            [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               lower-state
               names
@@ -7170,7 +7222,7 @@
         [(ast.AstStructCleanup.No) names]
         [(ast.AstStructCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
+            [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               lower-state
               names
@@ -7213,7 +7265,11 @@
   (match decl
     [(ast.AstDecl.Def decl-meta name _ _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String
+          (lower-name-id-text
+            (compiler-lower-state-from-name-cache
+              (lower-global-shared-view base-cache))
+            name)]
         (lower-name-env-add-import-alias-binding-base-cache-id
           names
           base-cache
@@ -7228,7 +7284,11 @@
           name))]
     [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String
+          (lower-name-id-text
+            (compiler-lower-state-from-name-cache
+              (lower-global-shared-view base-cache))
+            name)]
         (lower-name-env-add-import-alias-binding-base-cache-id
           names
           base-cache
@@ -7243,7 +7303,11 @@
           name))]
     [(ast.AstDecl.DefDispatch decl-meta name _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String
+          (lower-name-id-text
+            (compiler-lower-state-from-name-cache
+              (lower-global-shared-view base-cache))
+            name)]
         (lower-name-env-add-import-alias-binding-base-cache-id
           names
           base-cache
@@ -7258,7 +7322,11 @@
           name))]
     [(ast.AstDecl.Extern decl-meta name _ metadata _)
       (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
+        [name-str : String
+          (lower-name-id-text
+            (compiler-lower-state-from-name-cache
+              (lower-global-shared-view base-cache))
+            name)]
         [logical-id : i64 (lower-module-name-key-id-by-id module-id name)]
         (lower-name-env-add-import-alias-binding-base-cache-symbol-id
           names
@@ -7280,7 +7348,11 @@
         [(ast.AstEnumCleanup.No) names]
         [(ast.AstEnumCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
+            [cleanup-str : String
+              (lower-name-id-text
+                (compiler-lower-state-from-name-cache
+                  (lower-global-shared-view base-cache))
+                cleanup-name)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
               base-cache
@@ -7298,7 +7370,11 @@
         [(ast.AstEnumCleanup.No) names]
         [(ast.AstEnumCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
+            [cleanup-str : String
+              (lower-name-id-text
+                (compiler-lower-state-from-name-cache
+                  (lower-global-shared-view base-cache))
+                cleanup-name)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
               base-cache
@@ -7316,7 +7392,11 @@
         [(ast.AstStructCleanup.No) names]
         [(ast.AstStructCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
+            [cleanup-str : String
+              (lower-name-id-text
+                (compiler-lower-state-from-name-cache
+                  (lower-global-shared-view base-cache))
+                cleanup-name)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
               base-cache
@@ -7334,7 +7414,11 @@
         [(ast.AstStructCleanup.No) names]
         [(ast.AstStructCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
+            [cleanup-str : String
+              (lower-name-id-text
+                (compiler-lower-state-from-name-cache
+                  (lower-global-shared-view base-cache))
+                cleanup-name)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
               base-cache
@@ -7373,8 +7457,8 @@
   [path-aware : bool]) : LowerNameEnv
   (let
     [cur-names : LowerNameEnv names]
-    [target-module : String (tc_core.tc-env-key-name-text target-module-id)]
-    [alias : String (ci.intern-str alias-id)]
+    [target-module : String (lower-name-id-text lower-state target-module-id)]
+    [alias : String (lower-name-id-text lower-state alias-id)]
     [_ensure : unit
       (lower-module-decl-index-ensure!
         lower-state
@@ -7690,8 +7774,9 @@
       (let
         [j : i64 (lower-global-array-element-shared-view starts slot)]
         [end : i64 (lower-global-array-element-shared-view ends slot)]
-        [target-module : String (ci.intern-str target-module-id)]
-        [alias : String (ci.intern-str alias-id)]
+        [target-module : String
+          (lower-name-id-text lower-state target-module-id)]
+        [alias : String (lower-name-id-text lower-state alias-id)]
         (begin
           (while (< j end)
             (let
@@ -7751,7 +7836,7 @@
       (lower-name-env-add-import-alias-binding-symbol-id
         lower-state
         names
-        (ci.intern-str alias-id)
+        (lower-name-id-text lower-state alias-id)
         ""
         alias-key
         ""
@@ -7778,9 +7863,13 @@
     (if (or (< logical-id 0) (< symbol-id 0))
       names
       (lower-name-env-add-import-alias-binding-symbol-id
-        (compiler-lower-state-from-name-cache base-cache)
+        (compiler-lower-state-from-name-cache
+          (lower-global-shared-view base-cache))
         names
-        (ci.intern-str alias-id)
+        (lower-name-id-text
+          (compiler-lower-state-from-name-cache
+            (lower-global-shared-view base-cache))
+          alias-id)
         ""
         alias-key
         ""
@@ -10532,7 +10621,7 @@
           module
           module-id
           name
-          (tc_core.tc-env-key-name-text name)))]
+          (lower-name-id-text lower-state name)))]
     [(ast.AstDecl.Unsafe inner-box)
       (lower-function-logical-id-from-decl
         lower-state
@@ -10585,7 +10674,10 @@
                   lower-state
                   (lower-global-shared-view entry-path)
                   decl-path
-                  (lower-decl-owner-module-name cur-module-id logical-module-id)
+                  (lower-decl-owner-module-name
+                    lower-state
+                    cur-module-id
+                    logical-module-id)
                   logical-module-id
                   decl)
                   ;; Assign each distinct function name a dense slot
@@ -13191,7 +13283,10 @@
             (lower-global-shared-view decl-path)
             module-id)]
         [logical-module : String
-          (lower-decl-owner-module-name module-id logical-module-id)]
+          (lower-decl-owner-module-name
+            (lower-reach-state-owner (lower-global-shared-view state))
+            module-id
+            logical-module-id)]
         [next : LowerReachState
           (match (lower-global-shared-view decl)
             [(ast.AstDecl.DefStruct decl-meta _ _ cleanup fields)
@@ -13248,7 +13343,9 @@
                 (lower-global-shared-view rest)
                 (lower-global-shared-view rest-paths)
                 (lower-global-shared-view entry-path)
-                (ci.intern-str next-module)
+                (lower-name-id-text
+                  (lower-reach-state-owner (lower-global-shared-view state))
+                  next-module)
                 next-module
                 (lower-global-shared-view names)
                 state)]
@@ -13408,7 +13505,7 @@
           [(ast.AstDecl.Module next-module)
             (let
               [next-module-str : String
-                (tc_core.tc-env-key-name-text next-module)]
+                (lower-name-id-text lower-state next-module)]
               (lower-function-body-index-from-decls-in-module
                 lower-state
                 pools
@@ -13453,10 +13550,13 @@
                     lower-state
                     entry-path
                     decl-path
-                    (lower-decl-owner-module-name module-id logical-module-id)
+                    (lower-decl-owner-module-name
+                      lower-state
+                      module-id
+                      logical-module-id)
                     logical-module-id
                     name
-                    (tc_core.tc-env-key-name-text name))
+                    (lower-name-id-text lower-state name))
                   decl-name-cache
                   body
                   (ast.ast-decl-path-list-owner-id
@@ -15277,7 +15377,7 @@
               rest
               rest-paths
               entry-path
-              (tc_core.tc-env-key-name-text next-module)
+              (lower-name-id-text-for-session session next-module)
               reachable-paths
               used
               covered)]
@@ -15340,7 +15440,7 @@
               rest
               rest-paths
               entry-path
-              (tc_core.tc-env-key-name-text next-module)
+              (lower-name-id-text-for-session session next-module)
               next-module
               all-functions
               reachable
@@ -15387,7 +15487,7 @@
   ;; when source signatures only mention the public Arena wrapper.
   (if (and
     (string.eq module "stdlib.arena")
-    (string.eq (tc_core.tc-env-key-name-text name) "Arena"))
+    (string.eq (lower-name-id-text-for-session session name) "Arena"))
     (lower-used-type-name-add
       session
       used
@@ -15453,7 +15553,9 @@
             decl-slots
             (+ decl-offset index))
             [(ast.AstDecl.Module next-module)
-              (set! current-module (tc_core.tc-env-key-name-text next-module))]
+              (set!
+                current-module
+                (lower-name-id-text-for-session session next-module))]
             [_
               (if (and
                 (lower-type-decl?
@@ -15757,6 +15859,7 @@
                   (lower-global-shared-view entry-path)
                   (lower-global-shared-view decl-path)
                   (lower-decl-owner-module-name
+                    lower-state
                     source-module-id
                     logical-module-id)
                   logical-module-id
@@ -16055,7 +16158,9 @@
               rest
               rest-paths
               entry-path
-              (tc_core.tc-env-key-name-text next-module)
+              (lower-name-id-text
+                (lower-reach-state-owner (lower-global-shared-view state))
+                next-module)
               next-module
               all-functions
               state)]
@@ -20072,12 +20177,11 @@
         [(ast.AstType.EnumArgs _ _) true]
         [_ false]))))
 
-;; A memory-class global's symbol stores a pointer to its aggregate payload, so
-;; the address of the value is the loaded symbol. Owning/view handles such as a
-;; dynamic array are themselves stored inline in the symbol and therefore use
-;; the symbol's address even though ordinary borrowing treats their payload
-;; pointer as the referent.
-(define (lower-ptr-addr-of-global-value-reference?
+;; A memory-class local/global value already denotes its aggregate payload, so
+;; address-of can reuse that reference. Owning/view handles such as a dynamic
+;; array are instead stored inline and must take the address of the handle slot,
+;; even though ordinary borrowing treats their payload pointer as the referent.
+(define (lower-ptr-addr-of-storage-value-reference?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (let
@@ -22706,20 +22810,17 @@
   [offset : i64]
   [field-ty : ast.AstType]
   [ref-ty : ast.AstType]) : LowerExpr
-  (let
-    [referent-ty : ast.AstType
-      (tc_core.tc-borrow-referent-type (lower-global-shared-view field-ty))]
-    ;; Enum payload aggregates are stored inline in the enum slot. Borrowing a
-    ;; tuple, fixed array, struct, or enum payload therefore takes the payload's
-    ;; address even when that aggregate is normally represented by a pointer.
-    (if (lower-str-ref-type? ctx (lower-global-shared-view ref-ty))
-      (let
-        [loaded : LowerExpr (lower-load-at-offset state base offset field-ty)]
-        (match loaded
-          [(LowerExpr.Expr loaded-state value _)
-            (LowerExpr.Expr loaded-state value ref-ty)]))
-      (match (lower-gep-byte state base offset)
-        [(LowerExpr.Expr ptr-state ptr _) (LowerExpr.Expr ptr-state ptr ref-ty)]))))
+  ;; Enum payload aggregates are stored inline in the enum slot. Borrowing a
+  ;; tuple, fixed array, struct, or enum payload therefore takes the payload's
+  ;; address even when that aggregate is normally represented by a pointer.
+  (if (lower-str-ref-type? ctx (lower-global-shared-view ref-ty))
+    (let
+      [loaded : LowerExpr (lower-load-at-offset state base offset field-ty)]
+      (match loaded
+        [(LowerExpr.Expr loaded-state value _)
+          (LowerExpr.Expr loaded-state value ref-ty)]))
+    (match (lower-gep-byte state base offset)
+      [(LowerExpr.Expr ptr-state ptr _) (LowerExpr.Expr ptr-state ptr ref-ty)])))
 
 (define (lower-bind-borrowed-variant-payloads
   [ctx : tc_core.TcContext]
@@ -24894,7 +24995,6 @@
     (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
-      [logical-name-text : String (ir.compiler-ir-symbol-text logical-name)]
       [param-count : i64 (lower-param-count (lower-global-shared-view params))]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions
@@ -30784,7 +30884,7 @@
         type-env
         name)
         [(tc_core.ResultTcType.Ok place-ty)
-          (if (lower-borrow-place-value-reference?
+          (if (lower-ptr-addr-of-storage-value-reference?
             (lower-global-shared-view ctx)
             (lower-global-shared-view place-ty))
             (ResultLowerExpr.Ok
@@ -30829,7 +30929,7 @@
           (ResultLowerExpr.Ok
             (LowerExpr.Expr
               (lower-global-shared-view state)
-              (if (lower-ptr-addr-of-global-value-reference?
+              (if (lower-ptr-addr-of-storage-value-reference?
                 (lower-global-shared-view ctx)
                 (lower-global-shared-view place-ty))
                 (ir.CompilerIrValue.Global
@@ -73319,7 +73419,6 @@
     (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
-      [logical-name-text : String (ir.compiler-ir-symbol-text logical-name)]
       [param-count : i64 (lower-param-count (lower-global-shared-view params))]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions
@@ -75446,11 +75545,6 @@
   (match variant
     [(ast.AstDispatchVariant.Variant isa variant-name)
       (let
-        [variant-logical : String
-          (lower-dispatch-variant-logical-name
-            module-id
-            (lower-global-shared-view names)
-            variant-name)]
         [internal-name : i64
           (lower-dispatch-variant-role-symbol
             (lower-global-shared-view names)
@@ -75493,7 +75587,9 @@
               (lower-diagnostic
                 (str_cat.str-cat
                   "lower: unknown defdispatch variant "
-                  (tc_core.tc-env-key-name-text variant-name)))))))]))
+                  (tc_core.tc-env-key-name-text-for-session
+                    (tc_core.tc-context-structural-session ctx)
+                    variant-name)))))))]))
 
 (define (lower-dispatch-lower-variants-from
   [ctx : tc_core.TcContext]
@@ -75584,7 +75680,10 @@
   [logical-module : String]
   [logical-module-id : i64]) : ResultLowerDispatchDecl
   (let
-    [name : String (tc_core.tc-env-key-name-text name-id)]
+    [name : String
+      (tc_core.tc-env-key-name-text-for-session
+        (tc_core.tc-context-structural-session ctx)
+        name-id)]
     [decl-ctx : tc_core.TcContext
       (tc_core.tc-context-with-module-id ctx module module-id)]
     [logical-name : String
@@ -75952,7 +76051,10 @@
                   (lower-global-shared-view decl-path)
                   cur-module-id)]
               [logical-module : String
-                (lower-decl-owner-module-name cur-module-id logical-module-id)]
+                (lower-decl-owner-module-name
+                  lower-state
+                  cur-module-id
+                  logical-module-id)]
               [decl-name-cache : LowerNameCache
                 (lower-name-cache-with-module-id
                   (lower-global-shared-view cur-name-cache)
@@ -76003,7 +76105,7 @@
                             (lower-current-decl-logical-name-cache-id
                               (lower-global-shared-view decl-name-cache)
                               logical-module
-                              (tc_core.tc-env-key-name-text name)
+                              (lower-name-id-text lower-state name)
                               name)]
                           [global-key-id : i64
                             (lower-module-name-key-id-by-id
@@ -76103,7 +76205,7 @@
                       (lower-current-decl-logical-name-cache-id
                         (lower-global-shared-view decl-name-cache)
                         logical-module
-                        (tc_core.tc-env-key-name-text name)
+                        (lower-name-id-text lower-state name)
                         name)]
                     [logical-key-id : i64
                       (lower-module-name-key-id-by-id logical-module-id name)]
@@ -76167,14 +76269,14 @@
                         (lower-global-shared-view logical-module)
                         logical-module-id
                         name
-                        (tc_core.tc-env-key-name-text name))]
+                        (lower-name-id-text lower-state name))]
                     [logical-name : String
                       (if (= logical-id cbi.compiler-builtin-id-fix-main)
                         "main"
                         (lower-current-decl-logical-name-cache-id
                           (lower-global-shared-view decl-name-cache)
                           logical-module
-                          (tc_core.tc-env-key-name-text name)
+                          (lower-name-id-text lower-state name)
                           name))]
                     [function-symbol : i64
                       (lower-decl-function-symbol-id
@@ -76213,7 +76315,7 @@
                                   (compiler-lower-state-spmd-package-name
                                     lower-state)
                                   cur-module)
-                                (tc_core.tc-env-key-name-text name))
+                                (lower-name-id-text lower-state name))
                               (csym.compiler-symbols-lookup-value-id-or
                                 (tc_core.tc-context-symbols decl-ctx)
                                 logical-id
@@ -76336,7 +76438,7 @@
                 [(ast.AstDecl.Module next-module)
                   (let
                     [next-module-str : String
-                      (tc_core.tc-env-key-name-text next-module)]
+                      (lower-name-id-text lower-state next-module)]
                     [skip-runtime : bool
                       (lower-comptime-runtime-skip-module?
                         (lower-global-shared-view next-module-str))]
@@ -76399,7 +76501,7 @@
                               (lower-current-decl-logical-name-cache-id
                                 (lower-global-shared-view decl-name-cache)
                                 (lower-global-shared-view logical-module)
-                                (tc_core.tc-env-key-name-text cleanup-name)
+                                (lower-name-id-text lower-state cleanup-name)
                                 cleanup-name)))])]
                     [enum-id : i64
                       (csym.compiler-symbol-module-key-id-by-id
@@ -76422,7 +76524,7 @@
                           (lower-current-decl-logical-name-cache-id
                             (lower-global-shared-view decl-name-cache)
                             (lower-global-shared-view logical-module)
-                            (tc_core.tc-env-key-name-text name)
+                            (lower-name-id-text lower-state name)
                             name)
                           (lower-global-shared-view variants)
                           0
@@ -76482,7 +76584,7 @@
                               (lower-current-decl-logical-name-cache-id
                                 (lower-global-shared-view decl-name-cache)
                                 (lower-global-shared-view logical-module)
-                                (tc_core.tc-env-key-name-text cleanup-name)
+                                (lower-name-id-text lower-state cleanup-name)
                                 cleanup-name)))])]
                     [enum-id : i64
                       (csym.compiler-symbol-module-key-id-by-id
@@ -76505,7 +76607,7 @@
                           (lower-current-decl-logical-name-cache-id
                             (lower-global-shared-view decl-name-cache)
                             (lower-global-shared-view logical-module)
-                            (tc_core.tc-env-key-name-text name)
+                            (lower-name-id-text lower-state name)
                             name)
                           (lower-global-shared-view variants)
                           0
@@ -76560,7 +76662,7 @@
                               (lower-current-decl-logical-name-cache-id
                                 (lower-global-shared-view decl-name-cache)
                                 logical-module
-                                (tc_core.tc-env-key-name-text cleanup-name)
+                                (lower-name-id-text lower-state cleanup-name)
                                 cleanup-name)))])]
                     [struct-ty : ast.AstType
                       (ast.AstType.Struct
@@ -76621,7 +76723,7 @@
                               (lower-current-decl-logical-name-cache-id
                                 (lower-global-shared-view decl-name-cache)
                                 logical-module
-                                (tc_core.tc-env-key-name-text cleanup-name)
+                                (lower-name-id-text lower-state cleanup-name)
                                 cleanup-name)))])]
                     [struct-ty : ast.AstType
                       (ast.ast-ty-struct-args

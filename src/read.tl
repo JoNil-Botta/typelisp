@@ -210,7 +210,7 @@
         (begin
           (while (< i len)
             (begin
-              (set! (array-ref new-slots i) (array-ref sp-node-pool-slots i))
+              (set! (array-ref new-slots i) (sp-node-pool-shared-view i))
               (set! i (+ i 1))))
           (set! sp-node-pool-base-arena storage-root)
           (set! sp-node-pool-slots new-slots))))))
@@ -236,7 +236,7 @@
         (begin
           (while (< i len)
             (begin
-              (set! (array-ref new-slots i) (array-ref sexpr-node-pool-slots i))
+              (set! (array-ref new-slots i) (sexpr-node-pool-shared-view i))
               (set! i (+ i 1))))
           (set! sexpr-node-pool-base-arena storage-root)
           (set! sexpr-node-pool-slots new-slots))))))
@@ -262,7 +262,7 @@
         (begin
           (while (< i sp-builder-count)
             (begin
-              (set! (array-ref new-slots i) (array-ref sp-builder-slots i))
+              (set! (array-ref new-slots i) (sp-builder-shared-view i))
               (set! i (+ i 1))))
           (set! sp-node-pool-base-arena storage-root)
           (set! sp-builder-slots new-slots))))))
@@ -287,7 +287,7 @@
         (begin
           (while (< i sexpr-builder-count)
             (begin
-              (set! (array-ref new-slots i) (array-ref sexpr-builder-slots i))
+              (set! (array-ref new-slots i) (sexpr-builder-shared-view i))
               (set! i (+ i 1))))
           (set! sexpr-node-pool-base-arena storage-root)
           (set! sexpr-builder-slots new-slots))))))
@@ -484,6 +484,43 @@
                 (= sexpr-node-pool-base-arena 0))))))
       false)))
 
+;; A pool grow preserves its source rows, so aggregate relocation must use an
+;; explicit shared view instead of consuming an element through ordinary
+;; by-value indexing. Exercise a String-bearing row across the exact capacity
+;; boundary as well as the scalar fields.
+(define (sp-node-pool-growth-preserves-string?) : bool
+  (begin
+    (sp-node-pool-reset!)
+    (if (< (array-length sp-node-pool-slots) 1)
+      (sp-node-pool-grow!)
+      unit)
+    (let
+      [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
+      [old-cap : i64 (array-length sp-node-pool-slots)]
+      [i : i64 0]
+      (begin
+        (while (<= i old-cap)
+          (begin
+            (sp-node-push (SpannedSexpr.Int i "__tl_pool_growth_marker" span))
+            (set! i (+ i 1))))
+        (let
+          [grew : bool (> (array-length sp-node-pool-slots) old-cap)]
+          [first-ok : bool
+            (match (sp-node-get 0)
+              [(SpannedSexpr.Int value text _)
+                (and (= value 0) (string.eq text "__tl_pool_growth_marker"))]
+              [_ false])]
+          [boundary-ok : bool
+            (match (sp-node-get old-cap)
+              [(SpannedSexpr.Int value text _)
+                (and
+                  (= value old-cap)
+                  (string.eq text "__tl_pool_growth_marker"))]
+              [_ false])]
+          (begin
+            (sp-node-pool-reset!)
+            (and grew first-ok boundary-ok)))))))
+
 (define (sp-node-pool-arena-ownership-self-test) : i64
   (let
     [scratch : arena.Arena (arena.make)]
@@ -499,6 +536,7 @@
       (sp-node-pool-reset!)
       (sexpr-node-pool-reset!)
       (let
+        [growth-ok : bool (sp-node-pool-growth-preserves-string?)]
         [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
         [sp-list : SpannedSexpr
           (spanned-sexpr-list1
@@ -518,7 +556,8 @@
                   (= sp-length 1)
                   (= sp-span.start-line 1)
                   (= sexpr-start 0)
-                  (= sexpr-length 1))
+                  (= sexpr-length 1)
+                  growth-ok)
                   (match (sp-node-get sp-start)
                     [(SpannedSexpr.Sym sp-value _)
                       (match (sexpr-node-get sexpr-start)

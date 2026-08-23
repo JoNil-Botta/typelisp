@@ -24,7 +24,6 @@
 (import compiler_optimize_tests)
 (import compiler_optimize as opt)
 (import compiler_ir_types as ir)
-(import compiler_owned_view as owned_view)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)

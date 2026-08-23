@@ -184,8 +184,10 @@
         [cross-table-proof : String "tc-self-cross-table-proof"]
         (begin
           (tc_core.reset-result)
-          (tc_core.record-count (tc_core.tc-global-shared-view cross-table-proof))
-          (if (tc_core.complete-key (tc_core.tc-global-shared-view cross-table-proof))
+          (tc_core.record-count
+            (tc_core.tc-global-shared-view cross-table-proof))
+          (if (tc_core.complete-key
+            (tc_core.tc-global-shared-view cross-table-proof))
             unit
             (set! ok false))
           (if (=
@@ -194,10 +196,12 @@
             (set! ok false)
             unit)
           (ci.intern-compat-state-install! fresh-state)
-          (if (tc_core.complete-key (tc_core.tc-global-shared-view cross-table-proof))
+          (if (tc_core.complete-key
+            (tc_core.tc-global-shared-view cross-table-proof))
             unit
             (set! ok false))
-          (match (ci.intern-lookup (tc_core.tc-global-shared-view cross-table-proof))
+          (match (ci.intern-lookup
+            (tc_core.tc-global-shared-view cross-table-proof))
             [(InternLookupMissing) unit]
             [(InternLookupFound _) (set! ok false)])
           (ci.intern-compat-state-install! home-state)
@@ -474,7 +478,8 @@
           (tc_core.scratch-plan-result
             (tc_core.tc-global-shared-view owned-type-key)
             (tc_core.tc-global-shared-view owned-kind))
-          (tc_core.identity-remap (tc_core.tc-global-shared-view owned-identity))
+          (tc_core.identity-remap
+            (tc_core.tc-global-shared-view owned-identity))
           (if (= source-mark (ci.intern-pool-len))
             unit
             (set! ok false))
@@ -1243,7 +1248,8 @@
                       [(ast.AstProgram.Program decls-box)
                         (let
                           [decls : ast.AstDeclList
-                            (owned_view.compiler-owned-box-shared-view decls-box)]
+                            (owned_view.compiler-owned-box-shared-view
+                              decls-box)]
                           [decl-count : i64 (ast.ast-decl-list-len (& decls))]
                           (if (or
                             (< first-module-index 0)
@@ -1306,19 +1312,25 @@
                                                 (tc_core.lookup-key-id
                                                   "tc-walker-next"))
                                                 (tc_core.tc-proof-reuse-session-ast-decl-exact?
-                                                  (tc_core.tc-global-shared-view ctx)
-                                                  (tc_core.tc-global-shared-view first-decl)
-                                                  (tc_core.tc-global-shared-view next-decl))
+                                                  (tc_core.tc-global-shared-view
+                                                    ctx)
+                                                  (tc_core.tc-global-shared-view
+                                                    first-decl)
+                                                  (tc_core.tc-global-shared-view
+                                                    next-decl))
                                                 false))]
                                           [safe-ok : bool
                                             (tc_core.tc-proof-reuse-decl-safe-substitution-ids?
-                                              (tc_core.tc-global-shared-view ctx)
+                                              (tc_core.tc-global-shared-view
+                                                ctx)
                                               (tc_core.lookup-key-id
                                                 "tc-walker-first")
                                               (tc_core.lookup-key-id
                                                 "tc-walker-next")
-                                              (tc_core.tc-global-shared-view first-decl)
-                                              (tc_core.tc-global-shared-view next-decl))]
+                                              (tc_core.tc-global-shared-view
+                                                first-decl)
+                                              (tc_core.tc-global-shared-view
+                                                next-decl))]
                                           (begin
                                             (tc_core.scratch-reset-functions)
                                             (and
@@ -1373,7 +1385,8 @@
                       [(ast.AstProgram.Program decls-box)
                         (let
                           [decls : ast.AstDeclList
-                            (owned_view.compiler-owned-box-shared-view decls-box)]
+                            (owned_view.compiler-owned-box-shared-view
+                              decls-box)]
                           [decl-count : i64 (ast.ast-decl-list-len (& decls))]
                           (if (or
                             (< first-module-index 0)
@@ -1436,9 +1449,12 @@
                                                 (tc_core.lookup-key-id
                                                   "tc-walker-next"))
                                                 (tc_core.tc-proof-reuse-session-ast-decl-exact?
-                                                  (tc_core.tc-global-shared-view ctx)
-                                                  (tc_core.tc-global-shared-view first-decl)
-                                                  (tc_core.tc-global-shared-view next-decl))
+                                                  (tc_core.tc-global-shared-view
+                                                    ctx)
+                                                  (tc_core.tc-global-shared-view
+                                                    first-decl)
+                                                  (tc_core.tc-global-shared-view
+                                                    next-decl))
                                                 false))]
                                           [context-ok : bool
                                             (=
@@ -2310,9 +2326,11 @@
                               [(ast.AstDecl.ModuleBody _ next-box)
                                 (let
                                   [first-body : ast.AstDeclList
-                                    (owned_view.compiler-owned-box-shared-view first-box)]
+                                    (owned_view.compiler-owned-box-shared-view
+                                      first-box)]
                                   [next-body : ast.AstDeclList
-                                    (owned_view.compiler-owned-box-shared-view next-box)]
+                                    (owned_view.compiler-owned-box-shared-view
+                                      next-box)]
                                   [first-decl : ast.AstDecl
                                     (ast.ast-decl-list-get
                                       (& first-body)

@@ -6058,7 +6058,6 @@
   [link-inputs : build_run_core.SourceToolLinkInputs]
   [tlci-path : String]
   [tlci-text : String]
-  [prepared : ResultBuildPackagePreparedRuntime]
   [announce : bool]) : i64
   (match (build-package-try-prepare-direct-runtime
     (owned_view.compiler-owned-shared-view name)
@@ -6292,7 +6291,6 @@
                       link-inputs
                       tlci-path
                       tlci-text
-                      prepared
                       announce)])])])))))
 
 (define (build-package-doctest-paths

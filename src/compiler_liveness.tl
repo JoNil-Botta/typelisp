@@ -31,6 +31,8 @@
 
 (defmacro (compiler-live-box-shared-view [value : Expr]) : Expr
   (let
+    ;; Spliced into the generated pointer element type.
+    ;; lint-allow: unused-variable
     [inner-ty : comptime.Expr
       (comptime.box-element-type (comptime.expr-type value))]
     `(let

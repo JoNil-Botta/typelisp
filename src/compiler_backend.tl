@@ -23571,8 +23571,6 @@
 ;; those blocks anyway, and refused whole loops over a call on a break arm.
 (define (compiler-backend-const-hoist-region-leaf?
   [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
-  [nest : compiler_regalloc.CompilerRegLoopNest]
-  [generation : i64]
   [rlo : i64]
   [le : i64]) : bool
   (let
@@ -23943,8 +23941,6 @@
                       (< synth-count synth-cap)
                       (compiler-backend-const-hoist-region-leaf?
                         (compiler-backend-global-shared-view orig)
-                        (compiler-backend-global-shared-view nest)
-                        generation
                         rlo
                         le))
                       ;; lint-allow: nested-let
@@ -30366,6 +30362,30 @@
               (compiler-backend-global-shared-view planned-magic)
               (compiler-backend-global-shared-view backend-state))])))))
 
+(define (compiler-backend-binop-rax-rhs-plan
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [operand-ty : compiler_ast_types.AstType]
+  [binop-return : bool]
+  [planned0 : String]
+  [planned1 : String]
+  [planned2 : String]) : String
+  (cond
+    [(compiler-backend-divmod-op? (compiler-backend-global-shared-view op))
+      planned2]
+    [(or
+        binop-return
+        (compiler_regalloc.compiler-reg-clobber-binop-shift?
+          (compiler-backend-global-shared-view op)
+          (compiler-backend-global-shared-view rhs)
+          operand-ty))
+      ;; Return fusion fixes the result in %rax, so its only scalar slot (0) is
+      ;; already the RHS staging home. A variable shift likewise consumes slot
+      ;; 0, its fixed %rcx count home.
+      planned0]
+    [(string.eq (compiler-backend-global-shared-view planned1) "") planned0]
+    [else planned1]))
+
 (define (compiler-backend-emit-binop-to-rax
   [type-segment-bases : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
@@ -30416,31 +30436,14 @@
             (compiler-backend-global-shared-view operand-ty)
             (compiler-backend-global-shared-view ty)
             store-result
-            (if (compiler-backend-divmod-op?
-              (compiler-backend-global-shared-view op))
-              planned2
-              (if (or
-                binop-return
-                (compiler_regalloc.compiler-reg-clobber-binop-shift?
-                  (compiler-backend-global-shared-view op)
-                  (compiler-backend-global-shared-view rhs)
-                  operand-ty))
-                ;; Return fusion fixes the result in %rax, so its only scalar
-                ;; slot (0) is already the RHS staging home. A variable shift
-                ;; likewise consumes slot 0, its fixed %rcx count home; using
-                ;; ordinary slot 1 here can select %rax and overwrite the
-                ;; accumulator before the shift (the LZSS decoder's
-                ;; `(shl 1 bit)` is the bootstrap regression for this shape).
-                planned0
-                ;; Ordinary RAX forwarding eliminates the modeled spilled
-                ;; result home (slot 0). Prefer the RHS-specific slot 1 when
-                ;; the ordinary plan reserved it, otherwise reuse that freed
-                ;; result home for a fallback RHS stage.
-                (if (string.eq
-                  (compiler-backend-global-shared-view planned1)
-                  "")
-                  planned0
-                  planned1)))
+            (compiler-backend-binop-rax-rhs-plan
+              (compiler-backend-global-shared-view op)
+              (compiler-backend-global-shared-view rhs)
+              (compiler-backend-global-shared-view operand-ty)
+              binop-return
+              planned0
+              planned1
+              planned2)
             (if (compiler-backend-divmod-op?
               (compiler-backend-global-shared-view op))
               planned3
@@ -30521,19 +30524,14 @@
           (compiler-backend-global-shared-view operand-ty)
           (compiler-backend-global-shared-view ty)
           store-result
-          (if (compiler-backend-divmod-op?
-            (compiler-backend-global-shared-view op))
-            planned2
-            (if (or
-              binop-return
-              (compiler_regalloc.compiler-reg-clobber-binop-shift?
-                (compiler-backend-global-shared-view op)
-                (compiler-backend-global-shared-view rhs)
-                operand-ty))
-              planned0
-              (if (string.eq (compiler-backend-global-shared-view planned1) "")
-                planned0
-                planned1)))
+          (compiler-backend-binop-rax-rhs-plan
+            (compiler-backend-global-shared-view op)
+            (compiler-backend-global-shared-view rhs)
+            (compiler-backend-global-shared-view operand-ty)
+            binop-return
+            planned0
+            planned1
+            planned2)
           (if (compiler-backend-divmod-op?
             (compiler-backend-global-shared-view op))
             planned3
@@ -30902,85 +30900,84 @@
           "%rax")
         6
         (compiler-backend-global-shared-view rhs-home))]
-    (if direct-compare-home?
-      rhs-home
-      (if (string.eq planned "")
-        (if (and
-          (compiler-backend-compare-op?
-            (compiler-backend-global-shared-view op))
-          (not
-            (string.eq (compiler-backend-global-shared-view rhs-home) "%rax"))
-          (not (string.eq (compiler-backend-global-shared-view lhs-home) ""))
-          (not
-            (string.eq (compiler-backend-global-shared-view lhs-home) "%rax")))
-          ;; Once the LHS is copied into the fixed return accumulator, its old
-          ;; home is dead and can materialize a non-encodable RHS. This is the
-          ;; return-fusion counterpart of compare/branch's freed-LHS fallback.
-          lhs-home
-          (if (not (compiler-backend-scratch-vreg-enabled?))
-            ;; Legacy/default builds have no modeled scratch inventory. Preserve
-            ;; the established direct-emitter path until scratch-vreg is the only
-            ;; backend configuration.
-            (compiler-backend-scavenge-reg-here exclude 7 "%r8" backend-state)
-            (if (compiler-backend-compare-op?
+    (cond
+      [direct-compare-home? rhs-home]
+      [(string.eq planned "")
+        (cond
+          [(and
+              (compiler-backend-compare-op?
+                (compiler-backend-global-shared-view op))
+              (not
+                (string.eq
+                  (compiler-backend-global-shared-view rhs-home)
+                  "%rax"))
+              (not
+                (string.eq (compiler-backend-global-shared-view lhs-home) ""))
+              (not
+                (string.eq
+                  (compiler-backend-global-shared-view lhs-home)
+                  "%rax")))
+            ;; Once the LHS is copied into the fixed return accumulator, its old
+            ;; home is dead and can materialize a non-encodable RHS.
+            lhs-home]
+          [(not (compiler-backend-scratch-vreg-enabled?))
+            ;; Legacy/default builds have no modeled scratch inventory.
+            (compiler-backend-scavenge-reg-here exclude 7 "%r8" backend-state)]
+          [(compiler-backend-compare-op?
               (compiler-backend-global-shared-view op))
-              ;; Register pressure can leave both modeled sibling homes
-              ;; uncolorable. A comparison can still finish in the bounded cycle
-              ;; temp frame slot: preserve the RHS when it already occupies %rax,
-              ;; otherwise preserve the staged LHS and reverse the predicate.
-              "@return-rhs-frame"
-              (compiler-backend-missing-modeled-scratch!
-                (str_cat.str-cat
-                  "return-rhs primary-empty alternate "
-                  (if (string.eq planned-alternate "")
-                    "empty"
-                    planned-alternate))
-                backend-state))))
-        (if (compiler-backend-return-rhs-plan-conflicts?
+            ;; A comparison can still finish in the bounded cycle temp frame.
+            "@return-rhs-frame"]
+          [else
+            (compiler-backend-missing-modeled-scratch!
+              (str_cat.str-cat
+                "return-rhs primary-empty alternate "
+                (if (string.eq planned-alternate "")
+                  "empty"
+                  planned-alternate))
+              backend-state)])]
+      [(compiler-backend-return-rhs-plan-conflicts?
           (compiler-backend-global-shared-view planned)
           (compiler-backend-global-shared-view rhs-home)
           (compiler-backend-global-shared-view lhs-home))
-          ;; The comparison planner gives a non-direct RHS two sibling homes. If
-          ;; ordinal 0 aliases the fixed return accumulator or the RHS itself,
-          ;; consume ordinal 1 rather than escaping the model through a legacy
-          ;; scavenge. Div/mod callers pass no alternate because their remaining
-          ;; ordinals have distinct architectural roles.
-          (if (or
-            (string.eq
-              (compiler-backend-global-shared-view planned-alternate)
-              "")
-            (compiler-backend-return-rhs-plan-conflicts?
-              (compiler-backend-global-shared-view planned-alternate)
-              (compiler-backend-global-shared-view rhs-home)
-              (compiler-backend-global-shared-view lhs-home)))
-            (if (compiler-backend-compare-op?
-              (compiler-backend-global-shared-view op))
-              "@return-rhs-frame"
-              (compiler-backend-missing-modeled-scratch!
+        ;; The comparison planner gives a non-direct RHS two sibling homes. If
+        ;; ordinal 0 aliases the fixed return accumulator or the RHS itself,
+        ;; consume ordinal 1 rather than escaping the model through a legacy
+        ;; scavenge. Div/mod callers pass no alternate because their remaining
+        ;; ordinals have distinct architectural roles.
+        (if (or
+          (string.eq (compiler-backend-global-shared-view planned-alternate) "")
+          (compiler-backend-return-rhs-plan-conflicts?
+            (compiler-backend-global-shared-view planned-alternate)
+            (compiler-backend-global-shared-view rhs-home)
+            (compiler-backend-global-shared-view lhs-home)))
+          (if (compiler-backend-compare-op?
+            (compiler-backend-global-shared-view op))
+            "@return-rhs-frame"
+            (compiler-backend-missing-modeled-scratch!
+              (str_cat.str-cat
+                "return-rhs alternate-unavailable primary "
                 (str_cat.str-cat
-                  "return-rhs alternate-unavailable primary "
-                  (str_cat.str-cat
-                    planned
-                    (str_cat.str-cat " rhs-home " rhs-home)))
-                backend-state))
-            (compiler-backend-planned-or-scavenge-reg-here
-              planned-alternate
-              exclude
-              7
-              "%r8"
+                  planned
+                  (str_cat.str-cat " rhs-home " rhs-home)))
               backend-state))
           (compiler-backend-planned-or-scavenge-reg-here
-            planned
+            planned-alternate
             exclude
             7
             "%r8"
-            backend-state))))))
+            backend-state))]
+      [else
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned
+          exclude
+          7
+          "%r8"
+          backend-state)])))
 
 (define (compiler-backend-emit-return-compare-frame-fallback
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
-  [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
   [operand-ty : compiler_ast_types.AstType]
   [lhs-asm : String]
@@ -31266,7 +31263,6 @@
                                     (compiler-backend-global-shared-view
                                       assignments)
                                     (compiler-backend-global-shared-view op)
-                                    (compiler-backend-global-shared-view lhs)
                                     (compiler-backend-global-shared-view rhs)
                                     (compiler-backend-global-shared-view
                                       operand-ty)
@@ -31416,7 +31412,6 @@
                                     (compiler-backend-global-shared-view
                                       assignments)
                                     (compiler-backend-global-shared-view op)
-                                    (compiler-backend-global-shared-view lhs)
                                     (compiler-backend-global-shared-view rhs)
                                     (compiler-backend-global-shared-view
                                       operand-ty)
@@ -56167,7 +56162,6 @@
   [elem-ty : compiler_ast_types.AstType]
   [gep-disp : i64]
   [planned-base : String]
-  [planned-index : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [dst-home : String
@@ -58677,12 +58671,6 @@
               (compiler-backend-global-shared-view ctx.plan))
             0
             0
-            (compiler-backend-global-shared-view ctx.backend-state))
-          (compiler-backend-scratch-plan-register-ahead
-            (compiler-backend-runtime-plan-scratch
-              (compiler-backend-global-shared-view ctx.plan))
-            0
-            1
             (compiler-backend-global-shared-view ctx.backend-state))
           (compiler-backend-global-shared-view ctx.backend-state))
         (compiler-backend-global-shared-view instrs)
@@ -65244,7 +65232,6 @@
         true)
       (while (not done)
         (let
-          [step-mark : i64 (compiler-backend-asm-buf-len out)]
           [step-result : ResultCompilerBackend
             (begin
               ;; The remaining-instruction count derives the

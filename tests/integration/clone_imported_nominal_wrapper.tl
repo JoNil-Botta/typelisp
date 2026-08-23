@@ -14,8 +14,7 @@
 (define (make-wrapper [tag : String]) : Wrapper
   (Wrapper
     (dep.Item (string.copy (& tag)))
-    (dep.Nested
-      (dep.Item (string.append (string.copy (& tag)) ":nested")))
+    (dep.Nested (dep.Item (string.append (string.copy (& tag)) ":nested")))
     (dep.ImportedBranch
       (box (dep.ImportedLeaf (string.append (string.copy (& tag)) ":left")))
       (box (dep.ImportedLeaf (string.append tag ":right"))))))

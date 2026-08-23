@@ -7,7 +7,6 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_builtin_ids as cbi)
-(import compiler_owned_view as owned_view)
 
 (define (compiler-ir-smoke-symbol-id [name : String]) : i64
   (ci.intern-generated-canonical-name name))

@@ -417,6 +417,9 @@
     [surface-arena : i64 (arena.tl_arena_make)]
     [_set-surface-arena : unit
       (unsafe
+        ;; This standalone producer intentionally installs an isolated compiler
+        ;; arena whose region cannot cross the legacy load-session API.
+        ;; lint-allow: raw-arena-op
         (arena.tl_arena_set surface-arena))]
     [_reset-interns : unit (ci.intern-reset!)]
     [_reset-builtins : unit (cbi.compiler-builtin-reset!)]
@@ -438,6 +441,8 @@
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (begin
             (unsafe
+              ;; Restore the caller's allocation target before returning.
+              ;; lint-allow: raw-arena-op
               (arena.tl_arena_set previous-arena))
             (ResultPreludeSurface.Err
               (str_cat.str-cat
@@ -455,6 +460,8 @@
             [(ResultPreludeSurfaceFacts.Err message)
               (begin
                 (unsafe
+                  ;; Restore the caller's allocation target before returning.
+                  ;; lint-allow: raw-arena-op
                   (arena.tl_arena_set previous-arena))
                 (ResultPreludeSurface.Err message))]
             [(ResultPreludeSurfaceFacts.Ok facts surface-program surface-paths)
@@ -482,6 +489,8 @@
                   (+ source-count (array-length identity-payload.generated))]
                 (begin
                   (unsafe
+                    ;; Encode the durable result in the caller's arena.
+                    ;; lint-allow: raw-arena-op
                     (arena.tl_arena_set previous-arena))
                   (prelude-surface-encode-payloads
                     (load.compiler-load-session-state-structural-session

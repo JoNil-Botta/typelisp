@@ -1325,16 +1325,14 @@
 ;; arena handles synchronized so they never retain destroyed storage.
 (define (intern-compat-state-persistent-arena-floor-refresh!
   [state : (&mut state InternCompatState)]) : unit
-  (let
-    [prev-arena : i64 (tl_arena_current)]
-    (begin
-      (set! (array-ref state.persistent-arena-floor-mark 0) (tl_region_mark))
-      (if (= (intern-active-table-id) (intern-compat-state-table-id state))
-        (set!
-          intern-persistent-arena-floor-mark
-          (intern-compat-state-persistent-arena-floor-mark state))
-        unit)
-      unit)))
+  (begin
+    (set! (array-ref state.persistent-arena-floor-mark 0) (tl_region_mark))
+    (if (= (intern-active-table-id) (intern-compat-state-table-id state))
+      (set!
+        intern-persistent-arena-floor-mark
+        (intern-compat-state-persistent-arena-floor-mark state))
+      unit)
+    unit))
 
 (define (intern-compat-state-persistent-arena-floor-ensure!
   [state : (&mut state InternCompatState)]) : unit

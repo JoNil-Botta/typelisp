@@ -78,6 +78,8 @@
 
 (defmacro (compiler-opt-box-shared-view [value : Expr]) : Expr
   (let
+    ;; Spliced into the generated pointer element type.
+    ;; lint-allow: unused-variable
     [inner-ty : comptime.Expr
       (comptime.box-element-type (comptime.expr-type value))]
     `(let
@@ -22127,17 +22129,6 @@
             0
             (opt-rotate-ssa-multi-exit-body-max))
           (opt-rotate-ssa-multi-exit-body-max)))]
-    [exit-uses : opt_i64_i64_map.Map
-      (if classify?
-        (opt-rotate-ssa-uses-at-class
-          (opt_i64_i64_map.with-capacity 64)
-          (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view doms)
-          (compiler-opt-global-shared-view body)
-          exit-label
-          body-label
-          1)
-        (compiler-opt-global-shared-view outside-uses))]
     [unplaceable-uses : opt_i64_i64_map.Map
       (if classify?
         (opt-rotate-ssa-uses-at-class
@@ -105958,14 +105949,12 @@
 ;; src/compiler_backend.tl, read-only for this packet).
 ;;
 ;;  L1. A memory-class global's cell holds a POINTER to its aggregate payload.
-;;      `lower-ptr-addr-of-global-value-reference?` (compiler_lower.tl ~17269)
-;;      states it: "A memory-class global's symbol stores a pointer to its
-;;      aggregate payload, so the address of the value is the loaded symbol",
-;;      and it is what makes `(& g)` / `(&mut g)` lower to the VALUE form
-;;      `CompilerIrValue.Global g` rather than to `GlobalAddr g`
-;;      (lower-ptr-addr-of-local-address ~27089). A dynamic-array or string
-;;      global takes the `GlobalAddr` arm instead, which is why the
-;;      address-taken exclusion below is not vacuous.
+;;      `lower-ptr-addr-of-storage-value-reference?` (compiler_lower.tl)
+;;      identifies those payload-backed aggregate values, and it is what makes
+;;      `(& g)` / `(&mut g)` lower to the VALUE form `CompilerIrValue.Global g`
+;;      rather than to `GlobalAddr g`. A dynamic-array or string global takes
+;;      the `GlobalAddr` arm instead, which is why the address-taken exclusion
+;;      below is not vacuous.
 ;;
 ;;  L2. The startup initializer stores the init function's RETURN VALUE into the
 ;;      cell, from outside the IR: `compiler-backend-global-init-call`

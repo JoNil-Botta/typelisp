@@ -266,12 +266,12 @@
               unit
               (set! ok false))
             (match (compiler-surface-hydrate-payloads
-              payloads.identity-bytes
-              payloads.ast-bytes
-              payloads.fact-one-bytes
-              payloads.key
-              structural-session
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.identity-bytes)
+              (owned_view.compiler-owned-shared-view payloads.ast-bytes)
+              (owned_view.compiler-owned-shared-view payloads.fact-one-bytes)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view structural-session)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Ok hydration)
                 (set! first-hydrated hydration.facts)]
               [_ (set! ok false)])
@@ -294,9 +294,9 @@
               (owned_view.compiler-owned-shared-view payloads.identity-bytes)
               (owned_view.compiler-owned-shared-view payloads.ast-bytes)
               (__tl_make-array u8 0)
-              payloads.key
-              structural-session
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view structural-session)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Err _) unit]
               [_ (set! ok false)])
             (if (and
@@ -307,12 +307,12 @@
               unit
               (set! ok false))
             (match (compiler-surface-hydrate-payloads
-              payloads.identity-bytes
-              payloads.ast-bytes
-              payloads.fact-two-bytes
-              payloads.key
-              structural-session
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.identity-bytes)
+              (owned_view.compiler-owned-shared-view payloads.ast-bytes)
+              (owned_view.compiler-owned-shared-view payloads.fact-two-bytes)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view structural-session)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Ok hydration)
                 (begin
                   (set! second-hydrated hydration.facts)
@@ -323,9 +323,9 @@
               [_ (set! ok false)])
             (match (compiler-surface-hydrate
               (__tl_make-array u8 0)
-              payloads.key
-              structural-session
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view structural-session)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Missing) unit]
               [_ (set! ok false)])
             (if (and

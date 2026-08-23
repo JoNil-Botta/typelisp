@@ -170,10 +170,9 @@
         (process_borrowed.args-single (string.substring-view (& argv) 0 2))
         (process_borrowed.args-single
           (string.substring-view (& argv) 2 (- (string-length (& argv)) 2))))]
-    (let
-      [command : (process_borrowed.ProcessBorrowedCommand exe argv exe exe exe)
-        (process_borrowed.command (& exe) args)]
-      (process_borrowed.output (& command)))))
+    [command : (process_borrowed.ProcessBorrowedCommand exe argv exe exe exe)
+      (process_borrowed.command (& exe) args)]
+    (process_borrowed.output (& command))))
 
 (define (windows-missing-command) : process.ProcessCommand
   (process.command
@@ -231,10 +230,9 @@
         (process_borrowed.args-append
           (process_borrowed.args-single (string.substring-view (& argv) 5 8))
           (process_borrowed.args-single (string.substring-view (& argv) 13 4))))]
-    (let
-      [command : (process_borrowed.ProcessBorrowedCommand exe argv exe exe exe)
-        (process_borrowed.command (& exe) args)]
-      (process_borrowed.output (& command)))))
+    [command : (process_borrowed.ProcessBorrowedCommand exe argv exe exe exe)
+      (process_borrowed.command (& exe) args)]
+    (process_borrowed.output (& command))))
 
 (define (linux-async-process-command [text : String]) : process.ProcessCommand
   (process.command "/usr/bin/printf" (process.args-single text)))

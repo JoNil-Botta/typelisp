@@ -19,18 +19,9 @@
     [r1 : String (str_cat.str-cat "x")]
     [r2 : String (str_cat.str-cat (string.copy (& prefix)) "b")]
     [r5 : String (str_cat.str-cat "a" (string.copy (& prefix)) "c" "d" "e")]
-    [r6 : String
-      (str_cat.str-cat "a" "b" (string.copy (& prefix)) "d" "e" "f")]
+    [r6 : String (str_cat.str-cat "a" "b" (string.copy (& prefix)) "d" "e" "f")]
     [r8 : String
-      (str_cat.str-cat
-        "1"
-        "2"
-        "3"
-        (string.copy (& prefix))
-        "5"
-        "6"
-        "7"
-        "8")]
+      (str_cat.str-cat "1" "2" "3" (string.copy (& prefix)) "5" "6" "7" "8")]
     [total : i64
       (+
         (string.string-length r0)

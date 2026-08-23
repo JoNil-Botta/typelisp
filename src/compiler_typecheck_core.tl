@@ -31013,16 +31013,11 @@
           (ResultTcType.Ok ty)
           (tc-ptr-addr-of-local-lookup rest-env name-id)))]))
 
-(define (tc-ptr-addr-of-root-type [ctx : TcContext] [ty : ast.AstType]) : ResultTcType
-  (match (tc-type-strip-region
-    (tc-resolve-type (tc-global-shared-view ctx) (tc-global-shared-view ty)))
-    [(ast.AstType.Ref _ _)
-      (ResultTcType.Err
-        "typecheck: ptr-addr-of reference roots are not addressable")]
-    [(ast.AstType.MutRef _ _)
-      (ResultTcType.Err
-        "typecheck: ptr-addr-of reference roots are not addressable")]
-    [_ (ResultTcType.Ok ty)]))
+(define (tc-ptr-addr-of-root-type [_ctx : TcContext] [ty : ast.AstType]) : ResultTcType
+  ;; A root name selects its storage slot. That slot remains addressable when
+  ;; its stored value is itself a reference; projections through the reference
+  ;; are still rejected by the struct/array cases below.
+  (ResultTcType.Ok ty))
 
 (define (tc-ptr-addr-of-place
   [ctx : TcContext]
@@ -79037,21 +79032,22 @@
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
   [foreign-boundary : bool]) : TcMoveResult
-  (match (if foreign-boundary
-    ;; Foreign declarations describe an ABI, not TypeLisp ownership transfer.
-    ;; Validate each argument expression as a read while retaining the source
-    ;; place for subsequent TypeLisp code.
-    (tc-move-check-exprs
-      (tc-global-shared-view ctx)
-      expr-bases
-      (tc-global-shared-view env)
-      (tc-global-shared-view locals)
-      (tc-global-shared-view loop-carried)
-      (tc-global-shared-view moved)
-      (tc-global-shared-view args))
-    (if (tc-move-check-constructor-call?
-      (tc-global-shared-view ctx)
-      (tc-global-shared-view func))
+  (match (cond
+    [foreign-boundary
+      ;; Foreign declarations describe an ABI, not TypeLisp ownership transfer.
+      ;; Validate each argument expression as a read while retaining the source
+      ;; place for subsequent TypeLisp code.
+      (tc-move-check-exprs
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        (tc-global-shared-view loop-carried)
+        (tc-global-shared-view moved)
+        (tc-global-shared-view args))]
+    [(tc-move-check-constructor-call?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view func))
       (tc-move-check-aggregate-exprs-with-types
         (tc-global-shared-view ctx)
         expr-bases
@@ -79060,8 +79056,8 @@
         (tc-global-shared-view loop-carried)
         (tc-global-shared-view moved)
         (tc-global-shared-view args)
-        (tc-global-shared-view params))
-      (if (or
+        (tc-global-shared-view params))]
+    [(or
         (tc-move-global-place-inspector-call?
           (tc-global-shared-view ctx)
           (tc-global-shared-view env)
@@ -79075,23 +79071,24 @@
           (tc-global-shared-view env)
           (tc-global-shared-view func)
           (tc-global-shared-view params)))
-        (tc-move-check-exprs
-          (tc-global-shared-view ctx)
-          expr-bases
-          (tc-global-shared-view env)
-          (tc-global-shared-view locals)
-          (tc-global-shared-view loop-carried)
-          moved
-          (tc-global-shared-view args))
-        (tc-move-check-exprs-with-types
-          (tc-global-shared-view ctx)
-          expr-bases
-          (tc-global-shared-view env)
-          (tc-global-shared-view locals)
-          (tc-global-shared-view loop-carried)
-          moved
-          (tc-global-shared-view args)
-          (tc-global-shared-view params)))))
+      (tc-move-check-exprs
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        (tc-global-shared-view loop-carried)
+        moved
+        (tc-global-shared-view args))]
+    [else
+      (tc-move-check-exprs-with-types
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view locals)
+        (tc-global-shared-view loop-carried)
+        moved
+        (tc-global-shared-view args)
+        (tc-global-shared-view params))])
     [(TcMoveResult.Ok moved-args)
       (match (tc-move-check-thread-channel-send-message
         (tc-global-shared-view ctx)
@@ -104311,7 +104308,6 @@
 
 (define (macro-hygiene-produced-prepare!
   [state : TcMacroState]
-  [pools : ast.AstNodePoolContext]
   [expr-bases : i64]
   [root-id : i64]) : unit
   (let
@@ -105135,7 +105131,6 @@
       [_prepare : unit
         (macro-hygiene-produced-prepare!
           (tc-global-shared-view env.state)
-          (macro-hygiene-env-pools-shared-view env)
           expr-bases
           expr-id)]
       [result : i64
@@ -111166,8 +111161,6 @@
 
 (define (macro-captured-expr-produced-type
   [ctx : TcContext]
-  [expr-cell-address : u64]
-  [type-cell-address : u64]
   [env : TcTypeEnv]
   [resolved-expected : ast.AstType]
   [capture-expr-types : bool]
@@ -111298,7 +111291,6 @@
 
 (define (macro-caller-origin-expr-list
   [ctx : TcContext]
-  [pools : ast.AstNodePoolContext]
   [args : ast.AstExprList]) : ast.AstExprList
   (let
     [count : i64 args.len]
@@ -111331,10 +111323,7 @@
     [(ctfe_support.CtfeMaybeSyntaxPools.Some pools)
       (let
         [captured-items : ast.AstExprList
-          (macro-caller-origin-expr-list
-            (tc-global-shared-view ctx)
-            (tc-global-shared-view pools)
-            args)]
+          (macro-caller-origin-expr-list (tc-global-shared-view ctx) args)]
         (begin
           ;; Caller-origin wrapping appends through `ctx`, after `pools` was
           ;; selected. Advance the captured value's own state cell before CTFE
@@ -111350,7 +111339,6 @@
 
 (define (macro-caller-origin-expr-clause
   [ctx : TcContext]
-  [pools : ast.AstNodePoolContext]
   [clause : ast.AstExprClause]) : ast.AstExprClause
   (let
     [first-id : i64 clause.first]
@@ -111373,7 +111361,6 @@
 
 (define (macro-caller-origin-expr-clause-list
   [ctx : TcContext]
-  [pools : ast.AstNodePoolContext]
   [clauses : ast.AstExprClauseList]) : ast.AstExprClauseList
   (let
     [count : i64 clauses.len]
@@ -111386,7 +111373,6 @@
             (&mut out)
             (macro-caller-origin-expr-clause
               (tc-global-shared-view ctx)
-              (tc-global-shared-view pools)
               (ast.ast-expr-clause-list-get
                 (& clauses)
                 index
@@ -111404,7 +111390,6 @@
         [captured-clauses : ast.AstExprClauseList
           (macro-caller-origin-expr-clause-list
             (tc-global-shared-view ctx)
-            (tc-global-shared-view pools)
             clauses)]
         (begin
           (ast.ast-node-pool-context-adopt-newer!
@@ -111703,7 +111688,6 @@
                   (ctfe_support.CompilerCtfeValue.ExprClause
                     (macro-caller-origin-expr-clause
                       (tc-global-shared-view ctx)
-                      (tc-context-pools-live (tc-global-shared-view ctx))
                       clause)))]
               [(ResultMacroClause.Err diag) (ResultMacroCapturedValue.Err diag)])]
           [(tc-macro-expr-binding-clause-type?
@@ -111748,8 +111732,6 @@
                   [produced : ast.AstType
                     (macro-captured-expr-produced-type
                       (tc-global-shared-view ctx)
-                      expr-cell-address
-                      type-cell-address
                       (tc-global-shared-view type-env)
                       (tc-global-shared-view resolved-expected)
                       capture-expr-types

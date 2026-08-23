@@ -17,6 +17,7 @@
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
+(import compiler_owned_view as owned_view)
 (import compiler_parse_core as parse_core)
 (import tlci_core as tlci)
 (import tlci_loader)
@@ -3740,6 +3741,89 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
+;; `expr-string-value` also accepts an identity-bearing Name that syntax
+;; inspection turned into a string literal. The native host must render the
+;; table-backed identity through the session supplied by this compile job while
+;; preserving that identity in the returned String value.
+(define (producer-test-expr-string-value-structural-id?) : bool
+  (let
+    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [source-id : i64
+      (ci.intern-compat-state-intern (&mut state) "structural.clone.module")]
+    [_install : unit
+      (ci.intern-compat-state-install! (ci.intern-global-shared-view state))]
+    [source-names : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-handle-from-state (& state))]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names source-names)]
+    [string-id : i64
+      (cis.intern-macro-global-identity-raw
+        (cis.intern-structural-session-macro-global-identity
+          session
+          cis.InternMacroGlobalRole.Context
+          source-id
+          source-id))]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [node : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view pools)
+        (ast.AstExpr.Literal (ast.AstLiteral.String string-id)))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.CapturedExpr
+          node
+          (ast.AstType.Expr)
+          (owned_view.compiler-owned-shared-view pools)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open-with-macro-state!
+        (owned_view.compiler-owned-shared-view pools)
+        (& operands)
+        1
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty)
+        source-names
+        (compiler_ctfe.compiler-ctfe-serial-macro-state))
+      (let
+        [push-status : i64
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+            producer-test-cookie
+            0
+            0
+            0)]
+        [value-status : i64
+          (if (= push-status tlci.tlci-host-callback-status-ok)
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-string-value
+              producer-test-cookie
+              0
+              0
+              0)
+            push-status)]
+        [commit-status : i64
+          (if (= value-status tlci.tlci-host-callback-status-ok)
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-commit-result
+              producer-test-cookie
+              0
+              0
+              0)
+            value-status)]
+        [ok : bool
+          (and
+            (= commit-status tlci.tlci-host-callback-status-ok)
+            (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+              [(compiler_ctfe.CompilerCtfeValue.String text actual-id)
+                (and
+                  (string.eq text "structural.clone.module")
+                  (= actual-id string-id))]
+              [_ false]))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          (ci.intern-compat-state-install! installed)
+          ok)))))
+
 (test
   clone-host-callbacks-tlci-native-producer
   (unless
@@ -3751,7 +3835,8 @@
       (producer-test-type-list-callbacks-ok? 4)
       (producer-test-expr-string-value-callback-ok? true)
       (producer-test-expr-string-value-callback-ok? false)
-      (producer-test-string-var-preserves-source-session?))
+      (producer-test-string-var-preserves-source-session?)
+      (producer-test-expr-string-value-structural-id?))
     (io.panic "clone host callbacks tlci native producer test failed")))
 
 (define (producer-test-clone-route-result-ok? [pools : ast.AstNodePoolContext]) : bool

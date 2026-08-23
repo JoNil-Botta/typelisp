@@ -912,16 +912,19 @@
                 (ci.intern-template-source-name-id name-id)]
               [else -1])])])))
 
+(define (ctfe-name-text-for-session
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : String
+  (let
+    [source-id : i64 (ctfe-name-source-id-for-session session name-id)]
+    (if (ci.intern-renderable-id? source-id)
+      (ci.intern-str source-id)
+      "<structural-name>")))
+
 (define (ctfe-name-value-for-session
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : CompilerCtfeValue
-  (let
-    [source-id : i64 (ctfe-name-source-id-for-session session name-id)]
-    (CompilerCtfeValue.Name
-      (if (ci.intern-renderable-id? source-id)
-        (ci.intern-str source-id)
-        "<structural-name>")
-      name-id)))
+  (CompilerCtfeValue.Name (ctfe-name-text-for-session session name-id) name-id))
 
 (define (ctfe-name-value-for-source-names
   [source-names : ci.InternSourceNameSessionHandle]
@@ -942,8 +945,70 @@
     (clone text)
     (ctfe-materialize-generated-name-id text)))
 
+(define (ctfe-source-string-value-for-session
+  [session : cis.InternStructuralSessionHandle]
+  [string-id : i64]) : CompilerCtfeValue
+  ;; Syntax inspection can intentionally turn an identity-bearing Name into a
+  ;; string literal. Preserve that identity while rendering its spelling
+  ;; through the compile job's structural session instead of indexing the
+  ;; ordinary intern pool with an opaque table handle.
+  (CompilerCtfeValue.String
+    (ctfe-name-text-for-session session string-id)
+    string-id))
+
+(define (ctfe-source-string-value-for-source-names
+  [source-names : ci.InternSourceNameSessionHandle]
+  [string-id : i64]) : CompilerCtfeValue
+  (ctfe-source-string-value-for-session
+    (cis.intern-structural-session-handle-from-source-names source-names)
+    string-id))
+
 (define (ctfe-source-string-value [string-id : i64]) : CompilerCtfeValue
-  (CompilerCtfeValue.String (ci.intern-str string-id) string-id))
+  (ctfe-source-string-value-for-source-names
+    (ci.intern-source-name-session-capture-active-handle)
+    string-id))
+
+(cfg
+  test
+  (test
+    ctfe-source-string-structural-identity
+    (let
+      [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+      [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+      [source-name-id : i64
+        (ci.intern-compat-state-intern
+          (&mut intern-state)
+          "ctfe-structural-string")]
+      [_install : unit
+        (ci.intern-compat-state-install!
+          (ci.intern-global-shared-view intern-state))]
+      [source-names : ci.InternSourceNameSessionHandle
+        (ci.intern-source-name-session-handle-from-state (& intern-state))]
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names source-names)]
+      [string-id : i64
+        (cis.intern-macro-global-identity-raw
+          (cis.intern-structural-session-macro-global-identity
+            session
+            cis.InternMacroGlobalRole.Context
+            source-name-id
+            source-name-id))]
+      [value : CompilerCtfeValue
+        (ctfe-source-string-value-for-session session string-id)]
+      [ok : bool
+        (match value
+          [(CompilerCtfeValue.String text identity)
+            (and
+              (string.eq text "ctfe-structural-string")
+              (= identity string-id))]
+          [_ false])]
+      (begin
+        (ci.intern-compat-state-install! installed)
+        (if ok
+          unit
+          (begin
+            (/ 1 0)
+            unit))))))
 
 (define (ctfe-generated-leading-dot-suffix-id [suffix-id : i64]) : i64
   (let
@@ -3012,6 +3077,7 @@
 (define (ctfe-eval-literal
   [lit : ast.AstLiteral]
   [expr : ast.AstExpr]
+  [session : cis.InternStructuralSessionHandle]
   [fuel : i64]) : ResultCtfe
   (match lit
     [(ast.AstLiteral.Int n text)
@@ -3042,7 +3108,9 @@
               (box
                 (ctfe-diagnostic-at-expr expr "comptime: invalid f64 literal"))))])]
     [(ast.AstLiteral.String string-id)
-      (ResultCtfe.Ok (ctfe-source-string-value string-id) fuel)]))
+      (ResultCtfe.Ok
+        (ctfe-source-string-value-for-session session string-id)
+        fuel)]))
 
 ;; --- binary operators -------------------------------------------------------
 ;; i64 arithmetic/bitwise/shift and i64 comparisons.
@@ -4710,7 +4778,8 @@
           (ctfe-diagnostic-at-expr
             (clone expr)
             "comptime: init is a runtime-only expression")))]
-    [(ast.AstExpr.Literal lit) (ctfe-eval-literal lit expr fuel)]
+    [(ast.AstExpr.Literal lit)
+      (ctfe-eval-literal lit expr (ctfe-env-structural-session env) fuel)]
     [(ast.AstExpr.Var name) (ctfe-eval-var name expr env fuel)]
     [(ast.AstExpr.Binary op left-box right-box)
       (let
@@ -6698,7 +6767,9 @@
                 [(ast.AstExpr.Literal (ast.AstLiteral.String string-id))
                   (if extract?
                     (ResultCtfe.Ok
-                      (ctfe-source-string-value string-id)
+                      (ctfe-source-string-value-for-session
+                        (ctfe-env-structural-session env)
+                        string-id)
                       arg-fuel)
                     (ResultCtfe.Ok (CompilerCtfeValue.Bool true) arg-fuel))]
                 [_
@@ -11109,6 +11180,7 @@
 
 (define (ctfe-literal-matches-value?
   [lit : ast.AstLiteral]
+  [session : cis.InternStructuralSessionHandle]
   [value : CompilerCtfeValue]) : bool
   (match lit
     [(ast.AstLiteral.Int n text)
@@ -11138,7 +11210,7 @@
         [(CompilerFloatNoF64) false])]
     [(ast.AstLiteral.String string-id)
       (let
-        [text : String (ci.intern-str string-id)]
+        [text : String (ctfe-name-text-for-session session string-id)]
         (match value
           [(CompilerCtfeValue.String actual _) (string.eq actual text)]
           [(CompilerCtfeValue.Name actual _) (string.eq actual text)]
@@ -11287,7 +11359,10 @@
           value
           (ctfe-binding-type maybe-ty value-ty env)))]
     [(ast.AstPattern.Literal lit)
-      (if (ctfe-literal-matches-value? lit value)
+      (if (ctfe-literal-matches-value?
+        lit
+        (ctfe-env-structural-session env)
+        value)
         (CtfePatternMatch.Matched env)
         (CtfePatternMatch.No))]
     [(ast.AstPattern.Variant variant args-box)
@@ -13995,7 +14070,10 @@
 ;; These constructors / inspectors cover the forms needed by v1 macros
 ;; (and, or, when, unless, cond): literals, variables, if, and call.
 ;; EQ -------------------------------------------------------------------------
-(define (ctfe-literal-eq [a : ast.AstLiteral] [b : ast.AstLiteral]) : bool
+(define (ctfe-literal-eq
+  [session : cis.InternStructuralSessionHandle]
+  [a : ast.AstLiteral]
+  [b : ast.AstLiteral]) : bool
   (match a
     [(ast.AstLiteral.Int a-n a-text)
       (match b
@@ -14019,7 +14097,9 @@
     [(ast.AstLiteral.String a-id)
       (match b
         [(ast.AstLiteral.String b-id)
-          (string.eq (ci.intern-str a-id) (ci.intern-str b-id))]
+          (string.eq
+            (ctfe-name-text-for-session session a-id)
+            (ctfe-name-text-for-session session b-id))]
         [_ false])]
     [(ast.AstLiteral.Unit)
       (match b
@@ -14147,7 +14227,8 @@
           [_ false]))]
     [(ast.AstPattern.Literal a-lit)
       (match b
-        [(ast.AstPattern.Literal b-lit) (ctfe-literal-eq a-lit b-lit)]
+        [(ast.AstPattern.Literal b-lit)
+          (ctfe-literal-eq (ctfe-env-structural-session (& env)) a-lit b-lit)]
         [_ false])]))
 
 (define (ctfe-pattern-list-eq-in-env
@@ -14344,7 +14425,8 @@
   (match a
     [(ast.AstExpr.Literal a-lit)
       (match b
-        [(ast.AstExpr.Literal b-lit) (ctfe-literal-eq a-lit b-lit)]
+        [(ast.AstExpr.Literal b-lit)
+          (ctfe-literal-eq (ctfe-env-structural-session (& env)) a-lit b-lit)]
         [_ false])]
     [(ast.AstExpr.Var a-name)
       (match b

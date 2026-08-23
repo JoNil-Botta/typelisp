@@ -39,7 +39,10 @@
 ;; The same shape with the remainder feeding a store rather than an add: the
 ;; fused divmod+store bundle picks its SRC through a second selector, so it
 ;; needs its own coverage.
-(define (walk-store [out : (&mut out (__tl_dyn-array i64))] [n : i64] [seed : i64]) : i64
+(define (walk-store
+  [out : (&mut out (__tl_dyn-array i64))]
+  [n : i64]
+  [seed : i64]) : i64
   (let
     [state : i64 seed]
     [i : i64 0]

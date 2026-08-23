@@ -5,7 +5,6 @@
 (import compiler_ir_types as ir)
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
-(import compiler_owned_view as owned_view)
 (import stdlib.string)
 
 (define (compiler-reg-smoke-spmd-call-function) : ir.CompilerIrFunction

@@ -13,7 +13,10 @@
   (Push4)
   (Add))
 
-(define (push-value [stack : (&mut stack (__tl_dyn-array i64))] [sp : i64] [value : i64]) : i64
+(define (push-value
+  [stack : (&mut stack (__tl_dyn-array i64))]
+  [sp : i64]
+  [value : i64]) : i64
   (begin
     (set! (array-ref stack sp) value)
     (+ sp 1)))

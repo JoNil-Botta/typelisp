@@ -33,10 +33,7 @@
   (unsafe
     (ptr-write! (ptr-offset items.data index) value)))
 
-(define (alias-poke
-  [xs : AliasView]
-  [ys : AliasView]
-  [n : i64]) : i64
+(define (alias-poke [xs : AliasView] [ys : AliasView] [n : i64]) : i64
   (if (< n 0)
     (alias-poke xs ys (+ n 1))
     (let
@@ -45,10 +42,7 @@
         (alias-set! ys 0 (+ a n))
         (+ (alias-ref xs 0) (alias-ref ys 1))))))
 
-(define (mirror-sum
-  [xs : AliasView]
-  [ys : AliasView]
-  [n : i64]) : i64
+(define (mirror-sum [xs : AliasView] [ys : AliasView] [n : i64]) : i64
   (if (< n 0)
     (mirror-sum xs ys (+ n 1))
     (let

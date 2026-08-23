@@ -55,7 +55,7 @@
       (let
         [diag : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first
-             (diagnostic.compiler-diagnostic-list-box-shared-view diagnostics))]
+            (diagnostic.compiler-diagnostic-list-box-shared-view diagnostics))]
         [labels : diagnostic.CompilerDiagnosticLabelList
           (diagnostic.compiler-diagnostic-secondary-spans diag)]
         (and
@@ -70,7 +70,7 @@
             (diagnostic.compiler-diagnostic-label-list-count labels)
             frame-count)
           (macro-diagnostic-frame-at?
-             (& labels)
+            (& labels)
             0
             ""
             first-line
@@ -79,7 +79,7 @@
           (if (= frame-count 1)
             true
             (macro-diagnostic-frame-at?
-               (& labels)
+              (& labels)
               1
               ""
               second-line
@@ -219,8 +219,8 @@
           (let
             [diag : diagnostic.CompilerDiagnostic
               (diagnostic.compiler-diagnostic-list-first
-                 (diagnostic.compiler-diagnostic-list-box-shared-view
-                   diagnostics))]
+                (diagnostic.compiler-diagnostic-list-box-shared-view
+                  diagnostics))]
             [labels : diagnostic.CompilerDiagnosticLabelList
               (diagnostic.compiler-diagnostic-secondary-spans diag)]
             [ok : bool
@@ -236,7 +236,7 @@
                 (= (diagnostic.compiler-diagnostic-col diag) primary-col)
                 (= (diagnostic.compiler-diagnostic-label-list-count labels) 1)
                 (macro-diagnostic-frame-at?
-                   (& labels)
+                  (& labels)
                   0
                   entry-path
                   frame-line

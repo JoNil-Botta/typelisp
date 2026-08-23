@@ -40,6 +40,8 @@
 
 (defmacro (compiler-reg-box-shared-view [value : Expr]) : Expr
   (let
+    ;; Spliced into the generated pointer element type.
+    ;; lint-allow: unused-variable
     [inner-ty : comptime.Expr
       (comptime.box-element-type (comptime.expr-type value))]
     `(let
@@ -27039,10 +27041,10 @@
                                 (array-ref depths s)
                                 (array-ref depths (- s 1))
                                 (compiler-reg-call-region-evict-def-weight
-                                  points
+                                  (compiler-reg-global-shared-view points)
                                   nblocks
-                                  depths
-                                  out-saves
+                                  (compiler-reg-global-shared-view depths)
+                                  (compiler-reg-global-shared-view out-saves)
                                   def-count)
                                 live-exits)
                                 (CompilerRegCallEvictPick.CompilerRegCallEvictSomePick
@@ -27077,10 +27079,13 @@
                                               (compiler-reg-loop-depth-weight
                                                 (array-ref depths (- s 1))))
                                             (compiler-reg-call-region-evict-def-weight
-                                              points
+                                              (compiler-reg-global-shared-view
+                                                points)
                                               nblocks
-                                              depths
-                                              out-saves
+                                              (compiler-reg-global-shared-view
+                                                depths)
+                                              (compiler-reg-global-shared-view
+                                                out-saves)
                                               def-count)))
                                         (compiler-reg-evict-census-bump! 18)))
                                     unit)
@@ -28441,15 +28446,24 @@
             (begin
               (compiler-reg-move-census-bump! 0)
               (let
-                [rs : i64 (compiler-reg-move-census-find parents src)]
-                [rd : i64 (compiler-reg-move-census-find parents dst)]
+                [rs : i64
+                  (compiler-reg-move-census-find
+                    (compiler-reg-global-shared-view parents)
+                    src)]
+                [rd : i64
+                  (compiler-reg-move-census-find
+                    (compiler-reg-global-shared-view parents)
+                    dst)]
                 (if (= rs rd)
                   (compiler-reg-move-census-bump! 1)
-                  (if (compiler-reg-same-value-class? sv-parents src dst)
+                  (if (compiler-reg-same-value-class?
+                    (compiler-reg-global-shared-view sv-parents)
+                    src
+                    dst)
                     (compiler-reg-move-census-bump! 2)
                     (if (not
                       (compiler-reg-vars-interfere-segmented-index?
-                        interval-index
+                        (compiler-reg-global-shared-view interval-index)
                         src
                         dst))
                       ;; vars are segment-disjoint. Split by whether their
@@ -28461,31 +28475,34 @@
                       (begin
                         (compiler-reg-move-census-bump! 3)
                         (if (compiler-reg-vars-interfere-segmented-index?
-                          eff-index
+                          (compiler-reg-global-shared-view eff-index)
                           rs
                           rd)
                           (compiler-reg-move-census-bump! 6)
                           (begin
                             (compiler-reg-move-census-bump! 5)
                             (if (compiler-reg-coalesce-vars-compatible?
-                              interval-index
-                              types
-                              group-vars
+                              (compiler-reg-global-shared-view interval-index)
+                              (compiler-reg-global-shared-view types)
+                              (compiler-reg-global-shared-view group-vars)
                               src
                               dst
                               false
-                              sv-parents)
+                              (compiler-reg-global-shared-view sv-parents))
                               (compiler-reg-move-census-bump! 7)
                               (if (if (live.compiler-live-set-contains?
-                                group-vars
+                                (compiler-reg-global-shared-view group-vars)
                                 src)
                                 true
                                 (live.compiler-live-set-contains?
-                                  group-vars
+                                  (compiler-reg-global-shared-view group-vars)
                                   dst))
                                 (compiler-reg-move-census-bump! 8)
                                 (if (not
-                                  (compiler-reg-compatible-types? types src dst))
+                                  (compiler-reg-compatible-types?
+                                    (compiler-reg-global-shared-view types)
+                                    src
+                                    dst))
                                   (compiler-reg-move-census-bump! 9)
                                   (compiler-reg-move-census-bump! 10)))))))
                       (compiler-reg-move-census-bump! 4)))))))
@@ -34514,15 +34531,6 @@
         (compiler-reg-assignment-table-prefix
           (compiler-reg-global-shared-view integer-scratch-assignments)
           early-scratch-base))]
-    [early-scratch-moved-real? : bool
-      (and
-        (> early-scratch-count 0)
-        (not
-          (compiler-reg-assignment-table-prefix-eq?
-            (compiler-reg-global-shared-view base-integer-assignments)
-            (compiler-reg-global-shared-view integer-assignments)
-            early-scratch-base
-            0)))]
     ;; Step B: the caller-saved-overflow pass is gone -- the unified greedy already
     ;; allocates the caller-saved zero-call prefix itself, so retrying the same
     ;; registers here was redundant. The call-spanning save/restore rescue (a

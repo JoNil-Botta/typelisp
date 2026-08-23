@@ -1767,23 +1767,23 @@
     [source-count : i64]
     [identity-count : i64]) : ResultSurfaceAstBytes
     (match (surface-ast-encode
-      structural-session
-      decls
-      paths
-      modules
-      seen
-      source-pools
+      (owned_view.compiler-owned-shared-view structural-session)
+      (owned_view.compiler-owned-shared-view decls)
+      (owned_view.compiler-owned-shared-view paths)
+      (owned_view.compiler-owned-shared-view modules)
+      (owned_view.compiler-owned-shared-view seen)
+      (owned_view.compiler-owned-shared-view source-pools)
       source-count
       identity-count)
       [(ResultSurfaceAstBytes.Err message) (ResultSurfaceAstBytes.Err message)]
       [(ResultSurfaceAstBytes.Ok first)
         (match (surface-ast-encode
-          structural-session
-          decls
-          paths
-          modules
-          seen
-          source-pools
+          (owned_view.compiler-owned-shared-view structural-session)
+          (owned_view.compiler-owned-shared-view decls)
+          (owned_view.compiler-owned-shared-view paths)
+          (owned_view.compiler-owned-shared-view modules)
+          (owned_view.compiler-owned-shared-view seen)
+          (owned_view.compiler-owned-shared-view source-pools)
           source-count
           identity-count)
           [(ResultSurfaceAstBytes.Err message)

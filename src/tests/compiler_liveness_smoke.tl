@@ -3,7 +3,6 @@
 (import compiler_liveness as live)
 (import compiler_liveness_tests as live_tests)
 (import compiler_intern as ci)
-(import compiler_owned_view as owned_view)
 
 (define (compiler-live-smoke-spmd-call-use-def-ok?) : bool
   (let

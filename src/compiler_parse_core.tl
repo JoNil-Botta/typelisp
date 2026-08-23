@@ -19,7 +19,6 @@
 (import stdlib.arena)
 (import token)
 (import (option.option i64) as option_i64)
-(import compiler_owned_view as owned_view)
 
 ;; Parser dispatch environments and AST pool contexts are arena-backed shared
 ;; handles. Recursive parser calls borrow their backing storage; this explicit

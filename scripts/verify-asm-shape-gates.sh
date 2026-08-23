@@ -1394,6 +1394,73 @@ check_word_merge_unroll() {
         word-merge-unroll-mixed-k2
 }
 
+check_copy_call_word() {
+    _asm=$(compile_gate copy_call_word tests/integration/copy_call_word.tl)
+    # copy_call's EIGHT-BYTE tier: `dst[i] = src[i]` over i64 elements becomes
+    # ONE `tl_mem_copy8_fwd` call and no loop at all. The unrolled body it
+    # pre-empts is the word-merge K=4 group checked just above, at 11
+    # instructions per four elements; the call is 4 plus one `rep movsq`
+    # iteration per element. Correctness of the call cannot be seen here -- the
+    # manifest case is the runtime twin -- but a missed rewrite is invisible to
+    # an exit code, which is why the shape is pinned.
+    # The unrolled fast body is GONE, not merely supplemented. Each dynamic
+    # kernel keeps exactly ONE element-wise store -- the CHECKED slow path, which
+    # this pass deliberately leaves alone so a program that would abort mid-copy
+    # still aborts at the same element. Before this tier existed each of them had
+    # six: four in the unrolled group, one in its remainder, one checked.
+    for _kernel in copy_words shift_up shift_down; do
+        _body=$(function_body "$_asm" "_tl_copy_call_word_$_kernel")
+        assert_fixed_count_eq "$_body" 'call tl_mem_copy8_fwd' 1 \
+            "copy-call-word-$_kernel"
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
+            "copy-call-word-$_kernel-checked-store-only"
+    done
+    # The fixed-size pair have statically provable lengths, so no checked path
+    # survives at all and the whole function is the call.
+    for _kernel in copy_fixed8 copy_fixed4; do
+        _body=$(function_body "$_asm" "_tl_copy_call_word_$_kernel")
+        assert_fixed_count_eq "$_body" 'call tl_mem_copy8_fwd' 1 \
+            "copy-call-word-$_kernel"
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 0 \
+            "copy-call-word-$_kernel-no-element-store"
+    done
+    # The count is the ELEMENT count, handed over as-is: a literal trip count of
+    # eight becomes `movl $8, %edx`, not $64. A byte count here would copy an
+    # eighth of the range.
+    _fixed8=$(function_body "$_asm" _tl_copy_call_word_copy_fixed8)
+    assert_contains "$_fixed8" 'movl $8, %edx' copy-call-word-slot-count
+    # REFUSED, and both refusals must keep their loops. `copy_fixed3` is ONE trip
+    # below the pass's slot floor -- its admitted neighbour `copy_fixed4` is
+    # right above -- and `copy_halfwords` is u32, a width with no total
+    # forward-copy helper at all.
+    for _kernel in copy_fixed3 copy_halfwords; do
+        _body=$(function_body "$_asm" "_tl_copy_call_word_$_kernel")
+        assert_not_contains "$_body" 'call tl_mem_copy8_fwd' \
+            "copy-call-word-$_kernel-refused"
+        assert_not_contains "$_body" 'call tl_mem_copy_fwd' \
+            "copy-call-word-$_kernel-refused-byte"
+    done
+    # The byte tier still names the BYTE helper: the two widths are separate
+    # symbols because their counts and their overlap granularity differ.
+    _bytes=$(function_body "$_asm" _tl_copy_call_word_copy_bytes)
+    assert_fixed_count_eq "$_bytes" 'call tl_mem_copy_fwd' 1 copy-call-word-byte-tier
+    assert_not_contains "$_bytes" 'call tl_mem_copy8_fwd' copy-call-word-byte-tier
+    # The runtime helper itself: the propagating overlap gets a SCALAR
+    # eight-byte forward loop, not the wide `rep movsq`. No program run can tell
+    # the two apart on a machine whose REP MOVS honours element granularity, so
+    # this is the only place the arm's existence is pinned.
+    assert_contains "$_asm" '.Ltl_mem_copy8_fwd_loop:' copy-call-word-helper-scalar-arm
+    assert_contains "$_asm" '    rep movsq' copy-call-word-helper-wide-arm
+    # And the row the tier exists for: peephole_lines' inlined 25-element
+    # `pl-copy-line`, which paid 14.68M instructions as a K=4 unrolled loop.
+    _bench=$(compile_gate copy_call_word_peephole benchmarks/peephole_lines/bench.tl)
+    _chunk=$(function_body "$_bench" _tl_bench_pl_run_chunk)
+    assert_fixed_count_eq "$_chunk" 'call tl_mem_copy8_fwd' 2 copy-call-word-peephole
+    assert_fixed_count_eq "$_chunk" 'movl $25, %edx' 2 copy-call-word-peephole-count
+}
+
 check_gep_load_cmp_spilled_stage() {
     _asm=$(compile_gate gep_load_cmp_spilled_stage         tests/integration/gep_load_cmp_spilled_stage.tl)
     _changed=$(function_body "$_asm"         _tl_gep_load_cmp_spilled_stage_changed_question)
@@ -1468,6 +1535,7 @@ check_jump_only_forward() {
 
 check_mem_dest_rmw_fold
 check_word_merge_unroll
+check_copy_call_word
 check_divmagic_hoist
 check_hoist_priority
 check_lftr_counter_retire

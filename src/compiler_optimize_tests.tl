@@ -57945,12 +57945,12 @@
       [(not (opt-fc-test-loop-has-store? f7 3)) 61]
       [else 42])))
 
-;; --- byte copy -> tl_mem_copy_fwd (copy_call) self-tests ---------------------
+;; --- element copy -> tl_mem_copy_fwd / tl_mem_copy8_fwd (copy_call) tests ----
 ;;
 ;; The fixture is the shape the versioner emits for `dst[i] = src[i]`: a
 ;; `__bce_fast` clone entered from its own `__bce_guard`, counter seeded 0,
-;; step 1, invariant bound, with a byte Load feeding a byte StorePtr through two
-;; geps that both index on the counter.
+;; step 1, invariant bound, with a Load feeding a StorePtr through two geps that
+;; both index on the counter.
 ;;
 ;; C1  positive : the admitted shape becomes one tl_mem_copy_fwd call and a
 ;;                Jump; the loop, BOTH narrow memory operations' store side and
@@ -57961,10 +57961,10 @@
 ;;                preheader, carrying a BoundsCheck) is left exactly as it was.
 ;;                This is the trap rail: that path must keep aborting at the
 ;;                same element, and the call has no bounds check to abort on.
-;; C3  negative : i64 elements instead of u8. The count handed to the helper is
-;;                a BYTE count, and a wide-element loop copies each element
-;;                atomically, which a byte-granular forward copy does not
-;;                reproduce under a non-multiple overlap.
+;; C3  positive : i64 elements instead of u8, with a NON-literal bound. Same
+;;                rewrite, but to `tl_mem_copy8_fwd` -- the count is in slots,
+;;                so the byte helper would copy an eighth of the range, and its
+;;                byte-granular propagation is not this loop's anyway.
 ;; C4  negative : a fast clone whose predecessor is some other block, not the
 ;;                matching `__bce_guard`, loses the seed<bound fact. Without it
 ;;                a loop entered with seed >= bound still copies ONE byte (the
@@ -57991,15 +57991,37 @@
 ;;                would become the FIRST byte where the loop leaves the LAST.
 ;;                fill_call's escape check never sees a Load, which is why this
 ;;                pass carries its own.
+;; C13 negative : i32 elements -- a width with no total forward-copy helper.
+;;                Neither `rep movsb` nor `rep movsq` moves i32 elements
+;;                atomically, so the classifier answers 0 and the block is
+;;                refused before the body scan builds anything.
+;; C14 negative : i64 elements with a LITERAL bound of 3, below
+;;                `opt-copy-call-word-slot-floor`. No unrolled group runs at
+;;                three trips, so the loop is 16 instructions against the
+;;                helper's 12 to 17 -- a bet the pass declines.
+;; C15 positive : the same loop with a literal bound of 4, the floor itself,
+;;                rewrites to `tl_mem_copy8_fwd` (21 instructions against 13 to
+;;                18). C14/C15 are the two sides of the floor, one trip apart,
+;;                and pin its VALUE rather than merely that literal bounds are
+;;                not banned.
+;; C16 negative : an i64 store fed by a u8 load. The store fixes the width, and
+;;                a load that disagrees means the body does not move eight bytes
+;;                per iteration -- the wide-element twin of C8.
 ;;
 ;; These negatives were checked load-bearing by mutating the implementation and
 ;; confirming THIS test is what fails, with the code it reports:
-;;   * `opt-copy-call-byte-type?` widened to accept I64 -> code 30 (C3 wrongly
-;;     rewrites).
+;;   * `opt-copy-call-elem-width` widened to answer 4 for I32 -> code 130 (C13
+;;     wrongly rewrites).
+;;   * `opt-copy-call-count-ok?` forced true -> code 140 (C14 wrongly rewrites).
+;;   * `opt-copy-call-symbol` made to answer the byte helper for every width ->
+;;     code 31 (C3's call names the wrong helper) and code 151 (C15).
 ;;   * `opt-copy-call-index-tracks?` short-circuited to true -> code 60 (C6).
 ;;   * `opt-copy-call-scan-body`'s second-store arm made to keep the first site
 ;;     instead of rejecting -> code 70 (C7).
-;;   * `opt-copy-call-scan-body`'s store-width test dropped -> code 80 (C8).
+;;   * `opt-copy-call-block-match`'s `width < 1` guard dropped -> codes 80 (C8)
+;;     and 130 (C13): with no width there is nothing for the scan's own tests to
+;;     disagree with, so every one of them compares 0 against 0 and passes.
+;;   * `opt-copy-call-scan-body`'s Load-width arm dropped -> code 160 (C16).
 ;;   * `opt-copy-call-escape-ok?`'s Load arm dropped (i.e. reverting to
 ;;     `opt-fill-call-escape-ok?`, which never sees a Load) -> code 120 (C12).
 ;; C12 is why this pass has its own escape check at all: the first version of
@@ -58014,6 +58036,12 @@
 ;; (whose own suite mutation-checks them), C5 on fill_call's `(= step 1)`, and
 ;; C9 on the store value simply not being a Var, which no minimal mutation
 ;; expresses.
+;;
+;; The overlap semantics the two helpers differ on are not expressible against
+;; the IR fixture -- they are a property of the emitted runtime code -- so they
+;; are pinned end-to-end by tests/integration/copy_call_word.tl, which runs a
+;; propagating in-place element shift through the real rewrite and checks the
+;; values.
 (define (opt-cc-test-label [name : String]) : i64
   (compiler_ir_types.compiler-ir-label name))
 
@@ -58025,7 +58053,11 @@
     (opt-cc-test-label "cc.entry")
     (opt-test-instrs (compiler_ir_types.CompilerIrInstr.Jump pred))))
 
-(define (opt-cc-test-pred-block [pred : i64] [loop : i64] [exit : i64]) : compiler_ir_types.CompilerIrBlock
+(define (opt-cc-test-pred-block
+  [pred : i64]
+  [loop : i64]
+  [exit : i64]
+  [bound : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
     pred
     (opt-test-instrs
@@ -58033,12 +58065,17 @@
         3
         (compiler_ir_types.CompilerIrBinOp.Lt)
         (compiler_ir_types.CompilerIrValue.I64 0)
-        (compiler_ir_types.CompilerIrValue.Var 1)
+        bound
         (compiler_ast_types.AstType.Bool))
       (compiler_ir_types.CompilerIrInstr.Branch
         (compiler_ir_types.CompilerIrValue.Var 3)
         loop
         exit))))
+
+;; The loop's bound: the `bound` parameter for the dynamic-trip fixtures, a
+;; literal for the two that stand on either side of the word floor.
+(define (opt-cc-test-bound-var) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var 1))
 
 ;; `escape?` makes the exit block carry the loaded byte out through a phi on the
 ;; loop edge. The kept load runs once at the seed index, so a rewrite would hand
@@ -58111,7 +58148,9 @@
   [exit : i64]
   [elem-ty : compiler_ast_types.AstType]
   [store-ty : compiler_ast_types.AstType]
+  [load-ty : compiler_ast_types.AstType]
   [store-value : compiler_ir_types.CompilerIrValue]
+  [bound : compiler_ir_types.CompilerIrValue]
   [checked? : bool]
   [step : i64]
   [offset-add? : bool]
@@ -58127,7 +58166,9 @@
             exit
             elem-ty
             store-ty
+            load-ty
             store-value
+            bound
             step
             offset-add?
             invariant-index?
@@ -58141,7 +58182,9 @@
           exit
           elem-ty
           store-ty
+          load-ty
           store-value
+          bound
           step
           offset-add?
           invariant-index?
@@ -58162,7 +58205,9 @@
   [exit : i64]
   [elem-ty : compiler_ast_types.AstType]
   [store-ty : compiler_ast_types.AstType]
+  [load-ty : compiler_ast_types.AstType]
   [store-value : compiler_ir_types.CompilerIrValue]
+  [bound : compiler_ir_types.CompilerIrValue]
   [step : i64]
   [offset-add? : bool]
   [invariant-index? : bool]
@@ -58184,7 +58229,7 @@
               9
               (compiler_ir_types.CompilerIrBinOp.Lt)
               (compiler_ir_types.CompilerIrValue.Var 8)
-              (compiler_ir_types.CompilerIrValue.Var 1)
+              bound
               (compiler_ast_types.AstType.Bool))
             (compiler_ir_types.CompilerIrInstr.Branch
               (compiler_ir_types.CompilerIrValue.Var 9)
@@ -58211,14 +58256,16 @@
     (compiler_ir_types.CompilerIrInstr.Load
       6
       (compiler_ir_types.CompilerIrValue.Var 5)
-      elem-ty)))
+      load-ty)))
 
 (define (opt-cc-test-function
   [loop-name : String]
   [pred-name : String]
   [elem-ty : compiler_ast_types.AstType]
   [store-ty : compiler_ast_types.AstType]
+  [load-ty : compiler_ast_types.AstType]
   [store-value : compiler_ir_types.CompilerIrValue]
+  [bound : compiler_ir_types.CompilerIrValue]
   [checked? : bool]
   [step : i64]
   [offset-add? : bool]
@@ -58254,7 +58301,7 @@
       (compiler_ir_types.compiler-ir-block-cons
         (opt-cc-test-entry-block pred)
         (compiler_ir_types.compiler-ir-block-cons
-          (opt-cc-test-pred-block pred loop exit)
+          (opt-cc-test-pred-block pred loop exit bound)
           (compiler_ir_types.compiler-ir-block-cons
             (opt-cc-test-loop-block
               loop
@@ -58262,7 +58309,9 @@
               exit
               elem-ty
               store-ty
+              load-ty
               store-value
+              bound
               checked?
               step
               offset-add?
@@ -58289,6 +58338,59 @@
         (cbi.compiler-builtin-backend-tl-mem-copy-fwd-id? name)
         (opt-cc-test-args-are? args 7 5 1))]
     [_ false]))
+
+;; The eight-byte twin. The helper NAME is the whole of the width decision, so
+;; it is checked as tightly as the operand order is: handing a slot count to the
+;; byte helper copies an eighth of the range.
+(define (opt-cc-test-loop-has-call8?
+  [out : compiler_ir_types.CompilerIrFunction]
+  [index : i64]) : bool
+  (match (opt-gc-test-instr-at
+    (compiler_optimize.opt-function-blocks out)
+    2
+    index)
+    [(compiler_ir_types.CompilerIrInstr.Call _ name args _)
+      (and
+        (cbi.compiler-builtin-backend-tl-mem-copy8-fwd-id? name)
+        (opt-cc-test-args-are? args 7 5 1))]
+    [_ false]))
+
+;; The literal-bound fixtures' call: same operands, but the count is the
+;; literal the loop compared against rather than the `bound` parameter.
+(define (opt-cc-test-loop-has-call8-const?
+  [out : compiler_ir_types.CompilerIrFunction]
+  [index : i64]
+  [count : i64]) : bool
+  (match (opt-gc-test-instr-at
+    (compiler_optimize.opt-function-blocks out)
+    2
+    index)
+    [(compiler_ir_types.CompilerIrInstr.Call _ name args _)
+      (and
+        (cbi.compiler-builtin-backend-tl-mem-copy8-fwd-id? name)
+        (opt-cc-test-const-args-are? args 7 5 count))]
+    [_ false]))
+
+(define (opt-cc-test-const-args-are?
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [dst : i64]
+  [src : i64]
+  [count : i64]) : bool
+  (match args
+    [(compiler_ir_types.CompilerIrCallArgs.Array values)
+      (and
+        (= (array-length values) 3)
+        (= (opt-cc-test-arg-var values 0) dst)
+        (= (opt-cc-test-arg-var values 1) src)
+        (= (opt-cc-test-arg-const values 2) count))]
+    [_ false]))
+
+(define (opt-cc-test-arg-const
+  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]
+  [index : i64]) : i64
+  (match (array-ref values index)
+    [(compiler_ir_types.CompilerIrValue.I64 k) k]
+    [_ (- 0 1)]))
 
 (define (opt-cc-test-args-are?
   [args : compiler_ir_types.CompilerIrCallArgs]
@@ -58356,7 +58458,9 @@
   [pred-name : String]
   [elem-ty : compiler_ast_types.AstType]
   [store-ty : compiler_ast_types.AstType]
+  [load-ty : compiler_ast_types.AstType]
   [store-value : compiler_ir_types.CompilerIrValue]
+  [bound : compiler_ir_types.CompilerIrValue]
   [checked? : bool]
   [step : i64]
   [offset-add? : bool]
@@ -58369,7 +58473,9 @@
       pred-name
       elem-ty
       store-ty
+      load-ty
       store-value
+      bound
       checked?
       step
       offset-add?
@@ -58377,31 +58483,49 @@
       second-store?
       escape?)))
 
+;; The admitted shape at one element width, every other knob at its default.
+;; `elem-ty` is the geps' and the load's type as well as the store's, which is
+;; what the pass requires of a real copy body.
+(define (opt-cc-test-run-width
+  [loop-name : String]
+  [pred-name : String]
+  [elem-ty : compiler_ast_types.AstType]
+  [bound : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrFunction
+  (opt-cc-test-run
+    loop-name
+    pred-name
+    elem-ty
+    elem-ty
+    elem-ty
+    (opt-cc-test-loaded)
+    bound
+    false
+    1
+    false
+    false
+    false
+    false))
+
 (define (opt-cc-test-loaded) : compiler_ir_types.CompilerIrValue
   (compiler_ir_types.CompilerIrValue.Var 6))
 
 (define (compiler-optimize-copy-call-self-test) : i64
   (let
     [c1 : compiler_ir_types.CompilerIrFunction
-      (opt-cc-test-run
+      (opt-cc-test-run-width
         "while_body.1__bce_fast"
         "while_body.1__bce_guard"
         (opt-cc-test-byte)
-        (opt-cc-test-byte)
-        (opt-cc-test-loaded)
-        false
-        1
-        false
-        false
-        false
-        false)]
+        (opt-cc-test-bound-var))]
     [c2 : compiler_ir_types.CompilerIrFunction
       (opt-cc-test-run
         "while_body.9"
         "while_body.9__preheader"
         (opt-cc-test-byte)
         (opt-cc-test-byte)
+        (opt-cc-test-byte)
         (opt-cc-test-loaded)
+        (opt-cc-test-bound-var)
         true
         1
         false
@@ -58409,38 +58533,26 @@
         false
         false)]
     [c3 : compiler_ir_types.CompilerIrFunction
-      (opt-cc-test-run
+      (opt-cc-test-run-width
         "while_body.3__bce_fast"
         "while_body.3__bce_guard"
         (opt-cc-test-i64)
-        (opt-cc-test-i64)
-        (opt-cc-test-loaded)
-        false
-        1
-        false
-        false
-        false
-        false)]
+        (opt-cc-test-bound-var))]
     [c4 : compiler_ir_types.CompilerIrFunction
-      (opt-cc-test-run
+      (opt-cc-test-run-width
         "while_body.5__bce_fast"
         "while_body.5__somewhere_else"
         (opt-cc-test-byte)
-        (opt-cc-test-byte)
-        (opt-cc-test-loaded)
-        false
-        1
-        false
-        false
-        false
-        false)]
+        (opt-cc-test-bound-var))]
     [c5 : compiler_ir_types.CompilerIrFunction
       (opt-cc-test-run
         "while_body.11__bce_fast"
         "while_body.11__bce_guard"
         (opt-cc-test-byte)
         (opt-cc-test-byte)
+        (opt-cc-test-byte)
         (opt-cc-test-loaded)
+        (opt-cc-test-bound-var)
         false
         2
         false
@@ -58453,7 +58565,9 @@
         "while_body.13__bce_guard"
         (opt-cc-test-byte)
         (opt-cc-test-byte)
+        (opt-cc-test-byte)
         (opt-cc-test-loaded)
+        (opt-cc-test-bound-var)
         false
         1
         false
@@ -58466,7 +58580,9 @@
         "while_body.15__bce_guard"
         (opt-cc-test-byte)
         (opt-cc-test-byte)
+        (opt-cc-test-byte)
         (opt-cc-test-loaded)
+        (opt-cc-test-bound-var)
         false
         1
         false
@@ -58479,7 +58595,9 @@
         "while_body.17__bce_guard"
         (opt-cc-test-byte)
         (compiler_ast_types.AstType.U16)
+        (opt-cc-test-byte)
         (opt-cc-test-loaded)
+        (opt-cc-test-bound-var)
         false
         1
         false
@@ -58492,7 +58610,9 @@
         "while_body.19__bce_guard"
         (opt-cc-test-byte)
         (opt-cc-test-byte)
+        (opt-cc-test-byte)
         (compiler_ir_types.CompilerIrValue.I64 0)
+        (opt-cc-test-bound-var)
         false
         1
         false
@@ -58505,7 +58625,9 @@
         "while_body.21__bce_guard"
         (opt-cc-test-byte)
         (opt-cc-test-byte)
+        (opt-cc-test-byte)
         (opt-cc-test-loaded)
+        (opt-cc-test-bound-var)
         false
         1
         true
@@ -58518,13 +58640,48 @@
         "while_body.23__bce_guard"
         (opt-cc-test-byte)
         (opt-cc-test-byte)
+        (opt-cc-test-byte)
         (opt-cc-test-loaded)
+        (opt-cc-test-bound-var)
         false
         1
         false
         false
         false
         true)]
+    [c13 : compiler_ir_types.CompilerIrFunction
+      (opt-cc-test-run-width
+        "while_body.25__bce_fast"
+        "while_body.25__bce_guard"
+        (compiler_ast_types.AstType.I32)
+        (opt-cc-test-bound-var))]
+    [c14 : compiler_ir_types.CompilerIrFunction
+      (opt-cc-test-run-width
+        "while_body.27__bce_fast"
+        "while_body.27__bce_guard"
+        (opt-cc-test-i64)
+        (compiler_ir_types.CompilerIrValue.I64 3))]
+    [c15 : compiler_ir_types.CompilerIrFunction
+      (opt-cc-test-run-width
+        "while_body.29__bce_fast"
+        "while_body.29__bce_guard"
+        (opt-cc-test-i64)
+        (compiler_ir_types.CompilerIrValue.I64 4))]
+    [c16 : compiler_ir_types.CompilerIrFunction
+      (opt-cc-test-run
+        "while_body.31__bce_fast"
+        "while_body.31__bce_guard"
+        (opt-cc-test-i64)
+        (opt-cc-test-i64)
+        (opt-cc-test-byte)
+        (opt-cc-test-loaded)
+        (opt-cc-test-bound-var)
+        false
+        1
+        false
+        false
+        false
+        false)]
     [c11 : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-copy-call-function c1)]
     (cond
@@ -58536,7 +58693,11 @@
       [(not (= (compiler_optimize.opt-function-frame c1) 14)) 5]
       [(not (opt-cc-test-unchanged? c2)) 20]
       [(not (opt-cc-test-loop-has-store? c2 5)) 21]
-      [(not (opt-cc-test-unchanged? c3)) 30]
+      ;; C3: same rewrite as C1, to the EIGHT-BYTE helper.
+      [(not (= (opt-cc-test-loop-instr-count c3) 8)) 30]
+      [(not (opt-cc-test-loop-has-call8? c3 4)) 31]
+      [(not (= (opt-cc-test-loop-store-count c3 0 8) 0)) 32]
+      [(not (opt-cc-test-loop-ends-in-jump? c3)) 33]
       [(not (opt-cc-test-unchanged? c4)) 40]
       [(not (opt-cc-test-unchanged? c5)) 50]
       [(not (opt-cc-test-unchanged? c6)) 60]
@@ -58553,6 +58714,14 @@
       [(not (= (compiler_optimize.opt-function-frame c11) 14)) 112]
       [(not (opt-cc-test-unchanged? c12)) 120]
       [(not (opt-cc-test-loop-has-store? c12 4)) 121]
+      [(not (opt-cc-test-unchanged? c13)) 130]
+      [(not (opt-cc-test-unchanged? c14)) 140]
+      ;; C15: the literal bound at the floor's far side, handed over as the
+      ;; slot count itself.
+      [(not (= (opt-cc-test-loop-instr-count c15) 8)) 150]
+      [(not (opt-cc-test-loop-has-call8-const? c15 4 4)) 151]
+      [(not (= (opt-cc-test-loop-store-count c15 0 8) 0)) 152]
+      [(not (opt-cc-test-unchanged? c16)) 160]
       [else 42])))
 
 ;; --- global-cell condition (a): per-store observability ----------------------
@@ -61597,7 +61766,7 @@
   (test.assert-i64-eq
     (compiler-optimize-copy-call-self-test)
     42
-    "a byte copy in a __bce_fast clone becomes one tl_mem_copy_fwd(dst, src, count) call, with an invariant+counter destination index admitted and idempotently; checked, wide-element, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width and constant-value loops do not"))
+    "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
 
 (test
   global-cell-call-mod-ref

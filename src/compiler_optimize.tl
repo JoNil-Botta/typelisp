@@ -52478,35 +52478,40 @@
     func)
     [(OptFunctionCtxResult.Result out _) out]))
 
-;; --- byte copy -> tl_mem_copy_fwd (copy_call) ---------------------------------
+;; --- element copy -> tl_mem_copy_fwd / tl_mem_copy8_fwd (copy_call) ----------
 ;;
-;; A counted loop whose whole body is `dst[i] = src[i]` on ONE-BYTE elements
-;; becomes one `tl_mem_copy_fwd(&dst[i0], &src[i0], bound)` call. This is the
-;; STORE-side companion to the byte-compose load fold: where that one widens a
-;; shift/or tree of narrow LOADS into a single wide load, this one widens a
-;; whole loop of narrow STORES -- the corpus copies behind `byte_buf.to-string`
-;; and every hand-written `string -> byte vector` loop -- into the runtime's
-;; word-at-a-time copy. The element-wise loop costs 3.5 instructions per byte
-;; after the x2 unroller has had it (two loads, two stores, an add, a compare
-;; and a branch per two bytes); the helper's `rep movsq` is charged one
-;; instruction per EIGHT bytes by the deterministic instruction-count gate, and
-;; the unroller never sees the loop at all because this pass runs ahead of it,
-;; next to fill_call.
+;; A counted loop whose whole body is `dst[i] = src[i]` becomes ONE call to the
+;; total forward-copy helper for that element width:
+;; `tl_mem_copy_fwd(&dst[i0], &src[i0], bound)` for one-byte elements,
+;; `tl_mem_copy8_fwd(...)` for eight-byte ones. For bytes this is the STORE-side
+;; companion to the byte-compose load fold: where that one widens a shift/or
+;; tree of narrow LOADS into a single wide load, this one widens a whole loop of
+;; narrow STORES -- the corpus copies behind `byte_buf.to-string` and every
+;; hand-written `string -> byte vector` loop -- into the runtime's word-at-a-time
+;; copy. The element-wise byte loop costs 3.5 instructions per byte after the x2
+;; unroller has had it (two loads, two stores, an add, a compare and a branch per
+;; two bytes); the helper's `rep movsq` is charged one instruction per EIGHT
+;; bytes by the deterministic instruction-count gate. For eight-byte elements the
+;; loop the pass pre-empts is the word-merge K=4 unroller's, at 11 instructions
+;; per four elements, against one `rep movsq` iteration per element. Either way
+;; the unroller never sees the loop, because this pass runs ahead of it, next to
+;; fill_call.
 ;;
-;; WHY THE HELPER AND NOT `tl_memcpy`: `tl_memcpy` is memmove -- it copies
+;; WHY THE HELPERS AND NOT `tl_memcpy`: `tl_memcpy` is memmove -- it copies
 ;; BACKWARD when the destination overlaps and sits above the source -- and a
-;; wide forward copy is likewise not this loop. A forward byte loop over
-;; `src < dst < src + n` PROPAGATES: it re-reads bytes it has just written, and
-;; neither memmove nor a word-at-a-time forward copy reproduces that.
-;; `tl_mem_copy_fwd` is written to BE the loop for every argument triple (see
-;; its header in compiler_backend_runtime_linux.tl): it takes the wide path only
-;; when `dst <= src` or the ranges are disjoint -- the two cases where reading
-;; ahead of the write cannot matter -- and is a plain `rep movsb`, forward and
-;; byte-granular, otherwise. That TOTAL equivalence is what lets this pass fire
-;; without proving anything about aliasing, which no analysis here could do:
-;; both pointers are opaque loads in every real instance.
+;; wide forward copy is likewise not this loop. A forward loop over
+;; `src < dst < src + n*width` PROPAGATES: it re-reads elements it has just
+;; written, and neither memmove nor a chunk-at-a-time forward copy reproduces
+;; that. Both helpers are written to BE the loop for every argument triple (see
+;; their headers in compiler_backend_runtime_linux.tl): each takes the wide
+;; `rep movs` path only when `dst <= src` or the ranges are disjoint -- the two
+;; cases where reading ahead of the write cannot matter -- and otherwise runs a
+;; forward copy at its OWN granularity, `rep movsb` for the byte helper and a
+;; scalar eight-byte loop for the word one. That TOTAL equivalence is what lets
+;; this pass fire without proving anything about aliasing, which no analysis
+;; here could do: both pointers are opaque loads in every real instance.
 ;;
-;; WHY IT IS SOUND TO DROP THE BOUNDS CHECKS: the call touches EXACTLY the byte
+;; WHY IT IS SOUND TO DROP THE BOUNDS CHECKS: the call touches EXACTLY the
 ;; addresses the loop touched, in the same order, with the same values, so it
 ;; adds no fault site of its own -- a strictly stronger position than fill_call,
 ;; which has to argue about the slots it writes. What this pass still needs from
@@ -52514,50 +52519,132 @@
 ;; by rewriting ONLY a `__bce_fast` clone whose single non-self predecessor is
 ;; in that loop's own `__bce_guard` namespace. The body of a rotated do-while
 ;; runs ONCE before any compare, so a loop entered with `seed >= bound` copies
-;; one byte that the call (which writes nothing for a non-positive count) would
-;; not; the guard's `seed < bound` is what rules that out. The CHECKED original
-;; is left untouched, so a program that would abort mid-copy still takes that
-;; path and still aborts at the same element.
+;; one element that the call (which writes nothing for a non-positive count)
+;; would not; the guard's `seed < bound` is what rules that out. The CHECKED
+;; original is left untouched, so a program that would abort mid-copy still
+;; takes that path and still aborts at the same element.
 ;;
-;; ONE-BYTE ELEMENTS ONLY. The count handed to the helper is the loop's `bound`
-;; read as a BYTE count, which is only the element count when the element is a
-;; byte. It is also the soundness line for overlap: an eight-byte element loop
-;; copies each element atomically, which a byte-granular forward copy does not
-;; reproduce when the overlap is not a multiple of eight.
+;; ONE ELEMENT WIDTH PER HELPER. The count handed to a helper is the loop's
+;; `bound`, i.e. the ELEMENT count, so the helper has to move elements of that
+;; width: `tl_mem_copy_fwd` for one-byte elements and `tl_mem_copy8_fwd` for
+;; eight-byte (i64/u64) ones, the same set `opt-fill-call-slot-type?` accepts.
+;; Widening the count into the byte helper instead would be wrong, not merely
+;; slower: an eight-byte element loop copies each element atomically, which a
+;; byte-granular forward copy does not reproduce when the propagating overlap
+;; is not a multiple of eight. Every type in the body -- the store, the load it
+;; consumes, every other load, and both geps' element types -- must be that one
+;; width, because it is the gep's element type that makes the visited addresses
+;; `address(0) + width*i` and hence the run contiguous.
+;;
+;; WORD COPIES CARRY A TRIP FLOOR, byte copies do not. A refused loop is not
+;; free code: it falls to the word-merge K=4 unroller (the tier
+;; `opt-unroll-word-merge-group-copies` exists for, and the one that claims
+;; this shape today), whose version guard enters a group only while
+;; `i < bound - 4`. At a LITERAL bound that guard folds, and the cost is
+;;   n <= 4 : 1 + 5n                      -- no group runs; the plain body is
+;;                                           load, store, add, cmp, branch
+;;   n >= 5 : 1 + 11*ceil((n-4)/4) + 5*r  -- r = n - 4*ceil((n-4)/4), 1 <= r <= 4
+;; (n=25, the peephole_lines row, is 1 + 66 + 5 = 72, which is what that row
+;; measures). The helper costs `n + 9..14`: two to four argument set-ups and a
+;; call, then testq/jle/movq/cmpq/jbe -- plus leaq/cmpq/jae when the destination
+;; is above the source -- the `rep movsq`, and a ret. The two cross at FOUR:
+;; n=1 is 6 against 10..15 and n=3 is 16 against 12..17, either of which the
+;; loop can win, while n=4 is 21 against 13..18 and every larger n only widens
+;; it. So the floor is FOUR (`opt-copy-call-word-slot-floor`) -- the first count
+;; the helper wins at under every call-site and prologue length. A NON-literal
+;; bound is always admitted: there the guard does not fold, the unroller pays it
+;; on every entry and still falls back to the 5-per-element body below five
+;; trips, so the helper wins from about two slots up and nothing is left to
+;; decide. Byte copies keep no floor at all: their competing tier is the x2
+;; unroller at 3.5 instructions per byte, and the corpus's byte copies are
+;; dynamic-length anyway (intern_table's name-pool copy averages 21.5 bytes),
+;; so a floor there would only give the win back.
 ;;
 ;; The rewrite keeps the block and every other instruction in it, exactly as
 ;; fill_call does: it drops the self-edge phi inputs (so the body computes its
 ;; FIRST-iteration values, which is what makes the kept address geps spell the
 ;; two range starts), replaces the store with the call, redefines the counter's
 ;; `next` as its exit value `bound`, and ends with a Jump. The load stays; it
-;; reads one in-range byte once and DCE takes it when it is dead.
+;; reads one in-range element once and DCE takes it when it is dead.
 (defstruct OptCopyCallSite
   (store-index i64)
   (dst-ptr ir.CompilerIrValue)
-  (src-ptr ir.CompilerIrValue))
+  (src-ptr ir.CompilerIrValue)
+  ;; element width in bytes: 1 or 8, and the choice of runtime helper.
+  (width i64))
 
 (defenum OptCopyCallMaybeSite
   (No)
   (Some OptCopyCallSite))
 
-;; Element width one. `rep movsb`'s granularity, and the width at which a
-;; forward byte copy and the source loop agree under every overlap.
-(define (opt-copy-call-byte-type? [ty : ast.AstType]) : bool
+;; Element width in bytes, or 0 for a type this pass cannot copy. One is
+;; `rep movsb`'s granularity, eight is `rep movsq`'s and the same pair of
+;; integer types `opt-fill-call-slot-type?` admits. Nothing else has a total
+;; forward-copy helper, and a width the geps scale by but the helper does not
+;; move atomically would be a silently wrong copy under overlap.
+(define (opt-copy-call-elem-width [ty : ast.AstType]) : i64
   (match ty
-    [(ast.AstType.U8) true]
-    [(ast.AstType.I8) true]
-    [_ false]))
+    [(ast.AstType.U8) 1]
+    [(ast.AstType.I8) 1]
+    [(ast.AstType.I64) 8]
+    [(ast.AstType.U64) 8]
+    [_ 0]))
+
+;; The body's ONE store fixes the width every other type test in the block is
+;; then measured against, so it is read before the scan rather than inside it:
+;; the scan meets loads before it meets the store, and admitting a load whose
+;; width the store later contradicts is exactly the mismatch C8 pins. A body
+;; with no store, or a store at an unsupported width, answers 0 and the block
+;; is refused before any map is built.
+(define (opt-copy-call-body-width
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]) : i64
+  (if (>= index last)
+    0
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.StorePtr _ _ ty) (opt-copy-call-elem-width ty)]
+      [_ (opt-copy-call-body-width instrs (+ index 1) last)])))
+
+;; The trip floor for eight-byte elements, in slots. Four is the first count at
+;; which the helper beats the unroller's folded-guard body under every
+;; call-site and prologue length; see the pass header for the arithmetic. It is
+;; only ever consulted for a literal bound. No copy in the instruction-count
+;; corpus, nor in the compiler's own sources, has a literal bound below it --
+;; measured by building the pass with the floor at 1 and finding the same call
+;; sites -- so it is a rail, not a trade.
+(define (opt-copy-call-word-slot-floor) : i64
+  4)
+
+;; A literal bound below the floor is refused for word elements, because the
+;; unroller does better with it. A non-literal bound is admitted: no tier can
+;; unroll an unknown trip count to straight-line code, so the helper's only
+;; competition there is a guarded unrolled loop it beats from a couple of
+;; slots up. Byte copies are unconditional, as they were before word elements
+;; existed.
+(define (opt-copy-call-count-ok? [width : i64] [bound : ir.CompilerIrValue]) : bool
+  (if (= width 1)
+    true
+    (match bound
+      [(ir.CompilerIrValue.I64 n) (>= n (opt-copy-call-word-slot-floor))]
+      [_ true])))
 
 ;; The body must be exactly one `store_ptr <gep(base, i)>, <load <gep(base, i)>>`
-;; on byte elements, plus copies, address arithmetic and the counter's own
-;; arithmetic. A BoundsCheck, a second store, a call or anything else rejects --
-;; the check because it would mean the clone is not the check-free copy this
-;; pass reasons about.
+;; at the width `opt-copy-call-body-width` read off that store, plus copies,
+;; address arithmetic and the counter's own arithmetic. A BoundsCheck, a second
+;; store, a call or anything else rejects -- the check because it would mean the
+;; clone is not the check-free copy this pass reasons about. Every load and both
+;; geps must agree with the store's width: a body that mixes widths does not
+;; move `width` bytes per iteration, so no single helper is it. `width` is
+;; always 1 or 8 here -- a body whose store has neither is refused by
+;; `opt-copy-call-block-match` before this runs, because a 0 would make every
+;; width test below compare 0 against 0 and pass.
 (define (opt-copy-call-scan-body
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [last : i64]
   [iphi : i64]
+  [width : i64]
   [found : OptCopyCallMaybeSite]) : OptCopyCallMaybeSite
   (if (>= index last)
     found
@@ -52572,79 +52659,101 @@
                   [(ir.CompilerIrValue.Var value-var)
                     (if (not
                       (and
-                        (opt-copy-call-byte-type? ty)
-                        (opt-copy-call-gep-tracks? instrs 0 last ptr-var iphi)))
+                        (= (opt-copy-call-elem-width ty) width)
+                        (opt-copy-call-gep-tracks?
+                          instrs
+                          0
+                          last
+                          ptr-var
+                          iphi
+                          width)))
                       (OptCopyCallMaybeSite.No)
-                      (match (opt-copy-call-load-ptr instrs 0 index value-var)
+                      (match (opt-copy-call-load-ptr
+                        instrs
+                        0
+                        index
+                        value-var
+                        width)
                         [(ir.CompilerIrValue.Var src-var)
                           (if (opt-copy-call-gep-tracks?
                             instrs
                             0
                             last
                             src-var
-                            iphi)
+                            iphi
+                            width)
                             (opt-copy-call-scan-body
                               instrs
                               (+ index 1)
                               last
                               iphi
+                              width
                               (OptCopyCallMaybeSite.Some
                                 (OptCopyCallSite
                                   index
                                   ptr
-                                  (ir.CompilerIrValue.Var src-var))))
+                                  (ir.CompilerIrValue.Var src-var)
+                                  width)))
                             (OptCopyCallMaybeSite.No))]
                         [_ (OptCopyCallMaybeSite.No)]))]
                   [_ (OptCopyCallMaybeSite.No)])]
               [_ (OptCopyCallMaybeSite.No)])])]
       [(ir.CompilerIrInstr.Load _ _ ty)
-        (if (opt-copy-call-byte-type? ty)
-          (opt-copy-call-scan-body instrs (+ index 1) last iphi found)
+        (if (= (opt-copy-call-elem-width ty) width)
+          (opt-copy-call-scan-body instrs (+ index 1) last iphi width found)
           (OptCopyCallMaybeSite.No))]
       [(ir.CompilerIrInstr.Mov _ _ _)
-        (opt-copy-call-scan-body instrs (+ index 1) last iphi found)]
+        (opt-copy-call-scan-body instrs (+ index 1) last iphi width found)]
       [(ir.CompilerIrInstr.Gep _ _ _ _)
-        (opt-copy-call-scan-body instrs (+ index 1) last iphi found)]
+        (opt-copy-call-scan-body instrs (+ index 1) last iphi width found)]
       [(ir.CompilerIrInstr.BinOp _ op _ _ _)
         (if (opt-fill-call-binop-ok? op)
-          (opt-copy-call-scan-body instrs (+ index 1) last iphi found)
+          (opt-copy-call-scan-body instrs (+ index 1) last iphi width found)
           (OptCopyCallMaybeSite.No))]
       [_ (OptCopyCallMaybeSite.No)])))
 
-;; The pointer operand of the byte Load that defines `value-var`, searched only
-;; BEFORE the store so the read is the one the store consumes. A non-Var result
-;; (including "not found") rejects at the call site.
+;; The pointer operand of the same-width Load that defines `value-var`, searched
+;; only BEFORE the store so the read is the one the store consumes. A non-Var
+;; result (including "not found") rejects at the call site.
 (define (opt-copy-call-load-ptr
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [store-index : i64]
-  [value-var : i64]) : ir.CompilerIrValue
+  [value-var : i64]
+  [width : i64]) : ir.CompilerIrValue
   (if (>= index store-index)
     (ir.CompilerIrValue.I64 0)
     (match (ir.compiler-ir-instr-seq-ref instrs index)
       [(ir.CompilerIrInstr.Load dst ptr ty)
-        (if (and (= dst value-var) (opt-copy-call-byte-type? ty))
+        (if (and (= dst value-var) (= (opt-copy-call-elem-width ty) width))
           ptr
-          (opt-copy-call-load-ptr instrs (+ index 1) store-index value-var))]
-      [_ (opt-copy-call-load-ptr instrs (+ index 1) store-index value-var)])))
+          (opt-copy-call-load-ptr
+            instrs
+            (+ index 1)
+            store-index
+            value-var
+            width))]
+      [_
+        (opt-copy-call-load-ptr instrs (+ index 1) store-index value-var width)])))
 
-;; `ptr-var` must be `gep base, <index>` with a ONE-BYTE element, a
-;; loop-invariant base, and an index that advances exactly with the counter:
+;; `ptr-var` must be `gep base, <index>` at the body's element width, over a
+;; loop-invariant base, with an index that advances exactly with the counter:
 ;; the counter itself, or `invariant + counter` in either operand order. That is
-;; what makes address(i) = address(0) + i, hence what makes one contiguous copy
-;; of `bound` bytes from address(0) the loop.
+;; what makes address(i) = address(0) + width*i, hence what makes one contiguous
+;; copy of `bound` elements from address(0) the loop.
 (define (opt-copy-call-gep-tracks?
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [last : i64]
   [ptr-var : i64]
-  [iphi : i64]) : bool
+  [iphi : i64]
+  [width : i64]) : bool
   (if (>= index last)
     false
     (match (ir.compiler-ir-instr-seq-ref instrs index)
       [(ir.CompilerIrInstr.Gep dst base offset elem-ty)
         (if (not (= dst ptr-var))
-          (opt-copy-call-gep-tracks? instrs (+ index 1) last ptr-var iphi)
+          (opt-copy-call-gep-tracks? instrs (+ index 1) last ptr-var iphi width)
           (let
             [defs : opt_i64_i64_map.Map
               (opt-unroll-block-defs
@@ -52653,10 +52762,10 @@
                 last
                 (opt_i64_i64_map.with-capacity 32))]
             (and
-              (opt-copy-call-byte-type? elem-ty)
+              (= (opt-copy-call-elem-width elem-ty) width)
               (not (opt-used-contains defs (opt-fill-call-value-var base)))
               (opt-copy-call-index-tracks? instrs 0 last offset iphi defs))))]
-      [_ (opt-copy-call-gep-tracks? instrs (+ index 1) last ptr-var iphi)])))
+      [_ (opt-copy-call-gep-tracks? instrs (+ index 1) last ptr-var iphi width)])))
 
 (define (opt-copy-call-index-tracks?
   [instrs : ir.CompilerIrInstrSeq]
@@ -52720,9 +52829,9 @@
 ;; `bound`) and the loop compare (which keeps computing `bound < bound` = false)
 ;; may be observed from outside the block -- but it must ALSO cover Load, which
 ;; this pass's body scan admits and fill_call's never sees. The kept load runs
-;; once at the seed index, so its result is the FIRST iteration's byte where the
-;; loop left the LAST one; an outside use (directly, or through an exit phi
-;; naming it) would read the wrong byte, so it rejects.
+;; once at the seed index, so its result is the FIRST iteration's element where
+;; the loop left the LAST one; an outside use (directly, or through an exit phi
+;; naming it) would read the wrong element, so it rejects.
 (define (opt-copy-call-escape-ok?
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -52757,10 +52866,14 @@
           inext
           cond-var)))))
 
-(define (opt-copy-call-symbol) : i64
+;; One helper per element width. Both are total forward copies at their own
+;; granularity, so the choice is the whole of what the width buys.
+(define (opt-copy-call-symbol [width : i64]) : i64
   (begin
     (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-mem-copy-fwd))
+    (if (= width 8)
+      cbi.compiler-builtin-id-tl-mem-copy8-fwd
+      cbi.compiler-builtin-id-tl-mem-copy-fwd)))
 
 (define (opt-copy-call-emit-body!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
@@ -52775,16 +52888,18 @@
     unit
     (begin
       (if (= index site.store-index)
-        ;; The store becomes the copy call. The byte count is `bound - seed`
-        ;; and the recognizer pinned the seed to literal 0, so it is exactly
-        ;; `bound` -- no subtract is emitted.
+        ;; The store becomes the copy call. The count is in ELEMENTS of the
+        ;; body's width -- bytes for `tl_mem_copy_fwd`, eight-byte slots for
+        ;; `tl_mem_copy8_fwd` -- and equals `bound - seed`; the recognizer
+        ;; pinned the seed to literal 0, so it is exactly `bound` and no
+        ;; subtract (and no scaling) is emitted.
         (let
           [call-var : i64 (opt-fill-call-alloc-var frame-cell)]
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.Call
               call-var
-              (opt-copy-call-symbol)
+              (opt-copy-call-symbol site.width)
               (ir.compiler-ir-call-args-array
                 (ir.compiler-ir-value-seq3
                   site.dst-ptr
@@ -52860,31 +52975,40 @@
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
             [last : i64 (- count 1)]
             [prefix : String (opt-fill-call-versioned-prefix label)]
-            (if (not
-              (opt-fill-call-pred-in-version-namespace?
-                blocks
-                prefix
-                shape.pred-label))
+            ;; Read the width first: 0 means the body's store has no helper,
+            ;; and admitting it would let every OTHER width test in the scan
+            ;; compare 0 against 0 and pass.
+            [width : i64 (opt-copy-call-body-width instrs shape.phi-count last)]
+            (if (or
+              (< width 1)
+              (not
+                (opt-fill-call-pred-in-version-namespace?
+                  blocks
+                  prefix
+                  shape.pred-label)))
               (OptCopyCallMaybeShapeSite.No)
               (match (opt-copy-call-scan-body
                 instrs
                 shape.phi-count
                 last
                 shape.iphi
+                width
                 (OptCopyCallMaybeSite.No))
                 [(OptCopyCallMaybeSite.No) (OptCopyCallMaybeShapeSite.No)]
                 [(OptCopyCallMaybeSite.Some site)
-                  (if (opt-copy-call-escape-ok?
-                    instrs
-                    0
-                    shape.phi-count
-                    last
-                    (opt-fill-call-outside-uses
-                      blocks
-                      label
-                      (opt_i64_i64_map.with-capacity 64))
-                    shape.inext
-                    shape.cond-var)
+                  (if (and
+                    (opt-copy-call-count-ok? site.width shape.bound)
+                    (opt-copy-call-escape-ok?
+                      instrs
+                      0
+                      shape.phi-count
+                      last
+                      (opt-fill-call-outside-uses
+                        blocks
+                        label
+                        (opt_i64_i64_map.with-capacity 64))
+                      shape.inext
+                      shape.cond-var))
                     (OptCopyCallMaybeShapeSite.Some shape site)
                     (OptCopyCallMaybeShapeSite.No))])))])]))
 
@@ -81973,12 +82097,14 @@
                             name
                             _t-fill-call)
                           unit)]
-                      ;; Byte copies become one tl_mem_copy_fwd call, and for
-                      ;; the same reason fills do: it has to happen BEFORE the
-                      ;; unroller, both because the unrolled x2 body is what
-                      ;; costs 3.5 instructions per byte and because the rewrite
-                      ;; reads the versioner's own freshly built `__bce_guard`
-                      ;; for its trip-count fact (see the pass header).
+                      ;; Element copies become one tl_mem_copy_fwd (bytes) or
+                      ;; tl_mem_copy8_fwd (i64/u64 slots) call, and for the same
+                      ;; reason fills do: it has to happen BEFORE the unroller,
+                      ;; both because the unrolled body is what costs 3.5
+                      ;; instructions per byte (x2 tier) or 2.75 per word (K=4
+                      ;; word-merge tier) and because the rewrite reads the
+                      ;; versioner's own freshly built `__bce_guard` for its
+                      ;; trip-count fact (see the pass header).
                       [_t-copy-call : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [copy-call-result : OptFunctionCtxResult

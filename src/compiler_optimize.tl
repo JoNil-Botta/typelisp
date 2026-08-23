@@ -42998,10 +42998,140 @@
                 ty
                 header-id))])])))
 
+;; What the facts in scope say about one comparison, canonicalized the way the
+;; facts themselves are: the direct/implied/chained lookup first, and the
+;; joining-edge rule above when that returns nothing. Shared by the compare fold
+;; and the branch fold below, so both ask exactly the same question.
+(define (opt-bounds-dom-compare-verdict
+  [type-segment-bases : i64]
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [block-id : i64]
+  [cmp-facts : OptDomCmpFacts]
+  [copies : opt_i64_i64_map.Map]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (if (not (and (opt-dom-cmp-foldable-op? op) (opt-integer-type? ty)))
+    (OptDomCmpLookup.No)
+    (let
+      [canon-op : ir.CompilerIrBinOp (opt-dom-cmp-canon-op op)]
+      [canon-lhs : ir.CompilerIrValue
+        (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-lhs op lhs rhs))]
+      [canon-rhs : ir.CompilerIrValue
+        (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-rhs op lhs rhs))]
+      (match (opt-dom-cmp-lookup-chained
+        type-segment-bases
+        cmp-facts
+        canon-op
+        canon-lhs
+        canon-rhs
+        ty)
+        [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
+        [(OptDomCmpLookup.No)
+          (opt-bounds-dom-phi-carried-verdict
+            type-segment-bases
+            info
+            index
+            terms
+            defs
+            phi-defs
+            sources
+            copies
+            block-id
+            canon-op
+            canon-lhs
+            canon-rhs
+            ty)]))))
+
+;; --- a branch whose condition a dominating branch already decided ------------
+;;
+;; GVN unifies a dominated duplicate compare with the dominating one, so the
+;; dominated block usually holds no comparison at all: what is left is
+;; `Mov c2 = c1` (which copy propagation folds away) plus `branch c2` on a value
+;; the fact database can already decide. The compare fold below therefore never
+;; sees it -- there is no `BinOp` left to rewrite -- and `cmp_dup`
+;; (`opt-cmp-dup-final-pass`) re-mints the comparison below the fixpoint so the
+;; branch can fuse on EFLAGS, which is why the duplicate `cmp`/`jcc` pair
+;; reappears in the final assembly.
+;;
+;; Decide the BRANCH instead. Resolve its condition through the same copy/cast
+;; map the bounds facts use, read the defining comparison out of the BinOp def
+;; table, and ask `opt-bounds-dom-compare-verdict` the ordinary question -- so a
+;; dominating branch on the same or an implied comparison, a dominating branch's
+;; negation on its false edge, a passed `bounds_check` (which records
+;; `0 <= i < len`), a chained fact, and the joining-edge rule all decide a branch
+;; exactly as they already decide a compare.
+;;
+;; The rewrite stops at `branch <literal>`: `opt-cfg-fold-branch` turns that into
+;; a `Jump` to the decided successor, `opt-cfg-clean-instr` drops the phi inputs
+;; keyed on the edge that is gone, and the unreachable successor is removed by
+;; the same cleanup -- `thread_branch` and `cfg` both run below this pass in the
+;; same pipeline round. Emitting the `Jump` here instead would change the block's
+;; successor set, and this pass hands its CFG context on to `sccp` on the
+;; explicit promise that every terminator is left alone.
+;;
+;; The condition and the comparison's operands must be single-source vars, for
+;; the same reason `opt-dom-cmp-edge-fact` demands it of the fact side: the fact
+;; and the query are read at two different program points and have to name the
+;; same runtime values at both.
+(define (opt-bounds-dom-branch-verdict
+  [type-segment-bases : i64]
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [block-id : i64]
+  [cmp-facts : OptDomCmpFacts]
+  [copies : opt_i64_i64_map.Map]
+  [cond : ir.CompilerIrValue]) : OptDomCmpLookup
+  (match (opt-bounds-dom-resolve copies cond)
+    [(ir.CompilerIrValue.Var var)
+      (if (not (opt-gvn-stable-var? sources var))
+        (OptDomCmpLookup.No)
+        (match (opt-bool-branch-def defs var)
+          [(OptBoolBranchDef.No) (OptDomCmpLookup.No)]
+          [(OptBoolBranchDef.Some def-instr _)
+            (match def-instr
+              [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                (if (and
+                  (opt-gvn-value-stable?
+                    sources
+                    (opt-bounds-dom-resolve copies lhs))
+                  (opt-gvn-value-stable?
+                    sources
+                    (opt-bounds-dom-resolve copies rhs)))
+                  (opt-bounds-dom-compare-verdict
+                    type-segment-bases
+                    info
+                    index
+                    terms
+                    defs
+                    phi-defs
+                    sources
+                    block-id
+                    cmp-facts
+                    copies
+                    op
+                    lhs
+                    rhs
+                    ty)
+                  (OptDomCmpLookup.No))]
+              [_ (OptDomCmpLookup.No)])]))]
+    [_ (OptDomCmpLookup.No)]))
+
 ;; Replace a comparison a dominating branch already decided with its constant.
 ;; The move keeps the destination and bool type, so every consumer -- branch,
 ;; select, phi input -- sees an ordinary constant and the later fold/cfg passes
-;; collapse the control flow.
+;; collapse the control flow. A branch on an already-decided condition gets the
+;; same treatment on the condition operand itself (see above).
 (define (opt-bounds-dom-fold-compare
   [type-segment-bases : i64]
   [info : OptDomInfo]
@@ -43016,43 +43146,46 @@
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match instr
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (if (and (opt-dom-cmp-foldable-op? op) (opt-integer-type? ty))
-        (let
-          [canon-op : ir.CompilerIrBinOp (opt-dom-cmp-canon-op op)]
-          [canon-lhs : ir.CompilerIrValue
-            (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-lhs op lhs rhs))]
-          [canon-rhs : ir.CompilerIrValue
-            (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-rhs op lhs rhs))]
-          (match (match (opt-dom-cmp-lookup-chained
-            type-segment-bases
-            cmp-facts
-            canon-op
-            canon-lhs
-            canon-rhs
-            ty)
-            [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
-            [(OptDomCmpLookup.No)
-              (opt-bounds-dom-phi-carried-verdict
-                type-segment-bases
-                info
-                index
-                terms
-                defs
-                phi-defs
-                sources
-                copies
-                block-id
-                canon-op
-                canon-lhs
-                canon-rhs
-                ty)])
-            [(OptDomCmpLookup.No) instr]
-            [(OptDomCmpLookup.Some value)
-              (ir.CompilerIrInstr.Mov
-                dst
-                (ir.CompilerIrValue.Bool value)
-                (ast.AstType.Bool))]))
-        instr)]
+      (match (opt-bounds-dom-compare-verdict
+        type-segment-bases
+        info
+        index
+        terms
+        defs
+        phi-defs
+        sources
+        block-id
+        cmp-facts
+        copies
+        op
+        lhs
+        rhs
+        ty)
+        [(OptDomCmpLookup.No) instr]
+        [(OptDomCmpLookup.Some value)
+          (ir.CompilerIrInstr.Mov
+            dst
+            (ir.CompilerIrValue.Bool value)
+            (ast.AstType.Bool))])]
+    [(ir.CompilerIrInstr.Branch cond true-label false-label)
+      (match (opt-bounds-dom-branch-verdict
+        type-segment-bases
+        info
+        index
+        terms
+        defs
+        phi-defs
+        sources
+        block-id
+        cmp-facts
+        copies
+        cond)
+        [(OptDomCmpLookup.No) instr]
+        [(OptDomCmpLookup.Some value)
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Bool value)
+            true-label
+            false-label)])]
     [_ instr]))
 
 (define (opt-bounds-dom-rewrite-id
@@ -81113,9 +81246,13 @@
                       ;; Dominated bounds-check dedup rides the same context:
                       ;; it only deletes mid-block BoundsCheck instructions and
                       ;; REORDERS a constant-offset run's checks (plus the index
-                      ;; arithmetic they read) inside one block, so the block set,
-                      ;; every terminator, and therefore the CFG (and
-                      ;; ssa-context) stay valid for sccp below.
+                      ;; arithmetic they read) inside one block, so the block set
+                      ;; and therefore the CFG (and ssa-context) stay valid for
+                      ;; sccp below. A decided branch has its CONDITION replaced
+                      ;; by a bool literal and keeps both successor labels, so
+                      ;; that holds for the branch fold too -- turning it into a
+                      ;; `Jump` here is what would invalidate the context, which
+                      ;; is why `opt-cfg-fold-branch` does it further down.
                       ;; VERIFIER-GATED like GVN: in a fallback (non-SSA)
                       ;; function a textually-single-def var inside a loop
                       ;; still changes value across iterations (loop-carried

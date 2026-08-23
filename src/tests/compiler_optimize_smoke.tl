@@ -3039,6 +3039,10 @@
       (compiler_optimize_tests.compiler-optimize-dom-cmp-phi-carried-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dom-cmp-branch-fold-self-test"
+      (compiler_optimize_tests.compiler-optimize-dom-cmp-branch-fold-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-object-bounds-self-test"
       (smoke-object-bounds-self-test)
       42)

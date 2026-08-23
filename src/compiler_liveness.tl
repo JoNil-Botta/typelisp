@@ -1028,15 +1028,17 @@
   [d : ir.CompilerIrValue]) : CompilerLiveI64Set
   (compiler-live-value-vars-into (compiler-live-values3-vars b c d) a))
 
-(define (compiler-live-value-list-vars [values : ir.CompilerIrValueList]) : CompilerLiveI64Set
-  (match (ir.compiler-ir-value-list-force-cons values)
-    [(ir.CompilerIrValueList.Nil) (compiler-live-set-empty)]
-    [(ir.CompilerIrValueList.Array seq)
-      (compiler-live-value-list-vars (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (compiler-live-value-vars-into
-        (compiler-live-value-list-vars (__tl-box-place rest))
-        value)]))
+(define (compiler-live-value-seq-vars-from
+  [values : ir.CompilerIrValueSeq]
+  [index : i64]) : CompilerLiveI64Set
+  (if (>= index values.len)
+    (compiler-live-set-empty)
+    (compiler-live-value-vars-into
+      (compiler-live-value-seq-vars-from values (+ index 1))
+      (ir.compiler-ir-value-seq-ref values index))))
+
+(define (compiler-live-value-seq-vars [values : ir.CompilerIrValueSeq]) : CompilerLiveI64Set
+  (compiler-live-value-seq-vars-from values 0))
 
 (define (compiler-live-call-args-array-vars
   [values : (__tl_dyn-array ir.CompilerIrValue)]
@@ -1231,7 +1233,7 @@
       (compiler-live-value-vars cond)]
     [(ir.CompilerIrInstr.Return value) (compiler-live-maybe-value-vars value)]
     [(ir.CompilerIrInstr.Phi _ inputs _) (compiler-live-phi-input-vars inputs)]
-    [(ir.CompilerIrInstr.Pack _ words _) (compiler-live-value-list-vars words)]
+    [(ir.CompilerIrInstr.Pack _ words _) (compiler-live-value-seq-vars words)]
     [(ir.CompilerIrInstr.Word _ src _ _) (compiler-live-value-vars src)]
     [(ir.CompilerIrInstr.Jump _) (compiler-live-set-empty)]
     [(ir.CompilerIrInstr.TailCallIndirect func args _)
@@ -1391,36 +1393,25 @@
     [(ir.CompilerIrCallArgs.Array values)
       (compiler-live-use-ids-add-value-array! out n values 0)]))
 
-;; Walk the seq/list value forms in place. The bitset path reaches these through
-;; `compiler-ir-value-list-force-cons`, which MATERIALIZES a cons list (one box
-;; per element) for the array representation before reading it; walking the
-;; slots directly drops that per-instruction list build as well.
-(define (compiler-live-use-ids-add-value-seq!
+;; Walk dense value slots in place; no transient chain is materialized.
+(define (compiler-live-use-ids-add-value-seq-from!
   [out : (__tl_dyn-array i64)]
   [n : i64]
   [seq : ir.CompilerIrValueSeq]
   [index : i64]) : i64
   (if (>= index seq.len)
     n
-    (compiler-live-use-ids-add-value-seq!
+    (compiler-live-use-ids-add-value-seq-from!
       out
       (compiler-live-use-ids-add-value! out n (array-ref seq.slots index))
       seq
       (+ index 1))))
 
-(define (compiler-live-use-ids-add-value-list!
+(define (compiler-live-use-ids-add-value-seq!
   [out : (__tl_dyn-array i64)]
   [n : i64]
-  [values : ir.CompilerIrValueList]) : i64
-  (match values
-    [(ir.CompilerIrValueList.Nil) n]
-    [(ir.CompilerIrValueList.Array seq)
-      (compiler-live-use-ids-add-value-seq! out n seq 0)]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (compiler-live-use-ids-add-value-list!
-        out
-        (compiler-live-use-ids-add-value! out n value)
-        (__tl-box-place rest))]))
+  [values : ir.CompilerIrValueSeq]) : i64
+  (compiler-live-use-ids-add-value-seq-from! out n values 0))
 
 (define (compiler-live-use-ids-add-phi-input-seq!
   [out : (__tl_dyn-array i64)]
@@ -1701,7 +1692,7 @@
     [(ir.CompilerIrInstr.Phi _ inputs _)
       (compiler-live-use-ids-add-phi-inputs! out 0 inputs)]
     [(ir.CompilerIrInstr.Pack _ words _)
-      (compiler-live-use-ids-add-value-list! out 0 words)]
+      (compiler-live-use-ids-add-value-seq! out 0 words)]
     [(ir.CompilerIrInstr.Word _ src _ _)
       (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.Jump _) 0]

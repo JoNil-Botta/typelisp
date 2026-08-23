@@ -126,11 +126,11 @@
               (ir.compiler-ir-instr-cons
                 (ir.CompilerIrInstr.Pack
                   4
-                  (ir.compiler-ir-value-cons
+                  (ir.compiler-ir-value-seq-prepend
                     (ir.CompilerIrValue.Var 1)
-                    (ir.compiler-ir-value-cons
+                    (ir.compiler-ir-value-seq-prepend
                       (ir.CompilerIrValue.Var 3)
-                      ir.CompilerIrValueList.Nil))
+                      (ir.compiler-ir-value-seq-empty)))
                   (ast.AstType.String))
                 (ir.compiler-ir-instr-cons
                   (ir.CompilerIrInstr.Mov

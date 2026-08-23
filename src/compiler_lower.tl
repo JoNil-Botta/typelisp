@@ -1653,7 +1653,7 @@
   (selected ast.AstImportedSpmdSpecialization))
 
 (defenum ResultLowerArgs
-  (Ok LowerState ir.CompilerIrValueList)
+  (Ok LowerState ir.CompilerIrValueSeq)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum LowerArgWriteback
@@ -1677,7 +1677,7 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultLowerCallArgs
-  (Ok LowerState ir.CompilerIrValueList LowerArgWritebacks)
+  (Ok LowerState ir.CompilerIrValueSeq LowerArgWritebacks)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum LowerCAbiEightbyteClass
@@ -2393,7 +2393,7 @@
   (Some i64 i64))
 
 (defenum ResultLowerStringValues
-  (Ok LowerState ir.CompilerIrValueList i64)
+  (Ok LowerState i64)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defstruct LowerCleanupStack
@@ -16730,14 +16730,11 @@
                 (ir.CompilerIrInstr.Call
                   call-var
                   (lower-derived-symbol-id "tl_memcpy")
-                  (ir.compiler-ir-call-args-from-list
-                    (ir.compiler-ir-value-cons
+                  (ir.compiler-ir-call-args-from-seq
+                    (ir.compiler-ir-value-seq3
                       dst-addr
-                      (ir.compiler-ir-value-cons
-                        src-addr
-                        (ir.compiler-ir-value-cons
-                          (ir.CompilerIrValue.I64 size)
-                          (ir.CompilerIrValueList.Nil)))))
+                      src-addr
+                      (ir.CompilerIrValue.I64 size)))
                   (ast.AstType.Unit)))])])]))
 
 (define (lower-emit-memcpy-value
@@ -16758,14 +16755,8 @@
                 (ir.CompilerIrInstr.Call
                   call-var
                   (lower-derived-symbol-id "tl_memcpy")
-                  (ir.compiler-ir-call-args-from-list
-                    (ir.compiler-ir-value-cons
-                      dst-addr
-                      (ir.compiler-ir-value-cons
-                        src-addr
-                        (ir.compiler-ir-value-cons
-                          size
-                          (ir.CompilerIrValueList.Nil)))))
+                  (ir.compiler-ir-call-args-from-seq
+                    (ir.compiler-ir-value-seq3 dst-addr src-addr size))
                   (ast.AstType.Unit)))])])]))
 
 (define (lower-copy-bytes
@@ -17204,7 +17195,7 @@
   [state : LowerState]
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]
   [layout : tc_core.TcInlineAggregateLayout]) : ResultLowerExpr
   (lower-pack-inline-struct-values-at
@@ -17222,69 +17213,57 @@
   [state : LowerState]
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : (& fields ast.AstFieldDefList)]
   [field-index : i64]
   [layout : tc_core.TcInlineAggregateLayout]) : ResultLowerExpr
-  (match (ir.compiler-ir-value-list-force-cons values)
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= field-index fields.len)
-        (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
-        (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-pack-inline-struct-values-at
-        ctx
-        state
-        acc
-        acc-ty
-        (ir.compiler-ir-value-seq-to-list seq)
+  (if (>= field-index values.len)
+    (if (>= field-index fields.len)
+      (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= field-index fields.len)
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (match (ast.ast-field-def-list-get
         fields
         field-index
-        layout)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index fields.len)
-        (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (match (ast.ast-field-def-list-get
-          fields
-          field-index
-          (ast.ast-field-def-fallback))
-          [(ast.AstFieldDef.Def name ty _)
-            (let
-              [name-str : String (tc_core.tc-env-key-name-text name)]
-              [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
-              [offset : i64
-                (tc_core.tc-inline-aggregate-layout-field-offset-id layout name)]
-              (if (< offset 0)
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic
-                      (str_cat.str-cat
-                        "lower: inline struct layout missing field "
-                        name-str))))
-                (match (lower-pack-word-field
-                  ctx
-                  state
-                  acc
-                  value
-                  offset
-                  resolved)
-                  [(LowerExpr.Expr packed-state packed-acc packed-ty)
-                    (lower-pack-inline-struct-values-at
-                      ctx
-                      packed-state
-                      packed-acc
-                      packed-ty
-                      (__tl-box-place rest-values)
-                      fields
-                      (+ field-index 1)
-                      layout)])))]))]))
+        (ast.ast-field-def-fallback))
+        [(ast.AstFieldDef.Def name ty _)
+          (let
+            [name-str : String (tc_core.tc-env-key-name-text name)]
+            [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
+            [offset : i64
+              (tc_core.tc-inline-aggregate-layout-field-offset-id layout name)]
+            (if (< offset 0)
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic
+                    (str_cat.str-cat
+                      "lower: inline struct layout missing field "
+                      name-str))))
+              (match (lower-pack-word-field
+                ctx
+                state
+                acc
+                (ir.compiler-ir-value-seq-ref values field-index)
+                offset
+                resolved)
+                [(LowerExpr.Expr packed-state packed-acc packed-ty)
+                  (lower-pack-inline-struct-values-at
+                    ctx
+                    packed-state
+                    packed-acc
+                    packed-ty
+                    values
+                    fields
+                    (+ field-index 1)
+                    layout)])))]))))
 
 ;; Emit an CompilerIrInstr.Pack forming a register-group value from its word values.
 (define (lower-emit-pack
   [state : LowerState]
-  [words : ir.CompilerIrValueList]
+  [words : ir.CompilerIrValueSeq]
   [ty : ast.AstType]) : LowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc allocated var-id)
@@ -17486,12 +17465,7 @@
     [(LowerExpr.Expr s0 w0 _)
       (match (lower-load-at-offset s0 ptr 8 (lower-register-word-type ctx ty 1))
         [(LowerExpr.Expr s1 w1 _)
-          (lower-emit-pack
-            s1
-            (ir.compiler-ir-value-cons
-              w0
-              (ir.compiler-ir-value-cons w1 ir.CompilerIrValueList.Nil))
-            ty)])]))
+          (lower-emit-pack s1 (ir.compiler-ir-value-seq2 w0 w1) ty)])]))
 
 ;; Internal descriptor-pair transport. Source String/DynArray values remain
 ;; one-word pointers; only values built by this helper become structural
@@ -17522,7 +17496,7 @@
   [state : LowerState]
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]
   [layout : tc_core.TcInlineAggregateLayout]
   [word-index : i64]) : ResultLowerExpr
@@ -17542,85 +17516,72 @@
   [state : LowerState]
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : (& fields ast.AstFieldDefList)]
   [field-index : i64]
   [layout : tc_core.TcInlineAggregateLayout]
   [word-index : i64]) : ResultLowerExpr
-  (match (ir.compiler-ir-value-list-force-cons values)
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= field-index fields.len)
-        (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
-        (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-pack-inline-struct-word-at
-        ctx
-        state
-        acc
-        acc-ty
-        (ir.compiler-ir-value-seq-to-list seq)
+  (if (>= field-index values.len)
+    (if (>= field-index fields.len)
+      (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= field-index fields.len)
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (match (ast.ast-field-def-list-get
         fields
         field-index
-        layout
-        word-index)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index fields.len)
-        (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (match (ast.ast-field-def-list-get
-          fields
-          field-index
-          (ast.ast-field-def-fallback))
-          [(ast.AstFieldDef.Def name ty _)
-            (let
-              [name-str : String (tc_core.tc-env-key-name-text name)]
-              [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
-              [offset : i64
-                (tc_core.tc-inline-aggregate-layout-field-offset-id layout name)]
-              (if (< offset 0)
-                (ResultLowerExpr.Err
-                  (box
-                    (lower-diagnostic
-                      (str_cat.str-cat
-                        "lower: inline struct layout missing field "
-                        name-str))))
-                (if (= (/ offset 8) word-index)
-                  (match (lower-pack-word-field
-                    ctx
-                    state
-                    acc
-                    value
-                    (- offset (* word-index 8))
-                    resolved)
-                    [(LowerExpr.Expr packed-state packed-acc packed-ty)
-                      (lower-pack-inline-struct-word-at
-                        ctx
-                        packed-state
-                        packed-acc
-                        packed-ty
-                        (__tl-box-place rest-values)
-                        fields
-                        (+ field-index 1)
-                        layout
-                        word-index)])
-                  (lower-pack-inline-struct-word-at
-                    ctx
-                    state
-                    acc
-                    acc-ty
-                    (__tl-box-place rest-values)
-                    fields
-                    (+ field-index 1)
-                    layout
-                    word-index))))]))]))
+        (ast.ast-field-def-fallback))
+        [(ast.AstFieldDef.Def name ty _)
+          (let
+            [name-str : String (tc_core.tc-env-key-name-text name)]
+            [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
+            [offset : i64
+              (tc_core.tc-inline-aggregate-layout-field-offset-id layout name)]
+            (if (< offset 0)
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic
+                    (str_cat.str-cat
+                      "lower: inline struct layout missing field "
+                      name-str))))
+              (if (= (/ offset 8) word-index)
+                (match (lower-pack-word-field
+                  ctx
+                  state
+                  acc
+                  (ir.compiler-ir-value-seq-ref values field-index)
+                  (- offset (* word-index 8))
+                  resolved)
+                  [(LowerExpr.Expr packed-state packed-acc packed-ty)
+                    (lower-pack-inline-struct-word-at
+                      ctx
+                      packed-state
+                      packed-acc
+                      packed-ty
+                      values
+                      fields
+                      (+ field-index 1)
+                      layout
+                      word-index)])
+                (lower-pack-inline-struct-word-at
+                  ctx
+                  state
+                  acc
+                  acc-ty
+                  values
+                  fields
+                  (+ field-index 1)
+                  layout
+                  word-index))))]))))
 
 ;; Construct a register-group struct value: pack each machine word and
 ;; combine them with IrInstrPack. Two-word integer-class structs only.
 (define (lower-construct-struct-register-group
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]
   [layout : tc_core.TcInlineAggregateLayout]
   [struct-ty : ast.AstType]) : ResultLowerExpr
@@ -17658,11 +17619,7 @@
                 [(LowerExpr.Expr w1-state word1 _)
                   (match (lower-emit-pack
                     w1-state
-                    (ir.compiler-ir-value-cons
-                      word0
-                      (ir.compiler-ir-value-cons
-                        word1
-                        ir.CompilerIrValueList.Nil))
+                    (ir.compiler-ir-value-seq2 word0 word1)
                     struct-ty)
                     [(LowerExpr.Expr ps pv _)
                       (ResultLowerExpr.Ok (LowerExpr.Expr ps pv struct-ty))])])]
@@ -17678,43 +17635,55 @@
   [acc : ir.CompilerIrValue]
   [acc-ty : ast.AstType]
   [cursor : i64]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstTypeList]) : ResultLowerExpr
-  (match (ir.compiler-ir-value-list-force-cons values)
-    [(ir.CompilerIrValueList.Nil)
-      (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-pack-enum-payload-word
-        ctx
-        state
-        acc
-        acc-ty
-        cursor
-        (ir.compiler-ir-value-seq-to-list seq)
-        fields)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (ast.ast-type-list-empty? (& fields))
-        (ResultLowerExpr.Err
-          (box (lower-diagnostic "lower: enum payload arity mismatch")))
-        (let
-          [ty-id : i64
-            (ast.ast-type-list-get (& fields) 0 (ast.ast-type-id-fallback))]
-          [rest-fields : ast.AstTypeList (ast.ast-type-list-slice fields 1)]
-          [resolved : ast.AstType
-            (tc_core.tc-resolve-type
+  (lower-pack-enum-payload-word-at
+    ctx
+    state
+    acc
+    acc-ty
+    cursor
+    values
+    (& fields)
+    0))
+
+(define (lower-pack-enum-payload-word-at
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [acc : ir.CompilerIrValue]
+  [acc-ty : ast.AstType]
+  [cursor : i64]
+  [values : ir.CompilerIrValueSeq]
+  [fields : (& fields ast.AstTypeList)]
+  [index : i64]) : ResultLowerExpr
+  (if (>= index values.len)
+    (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
+    (if (>= index (ast.ast-type-list-len fields))
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: enum payload arity mismatch")))
+      (let
+        [ty-id : i64
+          (ast.ast-type-list-get fields index (ast.ast-type-id-fallback))]
+        [resolved : ast.AstType
+          (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx ty-id))]
+        [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+        (match (lower-pack-word-field
+          ctx
+          state
+          acc
+          (ir.compiler-ir-value-seq-ref values index)
+          offset
+          resolved)
+          [(LowerExpr.Expr packed-state packed-acc packed-ty)
+            (lower-pack-enum-payload-word-at
               ctx
-              (tc_core.tc-context-type-get ctx ty-id))]
-          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
-          (match (lower-pack-word-field ctx state acc value offset resolved)
-            [(LowerExpr.Expr packed-state packed-acc packed-ty)
-              (lower-pack-enum-payload-word
-                ctx
-                packed-state
-                packed-acc
-                packed-ty
-                (+ offset (lower-type-size ctx resolved))
-                (__tl-box-place rest-values)
-                rest-fields)])))]))
+              packed-state
+              packed-acc
+              packed-ty
+              (+ offset (lower-type-size ctx resolved))
+              values
+              fields
+              (+ index 1))])))))
 
 ;; Construct a register-group enum value: word0 = discriminant tag, word1 =
 ;; the variant's packed (word-class) payload (0 for a nullary variant).
@@ -17722,7 +17691,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [handle : i64]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstTypeList]
   [enum-ty : ast.AstType]) : ResultLowerExpr
   (match (lower-pack-enum-payload-word
@@ -17742,10 +17711,10 @@
         [(LowerExpr.Expr w1-state word1 _)
           (match (lower-emit-pack
             w1-state
-            (ir.compiler-ir-value-cons
+            (ir.compiler-ir-value-seq2
               (ir.CompilerIrValue.I64
                 (csym.compiler-registry-handle-child-index handle))
-              (ir.compiler-ir-value-cons word1 ir.CompilerIrValueList.Nil))
+              word1)
             enum-ty)
             [(LowerExpr.Expr ps pv _)
               (ResultLowerExpr.Ok (LowerExpr.Expr ps pv enum-ty))])])]
@@ -17828,12 +17797,7 @@
             (+ offset 8)
             (lower-register-word-type ctx ty 1))
             [(LowerExpr.Expr s1 w1 _)
-              (lower-emit-pack
-                s1
-                (ir.compiler-ir-value-cons
-                  w0
-                  (ir.compiler-ir-value-cons w1 ir.CompilerIrValueList.Nil))
-                ty)])])]
+              (lower-emit-pack s1 (ir.compiler-ir-value-seq2 w0 w1) ty)])])]
     [(lower-type-register-resident? ctx ty)
       (match (lower-load-at-offset
         state
@@ -18029,11 +17993,7 @@
                 [(LowerExpr.Expr second-state second-value _)
                   (match (lower-emit-pack
                     second-state
-                    (ir.compiler-ir-value-cons
-                      first-value
-                      (ir.compiler-ir-value-cons
-                        second-value
-                        ir.CompilerIrValueList.Nil))
+                    (ir.compiler-ir-value-seq2 first-value second-value)
                     (lower-internal-transport-type ctx ret-ty classification))
                     [(LowerExpr.Expr packed-state packed-value _)
                       (ResultLowerExpr.Ok
@@ -18455,7 +18415,7 @@
       [(= count 5) cbi.compiler-builtin-id-tl-string-concat5]
       [else cbi.compiler-builtin-id-tl-string-concat])))
 
-(define (lower-string-concat-values-rev-at
+(define (lower-string-concat-values-at!
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -18463,10 +18423,10 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [end : i64]
-  [acc : ir.CompilerIrValueList]
+  [builder : (&mut builder ir.CompilerIrValueBuilder)]
   [count : i64]) : ResultLowerStringValues
   (if (>= index end)
-    (ResultLowerStringValues.Ok state acc count)
+    (ResultLowerStringValues.Ok state count)
     (let
       [expr : ast.AstExpr
         (tc_core.tc-context-expr-get ctx (ast.ast-expr-list-get exprs index 0))]
@@ -18477,18 +18437,19 @@
               (if (lower-string-handle-type? ctx expr-ty)
                 (match (lower-string-fields expr-state value)
                   [(LowerStringFields.Fields field-state ptr len)
-                    (lower-string-concat-values-rev-at
-                      ctx
-                      field-state
-                      env
-                      type-env
-                      exprs
-                      (+ index 1)
-                      end
-                      (ir.compiler-ir-value-cons-linked
-                        len
-                        (ir.compiler-ir-value-cons-linked ptr acc))
-                      (+ count 1))])
+                    (begin
+                      (ir.compiler-ir-value-builder-push! builder ptr)
+                      (ir.compiler-ir-value-builder-push! builder len)
+                      (lower-string-concat-values-at!
+                        ctx
+                        field-state
+                        env
+                        type-env
+                        exprs
+                        (+ index 1)
+                        end
+                        builder
+                        (+ count 1)))])
                 (ResultLowerStringValues.Err
                   (box
                     (lower-diagnostic-at-expr
@@ -18498,7 +18459,7 @@
 
 (define (lower-string-concat-emit
   [state : LowerState]
-  [values-rev : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [count : i64]) : LowerExpr
   (begin
     (cfg
@@ -18513,10 +18474,7 @@
             (ir.CompilerIrInstr.Call
               var-id
               (lower-string-concat-runtime-name count)
-              (ir.compiler-ir-call-args-from-list
-                (ir.compiler-ir-value-list-reverse-onto
-                  values-rev
-                  ir.CompilerIrValueList.Nil))
+              (ir.compiler-ir-call-args-from-seq values)
               (ast.AstType.String)))
           (ir.CompilerIrValue.Var var-id)
           (ast.AstType.String))])))
@@ -18529,30 +18487,39 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [end : i64]
-  [acc : ir.CompilerIrValueList]
+  [prefix : ir.CompilerIrValueSeq]
   [count : i64]) : ResultLowerExpr
-  (match (lower-string-concat-values-rev-at
-    ctx
-    state
-    env
-    type-env
-    exprs
-    index
-    end
-    acc
-    count)
-    [(ResultLowerStringValues.Ok values-state values-rev value-count)
-      (match (lower-string-concat-emit values-state values-rev value-count)
-        [(LowerExpr.Expr call-state call-value _)
-          (lower-string-concat-exprs-batched
-            ctx
-            call-state
-            env
-            type-env
-            exprs
-            end
-            (LowerMaybeIrValue.Some call-value))])]
-    [(ResultLowerStringValues.Err message) (ResultLowerExpr.Err message)]))
+  (let
+    [builder : ir.CompilerIrValueBuilder
+      (ir.compiler-ir-value-builder-with-capacity
+        (+ prefix.len (* (- end index) 2)))]
+    [_prefix : unit
+      (ir.compiler-ir-value-builder-append-seq! (&mut builder) prefix)]
+    (match (lower-string-concat-values-at!
+      ctx
+      state
+      env
+      type-env
+      exprs
+      index
+      end
+      (&mut builder)
+      count)
+      [(ResultLowerStringValues.Ok values-state value-count)
+        (match (lower-string-concat-emit
+          values-state
+          (ir.compiler-ir-value-builder-to-seq builder)
+          value-count)
+          [(LowerExpr.Expr call-state call-value _)
+            (lower-string-concat-exprs-batched
+              ctx
+              call-state
+              env
+              type-env
+              exprs
+              end
+              (LowerMaybeIrValue.Some call-value))])]
+      [(ResultLowerStringValues.Err message) (ResultLowerExpr.Err message)])))
 
 (define (lower-string-concat-exprs-batched
   [ctx : tc_core.TcContext]
@@ -18586,7 +18553,7 @@
               exprs
               index
               (+ index take)
-              ir.CompilerIrValueList.Nil
+              (ir.compiler-ir-value-seq-empty)
               0))]
         [(LowerMaybeIrValue.Some value)
           (match (lower-string-fields state value)
@@ -18604,11 +18571,7 @@
                   exprs
                   index
                   (+ index take)
-                  (ir.compiler-ir-value-cons-linked
-                    len
-                    (ir.compiler-ir-value-cons-linked
-                      ptr
-                      ir.CompilerIrValueList.Nil))
+                  (ir.compiler-ir-value-seq2 ptr len)
                   1))])]))))
 
 (define (lower-string-concat-exprs
@@ -19820,7 +19783,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : ast.AstTypeList]
   [cursor : i64]) : ResultLowerState
   (lower-store-values-at ctx state base values (& types) 0 cursor))
@@ -19829,53 +19792,44 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : (& types ast.AstTypeList)]
   [type-index : i64]
   [cursor : i64]) : ResultLowerState
-  (match values
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= type-index (ast.ast-type-list-len types))
-        (ResultLowerState.Ok state)
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-store-values-at
-        ctx
-        state
-        base
-        (ir.compiler-ir-value-seq-to-list seq)
-        types
-        type-index
-        cursor)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= type-index (ast.ast-type-list-len types))
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (let
-          [ty : ast.AstType
-            (tc_core.tc-context-type-get
-              ctx
-              (ast.ast-type-list-get
-                types
-                type-index
-                (ast.ast-type-id-fallback)))]
-          [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
-          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
-          (lower-store-values-at
+  (if (>= type-index values.len)
+    (if (>= type-index (ast.ast-type-list-len types))
+      (ResultLowerState.Ok state)
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= type-index (ast.ast-type-list-len types))
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (let
+        [ty : ast.AstType
+          (tc_core.tc-context-type-get
             ctx
-            (lower-store-at-offset state base offset value resolved)
+            (ast.ast-type-list-get types type-index (ast.ast-type-id-fallback)))]
+        [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
+        [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+        (lower-store-values-at
+          ctx
+          (lower-store-at-offset
+            state
             base
-            (__tl-box-place rest-values)
-            types
-            (+ type-index 1)
-            (+ offset (lower-type-size ctx resolved)))))]))
+            offset
+            (ir.compiler-ir-value-seq-ref values type-index)
+            resolved)
+          base
+          values
+          types
+          (+ type-index 1)
+          (+ offset (lower-type-size ctx resolved)))))))
 
 (define (lower-store-repr-c-values
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : tc_core.TcReprCFieldLayoutList]) : ResultLowerState
   (lower-store-repr-c-values-at ctx state base values fields 0))
 
@@ -19883,53 +19837,45 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : tc_core.TcReprCFieldLayoutList]
   [field-index : i64]) : ResultLowerState
-  (match values
-    [(ir.CompilerIrValueList.Nil)
-      (if (= field-index (tc_core.tc-repr-c-field-layout-list-count fields))
-        (ResultLowerState.Ok state)
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-store-repr-c-values-at
-        ctx
-        state
-        base
-        (ir.compiler-ir-value-seq-to-list seq)
-        fields
-        field-index)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index (tc_core.tc-repr-c-field-layout-list-count fields))
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (match (tc_core.tc-repr-c-field-layout-list-ref fields field-index)
-          [(tc_core.TcReprCFieldLayout.Field _ field-ty offset)
-            (let
-              [stored-state : LowerState
-                (if (lower-repr-c-inline-field? ctx field-ty)
-                  (lower-copy-bytes
-                    state
-                    base
-                    offset
-                    value
-                    0
-                    (lower-repr-c-field-size ctx field-ty))
-                  (lower-store-at-offset state base offset value field-ty))]
-              (lower-store-repr-c-values-at
-                ctx
-                stored-state
-                base
-                (__tl-box-place rest-values)
-                fields
-                (+ field-index 1)))]))]))
+  (if (>= field-index values.len)
+    (if (= field-index (tc_core.tc-repr-c-field-layout-list-count fields))
+      (ResultLowerState.Ok state)
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= field-index (tc_core.tc-repr-c-field-layout-list-count fields))
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (match (tc_core.tc-repr-c-field-layout-list-ref fields field-index)
+        [(tc_core.TcReprCFieldLayout.Field _ field-ty offset)
+          (let
+            [value : ir.CompilerIrValue
+              (ir.compiler-ir-value-seq-ref values field-index)]
+            [stored-state : LowerState
+              (if (lower-repr-c-inline-field? ctx field-ty)
+                (lower-copy-bytes
+                  state
+                  base
+                  offset
+                  value
+                  0
+                  (lower-repr-c-field-size ctx field-ty))
+                (lower-store-at-offset state base offset value field-ty))]
+            (lower-store-repr-c-values-at
+              ctx
+              stored-state
+              base
+              values
+              fields
+              (+ field-index 1)))]))))
 
 (define (lower-store-inline-struct-values
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]
   [layout : tc_core.TcInlineAggregateLayout]) : ResultLowerState
   (lower-store-inline-struct-values-at
@@ -19945,76 +19891,65 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : (& fields ast.AstFieldDefList)]
   [field-index : i64]
   [layout : tc_core.TcInlineAggregateLayout]) : ResultLowerState
-  (match values
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= field-index fields.len)
-        (ResultLowerState.Ok state)
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-store-inline-struct-values-at
-        ctx
-        state
-        base
-        (ir.compiler-ir-value-seq-to-list seq)
+  (if (>= field-index values.len)
+    (if (>= field-index fields.len)
+      (ResultLowerState.Ok state)
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= field-index fields.len)
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (match (ast.ast-field-def-list-get
         fields
         field-index
-        layout)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= field-index fields.len)
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (match (ast.ast-field-def-list-get
-          fields
-          field-index
-          (ast.ast-field-def-fallback))
-          [(ast.AstFieldDef.Def name ty _)
-            (let
-              [name-str : String (tc_core.tc-env-key-name-text name)]
-              [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
-              [offset : i64
-                (tc_core.tc-inline-aggregate-layout-field-offset-id layout name)]
-              (if (< offset 0)
-                (ResultLowerState.Err
-                  (box
-                    (lower-diagnostic
-                      (str_cat.str-cat
-                        "lower: inline struct layout missing field "
-                        name-str))))
-                (match (tc_core.tc-inline-aggregate-type-layout ctx resolved)
-                  [(tc_core.ResultTcLayoutInfo.Ok info)
-                    (let
-                      [stored-state : LowerState
-                        (if (<= (tc_core.tc-layout-info-size info) 0)
+        (ast.ast-field-def-fallback))
+        [(ast.AstFieldDef.Def name ty _)
+          (let
+            [name-str : String (tc_core.tc-env-key-name-text name)]
+            [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
+            [offset : i64
+              (tc_core.tc-inline-aggregate-layout-field-offset-id layout name)]
+            (if (< offset 0)
+              (ResultLowerState.Err
+                (box
+                  (lower-diagnostic
+                    (str_cat.str-cat
+                      "lower: inline struct layout missing field "
+                      name-str))))
+              (match (tc_core.tc-inline-aggregate-type-layout ctx resolved)
+                [(tc_core.ResultTcLayoutInfo.Ok info)
+                  (let
+                    [stored-state : LowerState
+                      (if (<= (tc_core.tc-layout-info-size info) 0)
+                        state
+                        (lower-store-inline-value-at-offset
+                          ctx
                           state
-                          (lower-store-inline-value-at-offset
-                            ctx
-                            state
-                            base
-                            offset
-                            value
-                            resolved
-                            (tc_core.tc-layout-info-size info)))]
-                      (lower-store-inline-struct-values-at
-                        ctx
-                        stored-state
-                        base
-                        (__tl-box-place rest-values)
-                        fields
-                        (+ field-index 1)
-                        layout))]
-                  [(tc_core.ResultTcLayoutInfo.Err message)
-                    (ResultLowerState.Err (box (lower-diagnostic message)))])))]))]))
+                          base
+                          offset
+                          (ir.compiler-ir-value-seq-ref values field-index)
+                          resolved
+                          (tc_core.tc-layout-info-size info)))]
+                    (lower-store-inline-struct-values-at
+                      ctx
+                      stored-state
+                      base
+                      values
+                      fields
+                      (+ field-index 1)
+                      layout))]
+                [(tc_core.ResultTcLayoutInfo.Err message)
+                  (ResultLowerState.Err (box (lower-diagnostic message)))])))]))))
 
 (define (lower-store-inline-payload-values
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : ast.AstTypeList]
   [layout : tc_core.TcInlineAggregateLayout]
   [variant-name : String]
@@ -20035,74 +19970,61 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : (& types ast.AstTypeList)]
   [layout : tc_core.TcInlineAggregateLayout]
   [variant-name : String]
   [variant-name-id : i64]
   [index : i64]) : ResultLowerState
-  (match values
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= index (ast.ast-type-list-len types))
-        (ResultLowerState.Ok state)
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-store-inline-payload-values-at
-        ctx
-        state
-        base
-        (ir.compiler-ir-value-seq-to-list seq)
-        types
-        layout
-        variant-name
-        variant-name-id
-        index)]
-    [(ir.CompilerIrValueList.Cons value rest-values)
-      (if (>= index (ast.ast-type-list-len types))
-        (ResultLowerState.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (let
-          [ty : ast.AstType
-            (tc_core.tc-context-type-get
-              ctx
-              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-          [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
-          [offset : i64
-            (tc_core.tc-inline-aggregate-layout-variant-payload-offset-id
-              layout
-              variant-name-id
-              index)]
-          (if (< offset 0)
-            (ResultLowerState.Err
-              (box
-                (lower-diagnostic
-                  (str_cat.str-cat
-                    "lower: inline enum layout missing payload for "
-                    variant-name))))
-            (match (tc_core.tc-inline-aggregate-type-layout ctx resolved)
-              [(tc_core.ResultTcLayoutInfo.Ok info)
-                (lower-store-inline-payload-values-at
-                  ctx
-                  (if (<= (tc_core.tc-layout-info-size info) 0)
+  (if (>= index values.len)
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultLowerState.Ok state)
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (let
+        [ty : ast.AstType
+          (tc_core.tc-context-type-get
+            ctx
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+        [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
+        [offset : i64
+          (tc_core.tc-inline-aggregate-layout-variant-payload-offset-id
+            layout
+            variant-name-id
+            index)]
+        (if (< offset 0)
+          (ResultLowerState.Err
+            (box
+              (lower-diagnostic
+                (str_cat.str-cat
+                  "lower: inline enum layout missing payload for "
+                  variant-name))))
+          (match (tc_core.tc-inline-aggregate-type-layout ctx resolved)
+            [(tc_core.ResultTcLayoutInfo.Ok info)
+              (lower-store-inline-payload-values-at
+                ctx
+                (if (<= (tc_core.tc-layout-info-size info) 0)
+                  state
+                  (lower-store-inline-value-at-offset
+                    ctx
                     state
-                    (lower-store-inline-value-at-offset
-                      ctx
-                      state
-                      base
-                      offset
-                      value
-                      resolved
-                      (tc_core.tc-layout-info-size info)))
-                  base
-                  (__tl-box-place rest-values)
-                  types
-                  layout
-                  variant-name
-                  variant-name-id
-                  (+ index 1))]
-              [(tc_core.ResultTcLayoutInfo.Err message)
-                (ResultLowerState.Err (box (lower-diagnostic message)))]))))]))
+                    base
+                    offset
+                    (ir.compiler-ir-value-seq-ref values index)
+                    resolved
+                    (tc_core.tc-layout-info-size info)))
+                base
+                values
+                types
+                layout
+                variant-name
+                variant-name-id
+                (+ index 1))]
+            [(tc_core.ResultTcLayoutInfo.Err message)
+              (ResultLowerState.Err (box (lower-diagnostic message)))]))))))
 
 (define (lower-literal-payload-supported? [lit : ast.AstLiteral]) : bool
   (match lit
@@ -24720,7 +24642,7 @@
     (lower-runtime-call-values
       state
       (lower-arena-builtin-symbol-id name-id)
-      ir.CompilerIrValueList.Nil
+      (ir.compiler-ir-value-seq-empty)
       result-ty)
     (if (= args.len 1)
       (let
@@ -24739,9 +24661,7 @@
                     (lower-runtime-call-values
                       cast-state
                       (lower-arena-builtin-symbol-id name-id)
-                      (ir.compiler-ir-value-cons
-                        cast-value
-                        ir.CompilerIrValueList.Nil)
+                      (ir.compiler-ir-value-seq1 cast-value)
                       result-ty)])])]
           [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
       (ResultLowerExpr.Err
@@ -24755,7 +24675,7 @@
     (lower-runtime-call-values
       state
       cbi.compiler-builtin-id-tl-tls-current-arena-load
-      ir.CompilerIrValueList.Nil
+      (ir.compiler-ir-value-seq-empty)
       result-ty)
     (ResultLowerExpr.Err
       (box (lower-diagnostic "lower: tls-current-arena expects no arguments")))))
@@ -24784,9 +24704,7 @@
                   (lower-runtime-call-values
                     cast-state
                     cbi.compiler-builtin-id-tl-tls-current-arena-store
-                    (ir.compiler-ir-value-cons
-                      cast-value
-                      ir.CompilerIrValueList.Nil)
+                    (ir.compiler-ir-value-seq1 cast-value)
                     result-ty)])])]
         [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
     (ResultLowerExpr.Err
@@ -25013,7 +24931,7 @@
       (match (lower-call-append-sret-arg
         ctx
         state
-        (ir.compiler-ir-value-cons value ir.CompilerIrValueList.Nil)
+        (ir.compiler-ir-value-seq1 value)
         ty)
         [(ResultLowerArgs.Ok sret-state sret-values)
           (match (lower-state-alloc-var sret-state)
@@ -25031,7 +24949,7 @@
                       (ir.CompilerIrInstr.Call
                         var-id
                         call-name
-                        (ir.compiler-ir-call-args-from-list sret-values)
+                        (ir.compiler-ir-call-args-from-seq sret-values)
                         ty))
                     (ir.CompilerIrValue.Var var-id)
                     ty)))])]
@@ -25753,11 +25671,9 @@
                   (ResultLowerExpr.Ok
                     (lower-emit-pack
                       cast-state
-                      (ir.compiler-ir-value-cons
+                      (ir.compiler-ir-value-seq2
                         ptr
-                        (ir.compiler-ir-value-cons
-                          (ir.CompilerIrValue.I64 array-len)
-                          ir.CompilerIrValueList.Nil))
+                        (ir.CompilerIrValue.I64 array-len))
                       (tc_core.tc-type-without-regions expected)))])])]
         [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))))
 
@@ -26019,7 +25935,7 @@
     (if (>= index (ast.ast-type-list-len types))
       (ResultLowerCallArgs.Ok
         state
-        ir.CompilerIrValueList.Nil
+        (ir.compiler-ir-value-seq-empty)
         (LowerArgWritebacks.Some writebacks))
       (ResultLowerCallArgs.Err
         (box (lower-diagnostic "lower: constructor arity mismatch"))))
@@ -26063,7 +25979,7 @@
                           rest-writebacks)
                         (ResultLowerCallArgs.Ok
                           rest-state
-                          (ir.compiler-ir-value-cons value rest-values)
+                          (ir.compiler-ir-value-seq-prepend value rest-values)
                           rest-writebacks)]
                       [(ResultLowerCallArgs.Err message)
                         (ResultLowerCallArgs.Err message)])))])]
@@ -26141,7 +26057,7 @@
   [index : i64]) : ResultLowerArgs
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len types))
-      (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+      (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
       (ResultLowerArgs.Err
         (box (lower-diagnostic "lower: constructor arity mismatch"))))
     (if (>= index (ast.ast-type-list-len types))
@@ -26183,7 +26099,7 @@
                       [(ResultLowerArgs.Ok rest-state rest-values)
                         (ResultLowerArgs.Ok
                           rest-state
-                          (ir.compiler-ir-value-cons value rest-values))]
+                          (ir.compiler-ir-value-seq-prepend value rest-values))]
                       [(ResultLowerArgs.Err message)
                         (ResultLowerArgs.Err message)])])]
               [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)])]
@@ -26236,7 +26152,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [struct-name : String]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]
   [struct-ty : ast.AstType]) : ResultLowerExpr
   (match (tc_core.tc-inline-aggregate-layout-for-id
@@ -26333,7 +26249,7 @@
   [dst : ir.CompilerIrValue]
   [struct-id : i64]
   [struct-name : String]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstFieldDefList]) : ResultLowerState
   (match (tc_core.tc-inline-aggregate-layout-for-id ctx struct-id)
     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
@@ -26355,7 +26271,7 @@
   [state : LowerState]
   [variant-name : String]
   [handle : i64]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstTypeList]
   [enum-name : String]
   [enum-ty : ast.AstType]) : ResultLowerExpr
@@ -26441,7 +26357,7 @@
   [dst : ir.CompilerIrValue]
   [variant-name : String]
   [handle : i64]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [fields : ast.AstTypeList]
   [enum-id : i64]
   [enum-name : String]) : ResultLowerState
@@ -31841,12 +31757,7 @@
   [ptr : ir.CompilerIrValue]
   [len-value : ir.CompilerIrValue]
   [result-ty : ast.AstType]) : LowerExpr
-  (lower-emit-pack
-    state
-    (ir.compiler-ir-value-cons
-      ptr
-      (ir.compiler-ir-value-cons len-value ir.CompilerIrValueList.Nil))
-    result-ty))
+  (lower-emit-pack state (ir.compiler-ir-value-seq2 ptr len-value) result-ty))
 
 (define (lower-slice-view-finish-after-len-check
   [ctx : tc_core.TcContext]
@@ -32350,14 +32261,8 @@
             (ir.CompilerIrInstr.Call
               var-id
               (lower-tl-substring-symbol)
-              (ir.compiler-ir-call-args-from-list
-                (ir.compiler-ir-value-cons
-                  src-ptr
-                  (ir.compiler-ir-value-cons
-                    start-value
-                    (ir.compiler-ir-value-cons
-                      len-value
-                      ir.CompilerIrValueList.Nil))))
+              (ir.compiler-ir-call-args-from-seq
+                (ir.compiler-ir-value-seq3 src-ptr start-value len-value))
               (ast.AstType.String)))
           (ir.CompilerIrValue.Var var-id)
           (ast.AstType.String)))]))
@@ -33881,7 +33786,7 @@
   [index : i64]) : ResultLowerArgs
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len types))
-      (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+      (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
       (ResultLowerArgs.Err
         (box (lower-diagnostic "lower: constructor arity mismatch"))))
     (if (>= index (ast.ast-type-list-len types))
@@ -33916,7 +33821,7 @@
                       [(ResultLowerArgs.Ok rest-state rest-values)
                         (ResultLowerArgs.Ok
                           rest-state
-                          (ir.compiler-ir-value-cons value rest-values))]
+                          (ir.compiler-ir-value-seq-prepend value rest-values))]
                       [(ResultLowerArgs.Err message)
                         (ResultLowerArgs.Err message)])]
                   [(LowerCAbiAggregate.Integer scalar-ty size)
@@ -33949,7 +33854,7 @@
                           [(ResultLowerArgs.Ok rest-state rest-values)
                             (ResultLowerArgs.Ok
                               rest-state
-                              (ir.compiler-ir-value-cons
+                              (ir.compiler-ir-value-seq-prepend
                                 scalar-value
                                 rest-values))]
                           [(ResultLowerArgs.Err message)
@@ -33973,7 +33878,7 @@
                           [(ResultLowerArgs.Ok rest-state rest-values)
                             (ResultLowerArgs.Ok
                               rest-state
-                              (lower-value-list-append slot-values rest-values))]
+                              (lower-value-seq-append slot-values rest-values))]
                           [(ResultLowerArgs.Err message)
                             (ResultLowerArgs.Err message)])]
                       [(ResultLowerArgs.Err message)
@@ -33991,13 +33896,12 @@
                       [(ResultLowerArgs.Ok rest-state rest-values)
                         (ResultLowerArgs.Ok
                           rest-state
-                          (ir.compiler-ir-value-cons
-                            value
-                            (ir.compiler-ir-value-cons
+                          (lower-value-seq-append
+                            (ir.compiler-ir-value-seq3
+                              value
                               (ir.CompilerIrValue.I64 size)
-                              (ir.compiler-ir-value-cons
-                                (ir.CompilerIrValue.Unit)
-                                rest-values))))]
+                              (ir.CompilerIrValue.Unit))
+                            rest-values))]
                       [(ResultLowerArgs.Err message)
                         (ResultLowerArgs.Err message)])]
                   [(LowerCAbiAggregate.ByRef _)
@@ -34025,7 +33929,7 @@
                               [(ResultLowerArgs.Ok rest-state rest-values)
                                 (ResultLowerArgs.Ok
                                   rest-state
-                                  (ir.compiler-ir-value-cons
+                                  (ir.compiler-ir-value-seq-prepend
                                     copy-value
                                     rest-values))]
                               [(ResultLowerArgs.Err message)
@@ -34053,7 +33957,7 @@
   [slots : LowerCAbiSlotList]
   [index : i64]) : ResultLowerArgs
   (if (>= index (lower-c-abi-slot-list-count slots))
-    (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+    (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
     (match (lower-c-abi-slot-list-ref slots index)
       [(LowerCAbiSlot.Slot scalar-ty offset)
         (match (if (lower-type-register-resident? ctx arg-ty)
@@ -34072,7 +33976,7 @@
               [(ResultLowerArgs.Ok rest-state rest-values)
                 (ResultLowerArgs.Ok
                   rest-state
-                  (ir.compiler-ir-value-cons slot-value rest-values))]
+                  (ir.compiler-ir-value-seq-prepend slot-value rest-values))]
               [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])])])))
 
 (define (lower-c-abi-register-arg-slot-values
@@ -34083,17 +33987,10 @@
   [slots : LowerCAbiSlotList]) : ResultLowerArgs
   (lower-c-abi-register-arg-slot-values-from ctx state value arg-ty slots 0))
 
-(define (lower-value-list-append
-  [values : ir.CompilerIrValueList]
-  [tail : ir.CompilerIrValueList]) : ir.CompilerIrValueList
-  (match values
-    [(ir.CompilerIrValueList.Nil) tail]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-value-list-append (ir.compiler-ir-value-seq-to-list seq) tail)]
-    [(ir.CompilerIrValueList.Cons head rest)
-      (ir.compiler-ir-value-cons
-        head
-        (lower-value-list-append (__tl-box-place rest) tail))]))
+(define (lower-value-seq-append
+  [values : ir.CompilerIrValueSeq]
+  [tail : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
+  (ir.compiler-ir-value-seq-append values tail))
 
 (define (lower-c-abi-ir-return-slots-from
   [slots : LowerCAbiSlotList]
@@ -34256,7 +34153,7 @@
                       env
                       name-id
                       name)
-                    (ir.compiler-ir-call-args-from-list values)
+                    (ir.compiler-ir-call-args-from-seq values)
                     result-ty)]
                 (lower-c-abi-finish-call-result
                   ctx
@@ -34277,7 +34174,7 @@
                       env
                       name-id
                       name)
-                    (ir.compiler-ir-call-args-from-list values)
+                    (ir.compiler-ir-call-args-from-seq values)
                     scalar-ty)]
                 (lower-c-abi-finish-call-result
                   ctx
@@ -34304,7 +34201,7 @@
                                 env
                                 name-id
                                 name)
-                              (ir.compiler-ir-call-args-from-list values)
+                              (ir.compiler-ir-call-args-from-seq values)
                               scalar-ty)]
                           (lower-c-abi-finish-call-result
                             ctx
@@ -34333,7 +34230,7 @@
                             env
                             name-id
                             name)
-                          (ir.compiler-ir-call-args-from-list values)
+                          (ir.compiler-ir-call-args-from-seq values)
                           (lower-c-abi-ir-return-slots slots))]
                       (match (lower-c-abi-materialize-stored-register-result
                         ctx
@@ -34381,8 +34278,8 @@
                           env
                           name-id
                           name)
-                        (ir.compiler-ir-call-args-from-list
-                          (ir.compiler-ir-value-cons base values))
+                        (ir.compiler-ir-call-args-from-seq
+                          (ir.compiler-ir-value-seq-prepend base values))
                         (ast.AstType.U64))]
                     (lower-c-abi-finish-call-result
                       ctx
@@ -34397,7 +34294,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [func-value : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-c-abi-return-aggregate-class
@@ -34414,7 +34311,7 @@
               (ir.CompilerIrInstr.CallIndirectC
                 var-id
                 func-value
-                (ir.compiler-ir-call-args-from-list values)
+                (ir.compiler-ir-call-args-from-seq values)
                 result-ty)]
             (lower-c-abi-finish-call-result
               ctx
@@ -34431,7 +34328,7 @@
               (ir.CompilerIrInstr.CallIndirectC
                 var-id
                 func-value
-                (ir.compiler-ir-call-args-from-list values)
+                (ir.compiler-ir-call-args-from-seq values)
                 scalar-ty)]
             (lower-c-abi-finish-call-result
               ctx
@@ -34454,7 +34351,7 @@
                         (ir.CompilerIrInstr.CallIndirectC
                           var-id
                           func-value
-                          (ir.compiler-ir-call-args-from-list values)
+                          (ir.compiler-ir-call-args-from-seq values)
                           scalar-ty)]
                       (lower-c-abi-finish-call-result
                         ctx
@@ -34479,7 +34376,7 @@
                     (ir.ir-instr-call-indirect-cabi-store-result
                       base
                       func-value
-                      (ir.compiler-ir-call-args-from-list values)
+                      (ir.compiler-ir-call-args-from-seq values)
                       (lower-c-abi-ir-return-slots slots))]
                   (match (lower-c-abi-materialize-stored-register-result
                     ctx
@@ -34514,8 +34411,8 @@
                   (ir.CompilerIrInstr.CallIndirectC
                     var-id
                     func-value
-                    (ir.compiler-ir-call-args-from-list
-                      (ir.compiler-ir-value-cons base values))
+                    (ir.compiler-ir-call-args-from-seq
+                      (ir.compiler-ir-value-seq-prepend base values))
                     (ast.AstType.U64))]
                 (lower-c-abi-finish-call-result
                   ctx
@@ -34568,18 +34465,10 @@
 
 ;; sret ABI caller side: append the sret pointer as the trailing arg to a
 ;; value list (matching the callee's `__sret` param).
-(define (lower-value-list-append-one
-  [values : ir.CompilerIrValueList]
-  [extra : ir.CompilerIrValue]) : ir.CompilerIrValueList
-  (match values
-    [(ir.CompilerIrValueList.Nil)
-      (ir.compiler-ir-value-cons extra ir.CompilerIrValueList.Nil)]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-value-list-append-one (ir.compiler-ir-value-seq-to-list seq) extra)]
-    [(ir.CompilerIrValueList.Cons head rest)
-      (ir.compiler-ir-value-cons
-        head
-        (lower-value-list-append-one (__tl-box-place rest) extra))]))
+(define (lower-value-seq-append-one
+  [values : ir.CompilerIrValueSeq]
+  [extra : ir.CompilerIrValue]) : ir.CompilerIrValueSeq
+  (ir.compiler-ir-value-seq-append-one values extra))
 
 ;; For a call whose result is an inline aggregate, allocate the result slot on
 ;; the caller's stack and append its pointer as the hidden trailing arg. Uses
@@ -34589,7 +34478,7 @@
 (define (lower-call-append-sret-arg
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]) : ResultLowerArgs
   ;; Structural Tuple/Array sret is a leading ABI argument handled by the
   ;; internal call path below. This legacy helper is nominal Struct/Enum only.
@@ -34602,15 +34491,15 @@
           [(LowerExpr.Expr slot-state slot-ptr _)
             (ResultLowerArgs.Ok
               slot-state
-              (lower-value-list-append-one values slot-ptr))])]
+              (lower-value-seq-append-one values slot-ptr))])]
       [(ResultLowerSize.Err message)
         (ResultLowerArgs.Err (box (lower-diagnostic message)))])
     (ResultLowerArgs.Ok state values)))
 
-(define (lower-value-list-prepend-one
+(define (lower-value-seq-prepend-one
   [head : ir.CompilerIrValue]
-  [tail : ir.CompilerIrValueList]) : ir.CompilerIrValueList
-  (ir.compiler-ir-value-cons head tail))
+  [tail : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
+  (ir.compiler-ir-value-seq-prepend head tail))
 
 (define (lower-internal-return-class-for-symbol
   [ctx : tc_core.TcContext]
@@ -34633,31 +34522,19 @@
   [slots : LowerCAbiSlotList]) : ResultLowerArgs
   (match (lower-c-abi-register-arg-slot-values ctx state value source-ty slots)
     [(ResultLowerArgs.Ok slot-state slot-values)
-      (match (ir.compiler-ir-value-list-force-cons slot-values)
-        [(ir.CompilerIrValueList.Cons first-value rest)
-          (match (ir.compiler-ir-value-list-force-cons (__tl-box-place rest))
-            [(ir.CompilerIrValueList.Cons second-value _)
-              (match (lower-emit-pack
-                slot-state
-                (ir.compiler-ir-value-cons
-                  first-value
-                  (ir.compiler-ir-value-cons
-                    second-value
-                    ir.CompilerIrValueList.Nil))
-                (lower-internal-transport-type ctx source-ty classification))
-                [(LowerExpr.Expr packed-state packed-value _)
-                  (ResultLowerArgs.Ok
-                    packed-state
-                    (ir.compiler-ir-value-cons
-                      packed-value
-                      ir.CompilerIrValueList.Nil))])]
-            [_
-              (ResultLowerArgs.Err
-                (box
-                  (lower-diagnostic "lower: structural register group arity")))])]
-        [_
-          (ResultLowerArgs.Err
-            (box (lower-diagnostic "lower: structural register group arity")))])]
+      (if (= slot-values.len 2)
+        (match (lower-emit-pack
+          slot-state
+          (ir.compiler-ir-value-seq2
+            (ir.compiler-ir-value-seq-ref slot-values 0)
+            (ir.compiler-ir-value-seq-ref slot-values 1))
+          (lower-internal-transport-type ctx source-ty classification))
+          [(LowerExpr.Expr packed-state packed-value _)
+            (ResultLowerArgs.Ok
+              packed-state
+              (ir.compiler-ir-value-seq1 packed-value))])
+        (ResultLowerArgs.Err
+          (box (lower-diagnostic "lower: structural register group arity"))))]
     [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)]))
 
 (define (lower-internal-call-arg-one
@@ -34669,15 +34546,11 @@
   [origin : ast.AstExpr]) : ResultLowerArgs
   (match classification
     [(LowerCAbiAggregate.No)
-      (ResultLowerArgs.Ok
-        state
-        (ir.compiler-ir-value-cons value ir.CompilerIrValueList.Nil))]
+      (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq1 value))]
     [(LowerCAbiAggregate.Integer scalar-ty _)
       (match (lower-load-at-offset state value 0 scalar-ty)
         [(LowerExpr.Expr loaded loaded-value _)
-          (ResultLowerArgs.Ok
-            loaded
-            (ir.compiler-ir-value-cons loaded-value ir.CompilerIrValueList.Nil))])]
+          (ResultLowerArgs.Ok loaded (ir.compiler-ir-value-seq1 loaded-value))])]
     [(LowerCAbiAggregate.Register slots _)
       (if (= (lower-c-abi-slot-list-count slots) 1)
         (match (lower-c-abi-slot-list-ref slots 0)
@@ -34686,9 +34559,7 @@
               [(LowerExpr.Expr loaded loaded-value _)
                 (ResultLowerArgs.Ok
                   loaded
-                  (ir.compiler-ir-value-cons
-                    loaded-value
-                    ir.CompilerIrValueList.Nil))])])
+                  (ir.compiler-ir-value-seq1 loaded-value))])])
         (lower-internal-call-register-two
           ctx
           state
@@ -34706,9 +34577,7 @@
               (lower-state-emit
                 allocated
                 (ir.CompilerIrInstr.Mov var-id value physical-ty))
-              (ir.compiler-ir-value-cons
-                (ir.CompilerIrValue.Var var-id)
-                ir.CompilerIrValueList.Nil))]))]
+              (ir.compiler-ir-value-seq1 (ir.CompilerIrValue.Var var-id)))]))]
     [(LowerCAbiAggregate.ByRef size)
       (match (lower-reserve-inline-storage state size source-ty)
         [(LowerExpr.Expr copy-state copy-ptr _)
@@ -34723,7 +34592,7 @@
               [(LowerExpr.Expr cast-state pointer _)
                 (ResultLowerArgs.Ok
                   cast-state
-                  (ir.compiler-ir-value-cons pointer ir.CompilerIrValueList.Nil))]))])]
+                  (ir.compiler-ir-value-seq1 pointer))]))])]
     [(LowerCAbiAggregate.Unsupported message)
       (ResultLowerArgs.Err (box (lower-diagnostic-at-expr origin message)))]
     [(LowerCAbiAggregate.Sret _)
@@ -34737,62 +34606,51 @@
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [state : LowerState]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : (& types ast.AstTypeList)]
   [index : i64]
   [origin : ast.AstExpr]) : ResultLowerArgs
-  (match (ir.compiler-ir-value-list-force-cons values)
-    [(ir.CompilerIrValueList.Nil)
-      (if (>= index (ast.ast-type-list-len types))
-        (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
-        (ResultLowerArgs.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (lower-internal-call-args-at
-        ctx
-        mode
-        state
-        (ir.compiler-ir-value-seq-to-list seq)
-        types
-        index
-        origin)]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (if (>= index (ast.ast-type-list-len types))
-        (ResultLowerArgs.Err
-          (box (lower-diagnostic "lower: constructor arity mismatch")))
-        (let
-          [source-ty : ast.AstType
-            (tc_core.tc-context-type-get
-              ctx
-              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-          (match (lower-internal-call-arg-one
+  (if (>= index values.len)
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
+      (ResultLowerArgs.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch"))))
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultLowerArgs.Err
+        (box (lower-diagnostic "lower: constructor arity mismatch")))
+      (let
+        [source-ty : ast.AstType
+          (tc_core.tc-context-type-get
             ctx
-            state
-            value
-            source-ty
-            (lower-internal-param-class ctx mode source-ty)
-            origin)
-            [(ResultLowerArgs.Ok arg-state arg-values)
-              (match (lower-internal-call-args-at
-                ctx
-                mode
-                arg-state
-                (__tl-box-place rest)
-                types
-                (+ index 1)
-                origin)
-                [(ResultLowerArgs.Ok rest-state rest-values)
-                  (ResultLowerArgs.Ok
-                    rest-state
-                    (lower-value-list-append arg-values rest-values))]
-                [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])]
-            [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])))]))
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+        (match (lower-internal-call-arg-one
+          ctx
+          state
+          (ir.compiler-ir-value-seq-ref values index)
+          source-ty
+          (lower-internal-param-class ctx mode source-ty)
+          origin)
+          [(ResultLowerArgs.Ok arg-state arg-values)
+            (match (lower-internal-call-args-at
+              ctx
+              mode
+              arg-state
+              values
+              types
+              (+ index 1)
+              origin)
+              [(ResultLowerArgs.Ok rest-state rest-values)
+                (ResultLowerArgs.Ok
+                  rest-state
+                  (lower-value-seq-append arg-values rest-values))]
+              [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])]
+          [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])))))
 
 (define (lower-internal-call-args
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [state : LowerState]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [types : ast.AstTypeList]
   [origin : ast.AstExpr]) : ResultLowerArgs
   (if (lower-internal-structural-resolved-type-list? ctx types)
@@ -34882,7 +34740,7 @@
   [env : sym_i64_env.SymI64Env]
   [source-id : i64]
   [name : String]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [param-types : ast.AstTypeList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
@@ -34924,8 +34782,8 @@
                                     (ir.CompilerIrInstr.Call
                                       call-var
                                       callee
-                                      (ir.compiler-ir-call-args-from-list
-                                        (lower-value-list-prepend-one
+                                      (ir.compiler-ir-call-args-from-seq
+                                        (lower-value-seq-prepend-one
                                           sret-pointer
                                           physical-values))
                                       (ast.AstType.U64))
@@ -34967,7 +34825,7 @@
                                 (ir.CompilerIrInstr.Call
                                   call-var
                                   callee
-                                  (ir.compiler-ir-call-args-from-list
+                                  (ir.compiler-ir-call-args-from-seq
                                     call-values)
                                   (lower-one-word-register-storage-type
                                     ctx
@@ -35006,7 +34864,7 @@
                       (ir.CompilerIrInstr.Call
                         call-var
                         callee
-                        (ir.compiler-ir-call-args-from-list physical-values)
+                        (ir.compiler-ir-call-args-from-seq physical-values)
                         physical-ret)
                       origin)]
                   (match (lower-internal-materialize-call-result
@@ -35023,7 +34881,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [func-value : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [param-types : ast.AstTypeList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
@@ -35054,8 +34912,8 @@
                                   (ir.CompilerIrInstr.CallIndirect
                                     call-var
                                     func-value
-                                    (ir.compiler-ir-call-args-from-list
-                                      (lower-value-list-prepend-one
+                                    (ir.compiler-ir-call-args-from-seq
+                                      (lower-value-seq-prepend-one
                                         sret-pointer
                                         physical-values))
                                     (ast.AstType.U64))
@@ -35092,7 +34950,7 @@
                       (ir.CompilerIrInstr.CallIndirect
                         call-var
                         func-value
-                        (ir.compiler-ir-call-args-from-list physical-values)
+                        (ir.compiler-ir-call-args-from-seq physical-values)
                         physical-ret)
                       origin)]
                   (lower-internal-materialize-call-result
@@ -35108,7 +34966,7 @@
   [env : sym_i64_env.SymI64Env]
   [source-id : i64]
   [name : String]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-call-append-sret-arg ctx state values result-ty)
@@ -35128,7 +34986,7 @@
               (ir.CompilerIrInstr.Call
                 var-id
                 callee
-                (ir.compiler-ir-call-args-from-list sret-values)
+                (ir.compiler-ir-call-args-from-seq sret-values)
                 result-ir-ty)]
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
@@ -35179,14 +35037,11 @@
                   (ir.CompilerIrInstr.Call
                     call-var
                     (lower-tl-str-view-symbol)
-                    (ir.compiler-ir-call-args-from-list
-                      (ir.compiler-ir-value-cons
+                    (ir.compiler-ir-call-args-from-seq
+                      (ir.compiler-ir-value-seq3
                         base-value
-                        (ir.compiler-ir-value-cons
-                          (ir.CompilerIrValue.I64 0)
-                          (ir.compiler-ir-value-cons
-                            len-value
-                            ir.CompilerIrValueList.Nil))))
+                        (ir.CompilerIrValue.I64 0)
+                        len-value))
                     (lower-one-word-register-storage-type ctx result-ty))
                   origin)
                 (ir.CompilerIrValue.Var call-var)
@@ -35199,53 +35054,19 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match args-result
     [(ResultLowerArgs.Ok args-state values)
-      (match (ir.compiler-ir-value-list-force-cons values)
-        [(ir.CompilerIrValueList.Array seq)
-          (lower-bytes-view-from-parts-values
-            ctx
-            (ResultLowerArgs.Ok
-              args-state
-              (ir.compiler-ir-value-seq-to-list seq))
-            result-ty
-            origin)]
-        [(ir.CompilerIrValueList.Cons data-value rest0)
-          (match (__tl-box-place rest0)
-            [(ir.CompilerIrValueList.Cons len-value rest1)
-              (match (__tl-box-place rest1)
-                [(ir.CompilerIrValueList.Cons _ rest2)
-                  (match (__tl-box-place rest2)
-                    [(ir.CompilerIrValueList.Nil)
-                      (lower-bytes-view-from-parts-result
-                        ctx
-                        args-state
-                        data-value
-                        len-value
-                        result-ty
-                        origin)]
-                    [_
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            origin
-                            "lower: bytes view helper expects data, length, owner")))])]
-                [_
-                  (ResultLowerExpr.Err
-                    (box
-                      (lower-diagnostic-at-expr
-                        origin
-                        "lower: bytes view helper expects data, length, owner")))])]
-            [_
-              (ResultLowerExpr.Err
-                (box
-                  (lower-diagnostic-at-expr
-                    origin
-                    "lower: bytes view helper expects data, length, owner")))])]
-        [_
-          (ResultLowerExpr.Err
-            (box
-              (lower-diagnostic-at-expr
-                origin
-                "lower: bytes view helper expects data, length, owner")))])]
+      (if (= values.len 3)
+        (lower-bytes-view-from-parts-result
+          ctx
+          args-state
+          (ir.compiler-ir-value-seq-ref values 0)
+          (ir.compiler-ir-value-seq-ref values 1)
+          result-ty
+          origin)
+        (ResultLowerExpr.Err
+          (box
+            (lower-diagnostic-at-expr
+              origin
+              "lower: bytes view helper expects data, length, owner"))))]
     [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-bytes-view-from-parts-call
@@ -35477,7 +35298,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [func-value : ir.CompilerIrValue]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-call-append-sret-arg ctx state values result-ty)
@@ -35491,7 +35312,7 @@
               (ir.CompilerIrInstr.CallIndirect
                 var-id
                 func-value
-                (ir.compiler-ir-call-args-from-list sret-values)
+                (ir.compiler-ir-call-args-from-seq sret-values)
                 result-ir-ty)]
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
@@ -35743,7 +35564,7 @@
 (define (lower-runtime-call-values
   [state : LowerState]
   [name : i64]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [result-ty : ast.AstType]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc allocated var-id)
@@ -35754,7 +35575,7 @@
             (ir.CompilerIrInstr.Call
               var-id
               name
-              (ir.compiler-ir-call-args-from-list values)
+              (ir.compiler-ir-call-args-from-seq values)
               result-ty))
           (ir.CompilerIrValue.Var var-id)
           result-ty))]))
@@ -37051,7 +36872,7 @@
   [index : String]
   [args : ast.AstExprList]
   [params : ast.AstParamList]
-  [values : ir.CompilerIrValueList]) : ir.CompilerIrSpmdCallArgSeq
+  [values : ir.CompilerIrValueSeq]) : ir.CompilerIrSpmdCallArgSeq
   (let
     [builder : ir.CompilerIrSpmdCallArgBuilder
       (ir.compiler-ir-spmd-call-arg-builder-with-capacity
@@ -37065,7 +36886,7 @@
         index
         (& args)
         (& params)
-        (ir.compiler-ir-value-list-force-cons values)
+        values
         0
         (&mut builder))
       (ir.compiler-ir-spmd-call-arg-builder-to-seq builder))))
@@ -37078,67 +36899,50 @@
   [index : String]
   [args : (& args ast.AstExprList)]
   [params : (& params ast.AstParamList)]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [arg-index : i64]
   [builder : (&mut builder ir.CompilerIrSpmdCallArgBuilder)]) : unit
   (if (or
     (>= arg-index args.len)
-    (>= arg-index (ast.ast-param-list-len params)))
+    (>= arg-index (ast.ast-param-list-len params))
+    (>= arg-index values.len))
     unit
-    (match values
-      [(ir.CompilerIrValueList.Array seq)
-        (lower-spmd-call-args-from-values-at
-          ctx
-          function-state
-          env
-          type-env
-          index
-          args
-          params
-          (ir.compiler-ir-value-seq-to-list seq)
-          arg-index
-          builder)]
-      [(ir.CompilerIrValueList.Cons value rest)
-        (match (ast.ast-param-list-get
-          params
-          arg-index
-          (ast.ast-param-fallback))
-          [(ast.AstParam.Param _ param-ty _ _)
-            (let
-              [resolved-ty : ast.AstType
-                (tc_core.tc-type-without-regions
-                  (tc_core.tc-resolve-type ctx param-ty))]
-              [arg : ast.AstExpr
-                (lower-context-expr-get
-                  ctx
-                  (ast.ast-expr-list-get args arg-index 0))]
-              [varying : bool
-                (lower-spmd-scalar-arg-varying?
-                  ctx
-                  function-state
-                  env
-                  type-env
-                  index
-                  arg)]
-              (begin
-                (ir.compiler-ir-spmd-call-arg-builder-push!
-                  builder
-                  (ir.CompilerIrSpmdCallArg.Arg
-                    (lower-spmd-ir-value-class resolved-ty varying)
-                    value
-                    resolved-ty))
-                (lower-spmd-call-args-from-values-at
-                  ctx
-                  function-state
-                  env
-                  type-env
-                  index
-                  args
-                  params
-                  (__tl-box-place rest)
-                  (+ arg-index 1)
-                  builder)))])]
-      [(ir.CompilerIrValueList.Nil) unit])))
+    (match (ast.ast-param-list-get params arg-index (ast.ast-param-fallback))
+      [(ast.AstParam.Param _ param-ty _ _)
+        (let
+          [resolved-ty : ast.AstType
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-resolve-type ctx param-ty))]
+          [arg : ast.AstExpr
+            (lower-context-expr-get
+              ctx
+              (ast.ast-expr-list-get args arg-index 0))]
+          [varying : bool
+            (lower-spmd-scalar-arg-varying?
+              ctx
+              function-state
+              env
+              type-env
+              index
+              arg)]
+          (begin
+            (ir.compiler-ir-spmd-call-arg-builder-push!
+              builder
+              (ir.CompilerIrSpmdCallArg.Arg
+                (lower-spmd-ir-value-class resolved-ty varying)
+                (ir.compiler-ir-value-seq-ref values arg-index)
+                resolved-ty))
+            (lower-spmd-call-args-from-values-at
+              ctx
+              function-state
+              env
+              type-env
+              index
+              args
+              params
+              values
+              (+ arg-index 1)
+              builder)))])))
 
 (define (lower-imported-spmd-scalar-call
   [ctx : tc_core.TcContext]
@@ -38844,14 +38648,8 @@
             (ir.CompilerIrInstr.Call
               var-id
               (lower-atomic-pointer-raw-symbol name elem-ty)
-              (ir.compiler-ir-call-args-from-list
-                (ir.compiler-ir-value-cons
-                  ptr
-                  (ir.compiler-ir-value-cons
-                    expected
-                    (ir.compiler-ir-value-cons
-                      new-value
-                      (ir.CompilerIrValueList.Nil)))))
+              (ir.compiler-ir-call-args-from-seq
+                (ir.compiler-ir-value-seq3 ptr expected new-value))
               (lower-one-word-register-storage-type ctx result-ty))
             origin)
           (ir.CompilerIrValue.Var var-id)
@@ -39776,11 +39574,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-array-fill8-symbol)
-    (ir.compiler-ir-value-cons
-      buf-value
-      (ir.compiler-ir-value-cons
-        len-i64
-        (ir.compiler-ir-value-cons init-value ir.CompilerIrValueList.Nil)))
+    (ir.compiler-ir-value-seq3 buf-value len-i64 init-value)
     (ast.AstType.Unit))
     [(ResultLowerExpr.Ok lowered)
       (match lowered
@@ -39922,9 +39716,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-array-zero-symbol)
-    (ir.compiler-ir-value-cons
-      buf-value
-      (ir.compiler-ir-value-cons byte-count ir.CompilerIrValueList.Nil))
+    (ir.compiler-ir-value-seq2 buf-value byte-count)
     (ast.AstType.Unit))
     [(ResultLowerExpr.Ok lowered)
       (match lowered
@@ -42450,7 +42242,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]) : ResultLowerArgs
   (if (>= index args.len)
-    (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+    (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
     (let
       [arg : ast.AstExpr
         (lower-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
@@ -42474,7 +42266,9 @@
                     [(ResultLowerArgs.Ok rest-state rest-values)
                       (ResultLowerArgs.Ok
                         rest-state
-                        (ir.compiler-ir-value-cons cast-value rest-values))]
+                        (ir.compiler-ir-value-seq-prepend
+                          cast-value
+                          rest-values))]
                     [(ResultLowerArgs.Err message)
                       (ResultLowerArgs.Err message)])])])]
         [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))))
@@ -42495,7 +42289,7 @@
                 allocated
                 (ir.CompilerIrInstr.Syscall
                   var-id
-                  (ir.compiler-ir-call-args-from-list values)))
+                  (ir.compiler-ir-call-args-from-seq values)))
               (ir.CompilerIrValue.Var var-id)
               (ast.AstType.I64)))])]
     [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
@@ -42516,7 +42310,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]) : ResultLowerArgs
   (if (>= index args.len)
-    (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+    (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
     (let
       [arg : ast.AstExpr
         (lower-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
@@ -42528,7 +42322,7 @@
                 [(ResultLowerArgs.Ok rest-state rest-values)
                   (ResultLowerArgs.Ok
                     rest-state
-                    (ir.compiler-ir-value-cons value rest-values))]
+                    (ir.compiler-ir-value-seq-prepend value rest-values))]
                 [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])])]
         [(ResultLowerExpr.Err message) (ResultLowerArgs.Err message)]))))
 
@@ -43078,9 +42872,7 @@
                 (match (lower-runtime-call-values
                   arena-state
                   (lower-tl-arena-set-symbol)
-                  (ir.compiler-ir-value-cons
-                    arena-value
-                    ir.CompilerIrValueList.Nil)
+                  (ir.compiler-ir-value-seq1 arena-value)
                   (ast.AstType.Unit))
                   [(ResultLowerExpr.Ok set-lowered)
                     (match set-lowered
@@ -43112,9 +42904,8 @@
                                     (match (lower-runtime-call-values
                                       body-state
                                       (lower-tl-arena-set-symbol)
-                                      (ir.compiler-ir-value-cons
-                                        (ir.CompilerIrValue.Var saved-var)
-                                        ir.CompilerIrValueList.Nil)
+                                      (ir.compiler-ir-value-seq1
+                                        (ir.CompilerIrValue.Var saved-var))
                                       (ast.AstType.Unit))
                                       [(ResultLowerExpr.Ok restore-lowered)
                                         (match restore-lowered
@@ -43148,7 +42939,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-region-reset-symbol)
-    (ir.compiler-ir-value-cons mark-value ir.CompilerIrValueList.Nil)
+    (ir.compiler-ir-value-seq1 mark-value)
     (ast.AstType.Unit))
     [(ResultLowerExpr.Ok rewind-lowered)
       (match rewind-lowered
@@ -43156,9 +42947,7 @@
           (match (lower-runtime-call-values
             rewind-state
             (lower-tl-arena-set-symbol)
-            (ir.compiler-ir-value-cons
-              new-enclosing-value
-              ir.CompilerIrValueList.Nil)
+            (ir.compiler-ir-value-seq1 new-enclosing-value)
             (ast.AstType.Unit))
             [(ResultLowerExpr.Ok final-lowered)
               (lower-with-escape-final final-lowered escaped-value escaped-ty)]
@@ -43174,7 +42963,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-arena-current-symbol)
-    ir.CompilerIrValueList.Nil
+    (ir.compiler-ir-value-seq-empty)
     (ast.AstType.I64))
     [(ResultLowerExpr.Ok new-enclosing-lowered)
       (match new-enclosing-lowered
@@ -43182,9 +42971,7 @@
           (match (lower-runtime-call-values
             new-enclosing-state
             (lower-tl-arena-set-symbol)
-            (ir.compiler-ir-value-cons
-              scratch-head-value
-              ir.CompilerIrValueList.Nil)
+            (ir.compiler-ir-value-seq1 scratch-head-value)
             (ast.AstType.Unit))
             [(ResultLowerExpr.Ok restore-scratch-lowered)
               (match restore-scratch-lowered
@@ -43234,7 +43021,7 @@
           (match (lower-runtime-call-values
             body-state
             (lower-tl-arena-current-symbol)
-            ir.CompilerIrValueList.Nil
+            (ir.compiler-ir-value-seq-empty)
             (ast.AstType.I64))
             [(ResultLowerExpr.Ok scratch-head-lowered)
               (match scratch-head-lowered
@@ -43242,9 +43029,7 @@
                   (match (lower-runtime-call-values
                     scratch-head-state
                     (lower-tl-arena-set-symbol)
-                    (ir.compiler-ir-value-cons
-                      enclosing-value
-                      ir.CompilerIrValueList.Nil)
+                    (ir.compiler-ir-value-seq1 enclosing-value)
                     (ast.AstType.Unit))
                     [(ResultLowerExpr.Ok restore-enclosing-lowered)
                       (match restore-enclosing-lowered
@@ -43273,7 +43058,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-arena-current-symbol)
-    ir.CompilerIrValueList.Nil
+    (ir.compiler-ir-value-seq-empty)
     (ast.AstType.I64))
     [(ResultLowerExpr.Ok enclosing-lowered)
       (match enclosing-lowered
@@ -43291,9 +43076,7 @@
                   (match (lower-runtime-call-values
                     scratch-state
                     (lower-tl-arena-set-symbol)
-                    (ir.compiler-ir-value-cons
-                      scratch-value
-                      ir.CompilerIrValueList.Nil)
+                    (ir.compiler-ir-value-seq1 scratch-value)
                     (ast.AstType.Unit))
                     [(ResultLowerExpr.Ok set-scratch-lowered)
                       (match set-scratch-lowered
@@ -43301,7 +43084,7 @@
                           (match (lower-runtime-call-values
                             set-scratch-state
                             (lower-tl-region-mark-symbol)
-                            ir.CompilerIrValueList.Nil
+                            (ir.compiler-ir-value-seq-empty)
                             (ast.AstType.U64))
                             [(ResultLowerExpr.Ok mark-lowered)
                               (match mark-lowered
@@ -43329,7 +43112,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-arena-set-symbol)
-    (ir.compiler-ir-value-cons new-enclosing-value ir.CompilerIrValueList.Nil)
+    (ir.compiler-ir-value-seq1 new-enclosing-value)
     (ast.AstType.Unit))
     [(ResultLowerExpr.Ok final-lowered)
       (lower-with-escape-final final-lowered escaped-value escaped-ty)]
@@ -43343,7 +43126,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-arena-current-symbol)
-    ir.CompilerIrValueList.Nil
+    (ir.compiler-ir-value-seq-empty)
     (ast.AstType.I64))
     [(ResultLowerExpr.Ok new-enclosing-lowered)
       (match new-enclosing-lowered
@@ -43351,9 +43134,7 @@
           (match (lower-runtime-call-values
             new-enclosing-state
             (lower-tl-arena-destroy-symbol)
-            (ir.compiler-ir-value-cons
-              scratch-head-value
-              ir.CompilerIrValueList.Nil)
+            (ir.compiler-ir-value-seq1 scratch-head-value)
             (ast.AstType.Unit))
             [(ResultLowerExpr.Ok destroy-lowered)
               (match destroy-lowered
@@ -43399,7 +43180,7 @@
           (match (lower-runtime-call-values
             body-state
             (lower-tl-arena-current-symbol)
-            ir.CompilerIrValueList.Nil
+            (ir.compiler-ir-value-seq-empty)
             (ast.AstType.I64))
             [(ResultLowerExpr.Ok scratch-head-lowered)
               (match scratch-head-lowered
@@ -43407,9 +43188,7 @@
                   (match (lower-runtime-call-values
                     scratch-head-state
                     (lower-tl-arena-set-symbol)
-                    (ir.compiler-ir-value-cons
-                      enclosing-value
-                      ir.CompilerIrValueList.Nil)
+                    (ir.compiler-ir-value-seq1 enclosing-value)
                     (ast.AstType.Unit))
                     [(ResultLowerExpr.Ok restore-enclosing-lowered)
                       (match restore-enclosing-lowered
@@ -43436,7 +43215,7 @@
   (match (lower-runtime-call-values
     state
     (lower-tl-arena-current-symbol)
-    ir.CompilerIrValueList.Nil
+    (ir.compiler-ir-value-seq-empty)
     (ast.AstType.I64))
     [(ResultLowerExpr.Ok enclosing-lowered)
       (match enclosing-lowered
@@ -43444,7 +43223,7 @@
           (match (lower-runtime-call-values
             enclosing-state
             (lower-tl-arena-make-symbol)
-            ir.CompilerIrValueList.Nil
+            (ir.compiler-ir-value-seq-empty)
             (ast.AstType.I64))
             [(ResultLowerExpr.Ok scratch-lowered)
               (match scratch-lowered
@@ -43452,9 +43231,7 @@
                   (match (lower-runtime-call-values
                     scratch-state
                     (lower-tl-arena-set-symbol)
-                    (ir.compiler-ir-value-cons
-                      scratch-value
-                      ir.CompilerIrValueList.Nil)
+                    (ir.compiler-ir-value-seq1 scratch-value)
                     (ast.AstType.Unit))
                     [(ResultLowerExpr.Ok set-scratch-lowered)
                       (match set-scratch-lowered
@@ -64435,7 +64212,7 @@
                             tail-state
                             (ir.CompilerIrInstr.TailCallIndirect
                               func-value
-                              (ir.compiler-ir-call-args-from-list tail-values)
+                              (ir.compiler-ir-call-args-from-seq tail-values)
                               (lower-one-word-register-storage-type ctx ret-ty))
                             origin))]
                       [(ResultLowerArgs.Err message)
@@ -64952,8 +64729,8 @@
                           (let
                             [result-ir-ty : ast.AstType
                               (lower-one-word-register-storage-type ctx ret-ty)]
-                            [sret-values : ir.CompilerIrValueList
-                              (lower-value-list-append-one
+                            [sret-values : ir.CompilerIrValueSeq
+                              (lower-value-seq-append-one
                                 values
                                 (ir.CompilerIrValue.Var sret-var))]
                             [call-name : i64
@@ -64968,7 +64745,7 @@
                                 (ir.CompilerIrInstr.Call
                                   call-var
                                   call-name
-                                  (ir.compiler-ir-call-args-from-list
+                                  (ir.compiler-ir-call-args-from-seq
                                     sret-values)
                                   result-ir-ty)
                                 origin)]
@@ -65333,7 +65110,7 @@
 (define (lower-tail-call-append-current-sret-arg
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
   [ret-ty : ast.AstType]
   [sret-var : i64]) : ResultLowerArgs
   (if (and
@@ -65342,7 +65119,7 @@
     (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
     (ResultLowerArgs.Ok
       state
-      (lower-value-list-append-one values (ir.CompilerIrValue.Var sret-var)))
+      (lower-value-seq-append-one values (ir.CompilerIrValue.Var sret-var)))
     (ResultLowerArgs.Ok state values)))
 
 (define (lower-tail-call
@@ -65425,7 +65202,7 @@
                           tail-state
                           (ir.CompilerIrInstr.TailCall
                             target-id
-                            (ir.compiler-ir-call-args-from-list tail-values)
+                            (ir.compiler-ir-call-args-from-seq tail-values)
                             (lower-one-word-register-storage-type ctx ret-ty))
                           origin)))]
                   [(ResultLowerArgs.Err message) (ResultLowerState.Err message)])]
@@ -68529,12 +68306,23 @@
           (+ index 1)
           (+ idx 1))))))
 
-(define (lower-dispatch-physical-param-values [count : i64] [idx : i64]) : ir.CompilerIrValueList
-  (if (>= idx count)
-    ir.CompilerIrValueList.Nil
-    (ir.compiler-ir-value-cons
-      (ir.CompilerIrValue.Var idx)
-      (lower-dispatch-physical-param-values count (+ idx 1)))))
+(define (lower-dispatch-physical-param-values [count : i64] [idx : i64]) : ir.CompilerIrValueSeq
+  (let
+    [len : i64
+      (if (>= idx count)
+        0
+        (- count idx))]
+    [slots : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue len)]
+    [cursor : i64 0]
+    (begin
+      (while (< cursor len)
+        (begin
+          (set!
+            (array-ref slots cursor)
+            (ir.CompilerIrValue.Var (+ idx cursor)))
+          (set! cursor (+ cursor 1))))
+      (ir.CompilerIrValueSeq slots len))))
 
 (define (lower-dispatch-find-internal-name-from
   [variants : (& variants ast.AstDispatchVariantList)]
@@ -68901,7 +68689,7 @@
         [physical-ret-ty : ast.AstType
           (lower-internal-return-physical-type ctx mode ret-ty)]
         [args : ir.CompilerIrCallArgs
-          (ir.compiler-ir-call-args-from-list
+          (ir.compiler-ir-call-args-from-seq
             (lower-dispatch-physical-param-values param-count 0))]
         [maybe-avx2 : LowerMaybeIrSymbol
           (lower-dispatch-find-internal-name

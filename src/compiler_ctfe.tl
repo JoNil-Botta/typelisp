@@ -12072,7 +12072,14 @@
               (ctfe-quote-preserve-unquoted-source-span? inner node env))
               (ResultCtfeQuoteExpr.Ok node ty next-fuel)
               (ResultCtfeQuoteExpr.Ok
-                (ast.ast-expr-spanned-with-pools (ctfe-env-pools env) node span)
+                ;; The pool records this as canonical when `node` has no source
+                ;; owner, or as a sparse ReSpan when a template view genuinely
+                ;; differs. The unquoted branch above never manufactures that
+                ;; alternate view: caller syntax keeps caller provenance.
+                (ast.ast-expr-source-view-with-pools
+                  (ctfe-env-pools env)
+                  node
+                  span)
                 ty
                 next-fuel))]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]

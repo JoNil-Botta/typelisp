@@ -36836,12 +36836,15 @@
 ;; --- cross-array check-domain fusion ------------------------------------------
 ;;
 ;; A counted multi-block loop walking THREE arrays through one opaque index.
-;; `body` (the header) loads `v = mem[i]` under the counter check and an
-;; ANCHOR check `v < lenA`; the dominated arm `then` uses the same `v` against
-;; `lenB` and `lenC`. Only the anchor bounds `v` -- it is a loaded value, so no
-;; trip-range derivation reaches it -- and the two dominated checks derive from
-;; it under the guard conjuncts `lenA <=u lenB` and `lenA <=u lenC`, which is
-;; exactly the fusion rule.
+;; `body` (the header) loads `v = mem[i]` under the counter check and branches
+;; on the safe-accessor sentinel `v >= 0`. Its true arm `anchor` checks
+;; `v < lenA`; the dominated arm `then` uses the same `v` against `lenB` and
+;; `lenC`. Only the anchor bounds `v` -- it is a loaded value, so no trip-range
+;; derivation reaches it -- and the two dominated checks derive from it under
+;; the guard conjuncts `lenA <=u lenB` and `lenA <=u lenC`, which is exactly the
+;; fusion rule. The fused checks must NOT feed the guard-dominated floor folder:
+;; their proof relies on the earlier sentinel and using them to delete it would
+;; be circular.
 ;;
 ;; Variants:
 ;;   0 the arm READS through the covered index;
@@ -36850,8 +36853,8 @@
 ;;   2 the arm STORES through the covered index (the covered-store case: a
 ;;     store's check constrains its INDEX, so it fuses exactly like a read).
 ;;
-;; Vars: 0-4 params (n, lenA, lenB, lenC, mem), 5 the counter phi, 6-10 the
-;; header, 11-16 the arm, 17-18 the latch.
+;; Vars: 0-4 params (n, lenA, lenB, lenC, mem), 5 the counter phi, 6-7 and 10
+;; the header, 11-16 the arm, 17-18 the latch.
 (define opt-bce-fuse-test-frame : i64
   20)
 
@@ -36910,29 +36913,27 @@
         7
         (compiler_ir_types.CompilerIrValue.Var 6)
         (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        10
+        (compiler_ir_types.CompilerIrBinOp.Ge)
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ir_types.compiler-ir-label "anchor")
+        (compiler_ir_types.compiler-ir-label "latch")))))
+
+(define (opt-bce-fuse-test-anchor-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (compiler_ir_types.compiler-ir-label "anchor")
+    (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.BoundsCheck
         (compiler_ir_types.CompilerIrValue.Var 7)
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ir_types.compiler-ir-label "fuse_ok1"))
-      (compiler_ir_types.CompilerIrInstr.Gep
-        8
-        (compiler_ir_types.CompilerIrValue.Var 4)
-        (compiler_ir_types.CompilerIrValue.Var 7)
-        (compiler_ast_types.AstType.I64))
-      (compiler_ir_types.CompilerIrInstr.Load
-        9
-        (compiler_ir_types.CompilerIrValue.Var 8)
-        (compiler_ast_types.AstType.I64))
-      (compiler_ir_types.CompilerIrInstr.BinOp
-        10
-        (compiler_ir_types.CompilerIrBinOp.Lt)
-        (compiler_ir_types.CompilerIrValue.Var 9)
-        (compiler_ir_types.CompilerIrValue.Var 0)
-        (compiler_ast_types.AstType.Bool))
-      (compiler_ir_types.CompilerIrInstr.Branch
-        (compiler_ir_types.CompilerIrValue.Var 10)
-        (compiler_ir_types.compiler-ir-label "then")
-        (compiler_ir_types.compiler-ir-label "latch")))))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "then")))))
 
 ;; The index each arm check uses. Variant 1 gives them two different ESCAPING
 ;; loads -- values no check has bounded and no anchor dominates -- so neither
@@ -37027,17 +37028,19 @@
     (compiler_ir_types.compiler-ir-block-cons
       (opt-bce-fuse-test-body-block)
       (compiler_ir_types.compiler-ir-block-cons
-        (opt-bce-fuse-test-then-block variant)
+        (opt-bce-fuse-test-anchor-block)
         (compiler_ir_types.compiler-ir-block-cons
-          (opt-bce-fuse-test-latch-block)
+          (opt-bce-fuse-test-then-block variant)
           (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.CompilerIrBlock.Block
-              (compiler_ir_types.compiler-ir-label "exit")
-              (opt-test-instrs
-                (compiler_ir_types.CompilerIrInstr.Return
-                  (compiler_ir_types.CompilerIrMaybeValue.Some
-                    (compiler_ir_types.CompilerIrValue.Var 0)))))
-            compiler_ir_types.CompilerIrBlockList.Nil))))))
+            (opt-bce-fuse-test-latch-block)
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 0)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
 
 (define (opt-bce-fuse-test-function
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
@@ -37066,8 +37069,29 @@
   (compiler_optimize.opt-verify-ok?
     (compiler_optimize.opt-verify-function func)))
 
+(define (opt-bce-fuse-test-branch-terminated?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [name : String]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label name))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            (if (< count 1)
+              false
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                instrs
+                (- count 1))
+                [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) true]
+                [_ false])))])]))
+
 ;; (a) three arrays, ONE region guard, a fast clone whose only surviving check
-;;     is the anchor the other two derive from;
+;;     is the anchor the other two derive from, and whose loaded-index sentinel
+;;     remains conditional;
 ;; (b) the covered STORE reaches the same shape;
 ;; (c) an escaping index refuses fusion and keeps both dominated checks;
 ;; (d) the slow region is byte-for-byte the original, so a guard-failing or
@@ -37105,63 +37129,81 @@
             (opt-bce-version-test-block-checks
               read-only
               (compiler_ir_types.compiler-ir-label "body__bce_fast"))
-            1))
+            0))
         5]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              read-only
+              (compiler_ir_types.compiler-ir-label "anchor__bce_fast"))
+            1))
+        6]
       [(not
           (=
             (opt-bce-version-test-block-checks
               read-only
               (compiler_ir_types.compiler-ir-label "then__bce_fast"))
             0))
-        6]
+        7]
+      ;; The fused checks rely on this sentinel before the anchor. It cannot be
+      ;; folded from their later, path-conditional proof.
+      [(not (opt-bce-fuse-test-branch-terminated? read-only "body__bce_fast"))
+        8]
       ;; (d) the slow region keeps every check at its original site
       [(not
           (=
             (opt-bce-version-test-block-checks
               read-only
               (compiler_ir_types.compiler-ir-label "body"))
-            2))
-        7]
+            1))
+        9]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              read-only
+              (compiler_ir_types.compiler-ir-label "anchor"))
+            1))
+        10]
       [(not
           (=
             (opt-bce-version-test-block-checks
               read-only
               (compiler_ir_types.compiler-ir-label "then"))
             2))
-        8]
+        11]
       ;; (b) the covered store derives exactly like the covered read
-      [(not (opt-bce-fuse-test-verify-ok? stored-fn)) 9]
+      [(not (opt-bce-fuse-test-verify-ok? stored-fn)) 12]
       [(not
           (=
             (opt-bce-version-test-block-checks
               stored
               (compiler_ir_types.compiler-ir-label "then__bce_fast"))
             0))
-        10]
+        13]
       [(not
           (=
             (opt-bce-version-test-block-checks
               stored
               (compiler_ir_types.compiler-ir-label "then"))
             2))
-        11]
+        14]
       ;; (c) an escaping index has no anchor: both dominated checks stay in the
       ;; clone, exactly as any underivable index does
-      [(not (opt-bce-fuse-test-verify-ok? escaping-fn)) 12]
+      [(not (opt-bce-fuse-test-verify-ok? escaping-fn)) 15]
       [(not
           (=
             (opt-bce-version-test-block-checks
               escaping
               (compiler_ir_types.compiler-ir-label "then__bce_fast"))
             2))
-        13]
+        16]
       ;; (f) idempotence: a converted region is not offered a second time
-      [(not (opt-bce-fuse-test-verify-ok? again-fn)) 14]
+      [(not (opt-bce-fuse-test-verify-ok? again-fn)) 17]
       [(not
           (=
             (compiler_ir_types.compiler-ir-block-list-count again)
             (compiler_ir_types.compiler-ir-block-list-count read-only)))
-        15]
+        18]
       [else 42])))
 
 (define (opt-bce-mb-pair-test-guard-has-len-fact-from?
@@ -37560,6 +37602,8 @@
 ;;                     would need reasoning past exact conjunct identity
 ;;   7  `%3 >= 0` with a phi in the "else" arm fed from the header REFUSED:
 ;;                     folding would delete an edge a phi still selects on
+;;   8  `%6 >= 0` with `%6 = add %3, 1` and `bounds_check %6, %1` folds TRUE:
+;;                     the removed check's exact index has a proven floor
 ;; Vars: 0-2 params, 3 counter phi, 5 header condition, 6 the variant-3
 ;; in-loop value, 8 the step, 9 the latch compare, 10 the exit phi, 11 the
 ;; variant-7 else phi, 12-13 the variant-2 non-literal-step phi.
@@ -37571,6 +37615,9 @@
 
 (define (opt-bce-fold-test-else-phi-variant? [variant : i64]) : bool
   (= variant 7))
+
+(define (opt-bce-fold-test-derived-check-variant? [variant : i64]) : bool
+  (= variant 8))
 
 ;; The comparison the header branches on.
 (define (opt-bce-fold-test-cond-instr [variant : i64]) : compiler_ir_types.CompilerIrInstr
@@ -37589,7 +37636,7 @@
         (compiler_ir_types.CompilerIrValue.Var 12)
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ast_types.AstType.I64))]
-    [(= variant 3)
+    [(or (= variant 3) (opt-bce-fold-test-derived-check-variant? variant))
       (compiler_ir_types.CompilerIrInstr.BinOp
         5
         (compiler_ir_types.CompilerIrBinOp.Ge)
@@ -37647,16 +37694,24 @@
   (let
     [core : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-instrs
-        (compiler_ir_types.CompilerIrInstr.BoundsCheck
-          (compiler_ir_types.CompilerIrValue.Var 3)
-          (compiler_ir_types.CompilerIrValue.Var 1)
-          (compiler_ir_types.compiler-ir-label "fold_ok0"))
         (compiler_ir_types.CompilerIrInstr.BinOp
           6
-          (compiler_ir_types.CompilerIrBinOp.Sub)
+          (if (opt-bce-fold-test-derived-check-variant? variant)
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrBinOp.Sub))
           (compiler_ir_types.CompilerIrValue.Var 3)
-          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ir_types.CompilerIrValue.I64
+            (if (opt-bce-fold-test-derived-check-variant? variant)
+              1
+              5))
           (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler_ir_types.CompilerIrValue.Var
+            (if (opt-bce-fold-test-derived-check-variant? variant)
+              6
+              3))
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.compiler-ir-label "fold_ok0"))
         (opt-bce-fold-test-cond-instr variant)
         (compiler_ir_types.CompilerIrInstr.Branch
           (compiler_ir_types.CompilerIrValue.Var 5)
@@ -37840,6 +37895,8 @@
       (opt-bce-fold-test-versioned 1)]
     [invariant : compiler_ir_types.CompilerIrBlockList
       (opt-bce-fold-test-versioned 5)]
+    [derived-floor : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-fold-test-versioned 8)]
     [retired : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-cfg-simplify-blocks
         (opt-bce-fold-test-versioned 0))]
@@ -37869,14 +37926,18 @@
       ;; R2: the guard's own `bound <= length` conjunct, recomputed in the loop.
       [(not (= (opt-bce-fold-test-jump-target invariant fast-body) fast-then))
         6]
+      ;; R3: the exact index of a removed check carries its signed floor.
+      [(not
+          (= (opt-bce-fold-test-jump-target derived-floor fast-body) fast-then))
+        7]
       ;; the arm that lost its last predecessor retires.
-      [(opt-bce-fold-test-has-block? retired fast-else) 7]
-      [(not (opt-bce-fold-test-has-block? retired fast-then)) 8]
+      [(opt-bce-fold-test-has-block? retired fast-else) 8]
+      [(not (opt-bce-fold-test-has-block? retired fast-then)) 9]
       [(not
           (opt-bce-fold-test-has-block?
             retired
             (compiler_ir_types.compiler-ir-label "else")))
-        9]
+        10]
       [else 42])))
 
 ;; Every refusal keeps the versioned fast clone's conditional branch.

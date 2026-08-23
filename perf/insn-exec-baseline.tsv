@@ -31,6 +31,6 @@ benchmark/typelisp/lex_source	536771122
 benchmark/c-scalar/lex_source	555172535
 benchmark/typelisp/liveness_scan	398157632
 benchmark/c-scalar/liveness_scan	433553439
-benchmark/typelisp/peephole_lines	527247387
+benchmark/typelisp/peephole_lines	526410969
 benchmark/c-scalar/peephole_lines	464527258
 self_compile/compile_cli_opt1	73092173049

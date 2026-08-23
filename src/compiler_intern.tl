@@ -1802,6 +1802,26 @@
 (defmacro (intern-compat-state-str [state : Expr] [id : Expr]) : String
   `(intern-array-shared-view (__tl-project-field-name ,state "pool-slots") ,id))
 
+(define (intern-compat-state-id-str
+  [state : (& state InternCompatState)]
+  [id : InternId]) : String
+  (intern-compat-state-str state (intern-id-value id)))
+
+(define (intern-compat-state-syntax-name-text-or
+  [state : (& state InternCompatState)]
+  [id : i64]
+  [fallback : String]) : String
+  (let
+    [source-id : i64 (intern-syntax-source-name-id-or id -1)]
+    (if (>= source-id 0)
+      (intern-compat-state-str state source-id)
+      fallback)))
+
+(define (intern-compat-state-syntax-id-text
+  [state : (& state InternCompatState)]
+  [id : InternSyntaxId]) : String
+  (intern-compat-state-syntax-name-text-or state (intern-syntax-id-value id) ""))
+
 (define (intern-compat-state-qualified?
   [state : (& state InternCompatState)]
   [id : i64]) : bool
@@ -1826,6 +1846,11 @@
   [state : (& state InternCompatState)]
   [id : i64]) : i64
   (cast (array-ref state.pool-first-dot-slots id) : i64))
+
+(define (intern-compat-state-leading-dot-id
+  [state : (& state InternCompatState)]
+  [id : i64]) : i64
+  (intern-id-slot-decode (array-ref state.pool-leading-dot-id-slots id)))
 
 (define (intern-compat-state-dotted-prefix-id
   [state : (& state InternCompatState)]

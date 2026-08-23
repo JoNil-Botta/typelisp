@@ -196,11 +196,16 @@ Inline stdlib coverage:
 - `format_api.tl` covers implicit, indexed, repeated, mixed, explicit named,
   and nested lexical capture selection; leading-zero indices; trailing ASCII
   whitespace; source-order, exactly-once evaluation; owned values; escaped
-  braces; and String, integer, boolean, char, float, and nominal formatting.
+  braces; String, integer, boolean, char, float, and nominal formatting; byte
+  fill and left/center/right/default alignment; sign and sign-aware zero
+  padding; short/equal/long widths; positional/named/captured dynamic counts;
+  count reuse; and non-advancing count references.
   `comptime_string_literal_reject.tl` keeps non-literal syntax inspection
   rejected at macro expansion. The `format_*_reject.tl` fixtures cover
-  non-literal templates, unsupported specifiers, both placeholder-count
-  mismatches, invalid/overflowed indices, malformed/captured/raw/bare names,
+  non-literal templates, unsupported precision/type semantics, malformed or
+  out-of-order options, multi-byte fill, static width overflow, dynamic width
+  type/range/sign failures, both placeholder-count mismatches,
+  invalid/overflowed indices, malformed/captured/raw/bare names,
   named ordering/duplication/unused cases, the documented non-ASCII whitespace
   limitation, and missing or wrongly typed canonical owner hooks.
   `tests/integration/format_owner_*` covers positive struct/enum/nested hooks,

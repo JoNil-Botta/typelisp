@@ -24,7 +24,7 @@ stdlib.eq/enum-eq-dispatch	4	fixed	expr	tests/integration/stdlib_hash_generated.
 stdlib.eq/eq	1	fixed	module	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
 stdlib.fs/path-join-many	1	variadic	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
 stdlib.fs/path-join-fold	3	fixed	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
-stdlib.format/format-value	1	fixed	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly
+stdlib.format/format-value	11	fixed	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly
 stdlib.format/named	2	fixed	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly
 stdlib.format/format-expand-call	9	fixed	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly
 stdlib.format/format-expand	8	fixed	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly

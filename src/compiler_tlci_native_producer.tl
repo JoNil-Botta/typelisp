@@ -81,9 +81,12 @@
 ;; later `(comptime.expr-int n)` reads the count as data instead of a literal.
 ;; A scalar `let` binding over comptime data joins the same table, which is why
 ;; the budget is well above the two binder arms #5617 needed: the scanner
-;; bodies bind six at once. Refs #5617, #5701.
+;; bodies bind six at once, while the shared format-spec plan keeps its option
+;; scalars live beside the existing display-dispatch probes. Keep the producer
+;; table aligned with the host session's immediate-slot budget. Refs #5617,
+;; #5701, #6646.
 (define embedded-native-data-locals-cap : i64
-  24)
+  64)
 (define embedded-native-data-local-names : (__tl_dyn-array String)
   (array.make-array String embedded-native-data-locals-cap))
 (define embedded-native-data-local-texts : (__tl_dyn-array String)
@@ -2772,6 +2775,17 @@
               (tlci_core.tlci-host-callback-name-shared-view
                 tlci_core.tlci-host-callback-name-value-unit)
               "0"
+              "0"
+              "0")
+            1)]
+        [(compiler_ast_types.AstLiteral.Int value _)
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              (tlci_core.tlci-host-callback-name-shared-view
+                tlci_core.tlci-host-callback-name-value-i64)
+              (string.int->string value)
               "0"
               "0")
             1)]

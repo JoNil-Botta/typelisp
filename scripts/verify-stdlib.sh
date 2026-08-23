@@ -268,6 +268,7 @@ stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/format_api.tl|42|-|-|-
+stdlib/tests/format_negative_dynamic_width.tl|134|-|literal:format: dynamic width argument must be nonnegative|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/process_api.tl|42|-|-|-
@@ -300,23 +301,30 @@ stdlib/tests/env_api.tl|pass|-
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_bare_capture_reject.tl|fail|format: bare '_' is not a captured identifier
 stdlib/tests/format_duplicate_named_reject.tl|fail|format: duplicate named argument name
+stdlib/tests/format_dynamic_width_index_reject.tl|fail|format: dynamic width argument index is out of range: 2
+stdlib/tests/format_dynamic_width_type_reject.tl|fail|format: dynamic width argument must have exact type i64
 stdlib/tests/format_index_out_of_range_reject.tl|fail|format: positional argument index is out of range: 2
 stdlib/tests/format_index_overflow_reject.tl|fail|format: positional argument index overflow
 stdlib/tests/format_inner_whitespace_reject.tl|fail|format: whitespace is only allowed immediately before '}'
 stdlib/tests/format_malformed_capture_reject.tl|fail|format: malformed captured argument identifier
 stdlib/tests/format_malformed_index_reject.tl|fail|format: malformed positional argument index
+stdlib/tests/format_multibyte_fill_reject.tl|fail|format: fill must be exactly one TypeLisp byte before alignment
 stdlib/tests/format_named_nonidentifier_reject.tl|fail|format: named argument name must be an identifier
 stdlib/tests/format_non_ascii_whitespace_reject.tl|fail|format: placeholder names and whitespace are ASCII-only
 stdlib/tests/format_owner_ambiguous_reject.tl|fail|format: ambiguous owner hooks for
 stdlib/tests/format_owner_missing_reject.tl|fail|format: unsupported nominal type
 stdlib/tests/format_owner_wrong_signature_reject.tl|fail|format: owner hook has wrong signature for
 stdlib/tests/format_positional_after_named_reject.tl|fail|format: positional argument follows named argument
+stdlib/tests/format_precision_unsupported_reject.tl|fail|format: precision is parsed but not supported yet
+stdlib/tests/format_plus_nonnumeric_reject.tl|fail|format: '+' sign requires a numeric argument
 stdlib/tests/format_raw_capture_reject.tl|fail|format: Rust raw identifiers use the TypeLisp spelling without 'r#'
-stdlib/tests/format_specifier_reject.tl|fail|format: format specifiers are not supported
+stdlib/tests/format_specifier_order_reject.tl|fail|format: malformed, duplicated, or out-of-order format specifier
+stdlib/tests/format_specifier_reject.tl|fail|format: type selector is parsed but not supported yet: x
 stdlib/tests/format_too_few_args_reject.tl|fail|format: not enough arguments for placeholders
 stdlib/tests/format_too_many_args_reject.tl|fail|format: not enough placeholders for arguments
 stdlib/tests/format_unknown_capture_reject.tl|fail|typecheck: unbound name missing
 stdlib/tests/format_unused_named_reject.tl|fail|format: unused named argument unused
+stdlib/tests/format_width_overflow_reject.tl|fail|format: width integer overflow
 stdlib/tests/fs_api.tl|pass|-
 stdlib/tests/core_macros_cond_flat_reject.tl|fail|typecheck: ExprClause macro operand expects bracket syntax
 stdlib/tests/core_macros_cond_missing_else.tl|fail|core-cond-missing-else

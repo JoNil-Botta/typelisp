@@ -9,6 +9,7 @@
 (import doc_extract)
 (import (vector.vector doc_extract.DocItem core) as doc_item_vec)
 (import (vector.vector doc_render.DocModule core) as doc_module_vec)
+(import stdlib.byte_buf_core as byte_buf)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -26,13 +27,15 @@
   (let
     [i : i64 0]
     [n : i64 (string.string-length text)]
-    [out : String ""]
+    [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
     (begin
       (while (< i n)
         (begin
-          (set! out (str_cat.str-cat out (doc-html-escape-one text i) ""))
+          (byte_buf.byte-buf-builder-append-string
+            (&mut out)
+            (doc-html-escape-one text i))
           (set! i (+ i 1))))
-      out)))
+      (byte_buf.byte-buf-builder-finish-string (& out)))))
 
 (define (doc-html-escape-text-one [text : String] [idx : i64]) : String
   (let
@@ -47,13 +50,15 @@
   (let
     [i : i64 0]
     [n : i64 (string.string-length text)]
-    [out : String ""]
+    [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
     (begin
       (while (< i n)
         (begin
-          (set! out (str_cat.str-cat out (doc-html-escape-text-one text i) ""))
+          (byte_buf.byte-buf-builder-append-string
+            (&mut out)
+            (doc-html-escape-text-one text i))
           (set! i (+ i 1))))
-      out)))
+      (byte_buf.byte-buf-builder-finish-string (& out)))))
 
 (define (doc-html-page-open [title : String]) : String
   (str_cat.str-cat
@@ -252,32 +257,38 @@
   [end : i64]) : String
   (let
     [i : i64 start]
-    [out : String "<span class=\"tl-syn-string\">"]
+    [out : byte_buf.ByteBufBuilder
+      (byte_buf.byte-buf-builder-with-capacity (- end start))]
     (begin
+      (byte_buf.byte-buf-builder-append-string
+        (&mut out)
+        "<span class=\"tl-syn-string\">")
       (while (< i end)
         (if (= (string.string-ref source i) '\\')
           (let
             [escape-end : i64 (doc-html-syntax-valid-escape-end source i end)]
             (if (> escape-end i)
               (begin
-                (set!
-                  out
-                  (str_cat.str-cat
-                    out
-                    "<span class=\"tl-syn-escape\">"
-                    (doc-html-escape
-                      (string.substring source i (- escape-end i)))
-                    "</span>"))
+                (byte_buf.byte-buf-builder-append-string
+                  (&mut out)
+                  "<span class=\"tl-syn-escape\">")
+                (byte_buf.byte-buf-builder-append-string
+                  (&mut out)
+                  (doc-html-escape (string.substring source i (- escape-end i))))
+                (byte_buf.byte-buf-builder-append-string (&mut out) "</span>")
                 (set! i escape-end))
               (begin
-                (set!
-                  out
-                  (str_cat.str-cat out (doc-html-escape-one source i) ""))
+                (byte_buf.byte-buf-builder-append-string
+                  (&mut out)
+                  (doc-html-escape-one source i))
                 (set! i (+ i 1)))))
           (begin
-            (set! out (str_cat.str-cat out (doc-html-escape-one source i) ""))
+            (byte_buf.byte-buf-builder-append-string
+              (&mut out)
+              (doc-html-escape-one source i))
             (set! i (+ i 1)))))
-      (str_cat.str-cat out "</span>" ""))))
+      (byte_buf.byte-buf-builder-append-string (&mut out) "</span>")
+      (byte_buf.byte-buf-builder-finish-string (& out)))))
 
 (define (doc-html-syntax-char-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -428,7 +439,7 @@
   (let
     [i : i64 0]
     [n : i64 (string.string-length source)]
-    [out : String ""]
+    [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
     (begin
       (while (< i n)
         (let
@@ -447,55 +458,43 @@
                     "tl-syn-doc-comment"
                     "tl-syn-comment")]
                 (begin
-                  (set!
-                    out
-                    (str_cat.str-cat
-                      out
-                      (doc-html-syntax-span class-name line)
-                      ""))
+                  (byte_buf.byte-buf-builder-append-string
+                    (&mut out)
+                    (doc-html-syntax-span class-name line))
                   (set! i end)))]
             [(= c '"')
               (let
                 [end : i64 (doc-html-syntax-string-end source i)]
                 (begin
-                  (set!
-                    out
-                    (str_cat.str-cat
-                      out
-                      (doc-html-syntax-render-string source i end)
-                      ""))
+                  (byte_buf.byte-buf-builder-append-string
+                    (&mut out)
+                    (doc-html-syntax-render-string source i end))
                   (set! i end)))]
             [(= c '\'')
               (let
                 [end : i64 (doc-html-syntax-char-literal-end source i)]
                 (if (> end i)
                   (begin
-                    (set!
-                      out
-                      (str_cat.str-cat
-                        out
-                        (doc-html-syntax-span
-                          "tl-syn-string"
-                          (string.substring source i (- end i)))
-                        ""))
+                    (byte_buf.byte-buf-builder-append-string
+                      (&mut out)
+                      (doc-html-syntax-span
+                        "tl-syn-string"
+                        (string.substring source i (- end i))))
                     (set! i end))
                   (begin
-                    (set!
-                      out
-                      (str_cat.str-cat out (doc-html-escape-one source i) ""))
+                    (byte_buf.byte-buf-builder-append-string
+                      (&mut out)
+                      (doc-html-escape-one source i))
                     (set! i (+ i 1)))))]
             [(doc-html-syntax-number-start? source i)
               (let
                 [end : i64 (doc-html-syntax-token-end source i)]
                 (begin
-                  (set!
-                    out
-                    (str_cat.str-cat
-                      out
-                      (doc-html-syntax-span
-                        "tl-syn-number"
-                        (string.substring source i (- end i)))
-                      ""))
+                  (byte_buf.byte-buf-builder-append-string
+                    (&mut out)
+                    (doc-html-syntax-span
+                      "tl-syn-number"
+                      (string.substring source i (- end i))))
                   (set! i end)))]
             [(doc-html-syntax-token-start? c)
               (let
@@ -504,22 +503,19 @@
                 [class-name : String
                   (doc-html-syntax-token-class source i token)]
                 (begin
-                  (set!
-                    out
-                    (str_cat.str-cat
-                      out
-                      (if (= (string.string-length class-name) 0)
-                        (doc-html-escape token)
-                        (doc-html-syntax-span class-name token))
-                      ""))
+                  (byte_buf.byte-buf-builder-append-string
+                    (&mut out)
+                    (if (= (string.string-length class-name) 0)
+                      (doc-html-escape token)
+                      (doc-html-syntax-span class-name token)))
                   (set! i end)))]
             [else
               (begin
-                (set!
-                  out
-                  (str_cat.str-cat out (doc-html-escape-one source i) ""))
+                (byte_buf.byte-buf-builder-append-string
+                  (&mut out)
+                  (doc-html-escape-one source i))
                 (set! i (+ i 1)))])))
-      out)))
+      (byte_buf.byte-buf-builder-finish-string (& out)))))
 
 (define (doc-html-code-block-with-info
   [language : String]

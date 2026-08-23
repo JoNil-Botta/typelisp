@@ -899,6 +899,202 @@
       "(define (main) : i64 (comptime-decls (define value : i64 1)))"
       (compiler_parse_core.parse-ast-removed-declaration-message))))
 
+(define (compiler-parse-state-diagnostic-message
+  [path : String]
+  [source : String]
+  [parse-state : compiler_parse_core.CompilerParseState]
+  [pools : ast.AstNodePoolContext]) : String
+  (match (compiler_parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
+    path
+    source
+    (compiler_parse_core.compiler-parse-state-cfgs
+      parse-state
+      (compiler_parse_core.compiler-cfg-empty))
+    pools)
+    [(compiler_parse_core.ResultAstProgramDiagnostic.Ok _) "parse succeeded"]
+    [(compiler_parse_core.ResultAstProgramDiagnostic.Err diag)
+      (diagnostic.compiler-diagnostic-message (__tl-box-place diag))]))
+
+(define (compiler-parse-state-import-ok?
+  [source : String]
+  [expected-path : String]
+  [expected-alias : String]
+  [intern-state : ci.InternCompatState]
+  [parse-state : compiler_parse_core.CompilerParseState]
+  [pools : ast.AstNodePoolContext]) : bool
+  (match (compiler_parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
+    "owner-import.tl"
+    source
+    (compiler_parse_core.compiler-parse-state-cfgs
+      parse-state
+      (compiler_parse_core.compiler-cfg-empty))
+    pools)
+    [(compiler_parse_core.ResultAstProgramDiagnostic.Err _) false]
+    [(compiler_parse_core.ResultAstProgramDiagnostic.Ok
+        (ast.AstProgram.Program decls-box))
+      (let
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        (match (ast.ast-decl-list-step decls)
+          [(ast.AstDeclListStep.Cons
+              (ast.AstDecl.Import
+                _
+                (ast.AstImportSpec.Spec
+                  (ast.AstImportKind.Module)
+                  path
+                  (ast.AstMaybeModuleName.Some module-name)
+                  (ast.AstMaybeImportAlias.Some alias)
+                  _))
+              _)
+            (and
+              (string.eq path expected-path)
+              (string.eq
+                (ci.intern-compat-state-str intern-state module-name)
+                expected-path)
+              (string.eq
+                (ci.intern-compat-state-str intern-state alias)
+                expected-alias))]
+          [_ false]))]
+    [(compiler_parse_core.ResultAstProgramDiagnostic.Ok _) false]))
+
+(define (compiler-parse-state-source-ok?
+  [source : String]
+  [parse-state : compiler_parse_core.CompilerParseState]
+  [pools : ast.AstNodePoolContext]) : bool
+  (match (compiler_parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
+    "installed-owner.tl"
+    source
+    (compiler_parse_core.compiler-parse-state-cfgs
+      parse-state
+      (compiler_parse_core.compiler-cfg-empty))
+    pools)
+    [(compiler_parse_core.ResultAstProgramDiagnostic.Ok _) true]
+    [(compiler_parse_core.ResultAstProgramDiagnostic.Err _) false]))
+
+(define (compiler-parse-installed-owner-lex-sync-ok?) : bool
+  (let
+    [home : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [parse-state : compiler_parse_core.CompilerParseState
+      (compiler_parse_core.compiler-parse-state-new-with-intern-state
+        intern-state)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 32)]
+    [first-len : i64 0]
+    [second-len : i64 0]
+    [ok : bool false]
+    (begin
+      ;; The temporary driver bridge seeds builtins through the installed
+      ;; globals. Explicit lexing must capture that scalar advance, then publish
+      ;; each file's new count so the next file cannot rewind the same owner.
+      (ci.intern-compat-state-install! intern-state)
+      (cbi.compiler-builtin-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (set!
+        ok
+        (compiler-parse-state-source-ok?
+          "(define (first-owner-fn [first-owner-param : i64]) : i64 first-owner-param)"
+          parse-state
+          pools))
+      (set! first-len (ci.intern-compat-state-pool-len intern-state))
+      (set!
+        ok
+        (and
+          ok
+          (= first-len (ci.intern-pool-len))
+          (compiler-parse-state-source-ok?
+            "(define (second-owner-fn [second-owner-param : i64]) : i64 (+ second-owner-param 1))"
+            parse-state
+            pools)))
+      (set! second-len (ci.intern-compat-state-pool-len intern-state))
+      (set!
+        ok
+        (and ok (> second-len first-len) (= second-len (ci.intern-pool-len))))
+      (ci.intern-compat-state-install! home)
+      (cbi.compiler-builtin-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      ok)))
+
+(define (compiler-parse-intern-owner-isolation-ok?) : bool
+  (let
+    [active-decoy-id : i64 (ci.intern-source-slice "parser-active-decoy" 0 19)]
+    [home : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [message-a : String ""]
+    [message-b : String ""]
+    [ok : bool false]
+    (begin
+      ;; Seed fixed builtin IDs identically in both inactive owners, then leave
+      ;; the active table as a decoy while lexing and parsing through A and B.
+      (ci.intern-compat-state-install! state-a)
+      (cbi.compiler-builtin-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (ci.intern-compat-state-capture-from-globals! state-a)
+      (ci.intern-compat-state-install! state-b)
+      (cbi.compiler-builtin-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (ci.intern-compat-state-capture-from-globals! state-b)
+      (ci.intern-compat-state-install! home)
+      (cbi.compiler-builtin-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (let
+        [active-table-before : i64 (ci.intern-active-table-id)]
+        [active-generation-before : i64 (ci.intern-generation)]
+        [active-len-before : i64 (ci.intern-pool-len)]
+        [parse-state-a : compiler_parse_core.CompilerParseState
+          (compiler_parse_core.compiler-parse-state-new-with-intern-state
+            state-a)]
+        [parse-state-b : compiler_parse_core.CompilerParseState
+          (compiler_parse_core.compiler-parse-state-new-with-intern-state
+            state-b)]
+        [pools-a : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 64 32)]
+        [pools-b : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 64 32)]
+        (begin
+          (set!
+            message-a
+            (compiler-parse-state-diagnostic-message
+              "owner-a.tl"
+              "(defmacro (bad [T : type (:owner-a)]) : Module unit)"
+              parse-state-a
+              pools-a))
+          (set!
+            message-b
+            (compiler-parse-state-diagnostic-message
+              "owner-b.tl"
+              "(defmacro (bad [T : type (:owner-b)]) : Module unit)"
+              parse-state-b
+              pools-b))
+          (set!
+            ok
+            (and
+              (string.eq
+                message-a
+                "parse: macro type operand T has unknown constraint form :owner-a")
+              (string.eq
+                message-b
+                "parse: macro type operand T has unknown constraint form :owner-b")
+              (compiler-parse-state-import-ok?
+                "(import owner-a.pkg.alpha)"
+                "owner-a.pkg.alpha"
+                "alpha"
+                state-a
+                parse-state-a
+                pools-a)
+              (compiler-parse-state-import-ok?
+                "(import owner-b.pkg.beta)"
+                "owner-b.pkg.beta"
+                "beta"
+                state-b
+                parse-state-b
+                pools-b)
+              (= (ci.intern-active-table-id) active-table-before)
+              (= (ci.intern-generation) active-generation-before)
+              (= (ci.intern-pool-len) active-len-before)
+              (string.eq (ci.intern-str active-decoy-id) "parser-active-decoy")))))
+      ok)))
+
 (define (compiler-diagnostic-test-source-position-index
   [source : String]
   [target-line : i64]
@@ -1090,6 +1286,8 @@
       (compiler-parse-member-origin-boundary-ok?)
       (compiler-parse-name-id-provenance-ok?)
       (compiler-parse-removed-declaration-errors-ok?)
+      (compiler-parse-intern-owner-isolation-ok?)
+      (compiler-parse-installed-owner-lex-sync-ok?)
       (compiler-diagnostic-fix-model-ok?)
       (compiler-diagnostic-invalid-fixes-rejected-ok?)
       (compiler-diagnostic-unicode-byte-edit-ok?))

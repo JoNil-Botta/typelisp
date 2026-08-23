@@ -35074,15 +35074,24 @@
         [_ false])]
     [_ false]))
 
-(define (tc-integer-literal-expr-with-expected
+;; Literal classification only peels span/expansion wrappers and cannot install
+;; another pool. Snapshot its owner at the public boundary and keep that scalar
+;; through recursion so colliding ids cannot follow the compatibility reader.
+(define (tc-integer-literal-expr-with-expected-with-bases
   [ctx : TcContext]
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [expected : ast.AstType]) : ResultTcType
   (match expr
     [(ast.AstExpr.Spanned inner-box span)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (match (tc-integer-literal-expr-with-expected ctx inner expected)
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-integer-literal-expr-with-expected-with-bases
+          ctx
+          expr-bases
+          inner
+          expected)
           [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
           [(ResultTcType.Err message)
             (tc-locate-spanned-error
@@ -35091,9 +35100,10 @@
               span
               message)]))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-integer-literal-expr-with-expected
+      (tc-integer-literal-expr-with-expected-with-bases
         ctx
-        (ast.ast-node-get inner-box)
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
         expected)]
     [(ast.AstExpr.Literal lit)
       (match lit
@@ -35101,6 +35111,16 @@
           (tc-integer-literal-type-with-expected ctx value text expected)]
         [_ (ResultTcType.Ok (tc-literal-type lit))])]
     [_ (ResultTcType.Ok (ast.AstType.I32))]))
+
+(define (tc-integer-literal-expr-with-expected
+  [ctx : TcContext]
+  [expr : ast.AstExpr]
+  [expected : ast.AstType]) : ResultTcType
+  (tc-integer-literal-expr-with-expected-with-bases
+    ctx
+    (tc-context-expr-bases ctx)
+    expr
+    expected))
 
 (define (tc-binop-types-from-left
   [ctx : TcContext]
@@ -62926,17 +62946,22 @@
 (define (tc-macro-param-bound-names [params : ast.AstMacroParamList]) : TcStringList
   (tc-macro-param-list-add-bound-names params TcStringList.Nil))
 
+;; Purity analysis is a read-only pre-typecheck walk: it may recurse into a
+;; referenced declaration, but never expands a macro or installs a pool. Carry
+;; one stable expression segment table through the whole reachability walk.
 (define (tc-comptime-purity-expr
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
   [seen : TcStringList]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (tc-comptime-purity-expr-mode ctx env bound chain seen false expr))
+  (tc-comptime-purity-expr-mode ctx expr-bases env bound chain seen false expr))
 
 (define (tc-comptime-purity-node-mode
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -62945,15 +62970,17 @@
   [expr-id : i64]) : ResultTcUnit
   (tc-comptime-purity-expr-mode
     ctx
+    expr-bases
     env
     bound
     chain
     seen
     template?
-    (ast.ast-node-get expr-id)))
+    (ast.ast-expr-segment-bases-get expr-bases expr-id)))
 
 (define (tc-comptime-purity-node2-mode
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -62961,13 +62988,30 @@
   [template? : bool]
   [left : i64]
   [right : i64]) : ResultTcUnit
-  (match (tc-comptime-purity-node-mode ctx env bound chain seen template? left)
+  (match (tc-comptime-purity-node-mode
+    ctx
+    expr-bases
+    env
+    bound
+    chain
+    seen
+    template?
+    left)
     [(ResultTcUnit.Ok)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? right)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        right)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-comptime-purity-node3-mode
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -62976,10 +63020,19 @@
   [first : i64]
   [second : i64]
   [third : i64]) : ResultTcUnit
-  (match (tc-comptime-purity-node-mode ctx env bound chain seen template? first)
+  (match (tc-comptime-purity-node-mode
+    ctx
+    expr-bases
+    env
+    bound
+    chain
+    seen
+    template?
+    first)
     [(ResultTcUnit.Ok)
       (match (tc-comptime-purity-node-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -62989,6 +63042,7 @@
         [(ResultTcUnit.Ok)
           (tc-comptime-purity-node-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63018,6 +63072,7 @@
 
 (define (tc-comptime-purity-reject-or-template-node
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63028,11 +63083,20 @@
   [reason : String]
   [inner : i64]) : ResultTcUnit
   (if template?
-    (tc-comptime-purity-node-mode ctx env bound chain seen true inner)
+    (tc-comptime-purity-node-mode
+      ctx
+      expr-bases
+      env
+      bound
+      chain
+      seen
+      true
+      inner)
     (tc-comptime-purity-error expr chain name reason)))
 
 (define (tc-comptime-purity-reject-or-template-node2
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63044,11 +63108,21 @@
   [left : i64]
   [right : i64]) : ResultTcUnit
   (if template?
-    (tc-comptime-purity-node2-mode ctx env bound chain seen true left right)
+    (tc-comptime-purity-node2-mode
+      ctx
+      expr-bases
+      env
+      bound
+      chain
+      seen
+      true
+      left
+      right)
     (tc-comptime-purity-error expr chain name reason)))
 
 (define (tc-comptime-purity-expr-list-mode
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63057,6 +63131,7 @@
   [exprs : ast.AstExprList]) : ResultTcUnit
   (tc-comptime-purity-expr-list-mode-at
     ctx
+    expr-bases
     env
     bound
     chain
@@ -63067,6 +63142,7 @@
 
 (define (tc-comptime-purity-expr-list-mode-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63078,6 +63154,7 @@
     ResultTcUnit.Ok
     (match (tc-comptime-purity-node-mode
       ctx
+      expr-bases
       env
       bound
       chain
@@ -63087,6 +63164,7 @@
       [(ResultTcUnit.Ok)
         (tc-comptime-purity-expr-list-mode-at
           ctx
+          expr-bases
           env
           bound
           chain
@@ -63098,6 +63176,7 @@
 
 (define (tc-comptime-purity-let-bindings-mode
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63106,6 +63185,7 @@
   [bindings : ast.AstLetBindingList]) : ResultTcStringList
   (tc-comptime-purity-let-bindings-mode-at
     ctx
+    expr-bases
     env
     bound
     chain
@@ -63116,6 +63196,7 @@
 
 (define (tc-comptime-purity-let-bindings-mode-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63132,6 +63213,7 @@
       [(ast.AstLetBinding.Binding name _ init-box)
         (match (tc-comptime-purity-node-mode
           ctx
+          expr-bases
           env
           bound
           chain
@@ -63141,12 +63223,13 @@
           [(ResultTcUnit.Ok)
             (tc-comptime-purity-let-bindings-mode-at
               ctx
+              expr-bases
               env
               (tc-macro-abstract-binding-bound
                 (tc-context-macro-state ctx)
                 bound
                 name
-                (ast.ast-node-get init-box)
+                (ast.ast-expr-segment-bases-get expr-bases init-box)
                 template?)
               chain
               seen
@@ -63157,6 +63240,7 @@
 
 (define (tc-comptime-purity-resource-bindings-mode
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63165,6 +63249,7 @@
   [bindings : ast.AstResourceBindingList]) : ResultTcStringList
   (tc-comptime-purity-resource-bindings-mode-at
     ctx
+    expr-bases
     env
     bound
     chain
@@ -63175,6 +63260,7 @@
 
 (define (tc-comptime-purity-resource-bindings-mode-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63191,6 +63277,7 @@
       [(ast.AstResourceBinding.Binding name init-box cleanup-box _)
         (match (tc-comptime-purity-node2-mode
           ctx
+          expr-bases
           env
           bound
           chain
@@ -63201,6 +63288,7 @@
           [(ResultTcUnit.Ok)
             (tc-comptime-purity-resource-bindings-mode-at
               ctx
+              expr-bases
               env
               (tc-comptime-purity-template-bound template? bound name)
               chain
@@ -63212,6 +63300,7 @@
 
 (define (tc-comptime-purity-match-arms-mode
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63220,6 +63309,7 @@
   [arms : ast.AstMatchArmList]) : ResultTcUnit
   (tc-comptime-purity-match-arms-mode-at
     ctx
+    expr-bases
     env
     bound
     chain
@@ -63230,6 +63320,7 @@
 
 (define (tc-comptime-purity-match-arms-mode-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63243,6 +63334,7 @@
       [(ast.AstMatchArm.Arm pattern body-box)
         (match (tc-comptime-purity-node-mode
           ctx
+          expr-bases
           env
           (if template?
             bound
@@ -63254,6 +63346,7 @@
           [(ResultTcUnit.Ok)
             (tc-comptime-purity-match-arms-mode-at
               ctx
+              expr-bases
               env
               bound
               chain
@@ -63263,15 +63356,20 @@
               (+ index 1))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
-(define (tc-for-owned-purity-add-bound [expr-id : i64] [bound : TcStringList]) : TcStringList
+(define (tc-for-owned-purity-add-bound
+  [expr-bases : i64]
+  [expr-id : i64]
+  [bound : TcStringList]) : TcStringList
   (let
-    [name-id : i64 (tc-expr-var-name-id (ast.ast-node-get expr-id))]
+    [name-id : i64
+      (tc-expr-var-name-id (ast.ast-expr-segment-bases-get expr-bases expr-id))]
     (if (>= name-id 0)
       (tc-string-list-add bound (tc-env-key-name-text name-id))
       bound)))
 
 (define (tc-comptime-purity-expr-mode
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -63282,6 +63380,7 @@
     [(ast.AstExpr.Spanned inner-box _)
       (tc-comptime-purity-node-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63291,6 +63390,7 @@
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (tc-comptime-purity-node-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63301,10 +63401,11 @@
     [(ast.AstExpr.Var name)
       (if template?
         ResultTcUnit.Ok
-        (tc-comptime-purity-var ctx env bound chain seen expr name))]
+        (tc-comptime-purity-var ctx expr-bases env bound chain seen expr name))]
     [(ast.AstExpr.Binary _ left right)
       (tc-comptime-purity-node2-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63313,18 +63414,28 @@
         left
         right)]
     [(ast.AstExpr.Unary _ inner)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        inner)]
     [(ast.AstExpr.Call func args)
       (match (tc-macro-abstract-check-current-call
         (tc-context-macro-state ctx)
+        expr-bases
         bound
         template?
         expr
-        (ast.ast-node-get func)
+        (ast.ast-expr-segment-bases-get expr-bases func)
         args)
         [(ResultTcUnit.Ok)
           (match (tc-comptime-purity-node-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63334,6 +63445,7 @@
             [(ResultTcUnit.Ok)
               (tc-comptime-purity-expr-list-mode
                 ctx
+                expr-bases
                 env
                 bound
                 chain
@@ -63345,6 +63457,7 @@
     [(ast.AstExpr.If cond then-branch else-branch)
       (tc-comptime-purity-if-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63358,6 +63471,7 @@
         [(ast.AstLet.Let bindings body)
           (match (tc-comptime-purity-let-bindings-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63367,6 +63481,7 @@
             [(ResultTcStringList.Ok body-bound)
               (tc-comptime-purity-node-mode
                 ctx
+                expr-bases
                 env
                 body-bound
                 chain
@@ -63379,6 +63494,7 @@
         [(ast.AstLambda.Lambda params _ body)
           (tc-comptime-purity-node-mode
             ctx
+            expr-bases
             env
             (if template?
               bound
@@ -63390,6 +63506,7 @@
     [(ast.AstExpr.Tuple exprs)
       (tc-comptime-purity-expr-list-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63397,10 +63514,19 @@
         template?
         exprs)]
     [(ast.AstExpr.TupleRef tuple _)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? tuple)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        tuple)]
     [(ast.AstExpr.Array exprs)
       (tc-comptime-purity-expr-list-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63410,6 +63536,7 @@
     [(ast.AstExpr.DynArray exprs)
       (tc-comptime-purity-expr-list-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63417,10 +63544,19 @@
         template?
         exprs)]
     [(ast.AstExpr.MakeArray _ len)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? len)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        len)]
     [(ast.AstExpr.ArrayRef array index)
       (tc-comptime-purity-node2-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63431,6 +63567,7 @@
     [(ast.AstExpr.ArraySet array index value)
       (tc-comptime-purity-node3-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63442,6 +63579,7 @@
     [(ast.AstExpr.ArrayTake array live index)
       (tc-comptime-purity-node3-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63453,6 +63591,7 @@
     [(ast.AstExpr.FixedArrayTake array index)
       (tc-comptime-purity-node2-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63463,6 +63602,7 @@
     [(ast.AstExpr.Replace place replacement)
       (tc-comptime-purity-node2-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63473,6 +63613,7 @@
     [(ast.AstExpr.ArrayPush array value)
       (tc-comptime-purity-node2-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63483,6 +63624,7 @@
     [(ast.AstExpr.StringRef str index)
       (tc-comptime-purity-node2-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63493,6 +63635,7 @@
     [(ast.AstExpr.While cond body)
       (tc-comptime-purity-node2-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63503,6 +63646,7 @@
     [(ast.AstExpr.ForOwnedState payload)
       (match (tc-comptime-purity-node-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63512,10 +63656,13 @@
         [(ResultTcUnit.Ok)
           (tc-comptime-purity-node-mode
             ctx
+            expr-bases
             env
             (tc-for-owned-purity-add-bound
+              expr-bases
               (ast.ast-for-owned-state-index-name (& payload))
               (tc-for-owned-purity-add-bound
+                expr-bases
                 (ast.ast-for-owned-state-source-name (& payload))
                 bound))
             chain
@@ -63526,6 +63673,7 @@
     [(ast.AstExpr.ForOwnedStep payload)
       (match (tc-comptime-purity-node3-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63537,8 +63685,10 @@
         [(ResultTcUnit.Ok)
           (tc-comptime-purity-node-mode
             ctx
+            expr-bases
             env
             (tc-for-owned-purity-add-bound
+              expr-bases
               (ast.ast-for-owned-step-binding-name (& payload))
               bound)
             chain
@@ -63549,6 +63699,7 @@
     [(ast.AstExpr.Begin exprs)
       (tc-comptime-purity-expr-list-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63557,21 +63708,62 @@
         exprs)]
     [(ast.AstExpr.Unsafe exprs)
       (if template?
-        (tc-comptime-purity-expr-list-mode ctx env bound chain seen true exprs)
+        (tc-comptime-purity-expr-list-mode
+          ctx
+          expr-bases
+          env
+          bound
+          chain
+          seen
+          true
+          exprs)
         (tc-comptime-purity-error expr chain "unsafe" "unsafe block"))]
     [(ast.AstExpr.Set _ value)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? value)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        value)]
     [(ast.AstExpr.Ann inner _)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        inner)]
     [(ast.AstExpr.Cast inner _)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        inner)]
     [(ast.AstExpr.Borrow _ _ place)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? place)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        place)]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut arms)
           (match (tc-comptime-purity-node-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63581,6 +63773,7 @@
             [(ResultTcUnit.Ok)
               (tc-comptime-purity-match-arms-mode
                 ctx
+                expr-bases
                 env
                 bound
                 chain
@@ -63593,6 +63786,7 @@
         [(ast.AstForeach.Foreach index _ start end body)
           (match (tc-comptime-purity-node2-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63603,6 +63797,7 @@
             [(ResultTcUnit.Ok)
               (tc-comptime-purity-node-mode
                 ctx
+                expr-bases
                 env
                 (tc-comptime-purity-template-bound template? bound index)
                 chain
@@ -63615,6 +63810,7 @@
         [(ast.AstSpmdReduce.Reduce _ index _ start end init value)
           (match (tc-comptime-purity-node3-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63626,6 +63822,7 @@
             [(ResultTcUnit.Ok)
               (tc-comptime-purity-node-mode
                 ctx
+                expr-bases
                 env
                 (tc-comptime-purity-template-bound template? bound index)
                 chain
@@ -63638,6 +63835,7 @@
         [(ast.AstSpmdScan.Scan _ index _ start end prefix _ init value body)
           (match (tc-comptime-purity-node3-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63652,6 +63850,7 @@
                   (tc-comptime-purity-template-bound template? bound index)]
                 (match (tc-comptime-purity-node-mode
                   ctx
+                  expr-bases
                   env
                   index-bound
                   chain
@@ -63661,6 +63860,7 @@
                   [(ResultTcUnit.Ok)
                     (tc-comptime-purity-node-mode
                       ctx
+                      expr-bases
                       env
                       (tc-comptime-purity-template-bound
                         template?
@@ -63675,6 +63875,7 @@
     [(ast.AstExpr.SpmdBroadcast value lane)
       (tc-comptime-purity-node2-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63685,6 +63886,7 @@
     [(ast.AstExpr.SpmdShuffle value lane)
       (tc-comptime-purity-node2-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63693,10 +63895,19 @@
         value
         lane)]
     [(ast.AstExpr.StructGet receiver _)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? receiver)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        receiver)]
     [(ast.AstExpr.StructSet receiver _ value)
       (tc-comptime-purity-node2-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63707,6 +63918,7 @@
     [(ast.AstExpr.WithRegion _ body)
       (tc-comptime-purity-expr-list-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63716,6 +63928,7 @@
     [(ast.AstExpr.WithEscape scratch body)
       (match (tc-comptime-purity-node-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63725,6 +63938,7 @@
         [(ResultTcUnit.Ok)
           (tc-comptime-purity-expr-list-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63735,6 +63949,7 @@
     [(ast.AstExpr.WithScratch body)
       (tc-comptime-purity-expr-list-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63744,6 +63959,7 @@
     [(ast.AstExpr.InArena arena body)
       (match (tc-comptime-purity-node-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63753,6 +63969,7 @@
         [(ResultTcUnit.Ok)
           (tc-comptime-purity-expr-list-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63765,6 +63982,7 @@
         [(ast.AstWithResource.WithResource bindings body)
           (match (tc-comptime-purity-resource-bindings-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63774,6 +63992,7 @@
             [(ResultTcStringList.Ok body-bound)
               (tc-comptime-purity-expr-list-mode
                 ctx
+                expr-bases
                 env
                 body-bound
                 chain
@@ -63782,14 +64001,39 @@
                 body)]
             [(ResultTcStringList.Err message) (ResultTcUnit.Err message)])])]
     [(ast.AstExpr.Box inner)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        inner)]
     [(ast.AstExpr.BoxGet inner)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        inner)]
     [(ast.AstExpr.BoxTake inner)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        inner)]
     [(ast.AstExpr.BoxSet inner value)
       (match (tc-comptime-purity-node-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63799,6 +64043,7 @@
         [(ResultTcUnit.Ok)
           (tc-comptime-purity-node-mode
             ctx
+            expr-bases
             env
             bound
             chain
@@ -63809,17 +64054,50 @@
     [(ast.AstExpr.TypeLiteral _) ResultTcUnit.Ok]
     [(ast.AstExpr.Init _) ResultTcUnit.Ok]
     [(ast.AstExpr.Comptime inner)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        inner)]
     [(ast.AstExpr.Quote _) ResultTcUnit.Ok]
     [(ast.AstExpr.Quasiquote inner)
-      (tc-comptime-purity-node-mode ctx env bound chain seen true inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        true
+        inner)]
     [(ast.AstExpr.Unquote inner)
-      (tc-comptime-purity-node-mode ctx env bound chain seen false inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        false
+        inner)]
     [(ast.AstExpr.UnquoteSplicing inner)
-      (tc-comptime-purity-node-mode ctx env bound chain seen false inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        false
+        inner)]
     [(ast.AstExpr.BracketClause items)
       (tc-comptime-purity-expr-list-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63827,9 +64105,25 @@
         template?
         items)]
     [(ast.AstExpr.Try inner)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        inner)]
     [(ast.AstExpr.Return inner)
-      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        inner)]
     [(ast.AstExpr.Break) ResultTcUnit.Ok]
     [(ast.AstExpr.Continue) ResultTcUnit.Ok]
     [(ast.AstExpr.PtrNull _)
@@ -63842,6 +64136,7 @@
     [(ast.AstExpr.PtrNullCheck inner)
       (tc-comptime-purity-reject-or-template-node
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63854,6 +64149,7 @@
     [(ast.AstExpr.PtrAddrOf place)
       (tc-comptime-purity-reject-or-template-node
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63866,6 +64162,7 @@
     [(ast.AstExpr.PtrRead ptr)
       (tc-comptime-purity-reject-or-template-node
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63878,6 +64175,7 @@
     [(ast.AstExpr.PtrWrite ptr value)
       (tc-comptime-purity-reject-or-template-node2
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63891,6 +64189,7 @@
     [(ast.AstExpr.PtrOffset ptr offset)
       (tc-comptime-purity-reject-or-template-node2
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63904,6 +64203,7 @@
     [(ast.AstExpr.PtrCast ptr _)
       (tc-comptime-purity-reject-or-template-node
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63916,6 +64216,7 @@
     [(ast.AstExpr.PtrToInt ptr)
       (tc-comptime-purity-reject-or-template-node
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63928,6 +64229,7 @@
     [(ast.AstExpr.IntToPtr value _)
       (tc-comptime-purity-reject-or-template-node
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63940,6 +64242,7 @@
     [(ast.AstExpr.StringData str)
       (tc-comptime-purity-reject-or-template-node
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63952,6 +64255,7 @@
     [(ast.AstExpr.StringFromBytes ptr len)
       (tc-comptime-purity-reject-or-template-node2
         ctx
+        expr-bases
         env
         bound
         chain
@@ -63965,6 +64269,7 @@
     [(ast.AstExpr.ArrayData array)
       (tc-comptime-purity-reject-or-template-node
         ctx
+        expr-bases
         env
         bound
         chain
@@ -64001,6 +64306,7 @@
     [(ast.AstExpr.CpuIdEax leaf subleaf)
       (tc-comptime-purity-reject-or-template-node2
         ctx
+        expr-bases
         env
         bound
         chain
@@ -64014,6 +64320,7 @@
     [(ast.AstExpr.CpuIdEbx leaf subleaf)
       (tc-comptime-purity-reject-or-template-node2
         ctx
+        expr-bases
         env
         bound
         chain
@@ -64027,6 +64334,7 @@
     [(ast.AstExpr.CpuIdEcx leaf subleaf)
       (tc-comptime-purity-reject-or-template-node2
         ctx
+        expr-bases
         env
         bound
         chain
@@ -64040,6 +64348,7 @@
     [(ast.AstExpr.CpuIdEdx leaf subleaf)
       (tc-comptime-purity-reject-or-template-node2
         ctx
+        expr-bases
         env
         bound
         chain
@@ -64053,6 +64362,7 @@
     [(ast.AstExpr.Xgetbv index)
       (tc-comptime-purity-reject-or-template-node
         ctx
+        expr-bases
         env
         bound
         chain
@@ -64064,11 +64374,20 @@
         index)]
     [(ast.AstExpr.Syscall args)
       (if template?
-        (tc-comptime-purity-expr-list-mode ctx env bound chain seen true args)
+        (tc-comptime-purity-expr-list-mode
+          ctx
+          expr-bases
+          env
+          bound
+          chain
+          seen
+          true
+          args)
         (tc-comptime-purity-error expr chain "syscall" "host syscall"))]))
 
 (define (tc-comptime-purity-var
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -64106,6 +64425,7 @@
                 (str_cat.str-cat "unsafe declaration " name))
               (tc-comptime-purity-var-handle
                 ctx
+                expr-bases
                 env
                 bound
                 chain
@@ -64115,6 +64435,7 @@
           [(ResultTcTypeUnsafe.Err _)
             (tc-comptime-purity-var-handle
               ctx
+              expr-bases
               env
               bound
               chain
@@ -64124,6 +64445,7 @@
 
 (define (tc-comptime-purity-var-handle
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -64170,6 +64492,7 @@
               (= kind (csym.compiler-symbol-kind-function-define)))
             (tc-comptime-purity-handle-decl
               ctx
+              expr-bases
               env
               bound
               chain
@@ -64182,6 +64505,7 @@
 
 (define (tc-comptime-purity-handle-decl
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [_bound : TcStringList]
   [chain : TcStringList]
@@ -64199,6 +64523,7 @@
         ResultTcUnit.Ok
         (tc-comptime-purity-decl
           ctx
+          expr-bases
           env
           (tc-comptime-purity-chain-push chain name)
           (tc-string-list-add seen name)
@@ -64206,6 +64531,7 @@
 
 (define (tc-comptime-purity-decl
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [chain : TcStringList]
   [seen : TcStringList]
@@ -64213,13 +64539,23 @@
   (match decl
     [(ast.AstDecl.Def decl-meta _ _ expr-box)
       (let
-        [expr : ast.AstExpr (ast.ast-node-get expr-box)]
-        (tc-comptime-purity-expr ctx env TcStringList.Nil chain seen expr))]
-    [(ast.AstDecl.DefFn decl-meta _ params _ body-box _)
-      (let
-        [body : ast.AstExpr (ast.ast-node-get body-box)]
+        [expr : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases expr-box)]
         (tc-comptime-purity-expr
           ctx
+          expr-bases
+          env
+          TcStringList.Nil
+          chain
+          seen
+          expr))]
+    [(ast.AstDecl.DefFn decl-meta _ params _ body-box _)
+      (let
+        [body : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases body-box)]
+        (tc-comptime-purity-expr
+          ctx
+          expr-bases
           env
           (tc-param-bound-names params)
           chain
@@ -64249,12 +64585,14 @@
 
 (define (tc-check-defmacro-purity
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [name : i64]
   [params : ast.AstMacroParamList]
   [body : ast.AstExpr]) : ResultTcUnit
   (tc-comptime-purity-expr
     ctx
+    expr-bases
     env
     (tc-macro-param-bound-names params)
     (tc-comptime-purity-chain-push TcStringList.Nil (tc-env-key-name-text name))
@@ -67485,8 +67823,13 @@
       (ctfe_support.ctfe-comptime-helper-call-name-id
         (macro-hygiene-global-source-name-id-or session raw-id raw-id)))))
 
-(define (tc-macro-abstract-arg [args : (& args ast.AstExprList)] [index : i64]) : ast.AstExpr
-  (ast.ast-node-get (ast.ast-expr-list-get args index 0)))
+(define (tc-macro-abstract-arg
+  [expr-bases : i64]
+  [args : (& args ast.AstExprList)]
+  [index : i64]) : ast.AstExpr
+  (ast.ast-expr-segment-bases-get
+    expr-bases
+    (ast.ast-expr-list-get args index 0)))
 
 (define (tc-macro-abstract-alias-marker [name : String]) : String
   (str_cat.str-cat " abstract type alias " name))
@@ -67542,6 +67885,7 @@
 
 (define (tc-macro-abstract-cleanup-owning-call?
   [state : TcMacroState]
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [bound : TcStringList]) : bool
   (match (ast.ast-expr-unspan expr)
@@ -67550,13 +67894,13 @@
         (=
           (tc-macro-abstract-call-id
             (tc-macro-state-structural-session state)
-            (ast.ast-node-get func)
+            (ast.ast-expr-segment-bases-get expr-bases func)
             bound)
           (cbi.compiler-builtin-ctfe-ref 210))
         (= args.len 1)
         (tc-macro-abstract-param-var?
           state
-          (tc-macro-abstract-arg (& args) 0)
+          (tc-macro-abstract-arg expr-bases (& args) 0)
           bound))]
     [_ false]))
 
@@ -67731,6 +68075,7 @@
 
 (define (tc-macro-abstract-check-current-call
   [state : TcMacroState]
+  [expr-bases : i64]
   [bound : TcStringList]
   [template? : bool]
   [expr : ast.AstExpr]
@@ -67752,7 +68097,7 @@
             (ctfe_support.ctfe-builtin-offset-of-id? call-id))
           (tc-macro-abstract-param-var?
             state
-            (tc-macro-abstract-arg (& args) 0)
+            (tc-macro-abstract-arg expr-bases (& args) 0)
             bound)
           (not (tc-macro-abstract-reflection-supported? state call-id)))
           (let
@@ -67785,6 +68130,7 @@
 
 (define (tc-macro-abstract-type-kind-param?
   [state : TcMacroState]
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [bound : TcStringList]) : bool
   (match (ast.ast-expr-unspan expr)
@@ -67793,42 +68139,50 @@
         (=
           (tc-macro-abstract-call-id
             (tc-macro-state-structural-session state)
-            (ast.ast-node-get func)
+            (ast.ast-expr-segment-bases-get expr-bases func)
             bound)
           (cbi.compiler-builtin-ctfe-ref 71))
         (= args.len 1)
         (tc-macro-abstract-param-var?
           state
-          (tc-macro-abstract-arg (& args) 0)
+          (tc-macro-abstract-arg expr-bases (& args) 0)
           bound))]
     [_ false]))
 
 (define (tc-macro-abstract-kind-equality
   [state : TcMacroState]
+  [expr-bases : i64]
   [left : ast.AstExpr]
   [right : ast.AstExpr]
   [bound : TcStringList]) : TcMacroAbstractGuard
-  (if (tc-macro-abstract-type-kind-param? state left bound)
+  (if (tc-macro-abstract-type-kind-param? state expr-bases left bound)
     (tc-macro-abstract-kind-literal right)
-    (if (tc-macro-abstract-type-kind-param? state right bound)
+    (if (tc-macro-abstract-type-kind-param? state expr-bases right bound)
       (tc-macro-abstract-kind-literal left)
       TcMacroAbstractGuard.No)))
 
 (define (tc-macro-abstract-guard
   [state : TcMacroState]
+  [expr-bases : i64]
   [cond-expr : ast.AstExpr]
   [bound : TcStringList]) : TcMacroAbstractGuard
   (match (ast.ast-expr-unspan cond-expr)
     [(ast.AstExpr.Binary (ast.AstBinOp.Eq) left right)
       (tc-macro-abstract-kind-equality
         state
-        (ast.ast-node-get left)
-        (ast.ast-node-get right)
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases left)
+        (ast.ast-expr-segment-bases-get expr-bases right)
         bound)]
     [(ast.AstExpr.Call func args)
       (let
-        [raw-id : i64 (tc-expr-var-name-id (ast.ast-node-get func))]
-        (if (tc-macro-abstract-cleanup-owning-call? state cond-expr bound)
+        [raw-id : i64
+          (tc-expr-var-name-id (ast.ast-expr-segment-bases-get expr-bases func))]
+        (if (tc-macro-abstract-cleanup-owning-call?
+          state
+          expr-bases
+          cond-expr
+          bound)
           TcMacroAbstractGuard.CleanupOwning
           (if (and
             (= args.len 2)
@@ -67843,14 +68197,16 @@
                 raw-id)))
             (tc-macro-abstract-kind-equality
               state
-              (tc-macro-abstract-arg (& args) 0)
-              (tc-macro-abstract-arg (& args) 1)
+              expr-bases
+              (tc-macro-abstract-arg expr-bases (& args) 0)
+              (tc-macro-abstract-arg expr-bases (& args) 1)
               bound)
             TcMacroAbstractGuard.No)))]
     [_ TcMacroAbstractGuard.No]))
 
 (define (tc-macro-abstract-purity-node-with-mask
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -67866,7 +68222,15 @@
       (tc-macro-abstract-state-data-set! state abstract)
       (let
         [result : ResultTcUnit
-          (tc-comptime-purity-node-mode ctx env bound chain seen false expr-id)]
+          (tc-comptime-purity-node-mode
+            ctx
+            expr-bases
+            env
+            bound
+            chain
+            seen
+            false
+            expr-id)]
         (begin
           (set! abstract.kind-mask saved)
           (tc-macro-abstract-state-data-set! state abstract)
@@ -67874,6 +68238,7 @@
 
 (define (tc-macro-abstract-purity-node-with-cleanup-mask
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -67889,7 +68254,15 @@
       (tc-macro-abstract-state-data-set! state abstract)
       (let
         [result : ResultTcUnit
-          (tc-comptime-purity-node-mode ctx env bound chain seen false expr-id)]
+          (tc-comptime-purity-node-mode
+            ctx
+            expr-bases
+            env
+            bound
+            chain
+            seen
+            false
+            expr-id)]
         (begin
           (set! abstract.cleanup-owning-mask saved)
           (tc-macro-abstract-state-data-set! state abstract)
@@ -67897,6 +68270,7 @@
 
 (define (tc-comptime-purity-if-mode
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [chain : TcStringList]
@@ -67911,6 +68285,7 @@
     (if (or (not abstract.active) template?)
       (tc-comptime-purity-node3-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -67921,6 +68296,7 @@
         else-id)
       (match (tc-comptime-purity-node-mode
         ctx
+        expr-bases
         env
         bound
         chain
@@ -67930,11 +68306,13 @@
         [(ResultTcUnit.Ok)
           (match (tc-macro-abstract-guard
             state
-            (ast.ast-node-get cond-id)
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases cond-id)
             bound)
             [(TcMacroAbstractGuard.No)
               (tc-comptime-purity-node2-mode
                 ctx
+                expr-bases
                 env
                 bound
                 chain
@@ -67947,6 +68325,7 @@
                 [kind-bit : i64 (tc-macro-abstract-kind-bit kind)]
                 (match (tc-macro-abstract-purity-node-with-mask
                   ctx
+                  expr-bases
                   env
                   bound
                   chain
@@ -67956,6 +68335,7 @@
                   [(ResultTcUnit.Ok)
                     (tc-macro-abstract-purity-node-with-mask
                       ctx
+                      expr-bases
                       env
                       bound
                       chain
@@ -67966,6 +68346,7 @@
             [(TcMacroAbstractGuard.CleanupOwning)
               (match (tc-macro-abstract-purity-node-with-cleanup-mask
                 ctx
+                expr-bases
                 env
                 bound
                 chain
@@ -67975,6 +68356,7 @@
                 [(ResultTcUnit.Ok)
                   (tc-macro-abstract-purity-node-with-cleanup-mask
                     ctx
+                    expr-bases
                     env
                     bound
                     chain
@@ -67986,6 +68368,7 @@
 
 (define (tc-check-defmacro-abstract-param
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [macro-name : String]
   [macro-key : String]
@@ -68008,6 +68391,7 @@
         [result : ResultTcUnit
           (tc-comptime-purity-expr
             ctx
+            expr-bases
             env
             TcStringList.Nil
             (tc-comptime-purity-chain-push
@@ -68031,6 +68415,7 @@
 
 (define (tc-check-defmacro-abstract-type-params-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [macro-name : String]
   [macro-key : String]
@@ -68049,6 +68434,7 @@
           (not (ast.ast-macro-type-kind-list-empty? (& type-kinds))))
           (tc-check-defmacro-abstract-param
             ctx
+            expr-bases
             env
             macro-name
             macro-key
@@ -68059,6 +68445,7 @@
           [(ResultTcUnit.Ok)
             (tc-check-defmacro-abstract-type-params-at
               ctx
+              expr-bases
               env
               macro-name
               macro-key
@@ -68069,6 +68456,7 @@
 
 (define (tc-check-defmacro-abstract-type-params
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [name : i64]
   [params : ast.AstMacroParamList]
@@ -68082,6 +68470,7 @@
     [result : ResultTcUnit
       (tc-check-defmacro-abstract-type-params-at
         ctx
+        expr-bases
         env
         (tc-env-key-name-text name)
         macro-key
@@ -69034,6 +69423,7 @@
   [template : ast.AstDecl]) : ResultTcUnit
   (tc-comptime-purity-decl
     ctx
+    (tc-context-expr-bases ctx)
     env
     (tc-comptime-purity-chain-push TcStringList.Nil "comptime-decl")
     TcStringList.Nil
@@ -69047,6 +69437,7 @@
   [ret : ast.AstType]
   [body : ast.AstExpr]) : ResultTcUnit
   (let
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
     [macro-env : TcTypeEnv
       (tc-bind-macro-params
         ctx
@@ -69055,12 +69446,19 @@
     [expr-result : ResultTcType (tc-expr ctx macro-env body)]
     (match expr-result
       [(ResultTcType.Ok got)
-        (match (tc-check-defmacro-purity ctx macro-env name params body)
+        (match (tc-check-defmacro-purity
+          ctx
+          expr-bases
+          macro-env
+          name
+          params
+          body)
           [(ResultTcUnit.Ok)
             (let
               [abstract-result : ResultTcUnit
                 (tc-check-defmacro-abstract-type-params
                   ctx
+                  expr-bases
                   macro-env
                   name
                   params
@@ -109468,7 +109866,11 @@
                 (ast.ast-decl-meta-runtime-shared-view)
                 decl)]
             [uses-macro : bool
-              (macro-decl-uses-macro? decl-ctx orig-decls template)]
+              (macro-decl-uses-macro?
+                decl-ctx
+                (tc-context-expr-bases decl-ctx)
+                orig-decls
+                template)]
             (if (not uses-macro)
               (macro-single-decl-expansion
                 (tc-context-macro-state ctx)
@@ -110150,35 +110552,50 @@
 
 (define (macro-node-uses-macro?
   [ctx : TcContext]
+  [expr-bases : i64]
   [decls : ast.AstDeclList]
   [id : i64]) : bool
-  (macro-expr-uses-macro? ctx decls (ast.ast-node-get id)))
+  ;; This conservative inspection runs before expansion and never installs.
+  ;; Its caller snapshots one owner for the complete declaration walk.
+  (macro-expr-uses-macro?
+    ctx
+    expr-bases
+    decls
+    (ast.ast-expr-segment-bases-get expr-bases id)))
 
 (define (macro-exprs-use-macro?
   [ctx : TcContext]
+  [expr-bases : i64]
   [decls : ast.AstDeclList]
   [exprs : ast.AstExprList]) : bool
-  (macro-exprs-use-macro-at? ctx decls (& exprs) 0))
+  (macro-exprs-use-macro-at? ctx expr-bases decls (& exprs) 0))
 
 (define (macro-exprs-use-macro-at?
   [ctx : TcContext]
+  [expr-bases : i64]
   [decls : ast.AstDeclList]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : bool
   (if (>= index exprs.len)
     false
     (or
-      (macro-node-uses-macro? ctx decls (ast.ast-expr-list-get exprs index 0))
-      (macro-exprs-use-macro-at? ctx decls exprs (+ index 1)))))
+      (macro-node-uses-macro?
+        ctx
+        expr-bases
+        decls
+        (ast.ast-expr-list-get exprs index 0))
+      (macro-exprs-use-macro-at? ctx expr-bases decls exprs (+ index 1)))))
 
 (define (macro-arms-use-macro?
   [ctx : TcContext]
+  [expr-bases : i64]
   [decls : ast.AstDeclList]
   [arms : ast.AstMatchArmList]) : bool
-  (macro-arms-use-macro-at? ctx decls (& arms) 0))
+  (macro-arms-use-macro-at? ctx expr-bases decls (& arms) 0))
 
 (define (macro-arms-use-macro-at?
   [ctx : TcContext]
+  [expr-bases : i64]
   [decls : ast.AstDeclList]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : bool
@@ -110190,17 +110607,19 @@
         index
         (ast.ast-match-arm-fallback))
         [(ast.AstMatchArm.Arm _ body-box)
-          (macro-node-uses-macro? ctx decls body-box)])
-      (macro-arms-use-macro-at? ctx decls arms (+ index 1)))))
+          (macro-node-uses-macro? ctx expr-bases decls body-box)])
+      (macro-arms-use-macro-at? ctx expr-bases decls arms (+ index 1)))))
 
 (define (macro-bindings-use-macro?
   [ctx : TcContext]
+  [expr-bases : i64]
   [decls : ast.AstDeclList]
   [bindings : ast.AstLetBindingList]) : bool
-  (macro-bindings-use-macro-at? ctx decls (& bindings) 0))
+  (macro-bindings-use-macro-at? ctx expr-bases decls (& bindings) 0))
 
 (define (macro-bindings-use-macro-at?
   [ctx : TcContext]
+  [expr-bases : i64]
   [decls : ast.AstDeclList]
   [bindings : (& bindings ast.AstLetBindingList)]
   [index : i64]) : bool
@@ -110212,177 +110631,191 @@
         index
         (ast.ast-let-binding-fallback))
         [(ast.AstLetBinding.Binding _ _ init-box)
-          (macro-node-uses-macro? ctx decls init-box)])
-      (macro-bindings-use-macro-at? ctx decls bindings (+ index 1)))))
+          (macro-node-uses-macro? ctx expr-bases decls init-box)])
+      (macro-bindings-use-macro-at? ctx expr-bases decls bindings (+ index 1)))))
 
 (define (macro-expr-uses-macro?
   [ctx : TcContext]
+  [expr-bases : i64]
   [decls : ast.AstDeclList]
   [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
-      (macro-node-uses-macro? ctx decls inner-box)]
+      (macro-node-uses-macro? ctx expr-bases decls inner-box)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (macro-node-uses-macro? ctx decls inner-box)]
+      (macro-node-uses-macro? ctx expr-bases decls inner-box)]
     [(ast.AstExpr.Literal _) false]
     [(ast.AstExpr.Var _) false]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
+        [func : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases func-box)]
         (or
           (macro-call-is-expandable? ctx decls func expr)
-          (macro-expr-uses-macro? ctx decls func)
-          (macro-exprs-use-macro? ctx decls args)))]
-    [(ast.AstExpr.BracketClause items) (macro-exprs-use-macro? ctx decls items)]
+          (macro-expr-uses-macro? ctx expr-bases decls func)
+          (macro-exprs-use-macro? ctx expr-bases decls args)))]
+    [(ast.AstExpr.BracketClause items)
+      (macro-exprs-use-macro? ctx expr-bases decls items)]
     [(ast.AstExpr.Binary _ l r)
       (or
-        (macro-node-uses-macro? ctx decls l)
-        (macro-node-uses-macro? ctx decls r))]
-    [(ast.AstExpr.Unary _ i) (macro-node-uses-macro? ctx decls i)]
+        (macro-node-uses-macro? ctx expr-bases decls l)
+        (macro-node-uses-macro? ctx expr-bases decls r))]
+    [(ast.AstExpr.Unary _ i) (macro-node-uses-macro? ctx expr-bases decls i)]
     [(ast.AstExpr.If c t e)
       (or
-        (macro-node-uses-macro? ctx decls c)
-        (macro-node-uses-macro? ctx decls t)
-        (macro-node-uses-macro? ctx decls e))]
+        (macro-node-uses-macro? ctx expr-bases decls c)
+        (macro-node-uses-macro? ctx expr-bases decls t)
+        (macro-node-uses-macro? ctx expr-bases decls e))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (or
-            (macro-bindings-use-macro? ctx decls bindings)
-            (macro-node-uses-macro? ctx decls body))])]
+            (macro-bindings-use-macro? ctx expr-bases decls bindings)
+            (macro-node-uses-macro? ctx expr-bases decls body))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body)
-          (macro-node-uses-macro? ctx decls body)])]
-    [(ast.AstExpr.Tuple exprs) (macro-exprs-use-macro? ctx decls exprs)]
+          (macro-node-uses-macro? ctx expr-bases decls body)])]
+    [(ast.AstExpr.Tuple exprs)
+      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
     [(ast.AstExpr.TupleRef a b)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls b))]
-    [(ast.AstExpr.Array exprs) (macro-exprs-use-macro? ctx decls exprs)]
-    [(ast.AstExpr.DynArray exprs) (macro-exprs-use-macro? ctx decls exprs)]
-    [(ast.AstExpr.MakeArray _ len) (macro-node-uses-macro? ctx decls len)]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls b))]
+    [(ast.AstExpr.Array exprs)
+      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
+    [(ast.AstExpr.DynArray exprs)
+      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
+    [(ast.AstExpr.MakeArray _ len)
+      (macro-node-uses-macro? ctx expr-bases decls len)]
     [(ast.AstExpr.ArrayRef a i)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls i))]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls i))]
     [(ast.AstExpr.ArraySet a i v)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls i)
-        (macro-node-uses-macro? ctx decls v))]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls i)
+        (macro-node-uses-macro? ctx expr-bases decls v))]
     [(ast.AstExpr.ArrayTake a l i)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls l)
-        (macro-node-uses-macro? ctx decls i))]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls l)
+        (macro-node-uses-macro? ctx expr-bases decls i))]
     [(ast.AstExpr.FixedArrayTake a i)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls i))]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls i))]
     [(ast.AstExpr.Replace place replacement)
       (or
-        (macro-node-uses-macro? ctx decls place)
-        (macro-node-uses-macro? ctx decls replacement))]
+        (macro-node-uses-macro? ctx expr-bases decls place)
+        (macro-node-uses-macro? ctx expr-bases decls replacement))]
     [(ast.AstExpr.ArrayPush a v)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls v))]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls v))]
     [(ast.AstExpr.StringRef a b)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls b))]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls b))]
     [(ast.AstExpr.While c b)
       (or
-        (macro-node-uses-macro? ctx decls c)
-        (macro-node-uses-macro? ctx decls b))]
-    [(ast.AstExpr.Begin exprs) (macro-exprs-use-macro? ctx decls exprs)]
-    [(ast.AstExpr.Unsafe exprs) (macro-exprs-use-macro? ctx decls exprs)]
-    [(ast.AstExpr.Set _ rhs) (macro-node-uses-macro? ctx decls rhs)]
-    [(ast.AstExpr.Ann i _) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.Cast i _) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.Borrow _ _ i) (macro-node-uses-macro? ctx decls i)]
+        (macro-node-uses-macro? ctx expr-bases decls c)
+        (macro-node-uses-macro? ctx expr-bases decls b))]
+    [(ast.AstExpr.Begin exprs)
+      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
+    [(ast.AstExpr.Unsafe exprs)
+      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
+    [(ast.AstExpr.Set _ rhs) (macro-node-uses-macro? ctx expr-bases decls rhs)]
+    [(ast.AstExpr.Ann i _) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.Cast i _) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.Borrow _ _ i) (macro-node-uses-macro? ctx expr-bases decls i)]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut arms)
           (or
-            (macro-node-uses-macro? ctx decls scrut)
-            (macro-arms-use-macro? ctx decls arms))])]
+            (macro-node-uses-macro? ctx expr-bases decls scrut)
+            (macro-arms-use-macro? ctx expr-bases decls arms))])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ s e b)
           (or
-            (macro-node-uses-macro? ctx decls s)
-            (macro-node-uses-macro? ctx decls e)
-            (macro-node-uses-macro? ctx decls b))])]
-    [(ast.AstExpr.StructGet i _) (macro-node-uses-macro? ctx decls i)]
+            (macro-node-uses-macro? ctx expr-bases decls s)
+            (macro-node-uses-macro? ctx expr-bases decls e)
+            (macro-node-uses-macro? ctx expr-bases decls b))])]
+    [(ast.AstExpr.StructGet i _)
+      (macro-node-uses-macro? ctx expr-bases decls i)]
     [(ast.AstExpr.StructSet i _ v)
       (or
-        (macro-node-uses-macro? ctx decls i)
-        (macro-node-uses-macro? ctx decls v))]
+        (macro-node-uses-macro? ctx expr-bases decls i)
+        (macro-node-uses-macro? ctx expr-bases decls v))]
     [(ast.AstExpr.WithEscape i exprs)
       (or
-        (macro-node-uses-macro? ctx decls i)
-        (macro-exprs-use-macro? ctx decls exprs))]
-    [(ast.AstExpr.WithScratch exprs) (macro-exprs-use-macro? ctx decls exprs)]
+        (macro-node-uses-macro? ctx expr-bases decls i)
+        (macro-exprs-use-macro? ctx expr-bases decls exprs))]
+    [(ast.AstExpr.WithScratch exprs)
+      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
     [(ast.AstExpr.InArena i exprs)
       (or
-        (macro-node-uses-macro? ctx decls i)
-        (macro-exprs-use-macro? ctx decls exprs))]
-    [(ast.AstExpr.Box i) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.BoxGet i) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.BoxTake i) (macro-node-uses-macro? ctx decls i)]
+        (macro-node-uses-macro? ctx expr-bases decls i)
+        (macro-exprs-use-macro? ctx expr-bases decls exprs))]
+    [(ast.AstExpr.Box i) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.BoxGet i) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.BoxTake i) (macro-node-uses-macro? ctx expr-bases decls i)]
     [(ast.AstExpr.BoxSet i v)
       (or
-        (macro-node-uses-macro? ctx decls i)
-        (macro-node-uses-macro? ctx decls v))]
-    [(ast.AstExpr.Comptime i) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.Try i) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.Return i) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.PtrNullCheck i) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.PtrRead i) (macro-node-uses-macro? ctx decls i)]
+        (macro-node-uses-macro? ctx expr-bases decls i)
+        (macro-node-uses-macro? ctx expr-bases decls v))]
+    [(ast.AstExpr.Comptime i) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.Try i) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.Return i) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.PtrNullCheck i)
+      (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.PtrRead i) (macro-node-uses-macro? ctx expr-bases decls i)]
     [(ast.AstExpr.PtrWrite a b)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls b))]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls b))]
     [(ast.AstExpr.PtrOffset a b)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls b))]
-    [(ast.AstExpr.PtrCast i _) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.PtrToInt i) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.IntToPtr i _) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.StringData i) (macro-node-uses-macro? ctx decls i)]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls b))]
+    [(ast.AstExpr.PtrCast i _) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.PtrToInt i) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.IntToPtr i _) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.StringData i) (macro-node-uses-macro? ctx expr-bases decls i)]
     [(ast.AstExpr.StringFromBytes a b)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls b))]
-    [(ast.AstExpr.ArrayData i) (macro-node-uses-macro? ctx decls i)]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls b))]
+    [(ast.AstExpr.ArrayData i) (macro-node-uses-macro? ctx expr-bases decls i)]
     [(ast.AstExpr.BinaryData _) false]
     [(ast.AstExpr.SpmdProgramIndex) false]
     [(ast.AstExpr.SpmdProgramCount) false]
     [(ast.AstExpr.CpuIdEax a b)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls b))]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls b))]
     [(ast.AstExpr.CpuIdEbx a b)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls b))]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls b))]
     [(ast.AstExpr.CpuIdEcx a b)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls b))]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls b))]
     [(ast.AstExpr.CpuIdEdx a b)
       (or
-        (macro-node-uses-macro? ctx decls a)
-        (macro-node-uses-macro? ctx decls b))]
-    [(ast.AstExpr.Xgetbv i) (macro-node-uses-macro? ctx decls i)]
-    [(ast.AstExpr.Syscall exprs) (macro-exprs-use-macro? ctx decls exprs)]
+        (macro-node-uses-macro? ctx expr-bases decls a)
+        (macro-node-uses-macro? ctx expr-bases decls b))]
+    [(ast.AstExpr.Xgetbv i) (macro-node-uses-macro? ctx expr-bases decls i)]
+    [(ast.AstExpr.Syscall exprs)
+      (macro-exprs-use-macro? ctx expr-bases decls exprs)]
     [(ast.AstExpr.TypeLiteral _) false]
     [(ast.AstExpr.Init _) false]
     [(ast.AstExpr.PtrNull _) false]
-    [(ast.AstExpr.PtrAddrOf place) (macro-node-uses-macro? ctx decls place)]
+    [(ast.AstExpr.PtrAddrOf place)
+      (macro-node-uses-macro? ctx expr-bases decls place)]
     [(ast.AstExpr.SpmdProgramIndex) false]
     [(ast.AstExpr.SpmdProgramCount) false]
     [(ast.AstExpr.ProgramArgc) false]
@@ -110392,13 +110825,14 @@
 
 (define (macro-decl-uses-macro?
   [ctx : TcContext]
+  [expr-bases : i64]
   [decls : ast.AstDeclList]
   [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.Def decl-meta _ _ expr-box)
-      (macro-node-uses-macro? ctx decls expr-box)]
+      (macro-node-uses-macro? ctx expr-bases decls expr-box)]
     [(ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
-      (macro-node-uses-macro? ctx decls body-box)]
+      (macro-node-uses-macro? ctx expr-bases decls body-box)]
     [(ast.AstDecl.Test _ _ _) true]
     [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind _ _ _ _))
       (match kind
@@ -110406,8 +110840,106 @@
         [(ast.AstImportKind.MacroDecls _ _) true]
         [_ false])]
     [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-uses-macro? ctx decls (__tl-box-place inner-box))]
+      (macro-decl-uses-macro? ctx expr-bases decls (__tl-box-place inner-box))]
     [_ false]))
+
+(test
+  tc-noninstalling-expression-walk-pool-isolation
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [literal-a : i64
+      (ast.ast-node-pool-context-expr-push
+        pools-a
+        (ast.AstExpr.Literal (ast.AstLiteral.Int 7 "7")))]
+    [macro-a : i64
+      (ast.ast-node-pool-context-expr-push
+        pools-a
+        (ast.AstExpr.Literal (ast.AstLiteral.Int 8 "8")))]
+    [literal-b : i64
+      (ast.ast-node-pool-context-expr-push
+        pools-b
+        (ast.AstExpr.Unsafe (ast.ast-expr-list-new)))]
+    [macro-b : i64
+      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Quasiquote 0))]
+    [ctx-a : TcContext
+      (tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools-a)]
+    [_install-decoy : unit (ast.ast-node-pool-context-install! pools-b)]
+    [expr-bases-a : i64 (tc-context-expr-bases ctx-a)]
+    [expr-bases-b : i64 (ast.ast-node-pool-context-expr-segment-bases pools-b)]
+    [env : TcTypeEnv (tc-type-env-new)]
+    [decls : ast.AstDeclList (ast.ast-decl-list-new)]
+    [literal-a-ok? : bool
+      (match (tc-integer-literal-expr-with-expected-with-bases
+        ctx-a
+        expr-bases-a
+        (ast.AstExpr.Spanned literal-a (ast.ast-source-span 1 1 1 2))
+        (ast.AstType.I64))
+        [(ResultTcType.Ok (ast.AstType.I64)) true]
+        [_ false])]
+    [literal-b-differs? : bool
+      (match (tc-integer-literal-expr-with-expected-with-bases
+        ctx-a
+        expr-bases-b
+        (ast.AstExpr.Spanned literal-b (ast.ast-source-span 1 1 1 2))
+        (ast.AstType.I64))
+        [(ResultTcType.Ok (ast.AstType.I32)) true]
+        [_ false])]
+    [purity-a-ok? : bool
+      (match (tc-comptime-purity-node-mode
+        ctx-a
+        expr-bases-a
+        env
+        TcStringList.Nil
+        TcStringList.Nil
+        TcStringList.Nil
+        false
+        literal-a)
+        [(ResultTcUnit.Ok) true]
+        [_ false])]
+    [purity-b-differs? : bool
+      (match (tc-comptime-purity-node-mode
+        ctx-a
+        expr-bases-b
+        env
+        TcStringList.Nil
+        TcStringList.Nil
+        TcStringList.Nil
+        false
+        literal-b)
+        [(ResultTcUnit.Err _) true]
+        [_ false])]
+    [macro-a-ok? : bool
+      (not (macro-node-uses-macro? ctx-a expr-bases-a decls macro-a))]
+    [macro-b-differs? : bool
+      (macro-node-uses-macro? ctx-a expr-bases-b decls macro-b)]
+    [decoy-still-installed? : bool
+      (ast.ast-node-pool-context-expr-installed? pools-b)]
+    (begin
+      (ast.ast-node-pool-context-install! installed)
+      (if (and
+        (= literal-a literal-b)
+        (= macro-a macro-b)
+        literal-a-ok?
+        literal-b-differs?
+        purity-a-ok?
+        purity-b-differs?
+        macro-a-ok?
+        macro-b-differs?
+        decoy-still-installed?)
+        unit
+        (io.panic
+          "typecheck: noninstalling expression walk pool isolation failed")))))
 
 ;; `macro-decl-uses-macro?` is also a conservative inspection gate: tests take
 ;; that path even though production macro expansion shares them verbatim.  Keep

@@ -121,12 +121,15 @@
   0)
 (define compiler-parse-semantic-origin-capture-decl-slot : i64
   0)
+(define compiler-parse-semantic-quote-depth : i64
+  0)
 
 (define (compiler-parse-decl-origin-cache-reset!) : unit
   (begin
     (set! compiler-parse-semantic-origin-capture-active false)
     (set! compiler-parse-semantic-origin-capture-vec-addr 0)
-    (set! compiler-parse-semantic-origin-capture-decl-slot 0)))
+    (set! compiler-parse-semantic-origin-capture-decl-slot 0)
+    (set! compiler-parse-semantic-quote-depth 0)))
 
 (define (compiler-parse-token-span-from-ast-span [span : ast.AstSourceSpan]) : token.SourceSpan
   (token.SourceSpan
@@ -250,25 +253,27 @@
   [kind : CompilerParseSemanticOriginKind]
   [written-name : i64]
   [span : token.SourceSpan]) : unit
-  (unsafe
-    (let
-      [items-ptr : (MutPtr ParseSemanticOriginVec)
-        (int->ptr
-          (cast compiler-parse-semantic-origin-capture-vec-addr : u64)
-          : (MutPtr ParseSemanticOriginVec))]
-      [items : ParseSemanticOriginVec (ptr-read items-ptr)]
-      (begin
-        (parse-semantic-origin-vec-push!
-          (&mut items)
-          (ParseSemanticOriginRecord
-            compiler-parse-semantic-origin-capture-decl-slot
-            (compiler-parse-semantic-origin-kind-tag kind)
-            written-name
-            (token.span-start-line span)
-            (token.span-start-col span)
-            (token.span-end-line span)
-            (token.span-end-col span)))
-        (ptr-write! items-ptr items)))))
+  (if (> compiler-parse-semantic-quote-depth 0)
+    unit
+    (unsafe
+      (let
+        [items-ptr : (MutPtr ParseSemanticOriginVec)
+          (int->ptr
+            (cast compiler-parse-semantic-origin-capture-vec-addr : u64)
+            : (MutPtr ParseSemanticOriginVec))]
+        [items : ParseSemanticOriginVec (ptr-read items-ptr)]
+        (begin
+          (parse-semantic-origin-vec-push!
+            (&mut items)
+            (ParseSemanticOriginRecord
+              compiler-parse-semantic-origin-capture-decl-slot
+              (compiler-parse-semantic-origin-kind-tag kind)
+              written-name
+              (token.span-start-line span)
+              (token.span-start-col span)
+              (token.span-end-line span)
+              (token.span-end-col span)))
+          (ptr-write! items-ptr items))))))
 
 (define (compiler-parse-semantic-origin-push!
   [kind : CompilerParseSemanticOriginKind]
@@ -8097,9 +8102,19 @@
         [(reader.SpannedSexprView.Nil _)
           (let
             [saved-depth : i64 compiler-parse-quote-depth]
+            [saved-semantic-depth : i64 compiler-parse-semantic-quote-depth]
             [result : ResultAstExpr
               (begin
                 (set! compiler-parse-quote-depth (+ saved-depth 1))
+                (set!
+                  compiler-parse-semantic-quote-depth
+                  (if (or
+                    (= tag (compiler-parse-tag-expr-unquote))
+                    (= tag (compiler-parse-tag-expr-unquote-splicing)))
+                    (if (> saved-semantic-depth 0)
+                      (- saved-semantic-depth 1)
+                      0)
+                    (+ saved-semantic-depth 1)))
                 (match (parse-ast-expr-with-pools dispatch pools expr)
                   [(ResultAstExpr.Ok parsed)
                     (cond
@@ -8120,6 +8135,7 @@
                   [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))]
             (begin
               (set! compiler-parse-quote-depth saved-depth)
+              (set! compiler-parse-semantic-quote-depth saved-semantic-depth)
               result))]
         [_
           (ResultAstExpr.Err "parse: quote form expects exactly one expression")])]

@@ -596,6 +596,68 @@
       (compiler_parse_core.compiler-parse-decl-origin-cache-reset!)
       ok)))
 
+(define (compiler-parse-semantic-origin-quote-depth-ok?) : bool
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    [ok : bool false]
+    (begin
+      (match (compiler_parse_core.parse-ast-source
+        "(define q
+  (quasiquote
+    (ignored.field
+      (unquote live.field))))")
+        [(compiler_parse_core.ResultAstProgram.Ok
+            (ast.AstProgram.Program decls-box))
+          (let
+            [decls : ast.AstDeclList (__tl-box-place decls-box)]
+            (set!
+              ok
+              (and
+                ;; Quoted dotted syntax is inert, while an unquote resumes
+                ;; editable source-origin capture at the matching depth.
+                (compiler-parse-test-semantic-origin-ok?
+                  (& decls)
+                  0
+                  0
+                  3
+                  "__tl_semantic_origin_value_qualifier"
+                  "live"
+                  4
+                  16
+                  4
+                  20)
+                (compiler-parse-test-semantic-origin-ok?
+                  (& decls)
+                  0
+                  1
+                  3
+                  "__tl_semantic_origin_value_name"
+                  "field"
+                  4
+                  21
+                  4
+                  26)
+                (compiler-parse-test-semantic-origin-ok?
+                  (& decls)
+                  0
+                  2
+                  3
+                  "__tl_semantic_origin_struct_field_use"
+                  "field"
+                  4
+                  21
+                  4
+                  26))))]
+        [(compiler_parse_core.ResultAstProgram.Err message)
+          (io.print-error
+            (str_cat.str-cat
+              "semantic origin quote-depth parse failed: "
+              message
+              "\n"))])
+      (reader.sp-node-pool-truncate! mark)
+      (compiler_parse_core.compiler-parse-decl-origin-cache-reset!)
+      ok)))
+
 (define (compiler-parse-semantic-origin-aliases-ok?) : bool
   (let
     [mark : i64 (reader.sp-node-pool-len)]
@@ -1084,6 +1146,7 @@
       (= (compiler_diagnostic_tests.compiler-diagnostic-self-test) 42)
       (compiler-parse-test-decl-origin-records-ok?)
       (compiler-parse-semantic-origin-categories-ok?)
+      (compiler-parse-semantic-origin-quote-depth-ok?)
       (compiler-parse-semantic-origin-aliases-ok?)
       (compiler-parse-semantic-origin-nested-module-ok?)
       (compiler-parse-semantic-origin-growth-reset-ok?)

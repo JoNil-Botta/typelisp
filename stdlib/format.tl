@@ -74,7 +74,10 @@
       "format: dynamic width argument must be nonnegative")
     count))
 
-;; Caller guarantees the destination range is live and large enough.
+;: Fill a caller-validated live destination byte range.
+;:
+;: The caller must guarantee that `[start, start + count)` is in bounds for
+;: `dst`; this helper performs no independent allocation or range check.
 (define (format-write-fill!
   [dst : (MutPtr u8)]
   [start : i64]
@@ -89,7 +92,10 @@
           (ptr-write! (ptr-offset dst (+ start index)) byte))
         (set! index (+ index 1))))))
 
-;; Caller guarantees the source and destination ranges are live and in bounds.
+;: Copy between caller-validated live source and destination byte ranges.
+;:
+;: The caller must guarantee that both ranges are in bounds. A zero-byte copy
+;: does not derive a source pointer, which keeps empty rendered values valid.
 (define (format-copy-rendered-range!
   [rendered : (& rendered str)]
   [source-start : i64]

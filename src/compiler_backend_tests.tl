@@ -39742,6 +39742,63 @@ g:
 ;; peephole owner map a mirror that outlives the call which invalidates it: the
 ;; outgoing area belongs to the callee, and only the volatile registers have
 ;; their owners cleared at the call anyway.
+;; A PLANNED stack-argument stage register must have its preservation ARMED.
+;;
+;; The call-stage constraint admits callee-saved registers as well as %r10
+;; (compiler-reg-scratch-call-target-allowed), and the plan marks such a pick
+;; PRESERVE -- the consumer owes it the save/restore bracket. The stack-argument
+;; emitters used to consume the spelling raw, so under `--cfg scratch-vreg` a
+;; six-argument call in `compiler-backend-peephole-pair-action-desc` staged both
+;; of its stack arguments through %r12 while %r12 held a parameter read after the
+;; call, and the Windows scratch-vreg bootstrap segfaulted. This pins the arming:
+;; consuming a marked stage register clears its planned-preserve entry and pushes
+;; it onto the emergency set, and an UNPLANNED stage still arms nothing.
+(define (compiler-backend-stack-call-arg-stage-preserves-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [function-state : compiler_backend.CompilerBackendFunctionState
+      (compiler_backend.compiler-backend-state-function-state backend-state)]
+    [before-pending : i64
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
+        function-state)]
+    [_plan : unit
+      (compiler_backend.compiler-backend-current-planned-preserve-add!
+        function-state
+        compiler_abi.compiler-reg-id-r12)]
+    [marked? : bool
+      (compiler_backend.compiler-backend-planned-register-preserve?
+        "%r12"
+        backend-state)]
+    [staged : String
+      (compiler_backend.compiler-backend-stack-call-arg-stage
+        "%r12"
+        backend-state)]
+    [after-pending : i64
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
+        function-state)]
+    [still-marked? : bool
+      (compiler_backend.compiler-backend-planned-register-preserve?
+        "%r12"
+        backend-state)]
+    [unplanned : String
+      (compiler_backend.compiler-backend-stack-call-arg-stage "" backend-state)]
+    [after-unplanned : i64
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
+        function-state)]
+    (and
+      ;; the plan marked it, and the stage hands back exactly that register
+      marked?
+      (string.eq staged "%r12")
+      ;; ... with its bracket armed: the entry is consumed and the emergency
+      ;; save/restore now covers it
+      (not still-marked?)
+      (= after-pending (+ before-pending 1))
+      ;; an unplanned stage scavenges and arms nothing new
+      (not (string.eq unplanned ""))
+      (= after-unplanned after-pending))))
+
 (define (compiler-backend-any-arity-stack-arg-shape-ok?) : bool
   (and
     (=
@@ -48350,6 +48407,7 @@ b_keep:
         (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?)
         (compiler-backend-scavenge-special-reg-bit-map-ok?)
         (compiler-backend-any-arity-stack-arg-shape-ok?)
+        (compiler-backend-stack-call-arg-stage-preserves-ok?)
         (compiler-backend-emergency-vector-width-ok?)
         (compiler-backend-scavenge-widened-pool-picks-rsi-ok?)
         (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?)

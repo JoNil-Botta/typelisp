@@ -20637,6 +20637,38 @@
     (compiler-backend-target-float-arg-reg-for-banks target float-idx position)
     (compiler-backend-target-arg-reg-for-banks target int-idx position)))
 
+;; The staging register for one value written into an outgoing (or tail) stack
+;; argument slot.
+;;
+;; A PLANNED stage register is not automatically free. The call-stage constraint
+;; admits %r10 first but also the whole callee-saved set
+;; (compiler-reg-scratch-call-target-allowed), and when the planner hands one of
+;; those out it marks it PRESERVE -- the consumer owes it the save/restore
+;; bracket that `compiler-backend-preserve-planned-register!` arms. Consuming the
+;; spelling raw, as these emitters used to, clobbers whatever the register holds:
+;; under `--cfg scratch-vreg` a six-argument call in
+;; `compiler-backend-peephole-pair-action-desc` staged both of its stack
+;; arguments through %r12, which held a parameter read after the call, and every
+;; read after the call saw the staged value instead. Nothing about a plan
+;; register says it is free; only arming its bracket makes it so.
+;;
+;; `preserve-planned-register!` is a no-op for a plan register the plan did not
+;; mark, and the unplanned path (`planned-stage` empty -- every build without
+;; scratch-vreg) still scavenges exactly as before, so this is byte-identical
+;; wherever the old spelling was already safe.
+(define (compiler-backend-stack-call-arg-stage
+  [planned-stage : String]
+  [backend-state : CompilerBackendState]) : String
+  (if (string.eq planned-stage "")
+    (compiler-backend-scavenge-reg-here
+      (compiler-backend-c-abi-stage-exclude-with "%r11")
+      compiler-backend-c-abi-stage-exclude-count
+      "%r10"
+      backend-state)
+    (begin
+      (compiler-backend-preserve-planned-register! planned-stage backend-state)
+      planned-stage)))
+
 (define (compiler-backend-emit-group-word-stack-arg
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -20652,13 +20684,7 @@
     [(compiler_ir_types.CompilerIrValue.Var v)
       (let
         [scratch : String
-          (if (string.eq planned-stage "")
-            (compiler-backend-scavenge-reg-here
-              (compiler-backend-c-abi-stage-exclude-with "%r11")
-              compiler-backend-c-abi-stage-exclude-count
-              "%r10"
-              backend-state)
-            planned-stage)]
+          (compiler-backend-stack-call-arg-stage planned-stage backend-state)]
         (match (compiler-backend-group-word-operand-with-backend-state
           assignments
           v
@@ -33157,13 +33183,7 @@
     [dst-offset : i64
       (compiler-backend-outgoing-stack-arg-offset target stack-idx)]
     [src-reg : String
-      (if (string.eq planned-stage "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-c-abi-stage-exclude-with "%r11")
-          compiler-backend-c-abi-stage-exclude-count
-          "%r10"
-          backend-state)
-        planned-stage)]
+      (compiler-backend-stack-call-arg-stage planned-stage backend-state)]
     [copy-xmm : String
       (if (string.eq
         (compiler-backend-current-c-memory-planned-xmm backend-state)
@@ -38710,13 +38730,7 @@
     (if is-float
       (let
         [scav : String
-          (if (string.eq planned-stage "")
-            (compiler-backend-scavenge-reg-here
-              (compiler-backend-c-abi-stage-exclude-with "%r11")
-              compiler-backend-c-abi-stage-exclude-count
-              "%r10"
-              backend-state)
-            planned-stage)]
+          (compiler-backend-stack-call-arg-stage planned-stage backend-state)]
         [gp-part : String
           (compiler-backend-float-bits-gp-reg type-segment-bases scav arg-ty)]
         (match (compiler-backend-emit-load-float-bits-to-gp
@@ -38750,13 +38764,9 @@
         [(CompilerBackendMaybeImmediate.No)
           (let
             [scav : String
-              (if (string.eq planned-stage "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-c-abi-stage-exclude-with "%r11")
-                  compiler-backend-c-abi-stage-exclude-count
-                  "%r10"
-                  backend-state)
-                planned-stage)]
+              (compiler-backend-stack-call-arg-stage
+                planned-stage
+                backend-state)]
             (match (compiler-backend-emit-load-value-with-plan-into
               out
               assignments
@@ -40510,13 +40520,7 @@
     (if is-float
       (let
         [scav : String
-          (if (string.eq planned-stage "")
-            (compiler-backend-scavenge-reg-here
-              (compiler-backend-c-abi-stage-exclude-with "%r11")
-              compiler-backend-c-abi-stage-exclude-count
-              "%r10"
-              backend-state)
-            planned-stage)]
+          (compiler-backend-stack-call-arg-stage planned-stage backend-state)]
         [gp-part : String
           (compiler-backend-float-bits-gp-reg type-segment-bases scav arg-ty)]
         (match (compiler-backend-emit-load-float-bits-to-gp
@@ -40547,13 +40551,9 @@
         [(CompilerBackendMaybeImmediate.No)
           (let
             [scav : String
-              (if (string.eq planned-stage "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-c-abi-stage-exclude-with "%r11")
-                  compiler-backend-c-abi-stage-exclude-count
-                  "%r10"
-                  backend-state)
-                planned-stage)]
+              (compiler-backend-stack-call-arg-stage
+                planned-stage
+                backend-state)]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               value

@@ -383,11 +383,11 @@
                   (parse_core.compiler-parse-semantic-origin-fallback))]
               (begin
                 (set! cursor (+ cursor 1))
-                (if (= (compiler-semantic-origin-kind-tag origin.kind) tag)
+                (when
+                  (= (compiler-semantic-origin-kind-tag origin.kind) tag)
                   (begin
                     (set! (array-ref state.semantic-origin-cursors tag) cursor)
-                    (return (CompilerSemanticMaybeOrigin.Some origin)))
-                  unit))))
+                    (return (CompilerSemanticMaybeOrigin.Some origin)))))))
           (set! (array-ref state.semantic-origin-cursors tag) cursor)
           CompilerSemanticMaybeOrigin.None))]))
 
@@ -2355,22 +2355,6 @@
               [(option_i64.Some handle)
                 (CompilerSemanticMaybeHandle.Some handle)]
               [(option_i64.None) CompilerSemanticMaybeHandle.None])])])))
-
-(define (compiler-semantic-variant-handle-in-module
-  [ctx : tc.TcContext]
-  [module-id : i64]
-  [enum-name-id : i64]
-  [variant-name-id : i64]) : CompilerSemanticMaybeHandle
-  (let
-    [handle : i64
-      (tc.tc-source-variant-handle-for-enum-id-or
-        ctx
-        enum-name-id
-        variant-name-id
-        (csym.compiler-symbols-missing-handle))]
-    (if (csym.compiler-symbols-handle-found? handle)
-      (CompilerSemanticMaybeHandle.Some handle)
-      CompilerSemanticMaybeHandle.None)))
 
 (define (compiler-semantic-field-owner-handle [handle : i64]) : i64
   (csym.compiler-symbol-make-handle

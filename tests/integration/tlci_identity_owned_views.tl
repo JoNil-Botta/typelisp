@@ -27,20 +27,13 @@
       (process_runtime.process-runtime-place-shared-view place)]
     [runtime-item-view : i64
       (process_runtime.process-runtime-array-shared-view items 0)]
-    (if (not (= (string-length core-view) 4))
-      2
-      (if (not (= place-view.value 7))
-        3
-        (if (not (= item-view 0))
-          4
-          (if (not (= box-view 29))
-            5
-            (if (not (= process-place-view.value 7))
-              6
-              (if (not (= process-item-view 0))
-                7
-                (if (not (= runtime-place-view.value 7))
-                  8
-                  (if (not (= runtime-item-view 0))
-                    9
-                    42))))))))))
+    (cond
+      [(not (= (string-length core-view) 4)) 2]
+      [(not (= place-view.value 7)) 3]
+      [(not (= item-view 0)) 4]
+      [(not (= box-view 29)) 5]
+      [(not (= process-place-view.value 7)) 6]
+      [(not (= process-item-view 0)) 7]
+      [(not (= runtime-place-view.value 7)) 8]
+      [(not (= runtime-item-view 0)) 9]
+      [else 42])))

@@ -36961,6 +36961,28 @@
       (= distance best-distance)
       (or (string.eq best "") (tc-unbound-string-less? candidate best)))))
 
+;; Suggestion scan memo. Each speculative unbound event rescans and re-renders
+;; every pool spelling; macro-heavy compiles fire hundreds of recovered events
+;; over a pool that reaches six-figure entry counts. Class and byte length are
+;; pure functions of each spelling, so they are memoized: every entry carries
+;; a stamp packing the intern owner's active table id and reset generation,
+;; and an entry only validates when the stamp still matches the current owner,
+;; so installs, resets, and reset-to-mark all invalidate naturally without
+;; ever reallocating the storage. The arrays are allocated once at startup in
+;; the root arena -- never inside a scratch that can rewind under a declaration
+;; check -- and ids beyond the fixed capacity take the uncached path. Empty
+;; spellings stay uncached because generated handles materialize their text
+;; after creation. Both owner counters stay far below 2^31, so the packed
+;; stamp is exact.
+(define tc-unbound-suggest-cache-capacity : i64
+  262144)
+(define tc-unbound-suggest-cache-stamps : (__tl_dyn-array i64)
+  (array.make-array i64 tc-unbound-suggest-cache-capacity))
+(define tc-unbound-suggest-cache-classes : (__tl_dyn-array u8)
+  (array.make-array u8 tc-unbound-suggest-cache-capacity))
+(define tc-unbound-suggest-cache-lengths : (__tl_dyn-array i32)
+  (array.make-array i32 tc-unbound-suggest-cache-capacity))
+
 (define (tc-unbound-near-miss
   [module-qualified : bool]
   [module-id : i64]
@@ -36993,6 +37015,11 @@
     [second-row : (__tl_dyn-array i64) (array.make-array i64 (+ wanted-len 1))]
     [candidate-id : i64 0]
     [candidate-limit : i64 (ci.intern-pool-len)]
+    [owner-stamp : i64
+      (bit-or
+        (shl (ci.intern-active-table-id) 32)
+        (bit-and (ci.intern-generation) 4294967295))]
+    [cache-cap : i64 tc-unbound-suggest-cache-capacity]
     [best-distance : i64 (+ max-distance 1)]
     [best : String ""]
     (begin
@@ -37000,54 +37027,146 @@
         (if (= candidate-id wanted-id)
           (set! candidate-id (+ candidate-id 1))
           (let
-            [candidate : String (ci.intern-str candidate-id)]
-            [candidate-len : i64 (string.string-length candidate)]
-            (begin
-              (if (and
-                (or
-                  (not wanted-qualified)
-                  (not (ci.intern-qualified? candidate-id)))
-                (<=
-                  (if (> candidate-len wanted-len)
-                    (- candidate-len wanted-len)
-                    (- wanted-len candidate-len))
-                  max-distance)
-                (tc-unbound-suggestion-candidate-name? candidate)
-                (tc-unbound-candidate-visible-id?
-                  module-qualified
-                  module-id
-                  wanted-qualifier-id
-                  env
-                  candidate-id))
-                (let
-                  [distance : i64
-                    (tc-unbound-edit-distance
-                      wanted-text
-                      candidate
-                      first-row
-                      second-row)]
-                  [better : bool
-                    (and
-                      (<= distance max-distance)
-                      (tc-unbound-better-candidate?
-                        distance
-                        best-distance
-                        candidate
-                        best))]
-                  (if better
+            [cached-class : u8
+              (if (< candidate-id cache-cap)
+                (if (=
+                  (array-ref tc-unbound-suggest-cache-stamps candidate-id)
+                  owner-stamp)
+                  (array-ref tc-unbound-suggest-cache-classes candidate-id)
+                  0)
+                0)]
+            (if (= cached-class 2)
+              (set! candidate-id (+ candidate-id 1))
+              (begin
+                (if (> cached-class 0)
+                  ;; Known-suggestable spelling: the memo supplies its byte
+                  ;; length, so only candidates surviving the same prefix of
+                  ;; the original conjunction reach a render.
+                  (let
+                    [cached-length : i64
+                      (cast
+                        (array-ref
+                          tc-unbound-suggest-cache-lengths
+                          candidate-id)
+                        : i64)]
+                    (if (and
+                      (or
+                        (not wanted-qualified)
+                        (not (ci.intern-qualified? candidate-id)))
+                      (<=
+                        (if (> cached-length wanted-len)
+                          (- cached-length wanted-len)
+                          (- wanted-len cached-length))
+                        max-distance)
+                      (tc-unbound-candidate-visible-id?
+                        module-qualified
+                        module-id
+                        wanted-qualifier-id
+                        env
+                        candidate-id))
+                      (let
+                        [candidate : String (ci.intern-str candidate-id)]
+                        [distance : i64
+                          (tc-unbound-edit-distance
+                            wanted-text
+                            candidate
+                            first-row
+                            second-row)]
+                        [better : bool
+                          (and
+                            (<= distance max-distance)
+                            (tc-unbound-better-candidate?
+                              distance
+                              best-distance
+                              candidate
+                              best))]
+                        (if better
+                          (begin
+                            (set! best-distance distance)
+                            (set!
+                              best
+                              (if wanted-qualified
+                                (tc-name-slashes-to-dots
+                                  (csym.compiler-symbol-module-key
+                                    wanted-qualifier
+                                    candidate))
+                                (clone candidate))))
+                          unit))
+                      unit))
+                  ;; Unclassified spelling: render once, classify through the
+                  ;; original predicate, and record both facts unless the
+                  ;; generated handle has not materialized yet.
+                  (let
+                    [candidate : String (ci.intern-str candidate-id)]
+                    [candidate-len : i64 (string.string-length candidate)]
+                    [suggestable : bool
+                      (tc-unbound-suggestion-candidate-name? candidate)]
                     (begin
-                      (set! best-distance distance)
-                      (set!
-                        best
-                        (if wanted-qualified
-                          (tc-name-slashes-to-dots
-                            (csym.compiler-symbol-module-key
-                              wanted-qualifier
-                              candidate))
-                          (clone candidate))))
-                    unit))
-                unit)
-              (set! candidate-id (+ candidate-id 1))))))
+                      (if (and (< candidate-id cache-cap) (> candidate-len 0))
+                        (begin
+                          (set!
+                            (array-ref
+                              tc-unbound-suggest-cache-classes
+                              candidate-id)
+                            (if suggestable
+                              1
+                              2))
+                          (set!
+                            (array-ref
+                              tc-unbound-suggest-cache-lengths
+                              candidate-id)
+                            (cast candidate-len : i32))
+                          (set!
+                            (array-ref
+                              tc-unbound-suggest-cache-stamps
+                              candidate-id)
+                            owner-stamp))
+                        unit)
+                      (if (and
+                        suggestable
+                        (or
+                          (not wanted-qualified)
+                          (not (ci.intern-qualified? candidate-id)))
+                        (<=
+                          (if (> candidate-len wanted-len)
+                            (- candidate-len wanted-len)
+                            (- wanted-len candidate-len))
+                          max-distance)
+                        (tc-unbound-candidate-visible-id?
+                          module-qualified
+                          module-id
+                          wanted-qualifier-id
+                          env
+                          candidate-id))
+                        (let
+                          [distance : i64
+                            (tc-unbound-edit-distance
+                              wanted-text
+                              candidate
+                              first-row
+                              second-row)]
+                          [better : bool
+                            (and
+                              (<= distance max-distance)
+                              (tc-unbound-better-candidate?
+                                distance
+                                best-distance
+                                candidate
+                                best))]
+                          (if better
+                            (begin
+                              (set! best-distance distance)
+                              (set!
+                                best
+                                (if wanted-qualified
+                                  (tc-name-slashes-to-dots
+                                    (csym.compiler-symbol-module-key
+                                      wanted-qualifier
+                                      candidate))
+                                  (clone candidate))))
+                            unit))
+                        unit))))
+                (set! candidate-id (+ candidate-id 1)))))))
       best)))
 
 (defenum TcUnboundSuggestion

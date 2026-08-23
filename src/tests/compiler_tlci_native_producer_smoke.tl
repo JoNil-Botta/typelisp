@@ -108,7 +108,7 @@
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
   (match decl
-    [(ast.AstDecl.DefMacro _ name params _ body)
+    [(ast.AstDecl.DefMacro _ name params ret body)
       (let
         [identity : String
           (compiler_tlci_native_producer.embedded-stdlib-tlci-identity
@@ -121,6 +121,8 @@
             (compiler_tlci_native_producer.TlciNativeMacroCapture
               identity
               params
+              (compiler_tlci_native_producer.embedded-native-macro-result-kind
+                ret)
               body))))]
     [(ast.AstDecl.Unsafe inner)
       (producer-test-collect-decl! (__tl-box-place inner) module names captures)]

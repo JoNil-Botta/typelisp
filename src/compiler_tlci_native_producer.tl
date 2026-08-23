@@ -44,7 +44,22 @@
 (defstruct TlciNativeMacroCapture
   (identity String)
   (params compiler_ast_types.AstMacroParamList)
+  (result-kind i64)
   (body i64))
+
+(define (embedded-native-macro-result-kind [ret : compiler_ast_types.AstType]) : i64
+  (match ret
+    [(compiler_ast_types.AstType.Var name)
+      (if (or
+        (= name cbi.compiler-builtin-id-fix-Module)
+        (= name cbi.compiler-builtin-id-fix-module))
+        1
+        (if (or
+          (= name cbi.compiler-builtin-id-fix-Decls)
+          (= name cbi.compiler-builtin-id-fix-decls))
+          2
+          0))]
+    [_ 0]))
 
 ;; Compile-time let-local session slots for the body currently compiling
 ;; (let* scoping; the length is saved and restored around nested bodies).

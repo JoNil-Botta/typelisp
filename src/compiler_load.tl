@@ -4742,11 +4742,16 @@
 
 (define compiler-load-core-macro-prelude-path : String
   "stdlib/core_macros.tl")
+(define compiler-load-clone-prelude-path : String
+  "stdlib/clone.tl")
 (define compiler-load-runtime-prelude-path : String
   "stdlib/runtime.tl")
 
 (define (compiler-load-core-macro-prelude-path-shared-view) : String
   (compiler-load-global-shared-view compiler-load-core-macro-prelude-path))
+
+(define (compiler-load-clone-prelude-path-shared-view) : String
+  (compiler-load-global-shared-view compiler-load-clone-prelude-path))
 
 (define (compiler-load-runtime-prelude-path-shared-view) : String
   (compiler-load-global-shared-view compiler-load-runtime-prelude-path))

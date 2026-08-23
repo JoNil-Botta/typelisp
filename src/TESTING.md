@@ -911,6 +911,20 @@ source-only mutation changes the image, ratchets source-lowered native-entry
 coverage, and stress-tests the mapped host callback/session bridge on both
 hosts. Unsupported transformer shapes
 remain explicit registration shells and fall back to interpreted CTFE.
+The same gate derives the exact identity/arity/variadic/result-kind census from
+the parsed producer inputs and compares it with
+`tools/embedded-stdlib-tlci/identity-fixtures.tsv`; additions, removals,
+duplicates, or declaration-shape changes therefore require an explicit fixture
+review. `verify-stdlib-tlci-identity-differential.sh`, invoked by the required
+compile-profile gate, compiles the 15 unique witnesses through the default
+trusted route, a byte-identical explicit root, and a comment-modified source
+root. It requires every identity in its assigned witness on all three routes,
+all 107 native identities and result kinds, all 107 source controls, zero
+catalog fallback/miss/load-failure counters, zero native hits in the source
+control, byte-identical assembly for every `Expr`, `Module`, and `Decls`
+witness, and authored-error diagnostic parity. The enclosing gate's direct
+embedded verifier and comptime-host smoke pin malformed requests/handles,
+fuel exhaustion, native abort, and no partial result commit.
 `verify-compile-profile.sh` compares mapped-image and explicit-source assembly;
 its native-result counters require real `Module` and `Decls` results to commit
 through the existing module/declaration validation and splice paths. The

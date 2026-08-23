@@ -79089,6 +79089,1662 @@
                       (opt-ubound-block-instrs header-block)
                       0))])])))]))
 
+;; --- same-block bounds-check group coalescing (bounds_group) ----------------
+;;
+;; A parallel-array walk checks ONE index against SEVERAL lengths in the same
+;; block. `cfg-dfs-postorder`'s stack loop is the shape: `stack-node[sp]` and
+;; `stack-edge[sp]` are two arrays of one push depth, so the body pays two
+;; `cmpq len, sp ; jb ok` pairs per iteration for one index. The `i` / `i + 1`
+;; pair is the same redundancy written differently -- `pred-off[id]` and
+;; `pred-off[id + 1]` bracket one CSR row against one length -- and there the
+;; `+ 1` also costs a `lea`, because a bounds-check use is exactly what stops
+;; the backend's displacement fold (GAP9) from absorbing the Add into the Gep.
+;;
+;; Neither redundancy is removable by `bounds_dom`: that pass drops a check
+;; dominated by an EQUAL check, and these differ in their length operand, their
+;; offset, or both. Nor is either removable by range analysis -- the indices are
+;; values loaded out of another array, which nothing can bound.
+;;
+;; What IS true is that the group has ONE cheapest sufficient test. Write each
+;; member as `i + k_j <u L_j` with `k_j >= 0` literal and `L_j` loop invariant,
+;; and let
+;;
+;;     M = umin_j satsub(L_j, k_j),  satsub(L, k) = L - k if L >=u k else 0.
+;;
+;; Then `i <u M` implies every member: `i <u satsub(L_j, k_j)` gives
+;; `0 <= i <= L_j - k_j - 1`, hence `i + k_j < L_j` with no wrap, since `M` is
+;; clamped at zero and so never reads as a huge unsigned bound. `M` depends only
+;; on loop-invariant lengths, so it is built ONCE in the preheader.
+;;
+;; The rewrite is therefore a pure fast-path FILTER, not a replacement:
+;;
+;;     B:      <prefix>                       B:      <prefix>
+;;             bounds_check i,     L_1                c = i <u M
+;;             <pure filler>          ==>             branch c, B_ok, B_slow
+;;             bounds_check i + k, L_2        B_ok:   <pure filler>
+;;             <rest>                                 <rest>
+;;                                           B_slow: bounds_check i,     L_1
+;;                                                   t = i + k
+;;                                                   bounds_check t,     L_2
+;;                                                   jump B_ok
+;;
+;; `B_slow` holds the ORIGINAL checks, in their original order, with their
+;; original abort labels, so the abort site, the order in which the checks fire
+;; and the message are all exactly what they were. When the fast compare passes
+;; the checks are implied; when it fails -- which the wrap cases such as
+;; `i = -1, k = 1` allow even though every original check passes -- the slow arm
+;; runs them all and falls through. Nothing observable changes either way, and
+;; the fast path is the same two instructions ONE check used to cost.
+;;
+;; `B_slow` defines nothing the join needs, so `B_ok` takes no phi: the arm
+;; recomputes `i + k_j` into its own vars rather than borrowing the block's.
+;; That is also what frees the Add left in `B_ok`: its only remaining uses are
+;; the Geps it feeds, which is exactly GAP9's admission rule, so the `lea`
+;; disappears into the addressing displacement.
+;;
+;; Hoisting. The members do not have to be adjacent -- a `gep`/`load` pair
+;; between two checks of one index is the normal shape -- so the members after
+;; the first are effectively hoisted to it. Only fillers that can neither abort
+;; nor be observed are crossed: no store, no call, no division, no shift, and no
+;; bounds check the group does not own. The scan stops at the first of those and
+;; keeps the members found so far.
+;;
+;; Profitability. A group of two or more always pays: two instructions per extra
+;; member per execution against one preheader-entry build. A single member pays
+;; only through the displacement fold, so it is admitted only when its offset is
+;; nonzero AND the Add that forms it sits immediately in front of the check,
+;; where the split can carry it into `B_ok`.
+(defenum OptBgMaybeIndex
+  (No)
+  (Some i64 i64))
+
+;; A bounds check as `base + offset <u len`, with the abort label it carries.
+(defenum OptBgMaybeCheck
+  (No)
+  (Some i64 i64 ir.CompilerIrValue i64))
+
+;; Built instructions plus the next free var.
+(defenum OptBgSeqPlan
+  (Plan ir.CompilerIrInstrSeq i64))
+
+;; The preheader's bound: its instructions, `M`, and the next free var.
+(defenum OptBgBoundPlan
+  (Plan ir.CompilerIrInstrSeq ir.CompilerIrValue i64))
+
+;; One rewritten site. `drop` marks the member checks by position in the
+;; original block, so the rebuild needs no second recognition pass.
+(defstruct OptBgPlan
+  (block i64)
+  (ok i64)
+  (slow i64)
+  (pre i64)
+  (cut i64)
+  (cmp i64)
+  (index i64)
+  (bound ir.CompilerIrValue)
+  (drop (__tl_dyn-array bool))
+  (pre-instrs ir.CompilerIrInstrSeq)
+  (slow-instrs ir.CompilerIrInstrSeq))
+
+(defenum OptBgPlanResult
+  (No)
+  (Some OptBgPlan i64))
+
+(defenum OptBgMaybePlan
+  (No)
+  (Some OptBgPlan))
+
+(defenum OptBgPlanList
+  (Nil)
+  (Cons OptBgPlan (Box OptBgPlanList)))
+
+;; Plans so far, the blocks already split, the blocks already carrying a bound
+;; build, and the next free var.
+(defenum OptBgPlanState
+  (State OptBgPlanList OptLabelSet OptLabelSet i64))
+
+;; Scratch tables reused across every block of one function: the members'
+;; offsets, lengths and abort labels in program order, then the same after
+;; collapsing repeated lengths onto their largest offset.
+(defstruct OptBgScratch
+  (ks (__tl_dyn-array i64))
+  (lens (__tl_dyn-array ir.CompilerIrValue))
+  (oks (__tl_dyn-array i64))
+  (term-ks (__tl_dyn-array i64))
+  (term-lens (__tl_dyn-array ir.CompilerIrValue))
+  (drop (__tl_dyn-array bool)))
+
+;; Offsets bigger than this are not the parallel-array shape and would make the
+;; saturating subtraction the dominant cost.
+(define (opt-bg-offset-cap) : i64
+  4096)
+
+;; Copy/offset chain steps followed when canonicalising an index.
+(define (opt-bg-canon-depth) : i64
+  8)
+
+(define (opt-bg-index-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [_ false]))
+
+;; The (var, literal) split of an Add's operands, in either written order.
+(define (opt-bg-add-operands
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : OptBgMaybeIndex
+  (match lhs
+    [(ir.CompilerIrValue.Var v)
+      (match rhs
+        [(ir.CompilerIrValue.I64 k) (OptBgMaybeIndex.Some v k)]
+        [_ (OptBgMaybeIndex.No)])]
+    [(ir.CompilerIrValue.I64 k)
+      (match rhs
+        [(ir.CompilerIrValue.Var v) (OptBgMaybeIndex.Some v k)]
+        [_ (OptBgMaybeIndex.No)])]
+    [_ (OptBgMaybeIndex.No)]))
+
+;; `dst = src + k` (k a small positive literal) and `dst = src` copies, as two
+;; var-indexed tables. Anything else keeps `-1`, which stops the walk below.
+(define (opt-bg-adds-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [add-base : (__tl_dyn-array i64)]
+  [add-k : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+          [(ir.CompilerIrInstr.Mov dst source ty)
+            (if (opt-bg-index-type? ty)
+              (match source
+                [(ir.CompilerIrValue.Var src)
+                  (if (and
+                    (>= dst 0)
+                    (< dst (array-length add-base))
+                    (not (= dst src)))
+                    (begin
+                      (set! (array-ref add-base dst) src)
+                      (set! (array-ref add-k dst) 0))
+                    unit)]
+                [_ unit])
+              unit)]
+          [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+            (if (and
+              (opt-binop-eq op (ir.CompilerIrBinOp.Add))
+              (opt-bg-index-type? ty))
+              (match (opt-bg-add-operands lhs rhs)
+                [(OptBgMaybeIndex.Some src k)
+                  (if (and
+                    (>= dst 0)
+                    (< dst (array-length add-base))
+                    (not (= dst src))
+                    (> k 0)
+                    (<= k (opt-bg-offset-cap)))
+                    (begin
+                      (set! (array-ref add-base dst) src)
+                      (set! (array-ref add-k dst) k))
+                    unit)]
+                [(OptBgMaybeIndex.No) unit])
+              unit)]
+          [_ unit])
+        (set! cursor (+ cursor 1))))))
+
+(define (opt-bg-adds-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [add-base : (__tl_dyn-array i64)]
+  [add-k : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-bg-adds-instrs! instrs add-base add-k)
+            (opt-bg-adds-blocks! (__tl-box-place rest) add-base add-k))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bg-adds-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        add-base
+        add-k)]))
+
+;; The pass runs below the pipeline, where the IR is no longer REQUIRED to be
+;; SSA: a var with two definitions would make the offset chain and the
+;; invariance test read whichever definition the walk happened to see last. Such
+;; a var is poisoned with `-2` here, and every gate below refuses it, so the
+;; recognition never rests on a property the IR does not owe.
+(define (opt-bg-multi-def) : i64
+  (- 0 2))
+
+(define (opt-bg-defs-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [block-id : i64]
+  [def-block : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (match (opt-instr-def-var (ir.compiler-ir-instr-seq-ref instrs cursor))
+          [(option_i64.Some dst)
+            (if (and (>= dst 0) (< dst (array-length def-block)))
+              (set!
+                (array-ref def-block dst)
+                (if (= (array-ref def-block dst) (- 0 1))
+                  block-id
+                  (opt-bg-multi-def)))
+              unit)]
+          [(option_i64.None) unit])
+        (set! cursor (+ cursor 1))))))
+
+(define (opt-bg-defs-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [block-id : i64]
+  [def-block : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-bg-defs-instrs! instrs block-id def-block)
+            (opt-bg-defs-blocks! (__tl-box-place rest) (+ block-id 1) def-block))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bg-defs-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        block-id
+        def-block)]))
+
+(define (opt-bg-single-def? [var : i64] [def-block : (__tl_dyn-array i64)]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length def-block))
+    (not (= (array-ref def-block var) (opt-bg-multi-def)))))
+
+;; Drop every offset record whose destination turned out to have more than one
+;; definition, and every record whose source did.
+(define (opt-bg-prune-adds!
+  [add-base : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]) : unit
+  (let
+    [cursor : i64 0]
+    (while (< cursor (array-length add-base))
+      (begin
+        (if (and
+          (>= (array-ref add-base cursor) 0)
+          (or
+            (not (opt-bg-single-def? cursor def-block))
+            (not (opt-bg-single-def? (array-ref add-base cursor) def-block))))
+          (set! (array-ref add-base cursor) (- 0 1))
+          unit)
+        (set! cursor (+ cursor 1))))))
+
+;; `var` as `base + offset` over the copy/offset tables.
+(define (opt-bg-canon
+  [var : i64]
+  [add-base : (__tl_dyn-array i64)]
+  [add-k : (__tl_dyn-array i64)]) : OptBgMaybeIndex
+  (let
+    [base : i64 var]
+    [offset : i64 0]
+    [steps : i64 0]
+    (begin
+      (while (and
+        (< steps (opt-bg-canon-depth))
+        (>= base 0)
+        (< base (array-length add-base))
+        (>= (array-ref add-base base) 0))
+        (begin
+          (set! offset (+ offset (array-ref add-k base)))
+          (set! base (array-ref add-base base))
+          (set! steps (+ steps 1))))
+      (if (and (>= base 0) (<= offset (opt-bg-offset-cap)))
+        (OptBgMaybeIndex.Some base offset)
+        (OptBgMaybeIndex.No)))))
+
+;; A length the preheader can read: a literal, or a value the loop body does not
+;; define. Anything the body defines would make `M` a per-iteration build.
+(define (opt-bg-invariant-length?
+  [len : ir.CompilerIrValue]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]) : bool
+  (match len
+    [(ir.CompilerIrValue.I64 _) true]
+    [(ir.CompilerIrValue.Var w)
+      (and
+        (opt-bg-single-def? w def-block)
+        (not (opt-gep-offset-var-in-loop? w def-block body)))]
+    [_ false]))
+
+(define (opt-bg-check-at
+  [instr : ir.CompilerIrInstr]
+  [add-base : (__tl_dyn-array i64)]
+  [add-k : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]) : OptBgMaybeCheck
+  (match instr
+    [(ir.CompilerIrInstr.BoundsCheck idx len ok)
+      (match idx
+        [(ir.CompilerIrValue.Var v)
+          (if (opt-bg-invariant-length? len def-block body)
+            (match (opt-bg-canon v add-base add-k)
+              [(OptBgMaybeIndex.Some base offset)
+                (if (opt-bg-single-def? base def-block)
+                  (OptBgMaybeCheck.Some base offset len ok)
+                  (OptBgMaybeCheck.No))]
+              [(OptBgMaybeIndex.No) (OptBgMaybeCheck.No)])
+            (OptBgMaybeCheck.No))]
+        [_ (OptBgMaybeCheck.No)])]
+    [_ (OptBgMaybeCheck.No)]))
+
+;; Operations a member check may be hoisted over: they cannot abort, cannot be
+;; observed, and cannot fault where the check they pass would not already have
+;; aborted. Division, shifts and every memory write or call are excluded, and so
+;; is any bounds check the group does not own.
+(define (opt-bg-safe-binop? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Div) false]
+    [(ir.CompilerIrBinOp.Mod) false]
+    [(ir.CompilerIrBinOp.SafeDiv) false]
+    [(ir.CompilerIrBinOp.SafeMod) false]
+    [(ir.CompilerIrBinOp.Shl _) false]
+    [(ir.CompilerIrBinOp.Shr _) false]
+    [_ true]))
+
+(define (opt-bg-filler? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ _ _) true]
+    [(ir.CompilerIrInstr.AddrOf _ _) true]
+    [(ir.CompilerIrInstr.Gep _ _ _ _) true]
+    [(ir.CompilerIrInstr.Load _ _ _) true]
+    [(ir.CompilerIrInstr.Cast _ _ _ _) true]
+    [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
+    [(ir.CompilerIrInstr.Select _) true]
+    [(ir.CompilerIrInstr.Pack _ _ _) true]
+    [(ir.CompilerIrInstr.Word _ _ _ _) true]
+    [(ir.CompilerIrInstr.BinOp _ op _ _ _) (opt-bg-safe-binop? op)]
+    [_ false]))
+
+;; The group rooted at `start`: every later check on the same base, up to the
+;; first instruction that is neither one of those nor a filler. `record?` false
+;; runs the same walk for its count alone, which is what the site search wants.
+(define (opt-bg-collect!
+  [instrs : ir.CompilerIrInstrSeq]
+  [start : i64]
+  [base : i64]
+  [add-base : (__tl_dyn-array i64)]
+  [add-k : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [scratch : OptBgScratch]
+  [record? : bool]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 start]
+    [found : i64 0]
+    (begin
+      (while (< cursor count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          (match (opt-bg-check-at instr add-base add-k def-block body)
+            [(OptBgMaybeCheck.Some member-base offset len ok)
+              (if (= member-base base)
+                (begin
+                  (if record?
+                    (begin
+                      (set! (array-ref scratch.drop cursor) true)
+                      (set! (array-ref scratch.ks found) offset)
+                      (set! (array-ref scratch.lens found) len)
+                      (set! (array-ref scratch.oks found) ok))
+                    unit)
+                  (set! found (+ found 1))
+                  (set! cursor (+ cursor 1)))
+                (set! cursor count))]
+            [(OptBgMaybeCheck.No)
+              (if (opt-bg-filler? instr)
+                (set! cursor (+ cursor 1))
+                (set! cursor count))])))
+      found)))
+
+(define (opt-bg-canon-offset-of?
+  [var : i64]
+  [base : i64]
+  [add-base : (__tl_dyn-array i64)]
+  [add-k : (__tl_dyn-array i64)]) : bool
+  (match (opt-bg-canon var add-base add-k)
+    [(OptBgMaybeIndex.Some canon-base offset)
+      (and (= canon-base base) (> offset 0))]
+    [(OptBgMaybeIndex.No) false]))
+
+;; Pull the split point back over the offset arithmetic that only exists to form
+;; a member's index: in the fast block those Adds keep Gep-index uses only,
+;; which is what lets the backend fold them into the addressing displacement.
+(define (opt-bg-cut-of
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [base : i64]
+  [add-base : (__tl_dyn-array i64)]
+  [add-k : (__tl_dyn-array i64)]) : i64
+  (let
+    [cut : i64 first]
+    [steps : i64 0]
+    (begin
+      (while (and (> cut 0) (< steps (opt-bg-canon-depth)))
+        (match (ir.compiler-ir-instr-seq-ref instrs (- cut 1))
+          [(ir.CompilerIrInstr.BinOp dst op _ _ _)
+            (if (and
+              (opt-binop-eq op (ir.CompilerIrBinOp.Add))
+              (>= dst 0)
+              (< dst (array-length add-base))
+              (opt-bg-canon-offset-of? dst base add-base add-k))
+              (begin
+                (set! cut (- cut 1))
+                (set! steps (+ steps 1)))
+              (set! steps (opt-bg-canon-depth)))]
+          [_ (set! steps (opt-bg-canon-depth))]))
+      cut)))
+
+;; Collapse repeated lengths onto their largest offset: `umin` over one length
+;; is just its most conservative term, and the parallel `i` / `i + 1` shape
+;; checks one length twice.
+(define (opt-bg-find-term
+  [term-lens : (__tl_dyn-array ir.CompilerIrValue)]
+  [terms : i64]
+  [len : ir.CompilerIrValue]) : i64
+  (let
+    [cursor : i64 0]
+    [slot : i64 (- 0 1)]
+    (begin
+      (while (< cursor terms)
+        (if (opt-value-eq (array-ref term-lens cursor) len)
+          (begin
+            (set! slot cursor)
+            (set! cursor terms))
+          (set! cursor (+ cursor 1))))
+      slot)))
+
+(define (opt-bg-dedup-terms! [count : i64] [scratch : OptBgScratch]) : i64
+  (let
+    [terms : i64 0]
+    [cursor : i64 0]
+    (begin
+      (while (< cursor count)
+        (let
+          [len : ir.CompilerIrValue (array-ref scratch.lens cursor)]
+          [k : i64 (array-ref scratch.ks cursor)]
+          [slot : i64 (opt-bg-find-term scratch.term-lens terms len)]
+          (begin
+            (if (< slot 0)
+              (begin
+                (set! (array-ref scratch.term-lens terms) len)
+                (set! (array-ref scratch.term-ks terms) k)
+                (set! terms (+ terms 1)))
+              (if (> k (array-ref scratch.term-ks slot))
+                (set! (array-ref scratch.term-ks slot) k)
+                unit))
+            (set! cursor (+ cursor 1)))))
+      terms)))
+
+;; `M = umin_j satsub(len_j, k_j)`, in the unsigned domain the checks use. A
+;; zero offset contributes its length unchanged, so the common all-zero group
+;; costs one compare and one select per extra length and nothing else.
+(define (opt-bg-bound-plan
+  [terms : i64]
+  [scratch : OptBgScratch]
+  [next-var : i64]) : OptBgBoundPlan
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (* terms 5))]
+    [cursor : i64 0]
+    [var : i64 next-var]
+    [sat : i64 (- 0 1)]
+    [acc : ir.CompilerIrValue (ir.CompilerIrValue.I64 0)]
+    (begin
+      (while (< cursor terms)
+        (let
+          [k : i64 (array-ref scratch.term-ks cursor)]
+          (begin
+            (if (> k 0)
+              (begin
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (ir.CompilerIrInstr.BinOp
+                    var
+                    (ir.CompilerIrBinOp.Ge)
+                    (array-ref scratch.term-lens cursor)
+                    (ir.CompilerIrValue.I64 k)
+                    (ast.AstType.U64)))
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (ir.CompilerIrInstr.BinOp
+                    (+ var 1)
+                    (ir.CompilerIrBinOp.Sub)
+                    (array-ref scratch.term-lens cursor)
+                    (ir.CompilerIrValue.I64 k)
+                    (ast.AstType.I64)))
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (ir.ir-instr-select
+                    (+ var 2)
+                    (ir.CompilerIrValue.Var var)
+                    (ir.CompilerIrValue.Var (+ var 1))
+                    (ir.CompilerIrValue.I64 0)
+                    0
+                    (ast.AstType.I64)))
+                (set! sat (+ var 2))
+                (set! var (+ var 3)))
+              (set! sat (- 0 1)))
+            (if (= cursor 0)
+              (set!
+                acc
+                (if (>= sat 0)
+                  (ir.CompilerIrValue.Var sat)
+                  (array-ref scratch.term-lens cursor)))
+              (begin
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (ir.CompilerIrInstr.BinOp
+                    var
+                    (ir.CompilerIrBinOp.Lt)
+                    (if (>= sat 0)
+                      (ir.CompilerIrValue.Var sat)
+                      (array-ref scratch.term-lens cursor))
+                    acc
+                    (ast.AstType.U64)))
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (ir.ir-instr-select
+                    (+ var 1)
+                    (ir.CompilerIrValue.Var var)
+                    (if (>= sat 0)
+                      (ir.CompilerIrValue.Var sat)
+                      (array-ref scratch.term-lens cursor))
+                    acc
+                    0
+                    (ast.AstType.I64)))
+                (set! acc (ir.CompilerIrValue.Var (+ var 1)))
+                (set! var (+ var 2))))
+            (set! cursor (+ cursor 1)))))
+      (OptBgBoundPlan.Plan
+        (ir.compiler-ir-instr-builder-to-seq builder)
+        acc
+        var))))
+
+;; The slow arm: the original checks, in order, with their original abort
+;; labels. Offsets are recomputed here rather than read from the fast block so
+;; the arm needs no value the split would have to phi back.
+(define (opt-bg-slow-plan
+  [count : i64]
+  [scratch : OptBgScratch]
+  [base : i64]
+  [ok-label : i64]
+  [next-var : i64]) : OptBgSeqPlan
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ (* count 2) 1))]
+    [cursor : i64 0]
+    [var : i64 next-var]
+    (begin
+      (while (< cursor count)
+        (let
+          [k : i64 (array-ref scratch.ks cursor)]
+          (begin
+            (if (> k 0)
+              (begin
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (ir.CompilerIrInstr.BinOp
+                    var
+                    (ir.CompilerIrBinOp.Add)
+                    (ir.CompilerIrValue.Var base)
+                    (ir.CompilerIrValue.I64 k)
+                    (ast.AstType.I64)))
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (ir.CompilerIrInstr.BoundsCheck
+                    (ir.CompilerIrValue.Var var)
+                    (array-ref scratch.lens cursor)
+                    (array-ref scratch.oks cursor)))
+                (set! var (+ var 1)))
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (ir.CompilerIrInstr.BoundsCheck
+                  (ir.CompilerIrValue.Var base)
+                  (array-ref scratch.lens cursor)
+                  (array-ref scratch.oks cursor))))
+            (set! cursor (+ cursor 1)))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Jump ok-label))
+      (OptBgSeqPlan.Plan (ir.compiler-ir-instr-builder-to-seq builder) var))))
+
+;; A block that is nothing but a run of checks and offset Adds ending in a jump
+;; is the slow arm this pass (or an equivalent guard chain) already produced.
+;; Splitting it again would nest a second filter inside a cold path for ever, so
+;; it is refused structurally rather than by label spelling.
+(define (opt-bg-check-run-block? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    [run? : bool (> count 0)]
+    (begin
+      (if run?
+        (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+          [(ir.CompilerIrInstr.Jump _) unit]
+          [_ (set! run? false)])
+        unit)
+      (while (and run? (< cursor (- count 1)))
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+            [(ir.CompilerIrInstr.BoundsCheck _ _ _) unit]
+            [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+              (if (opt-binop-eq op (ir.CompilerIrBinOp.Add))
+                unit
+                (set! run? false))]
+            [_ (set! run? false)])
+          (set! cursor (+ cursor 1))))
+      run?)))
+
+;; The whole-function tables the recognition reads, built once per round.
+(defstruct OptBgAnalysis
+  (add-base (__tl_dyn-array i64))
+  (add-k (__tl_dyn-array i64))
+  (def-block (__tl_dyn-array i64))
+  (uses (__tl_dyn-array i64))
+  (scratch OptBgScratch))
+
+(define (opt-bg-analysis-build
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]
+  [width : i64]) : OptBgAnalysis
+  (let
+    [add-base : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [add-k : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [def-block : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    (begin
+      (opt-gep-offset-fill! def-block (- 0 1))
+      (opt-bg-defs-blocks! blocks 0 def-block)
+      (opt-gep-offset-fill! add-base (- 0 1))
+      (opt-bg-adds-blocks! blocks add-base add-k)
+      (opt-bg-prune-adds! add-base def-block)
+      (OptBgAnalysis
+        add-base
+        add-k
+        def-block
+        (opt-collect-blocks-uses-array frame blocks)
+        (OptBgScratch
+          (array.make-array i64 width)
+          (array.make-array ir.CompilerIrValue width)
+          (array.make-array i64 width)
+          (array.make-array i64 width)
+          (array.make-array ir.CompilerIrValue width)
+          (array.make-array bool width))))))
+
+;; A lone member pays only through the backend displacement fold, and that fold
+;; admits the offset Add only when every reader it has left is a Gep INDEX in
+;; the same block. The member check is the one reader the split removes, so the
+;; Add is freed exactly when its whole-function use count is those in-block Gep
+;; indices plus that check. A second check on the same offset -- the shape a
+;; store between two checks leaves behind -- fails this and keeps its `lea`,
+;; which is the case where a lone filter would cost an entry build and save
+;; nothing.
+(define (opt-bg-fold-frees-add?
+  [instrs : ir.CompilerIrInstrSeq]
+  [add-pos : i64]
+  [uses : (__tl_dyn-array i64)]) : bool
+  (match (opt-instr-def-var (ir.compiler-ir-instr-seq-ref instrs add-pos))
+    [(option_i64.None) false]
+    [(option_i64.Some dst)
+      (if (or (< dst 0) (>= dst (array-length uses)))
+        false
+        (let
+          [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+          [cursor : i64 (+ add-pos 1)]
+          [geps : i64 0]
+          (begin
+            (while (< cursor count)
+              (begin
+                (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+                  [(ir.CompilerIrInstr.Gep _ _ offset _)
+                    (if (opt-value-is-var? offset dst)
+                      (set! geps (+ geps 1))
+                      unit)]
+                  [_ unit])
+                (set! cursor (+ cursor 1))))
+            (and (>= geps 1) (= (array-ref uses dst) (+ geps 1))))))]))
+
+;; The group worth rewriting in this block, as its first member's position, or
+;; `-1`. Bigger groups win; a lone member only counts when the split can carry
+;; its offset Add along AND freeing that Add actually retires it.
+(define (opt-bg-best-start
+  [instrs : ir.CompilerIrInstrSeq]
+  [body : OptLoopBody]
+  [analysis : OptBgAnalysis]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    [best : i64 (- 0 1)]
+    [best-count : i64 0]
+    (begin
+      (while (< cursor count)
+        (begin
+          (match (opt-bg-check-at
+            (ir.compiler-ir-instr-seq-ref instrs cursor)
+            analysis.add-base
+            analysis.add-k
+            analysis.def-block
+            body)
+            [(OptBgMaybeCheck.Some base offset _ _)
+              (let
+                [found : i64
+                  (opt-bg-collect!
+                    instrs
+                    cursor
+                    base
+                    analysis.add-base
+                    analysis.add-k
+                    analysis.def-block
+                    body
+                    analysis.scratch
+                    false)]
+                [worth? : bool
+                  (if (>= found 2)
+                    true
+                    (and
+                      (> offset 0)
+                      (<
+                        (opt-bg-cut-of
+                          instrs
+                          cursor
+                          base
+                          analysis.add-base
+                          analysis.add-k)
+                        cursor)
+                      (opt-bg-fold-frees-add? instrs (- cursor 1) analysis.uses)))]
+                (if (and worth? (> found best-count))
+                  (begin
+                    (set! best cursor)
+                    (set! best-count found))
+                  unit))]
+            [(OptBgMaybeCheck.No) unit])
+          (set! cursor (+ cursor 1))))
+      best)))
+
+;; The block-shape gates that hold whatever loop the block is claimed for.
+(define (opt-bg-block-eligible? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (and
+    (> (ir.compiler-ir-instr-seq-count instrs) 0)
+    (not (opt-cfg-instr-seq-can-fallthrough? instrs))
+    (not (opt-bg-check-run-block? instrs))))
+
+(define (opt-bg-plan-block
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [pre : i64]
+  [body : OptLoopBody]
+  [analysis : OptBgAnalysis]
+  [next-var : i64]) : OptBgPlanResult
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (not (opt-bg-block-eligible? instrs))
+      (OptBgPlanResult.No)
+      (let
+        [start : i64 (opt-bg-best-start instrs body analysis)]
+        (if (< start 0)
+          (OptBgPlanResult.No)
+          (match (opt-bg-check-at
+            (ir.compiler-ir-instr-seq-ref instrs start)
+            analysis.add-base
+            analysis.add-k
+            analysis.def-block
+            body)
+            [(OptBgMaybeCheck.No) (OptBgPlanResult.No)]
+            [(OptBgMaybeCheck.Some base _ _ _)
+              (let
+                [drop : (__tl_dyn-array bool) (array.make-array bool count)]
+                [scratch : OptBgScratch analysis.scratch]
+                [marked : OptBgScratch
+                  (OptBgScratch
+                    scratch.ks
+                    scratch.lens
+                    scratch.oks
+                    scratch.term-ks
+                    scratch.term-lens
+                    drop)]
+                [members : i64
+                  (opt-bg-collect!
+                    instrs
+                    start
+                    base
+                    analysis.add-base
+                    analysis.add-k
+                    analysis.def-block
+                    body
+                    marked
+                    true)]
+                [terms : i64 (opt-bg-dedup-terms! members marked)]
+                [ok-label : i64
+                  (opt-ubound-fresh-label blocks label "__bg_ok" 0)]
+                [slow-label : i64
+                  (opt-ubound-fresh-label blocks label "__bg_slow" 0)]
+                (match (opt-bg-bound-plan terms marked next-var)
+                  [(OptBgBoundPlan.Plan pre-instrs bound bound-var)
+                    (match (opt-bg-slow-plan
+                      members
+                      marked
+                      base
+                      ok-label
+                      (+ bound-var 1))
+                      [(OptBgSeqPlan.Plan slow-instrs slow-var)
+                        (OptBgPlanResult.Some
+                          (OptBgPlan
+                            label
+                            ok-label
+                            slow-label
+                            pre
+                            (opt-bg-cut-of
+                              instrs
+                              start
+                              base
+                              analysis.add-base
+                              analysis.add-k)
+                            bound-var
+                            base
+                            bound
+                            drop
+                            pre-instrs
+                            slow-instrs)
+                          slow-var)])]))]))))))
+
+;; --- loop choice -------------------------------------------------------------
+;;
+;; Two structural rules decide which loops a block may build its bound for, and
+;; both came out of measurement rather than taste.
+;;
+;; The preheader must sit outside every loop of the function, so the build is
+;; paid once per call. A bound built one level in is rebuilt per iteration of
+;; THAT loop, and the build is not cheap: `min` lowers to a compare, a
+;; materialised flag and a `cmov`. Measured on intern_table's hash-probe loop, a
+;; bound one level in cost 6.8M Ir of arithmetic and 12.0M Ir of spill traffic
+;; against a 3.4M Ir saving -- a rewrite that removed real checks and still lost.
+;;
+;; Loops are still visited widest body first, so that where two loops could both
+;; host a block the outer one -- the one that builds less often -- claims it,
+;; and a block is claimed once.
+(define (opt-bg-mark-members!
+  [members : (__tl_dyn-array bool)]
+  [marks : (__tl_dyn-array bool)]) : unit
+  (let
+    [count : i64 (array-length members)]
+    [limit : i64 (array-length marks)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (if (and (< cursor limit) (array-ref members cursor))
+          (set! (array-ref marks cursor) true)
+          unit)
+        (set! cursor (+ cursor 1))))))
+
+(define (opt-bg-loop-marks!
+  [loops : OptNaturalLoopList]
+  [marks : (__tl_dyn-array bool)]) : unit
+  (match loops
+    [(OptNaturalLoopList.Nil) unit]
+    [(OptNaturalLoopList.Cons loop rest)
+      (begin
+        (opt-bg-mark-members! (opt-natural-loop-body-members loop) marks)
+        (opt-bg-loop-marks! (__tl-box-place rest) marks))]))
+
+(define (opt-bg-outside-loops?
+  [index : OptCfgIndex]
+  [marks : (__tl_dyn-array bool)]
+  [label : i64]) : bool
+  (match (opt-cfg-index-id index label)
+    [(option_i64.Some id)
+      (and (>= id 0) (< id (array-length marks)) (not (array-ref marks id)))]
+    [(option_i64.None) false]))
+
+;; And the loop must be INNERMOST -- its body may not contain another loop's
+;; header. The filter trades the group's lengths for one more loop-invariant
+;; value, and the lengths stay live because the slow arm still reads them, so
+;; the body ends one register hungrier than it started. An innermost body is
+;; where that fits; a body that wraps other loops is already carrying their
+;; live-through state, and there the extra invariant evicts something hotter
+;; than the two instructions the filter saved. Measured: on cfg_domloops'
+;; `cfg-idom-iterate` the rewrite removed 2.5M checks and still cost +4.3M Ir,
+;; because the outer loop's counter and its flag were pushed to the stack
+;; (`if_merge.51` grew from 3 instructions to 11); intern_table's `it-bench`
+;; line loop lost 6.9M Ir of reload traffic against a 6.8M Ir saving.
+(define (opt-bg-loop-body-size [loop : OptNaturalLoop]) : i64
+  (opt-label-count (opt-natural-loop-body loop)))
+
+(define (opt-bg-loop-innermost?
+  [loop : OptNaturalLoop]
+  [loops : OptNaturalLoopList]
+  [index : OptCfgIndex]) : bool
+  (let
+    [body : OptLoopBody (opt-natural-loop-body-info loop)]
+    [header : i64 (opt-natural-loop-header loop)]
+    (opt-bg-no-inner-header? body header loops index)))
+
+(define (opt-bg-no-inner-header?
+  [body : OptLoopBody]
+  [header : i64]
+  [loops : OptNaturalLoopList]
+  [index : OptCfgIndex]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) true]
+    [(OptNaturalLoopList.Cons other rest)
+      (and
+        (or
+          (= (opt-natural-loop-header other) header)
+          (not
+            (opt-loop-body-label-member?
+              body
+              index
+              (opt-natural-loop-header other))))
+        (opt-bg-no-inner-header? body header (__tl-box-place rest) index))]))
+
+(define (opt-bg-loops-insert
+  [loop : OptNaturalLoop]
+  [sorted : OptNaturalLoopList]) : OptNaturalLoopList
+  (match sorted
+    [(OptNaturalLoopList.Nil)
+      (OptNaturalLoopList.Cons loop (box (OptNaturalLoopList.Nil)))]
+    [(OptNaturalLoopList.Cons head rest)
+      (if (> (opt-bg-loop-body-size loop) (opt-bg-loop-body-size head))
+        (OptNaturalLoopList.Cons loop (box (OptNaturalLoopList.Cons head rest)))
+        (OptNaturalLoopList.Cons
+          head
+          (box (opt-bg-loops-insert loop (__tl-box-place rest)))))]))
+
+(define (opt-bg-loops-widest-first [loops : OptNaturalLoopList]) : OptNaturalLoopList
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptNaturalLoopList.Nil)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (opt-bg-loops-insert
+        loop
+        (opt-bg-loops-widest-first (__tl-box-place rest)))]))
+
+;; --- planning ----------------------------------------------------------------
+;;
+;; One site per block per run: the split leaves the rest of the block in `B_ok`,
+;; where the next round finds any second group. A block already split, and a
+;; block already carrying another site's bound build, are both off limits, so
+;; the plans of one run never interfere.
+(define (opt-bg-plan-one
+  [block : ir.CompilerIrBlock]
+  [blocks : ir.CompilerIrBlockList]
+  [pre : i64]
+  [body : OptLoopBody]
+  [analysis : OptBgAnalysis]
+  [state : OptBgPlanState]) : OptBgPlanState
+  (match state
+    [(OptBgPlanState.State plans taken pre-used next-var)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (if (or
+            (= label pre)
+            (opt-label-contains taken label)
+            (opt-label-contains pre-used label)
+            (opt-label-contains taken pre))
+            state
+            (match (opt-bg-plan-block
+              blocks
+              label
+              instrs
+              pre
+              body
+              analysis
+              next-var)
+              [(OptBgPlanResult.No) state]
+              [(OptBgPlanResult.Some plan plan-var)
+                (OptBgPlanState.State
+                  (OptBgPlanList.Cons plan (box plans))
+                  (opt-label-add taken label)
+                  (opt-label-add pre-used pre)
+                  plan-var)]))])]))
+
+(define (opt-bg-plan-loop-body
+  [remaining : ir.CompilerIrBlockList]
+  [blocks : ir.CompilerIrBlockList]
+  [pre : i64]
+  [body : OptLoopBody]
+  [analysis : OptBgAnalysis]
+  [state : OptBgPlanState]) : OptBgPlanState
+  (match remaining
+    [(ir.CompilerIrBlockList.Nil) state]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bg-plan-loop-body
+        (ir.compiler-ir-block-seq-to-list seq)
+        blocks
+        pre
+        body
+        analysis
+        state)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (opt-bg-plan-loop-body
+        (__tl-box-place rest)
+        blocks
+        pre
+        body
+        analysis
+        (opt-bg-plan-one block blocks pre body analysis state))]))
+
+(define (opt-bg-plan-loops
+  [loops : OptNaturalLoopList]
+  [all-loops : OptNaturalLoopList]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [marks : (__tl_dyn-array bool)]
+  [analysis : OptBgAnalysis]
+  [state : OptBgPlanState]) : OptBgPlanState
+  (match loops
+    [(OptNaturalLoopList.Nil) state]
+    [(OptNaturalLoopList.Cons loop rest)
+      (opt-bg-plan-loops
+        (__tl-box-place rest)
+        all-loops
+        blocks
+        index
+        marks
+        analysis
+        (match (opt-natural-loop-preheader loop)
+          [(OptLoopPreheader.No) state]
+          [(OptLoopPreheader.Some pre)
+            (if (not
+              (and
+                (opt-bg-outside-loops? index marks pre)
+                (opt-bg-loop-innermost? loop all-loops index)))
+              state
+              (opt-bg-plan-loop-body
+                (opt-natural-loop-current-body-blocks loop blocks)
+                blocks
+                pre
+                (opt-natural-loop-body-info loop)
+                analysis
+                state))]))]))
+
+;; --- rewrite -----------------------------------------------------------------
+(define (opt-bg-plan-ok-of [plans : OptBgPlanList] [label : i64]) : i64
+  (match plans
+    [(OptBgPlanList.Nil) label]
+    [(OptBgPlanList.Cons plan rest)
+      (if (= plan.block label)
+        plan.ok
+        (opt-bg-plan-ok-of (__tl-box-place rest) label))]))
+
+(define (opt-bg-plan-for [plans : OptBgPlanList] [label : i64]) : OptBgMaybePlan
+  (match plans
+    [(OptBgPlanList.Nil) (OptBgMaybePlan.No)]
+    [(OptBgPlanList.Cons plan rest)
+      (if (= plan.block label)
+        (OptBgMaybePlan.Some plan)
+        (opt-bg-plan-for (__tl-box-place rest) label))]))
+
+(define (opt-bg-inputs-need-relabel?
+  [inputs : ir.CompilerIrPhiInputList]
+  [plans : OptBgPlanList]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) false]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bg-inputs-need-relabel?
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        plans)]
+    [(ir.CompilerIrPhiInputList.Cons _ label rest)
+      (or
+        (not (= (opt-bg-plan-ok-of plans label) label))
+        (opt-bg-inputs-need-relabel? (__tl-box-place rest) plans))]))
+
+;; `B_ok` inherits `B`'s terminator, so every phi input that named `B` names the
+;; fast block after the split. A block whose phis name no split block keeps its
+;; instruction sequence by identity.
+(define (opt-bg-relabel-inputs
+  [inputs : ir.CompilerIrPhiInputList]
+  [plans : OptBgPlanList]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bg-relabel-inputs (ir.compiler-ir-phi-input-seq-to-list seq) plans)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (ir.compiler-ir-phi-input-cons
+        value
+        (opt-bg-plan-ok-of plans label)
+        (opt-bg-relabel-inputs (__tl-box-place rest) plans))]))
+
+(define (opt-bg-instrs-need-relabel?
+  [instrs : ir.CompilerIrInstrSeq]
+  [plans : OptBgPlanList]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    [needed? : bool false]
+    (begin
+      (while (< cursor count)
+        (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+          [(ir.CompilerIrInstr.Phi _ inputs _)
+            (if (opt-bg-inputs-need-relabel? inputs plans)
+              (begin
+                (set! needed? true)
+                (set! cursor count))
+              (set! cursor (+ cursor 1)))]
+          [_ (set! cursor count)]))
+      needed?)))
+
+(define (opt-bg-relabel-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [plans : OptBgPlanList]) : ir.CompilerIrInstrSeq
+  (if (not (opt-bg-instrs-need-relabel? instrs plans))
+    instrs
+    (let
+      [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+      [builder : ir.CompilerIrInstrBuilder
+        (ir.compiler-ir-instr-builder-with-capacity count)]
+      [cursor : i64 0]
+      (begin
+        (while (< cursor count)
+          (let
+            [instr : ir.CompilerIrInstr
+              (ir.compiler-ir-instr-seq-ref instrs cursor)]
+            (begin
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (match instr
+                  [(ir.CompilerIrInstr.Phi dst inputs ty)
+                    (ir.CompilerIrInstr.Phi
+                      dst
+                      (opt-bg-relabel-inputs inputs plans)
+                      ty)]
+                  [_ instr]))
+              (set! cursor (+ cursor 1)))))
+        (ir.compiler-ir-instr-builder-to-seq builder)))))
+
+;; The filter block: everything before the split point, then the one unsigned
+;; compare and its branch.
+(define (opt-bg-fast-instrs [instrs : ir.CompilerIrInstrSeq] [plan : OptBgPlan]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ plan.cut 2))]
+    (begin
+      (ir.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        instrs
+        0
+        plan.cut)
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.BinOp
+          plan.cmp
+          (ir.CompilerIrBinOp.Lt)
+          (ir.CompilerIrValue.Var plan.index)
+          plan.bound
+          (ast.AstType.U64)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var plan.cmp)
+          plan.ok
+          plan.slow))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+;; The fast block: the rest of the original block with the member checks gone.
+(define (opt-bg-ok-instrs [instrs : ir.CompilerIrInstrSeq] [plan : OptBgPlan]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count plan.cut))]
+    [cursor : i64 plan.cut]
+    (begin
+      (while (< cursor count)
+        (begin
+          (if (array-ref plan.drop cursor)
+            unit
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.compiler-ir-instr-seq-ref instrs cursor)))
+          (set! cursor (+ cursor 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-bg-hoisted-into!
+  [plans : OptBgPlanList]
+  [label : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
+  (match plans
+    [(OptBgPlanList.Nil) unit]
+    [(OptBgPlanList.Cons plan rest)
+      (begin
+        (if (= plan.pre label)
+          (ir.compiler-ir-instr-builder-append-seq-range!
+            (&mut builder)
+            plan.pre-instrs
+            0
+            (ir.compiler-ir-instr-seq-count plan.pre-instrs))
+          unit)
+        (opt-bg-hoisted-into! (__tl-box-place rest) label (&mut builder)))]))
+
+(define (opt-bg-hoisted-for-label [plans : OptBgPlanList] [label : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder (ir.compiler-ir-instr-builder-new)]
+    (begin
+      (opt-bg-hoisted-into! plans label (&mut builder))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+;; The slow arms go last in the block list, out of the loop body's straight-line
+;; run: the fast edge then falls through and only the cold arm pays a jump back.
+(define (opt-bg-slow-blocks
+  [plans : OptBgPlanList]
+  [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match plans
+    [(OptBgPlanList.Nil) tail]
+    [(OptBgPlanList.Cons plan rest)
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block plan.slow plan.slow-instrs)
+        (opt-bg-slow-blocks (__tl-box-place rest) tail))]))
+
+(define (opt-bg-rewrite-blocks
+  [remaining : ir.CompilerIrBlockList]
+  [plans : OptBgPlanList]) : ir.CompilerIrBlockList
+  (match remaining
+    [(ir.CompilerIrBlockList.Nil)
+      (opt-bg-slow-blocks plans (ir.CompilerIrBlockList.Nil))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bg-rewrite-blocks (ir.compiler-ir-block-seq-to-list seq) plans)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (let
+            [relabeled : ir.CompilerIrInstrSeq
+              (opt-bg-relabel-instrs instrs plans)]
+            [tail : ir.CompilerIrBlockList
+              (opt-bg-rewrite-blocks (__tl-box-place rest) plans)]
+            (match (opt-bg-plan-for plans label)
+              [(OptBgMaybePlan.Some plan)
+                (ir.compiler-ir-block-cons
+                  (ir.CompilerIrBlock.Block
+                    label
+                    (opt-bg-fast-instrs relabeled plan))
+                  (ir.compiler-ir-block-cons
+                    (ir.CompilerIrBlock.Block
+                      plan.ok
+                      (opt-bg-ok-instrs relabeled plan))
+                    tail))]
+              [(OptBgMaybePlan.No)
+                (ir.compiler-ir-block-cons
+                  (ir.CompilerIrBlock.Block
+                    label
+                    (opt-instr-seq-insert-before-terminator
+                      (opt-bg-hoisted-for-label plans label)
+                      relabeled))
+                  tail)]))])]))
+
+;; --- entry -------------------------------------------------------------------
+(defenum OptBgBlocksResult
+  (Result ir.CompilerIrBlockList i64 bool))
+
+;; Cheap prescan, invariant under everything the plan then checks: a block with
+;; two bounds checks, or with a bounds check right behind an Add, is the only
+;; shape that can produce a site.
+(define (opt-bg-instrs-have-candidate? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    [checks : i64 0]
+    [found? : bool false]
+    (begin
+      (while (< cursor count)
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+            [(ir.CompilerIrInstr.BoundsCheck _ _ _)
+              (begin
+                (set! checks (+ checks 1))
+                (if (or
+                  (>= checks 2)
+                  (and
+                    (> cursor 0)
+                    (match (ir.compiler-ir-instr-seq-ref instrs (- cursor 1))
+                      [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+                        (opt-binop-eq op (ir.CompilerIrBinOp.Add))]
+                      [_ false])))
+                  (begin
+                    (set! found? true)
+                    (set! cursor count))
+                  unit))]
+            [_ unit])
+          (set! cursor (+ cursor 1))))
+      found?)))
+
+(define (opt-bg-blocks-have-candidate? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-bg-instrs-have-candidate? instrs)
+            (opt-bg-blocks-have-candidate? (__tl-box-place rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bg-blocks-have-candidate? (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bg-max-instr-count [blocks : ir.CompilerIrBlockList]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) 0]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [here : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [tail : i64 (opt-bg-max-instr-count (__tl-box-place rest))]
+            (if (> here tail)
+              here
+              tail))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bg-max-instr-count (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; Would this loop actually produce a site if it had a preheader? The synthesis
+;; below only pays for a block when the answer is yes: a preheader nothing then
+;; uses is a jump-only block on every entry edge of a loop this pass declined.
+(define (opt-bg-body-would-plan?
+  [remaining : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [analysis : OptBgAnalysis]) : bool
+  (match remaining
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bg-body-would-plan?
+        (ir.compiler-ir-block-seq-to-list seq)
+        body
+        analysis)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (or
+            (and
+              (opt-bg-block-eligible? instrs)
+              (>= (opt-bg-best-start instrs body analysis) 0))
+            (opt-bg-body-would-plan? (__tl-box-place rest) body analysis))])]))
+
+;; How many loops of the function contain `header` in their body. A synthesized
+;; preheader takes over every entry edge and lands immediately in front of the
+;; header, so it is outside every loop exactly when the header is inside its own
+;; loop alone -- which is the condition the plan then demands of it.
+(define (opt-bg-header-loop-count
+  [loops : OptNaturalLoopList]
+  [index : OptCfgIndex]
+  [header : i64]) : i64
+  (match loops
+    [(OptNaturalLoopList.Nil) 0]
+    [(OptNaturalLoopList.Cons loop rest)
+      (+
+        (if (opt-loop-body-label-member?
+          (opt-natural-loop-body-info loop)
+          index
+          header)
+          1
+          0)
+        (opt-bg-header-loop-count (__tl-box-place rest) index header))]))
+
+(define (opt-bg-synthesize-first-candidate
+  [remaining : OptNaturalLoopList]
+  [loops : OptNaturalLoopList]
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [analysis : OptBgAnalysis]) : OptBlockListPassResult
+  (match remaining
+    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-natural-loop-preheader loop)
+        [(OptLoopPreheader.Some _)
+          (opt-bg-synthesize-first-candidate
+            (__tl-box-place rest)
+            loops
+            blocks
+            context
+            analysis)]
+        [(OptLoopPreheader.No)
+          (if (and
+            (=
+              (opt-bg-header-loop-count
+                loops
+                context.index
+                (opt-natural-loop-header loop))
+              1)
+            (opt-bg-loop-innermost? loop loops context.index)
+            (opt-bg-body-would-plan?
+              (opt-natural-loop-current-body-blocks loop blocks)
+              (opt-natural-loop-body-info loop)
+              analysis))
+            (match (opt-loop-preheaders-synthesize-loop blocks context loop)
+              [(OptBlockListPassResult.Result next synthesized)
+                (if synthesized
+                  (OptBlockListPassResult.Result next true)
+                  (opt-bg-synthesize-first-candidate
+                    (__tl-box-place rest)
+                    loops
+                    blocks
+                    context
+                    analysis))])
+            (opt-bg-synthesize-first-candidate
+              (__tl-box-place rest)
+              loops
+              blocks
+              context
+              analysis))])]))
+
+(defenum OptBgPreheaderResult
+  (Result ir.CompilerIrBlockList OptCfgContext bool))
+
+(define (opt-bg-loops-need-preheader? [loops : OptNaturalLoopList]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-natural-loop-preheader loop)
+        [(OptLoopPreheader.No) true]
+        [(OptLoopPreheader.Some _)
+          (opt-bg-loops-need-preheader? (__tl-box-place rest))])]))
+
+;; One synthesis per round: the CFG (and therefore `context`) is stale straight
+;; afterwards, exactly as `opt-loop-preheaders-blocks-fixed-result` handles it.
+;; The rounds are skipped outright when every loop already has a preheader,
+;; which is the ordinary case and the one where building the recognition tables
+;; here would be pure compile-time cost.
+(define (opt-bg-prepare-preheaders
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [remaining : i64]
+  [changed : bool]) : OptBgPreheaderResult
+  (if (<= remaining 0)
+    (OptBgPreheaderResult.Result blocks context changed)
+    (let
+      [width : i64 (opt-bg-max-instr-count blocks)]
+      (if (or
+        (<= width 0)
+        (not
+          (opt-bg-loops-need-preheader?
+            (opt-cfg-natural-loops-with-context blocks context))))
+        (OptBgPreheaderResult.Result blocks context changed)
+        (match (opt-bg-synthesize-first-candidate
+          (opt-cfg-natural-loops-with-context blocks context)
+          (opt-cfg-natural-loops-with-context blocks context)
+          blocks
+          context
+          (opt-bg-analysis-build blocks frame width))
+          [(OptBlockListPassResult.Result next synthesized)
+            (if synthesized
+              (opt-bg-prepare-preheaders
+                next
+                (opt-cfg-context-build next)
+                frame
+                (- remaining 1)
+                true)
+              (OptBgPreheaderResult.Result blocks context changed))])))))
+
+(define (opt-bg-blocks-result
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]) : OptBgBlocksResult
+  (let
+    [width : i64 (opt-bg-max-instr-count blocks)]
+    (if (or (<= frame 0) (<= width 0))
+      (OptBgBlocksResult.Result blocks frame false)
+      (let
+        [loops : OptNaturalLoopList
+          (opt-cfg-natural-loops-with-context blocks context)]
+        [marks : (__tl_dyn-array bool)
+          (array.make-array bool (ir.compiler-ir-block-list-count blocks))]
+        [_marks : unit (opt-bg-loop-marks! loops marks)]
+        (match (opt-bg-plan-loops
+          (opt-bg-loops-widest-first loops)
+          (opt-cfg-natural-loops-with-context blocks context)
+          blocks
+          context.index
+          marks
+          (opt-bg-analysis-build blocks frame width)
+          (OptBgPlanState.State
+            (OptBgPlanList.Nil)
+            (OptLabelSet.Nil)
+            (OptLabelSet.Nil)
+            frame))
+          [(OptBgPlanState.State plans _ _ next-var)
+            (match plans
+              [(OptBgPlanList.Nil)
+                (OptBgBlocksResult.Result blocks frame false)]
+              [(OptBgPlanList.Cons _ _)
+                ;; An offset Add whose only reader was a member check is dead
+                ;; in the fast block (the slow arm re-forms its own), and the
+                ;; pipeline DCE has already run by the time this pass fires.
+                (OptBgBlocksResult.Result
+                  (opt-dce-block-list-array-fixpoint
+                    next-var
+                    (opt-bg-rewrite-blocks blocks plans)
+                    4)
+                  next-var
+                  true)])])))))
+
+(defenum OptBgFunctionResult
+  (Result ir.CompilerIrFunction OptCfgContext bool))
+
+;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
+;; Preheader synthesis is the only step that runs before the plan, so the
+;; returned context is rebuilt exactly when the rewrite fired.
+(define (opt-bg-function-changed-result
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : OptBgFunctionResult
+  (match (opt-verify-gate verified? func context)
+    [(ResultCompilerOptimizeVerify.Err _)
+      (OptBgFunctionResult.Result func context false)]
+    [(ResultCompilerOptimizeVerify.Ok)
+      (match func
+        [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+          (if (not (opt-bg-blocks-have-candidate? blocks))
+            (OptBgFunctionResult.Result func context false)
+            (match (opt-bg-prepare-preheaders
+              blocks
+              context
+              frame
+              (+ 1 (ir.compiler-ir-block-list-count blocks))
+              false)
+              [(OptBgPreheaderResult.Result staged staged-context _)
+                (match (opt-bg-blocks-result staged staged-context frame)
+                  [(OptBgBlocksResult.Result next-blocks next-frame changed)
+                    ;; A preheader synthesized for a loop that then failed a
+                    ;; gate would leave a jump-only block behind, so drop the
+                    ;; whole staging when nothing split.
+                    (if (not changed)
+                      (OptBgFunctionResult.Result func context false)
+                      (let
+                        [next : ir.CompilerIrFunction
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            next-frame
+                            (opt-cfg-reachable-block-order next-blocks))]
+                        [next-context : OptCfgContext
+                          (opt-cfg-context-build (opt-function-blocks next))]
+                        (match (opt-verify-function-with-context
+                          next
+                          next-context)
+                          [(ResultCompilerOptimizeVerify.Ok)
+                            (OptBgFunctionResult.Result next next-context true)]
+                          [(ResultCompilerOptimizeVerify.Err _)
+                            (OptBgFunctionResult.Result func context false)])))])]))])]))
+
+(define (opt-bg-function-with-context-result
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
+  (match (opt-bg-function-changed-result context verified? func)
+    [(OptBgFunctionResult.Result next next-context _)
+      (OptFunctionCtxResult.Result next next-context)]))
+
+;; Standalone driver for tests and ad-hoc runs: builds its own CFG context and
+;; keeps the defensive entry verify.
+(define (opt-bg-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match (opt-bg-function-changed-result
+    (opt-cfg-context-build (opt-function-blocks func))
+    false
+    func)
+    [(OptBgFunctionResult.Result next _ changed)
+      (OptFunctionPassResult.Result next changed)]))
+
+;; The pass runs BELOW the pipeline fixpoint, from the escaping per-function
+;; driver rather than from `optimize-function-once-with-summaries`. Two measured
+;; regressions pin it there. Inside the pipeline, the fixpoint second iteration
+;; re-derives `bce_version`'s guard chain from a body whose checks now sit on
+;; cold arms; the weaker chain puts a check back on a hot path the old chain had
+;; proved away (`cfg-idom-iterate`, +9.5M Ir on cfg_domloops). And the inliner's
+;; checked cost model MEASURES a candidate by running the level-2 optimizer over
+;; it and weighing the result, so a pass that adds cold STATIC instructions
+;; inside that measurement flips inline decisions on bodies it never made faster
+;; (intern_table, +27.8M Ir). Below the pipeline the pass sees the final shape --
+;; versioned clones and unrolled bodies included -- and nothing re-reads its
+;; output.
+;;
+;; Its own bounded fixpoint takes the place of the pipeline iteration it gave
+;; up: a block with two groups splits once per round, and the second group is
+;; found in the fast block the first round left behind.
+(define (opt-bg-function-rounds) : i64
+  3)
+
+;; The pipeline entry skips the defensive entry verify: the body arrives
+;; straight out of `optimize-function-with-level-and-summaries-pass`, whose last
+;; rewriting passes each post-verify their own output, and this pass verifies
+;; what it produces before returning it either way. The prescan runs before the
+;; CFG context is built so a function with no candidate shape costs one linear
+;; instruction walk and nothing else.
+(define (opt-bg-function-verified-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (if (not (opt-bg-blocks-have-candidate? (opt-function-blocks func)))
+    (OptFunctionPassResult.Result func false)
+    (match (opt-bg-function-changed-result
+      (opt-cfg-context-build (opt-function-blocks func))
+      true
+      func)
+      [(OptBgFunctionResult.Result next _ changed)
+        (OptFunctionPassResult.Result next changed)])))
+
+(define (opt-bg-function-fixed [func : ir.CompilerIrFunction] [remaining : i64]) : ir.CompilerIrFunction
+  (if (<= remaining 0)
+    func
+    (match (opt-bg-function-verified-pass func)
+      [(OptFunctionPassResult.Result next changed)
+        (if changed
+          (opt-bg-function-fixed next (- remaining 1))
+          func)])))
+
+(define (opt-bg-function
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (compiler-opt-debug-observe-function
+    type-segment-bases
+    "bounds_group"
+    (opt-bg-function-fixed func (opt-bg-function-rounds))))
+
 (define (optimize-function-once-with-summaries
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -81391,8 +83047,21 @@
               _profile-name
               _t-body))]
         (match body-result
-          [(OptFunctionPassResult.Result body _)
+          [(OptFunctionPassResult.Result body-optimized _)
             (let
+              [_t-bounds-group : i64 (cfg compile-profile (profile.now-ms) 0)]
+              [body : ir.CompilerIrFunction
+                (if (>= level 2)
+                  (opt-bg-function type-segment-bases body-optimized)
+                  body-optimized)]
+              [_profile-bounds-group : unit
+                (cfg
+                  compile-profile
+                  (compiler-opt-profile-escape-finish
+                    "bounds_group"
+                    level
+                    _profile-name
+                    _t-bounds-group))]
               [_t-compact : i64 (cfg compile-profile (profile.now-ms) 0)]
               [optimized : ir.CompilerIrFunction
                 (ir.compiler-ir-function-compact-blocks body)]

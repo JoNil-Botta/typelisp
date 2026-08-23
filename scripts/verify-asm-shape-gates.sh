@@ -697,11 +697,17 @@ check_alu_mem_operand_tie() {
     # No element load survives: the fold consumed all eight.
     assert_not_matches "$_body" \
         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r' alu-mem-operand-tie
-    # The only register-to-register copies left are the seed's entry home and the
-    # accumulator's move into the return register -- one each, outside both loops.
-    # A destination tied to the load instead would add one staging copy per op.
+    # The register-to-register copies left are the seed's entry home, the
+    # accumulator's move into the return register, and the three the CHECKED
+    # clone's preheader spends on `bounds_group`'s bound: that clone still runs
+    # four checks of one index against four lengths, so the pass builds
+    # `min(len_a, len_b, len_c, len_d)` there once as three compare/`cmov`
+    # pairs, each staging its running minimum with one `movq`. All five sit
+    # outside both loops. A destination tied to the load instead would add one
+    # staging copy per op INSIDE them, which is what the count guards and what
+    # the two assertions above pin independently.
     assert_regex_count_eq "$_body" \
-        '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 2 alu-mem-operand-tie
+        '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 5 alu-mem-operand-tie
 }
 
 check_alu_mem_operand_sink() {
@@ -717,10 +723,15 @@ check_alu_mem_operand_sink() {
     assert_regex_count_eq "$_body"         '^[[:space:]]+(andq|orq|xorq) \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 8         alu-mem-operand-sink
     # No element load survives: the fold consumed all eight.
     assert_not_matches "$_body"         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r' alu-mem-operand-sink
-    # The only register-to-register copies left are the seed's entry home and
-    # the accumulator's move into the return register, one each and both
-    # outside the loops.
-    assert_regex_count_eq "$_body"         '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 2 alu-mem-operand-sink
+    # The register-to-register copies left are the seed's entry home, the
+    # accumulator's move into the return register, and the three the CHECKED
+    # clone's preheader spends on `bounds_group`'s bound, exactly as in
+    # `check_alu_mem_operand_tie` above: four checks of one index against four
+    # lengths become one `min(len_a, len_b, len_c, len_d)` built there as three
+    # compare/`cmov` pairs, each staging its running minimum with one `movq`.
+    # All five are outside the loops; a wrong tie would put one staging copy per
+    # op INSIDE them, which is what the two assertions above pin independently.
+    assert_regex_count_eq "$_body"         '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 5 alu-mem-operand-sink
 }
 
 check_const_global_mask_unroll() {

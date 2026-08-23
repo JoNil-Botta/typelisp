@@ -61886,3 +61886,432 @@
           (opt-ubound-with-head (opt-ubound-wide-head-block))))
       (return 2))
     42))
+
+;; --- bounds-check group coalescing (bounds_group) ---------------------------
+;;
+;; The fixture is one self-looping body over two arrays:
+;;
+;;   entry: la = load len(a) ; lb = load len(b) ; jump pre
+;;   pre:   jump head
+;;   head:  i = phi [0, pre], [n, head]
+;;          bounds_check i, la
+;;          g = gep a, i ; v = load g
+;;          bounds_check i, lb          ; second length, same index
+;;          n = add i, 1
+;;          go = lt n, la
+;;          branch go, head, exit
+;;   exit:  return v
+;;
+;; `inside?` moves the length loads into the body, which is the refusal case
+;; where `M` would be a per-iteration build. `offset?` turns the second check
+;; into `i + 1` against the FIRST length, which is the parallel `i` / `i + 1`
+;; shape. `loop?` false drops the back edge, leaving a straight-line function
+;; the pass must not touch.
+(define (opt-bg-label [name : String]) : i64
+  (compiler_ir_types.compiler-ir-label name))
+
+(define (opt-bg-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "a"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "b"
+        (compiler_ast_types.AstType.I64)
+        1)
+      compiler_ir_types.CompilerIrParamList.Nil)))
+
+(define (opt-bg-entry-block [inside? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (opt-bg-label "entry")
+    (if inside?
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump (opt-bg-label "pre")))
+      (opt-test-instrs-with-tail
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump (opt-bg-label "pre")))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          4
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          5
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ast_types.AstType.I64))))))
+
+(define (opt-bg-pre-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (opt-bg-label "pre")
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Jump (opt-bg-label "head")))))
+
+;; The body after its phi: the two checks with a `gep`/`load` between them, then
+;; the step and the loop test.
+(define (opt-bg-head-tail [offset? : bool] [loop? : bool]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs-with-tail
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (if offset?
+          (compiler_ir_types.CompilerIrValue.Var 9)
+          (compiler_ir_types.CompilerIrValue.Var 6))
+        (if offset?
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 5))
+        (opt-bg-label "bg_ok_b"))
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        10
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 9)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (if loop?
+          (opt-bg-label "head")
+          (opt-bg-label "exit"))
+        (opt-bg-label "exit")))
+    (compiler_ir_types.CompilerIrInstr.BoundsCheck
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (opt-bg-label "bg_ok_a"))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      7
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      8
+      (compiler_ir_types.CompilerIrValue.Var 7)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      9
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))))
+
+(define (opt-bg-head-block [inside? : bool] [offset? : bool] [loop? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (opt-bg-label "head")
+    (if inside?
+      (opt-test-instrs-with-tail
+        (opt-bg-head-tail offset? loop?)
+        (compiler_ir_types.CompilerIrInstr.Phi
+          6
+          (opt-bg-head-phi-inputs loop?)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          4
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          5
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ast_types.AstType.I64)))
+      (opt-test-instrs-with-tail
+        (opt-bg-head-tail offset? loop?)
+        (compiler_ir_types.CompilerIrInstr.Phi
+          6
+          (opt-bg-head-phi-inputs loop?)
+          (compiler_ast_types.AstType.I64))))))
+
+(define (opt-bg-head-phi-inputs [loop? : bool]) : compiler_ir_types.CompilerIrPhiInputList
+  (if loop?
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (opt-bg-label "pre")
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.Var 9)
+        (opt-bg-label "head")
+        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (opt-bg-label "pre")
+      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+
+(define (opt-bg-exit-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (opt-bg-label "exit")
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var 8))))))
+
+(define (opt-bg-blocks [inside? : bool] [offset? : bool] [loop? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bg-entry-block inside?)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bg-pre-block)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bg-head-block inside? offset? loop?)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bg-exit-block)
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-bg-function
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (opt-bg-test-params)
+    (compiler_ast_types.AstType.I64)
+    11
+    blocks))
+
+(define (opt-bg-run
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_optimize.OptFunctionPassResult
+  (compiler_optimize.opt-bg-function-pass (opt-bg-function name blocks)))
+
+(define (opt-bg-changed?
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (opt-bg-run name blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
+
+(define (opt-bg-result
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (match (opt-bg-run name blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result f _) f]))
+
+(define (opt-bg-block-of
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : compiler_ir_types.CompilerIrBlock
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.Some block) block]
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.CompilerIrBlock.Block
+        label
+        (compiler_ir_types.compiler-ir-instr-seq-empty))]))
+
+(define (opt-bg-block-checks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-bg-block-of blocks label)]
+    [count : i64 (opt-block-instr-count block)]
+    [cursor : i64 0]
+    [checks : i64 0]
+    (begin
+      (while (< cursor count)
+        (begin
+          (match (opt-block-instr-at block cursor)
+            [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _)
+              (set! checks (+ checks 1))]
+            [_ unit])
+          (set! cursor (+ cursor 1))))
+      checks)))
+
+;; Is the block's last-but-one instruction the unsigned filter compare, and its
+;; last one the branch to the two arms?
+(define (opt-bg-filter-shape?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [ok-label : i64]
+  [slow-label : i64]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-bg-block-of blocks label)]
+    [count : i64 (opt-block-instr-count block)]
+    (and
+      (>= count 2)
+      (match (opt-block-instr-at block (- count 2))
+        [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ ty)
+          (and
+            (compiler_optimize.opt-binop-eq
+              op
+              (compiler_ir_types.CompilerIrBinOp.Lt))
+            (compiler_optimize.opt-type-eq
+              0
+              ty
+              (compiler_ast_types.AstType.U64)))]
+        [_ false])
+      (match (opt-block-instr-at block (- count 1))
+        [(compiler_ir_types.CompilerIrInstr.Branch _ yes no)
+          (and (= yes ok-label) (= no slow-label))]
+        [_ false]))))
+
+(define (opt-bg-verified? [func : compiler_ir_types.CompilerIrFunction]) : bool
+  (match (compiler_optimize.opt-verify-function func)
+    [(compiler_optimize.ResultCompilerOptimizeVerify.Ok) true]
+    [(compiler_optimize.ResultCompilerOptimizeVerify.Err _) false]))
+
+;; Returns 42 only when the two-length group rewrites into preheader bound plus
+;; filter plus slow arm, and the arm keeps both original checks in order.
+(define (compiler-optimize-bounds-group-self-test) : i64
+  (let
+    [result : compiler_ir_types.CompilerIrFunction
+      (opt-bg-result "bg_pair" (opt-bg-blocks false false true))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks result)]
+    [head : i64 (opt-bg-label "head")]
+    [ok : i64 (opt-bg-label "head__bg_ok")]
+    [slow : i64 (opt-bg-label "head__bg_slow")]
+    (begin
+      (unless (opt-bg-verified? result) (return 1))
+      ;; The body keeps its phi and gains the one unsigned filter.
+      (unless (opt-bg-filter-shape? blocks head ok slow) (return 2))
+      (unless (= (opt-bg-block-checks blocks head) 0) (return 3))
+      ;; Both checks moved to the slow arm, in their original order.
+      (unless (= (opt-bg-block-checks blocks slow) 2) (return 4))
+      (unless
+        (match (opt-block-instr-at (opt-bg-block-of blocks slow) 0)
+          [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ len ok-label)
+            (and
+              (compiler_optimize.opt-value-is-var? len 3)
+              (= ok-label (opt-bg-label "bg_ok_a")))]
+          [_ false])
+        (return 5))
+      (unless
+        (match (opt-block-instr-at (opt-bg-block-of blocks slow) 1)
+          [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ len ok-label)
+            (and
+              (compiler_optimize.opt-value-is-var? len 5)
+              (= ok-label (opt-bg-label "bg_ok_b")))]
+          [_ false])
+        (return 6))
+      ;; The arm rejoins the fast block, which carries the rest of the body and
+      ;; no check at all.
+      (unless
+        (match (opt-block-instr-at
+          (opt-bg-block-of blocks slow)
+          (- (opt-block-instr-count (opt-bg-block-of blocks slow)) 1))
+          [(compiler_ir_types.CompilerIrInstr.Jump target) (= target ok)]
+          [_ false])
+        (return 7))
+      (unless (= (opt-bg-block-checks blocks ok) 0) (return 8))
+      ;; `M` is built once, in the preheader: one compare and one select for the
+      ;; second length.
+      (unless
+        (=
+          (opt-block-instr-count (opt-bg-block-of blocks (opt-bg-label "pre")))
+          3)
+        (return 9))
+      ;; The back edge now leaves the fast block, so the body's phi names it.
+      (unless
+        (match (opt-block-instr-at (opt-bg-block-of blocks head) 0)
+          [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+            (and
+              (compiler_optimize.opt-bool-branch-phi-input-has-label? inputs ok)
+              (not
+                (compiler_optimize.opt-bool-branch-phi-input-has-label?
+                  inputs
+                  head)))]
+          [_ false])
+        (return 10))
+      42)))
+
+;; Returns 42 only when `i` and `i + 1` against ONE length collapse to a single
+;; saturating bound, and the arm re-forms the offset itself.
+(define (compiler-optimize-bounds-group-offset-self-test) : i64
+  (let
+    [result : compiler_ir_types.CompilerIrFunction
+      (opt-bg-result "bg_offset" (opt-bg-blocks false true true))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks result)]
+    [slow : i64 (opt-bg-label "head__bg_slow")]
+    [pre : i64 (opt-bg-label "pre")]
+    (begin
+      (unless (opt-bg-verified? result) (return 1))
+      (unless
+        (opt-bg-filter-shape?
+          blocks
+          (opt-bg-label "head")
+          (opt-bg-label "head__bg_ok")
+          slow)
+        (return 2))
+      ;; One length, two offsets: the repeated length collapses onto its largest
+      ;; offset, so the preheader builds `satsub(la, 1)` and nothing else.
+      (unless
+        (= (opt-block-instr-count (opt-bg-block-of blocks pre)) 4)
+        (return 3))
+      (unless
+        (match (opt-block-instr-at (opt-bg-block-of blocks pre) 2)
+          [(compiler_ir_types.CompilerIrInstr.Select _) true]
+          [_ false])
+        (return 4))
+      ;; The arm holds both checks and the Add that re-forms `i + 1`.
+      (unless (= (opt-bg-block-checks blocks slow) 2) (return 5))
+      (unless
+        (match (opt-block-instr-at (opt-bg-block-of blocks slow) 1)
+          [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ _)
+            (compiler_optimize.opt-binop-eq
+              op
+              (compiler_ir_types.CompilerIrBinOp.Add))]
+          [_ false])
+        (return 6))
+      ;; The fast block keeps the body's own Add, now with Gep uses only.
+      (unless
+        (= (opt-bg-block-checks blocks (opt-bg-label "head__bg_ok")) 0)
+        (return 7))
+      42)))
+
+;; Returns 42 only when each neighbour of the admitted shape is refused.
+(define (compiler-optimize-bounds-group-refusal-self-test) : i64
+  (begin
+    ;; The admitted shape, for contrast.
+    (unless
+      (opt-bg-changed? "bg_ref_base" (opt-bg-blocks false false true))
+      (return 1))
+    ;; Lengths defined inside the body: `M` would be rebuilt every iteration,
+    ;; which is not a filter but a second copy of the work.
+    (unless
+      (not (opt-bg-changed? "bg_ref_inside" (opt-bg-blocks true false true)))
+      (return 2))
+    ;; No back edge: there is no preheader to amortise the bound over, so a
+    ;; straight-line block pays the filter every time it pays the checks.
+    (unless
+      (not (opt-bg-changed? "bg_ref_flat" (opt-bg-blocks false false false)))
+      (return 3))
+    ;; Idempotence: the fast block it leaves behind carries no check, and the
+    ;; slow arm is a bare check run, so a second round finds nothing.
+    (unless
+      (not
+        (match (compiler_optimize.opt-bg-function-pass
+          (opt-bg-result "bg_ref_again" (opt-bg-blocks false false true)))
+          [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
+      (return 4))
+    42))
+
+(test
+  bounds-group-parallel-array-pair
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-self-test)
+    42
+    "two checks of one index against two invariant lengths become one unsigned filter over min(len_a, len_b), with the originals kept in order on the slow arm"))
+
+(test
+  bounds-group-offset-pair
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-offset-self-test)
+    42
+    "i and i+1 against one length collapse to a single saturating bound and the slow arm re-forms the offset itself"))
+
+(test
+  bounds-group-refusals
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-refusal-self-test)
+    42
+    "a body-defined length, a loopless block and an already-split block are refused"))

@@ -2320,11 +2320,11 @@
     [pack : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.CompilerIrInstr.Pack
         2
-        (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.compiler-ir-value-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 0)
-          (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.compiler-ir-value-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 1)
-            compiler_ir_types.CompilerIrValueList.Nil))
+            (compiler_ir_types.compiler-ir-value-seq-empty)))
         (compiler_ast_types.AstType.Struct (ci.intern "Pair")))]
     [word : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.CompilerIrInstr.Word
@@ -5196,11 +5196,11 @@
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Pack
       2
-      (compiler_ir_types.compiler-ir-value-cons
+      (compiler_ir_types.compiler-ir-value-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 7)
-        (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.compiler-ir-value-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 9)
-          compiler_ir_types.CompilerIrValueList.Nil))
+          (compiler_ir_types.compiler-ir-value-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Return
       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -6905,11 +6905,11 @@
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.Pack
           10
-          (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.compiler-ir-value-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 0)
-            (compiler_ir_types.compiler-ir-value-cons
+            (compiler_ir_types.compiler-ir-value-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
-              compiler_ir_types.CompilerIrValueList.Nil))
+              (compiler_ir_types.compiler-ir-value-seq-empty)))
           (compiler_ast_types.AstType.Struct (ci.intern "Pair")))
         (compiler_ir_types.CompilerIrInstr.Word
           11
@@ -7955,9 +7955,9 @@
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.Pack
           3
-          (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.compiler-ir-value-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 2)
-            compiler_ir_types.CompilerIrValueList.Nil)
+            (compiler_ir_types.compiler-ir-value-seq-empty))
           (compiler_ast_types.AstType.Struct (ci.intern "OneWord")))
         (compiler_ir_types.CompilerIrInstr.Branch
           (compiler_ir_types.CompilerIrValue.Var 0)
@@ -9030,12 +9030,12 @@
 
 (define (opt-copy-pack-words
   [a : compiler_ir_types.CompilerIrValue]
-  [b : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrValueList
-  (compiler_ir_types.compiler-ir-value-cons
+  [b : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrValueSeq
+  (compiler_ir_types.compiler-ir-value-seq-prepend
     a
-    (compiler_ir_types.compiler-ir-value-cons
+    (compiler_ir_types.compiler-ir-value-seq-prepend
       b
-      compiler_ir_types.CompilerIrValueList.Nil)))
+      (compiler_ir_types.compiler-ir-value-seq-empty))))
 
 (define (opt-copy-pack-word-instrs) : compiler_ir_types.CompilerIrInstrSeq
   (opt-test-instrs
@@ -12158,14 +12158,14 @@
     (compiler_ir_types.CompilerIrInstr.Call
       2
       (opt-test-symbol "tl_substring")
-      (compiler_ir_types.compiler-ir-call-args-from-list
-        (compiler_ir_types.compiler-ir-value-cons
+      (compiler_ir_types.compiler-ir-call-args-from-seq
+        (compiler_ir_types.compiler-ir-value-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
-          (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.compiler-ir-value-seq-prepend
             (compiler_ir_types.CompilerIrValue.I64 0)
-            (compiler_ir_types.compiler-ir-value-cons
+            (compiler_ir_types.compiler-ir-value-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
-              compiler_ir_types.CompilerIrValueList.Nil))))
+              (compiler_ir_types.compiler-ir-value-seq-empty)))))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Return
       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -12849,11 +12849,11 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Pack
             2
-            (compiler_ir_types.compiler-ir-value-cons
+            (compiler_ir_types.compiler-ir-value-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 0)
-              (compiler_ir_types.compiler-ir-value-cons
+              (compiler_ir_types.compiler-ir-value-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 1)
-                compiler_ir_types.CompilerIrValueList.Nil))
+                (compiler_ir_types.compiler-ir-value-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Word
             3
@@ -14593,23 +14593,15 @@
       (= (opt-count-direct-call-name-instr-seq b-instrs "inline_mut_b") 0))))
 
 (define (opt-inline-pack-words-are-vars-1-2?
-  [words : compiler_ir_types.CompilerIrValueList]) : bool
-  (match (compiler_ir_types.compiler-ir-value-list-force-cons words)
-    [(compiler_ir_types.CompilerIrValueList.Cons a arest)
-      (match a
-        [(compiler_ir_types.CompilerIrValue.Var av)
-          (match (__tl-box-place arest)
-            [(compiler_ir_types.CompilerIrValueList.Cons b brest)
-              (match b
-                [(compiler_ir_types.CompilerIrValue.Var bv)
-                  (match (__tl-box-place brest)
-                    [(compiler_ir_types.CompilerIrValueList.Nil)
-                      (and (= av 1) (= bv 2))]
-                    [_ false])]
-                [_ false])]
-            [_ false])]
-        [_ false])]
-    [_ false]))
+  [words : compiler_ir_types.CompilerIrValueSeq]) : bool
+  (if (= words.len 2)
+    (match (compiler_ir_types.compiler-ir-value-seq-ref words 0)
+      [(compiler_ir_types.CompilerIrValue.Var av)
+        (match (compiler_ir_types.compiler-ir-value-seq-ref words 1)
+          [(compiler_ir_types.CompilerIrValue.Var bv) (and (= av 1) (= bv 2))]
+          [_ false])]
+      [_ false])
+    false))
 
 ;; True when the inlined body contains a Pack reading the CALLER's argument
 ;; vars (1/2, remapped from the callee's params 0/1) and a Word whose source
@@ -22584,11 +22576,11 @@
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.Pack
           2
-          (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.compiler-ir-value-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 0)
-            (compiler_ir_types.compiler-ir-value-cons
+            (compiler_ir_types.compiler-ir-value-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
-              compiler_ir_types.CompilerIrValueList.Nil))
+              (compiler_ir_types.compiler-ir-value-seq-empty)))
           (compiler_ast_types.AstType.Struct (ci.intern "Pair")))
         (compiler_ir_types.CompilerIrInstr.Jump
           (compiler_ir_types.compiler-ir-label "use"))))
@@ -23526,11 +23518,11 @@
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.Pack
           0
-          (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.compiler-ir-value-seq-prepend
             (compiler_ir_types.CompilerIrValue.I64 1)
-            (compiler_ir_types.compiler-ir-value-cons
+            (compiler_ir_types.compiler-ir-value-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 5)
-              compiler_ir_types.CompilerIrValueList.Nil))
+              (compiler_ir_types.compiler-ir-value-seq-empty)))
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.Word
           1
@@ -25960,11 +25952,11 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Pack
             0
-            (compiler_ir_types.compiler-ir-value-cons
+            (compiler_ir_types.compiler-ir-value-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 1)
-              (compiler_ir_types.compiler-ir-value-cons
+              (compiler_ir_types.compiler-ir-value-seq-prepend
                 (compiler_ir_types.CompilerIrValue.I64 2)
-                (compiler_ir_types.CompilerIrValueList.Nil)))
+                (compiler_ir_types.compiler-ir-value-seq-empty)))
             ty)
           (compiler_ir_types.CompilerIrInstr.Return
             (compiler_ir_types.CompilerIrMaybeValue.No))))
@@ -43970,32 +43962,28 @@
 (define (opt-ssa-preexisting-test-first-phi-inputs
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
-  [count : i64]) : compiler_ir_types.CompilerIrValueList
+  [count : i64]) : compiler_ir_types.CompilerIrValueSeq
   (if (>= index count)
-    (compiler_ir_types.CompilerIrValueList.Nil)
+    (compiler_ir_types.compiler-ir-value-seq-empty)
     (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
       [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
         (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
           [(compiler_ir_types.CompilerIrPhiInputList.Cons a _ rest)
             (match (__tl-box-place rest)
               [(compiler_ir_types.CompilerIrPhiInputList.Cons b _ _)
-                (compiler_ir_types.compiler-ir-value-cons
-                  a
-                  (compiler_ir_types.compiler-ir-value-cons
-                    b
-                    (compiler_ir_types.CompilerIrValueList.Nil)))]
-              [_ (compiler_ir_types.CompilerIrValueList.Nil)])]
-          [_ (compiler_ir_types.CompilerIrValueList.Nil)])]
+                (compiler_ir_types.compiler-ir-value-seq2 a b)]
+              [_ (compiler_ir_types.compiler-ir-value-seq-empty)])]
+          [_ (compiler_ir_types.compiler-ir-value-seq-empty)])]
       [_ (opt-ssa-preexisting-test-first-phi-inputs instrs (+ index 1) count)])))
 
 ;; The join block's first phi's two inputs; Nil when missing.
 (define (opt-ssa-preexisting-test-phi-inputs
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrValueList
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrValueSeq
   (match (compiler_optimize.opt-cfg-find-block
     blocks
     (compiler_ir_types.compiler-ir-label "join"))
     [(compiler_optimize.OptMaybeBlock.No)
-      (compiler_ir_types.CompilerIrValueList.Nil)]
+      (compiler_ir_types.compiler-ir-value-seq-empty)]
     [(compiler_optimize.OptMaybeBlock.Some block)
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
@@ -44023,20 +44011,18 @@
         1]
       ;; the pre-existing join phi reads the then/else VERSIONS of var 3: two
       ;; Var inputs that differ from each other (unrewritten would be 3 == 3).
-      [(match (compiler_ir_types.compiler-ir-value-list-force-cons
-          (opt-ssa-preexisting-test-phi-inputs
-            (compiler_optimize.opt-function-blocks constructed)))
-          [(compiler_ir_types.CompilerIrValueList.Cons a rest)
-            (match (__tl-box-place rest)
-              [(compiler_ir_types.CompilerIrValueList.Cons b _)
-                (match a
-                  [(compiler_ir_types.CompilerIrValue.Var av)
-                    (match b
-                      [(compiler_ir_types.CompilerIrValue.Var bv) (= av bv)]
-                      [_ true])]
+      [(let
+          [values : compiler_ir_types.CompilerIrValueSeq
+            (opt-ssa-preexisting-test-phi-inputs
+              (compiler_optimize.opt-function-blocks constructed))]
+          (if (= values.len 2)
+            (match (compiler_ir_types.compiler-ir-value-seq-ref values 0)
+              [(compiler_ir_types.CompilerIrValue.Var av)
+                (match (compiler_ir_types.compiler-ir-value-seq-ref values 1)
+                  [(compiler_ir_types.CompilerIrValue.Var bv) (= av bv)]
                   [_ true])]
-              [_ true])]
-          [_ true])
+              [_ true])
+            true))
         2]
       ;; a multi-def phi DST rejects: the function stays non-SSA.
       [(compiler_optimize.opt-verify-ok?

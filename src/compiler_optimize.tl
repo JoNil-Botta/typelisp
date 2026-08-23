@@ -2052,17 +2052,22 @@
     [(ir.CompilerIrValue.Var id) (opt-used-add set id)]
     [_ set]))
 
-(define (opt-collect-value-list-uses
+(define (opt-collect-value-seq-uses
   [set : opt_i64_i64_map.Map (:consume)]
-  [values : ir.CompilerIrValueList]) : opt_i64_i64_map.Map
-  (match values
-    [(ir.CompilerIrValueList.Nil) set]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-collect-value-list-uses set (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (opt-collect-value-list-uses
-        (opt-collect-value-uses set value)
-        (__tl-box-place rest))]))
+  [values : ir.CompilerIrValueSeq]) : opt_i64_i64_map.Map
+  (let
+    [out : opt_i64_i64_map.Map set]
+    [index : i64 0]
+    (begin
+      (while (< index values.len)
+        (begin
+          (set!
+            out
+            (opt-collect-value-uses
+              out
+              (ir.compiler-ir-value-seq-ref values index)))
+          (set! index (+ index 1))))
+      out)))
 
 (define (opt-collect-call-args-array-uses
   [set : opt_i64_i64_map.Map (:consume)]
@@ -2275,8 +2280,7 @@
     ;; Register-group ops use their operands -- Pack uses each word value,
     ;; Word uses the source group. Omitting these would let DCE drop a definition
     ;; that feeds a Pack/Word.
-    [(ir.CompilerIrInstr.Pack _ words _)
-      (opt-collect-value-list-uses set words)]
+    [(ir.CompilerIrInstr.Pack _ words _) (opt-collect-value-seq-uses set words)]
     [(ir.CompilerIrInstr.Word _ src _ _) (opt-collect-value-uses set src)]
     [(ir.CompilerIrInstr.TailCallIndirect func args _)
       (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
@@ -2508,19 +2512,17 @@
     [(ir.CompilerIrValue.Var id) (opt-used-array-add items id)]
     [_ unit]))
 
-(define (opt-collect-value-list-uses-array
+(define (opt-collect-value-seq-uses-array
   [items : (__tl_dyn-array i64)]
-  [values : ir.CompilerIrValueList]) : unit
-  (match values
-    [(ir.CompilerIrValueList.Nil) unit]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-collect-value-list-uses-array
-        items
-        (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
+  [values : ir.CompilerIrValueSeq]) : unit
+  (let
+    [index : i64 0]
+    (while (< index values.len)
       (begin
-        (opt-collect-value-uses-array items value)
-        (opt-collect-value-list-uses-array items (__tl-box-place rest)))]))
+        (opt-collect-value-uses-array
+          items
+          (ir.compiler-ir-value-seq-ref values index))
+        (set! index (+ index 1))))))
 
 (define (opt-collect-call-args-array-uses-array
   [items : (__tl_dyn-array i64)]
@@ -2633,7 +2635,7 @@
     [(ir.CompilerIrInstr.Word _ src _ _)
       (opt-collect-value-uses-array items src)]
     [(ir.CompilerIrInstr.Pack _ words _)
-      (opt-collect-value-list-uses-array items words)]
+      (opt-collect-value-seq-uses-array items words)]
     [(ir.CompilerIrInstr.Store _ value _)
       (opt-collect-value-uses-array items value)]
     [(ir.CompilerIrInstr.Switch index _ _ _)
@@ -2812,19 +2814,17 @@
     [(ir.CompilerIrValue.Var id) (opt-used-array-dec items id)]
     [_ unit]))
 
-(define (opt-uncount-value-list-uses-array
+(define (opt-uncount-value-seq-uses-array
   [items : (__tl_dyn-array i64)]
-  [values : ir.CompilerIrValueList]) : unit
-  (match values
-    [(ir.CompilerIrValueList.Nil) unit]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-uncount-value-list-uses-array
-        items
-        (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
+  [values : ir.CompilerIrValueSeq]) : unit
+  (let
+    [index : i64 0]
+    (while (< index values.len)
       (begin
-        (opt-uncount-value-uses-array items value)
-        (opt-uncount-value-list-uses-array items (__tl-box-place rest)))]))
+        (opt-uncount-value-uses-array
+          items
+          (ir.compiler-ir-value-seq-ref values index))
+        (set! index (+ index 1))))))
 
 (define (opt-uncount-phi-uses-array
   [items : (__tl_dyn-array i64)]
@@ -2908,7 +2908,7 @@
         (opt-uncount-value-uses-array items index)
         (opt-uncount-value-uses-array items length))]
     [(ir.CompilerIrInstr.Pack _ words _)
-      (opt-uncount-value-list-uses-array items words)]
+      (opt-uncount-value-seq-uses-array items words)]
     [(ir.CompilerIrInstr.Word _ src _ _)
       (opt-uncount-value-uses-array items src)]
     [_ unit]))
@@ -5701,27 +5701,22 @@
         [(ir.CompilerIrMaybeValue.Some bv) (opt-value-eq av bv)]
         [_ false])]))
 
-(define (opt-value-list-eq
-  [a : ir.CompilerIrValueList]
-  [b : ir.CompilerIrValueList]) : bool
-  (match a
-    [(ir.CompilerIrValueList.Nil)
-      (match b
-        [(ir.CompilerIrValueList.Nil) true]
-        [(ir.CompilerIrValueList.Array seq)
-          (opt-value-list-eq a (ir.compiler-ir-value-seq-to-list seq))]
-        [_ false])]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-value-list-eq (ir.compiler-ir-value-seq-to-list seq) b)]
-    [(ir.CompilerIrValueList.Cons ah at)
-      (match b
-        [(ir.CompilerIrValueList.Array seq)
-          (opt-value-list-eq a (ir.compiler-ir-value-seq-to-list seq))]
-        [(ir.CompilerIrValueList.Cons bh bt)
-          (and
-            (opt-value-eq ah bh)
-            (opt-value-list-eq (__tl-box-place at) (__tl-box-place bt)))]
-        [_ false])]))
+(define (opt-value-seq-eq-from
+  [a : ir.CompilerIrValueSeq]
+  [b : ir.CompilerIrValueSeq]
+  [index : i64]) : bool
+  (if (>= index a.len)
+    true
+    (and
+      (opt-value-eq
+        (ir.compiler-ir-value-seq-ref a index)
+        (ir.compiler-ir-value-seq-ref b index))
+      (opt-value-seq-eq-from a b (+ index 1)))))
+
+(define (opt-value-seq-eq
+  [a : ir.CompilerIrValueSeq]
+  [b : ir.CompilerIrValueSeq]) : bool
+  (and (= a.len b.len) (opt-value-seq-eq-from a b 0)))
 
 (define (opt-call-args-array-eq
   [a : (__tl_dyn-array ir.CompilerIrValue)]
@@ -6466,7 +6461,7 @@
         [(ir.CompilerIrInstr.Pack bd bwords bty)
           (and
             (= ad bd)
-            (opt-value-list-eq awords bwords)
+            (opt-value-seq-eq awords bwords)
             (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(ir.CompilerIrInstr.Word ad asrc ai aty)
@@ -7126,26 +7121,23 @@
   [env : OptCopyEnv]
   [group : i64]
   [index : i64]
-  [words : ir.CompilerIrValueList]) : OptCopyEnv
-  (match words
-    [(ir.CompilerIrValueList.Nil) env]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-copy-add-pack-words-from
+  [words : ir.CompilerIrValueSeq]) : OptCopyEnv
+  (if (>= index words.len)
+    env
+    (opt-copy-add-pack-words-from
+      (opt-copy-add-pack-word
         env
         group
         index
-        (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (opt-copy-add-pack-words-from
-        (opt-copy-add-pack-word env group index value)
-        group
-        (+ index 1)
-        (__tl-box-place rest))]))
+        (ir.compiler-ir-value-seq-ref words index))
+      group
+      (+ index 1)
+      words)))
 
 (define (opt-copy-update-pack-env
   [env : OptCopyEnv]
   [dst : i64]
-  [words : ir.CompilerIrValueList]) : OptCopyEnv
+  [words : ir.CompilerIrValueSeq]) : OptCopyEnv
   (opt-copy-add-pack-words-from (opt-copy-invalidate-var env dst) dst 0 words))
 
 (define (opt-copy-mask-source? [value : ir.CompilerIrValue] [dst : i64]) : bool
@@ -7168,17 +7160,21 @@
       [(ir.CompilerIrValue.Var _) resolved]
       [_ value])))
 
-(define (opt-copy-subst-value-list
+(define (opt-copy-subst-value-seq
   [env : OptCopyEnv]
-  [values : ir.CompilerIrValueList]) : ir.CompilerIrValueList
-  (match values
-    [(ir.CompilerIrValueList.Nil) (ir.CompilerIrValueList.Nil)]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-copy-subst-value-list env (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (ir.compiler-ir-value-cons
-        (opt-copy-resolve env value)
-        (opt-copy-subst-value-list env (__tl-box-place rest)))]))
+  [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrValue)
+      (array.make-array ir.CompilerIrValue values.len)]
+    [index : i64 0]
+    (begin
+      (while (< index values.len)
+        (begin
+          (set!
+            (array-ref slots index)
+            (opt-copy-resolve env (ir.compiler-ir-value-seq-ref values index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrValueSeq slots values.len))))
 
 (define (opt-copy-subst-call-args-array
   [env : OptCopyEnv]
@@ -7418,7 +7414,7 @@
     ;; Register-group ops carry value operands -- substitute copies into
     ;; the packed words / the extracted source group.
     [(ir.CompilerIrInstr.Pack dst words ty)
-      (ir.CompilerIrInstr.Pack dst (opt-copy-subst-value-list env words) ty)]
+      (ir.CompilerIrInstr.Pack dst (opt-copy-subst-value-seq env words) ty)]
     [(ir.CompilerIrInstr.Word dst src index ty)
       (let
         [resolved-src : ir.CompilerIrValue (opt-copy-resolve env src)]
@@ -10734,32 +10730,39 @@
         "optimizer verify: runtime-global marker used as an instruction value")]
     [_ (ResultCompilerOptimizeVerify.Ok)]))
 
-(define (opt-verify-value-list-uses
+(define (opt-verify-value-seq-uses-from
   [defs : (__tl_dyn-array OptMaybeVarDef)]
   [doms : OptDomInfo]
-  [values : ir.CompilerIrValueList]
+  [values : ir.CompilerIrValueSeq]
+  [use-block : i64]
+  [use-pos : i64]
+  [index : i64]) : ResultCompilerOptimizeVerify
+  (if (>= index values.len)
+    (ResultCompilerOptimizeVerify.Ok)
+    (match (opt-verify-value-use
+      defs
+      doms
+      (ir.compiler-ir-value-seq-ref values index)
+      use-block
+      use-pos)
+      [(ResultCompilerOptimizeVerify.Ok)
+        (opt-verify-value-seq-uses-from
+          defs
+          doms
+          values
+          use-block
+          use-pos
+          (+ index 1))]
+      [(ResultCompilerOptimizeVerify.Err message)
+        (ResultCompilerOptimizeVerify.Err message)])))
+
+(define (opt-verify-value-seq-uses
+  [defs : (__tl_dyn-array OptMaybeVarDef)]
+  [doms : OptDomInfo]
+  [values : ir.CompilerIrValueSeq]
   [use-block : i64]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
-  (match values
-    [(ir.CompilerIrValueList.Nil) (ResultCompilerOptimizeVerify.Ok)]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-verify-value-list-uses
-        defs
-        doms
-        (ir.compiler-ir-value-seq-to-list seq)
-        use-block
-        use-pos)]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (match (opt-verify-value-use defs doms value use-block use-pos)
-        [(ResultCompilerOptimizeVerify.Ok)
-          (opt-verify-value-list-uses
-            defs
-            doms
-            (__tl-box-place rest)
-            use-block
-            use-pos)]
-        [(ResultCompilerOptimizeVerify.Err message)
-          (ResultCompilerOptimizeVerify.Err message)])]))
+  (opt-verify-value-seq-uses-from defs doms values use-block use-pos 0))
 
 (define (opt-verify-call-args-array-uses
   [defs : (__tl_dyn-array OptMaybeVarDef)]
@@ -11080,7 +11083,7 @@
     [(ir.CompilerIrInstr.Jump _) (ResultCompilerOptimizeVerify.Ok)]
     ;; Verify register-group operands dominate their use.
     [(ir.CompilerIrInstr.Pack _ words _)
-      (opt-verify-value-list-uses defs doms words block-id pos)]
+      (opt-verify-value-seq-uses defs doms words block-id pos)]
     [(ir.CompilerIrInstr.Word _ src _ _)
       (opt-verify-value-use defs doms src block-id pos)]
     [(ir.CompilerIrInstr.TailCallIndirect func args _)
@@ -12689,17 +12692,23 @@
     [(ir.CompilerIrMaybeValue.Some inner)
       (ir.CompilerIrMaybeValue.Some (opt-ssa-rewrite-value env inner))]))
 
-(define (opt-ssa-rewrite-value-list
+(define (opt-ssa-rewrite-value-seq
   [env : OptSsaRenameEnv]
-  [values : ir.CompilerIrValueList]) : ir.CompilerIrValueList
-  (match values
-    [(ir.CompilerIrValueList.Nil) (ir.CompilerIrValueList.Nil)]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-ssa-rewrite-value-list env (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (ir.compiler-ir-value-cons
-        (opt-ssa-rewrite-value env value)
-        (opt-ssa-rewrite-value-list env (__tl-box-place rest)))]))
+  [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrValue)
+      (array.make-array ir.CompilerIrValue values.len)]
+    [index : i64 0]
+    (begin
+      (while (< index values.len)
+        (begin
+          (set!
+            (array-ref slots index)
+            (opt-ssa-rewrite-value
+              env
+              (ir.compiler-ir-value-seq-ref values index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrValueSeq slots values.len))))
 
 (define (opt-ssa-rewrite-call-args-array
   [env : OptSsaRenameEnv]
@@ -13273,8 +13282,8 @@
     ;; env, then rename the dst.
     [(ir.CompilerIrInstr.Pack dst words ty)
       (let
-        [out-words : ir.CompilerIrValueList
-          (opt-ssa-rewrite-value-list env words)]
+        [out-words : ir.CompilerIrValueSeq
+          (opt-ssa-rewrite-value-seq env words)]
         (match (opt-ssa-rename-dst facts env next-var dst)
           [(OptSsaDstResult.Result out-dst next-env out-next)
             (OptSsaInstrResult.Result
@@ -14660,32 +14669,25 @@
   [block-id : i64]
   [def-pos : i64]
   [index : i64]
-  [words : ir.CompilerIrValueList]
+  [words : ir.CompilerIrValueSeq]
   [tail : OptGlobalPackWordFacts (:consume)]) : OptGlobalPackWordFacts
-  (match words
-    [(ir.CompilerIrValueList.Nil) tail]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-global-pack-word-facts-from-words
-        group
-        block-id
-        def-pos
-        index
-        (ir.compiler-ir-value-seq-to-list seq)
-        tail)]
-    [(ir.CompilerIrValueList.Cons value rest)
+  (if (>= index words.len)
+    tail
+    (let
+      [value : ir.CompilerIrValue (ir.compiler-ir-value-seq-ref words index)]
       (opt-global-pack-word-facts-from-words
         group
         block-id
         def-pos
         (+ index 1)
-        (__tl-box-place rest)
+        words
         (if (and
           (opt-copy-safe-source? value)
           (not (opt-value-is-var? value group)))
           (opt-global-pack-word-facts-prepend
             tail
             (OptGlobalPackWordFact.Fact group index value block-id def-pos))
-          tail))]))
+          tail)))))
 
 (define (opt-global-pack-word-facts-from-instr-seq-from
   [block-id : i64]
@@ -47885,20 +47887,13 @@
     [(ir.CompilerIrValue.Var id) (opt-scan-stamp items generation id)]
     [_ unit]))
 
-(define (opt-scan-note-value-list-uses
+(define (opt-scan-note-value-seq-uses
   [items : (__tl_dyn-array i64)]
   [generation : i64]
-  [values : ir.CompilerIrValueList]) : unit
-  (match values
-    [(ir.CompilerIrValueList.Nil) unit]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-scan-note-value-seq-uses items generation seq 0)]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (begin
-        (opt-scan-note-value-uses items generation value)
-        (opt-scan-note-value-list-uses items generation (__tl-box-place rest)))]))
+  [values : ir.CompilerIrValueSeq]) : unit
+  (opt-scan-note-value-seq-uses-from items generation values 0))
 
-(define (opt-scan-note-value-seq-uses
+(define (opt-scan-note-value-seq-uses-from
   [items : (__tl_dyn-array i64)]
   [generation : i64]
   [seq : ir.CompilerIrValueSeq]
@@ -47907,7 +47902,7 @@
     unit
     (begin
       (opt-scan-note-value-uses items generation (array-ref seq.slots index))
-      (opt-scan-note-value-seq-uses items generation seq (+ index 1)))))
+      (opt-scan-note-value-seq-uses-from items generation seq (+ index 1)))))
 
 (define (opt-scan-note-call-args-uses
   [items : (__tl_dyn-array i64)]
@@ -48166,7 +48161,7 @@
         [(ir.CompilerIrMaybeValue.No) unit])]
     [(ir.CompilerIrInstr.Phi _ _ _) unit]
     [(ir.CompilerIrInstr.Pack _ words _)
-      (opt-scan-note-value-list-uses items generation words)]
+      (opt-scan-note-value-seq-uses items generation words)]
     [(ir.CompilerIrInstr.Word _ src _ _)
       (opt-scan-note-value-uses items generation src)]
     [(ir.CompilerIrInstr.TailCallIndirect func args _)
@@ -48766,26 +48761,13 @@
     [(ir.CompilerIrParamList.Cons _ rest)
       (+ 1 (opt-tailrec-param-count (__tl-box-place rest)))]))
 
-(define (opt-tailrec-array-values-to-list
-  [values : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : ir.CompilerIrValueList
-  (if (>= index (array-length values))
-    ir.CompilerIrValueList.Nil
-    (ir.compiler-ir-value-cons
-      (array-ref values index)
-      (opt-tailrec-array-values-to-list values (+ index 1)))))
-
-(define (opt-tailrec-args-to-list [args : ir.CompilerIrCallArgs]) : ir.CompilerIrValueList
+(define (opt-tailrec-args-to-seq [args : ir.CompilerIrCallArgs]) : ir.CompilerIrValueSeq
   (match args
-    [(ir.CompilerIrCallArgs.Nil) ir.CompilerIrValueList.Nil]
-    [(ir.CompilerIrCallArgs.One a)
-      (ir.compiler-ir-value-cons a ir.CompilerIrValueList.Nil)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (ir.compiler-ir-value-cons
-        a
-        (ir.compiler-ir-value-cons b ir.CompilerIrValueList.Nil))]
+    [(ir.CompilerIrCallArgs.Nil) (ir.compiler-ir-value-seq-empty)]
+    [(ir.CompilerIrCallArgs.One a) (ir.compiler-ir-value-seq1 a)]
+    [(ir.CompilerIrCallArgs.Two a b) (ir.compiler-ir-value-seq2 a b)]
     [(ir.CompilerIrCallArgs.Array values)
-      (opt-tailrec-array-values-to-list values 0)]))
+      (ir.CompilerIrValueSeq values (array-length values))]))
 
 ;; An unchanged tail argument needs no write back to its parameter slot. A
 ;; non-SSA identity is the structural trigger: when a caller containing an
@@ -48796,34 +48778,37 @@
 ;; unchanged scalar arguments. The predicate is paired by parameter and
 ;; argument at this call site; it is independent of enclosing function size and
 ;; layout.
-(define (opt-tailrec-hybrid-identity-args?
+(define (opt-tailrec-hybrid-identity-args-from?
   [params : ir.CompilerIrParamList]
-  [args : ir.CompilerIrValueList]) : bool
+  [args : ir.CompilerIrValueSeq]
+  [index : i64]) : bool
   (match (ir.compiler-ir-param-list-force-cons params)
     [(ir.CompilerIrParamList.Nil) false]
     [(ir.CompilerIrParamList.Array seq)
-      (opt-tailrec-hybrid-identity-args?
+      (opt-tailrec-hybrid-identity-args-from?
         (ir.compiler-ir-param-seq-to-list seq)
-        args)]
+        args
+        index)]
     [(ir.CompilerIrParamList.Cons param prest)
-      (match args
-        [(ir.CompilerIrValueList.Nil) false]
-        [(ir.CompilerIrValueList.Array seq)
-          (opt-tailrec-hybrid-identity-args?
-            params
-            (ir.compiler-ir-value-seq-to-list seq))]
-        [(ir.CompilerIrValueList.Cons arg arest)
-          (match param
-            [(ir.CompilerIrParam.Param _ ty var-id)
-              (if (and
-                (not (opt-ssa-register-value-type? ty))
-                (match arg
-                  [(ir.CompilerIrValue.Var source) (= source var-id)]
-                  [_ false]))
-                true
-                (opt-tailrec-hybrid-identity-args?
-                  (__tl-box-place prest)
-                  (__tl-box-place arest)))])])]))
+      (if (>= index args.len)
+        false
+        (match param
+          [(ir.CompilerIrParam.Param _ ty var-id)
+            (if (and
+              (not (opt-ssa-register-value-type? ty))
+              (match (ir.compiler-ir-value-seq-ref args index)
+                [(ir.CompilerIrValue.Var source) (= source var-id)]
+                [_ false]))
+              true
+              (opt-tailrec-hybrid-identity-args-from?
+                (__tl-box-place prest)
+                args
+                (+ index 1)))]))]))
+
+(define (opt-tailrec-hybrid-identity-args?
+  [params : ir.CompilerIrParamList]
+  [args : ir.CompilerIrValueSeq]) : bool
+  (opt-tailrec-hybrid-identity-args-from? params args 0))
 
 (define (opt-tailrec-instrs-have-hybrid-identity-from?
   [instrs : ir.CompilerIrInstrSeq]
@@ -48840,7 +48825,7 @@
           (= (ir.compiler-ir-call-args-count args) n)
           (opt-tailrec-hybrid-identity-args?
             params
-            (opt-tailrec-args-to-list args)))
+            (opt-tailrec-args-to-seq args)))
           true
           (opt-tailrec-instrs-have-hybrid-identity-from?
             instrs
@@ -48920,7 +48905,7 @@
 
 (define (opt-tailrec-push-assign-movs-hybrid!
   [params : ir.CompilerIrParamList]
-  [args : ir.CompilerIrValueList]
+  [args : ir.CompilerIrValueSeq]
   [base : i64]
   [index : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
@@ -48934,16 +48919,10 @@
         index
         (&mut builder))]
     [(ir.CompilerIrParamList.Cons param prest)
-      (match args
-        [(ir.CompilerIrValueList.Nil) unit]
-        [(ir.CompilerIrValueList.Array seq)
-          (opt-tailrec-push-assign-movs-hybrid!
-            params
-            (ir.compiler-ir-value-seq-to-list seq)
-            base
-            index
-            (&mut builder))]
-        [(ir.CompilerIrValueList.Cons arg arest)
+      (if (>= index args.len)
+        unit
+        (let
+          [arg : ir.CompilerIrValue (ir.compiler-ir-value-seq-ref args index)]
           (match param
             [(ir.CompilerIrParam.Param _ ty var-id)
               (begin
@@ -48959,17 +48938,17 @@
                       ty)))
                 (opt-tailrec-push-assign-movs-hybrid!
                   (__tl-box-place prest)
-                  (__tl-box-place arest)
+                  args
                   base
                   (+ index 1)
-                  (&mut builder)))])])]))
+                  (&mut builder)))])))]))
 
 ;; Evaluate each argument into a fresh temp slot (`base + i`) before any
 ;; parameter slot is overwritten, so argument aliasing on the parameters is
 ;; preserved.
 (define (opt-tailrec-push-stage-movs!
   [params : ir.CompilerIrParamList]
-  [args : ir.CompilerIrValueList]
+  [args : ir.CompilerIrValueSeq]
   [base : i64]
   [index : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
@@ -48983,28 +48962,23 @@
         index
         (&mut builder))]
     [(ir.CompilerIrParamList.Cons param prest)
-      (match args
-        [(ir.CompilerIrValueList.Nil) unit]
-        [(ir.CompilerIrValueList.Array seq)
-          (opt-tailrec-push-stage-movs!
-            params
-            (ir.compiler-ir-value-seq-to-list seq)
-            base
-            index
-            (&mut builder))]
-        [(ir.CompilerIrValueList.Cons arg arest)
-          (match param
-            [(ir.CompilerIrParam.Param _ ty _)
-              (begin
-                (ir.compiler-ir-instr-builder-push!
-                  (&mut builder)
-                  (ir.CompilerIrInstr.Mov (+ base index) arg ty))
-                (opt-tailrec-push-stage-movs!
-                  (__tl-box-place prest)
-                  (__tl-box-place arest)
-                  base
-                  (+ index 1)
-                  (&mut builder)))])])]))
+      (if (>= index args.len)
+        unit
+        (match param
+          [(ir.CompilerIrParam.Param _ ty _)
+            (begin
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (ir.CompilerIrInstr.Mov
+                  (+ base index)
+                  (ir.compiler-ir-value-seq-ref args index)
+                  ty))
+              (opt-tailrec-push-stage-movs!
+                (__tl-box-place prest)
+                args
+                base
+                (+ index 1)
+                (&mut builder)))]))]))
 
 (define (opt-tailrec-self-call?
   [instr : ir.CompilerIrInstr]
@@ -49035,8 +49009,7 @@
         (match instr
           [(ir.CompilerIrInstr.TailCall _ args _)
             (let
-              [arg-list : ir.CompilerIrValueList
-                (opt-tailrec-args-to-list args)]
+              [arg-list : ir.CompilerIrValueSeq (opt-tailrec-args-to-seq args)]
               (begin
                 (opt-tailrec-push-stage-movs!
                   params
@@ -50616,54 +50589,85 @@
 (define (opt-unroll-ku-values
   [ku-ids : (__tl_dyn-array i64)]
   [index : i64]
-  [count : i64]) : ir.CompilerIrValueList
-  (if (>= index count)
-    (ir.CompilerIrValueList.Nil)
-    (ir.compiler-ir-value-cons
-      (ir.CompilerIrValue.Var (array-ref ku-ids index))
-      (opt-unroll-ku-values ku-ids (+ index 1) count))))
+  [count : i64]) : ir.CompilerIrValueSeq
+  (let
+    [remaining : i64
+      (if (< index count)
+        (- count index)
+        0)]
+    [slots : (__tl_dyn-array ir.CompilerIrValue)
+      (array.make-array ir.CompilerIrValue remaining)]
+    [offset : i64 0]
+    (begin
+      (while (< offset remaining)
+        (begin
+          (set!
+            (array-ref slots offset)
+            (ir.CompilerIrValue.Var (array-ref ku-ids (+ index offset))))
+          (set! offset (+ offset 1))))
+      (ir.CompilerIrValueSeq slots remaining))))
 
 ;; Back-edge values of the loop-carried phis under the current remap state
 ;; (the values the NEXT copy's phi vars should read). Computed for every phi
 ;; before any phi var is re-seeded so phi-to-phi back edges (value rotations)
 ;; read the previous copy's state.
-(define (opt-unroll-phi-chain-values
+(define (opt-unroll-phi-chain-values-into!
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [others : OptUnrollPhiList]) : ir.CompilerIrValueList
+  [others : OptUnrollPhiList]
+  [builder : (&mut builder ir.CompilerIrValueBuilder)]) : unit
   (match others
-    [(OptUnrollPhiList.Nil) (ir.CompilerIrValueList.Nil)]
+    [(OptUnrollPhiList.Nil) unit]
     [(OptUnrollPhiList.Dense _ _)
       (match (opt-unroll-phi-list-ref others 0)
         [(OptUnrollPhi.Phi _ _ back _)
-          (ir.compiler-ir-value-cons
-            (opt-unroll-subst-value remap back)
-            (opt-unroll-phi-chain-values
+          (begin
+            (ir.compiler-ir-value-builder-push!
+              builder
+              (opt-unroll-subst-value remap back))
+            (opt-unroll-phi-chain-values-into!
               remap
-              (opt-unroll-phi-list-tail others)))])]))
+              (opt-unroll-phi-list-tail others)
+              builder))])]))
 
-(define (opt-unroll-write-phi-seeds
+(define (opt-unroll-phi-chain-values
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [others : OptUnrollPhiList]) : ir.CompilerIrValueSeq
+  (let
+    [builder : ir.CompilerIrValueBuilder
+      (ir.compiler-ir-value-builder-with-capacity
+        (opt-unroll-phi-list-count others))]
+    (begin
+      (opt-unroll-phi-chain-values-into! remap others (&mut builder))
+      (ir.compiler-ir-value-builder-to-seq builder))))
+
+(define (opt-unroll-write-phi-seeds-from
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [others : OptUnrollPhiList]
-  [values : ir.CompilerIrValueList]) : unit
+  [values : ir.CompilerIrValueSeq]
+  [index : i64]) : unit
   (match others
     [(OptUnrollPhiList.Nil) unit]
     [(OptUnrollPhiList.Dense _ _)
       (match (opt-unroll-phi-list-ref others 0)
         [(OptUnrollPhi.Phi dst _ _ _)
-          (match values
-            [(ir.CompilerIrValueList.Cons value value-rest)
-              (begin
-                (opt-unroll-remap-set remap dst value)
-                (opt-unroll-write-phi-seeds
-                  remap
-                  (opt-unroll-phi-list-tail others)
-                  (__tl-box-place value-rest)))]
-            [(ir.CompilerIrValueList.Array seq)
-              (opt-unroll-write-phi-seeds
+          (if (>= index values.len)
+            unit
+            (begin
+              (opt-unroll-remap-set
                 remap
-                others
-                (ir.compiler-ir-value-seq-to-list seq))]
-            [(ir.CompilerIrValueList.Nil) unit])])]))
+                dst
+                (ir.compiler-ir-value-seq-ref values index))
+              (opt-unroll-write-phi-seeds-from
+                remap
+                (opt-unroll-phi-list-tail others)
+                values
+                (+ index 1))))])]))
+
+(define (opt-unroll-write-phi-seeds
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [others : OptUnrollPhiList]
+  [values : ir.CompilerIrValueSeq]) : unit
+  (opt-unroll-write-phi-seeds-from remap others values 0))
 
 ;; One clone of B's body (the non-phi instructions minus the c-def and the
 ;; final branch), in original order. The let forces the clone (and its remap
@@ -50734,7 +50738,7 @@
         (if (= copy 0)
           (ir.CompilerIrValue.Var iu)
           (opt-unroll-subst-value remap (ir.CompilerIrValue.Var inext)))]
-      [other-seeds : ir.CompilerIrValueList
+      [other-seeds : ir.CompilerIrValueSeq
         (if (= copy 0)
           (opt-unroll-ku-values ku-ids 0 other-count)
           (opt-unroll-phi-chain-values remap others))]
@@ -50808,7 +50812,7 @@
   [others : OptUnrollPhiList]
   [ku-ids : (__tl_dyn-array i64)]
   [index : i64]
-  [chains : ir.CompilerIrValueList]
+  [chains : ir.CompilerIrValueSeq]
   [guard-label : i64]
   [unrolled-label : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
@@ -50817,39 +50821,29 @@
     [(OptUnrollPhiList.Dense _ _)
       (match (opt-unroll-phi-list-ref others 0)
         [(OptUnrollPhi.Phi _ init _ ty)
-          (match chains
-            [(ir.CompilerIrValueList.Cons chain chain-rest)
-              (begin
-                (ir.compiler-ir-instr-builder-push!
-                  builder
-                  (ir.CompilerIrInstr.Phi
-                    (array-ref ku-ids index)
+          (if (>= index chains.len)
+            unit
+            (begin
+              (ir.compiler-ir-instr-builder-push!
+                builder
+                (ir.CompilerIrInstr.Phi
+                  (array-ref ku-ids index)
+                  (ir.compiler-ir-phi-input-cons
+                    init
+                    guard-label
                     (ir.compiler-ir-phi-input-cons
-                      init
-                      guard-label
-                      (ir.compiler-ir-phi-input-cons
-                        chain
-                        unrolled-label
-                        (ir.CompilerIrPhiInputList.Nil)))
-                    ty))
-                (opt-unroll-push-unrolled-phis!
-                  (opt-unroll-phi-list-tail others)
-                  ku-ids
-                  (+ index 1)
-                  (__tl-box-place chain-rest)
-                  guard-label
-                  unrolled-label
-                  builder))]
-            [(ir.CompilerIrValueList.Array seq)
+                      (ir.compiler-ir-value-seq-ref chains index)
+                      unrolled-label
+                      (ir.CompilerIrPhiInputList.Nil)))
+                  ty))
               (opt-unroll-push-unrolled-phis!
-                others
+                (opt-unroll-phi-list-tail others)
                 ku-ids
-                index
-                (ir.compiler-ir-value-seq-to-list seq)
+                (+ index 1)
+                chains
                 guard-label
                 unrolled-label
-                builder)]
-            [(ir.CompilerIrValueList.Nil) unit])])]))
+                builder)))])]))
 
 ;; B stays in place as the remainder loop: each phi keeps its back-edge input,
 ;; its outside input is relabeled from P to the guard, and a third input from
@@ -50864,7 +50858,8 @@
   [inext : i64]
   [inext3 : ir.CompilerIrValue]
   [others : OptUnrollPhiList]
-  [chains : ir.CompilerIrValueList]
+  [chains : ir.CompilerIrValueSeq]
+  [chain-index : i64]
   [guard-label : i64]
   [unrolled-label : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
@@ -50900,6 +50895,7 @@
               inext3
               others
               chains
+              chain-index
               guard-label
               unrolled-label
               builder))
@@ -50907,54 +50903,41 @@
             [(OptUnrollPhiList.Dense _ _)
               (match (opt-unroll-phi-list-ref others 0)
                 [(OptUnrollPhi.Phi _ init back _)
-                  (match chains
-                    [(ir.CompilerIrValueList.Cons chain chain-rest)
-                      (begin
-                        (ir.compiler-ir-instr-builder-push!
-                          builder
-                          (ir.CompilerIrInstr.Phi
-                            dst
+                  (if (>= chain-index chains.len)
+                    unit
+                    (begin
+                      (ir.compiler-ir-instr-builder-push!
+                        builder
+                        (ir.CompilerIrInstr.Phi
+                          dst
+                          (ir.compiler-ir-phi-input-cons
+                            init
+                            guard-label
                             (ir.compiler-ir-phi-input-cons
-                              init
-                              guard-label
+                              back
+                              loop-label
                               (ir.compiler-ir-phi-input-cons
-                                back
-                                loop-label
-                                (ir.compiler-ir-phi-input-cons
-                                  chain
-                                  unrolled-label
-                                  (ir.CompilerIrPhiInputList.Nil))))
-                            ty))
-                        (opt-unroll-push-tail-instrs!
-                          instrs
-                          (+ index 1)
-                          count
-                          loop-label
-                          iphi
-                          seed
-                          inext
-                          inext3
-                          (opt-unroll-phi-list-tail others)
-                          (__tl-box-place chain-rest)
-                          guard-label
-                          unrolled-label
-                          builder))]
-                    [(ir.CompilerIrValueList.Array seq)
+                                (ir.compiler-ir-value-seq-ref
+                                  chains
+                                  chain-index)
+                                unrolled-label
+                                (ir.CompilerIrPhiInputList.Nil))))
+                          ty))
                       (opt-unroll-push-tail-instrs!
                         instrs
-                        index
+                        (+ index 1)
                         count
                         loop-label
                         iphi
                         seed
                         inext
                         inext3
-                        others
-                        (ir.compiler-ir-value-seq-to-list seq)
+                        (opt-unroll-phi-list-tail others)
+                        chains
+                        (+ chain-index 1)
                         guard-label
                         unrolled-label
-                        builder)]
-                    [(ir.CompilerIrValueList.Nil) unit])])]
+                        builder)))])]
             [(OptUnrollPhiList.Nil) unit]))]
       [_
         (begin
@@ -50972,6 +50955,7 @@
             inext3
             others
             chains
+            chain-index
             guard-label
             unrolled-label
             builder))])))
@@ -50984,7 +50968,7 @@
   [inext : i64]
   [inext3 : ir.CompilerIrValue]
   [others : OptUnrollPhiList]
-  [chains : ir.CompilerIrValueList]
+  [chains : ir.CompilerIrValueSeq]
   [guard-label : i64]
   [unrolled-label : i64]) : ir.CompilerIrInstrSeq
   (let
@@ -51003,6 +50987,7 @@
         inext3
         others
         chains
+        0
         guard-label
         unrolled-label
         (&mut builder))
@@ -51168,7 +51153,7 @@
         ;; iteration (and the remainder loop's phis) receive.
         [inext3 : ir.CompilerIrValue
           (opt-unroll-subst-value remap (ir.CompilerIrValue.Var inext))]
-        [chains : ir.CompilerIrValueList
+        [chains : ir.CompilerIrValueSeq
           (opt-unroll-phi-chain-values remap others)]
         [ngroup : i64 (opt-unroll-alloc-var cell)]
         [gwrap : i64 (opt-unroll-alloc-var cell)]
@@ -51881,13 +51866,10 @@
               call-var
               (opt-fill-call-symbol)
               (ir.compiler-ir-call-args-array
-                (ir.compiler-ir-value-cons
+                (ir.compiler-ir-value-seq3
                   ptr
-                  (ir.compiler-ir-value-cons
-                    shape.bound
-                    (ir.compiler-ir-value-cons
-                      (ir.CompilerIrValue.I64 site.value)
-                      ir.CompilerIrValueList.Nil))))
+                  shape.bound
+                  (ir.CompilerIrValue.I64 site.value)))
               (ast.AstType.Unit))))
         ;; the counter's `next` is redefined as its exit value, `bound`
         (if (opt-fill-call-defines-inext? instrs index shape.inext)
@@ -52407,13 +52389,10 @@
               call-var
               (opt-copy-call-symbol)
               (ir.compiler-ir-call-args-array
-                (ir.compiler-ir-value-cons
+                (ir.compiler-ir-value-seq3
                   site.dst-ptr
-                  (ir.compiler-ir-value-cons
-                    site.src-ptr
-                    (ir.compiler-ir-value-cons
-                      shape.bound
-                      ir.CompilerIrValueList.Nil))))
+                  site.src-ptr
+                  shape.bound))
               (ast.AstType.Unit))))
         ;; the counter's `next` is redefined as its exit value, `bound`
         (if (opt-fill-call-defines-inext? instrs index shape.inext)
@@ -53425,15 +53404,28 @@
             trips
             builder))))))
 
-(define (opt-unroll-const-init-values [others : OptUnrollPhiList]) : ir.CompilerIrValueList
+(define (opt-unroll-const-init-values-into!
+  [others : OptUnrollPhiList]
+  [builder : (&mut builder ir.CompilerIrValueBuilder)]) : unit
   (match others
-    [(OptUnrollPhiList.Nil) (ir.CompilerIrValueList.Nil)]
+    [(OptUnrollPhiList.Nil) unit]
     [(OptUnrollPhiList.Dense _ _)
       (match (opt-unroll-phi-list-ref others 0)
         [(OptUnrollPhi.Phi _ init _ _)
-          (ir.compiler-ir-value-cons
-            init
-            (opt-unroll-const-init-values (opt-unroll-phi-list-tail others)))])]))
+          (begin
+            (ir.compiler-ir-value-builder-push! builder init)
+            (opt-unroll-const-init-values-into!
+              (opt-unroll-phi-list-tail others)
+              builder))])]))
+
+(define (opt-unroll-const-init-values [others : OptUnrollPhiList]) : ir.CompilerIrValueSeq
+  (let
+    [builder : ir.CompilerIrValueBuilder
+      (ir.compiler-ir-value-builder-with-capacity
+        (opt-unroll-phi-list-count others))]
+    (begin
+      (opt-unroll-const-init-values-into! others (&mut builder))
+      (ir.compiler-ir-value-builder-to-seq builder))))
 
 ;; One body copy per simulated trip. The counter phi reads the literal counter
 ;; value of its trip; every other phi reads its init value on copy 0 and the
@@ -53459,7 +53451,7 @@
   (if (>= copy trips)
     unit
     (let
-      [other-seeds : ir.CompilerIrValueList
+      [other-seeds : ir.CompilerIrValueSeq
         (if (= copy 0)
           (opt-unroll-const-init-values others)
           (opt-unroll-phi-chain-values remap others))]
@@ -57024,7 +57016,7 @@
 ;; with fallback like unroll.
 (defenum OptBceVersionGuardAcc
   (No)
-  (Some ir.CompilerIrInstrBuilder ir.CompilerIrValueList bool))
+  (Some ir.CompilerIrInstrBuilder ir.CompilerIrValueSeq bool))
 
 (defenum OptBceVersionGuardResult
   (No)
@@ -57193,7 +57185,7 @@
           (opt-bce-version-builder-push
             instrs
             (ir.CompilerIrInstr.BinOp dst op lhs rhs ty))
-          (ir.compiler-ir-value-cons (ir.CompilerIrValue.Var dst) values)
+          (ir.compiler-ir-value-seq-prepend (ir.CompilerIrValue.Var dst) values)
           counter-seen))]))
 
 (define (opt-bce-version-cond
@@ -59329,66 +59321,25 @@
           values
           (+ index 1))))))
 
-(define (opt-bce-version-and-chain
-  [cell : (__tl_dyn-array i64)]
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
-  [first : ir.CompilerIrValue]
-  [rest : ir.CompilerIrValueList]) : ir.CompilerIrValue
-  (match rest
-    [(ir.CompilerIrValueList.Nil) first]
-    [(ir.CompilerIrValueList.Cons value tail)
-      (let
-        [dst : i64 (opt-bce-version-alloc-var cell)]
-        (begin
-          (ir.compiler-ir-instr-builder-push!
-            builder
-            (ir.CompilerIrInstr.BinOp
-              dst
-              (ir.CompilerIrBinOp.And)
-              first
-              value
-              (ast.AstType.Bool)))
-          (opt-bce-version-and-chain
-            cell
-            builder
-            (ir.CompilerIrValue.Var dst)
-            (__tl-box-place tail))))]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-bce-version-and-chain-array cell builder first seq 0)]))
-
 (define (opt-bce-version-build-guard
   [cell : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrBuilder (:consume)]
-  [values : ir.CompilerIrValueList]) : OptBceVersionGuardResult
+  [values : ir.CompilerIrValueSeq]) : OptBceVersionGuardResult
   (let
-    [value-count : i64 (ir.compiler-ir-value-list-count values)]
+    [value-count : i64 (ir.compiler-ir-value-seq-count values)]
     (if (= value-count 0)
       (OptBceVersionGuardResult.No)
-      (match values
-        [(ir.CompilerIrValueList.Nil) (OptBceVersionGuardResult.No)]
-        [(ir.CompilerIrValueList.Cons first rest)
-          (let
-            [guard-value : ir.CompilerIrValue
-              (opt-bce-version-and-chain
-                cell
-                (&mut instrs)
-                first
-                (__tl-box-place rest))]
-            (OptBceVersionGuardResult.Some
-              (ir.compiler-ir-instr-builder-to-seq instrs)
-              guard-value))]
-        [(ir.CompilerIrValueList.Array seq)
-          (let
-            [guard-value : ir.CompilerIrValue
-              (opt-bce-version-and-chain-array
-                cell
-                (&mut instrs)
-                (array-ref seq.slots 0)
-                seq
-                1)]
-            (OptBceVersionGuardResult.Some
-              (ir.compiler-ir-instr-builder-to-seq instrs)
-              guard-value))]))))
+      (let
+        [guard-value : ir.CompilerIrValue
+          (opt-bce-version-and-chain-array
+            cell
+            (&mut instrs)
+            (ir.compiler-ir-value-seq-ref values 0)
+            values
+            1)]
+        (OptBceVersionGuardResult.Some
+          (ir.compiler-ir-instr-builder-to-seq instrs)
+          guard-value)))))
 
 ;; Assemble the guard from the derived per-check conditions: the once-only
 ;; `seed < bound` and `seed >= 0` when any counter-cased check needs them (a
@@ -59566,7 +59517,7 @@
   (OptBceVersionDerive
     (OptBceVersionGuardAcc.Some
       (ir.compiler-ir-instr-builder-new)
-      (ir.CompilerIrValueList.Nil)
+      (ir.compiler-ir-value-seq-empty)
       false)
     (opt-bce-version-keep-new index-bound)
     0))
@@ -67363,7 +67314,7 @@
     cell
     (OptBceVersionGuardAcc.Some
       (ir.compiler-ir-instr-builder-new)
-      (ir.CompilerIrValueList.Nil)
+      (ir.compiler-ir-value-seq-empty)
       false))
     [(OptBceMbRange.No) (OptBceMbGuardOut.No)]
     [(OptBceMbRange.Some first limit step seeded)
@@ -74947,15 +74898,18 @@
     [(ir.CompilerIrValue.RuntimeGlobal _) false]
     [_ true]))
 
-(define (opt-successor-sink-stable-values? [values : ir.CompilerIrValueList]) : bool
-  (match values
-    [(ir.CompilerIrValueList.Nil) true]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-successor-sink-stable-values? (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (and
-        (opt-successor-sink-stable-value? value)
-        (opt-successor-sink-stable-values? (__tl-box-place rest)))]))
+(define (opt-successor-sink-stable-values-from?
+  [values : ir.CompilerIrValueSeq]
+  [index : i64]) : bool
+  (if (>= index values.len)
+    true
+    (and
+      (opt-successor-sink-stable-value?
+        (ir.compiler-ir-value-seq-ref values index))
+      (opt-successor-sink-stable-values-from? values (+ index 1)))))
+
+(define (opt-successor-sink-stable-values? [values : ir.CompilerIrValueSeq]) : bool
+  (opt-successor-sink-stable-values-from? values 0))
 
 (define (opt-successor-sink-load-barrier? [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -75054,18 +75008,22 @@
 (define (opt-successor-sink-subst-values
   [frame : i64]
   [remap : (__tl_dyn-array i64)]
-  [values : ir.CompilerIrValueList]) : ir.CompilerIrValueList
-  (match values
-    [(ir.CompilerIrValueList.Nil) ir.CompilerIrValueList.Nil]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-successor-sink-subst-values
-        frame
-        remap
-        (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (ir.compiler-ir-value-cons
-        (opt-successor-sink-subst-value frame remap value)
-        (opt-successor-sink-subst-values frame remap (__tl-box-place rest)))]))
+  [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrValue)
+      (array.make-array ir.CompilerIrValue values.len)]
+    [index : i64 0]
+    (begin
+      (while (< index values.len)
+        (begin
+          (set!
+            (array-ref slots index)
+            (opt-successor-sink-subst-value
+              frame
+              remap
+              (ir.compiler-ir-value-seq-ref values index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrValueSeq slots values.len))))
 
 (define (opt-successor-sink-subst-instr
   [frame : i64]
@@ -82143,22 +82101,27 @@
         (opt-inline-census-value index census value)
         (__tl-box-place rest))]))
 
-(define (opt-inline-census-value-list
+(define (opt-inline-census-value-seq-from
   [index : OptFunctionIndex]
   [census : OptInlineCensus (:consume)]
-  [values : ir.CompilerIrValueList]) : OptInlineCensus
-  (match values
-    [(ir.CompilerIrValueList.Nil) census]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-inline-census-value-list
+  [values : ir.CompilerIrValueSeq]
+  [position : i64]) : OptInlineCensus
+  (if (>= position values.len)
+    census
+    (opt-inline-census-value-seq-from
+      index
+      (opt-inline-census-value
         index
         census
-        (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (opt-inline-census-value-list
-        index
-        (opt-inline-census-value index census value)
-        (__tl-box-place rest))]))
+        (ir.compiler-ir-value-seq-ref values position))
+      values
+      (+ position 1))))
+
+(define (opt-inline-census-value-seq
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus (:consume)]
+  [values : ir.CompilerIrValueSeq]) : OptInlineCensus
+  (opt-inline-census-value-seq-from index census values 0))
 
 (define (opt-inline-census-instr
   [index : OptFunctionIndex]
@@ -82416,7 +82379,7 @@
       (opt-inline-census-phi-inputs index census inputs)]
     ;; Register-group ops use their operands (Pack: each word; Word: src).
     [(ir.CompilerIrInstr.Pack _ words _)
-      (opt-inline-census-value-list index census words)]
+      (opt-inline-census-value-seq index census words)]
     [(ir.CompilerIrInstr.Word _ src _ _)
       (opt-inline-census-value index census src)]
     [(ir.CompilerIrInstr.TailCallIndirect func args _)
@@ -84639,23 +84602,27 @@
               (set! i (+ i 1))))
           (ir.CompilerIrCallArgs.Array out)))]))
 
-(define (opt-inline-remap-value-list
-  [values : ir.CompilerIrValueList]
+(define (opt-inline-remap-value-seq
+  [values : ir.CompilerIrValueSeq]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
-  [base : i64]) : ir.CompilerIrValueList
-  (match values
-    [(ir.CompilerIrValueList.Nil) ir.CompilerIrValueList.Nil]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-inline-remap-value-list
-        (ir.compiler-ir-value-seq-to-list seq)
-        sa
-        np
-        base)]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (ir.compiler-ir-value-cons
-        (opt-inline-remap-value value sa np base)
-        (opt-inline-remap-value-list (__tl-box-place rest) sa np base))]))
+  [base : i64]) : ir.CompilerIrValueSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrValue)
+      (array.make-array ir.CompilerIrValue values.len)]
+    [index : i64 0]
+    (begin
+      (while (< index values.len)
+        (begin
+          (set!
+            (array-ref slots index)
+            (opt-inline-remap-value
+              (ir.compiler-ir-value-seq-ref values index)
+              sa
+              np
+              base))
+          (set! index (+ index 1))))
+      (ir.CompilerIrValueSeq slots values.len))))
 
 ;; Inlining renames a callee's blocks by prefixing the caller-site tag onto the
 ;; original spelling, so the derived name is re-interned into a fresh id.
@@ -84721,7 +84688,7 @@
     [(ir.CompilerIrInstr.Pack dst words ty)
       (ir.CompilerIrInstr.Pack
         (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value-list words sa np base)
+        (opt-inline-remap-value-seq words sa np base)
         (clone ty))]
     [(ir.CompilerIrInstr.Word dst src index ty)
       (ir.CompilerIrInstr.Word
@@ -100406,21 +100373,25 @@
     [(ir.CompilerIrMaybeValue.Some value)
       (opt-scratch-value-derived? roots facts value)]))
 
-(define (opt-scratch-value-list-derived?
+(define (opt-scratch-value-seq-derived-from?
   [roots : OptScratchRootList]
   [facts : OptAliasFacts]
-  [values : ir.CompilerIrValueList]) : bool
-  (match values
-    [(ir.CompilerIrValueList.Nil) false]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-scratch-value-list-derived?
+  [values : ir.CompilerIrValueSeq]
+  [index : i64]) : bool
+  (if (>= index values.len)
+    false
+    (or
+      (opt-scratch-value-derived?
         roots
         facts
-        (ir.compiler-ir-value-seq-to-list seq))]
-    [(ir.CompilerIrValueList.Cons value rest)
-      (or
-        (opt-scratch-value-derived? roots facts value)
-        (opt-scratch-value-list-derived? roots facts (__tl-box-place rest)))]))
+        (ir.compiler-ir-value-seq-ref values index))
+      (opt-scratch-value-seq-derived-from? roots facts values (+ index 1)))))
+
+(define (opt-scratch-value-seq-derived?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [values : ir.CompilerIrValueSeq]) : bool
+  (opt-scratch-value-seq-derived-from? roots facts values 0))
 
 (define (opt-scratch-blocker-none? [blocker : OptScratchBlockerReason]) : bool
   (match blocker
@@ -100576,7 +100547,7 @@
             (OptScratchBlockerReason.Blocked "return_escape")
             (OptScratchBlockerReason.NoBlocker))]
         [(ir.CompilerIrInstr.Pack _ values _)
-          (if (opt-scratch-value-list-derived? roots facts values)
+          (if (opt-scratch-value-seq-derived? roots facts values)
             (OptScratchBlockerReason.Blocked "return_escape")
             (OptScratchBlockerReason.NoBlocker))]
         [(ir.CompilerIrInstr.Branch cond _ _)

@@ -474,11 +474,6 @@
   (slots (__tl_dyn-array CompilerIrValue))
   (len i64))
 
-(defenum CompilerIrValueList
-  (Nil)
-  (Cons CompilerIrValue (Box CompilerIrValueList))
-  (Array CompilerIrValueSeq))
-
 (defenum CompilerIrCallArgs
   (Nil)
   (One CompilerIrValue)
@@ -731,7 +726,7 @@
   ;; as a group. Pack forms `dst` from low word first and Word extracts `index`.
   ;; The allocator gives a group N adjacent homes (or an N*8-byte spill slot),
   ;; and the backend lowers the operations as register/slot word moves.
-  (Pack i64 CompilerIrValueList ast.AstType)
+  (Pack i64 CompilerIrValueSeq ast.AstType)
   (Word i64 CompilerIrValue i64 ast.AstType)
   (TailCallIndirect CompilerIrValue CompilerIrCallArgs ast.AstType)
   (Switch CompilerIrValue i64 CompilerIrSwitchCaseSeq i64)
@@ -766,9 +761,7 @@
   [kind : CompilerIrDescriptorPairKind]) : CompilerIrInstr
   (CompilerIrInstr.Pack
     dst
-    (compiler-ir-value-cons
-      data
-      (compiler-ir-value-cons length CompilerIrValueList.Nil))
+    (compiler-ir-value-seq2 data length)
     (compiler-ir-descriptor-pair-handle-type kind)))
 
 (define (ir-instr-descriptor-pair-data [dst : i64] [pair : CompilerIrValue]) : CompilerIrInstr
@@ -1144,54 +1137,59 @@
       (compiler-ir-representation-index-kind-for-key index key)]
     [(ast.AstMaybeNominalKey.None) CompilerIrRepresentationKind.Unknown]))
 
-(define (compiler-ir-value-cons-linked
-  [value : CompilerIrValue]
-  [rest : CompilerIrValueList]) : CompilerIrValueList
-  (CompilerIrValueList.Cons value (box rest)))
+(define (compiler-ir-value-seq-empty) : CompilerIrValueSeq
+  (CompilerIrValueSeq (__tl_make-array CompilerIrValue 0) 0))
 
-(define (compiler-ir-value-cons
-  [value : CompilerIrValue]
-  [rest : CompilerIrValueList]) : CompilerIrValueList
+(define (compiler-ir-value-seq1 [a : CompilerIrValue]) : CompilerIrValueSeq
   (let
-    [count : i64 (+ 1 (compiler-ir-value-list-count rest))]
     [slots : (__tl_dyn-array CompilerIrValue)
-      (array.make-array CompilerIrValue count)]
+      (__tl_make-array CompilerIrValue 1)]
     (begin
-      (set! (array-ref slots 0) value)
-      (compiler-ir-value-list-fill-array rest slots 1)
-      (CompilerIrValueList.Array (CompilerIrValueSeq slots count)))))
+      (set! (array-ref slots 0) a)
+      (CompilerIrValueSeq slots 1))))
 
-(define (compiler-ir-value-list-compact [values : CompilerIrValueList]) : CompilerIrValueList
-  (match values
-    [(CompilerIrValueList.Array _) values]
-    [_ (CompilerIrValueList.Array (compiler-ir-value-seq-from-list values))]))
-
-(define (compiler-ir-value-seq-to-list-rev
-  [slots : (__tl_dyn-array CompilerIrValue)]
-  [index : i64]
-  [acc : CompilerIrValueList]) : CompilerIrValueList
+(define (compiler-ir-value-seq2 [a : CompilerIrValue] [b : CompilerIrValue]) : CompilerIrValueSeq
   (let
-    [cursor : i64 index]
-    [out : CompilerIrValueList acc]
+    [slots : (__tl_dyn-array CompilerIrValue)
+      (__tl_make-array CompilerIrValue 2)]
     (begin
-      (while (>= cursor 0)
-        (begin
-          (set!
-            out
-            (compiler-ir-value-cons-linked (array-ref slots cursor) out))
-          (set! cursor (- cursor 1))))
-      out)))
+      (set! (array-ref slots 0) a)
+      (set! (array-ref slots 1) b)
+      (CompilerIrValueSeq slots 2))))
 
-(define (compiler-ir-value-seq-to-list [seq : CompilerIrValueSeq]) : CompilerIrValueList
-  (compiler-ir-value-seq-to-list-rev
-    seq.slots
-    (- seq.len 1)
-    CompilerIrValueList.Nil))
+(define (compiler-ir-value-seq3
+  [a : CompilerIrValue]
+  [b : CompilerIrValue]
+  [c : CompilerIrValue]) : CompilerIrValueSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrValue)
+      (__tl_make-array CompilerIrValue 3)]
+    (begin
+      (set! (array-ref slots 0) a)
+      (set! (array-ref slots 1) b)
+      (set! (array-ref slots 2) c)
+      (CompilerIrValueSeq slots 3))))
 
-(define (compiler-ir-value-list-force-cons [values : CompilerIrValueList]) : CompilerIrValueList
-  (match values
-    [(CompilerIrValueList.Array seq) (compiler-ir-value-seq-to-list seq)]
-    [_ values]))
+(define (compiler-ir-value-seq4
+  [a : CompilerIrValue]
+  [b : CompilerIrValue]
+  [c : CompilerIrValue]
+  [d : CompilerIrValue]) : CompilerIrValueSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrValue)
+      (__tl_make-array CompilerIrValue 4)]
+    (begin
+      (set! (array-ref slots 0) a)
+      (set! (array-ref slots 1) b)
+      (set! (array-ref slots 2) c)
+      (set! (array-ref slots 3) d)
+      (CompilerIrValueSeq slots 4))))
+
+(define (compiler-ir-value-seq-count [values : CompilerIrValueSeq]) : i64
+  values.len)
+
+(define (compiler-ir-value-seq-ref [values : CompilerIrValueSeq] [index : i64]) : CompilerIrValue
+  (array-ref values.slots index))
 
 (define (compiler-ir-phi-input-cons-linked
   [value : CompilerIrValue]
@@ -1994,6 +1992,10 @@
   (slots (__tl_dyn-array CompilerIrInstr))
   (len i64))
 
+(defstruct CompilerIrValueBuilder
+  (slots (__tl_dyn-array CompilerIrValue))
+  (len i64))
+
 (defstruct CompilerIrBlockBuilder
   (slots (__tl_dyn-array CompilerIrBlock))
   (len i64))
@@ -2014,6 +2016,125 @@
   (if (< capacity 1)
     1
     capacity))
+
+(define (compiler-ir-value-builder-with-capacity [capacity : i64]) : CompilerIrValueBuilder
+  (CompilerIrValueBuilder
+    (__tl_make-array CompilerIrValue (compiler-ir-builder-capacity capacity))
+    0))
+
+(define (compiler-ir-value-builder-new) : CompilerIrValueBuilder
+  (compiler-ir-value-builder-with-capacity 4))
+
+(define (compiler-ir-value-builder-copy-range!
+  [dst : (&mut dst (__tl_dyn-array CompilerIrValue))]
+  [src : (& src (__tl_dyn-array CompilerIrValue))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (set! (array-ref dst index) (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-value-builder-grow!
+  [builder : (&mut builder CompilerIrValueBuilder)]) : unit
+  (let
+    [old-cap : i64 (array-length builder.slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array CompilerIrValue)
+      (__tl_make-array CompilerIrValue new-cap)]
+    (begin
+      (compiler-ir-value-builder-copy-range!
+        (&mut bigger)
+        (& builder.slots)
+        builder.len)
+      (set! builder.slots bigger))))
+
+(define (compiler-ir-value-builder-push!
+  [builder : (&mut builder CompilerIrValueBuilder)]
+  [value : CompilerIrValue]) : unit
+  (begin
+    (if (< builder.len (array-length builder.slots))
+      unit
+      (compiler-ir-value-builder-grow! builder))
+    (let
+      [index : i64 builder.len]
+      (begin
+        (set! (array-ref builder.slots index) value)
+        (set! builder.len (+ index 1))))))
+
+(define (compiler-ir-value-builder-append-seq!
+  [builder : (&mut builder CompilerIrValueBuilder)]
+  [values : CompilerIrValueSeq]) : unit
+  (let
+    [index : i64 0]
+    (while (< index values.len)
+      (begin
+        (compiler-ir-value-builder-push!
+          builder
+          (compiler-ir-value-seq-ref values index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-value-builder-to-seq [builder : CompilerIrValueBuilder]) : CompilerIrValueSeq
+  (if (= builder.len (array-length builder.slots))
+    (CompilerIrValueSeq builder.slots builder.len)
+    (let
+      [slots : (__tl_dyn-array CompilerIrValue)
+        (__tl_make-array CompilerIrValue builder.len)]
+      (begin
+        (compiler-ir-value-builder-copy-range!
+          (&mut slots)
+          (& builder.slots)
+          builder.len)
+        (CompilerIrValueSeq slots builder.len)))))
+
+(define (compiler-ir-value-builder-snapshot
+  [builder : (& builder CompilerIrValueBuilder)]) : CompilerIrValueSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrValue)
+      (__tl_make-array CompilerIrValue builder.len)]
+    (begin
+      (compiler-ir-value-builder-copy-range!
+        (&mut slots)
+        (& builder.slots)
+        builder.len)
+      (CompilerIrValueSeq slots builder.len))))
+
+(define (compiler-ir-value-seq-prepend
+  [value : CompilerIrValue]
+  [values : CompilerIrValueSeq]) : CompilerIrValueSeq
+  (let
+    [builder : CompilerIrValueBuilder
+      (compiler-ir-value-builder-with-capacity (+ values.len 1))]
+    (begin
+      (compiler-ir-value-builder-push! (&mut builder) value)
+      (compiler-ir-value-builder-append-seq! (&mut builder) values)
+      (compiler-ir-value-builder-to-seq builder))))
+
+(define (compiler-ir-value-seq-append-one
+  [values : CompilerIrValueSeq]
+  [value : CompilerIrValue]) : CompilerIrValueSeq
+  (let
+    [builder : CompilerIrValueBuilder
+      (compiler-ir-value-builder-with-capacity (+ values.len 1))]
+    (begin
+      (compiler-ir-value-builder-append-seq! (&mut builder) values)
+      (compiler-ir-value-builder-push! (&mut builder) value)
+      (compiler-ir-value-builder-to-seq builder))))
+
+(define (compiler-ir-value-seq-append
+  [head : CompilerIrValueSeq]
+  [tail : CompilerIrValueSeq]) : CompilerIrValueSeq
+  (let
+    [builder : CompilerIrValueBuilder
+      (compiler-ir-value-builder-with-capacity (+ head.len tail.len))]
+    (begin
+      (compiler-ir-value-builder-append-seq! (&mut builder) head)
+      (compiler-ir-value-builder-append-seq! (&mut builder) tail)
+      (compiler-ir-value-builder-to-seq builder))))
 
 (define (compiler-ir-instr-builder-with-capacity [capacity : i64]) : CompilerIrInstrBuilder
   (let
@@ -2503,42 +2624,19 @@
     [(CompilerIrMaybeValue.Some inner)
       (CompilerIrMaybeValue.Some (compiler-ir-clone-value inner))]))
 
-(define (compiler-ir-clone-value-list-acc
-  [values : CompilerIrValueList]
-  [acc : CompilerIrValueList]) : CompilerIrValueList
-  (match (compiler-ir-value-list-force-cons values)
-    [(CompilerIrValueList.Nil) acc]
-    [(CompilerIrValueList.Array seq)
-      (compiler-ir-clone-value-list-acc (compiler-ir-value-seq-to-list seq) acc)]
-    [(CompilerIrValueList.Cons value rest)
-      (compiler-ir-clone-value-list-acc
-        (__tl-box-place rest)
-        (compiler-ir-value-cons (compiler-ir-clone-value value) acc))]))
-
-(define (compiler-ir-value-list-reverse-onto
-  [values : CompilerIrValueList]
-  [acc : CompilerIrValueList]) : CompilerIrValueList
-  (compiler-ir-value-list-compact
-    (compiler-ir-value-list-reverse-onto-acc values acc)))
-
-(define (compiler-ir-value-list-reverse-onto-acc
-  [values : CompilerIrValueList]
-  [acc : CompilerIrValueList]) : CompilerIrValueList
-  (match (compiler-ir-value-list-force-cons values)
-    [(CompilerIrValueList.Nil) acc]
-    [(CompilerIrValueList.Array seq)
-      (compiler-ir-value-list-reverse-onto-acc
-        (compiler-ir-value-seq-to-list seq)
-        acc)]
-    [(CompilerIrValueList.Cons value rest)
-      (compiler-ir-value-list-reverse-onto-acc
-        (__tl-box-place rest)
-        (compiler-ir-value-cons value acc))]))
-
-(define (compiler-ir-clone-value-list [values : CompilerIrValueList]) : CompilerIrValueList
-  (compiler-ir-value-list-reverse-onto
-    (compiler-ir-clone-value-list-acc values CompilerIrValueList.Nil)
-    CompilerIrValueList.Nil))
+(define (compiler-ir-clone-value-seq [values : CompilerIrValueSeq]) : CompilerIrValueSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrValue)
+      (__tl_make-array CompilerIrValue values.len)]
+    [index : i64 0]
+    (begin
+      (while (< index values.len)
+        (begin
+          (set!
+            (array-ref slots index)
+            (compiler-ir-clone-value (compiler-ir-value-seq-ref values index)))
+          (set! index (+ index 1))))
+      (CompilerIrValueSeq slots values.len))))
 
 (define (compiler-ir-clone-call-args [args : CompilerIrCallArgs]) : CompilerIrCallArgs
   (match args
@@ -3177,7 +3275,7 @@
     [(CompilerIrInstr.Pack dst words ty)
       (CompilerIrInstr.Pack
         dst
-        (compiler-ir-clone-value-list words)
+        (compiler-ir-clone-value-seq words)
         (compiler-ir-clone-type pools ty))]
     [(CompilerIrInstr.Word dst src index ty)
       (CompilerIrInstr.Word
@@ -3775,25 +3873,20 @@
       (str_cat.str-cat "runtime-init@" (compiler-ir-symbol-text init))]
     [(CompilerIrValue.Unit) "unit"]))
 
-(define (compiler-ir-value-list-render [values : CompilerIrValueList]) : String
-  (match (compiler-ir-value-list-force-cons values)
-    [(CompilerIrValueList.Nil) ""]
-    [(CompilerIrValueList.Array seq)
-      (compiler-ir-value-list-render (compiler-ir-value-seq-to-list seq))]
-    [(CompilerIrValueList.Cons value rest)
-      (str_cat.str-cat
-        (compiler-ir-value-render value)
-        (match (compiler-ir-value-list-force-cons (__tl-box-place rest))
-          [(CompilerIrValueList.Nil) ""]
-          [(CompilerIrValueList.Array seq)
-            (str_cat.str-cat
-              ", "
-              (compiler-ir-value-list-render
-                (compiler-ir-value-seq-to-list seq)))]
-          [_
-            (str_cat.str-cat
-              ", "
-              (compiler-ir-value-list-render (__tl-box-place rest)))]))]))
+(define (compiler-ir-value-seq-render-from
+  [values : CompilerIrValueSeq]
+  [index : i64]) : String
+  (if (>= index values.len)
+    ""
+    (str_cat.str-cat
+      (if (= index 0)
+        ""
+        ", ")
+      (compiler-ir-value-render (compiler-ir-value-seq-ref values index))
+      (compiler-ir-value-seq-render-from values (+ index 1)))))
+
+(define (compiler-ir-value-seq-render [values : CompilerIrValueSeq]) : String
+  (compiler-ir-value-seq-render-from values 0))
 
 (define (compiler-ir-switch-case-render [case : CompilerIrSwitchCase]) : String
   (match case
@@ -3819,72 +3912,25 @@
 (define (compiler-ir-switch-case-seq-render [cases : CompilerIrSwitchCaseSeq]) : String
   (compiler-ir-switch-case-seq-render-from cases 0))
 
-(define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
-  (match values
-    [(CompilerIrValueList.Nil) 0]
-    [(CompilerIrValueList.Cons _ rest)
-      (+ 1 (compiler-ir-value-list-count (__tl-box-place rest)))]
-    [(CompilerIrValueList.Array seq) seq.len]))
-
-(define (compiler-ir-value-list-fill-array
-  [values : CompilerIrValueList]
-  [out : (__tl_dyn-array CompilerIrValue)]
-  [index : i64]) : unit
-  (match values
-    [(CompilerIrValueList.Nil) unit]
-    [(CompilerIrValueList.Cons value rest)
-      (begin
-        (set! (array-ref out index) value)
-        (compiler-ir-value-list-fill-array
-          (__tl-box-place rest)
-          out
-          (+ index 1)))]
-    [(CompilerIrValueList.Array seq)
-      (let
-        [read : i64 0]
-        [count : i64 seq.len]
-        [source : (__tl_dyn-array CompilerIrValue) seq.slots]
-        (while (< read count)
-          (begin
-            (set! (array-ref out (+ index read)) (array-ref source read))
-            (set! read (+ read 1)))))]))
-
-(define (compiler-ir-value-seq-from-list [values : CompilerIrValueList]) : CompilerIrValueSeq
+(define (compiler-ir-call-args-array [values : CompilerIrValueSeq]) : CompilerIrCallArgs
   (let
-    [count : i64 (compiler-ir-value-list-count values)]
-    [slots : (__tl_dyn-array CompilerIrValue)
-      (array.make-array CompilerIrValue count)]
-    (begin
-      (compiler-ir-value-list-fill-array values slots 0)
-      (CompilerIrValueSeq slots count))))
-
-(define (compiler-ir-call-args-array [values : CompilerIrValueList]) : CompilerIrCallArgs
-  (let
-    [count : i64 (compiler-ir-value-list-count values)]
+    [count : i64 values.len]
     [out : (__tl_dyn-array CompilerIrValue)
-      (array.make-array CompilerIrValue count)]
+      (__tl_make-array CompilerIrValue count)]
     (begin
-      (compiler-ir-value-list-fill-array values out 0)
+      (compiler-ir-value-builder-copy-range! (&mut out) (& values.slots) count)
       (CompilerIrCallArgs.Array out))))
 
-(define (compiler-ir-call-args-from-list [values : CompilerIrValueList]) : CompilerIrCallArgs
-  (match (compiler-ir-value-list-force-cons values)
-    [(CompilerIrValueList.Nil) (CompilerIrCallArgs.Nil)]
-    [(CompilerIrValueList.Array seq)
-      (compiler-ir-call-args-from-list (compiler-ir-value-seq-to-list seq))]
-    [(CompilerIrValueList.Cons a rest)
-      (match (compiler-ir-value-list-force-cons (__tl-box-place rest))
-        [(CompilerIrValueList.Nil) (CompilerIrCallArgs.One a)]
-        [(CompilerIrValueList.Array seq)
-          (compiler-ir-call-args-from-list
-            (compiler-ir-value-cons-linked
-              a
-              (compiler-ir-value-seq-to-list seq)))]
-        [(CompilerIrValueList.Cons b tail)
-          (match (compiler-ir-value-list-force-cons (__tl-box-place tail))
-            [(CompilerIrValueList.Nil) (CompilerIrCallArgs.Two a b)]
-            [(CompilerIrValueList.Array _) (compiler-ir-call-args-array values)]
-            [_ (compiler-ir-call-args-array values)])])]))
+(define (compiler-ir-call-args-from-seq [values : CompilerIrValueSeq]) : CompilerIrCallArgs
+  (cond
+    [(= values.len 0) (CompilerIrCallArgs.Nil)]
+    [(= values.len 1)
+      (CompilerIrCallArgs.One (compiler-ir-value-seq-ref values 0))]
+    [(= values.len 2)
+      (CompilerIrCallArgs.Two
+        (compiler-ir-value-seq-ref values 0)
+        (compiler-ir-value-seq-ref values 1))]
+    [else (compiler-ir-call-args-array values)]))
 
 (define (compiler-ir-call-args-array-render
   [values : (__tl_dyn-array CompilerIrValue)]
@@ -4703,7 +4749,7 @@
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
         "pack ["
-        (compiler-ir-value-list-render values)
+        (compiler-ir-value-seq-render values)
         "] : "
         (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.Word dst value index ty)
@@ -6971,25 +7017,20 @@
       (str_cat.str-cat "runtime-init@" (compiler-ir-symbol-text init) "")]
     [(CompilerIrValue.Unit) "unit"]))
 
-(define (compiler-ir-value-list-describe [values : CompilerIrValueList]) : String
-  (match (compiler-ir-value-list-force-cons values)
-    [(CompilerIrValueList.Nil) ""]
-    [(CompilerIrValueList.Array seq)
-      (compiler-ir-value-list-describe (compiler-ir-value-seq-to-list seq))]
-    [(CompilerIrValueList.Cons head tail)
-      (match (compiler-ir-value-list-force-cons (__tl-box-place tail))
-        [(CompilerIrValueList.Nil) (compiler-ir-value-describe head)]
-        [(CompilerIrValueList.Array seq)
-          (str_cat.str-cat
-            (compiler-ir-value-describe head)
-            ", "
-            (compiler-ir-value-list-describe
-              (compiler-ir-value-seq-to-list seq)))]
-        [_
-          (str_cat.str-cat
-            (compiler-ir-value-describe head)
-            ", "
-            (compiler-ir-value-list-describe (__tl-box-place tail)))])]))
+(define (compiler-ir-value-seq-describe-from
+  [values : CompilerIrValueSeq]
+  [index : i64]) : String
+  (if (>= index values.len)
+    ""
+    (str_cat.str-cat
+      (if (= index 0)
+        ""
+        ", ")
+      (compiler-ir-value-describe (compiler-ir-value-seq-ref values index))
+      (compiler-ir-value-seq-describe-from values (+ index 1)))))
+
+(define (compiler-ir-value-seq-describe [values : CompilerIrValueSeq]) : String
+  (compiler-ir-value-seq-describe-from values 0))
 
 (define (compiler-ir-spmd-call-arg-describe
   [type-segment-bases : i64]
@@ -8189,29 +8230,24 @@
 
 (define (compiler-ir-representation-pack-class-mask
   [types : CompilerIrRepresentationVarTypes]
-  [words : CompilerIrValueList]
+  [words : CompilerIrValueSeq]
   [position : i64]
   [mask : i64]) : i64
-  (match (compiler-ir-value-list-force-cons words)
-    [(CompilerIrValueList.Nil) mask]
-    [(CompilerIrValueList.Array seq)
-      (compiler-ir-representation-pack-class-mask
+  (if (>= position words.len)
+    mask
+    (compiler-ir-representation-pack-class-mask
+      types
+      words
+      (+ position 1)
+      (if (compiler-ir-representation-pack-word-sse?
         types
-        (compiler-ir-value-seq-to-list seq)
-        position
-        mask)]
-    [(CompilerIrValueList.Cons value rest)
-      (compiler-ir-representation-pack-class-mask
-        types
-        (__tl-box-place rest)
-        (+ position 1)
-        (if (compiler-ir-representation-pack-word-sse? types value)
-          (bit-or
-            mask
-            (if (= position 0)
-              1
-              2))
-          mask))]))
+        (compiler-ir-value-seq-ref words position))
+        (bit-or
+          mask
+          (if (= position 0)
+            1
+            2))
+        mask))))
 
 (define (compiler-ir-representation-merge-group-type
   [type-segment-bases : i64]
@@ -8282,7 +8318,7 @@
             type-segment-bases
             index
             ty
-            (compiler-ir-value-list-count words)
+            (compiler-ir-value-seq-count words)
             (compiler-ir-representation-pack-class-mask types words 0 0))
           types
           instrs
@@ -9345,37 +9381,46 @@
       [(CompilerIrValue.Var id) (= id want)]
       [_ false])))
 
-(define (compiler-ir-pack-value-list-dense-order-ok?) : bool
+(define (compiler-ir-pack-value-seq-dense-order-ok?) : bool
   (let
-    [words : CompilerIrValueList
-      (compiler-ir-value-cons
-        (CompilerIrValue.Var 10)
-        (compiler-ir-value-cons
-          (CompilerIrValue.Var 20)
-          CompilerIrValueList.Nil))]
-    [cloned : CompilerIrValueList (compiler-ir-clone-value-list words)]
+    [builder : CompilerIrValueBuilder
+      (compiler-ir-value-builder-with-capacity 1)]
+    [_first-two : unit
+      (begin
+        (compiler-ir-value-builder-push!
+          (&mut builder)
+          (CompilerIrValue.Var 10))
+        (compiler-ir-value-builder-push!
+          (&mut builder)
+          (CompilerIrValue.Var 20)))]
+    [snapshot : CompilerIrValueSeq
+      (compiler-ir-value-builder-snapshot (& builder))]
+    [_third : unit
+      (compiler-ir-value-builder-push! (&mut builder) (CompilerIrValue.Var 30))]
+    [words : CompilerIrValueSeq (compiler-ir-value-builder-to-seq builder)]
+    [cloned : CompilerIrValueSeq (compiler-ir-clone-value-seq words)]
     [instr : CompilerIrInstr
-      (CompilerIrInstr.Pack 30 words (ast.AstType.Struct (ci.intern "Pair")))]
+      (CompilerIrInstr.Pack 40 words (ast.AstType.Struct (ci.intern "Triple")))]
     (and
+      (= snapshot.len 2)
+      (= (array-length snapshot.slots) 2)
+      (compiler-ir-value-seq-entry-var? snapshot 0 10)
+      (compiler-ir-value-seq-entry-var? snapshot 1 20)
       (match instr
         [(CompilerIrInstr.Pack _ packed _)
-          (match packed
-            [(CompilerIrValueList.Array seq)
-              (and
-                (= seq.len 2)
-                (compiler-ir-value-seq-entry-var? seq 0 10)
-                (compiler-ir-value-seq-entry-var? seq 1 20))]
-            [_ false])]
-        [_ false])
-      (match cloned
-        [(CompilerIrValueList.Array seq)
           (and
-            (= seq.len 2)
-            (compiler-ir-value-seq-entry-var? seq 0 10)
-            (compiler-ir-value-seq-entry-var? seq 1 20))]
+            (= packed.len 3)
+            (= (array-length packed.slots) 3)
+            (compiler-ir-value-seq-entry-var? packed 0 10)
+            (compiler-ir-value-seq-entry-var? packed 1 20)
+            (compiler-ir-value-seq-entry-var? packed 2 30))]
         [_ false])
-      (string.eq (compiler-ir-value-list-render words) "%10, %20")
-      (string.eq (compiler-ir-value-list-describe words) "%10, %20"))))
+      (= cloned.len 3)
+      (compiler-ir-value-seq-entry-var? cloned 0 10)
+      (compiler-ir-value-seq-entry-var? cloned 1 20)
+      (compiler-ir-value-seq-entry-var? cloned 2 30)
+      (string.eq (compiler-ir-value-seq-render words) "%10, %20, %30")
+      (string.eq (compiler-ir-value-seq-describe words) "%10, %20, %30"))))
 
 (define (compiler-ir-descriptor-pair-capability-ok?) : bool
   (let
@@ -9426,13 +9471,9 @@
             (match ty
               [(ast.AstType.String) true]
               [_ false])
-            (match words
-              [(CompilerIrValueList.Array seq)
-                (and
-                  (= seq.len 2)
-                  (compiler-ir-value-seq-entry-var? seq 0 10)
-                  (compiler-ir-value-seq-entry-var? seq 1 20))]
-              [_ false]))]
+            (= words.len 2)
+            (compiler-ir-value-seq-entry-var? words 0 10)
+            (compiler-ir-value-seq-entry-var? words 1 20))]
         [_ false])
       (match data
         [(CompilerIrInstr.Word dst (CompilerIrValue.Var src) index ty)
@@ -9595,7 +9636,7 @@
     (unless (compiler-ir-dense-builders-order-ok?) (return 1))
     (unless (compiler-ir-param-list-dense-order-ok?) (return 1))
     (unless (compiler-ir-c-abi-return-slot-dense-order-ok?) (return 1))
-    (unless (compiler-ir-pack-value-list-dense-order-ok?) (return 1))
+    (unless (compiler-ir-pack-value-seq-dense-order-ok?) (return 1))
     (unless (compiler-ir-descriptor-pair-capability-ok?) (return 1))
     (unless (compiler-ir-phi-input-dense-order-ok?) (return 1))
     (unless (compiler-ir-switch-case-dense-order-ok?) (return 1))

@@ -1,6 +1,5 @@
 ;; compiler_lower_tests.tl - Selfhost lowering fixtures split from production.
 (import compiler_lower)
-(import stdlib.array)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_builtin_ids as cbi)
@@ -3041,16 +3040,11 @@
     [_ false]))
 
 (define (lower-test-pack-values-shape?
-  [values : compiler_ir_types.CompilerIrValueList]) : bool
-  (if (= (compiler_ir_types.compiler-ir-value-list-count values) 2)
-    (let
-      [slots : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
-        (array.make-array compiler_ir_types.CompilerIrValue 2)]
-      (begin
-        (compiler_ir_types.compiler-ir-value-list-fill-array values slots 0)
-        (match (array-ref slots 1)
-          [(compiler_ir_types.CompilerIrValue.I64 length) (= length 3)]
-          [_ false])))
+  [values : compiler_ir_types.CompilerIrValueSeq]) : bool
+  (if (= (compiler_ir_types.compiler-ir-value-seq-count values) 2)
+    (match (compiler_ir_types.compiler-ir-value-seq-ref values 1)
+      [(compiler_ir_types.CompilerIrValue.I64 length) (= length 3)]
+      [_ false])
     false))
 
 (define (lower-test-instr-pack-count

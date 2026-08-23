@@ -39730,6 +39730,68 @@ g:
           (set! i (+ i 1))))
       unit)))
 
+;; Any-arity GP argument marshalling: where the register prefix ends, where the
+;; overflow lands, and the one register class whose stack mirror the peephole may
+;; NOT learn from a store.
+;;
+;; The prefix is the ABI's GP argument-register count minus the caller's current
+;; bank base (a closure/indirect shape starts at one), and the overflow is packed
+;; from the base of the outgoing area -- 0 on System V, past the shadow space on
+;; Windows. The owner-key store bit (`compiler-backend-peephole-owner-key-mark-store`)
+;; is what keeps a `movq %reg, off(%rsp)` argument store from teaching the
+;; peephole owner map a mirror that outlives the call which invalidates it: the
+;; outgoing area belongs to the callee, and only the volatile registers have
+;; their owners cleared at the call anyway.
+(define (compiler-backend-any-arity-stack-arg-shape-ok?) : bool
+  (and
+    (=
+      (compiler_backend.compiler-backend-call-args-gp-register-prefix
+        (compiler_backend.CompilerBackendTarget.Linux)
+        9
+        0
+        0)
+      6)
+    (=
+      (compiler_backend.compiler-backend-call-args-gp-register-prefix
+        (compiler_backend.CompilerBackendTarget.Linux)
+        9
+        1
+        1)
+      5)
+    (=
+      (compiler_backend.compiler-backend-call-args-gp-register-prefix
+        (compiler_backend.CompilerBackendTarget.Linux)
+        4
+        0
+        0)
+      4)
+    (=
+      (compiler_backend.compiler-backend-call-args-gp-register-prefix
+        (compiler_backend.CompilerBackendTarget.Windows)
+        9
+        0
+        0)
+      4)
+    (=
+      (compiler_backend.compiler-backend-outgoing-stack-arg-offset
+        (compiler_backend.CompilerBackendTarget.Linux)
+        0)
+      0)
+    (=
+      (compiler_backend.compiler-backend-outgoing-stack-arg-offset
+        (compiler_backend.CompilerBackendTarget.Linux)
+        2)
+      16)
+    (=
+      (compiler_backend.compiler-backend-outgoing-stack-arg-offset
+        (compiler_backend.CompilerBackendTarget.Windows)
+        0)
+      32)
+    ;; A store-marked owner key compares equal to the plain one it was made
+    ;; from -- every rule inside a call-free run reads it as the same mirror --
+    ;; and only the call boundary tells them apart.
+    (compiler_backend.compiler-backend-owner-key-store-mark-ok?)))
+
 (define (compiler-backend-scavenge-special-reg-bit-map-ok?) : bool
   (let
     [rax : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%rax")]
@@ -48287,6 +48349,7 @@ b_keep:
         (compiler-backend-scavenge-operand-excludes-keep-pooled-ok?)
         (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?)
         (compiler-backend-scavenge-special-reg-bit-map-ok?)
+        (compiler-backend-any-arity-stack-arg-shape-ok?)
         (compiler-backend-emergency-vector-width-ok?)
         (compiler-backend-scavenge-widened-pool-picks-rsi-ok?)
         (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?)

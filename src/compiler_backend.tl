@@ -39836,6 +39836,377 @@
                     func-diag
                     message)))])]))))
 
+;; --- Any-arity GP argument marshalling (stack-first) -----------------------
+;; A call whose arguments are ALL single-GP-register class can still overflow
+;; the ABI's argument registers; everything past the register prefix is stored
+;; into the outgoing stack area. The naive ascending emitter is sound only while
+;; no argument SOURCE can be overwritten before it is read, which memory-homed
+;; arg vars guarantee -- and that is the only reason regalloc used to force a
+;; frame home on every arg var of an over-arity call. Once such a call's args
+;; may stay register-homed, two orders go wrong: a cycle inside the register
+;; prefix, and a STACK argument read out of a register the prefix has already
+;; overwritten.
+;;
+;; Both are answered by the same observation: an outgoing stack slot is never
+;; the SOURCE of another argument (arg sources are register homes, frame slots,
+;; immediates, globals and forwarded addr-of leas), so a stack store has no
+;; incoming dependency and may be emitted FIRST. This path emits, in order,
+;;   1. the stack stores whose source is a register home -- a plain
+;;      `movq %home, off(%rsp)` issued before any argument register is written,
+;;      and needing no staging scratch at all;
+;;   2. the register prefix, through the existing sound parallel move
+;;      (compiler-backend-emit-arg-move-list), which breaks prefix cycles;
+;;   3. the remaining stack stores, whose sources are immediates or memory and
+;;      so cannot have been clobbered by anything step 2 wrote. Their staging
+;;      scratch is scavenged exactly as the naive path scavenges it, with every
+;;      argument register already excluded by the c-abi stage mask -- and by
+;;      then no register source is left to protect, which is what keeps the
+;;      "a source dying at the call may read as free" scavenge hazard out of
+;;      this path.
+;; The invariant is that no argument source is overwritten before it is read.
+;; Mirrored in regalloc by compiler-reg-call-gp-overflow-from?; only the call
+;; kinds whose emitter reaches this path may use that rule.
+;; How many leading arguments of an all-GP-int call are passed in GP ARGUMENT
+;; REGISTERS from the caller's current bank position. Every argument is one GP
+;; register wide here, so the split is a prefix: once the bank is full it stays
+;; full, and the remaining args take one outgoing stack slot each.
+(define (compiler-backend-call-args-gp-register-prefix
+  [target : CompilerBackendTarget]
+  [count : i64]
+  [int-idx : i64]
+  [position : i64]) : i64
+  (let
+    [index : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (< index count) (not done))
+        (if (compiler-backend-stack-call-arg-for-banks?
+          target
+          false
+          (+ int-idx index)
+          0
+          (+ position index))
+          (set! done true)
+          (set! index (+ index 1))))
+      index)))
+
+;; The argument type at `index`, read exactly as the naive marshalling loop
+;; reads it: past the declared parameter list (a vararg tail) an argument is
+;; i64-class.
+(define (compiler-backend-call-arg-type-at
+  [type-segment-bases : i64]
+  [types : compiler_ast_types.AstTypeList]
+  [index : i64]) : compiler_ast_types.AstType
+  (if (< index (compiler_ast_types.ast-type-list-len (& types)))
+    (compiler_ast_types.ast-type-segment-bases-get
+      type-segment-bases
+      (compiler_ast_types.ast-type-list-get
+        (& types)
+        index
+        (compiler_ast_types.ast-type-id-fallback)))
+    (compiler_ast_types.AstType.I64)))
+
+;; An all-GP-int call that does NOT fit its ABI's argument registers from the
+;; caller's current bank position -- the shape the stack-first order exists for.
+;; Deliberately the complement of compiler-backend-call-args-gp-parallel-from?'s
+;; fit test, so exactly one of the two paths can claim a call.
+(define (compiler-backend-call-args-gp-overflow-from?
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [types : compiler_ast_types.AstTypeList]
+  [c-abi? : bool]
+  [program-index : CompilerBackendProgramIndex]
+  [int-idx : i64]
+  [position : i64]) : bool
+  (let
+    [count : i64 (compiler-backend-call-args-count args)]
+    (and
+      (> count 0)
+      (not
+        (compiler-backend-call-args-gp-fit-from?
+          target
+          0
+          count
+          int-idx
+          position))
+      (compiler-backend-types-all-gp-int?
+        type-segment-bases
+        target
+        types
+        c-abi?
+        program-index))))
+
+;; Does any STACK-passed argument read a register home? Those are exactly the
+;; sources the register prefix -- and a staging scratch scavenged after it --
+;; can destroy, so their presence is what makes the stack-first order necessary.
+;; With every arg var memory-homed (the pre-existing rule for an over-arity
+;; call) this is false, no prefix move has a register source either, and the
+;; call keeps the byte-identical naive path.
+(define (compiler-backend-call-stack-args-register-sourced?
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [prefix : i64]
+  [count : i64]) : bool
+  (let
+    [index : i64 prefix]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (if (=
+            (compiler-backend-arg-move-source-reg
+              backend-state
+              assignments
+              (BackendArgMoveValue (compiler-backend-call-arg-at args index)))
+            compiler_abi.compiler-reg-id-invalid)
+            unit
+            (set! found true))
+          (set! index (+ index 1))))
+      found)))
+
+;; Does this over-arity all-GP call need the stack-first order? Either the
+;; register prefix has a real source/dest conflict, or a stack argument is read
+;; out of a register. Neither can hold while the args are memory-homed, so the
+;; pre-existing emission of every such call is untouched.
+(define (compiler-backend-call-args-gp-stack-first?
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [types : compiler_ast_types.AstTypeList]
+  [c-abi? : bool]
+  [program-index : CompilerBackendProgramIndex]
+  [int-idx : i64]
+  [position : i64]
+  [backend-state : CompilerBackendState]) : bool
+  (and
+    (compiler-backend-call-args-gp-overflow-from?
+      type-segment-bases
+      target
+      args
+      types
+      c-abi?
+      program-index
+      int-idx
+      position)
+    (let
+      [count : i64 (compiler-backend-call-args-count args)]
+      [prefix : i64
+        (compiler-backend-call-args-gp-register-prefix
+          target
+          count
+          int-idx
+          position)]
+      (or
+        (compiler-backend-arg-moves-conflict?
+          backend-state
+          assignments
+          (compiler-backend-arg-moves-build-from
+            target
+            args
+            0
+            prefix
+            int-idx
+            position)
+          (compiler-backend-arg-moves-build-from
+            target
+            args
+            0
+            prefix
+            int-idx
+            position))
+        (compiler-backend-call-stack-args-register-sourced?
+          backend-state
+          assignments
+          args
+          prefix
+          count)))))
+
+;; The source register of every OVERFLOW argument, resolved once. Step 1 stores
+;; exactly the arguments this array names a register for and step 3 stores the
+;; rest, so the two steps are a partition by construction. Asking the assignment
+;; view twice -- once on each side of the register prefix -- is asking a view the
+;; marshalling itself sits inside, and a single disagreement silently drops an
+;; argument.
+(define (compiler-backend-stack-arg-sources
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [prefix : i64]
+  [count : i64]) : (__tl_dyn-array i64)
+  (let
+    [out : (__tl_dyn-array i64) (array.make-array i64 (- count prefix))]
+    [index : i64 prefix]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref out (- index prefix))
+            (compiler-backend-arg-move-source-reg
+              backend-state
+              assignments
+              (BackendArgMoveValue (compiler-backend-call-arg-at args index))))
+          (set! index (+ index 1))))
+      out)))
+
+;; Step 1: the register-sourced stack stores. Nothing has been written yet, so
+;; every home still holds its argument, and a register source is stored with one
+;; `movq` and no staging scratch.
+(define (compiler-backend-emit-register-sourced-stack-args-into
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [target : CompilerBackendTarget]
+  [sources : (__tl_dyn-array i64)]
+  [stack-idx : i64]) : unit
+  (let
+    [total : i64 (array-length sources)]
+    [index : i64 0]
+    (while (< index total)
+      (begin
+        (let
+          [source : i64 (array-ref sources index)]
+          (if (= source compiler_abi.compiler-reg-id-invalid)
+            unit
+            (compiler-backend-asm-append5
+              out
+              "    movq "
+              (compiler_abi.compiler-abi-register-spelling source)
+              ", "
+              (string.int->string
+                (compiler-backend-outgoing-stack-arg-offset
+                  target
+                  (+ stack-idx index)))
+              "(%rsp)\n")))
+        (set! index (+ index 1))))))
+
+;; Step 3: the stack stores whose source is an immediate or memory, emitted
+;; through the same scalar stack-arg emitter the naive path uses. The register
+;; prefix is already placed, so the staging scratch only has to avoid the
+;; argument registers (all of which the c-abi stage mask excludes) and whatever
+;; the occupancy mask reports live -- exactly the naive path's own conditions.
+(define (compiler-backend-emit-memory-sourced-stack-args-into
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [types : compiler_ast_types.AstTypeList]
+  [sources : (__tl_dyn-array i64)]
+  [index : i64]
+  [prefix : i64]
+  [stack-idx : i64]
+  [planned-stage : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (if (>= index (array-length sources))
+    (ResultCompilerBackend.Ok "")
+    (if (not (= (array-ref sources index) compiler_abi.compiler-reg-id-invalid))
+      (compiler-backend-emit-memory-sourced-stack-args-into
+        out
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        sources
+        (+ index 1)
+        prefix
+        stack-idx
+        planned-stage
+        backend-state)
+      (match (compiler-backend-emit-scalar-stack-call-arg-into
+        out
+        type-segment-bases
+        target
+        assignments
+        (compiler-backend-call-arg-at args (+ prefix index))
+        (compiler-backend-call-arg-type-at
+          type-segment-bases
+          types
+          (+ prefix index))
+        false
+        (+ stack-idx index)
+        planned-stage
+        backend-state)
+        [(ResultCompilerBackend.Ok _)
+          (compiler-backend-emit-memory-sourced-stack-args-into
+            out
+            type-segment-bases
+            target
+            assignments
+            args
+            types
+            sources
+            (+ index 1)
+            prefix
+            stack-idx
+            planned-stage
+            backend-state)]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
+
+(define (compiler-backend-emit-call-args-stack-first-into
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [types : compiler_ast_types.AstTypeList]
+  [int-idx : i64]
+  [position : i64]
+  [stack-idx : i64]
+  [planned-stage : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [count : i64 (compiler-backend-call-args-count args)]
+    [prefix : i64
+      (compiler-backend-call-args-gp-register-prefix
+        target
+        count
+        int-idx
+        position)]
+    [sources : (__tl_dyn-array i64)
+      (compiler-backend-stack-arg-sources
+        backend-state
+        assignments
+        args
+        prefix
+        count)]
+    (begin
+      (compiler-backend-emit-register-sourced-stack-args-into
+        out
+        target
+        sources
+        stack-idx)
+      (match (compiler-backend-emit-arg-move-list
+        assignments
+        (compiler-backend-arg-moves-build-from
+          target
+          args
+          0
+          prefix
+          int-idx
+          position)
+        backend-state)
+        [(ResultCompilerBackend.Ok moves)
+          (begin
+            (compiler-backend-asm-append out moves)
+            (compiler-backend-emit-memory-sourced-stack-args-into
+              out
+              type-segment-bases
+              target
+              assignments
+              args
+              types
+              sources
+              0
+              prefix
+              stack-idx
+              planned-stage
+              backend-state))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
+
 (define (compiler-backend-emit-call-args-into
   [out : (&mut out CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
@@ -39884,24 +40255,53 @@
           (compiler-backend-asm-append out moves)
           (ResultCompilerBackend.Ok ""))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])
-    (compiler-backend-emit-call-args-with-assignments-into
-      out
-      type-segment-bases
-      target
-      assignments
-      args
-      types
-      c-abi?
-      arg-index
-      int-idx
-      float-idx
-      position
-      stack-idx
-      planned-stage
-      func-diag
-      program-index
-      vars
-      backend-state)))
+    ;; The same interception one arity up: an all-GP call that OVERFLOWS its
+    ;; argument registers and whose stack args or register prefix read a
+    ;; register. Its overflow is stored before any argument register is written
+    ;; (compiler-backend-emit-call-args-stack-first-into).
+    (if (and
+      (= arg-index 0)
+      (compiler-backend-call-args-gp-stack-first?
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        c-abi?
+        program-index
+        int-idx
+        position
+        backend-state))
+      (compiler-backend-emit-call-args-stack-first-into
+        out
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        int-idx
+        position
+        stack-idx
+        planned-stage
+        backend-state)
+      (compiler-backend-emit-call-args-with-assignments-into
+        out
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        c-abi?
+        arg-index
+        int-idx
+        float-idx
+        position
+        stack-idx
+        planned-stage
+        func-diag
+        program-index
+        vars
+        backend-state))))
 
 ;; String-returning shim for the call emitters that still hand their argument
 ;; block back as text: one sequence buffer for the whole marshalling block
@@ -68672,18 +69072,29 @@
                       emit-blocks-list
                       plan-types
                       program-index)]
+                  ;; The base the dynamic bottom-of-frame slots (cycle temps,
+                  ;; emergency spill) count down from: the maximum callee-save
+                  ;; area, and NOTHING else. The outgoing stack-arg area is
+                  ;; addressed from %rsp (0(%rsp) upward) and therefore occupies
+                  ;; the very bottom of the frame, so adding it here would push
+                  ;; the dynamic slots INTO it -- with the max emergency depth
+                  ;; the last slot landed exactly on outgoing argument 0, and an
+                  ;; emergency save taken while marshalling a call with stack
+                  ;; args was then overwritten by the argument it was protecting.
+                  ;; The frame total below still accounts for the outgoing area
+                  ;; separately, so the layout from the bottom is
+                  ;; [outgoing][cycle temps + emergency][slots] and the frame
+                  ;; SIZE is unchanged.
                   [dynamic-frame-base : i64
-                    (+
-                      (compiler-backend-frame-size
-                        (+
-                          (compiler-backend-frame-slots-emergency-max
-                            slot-vars
-                            has-group-vars
-                            program-index.backend-state)
-                          (compiler-backend-function-scratch-i64
-                            function-state
-                            compiler-backend-scratch-i64-const-hoist-frame-count)))
-                      outgoing-frame-space)]
+                    (compiler-backend-frame-size
+                      (+
+                        (compiler-backend-frame-slots-emergency-max
+                          slot-vars
+                          has-group-vars
+                          program-index.backend-state)
+                        (compiler-backend-function-scratch-i64
+                          function-state
+                          compiler-backend-scratch-i64-const-hoist-frame-count)))]
                   [_emergency-init : unit
                     (begin
                       (compiler-backend-function-scratch-set-i64!
@@ -77218,11 +77629,64 @@
 (define (compiler-backend-peephole-owner-key-known? [key : i64]) : bool
   (not (= key 0)))
 
+;; Provenance bit carried ABOVE every key an owner slot holds: set when the
+;; mirror was established by a STORE `movq %reg, SLOT`, clear when a LOAD
+;; established it. Only a call reads it (see call-preserved-owner); every other
+;; consumer compares keys through `owner-key-eq?`, which strips it, so a mirror
+;; behaves identically either way inside a call-free run. Keys parsed from a
+;; line never carry it. Stack keys are small positives and global keys are
+;; negative, so bit 62 is free and setting it on a stack key keeps it positive.
+(define compiler-backend-peephole-owner-key-store-bit : i64
+  4611686018427387904)
+
+(define (compiler-backend-peephole-owner-key-base [key : i64]) : i64
+  (if (= (bit-and key compiler-backend-peephole-owner-key-store-bit) 0)
+    key
+    (- key compiler-backend-peephole-owner-key-store-bit)))
+
+(define (compiler-backend-peephole-owner-key-from-store? [key : i64]) : bool
+  (not (= (bit-and key compiler-backend-peephole-owner-key-store-bit) 0)))
+
+(define (compiler-backend-peephole-owner-key-mark-store [key : i64]) : i64
+  (if (compiler-backend-peephole-owner-key-stack? key)
+    (bit-or key compiler-backend-peephole-owner-key-store-bit)
+    key))
+
 (define (compiler-backend-peephole-owner-key-stack? [key : i64]) : bool
-  (> key 0))
+  (> (compiler-backend-peephole-owner-key-base key) 0))
 
 (define (compiler-backend-peephole-owner-key-eq? [left : i64] [right : i64]) : bool
-  (= left right))
+  (=
+    (compiler-backend-peephole-owner-key-base left)
+    (compiler-backend-peephole-owner-key-base right)))
+
+;; Self-check for the provenance bit: marking a stack key leaves it a KNOWN
+;; STACK key that compares equal to the unmarked one, and only the marked one
+;; reads as store-established. A global (negative) key is left alone, so it
+;; still fails the stack test and no call keeps it.
+(define (compiler-backend-owner-key-store-mark-ok?) : bool
+  (let
+    [plain : i64
+      (compiler-backend-peephole-stack-owner-key-from-parts 1 0 true)]
+    [marked : i64 (compiler-backend-peephole-owner-key-mark-store plain)]
+    (and
+      (compiler-backend-peephole-owner-key-stack? plain)
+      (compiler-backend-peephole-owner-key-stack? marked)
+      (compiler-backend-peephole-owner-key-known? marked)
+      (compiler-backend-peephole-owner-key-eq? plain marked)
+      (compiler-backend-peephole-owner-key-eq? marked plain)
+      (not (compiler-backend-peephole-owner-key-from-store? plain))
+      (compiler-backend-peephole-owner-key-from-store? marked)
+      (not
+        (compiler-backend-peephole-owner-key-known?
+          (compiler-backend-peephole-call-preserved-owner marked)))
+      (compiler-backend-peephole-owner-key-eq?
+        (compiler-backend-peephole-call-preserved-owner plain)
+        plain)
+      (=
+        (compiler-backend-peephole-owner-key-mark-store
+          (compiler-backend-peephole-owner-key-unknown))
+        (compiler-backend-peephole-owner-key-unknown)))))
 
 (define compiler-backend-peephole-owner-global-initial-capacity : i64
   64)
@@ -78095,9 +78559,27 @@
       owners.r15)))
 
 ;; Owner key that can survive a normal call. Calls may mutate globals, so a
-;; callee-saved register keeps only stack-slot ownership across the boundary.
+;; callee-saved register keeps only stack-slot ownership across the boundary --
+;; and only a mirror a LOAD established.
+;;
+;; A STORE-established one cannot be kept, because of the OUTGOING ARGUMENT AREA
+;; at 0(%rsp) upward: that area is the CALLEE's incoming argument area, which the
+;; callee owns and may overwrite -- this backend's own tail-call marshalling
+;; provably does, since it rewrites its incoming stack args in place before
+;; jumping -- and after the FPO rebase a local frame slot and an outgoing
+;; argument slot are both spelled `N(%rsp)`, so a text pass cannot tell them
+;; apart (the boundary is the per-function outgoing size, which is nowhere in
+;; the text). Keeping one let a second identical `movq %r14, 0(%rsp)` argument
+;; store be elided as a dead spill store (P22-A1) against a slot the callee had
+;; already overwritten, and the argument was never passed at all. A LOAD is
+;; never issued against the outgoing area, so a load-established mirror can only
+;; name this function's own frame and survives the call unharmed -- and that is
+;; the mirror the rule was written for, since the emergency-scavenge
+;; `restore ... resave` pair is a load followed by the store it elides.
 (define (compiler-backend-peephole-call-preserved-owner [owner : i64]) : i64
-  (if (compiler-backend-peephole-owner-key-stack? owner)
+  (if (and
+    (compiler-backend-peephole-owner-key-stack? owner)
+    (not (compiler-backend-peephole-owner-key-from-store? owner)))
     owner
     (compiler-backend-peephole-owner-key-unknown)))
 
@@ -78157,7 +78639,7 @@
           (compiler-backend-peephole-owners-set-reg-index
             cleared
             src-reg
-            dst-key)
+            (compiler-backend-peephole-owner-key-mark-store dst-key))
           cleared))]
     [(>= dst-reg 0)
       ;; DST is a load/reg-reg dest: it mirrors a clean stack slot OR a SYM(%rip)

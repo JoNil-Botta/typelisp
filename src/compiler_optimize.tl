@@ -23097,6 +23097,18 @@
           (+ count 1)
           count))]))
 
+;; The frozen-chain hoist's own live-in budget, twice the shared promotion one
+;; (opt-licm-global-promote-live-in-budget, whose "WHY SIX" note prices a
+;; promotion at loop-entry frequency). A frozen chain is not a promotion: the
+;; loads it hoists are of values that cannot change, so the preheader pays them
+;; once and the loop's register pressure is the only thing traded. Now that the
+;; register allocator keeps an over-arity call's arguments in registers, the
+;; chains this admits stop turning into whole-range spills -- measured, doubling
+;; the budget is -0.14% on cfg_domloops, -0.05% on gvn_table and -0.002% on
+;; peephole_lines with every other benchmark row unchanged.
+(define (opt-licm-frozen-chain-live-in-budget) : i64
+  12)
+
 (define (opt-licm-frozen-chain-hoist?
   [cells : OptGlobalCellSummary]
   [late? : bool]
@@ -23122,7 +23134,7 @@
           (+
             (opt-unroll-mb-live-in-count body-blocks)
             (* count (opt-licm-frozen-chain-words)))
-          (opt-licm-global-promote-live-in-budget))))))
+          (opt-licm-frozen-chain-live-in-budget))))))
 
 ;; Preheader instruction list: the hoisted instructions followed by the
 ;; promotion's cell loads. No promotion means the hoisted list is handed back

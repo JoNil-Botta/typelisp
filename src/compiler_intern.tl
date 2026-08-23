@@ -1763,6 +1763,24 @@
 (define (intern-compat-state-str [state : InternCompatState] [id : i64]) : String
   (array-ref state.pool-slots id))
 
+(define (intern-compat-state-id-str [state : InternCompatState] [id : InternId]) : String
+  (intern-compat-state-str state (intern-id-value id)))
+
+(define (intern-compat-state-syntax-name-text-or
+  [state : InternCompatState]
+  [id : i64]
+  [fallback : String]) : String
+  (let
+    [source-id : i64 (intern-syntax-source-name-id-or id -1)]
+    (if (>= source-id 0)
+      (intern-compat-state-str state source-id)
+      fallback)))
+
+(define (intern-compat-state-syntax-id-text
+  [state : InternCompatState]
+  [id : InternSyntaxId]) : String
+  (intern-compat-state-syntax-name-text-or state (intern-syntax-id-value id) ""))
+
 (define (intern-compat-state-qualified? [state : InternCompatState] [id : i64]) : bool
   (array-ref state.pool-qualified-slots id))
 
@@ -1783,6 +1801,11 @@
 
 (define (intern-compat-state-first-dot [state : InternCompatState] [id : i64]) : i64
   (cast (array-ref state.pool-first-dot-slots id) : i64))
+
+(define (intern-compat-state-leading-dot-id
+  [state : InternCompatState]
+  [id : i64]) : i64
+  (intern-id-slot-decode (array-ref state.pool-leading-dot-id-slots id)))
 
 (define (intern-compat-state-dotted-prefix-id
   [state : InternCompatState]

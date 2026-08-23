@@ -6331,7 +6331,28 @@ TypeLisp identifier spelling, including contextual keyword spellings. Rust
 trailing-placeholder-whitespace rule for ASCII tab, newline, vertical tab,
 form feed, carriage return, and space. Non-ASCII Unicode whitespace is a
 diagnosed non-equivalence until compile-time string inspection exposes Unicode
-scalar values. Interior whitespace and format specifiers remain unsupported.
+scalar values. Interior whitespace remains unsupported.
+
+A placeholder may append `:` and the stable Rust-style format-spec grammar
+`[[fill]align][sign]['#']['0'][width]['.' precision][type]`. Fill is exactly one
+TypeLisp byte and alignment is `<`, `^`, or `>`; when alignment is omitted,
+nonnumeric values align left and numeric values align right. Width counts bytes
+and never truncates. It may be an inline nonnegative signed-`i64` decimal or a
+zero-based positional/named count reference written `N$` or `name$`. A dynamic
+count must have exact source type `i64` and traps before allocation when
+negative. Count references count as argument uses but do not advance the
+implicit value iterator.
+
+The `+` sign emits a plus for nonnegative `i64`/`f64`/`f32` values and is
+rejected for nonnumeric values; `-` is accepted as the Rust-compatible no-op.
+The `0` flag performs numeric sign-aware zero padding, inserting zeroes after an
+existing or requested sign and after a base prefix when a type-specific
+renderer supplies one; it overrides fill/alignment for that numeric value. `#`
+is retained in the common option plan for type-specific renderers and does not
+change default Display output. Precision forms and the selectors `?`, `x?`,
+`X?`, `o`, `x`, `X`, `p`, `b`, `e`, and `E` are parsed into that same plan, but
+currently produce focused unsupported-semantics diagnostics. Malformed,
+duplicated, or out-of-order options are rejected during macro expansion.
 
 The built-in placeholder types are `String`, `i64`, `bool`, `char`, `f64`, and
 `f32`. A struct or enum instead delegates to a function in the type's canonical

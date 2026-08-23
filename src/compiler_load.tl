@@ -2350,6 +2350,9 @@
       compiler-load-active-session-state
       (compiler-load-standalone-session-state-new))
     (compiler-load-session-reset-pools!)
+    ;; Fresh sessions retire every cached AST owner, so no declaration-origin
+    ;; sidecar keyed by a retired storage address may survive into the next run.
+    (reader.sp-node-pool-reset!)
     (compiler-load-session-reset-interns!)
     (ci.intern-persistent-arena-reset!)
     (compiler-load-session-floors-set! 0 0 0)

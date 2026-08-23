@@ -115,7 +115,7 @@
   (define (surface-binary-copy [bytes : (& bytes (__tl_dyn-array u8))]) : (__tl_dyn-array
       u8)
     (let
-      [out : (__tl_dyn-array u8) (make-array u8 (array-length bytes))]
+      [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
       [index : i64 0]
       (begin
         (while (< index (array-length bytes))

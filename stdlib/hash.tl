@@ -28,7 +28,7 @@
   [items : comptime.Expr]
   [index : comptime.Expr]) : comptime.Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 ;: Return the fixed hash modulus.
 (define (modulus) : i64

@@ -124,7 +124,7 @@
       [items : (__tl_dyn-array CompilerProfileStateStorage)
         (compiler-profile-state-shared-view state.storage)]
       (unsafe
-        (ptr-read (ptr-offset (array-data items) 0))))))
+        (ptr-read (ptr-offset (__tl_array-data items) 0))))))
 
 (define (compiler-profile-state-metrics [_state : CompilerProfileState]) : CompilerProfileMetrics
   (cfg

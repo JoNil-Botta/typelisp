@@ -32,7 +32,7 @@
 
 (defmacro (msvc-array-element-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defmacro (msvc-box-shared-view [value : Expr]) : Expr
   (let

@@ -1,5 +1,5 @@
 ;; #1521: `(set! place.field value)` mutates the field in place,
-;; including register-resident locals, compatibility dynamic-array elements,
+;; including register-resident locals, private dynamic-buffer elements,
 ;; fixed-array elements, tuple projections, mutable references, and nested fields.
 (import stdlib.array)
 
@@ -20,7 +20,7 @@
       (+ p.x p.y))))
 
 ;; Compatibility dynamic-array regression coverage kept until public unsized
-;; `(Array T)` removal in #3581.
+;; private dynamic-buffer spelling retained after public `(Array T)` removal.
 (define (compat-dynamic-array-element-field-set) : i64
   (let
     [items : (__tl_dyn-array Pair) (array.make-array Pair 0)]

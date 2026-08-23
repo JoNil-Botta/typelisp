@@ -2777,7 +2777,7 @@
         (build-package-graph-node-vec-new))]
     [stack : BuildPackagePathSeq
       (build-package-path-seq-push
-        (BuildPackagePathSeq (make-array String 0) 0)
+        (BuildPackagePathSeq (__tl_make-array String 0) 0)
         (owned_view.compiler-owned-shared-view root-path))]
     (match (build-package-graph-add-deps
       root-dir

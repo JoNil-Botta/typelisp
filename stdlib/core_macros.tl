@@ -37,7 +37,7 @@
   ;; lint-allow: unused-variable
   [value-ty : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-cast (array-data (array ,value)) : (Ptr ,value-ty)))))
+    (ptr-read (ptr-cast (__tl_array-data (array ,value)) : (Ptr ,value-ty)))))
 
 ;; Private AST-level bridge for the checked-in seed's pre-dotted global and
 ;; macro-hygiene resolver. Ordinary source uses direct `value.field` places.

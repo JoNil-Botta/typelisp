@@ -43,7 +43,7 @@
 
 (defmacro (process-runtime-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 ;: Private runtime argv sequence. `tl` converts the public process model to
 ;: this no-cycle representation before invoking the OS runtime.

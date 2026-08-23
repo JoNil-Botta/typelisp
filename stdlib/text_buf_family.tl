@@ -293,7 +293,7 @@
             (unsafe
               (ptr-read (ptr-addr-of front)))
             0)]
-        [items : (__tl_dyn-array String) (make-array String front-count)]
+        [items : (__tl_dyn-array String) (__tl_make-array String front-count)]
         [result : TextBufChunkList back]
         [index : i64 0]
         (begin
@@ -307,7 +307,7 @@
                 result
                 (stdlib.text_buf.chunk-cons
                   (unsafe
-                    (ptr-read (ptr-offset (array-data items) index)))
+                    (ptr-read (ptr-offset (__tl_array-data items) index)))
                   result))
               (set! index (+ index 1))))
           result)))
@@ -508,7 +508,7 @@
             (unsafe
               (ptr-read (ptr-addr-of write-chunks-list)))
             0)]
-        [items : (__tl_dyn-array String) (make-array String count)]
+        [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [index : i64 0]
         [status : i64 io.io-status-ok]
         (begin
@@ -520,7 +520,7 @@
             (let
               [chunk : String
                 (unsafe
-                  (ptr-read (ptr-offset (array-data items) index)))]
+                  (ptr-read (ptr-offset (__tl_array-data items) index)))]
               (begin
                 (set!
                   status
@@ -580,7 +580,7 @@
             (unsafe
               (ptr-read (ptr-addr-of write-chunks-list)))
             0)]
-        [items : (__tl_dyn-array String) (make-array String count)]
+        [items : (__tl_dyn-array String) (__tl_make-array String count)]
         (begin
           (stdlib.text_buf.chunks-fill-array-rev
             write-chunks-list
@@ -941,7 +941,7 @@
           (text_buf.chunk-count
             (text_buf_family.text-buf-family-shared-view prefix)
             0)]
-        [items : (__tl_dyn-array String) (make-array String count)]
+        [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [result : (TextBufBorrowedChunkList text) left]
         [index : i64 0]
         (begin
@@ -956,7 +956,7 @@
                 (stdlib.text_buf_borrowed.text-buf-borrowed-append-tail
                   result
                   (unsafe
-                    (ptr-read (ptr-offset (array-data items) index)))
+                    (ptr-read (ptr-offset (__tl_array-data items) index)))
                   false))
               (set! index (+ index 1))))
           (stdlib.text_buf_borrowed.text-buf-borrowed-append-tail
@@ -1049,7 +1049,7 @@
           (text_buf.chunk-count
             (text_buf_family.text-buf-family-shared-view prefix)
             0)]
-        [items : (__tl_dyn-array String) (make-array String count)]
+        [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [owned : text_buf.TextBufChunkList
           (stdlib.text_buf_borrowed.text-buf-borrowed-empty-owned-chunks)]
         [index : i64 0]
@@ -1062,7 +1062,7 @@
             (let
               [entry : String
                 (unsafe
-                  (ptr-read (ptr-offset (array-data items) index)))]
+                  (ptr-read (ptr-offset (__tl_array-data items) index)))]
               (begin
                 (set!
                   owned

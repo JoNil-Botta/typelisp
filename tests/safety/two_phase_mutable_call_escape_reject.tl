@@ -1,4 +1,4 @@
-;: SPEC borrow contract: compatibility dynamic-array shared borrow created
+;: SPEC borrow contract: private dynamic-buffer shared borrow created
 ;: during reservation cannot escape activation (#3581 keeps this surface staged).
 (import stdlib.array)
 

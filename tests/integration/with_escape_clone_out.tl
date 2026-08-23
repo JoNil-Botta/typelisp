@@ -2,7 +2,7 @@
 (import stdlib.string)
 
 ;; Compatibility dynamic-array clone-out coverage kept until public unsized
-;; `(Array T)` removal in #3581. The fixed array and box cases below cover the
+;; public `(Array T)` removal. The fixed array and box cases below cover the
 ;; non-dynamic-array escape paths.
 (defstruct EscapeBundle
   (name String)

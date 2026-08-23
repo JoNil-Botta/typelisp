@@ -1393,7 +1393,7 @@
 (define (source-tool-windows-direct-object-runtime-fallback-smoke-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
     "(define (main) : i64
-  (let [items : (__tl_dyn-array i64) (make-array i64 1)]
+  (let [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (array-length items)))"
     (backend.CompilerBackendTarget.Windows))
     [(backend.ResultCompilerBackendObject.Ok image)

@@ -12,7 +12,7 @@
 ;# (import stdlib.atomic)
 ;#
 ;# (define (add-counts
-;#   [ix : (Array i64)]
+;#   [ix : (& ix (Slice i64))]
 ;#   [out : (& out atomic.AtomicI64Buffer)]
 ;#   [n : i64]) : unit
 ;#   (foreach

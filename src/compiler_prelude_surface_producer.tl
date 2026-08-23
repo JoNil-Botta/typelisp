@@ -334,7 +334,7 @@
   [fact-bytes : (__tl_dyn-array u8)]) : ResultPreludeSurface
   (let
     [sections : (__tl_dyn-array tlci.TlciAuxSection)
-      (make-array tlci.TlciAuxSection 3)]
+      (__tl_make-array tlci.TlciAuxSection 3)]
     (begin
       (set!
         (array-ref sections 0)

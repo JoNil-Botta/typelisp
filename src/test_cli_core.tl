@@ -860,7 +860,7 @@
                         [private-id : i64
                           (ci.intern-generated-name
                             (owned_view.compiler-owned-shared-view private-name))]
-                        (array-push!
+                        (__tl_array-push!
                           test-items
                           (InlineTest.Case
                             (ci.intern-str name)
@@ -2754,8 +2754,8 @@
   (let
     [count : i64
       (tltest-cfg-env-count (owned_view.compiler-owned-shared-view cfgs))]
-    [slots : (__tl_dyn-array String) (make-array String count)]
-    [values : (__tl_dyn-array i64) (make-array i64 count)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String count)]
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (begin
       (tltest-cfg-names-fill!
         cfgs

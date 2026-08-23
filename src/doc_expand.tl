@@ -221,7 +221,10 @@
         (string.int->string size)
         ")")]
     [(ast.AstType.DynArray elem)
-      (doc-cat3 "(Array " (doc-ast-type-id-source type-segment-bases elem) ")")]
+      (doc-cat3
+        "(__tl_dyn-array "
+        (doc-ast-type-id-source type-segment-bases elem)
+        ")")]
     [(ast.AstType.Slice elem)
       (doc-cat3 "(Slice " (doc-ast-type-id-source type-segment-bases elem) ")")]
     [(ast.AstType.Box elem)

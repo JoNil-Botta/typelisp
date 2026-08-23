@@ -70,7 +70,7 @@
       (cast
         (ptr->int
           (ptr-cast
-            (array-data
+            (__tl_array-data
               (__tl-compiler-owned-shared-view-dyn-ref-as
                 items
                 (__tl_dyn-array i64)))

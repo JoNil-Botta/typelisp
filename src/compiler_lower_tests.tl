@@ -496,7 +496,7 @@
   "(define (main [n : i64]) : i64
   (let
     [s : String \"hello\"]
-    [a : (Array i64) (make-array i64 2)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref a 0) n)
       ((lambda () : i64 (+ (__tl_string_length s) (array-ref a 0)))))))")
@@ -1018,15 +1018,15 @@
 ;; Dynamic-array length lowering smoke: `array-length` and `length` on a
 ;; dynamic array lower to a fat-value length load rather than a runtime call.
 (define (compiler-lower-array-length-source) : String
-  "(define (dyn-len [a : (Array i64)]) : i64 (array-length a))
-(define (dyn-len-alias [a : (Array i64)]) : i64 (length a))
+  "(define (dyn-len [a : (__tl_dyn-array i64)]) : i64 (array-length a))
+(define (dyn-len-alias [a : (__tl_dyn-array i64)]) : i64 (length a))
 (define (main) : i64 0)")
 
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
 ;; Taking the array as a parameter avoids needing `make-array` here.
 (define (compiler-lower-array-access-source) : String
-  "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
-(define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (set! (array-ref a i) v))
+  "(define (get [a : (__tl_dyn-array i64)] [i : i64]) : i64 (array-ref a i))
+(define (put [a : (__tl_dyn-array i64)] [i : i64] [v : i64]) : unit (set! (array-ref a i) v))
 (define (main) : i64 0)")
 
 ;; Private `__tl_array-take!` moves an element only when its companion liveness
@@ -1038,11 +1038,11 @@
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-item [items : (Array i64)] [live : (Array bool)] [i : i64]) : (Tuple bool i64)
+(define (take-item [items : (__tl_dyn-array i64)] [live : (__tl_dyn-array bool)] [i : i64]) : (Tuple bool i64)
   (__tl_array-take! items live i))
-(define (take-handle [items : (Array FileHandle)] [live : (Array bool)] [i : i64]) : (Tuple bool FileHandle)
+(define (take-handle [items : (__tl_dyn-array FileHandle)] [live : (__tl_dyn-array bool)] [i : i64]) : (Tuple bool FileHandle)
   (__tl_array-take! items live i))
-(define (main [items : (Array i64)] [live : (Array bool)] [handles : (Array FileHandle)] [handle-live : (Array bool)] [i : i64]) : i64
+(define (main [items : (__tl_dyn-array i64)] [live : (__tl_dyn-array bool)] [handles : (__tl_dyn-array FileHandle)] [handle-live : (__tl_dyn-array bool)] [i : i64]) : i64
   (begin
     (take-item items live i)
     (if (tuple-ref (take-handle handles handle-live i) 0) 1 0)))")
@@ -1163,12 +1163,12 @@
       (compiler_lower.CompilerLowerMode.WindowsScalar))))
 
 (define (compiler-lower-mut-ref-array-access-source) : String
-  "(define (len [a : (& a (Array i64))]) : i64 (array-length a))
-(define (get [a : (& a (Array i64))] [i : i64]) : i64 (array-ref a i))
-(define (put [a : (&mut a (Array i64))] [i : i64] [v : i64]) : unit
+  "(define (len [a : (& a (__tl_dyn-array i64))]) : i64 (array-length a))
+(define (get [a : (& a (__tl_dyn-array i64))] [i : i64]) : i64 (array-ref a i))
+(define (put [a : (&mut a (__tl_dyn-array i64))] [i : i64] [v : i64]) : unit
   (set! (array-ref a i) v))
-(define (grow [a : (&mut a (Array i64))] [v : i64]) : unit
-  (array-push! a v))
+(define (grow [a : (&mut a (__tl_dyn-array i64))] [v : i64]) : unit
+  (__tl_array-push! a v))
 (define (main) : i64 0)")
 
 (define (compiler-lower-mut-ref-by-value-writeback-source) : String
@@ -1216,10 +1216,10 @@
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-mut-ref-array-field-access-source) : String
-  "(defstruct ArrayBag (items (Array i64)))
+  "(defstruct ArrayBag (items (__tl_dyn-array i64)))
 (defstruct ArrayBagHandle
   (:lifetimes bag)
-  (items (&mut bag (Array i64)))
+  (items (&mut bag (__tl_dyn-array i64)))
   (index i64))
 (define (array-bag-handle [bag : (&mut bag ArrayBag)] [index : i64]) : (ArrayBagHandle bag)
   (ArrayBagHandle (&mut bag.items) index))
@@ -1234,12 +1234,12 @@
 ;; `array-push!` lowers to checked arena reallocation, a runtime-length copy,
 ;; a tail store, and in-place fat `{ptr, len}` updates.
 (define (compiler-lower-array-push-source) : String
-  "(define (grow [a : (Array i64)] [v : i64]) : unit (array-push! a v))
+  "(define (grow [a : (__tl_dyn-array i64)] [v : i64]) : unit (__tl_array-push! a v))
 (define (main) : i64 0)")
 
 ;; Fixed arrays have no runtime capacity field and remain unsupported for push.
 (define (compiler-lower-fixed-array-push-source) : String
-  "(define (grow [a : (Array i64 3)] [v : i64]) : unit (array-push! a v))
+  "(define (grow [a : (Array i64 3)] [v : i64]) : unit (__tl_array-push! a v))
 (define (main) : i64 0)")
 
 ;; `make-array` lowers to checked byte-count math, a `tl_alloc` element buffer,
@@ -1249,7 +1249,7 @@
 (define (compiler-lower-make-array-source) : String
   "(define (main [n : u32]) : i64
   (let
-    [a : (Array i64) (make-array i64 n)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (set! (array-ref a 0) 40)
       (set! (array-ref a 1) 2)
@@ -1258,7 +1258,7 @@
 (define (compiler-lower-make-array-init-source) : String
   "(define (main [n : i64]) : i64
   (let
-    [items : (Array String) (make-array String n)]
+    [items : (__tl_dyn-array String) (__tl_make-array String n)]
     (array-length items)))")
 
 (define (compiler-lower-dyn-array-literal-source) : String
@@ -1269,7 +1269,7 @@
     value))
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array (side 1) (side 2) (side 3))]
+    [items : (__tl_dyn-array i64) (__tl_make-array (side 1) (side 2) (side 3))]
     (+ (array-length items)
        (+ (array-ref items 0)
           (+ (array-ref items 1)
@@ -1279,7 +1279,7 @@
   "(defstruct OneWord (value i64))
 (define (main [n : i64]) : i64
   (let
-    [items : (Array OneWord) (make-array OneWord n)]
+    [items : (__tl_dyn-array OneWord) (__tl_make-array OneWord n)]
     (array-length items)))")
 
 ;; Core and private string length lower to the same fat `{ptr, len}` length load
@@ -1516,12 +1516,12 @@
   "(define stdin-eof-state : bool false)
 (define (io.read-stdin-bytes [count : i64]) : String
   (let
-    [buf : (Array u8) (make-array u8 count)]
-    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) count))))
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 count)]
+    (unsafe (string-from-bytes (ptr-cast (__tl_array-data buf) : (Ptr u8)) count))))
 (define (read-stdin-line) : String
   (let
-    [buf : (Array u8) (make-array u8 0)]
-    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) 0))))
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 0)]
+    (unsafe (string-from-bytes (ptr-cast (__tl_array-data buf) : (Ptr u8)) 0))))
 (define (stdin-eof?) : bool stdin-eof-state)
 (define (flush-stdout) : unit unit)
 (define (main) : i64
@@ -1535,12 +1535,12 @@
   "(define stdin-eof-state : bool false)
 (define (io.read-stdin-bytes [count : i64]) : String
   (let
-    [buf : (Array u8) (make-array u8 count)]
-    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) count))))
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 count)]
+    (unsafe (string-from-bytes (ptr-cast (__tl_array-data buf) : (Ptr u8)) count))))
 (define (read-stdin-line) : String
   (let
-    [buf : (Array u8) (make-array u8 0)]
-    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) 0))))
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 0)]
+    (unsafe (string-from-bytes (ptr-cast (__tl_array-data buf) : (Ptr u8)) 0))))
 (define (stdin-eof?) : bool stdin-eof-state)
 (define (flush-stdout) : unit unit)
 (define (main [count : i64]) : i64
@@ -1692,7 +1692,7 @@
     [ch : char (init)]
     [text : String (init)]
     [ptr : (Ptr i64) (init)]
-    [items : (Array i64) (init)]
+    [items : (__tl_dyn-array i64) (init)]
     [tupled : (Tuple i64 bool) (init)]
     [fixed : (Array i64 2) (array (init) 2)]
     [point : Point (init)]
@@ -1722,29 +1722,29 @@
   "(defstruct Holder
   (name String)
   (fixed (Array String 2))
-  (items (Array String))
+  (items (__tl_dyn-array String))
   (pair (Tuple String String)))
 (defenum StringTree
   (Leaf String)
   (Branch (Box StringTree) (Box StringTree)))
-(define (clone-tuple [items : (Array String)]) : i64
-  (let [pair : (Tuple String (Array String)) (clone (tuple \"tuple\" items))]
+(define (clone-tuple [items : (__tl_dyn-array String)]) : i64
+  (let [pair : (Tuple String (__tl_dyn-array String)) (clone (tuple \"tuple\" items))]
     (__tl_string_length (tuple-ref pair 0))))
 (define (clone-fixed) : i64
   (let [fixed : (Array String 2) (clone (array \"left\" \"right\"))]
     (__tl_string_length (array-ref fixed 0))))
-(define (clone-dyn [items : (Array String)]) : i64
-  (let [copied : (Array String) (clone items)]
+(define (clone-dyn [items : (__tl_dyn-array String)]) : i64
+  (let [copied : (__tl_dyn-array String) (clone items)]
     (array-length copied)))
-(define (clone-holder [items : (Array String)]) : Holder
+(define (clone-holder [items : (__tl_dyn-array String)]) : Holder
   (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
 (define (clone-tree [tree : StringTree]) : StringTree
   (clone tree))
 (define (main [n : i64] [tree : StringTree]) : i64
   (let
-    [items1 : (Array String) (make-array String n)]
-    [items2 : (Array String) (make-array String n)]
-    [items3 : (Array String) (make-array String n)]
+    [items1 : (__tl_dyn-array String) (__tl_make-array String n)]
+    [items2 : (__tl_dyn-array String) (__tl_make-array String n)]
+    [items3 : (__tl_dyn-array String) (__tl_make-array String n)]
     (begin
       (clone-tuple items1)
       (clone-dyn items2)
@@ -1756,11 +1756,11 @@
 (define (compiler-lower-clone-dynarray-bulk-source) : String
   "(defstruct OneWord
   (value i64))
-(define (copy-i64-items [items : (Array i64)]) : (Array i64)
+(define (copy-i64-items [items : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (clone items))
-(define (copy-word-items [items : (Array OneWord)]) : (Array OneWord)
+(define (copy-word-items [items : (__tl_dyn-array OneWord)]) : (__tl_dyn-array OneWord)
   (clone items))
-(define (copy-string-items [items : (Array String)]) : (Array String)
+(define (copy-string-items [items : (__tl_dyn-array String)]) : (__tl_dyn-array String)
   (clone items))")
 
 (define (compiler-lower-clone-unsupported-source) : String
@@ -2313,7 +2313,7 @@
   (begin
     (set! h.wide (init : Wide))
     0))
-(define (direct-dyn-array [items : (Array Wide)] [i : i64]) : unit
+(define (direct-dyn-array [items : (__tl_dyn-array Wide)] [i : i64]) : unit
   (set! (array-ref items i) (Wide 4 5 6)))
 (define (direct-fixed-array [items : (Array Wide 2)] [i : i64]) : unit
   (set! (array-ref items i) (Wide 7 8 9)))
@@ -2898,7 +2898,7 @@
 
 (define (compiler-lower-borrowed-enum-match-ref-struct-array-source) : String
   "(defenum Slot (Empty) (Occupied i64))
-(defstruct Bag (slots (Array Slot)))
+(defstruct Bag (slots (__tl_dyn-array Slot)))
 (defenum SlotLookup (:lifetimes bag) (Missing) (Found (& bag i64)))
 (define (take [v : (& bag i64)]) : i64 41)
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) SlotLookup.Missing)
@@ -2913,7 +2913,7 @@
     [Empty 0]))
 (define (main) : i64
   (let
-    [slots : (Array Slot) (make-array Slot 1)]
+    [slots : (__tl_dyn-array Slot) (__tl_make-array Slot 1)]
     (begin
       (set! (array-ref slots 0) (Occupied 9))
       (let [bag : Bag (Bag slots)]
@@ -7072,14 +7072,14 @@
 (define (compiler-lower-module-function-returning-struct-source) : String
   "(module data)
 (defstruct Candidate (number i64))
-(define (cand-nth [cands : (Array Candidate)]) : Candidate
+(define (cand-nth [cands : (__tl_dyn-array Candidate)]) : Candidate
   (array-ref cands 0))
 (module main)
 (import data)
 (define (main) : i64
   (let [c : data.Candidate
     (data.cand-nth
-      (make-array (data.Candidate 7)))]
+      (__tl_make-array (data.Candidate 7)))]
     c.number))")
 
 (define (compiler-lower-module-function-returning-struct-ok?) : bool
@@ -7280,9 +7280,9 @@
         1))))
 
 (define (compiler-lower-module-specialize-source) : String
-  "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
-  (make-array T n))
-(define (main) : (Array i64)
+  "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64)
+  (__tl_make-array T n))
+(define (main) : (__tl_dyn-array i64)
   (alloc (type i64) 4))")
 
 (define (compiler-lower-module-specialize-paths) : compiler_ast_types.AstDeclPathList
@@ -10399,12 +10399,12 @@
 
 (define (compiler-lower-with-escape-array-source) : String
   (compiler-lower-with-arena-source
-    "(define (main) : (Array String)
+    "(define (main) : (__tl_dyn-array String)
   (let
     [scratch : Arena (arena-make)]
     (with-escape scratch
       (let
-        [items : (Array String) (make-array String 2)]
+        [items : (__tl_dyn-array String) (__tl_make-array String 2)]
         (begin
           (set! (array-ref items 0) (string.int->string 1))
           (set! (array-ref items 1) (string.int->string 2))
@@ -10421,7 +10421,7 @@
   (compiler-lower-with-arena-source
     "(defstruct EscapePayload
   (name String)
-  (items (Array String))
+  (items (__tl_dyn-array String))
   (cell (Box String)))
 (defenum EscapeResult
   (Ok EscapePayload)
@@ -10431,7 +10431,7 @@
     [scratch : Arena (arena-make)]
     (with-escape scratch
       (let
-        [items : (Array String) (make-array String 2)]
+        [items : (__tl_dyn-array String) (__tl_make-array String 2)]
         (begin
           (set! (array-ref items 0) (string.int->string 1))
           (set! (array-ref items 1) (string.int->string 2))
@@ -10617,10 +10617,10 @@
 (define (atomic-i64-load-ptr [ptr : (Ptr i64)]) : i64
   (unsafe (atomic-load ptr)))
 (extern (atomic-i64-fetch-add!
-  [items : (Array i64)]
+  [items : (__tl_dyn-array i64)]
   [index : i64]
   [delta : i64]) : i64 (:symbol \"tl_atomic_i64_fetch_add\"))
-(define (main [items : (Array i64)]) : i64
+(define (main [items : (__tl_dyn-array i64)]) : i64
   (atomic-i64-fetch-add! items 0 1))")
 
 (define (compiler-lower-runtime-atomic-reachable-paths) : compiler_ast_types.AstDeclPathList
@@ -10638,7 +10638,7 @@
   (compiler-lower-with-arena-source
     "(defstruct ScratchPayload
   (name String)
-  (items (Array String))
+  (items (__tl_dyn-array String))
   (cell (Box String)))
 (defenum ScratchResult
   (Ok ScratchPayload)
@@ -10646,7 +10646,7 @@
 (define (main) : ScratchResult
   (with-scratch
     (let
-      [items : (Array String) (make-array String 2)]
+      [items : (__tl_dyn-array String) (__tl_make-array String 2)]
         (begin
           (set! (array-ref items 0) (string.int->string 1))
           (set! (array-ref items 1) (string.int->string 2))
@@ -10986,163 +10986,163 @@
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx2-foreach-map-source) : String
-  "(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-foreach-borrowed-array-map-source) : String
-  "(define (fill [a : (& a (Array i64))] [b : (& b (Array i64))] [out : (&mut out (Array i64))] [n : i64]) : unit
+  "(define (fill [a : (& a (__tl_dyn-array i64))] [b : (& b (__tl_dyn-array i64))] [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-i32-source) : String
-  "(define (fill [a : (Array i32)] [b : (Array i32)] [out : (Array i32)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i32)] [b : (__tl_dyn-array i32)] [out : (__tl_dyn-array i32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-u64-source) : String
-  "(define (fill [a : (Array u64)] [b : (Array u64)] [out : (Array u64)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array u64)] [b : (__tl_dyn-array u64)] [out : (__tl_dyn-array u64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-u32-source) : String
-  "(define (fill [a : (Array u32)] [b : (Array u32)] [out : (Array u32)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array u32)] [b : (__tl_dyn-array u32)] [out : (__tl_dyn-array u32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-i16-source) : String
-  "(define (fill [a : (Array i16)] [b : (Array i16)] [out : (Array i16)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i16)] [b : (__tl_dyn-array i16)] [out : (__tl_dyn-array i16)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-u16-source) : String
-  "(define (fill [a : (Array u16)] [b : (Array u16)] [out : (Array u16)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array u16)] [b : (__tl_dyn-array u16)] [out : (__tl_dyn-array u16)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-f64-source) : String
-  "(define (fill [a : (Array f64)] [b : (Array f64)] [out : (Array f64)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array f64)] [b : (__tl_dyn-array f64)] [out : (__tl_dyn-array f64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-f32-source) : String
-  "(define (fill [a : (Array f32)] [b : (Array f32)] [out : (Array f32)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array f32)] [b : (__tl_dyn-array f32)] [out : (__tl_dyn-array f32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-i8-source) : String
-  "(define (fill [a : (Array i8)] [b : (Array i8)] [out : (Array i8)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i8)] [b : (__tl_dyn-array i8)] [out : (__tl_dyn-array i8)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-u8-source) : String
-  "(define (fill [a : (Array u8)] [b : (Array u8)] [out : (Array u8)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array u8)] [b : (__tl_dyn-array u8)] [out : (__tl_dyn-array u8)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-source) : String
-  "(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64] [r : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64] [r : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-i32-source) : String
-  "(define (fill [a : (Array i32)] [b : (Array i32)] [out : (Array i32)] [n : i64] [r : i32]) : unit
+  "(define (fill [a : (__tl_dyn-array i32)] [b : (__tl_dyn-array i32)] [out : (__tl_dyn-array i32)] [n : i64] [r : i32]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-u64-source) : String
-  "(define (fill [a : (Array u64)] [b : (Array u64)] [out : (Array u64)] [n : i64] [r : u64]) : unit
+  "(define (fill [a : (__tl_dyn-array u64)] [b : (__tl_dyn-array u64)] [out : (__tl_dyn-array u64)] [n : i64] [r : u64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (array-ref a i) (* (array-ref b i) r)) (cast 7 : u64)))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-u32-source) : String
-  "(define (fill [a : (Array u32)] [b : (Array u32)] [out : (Array u32)] [n : i64] [r : u32]) : unit
+  "(define (fill [a : (__tl_dyn-array u32)] [b : (__tl_dyn-array u32)] [out : (__tl_dyn-array u32)] [n : i64] [r : u32]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (array-ref a i) (* (array-ref b i) r)) (cast 7 : u32)))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-i16-source) : String
-  "(define (fill [a : (Array i16)] [b : (Array i16)] [out : (Array i16)] [n : i64] [r : i16]) : unit
+  "(define (fill [a : (__tl_dyn-array i16)] [b : (__tl_dyn-array i16)] [out : (__tl_dyn-array i16)] [n : i64] [r : i16]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-u16-source) : String
-  "(define (fill [a : (Array u16)] [b : (Array u16)] [out : (Array u16)] [n : i64] [r : u16]) : unit
+  "(define (fill [a : (__tl_dyn-array u16)] [b : (__tl_dyn-array u16)] [out : (__tl_dyn-array u16)] [n : i64] [r : u16]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-f64-source) : String
-  "(define (fill [a : (Array f64)] [b : (Array f64)] [out : (Array f64)] [n : i64] [r : f64]) : unit
+  "(define (fill [a : (__tl_dyn-array f64)] [b : (__tl_dyn-array f64)] [out : (__tl_dyn-array f64)] [n : i64] [r : f64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-f32-source) : String
-  "(define (fill [a : (Array f32)] [b : (Array f32)] [out : (Array f32)] [n : i64] [r : f32]) : unit
+  "(define (fill [a : (__tl_dyn-array f32)] [b : (__tl_dyn-array f32)] [out : (__tl_dyn-array f32)] [n : i64] [r : f32]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-i8-source) : String
-  "(define (fill [a : (Array i8)] [b : (Array i8)] [out : (Array i8)] [n : i64] [r : i8]) : unit
+  "(define (fill [a : (__tl_dyn-array i8)] [b : (__tl_dyn-array i8)] [out : (__tl_dyn-array i8)] [n : i64] [r : i8]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-u8-source) : String
-  "(define (fill [a : (Array u8)] [b : (Array u8)] [out : (Array u8)] [n : i64] [r : u8]) : unit
+  "(define (fill [a : (__tl_dyn-array u8)] [b : (__tl_dyn-array u8)] [out : (__tl_dyn-array u8)] [n : i64] [r : u8]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-zip-uniform-source) : String
-  "(define (fill [a : (Array i64)] [b : (Array i64)] [c : (Array i64)] [out : (Array i64)] [n : i64] [r : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [c : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64] [r : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))")
 
 (define (compiler-lower-spmd-broadcast-source) : String
-  "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64] [lane : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64] [lane : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (spmd-broadcast (array-ref a i) lane))))")
 
 (define (compiler-lower-spmd-broadcast-u64-source) : String
-  "(define (fill [a : (Array u64)] [out : (Array u64)] [n : i64] [lane : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array u64)] [out : (__tl_dyn-array u64)] [n : i64] [lane : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (spmd-broadcast (array-ref a i) lane))))")
 
 (define (compiler-lower-spmd-broadcast-u32-source) : String
-  "(define (fill [a : (Array u32)] [out : (Array u32)] [n : i64] [lane : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array u32)] [out : (__tl_dyn-array u32)] [n : i64] [lane : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (spmd-broadcast (array-ref a i) lane))))")
 
 (define (compiler-lower-spmd-shuffle-source) : String
-  "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (spmd-shuffle (array-ref a i) i))))")
 
 (define (compiler-lower-avx2-foreach-scalar-fallback-source) : String
-  "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a (+ i 1)) 1))))")
@@ -11765,7 +11765,7 @@
       16)))
 
 (define (compiler-lower-avx512-masked-if-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs i) 0)
@@ -11773,7 +11773,7 @@
       (set! (array-ref out i) (+ (array-ref xs i) 1)))))")
 
 (define (compiler-lower-avx512-masked-if-offset-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs (+ i 1)) 0)
@@ -11781,7 +11781,7 @@
       (set! (array-ref out (+ i 1)) (+ (array-ref xs (+ i 1)) 1)))))")
 
 (define (compiler-lower-avx512-masked-if-index-value-source) : String
-  "(define (fill [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 6)
@@ -11789,7 +11789,7 @@
       (set! (array-ref out i) (+ i 1)))))")
 
 (define (compiler-lower-avx512-masked-if-index-mod-source) : String
-  "(define (fill [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (= (% i 2) 0)
@@ -11797,7 +11797,7 @@
       (set! (array-ref out i) (+ i 100)))))")
 
 (define (compiler-lower-avx512-masked-if-value-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (if (< (array-ref xs i) 0)
@@ -11805,7 +11805,7 @@
         (+ (array-ref xs i) 1)))))")
 
 (define (compiler-lower-masked-if-bitand-value-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64] [bias : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64] [bias : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (if (= (bit-and (array-ref xs i) 1) 1)
@@ -11813,7 +11813,7 @@
         (- (array-ref xs i) bias)))))")
 
 (define (compiler-lower-masked-load-cache-let-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64] [bias : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64] [bias : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (let
@@ -11823,7 +11823,7 @@
           (- x bias))))))")
 
 (define (compiler-lower-masked-load-cache-sibling-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (if (< i 4)
@@ -11831,7 +11831,7 @@
         (- (array-ref xs i) 1)))))")
 
 (define (compiler-lower-masked-load-cache-mutation-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (if (= (bit-and (array-ref xs i) 1) 1)
@@ -11841,7 +11841,7 @@
         (array-ref xs i)))))")
 
 (define (compiler-lower-masked-load-cache-nested-if-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (if (< (array-ref xs i) 0)
@@ -11851,7 +11851,7 @@
           (+ (array-ref xs i) 1))))))")
 
 (define (compiler-lower-masked-load-cache-match-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i)
@@ -11922,7 +11922,7 @@
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-masked-preheader-reassign-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (begin
@@ -11930,17 +11930,17 @@
       (set! (array-ref out i) (array-ref xs i)))))")
 
 (define (compiler-lower-masked-preheader-grow-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 4)
-      (array-push! xs i)
+      (__tl_array-push! xs i)
       (set! (array-ref out i) (array-ref xs i)))))")
 
 (define (compiler-lower-masked-preheader-windows-avx2-cap-source) : String
   "(define (fill
-    [xs : (Array i32)]
-    [out : (Array i32)]
+    [xs : (__tl_dyn-array i32)]
+    [out : (__tl_dyn-array i32)]
     [n : i64]
     [a : i32]
     [b : i32]
@@ -12099,7 +12099,7 @@
       1)))
 
 (define (compiler-lower-masked-if-bitwise-value-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (let
@@ -12112,9 +12112,9 @@
 
 (define (compiler-lower-masked-if-shift-value-source) : String
   "(define (fill
-  [xs : (Array i64)]
-  [counts : (Array i64)]
-  [out : (Array i64)]
+  [xs : (__tl_dyn-array i64)]
+  [counts : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -12127,9 +12127,9 @@
 
 (define (compiler-lower-masked-if-narrow-shift-source) : String
   "(define (fill
-  [xs : (Array i16)]
-  [counts : (Array i16)]
-  [out : (Array i16)]
+  [xs : (__tl_dyn-array i16)]
+  [counts : (__tl_dyn-array i16)]
+  [out : (__tl_dyn-array i16)]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -12141,7 +12141,7 @@
           (shl x count))))))")
 
 (define (compiler-lower-avx512-masked-if-nested-source) : String
-  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (let
@@ -12744,7 +12744,7 @@
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-lane-array-source) : String
-  "(define (fill [zeros : (Array f32)] [out : (Array f32)] [n : i64]) : unit
+  "(define (fill [zeros : (__tl_dyn-array f32)] [out : (__tl_dyn-array f32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (array-ref zeros (program-index)))))")
@@ -12815,7 +12815,7 @@
 (define (compiler-lower-spmd-out-of-line-value-source) : String
   "(define (heavy [x : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7))
-(define (fill [out : (Array i64)] [n : i64]) : unit
+(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (heavy i))))")
 
 (define (compiler-lower-spmd-out-of-line-unit-source) : String
@@ -12829,7 +12829,7 @@
 (define (compiler-lower-spmd-out-of-line-masked-source) : String
   "(define (heavy [x : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7))
-(define (fill [out : (Array i64)] [n : i64]) : unit
+(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 4)
@@ -12866,7 +12866,7 @@
   (begin
     (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7)
     unit))
-(define (fill-value [out : (Array i64)] [n : i64]) : unit
+(define (fill-value [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (heavy i))))
 (define (fill-unit [n : i64]) : unit
   (foreach ([i : i64 0 n]) (touch-heavy i)))")
@@ -12874,7 +12874,7 @@
 (define (compiler-lower-spmd-varying-local-call-source) : String
   "(define (heavy [x : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7))
-(define (fill [out : (Array i64)] [n : i64]) : unit
+(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (let
@@ -12884,7 +12884,7 @@
 (define (compiler-lower-spmd-uniform-arg-call-source) : String
   "(define (heavy [x : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7))
-(define (fill [out : (Array i64)] [n : i64] [offset : i64]) : unit
+(define (fill [out : (__tl_dyn-array i64)] [n : i64] [offset : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (heavy (+ offset 1)))))")
@@ -13187,7 +13187,7 @@
       (compiler-lower-ok?
         "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
       (compiler-lower-ok?
-        "(define (f [a : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref a i) i)))")
+        "(define (f [a : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref a i) i)))")
       (compiler-lower-ok?
         "(define (main) : i64 (begin (foreach ([i : i64 0 0]) unit) 0))")
       (compiler-lower-ok?
@@ -13316,7 +13316,7 @@
   [mode : compiler_lower.CompilerLowerMode]
   [lanes : i64]) : bool
   (match (compiler_lower.lower-compiler-source-with-mode
-    "(define (f [xs : (Array i64)] [n : i64] [r : i64]) : i64
+    "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [r : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0
     (+ (+ (array-ref xs i) r) (bit-and (program-index) 0))))"
     mode)
@@ -13476,12 +13476,12 @@
   [lanes : i64]) : bool
   (and
     (compiler-lower-spmd-reduce-gather-source-shape-ok?
-      "(define (f [xs : (Array f32)] [ix : (Array i64)] [n : i64]) : f32
+      "(define (f [xs : (__tl_dyn-array f32)] [ix : (__tl_dyn-array i64)] [n : i64]) : f32
   (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs (array-ref ix i))))"
       mode
       lanes)
     (compiler-lower-spmd-reduce-gather-source-shape-ok?
-      "(define (f [xs : (Array f32)] [offsets : (Array i64)] [n : i64]) : f32
+      "(define (f [xs : (__tl_dyn-array f32)] [offsets : (__tl_dyn-array i64)] [n : i64]) : f32
   (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs (+ i (array-ref offsets (program-index))))))"
       mode
       lanes)))
@@ -13490,43 +13490,43 @@
   (and
     (compiler-lower-and8
       (compiler-lower-avx2-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
         (compiler_ast_types.AstType.I64)
         4
         4
         1)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
         (compiler_ast_types.AstType.I32)
         8
         4
         1)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (compiler_ast_types.AstType.I32)
         8
         4
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (compiler_ast_types.AstType.I32)
         8
         4
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
         (compiler_ast_types.AstType.F64)
         4
         2
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (compiler_ast_types.AstType.I64)
         4
         4
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (compiler_ast_types.AstType.I64)
         4
         4
@@ -13535,7 +13535,7 @@
         (compiler_lower.CompilerLowerMode.Avx2)
         4))
     (compiler-lower-avx2-spmd-reduce-shape-ok?
-      "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      "(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
       (compiler_ast_types.AstType.F32)
       8
       2
@@ -13547,11 +13547,11 @@
       (compiler_lower.CompilerLowerMode.Avx2)
       8)
     (compiler-lower-spmd-bool-reduce-shape-ok?
-      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
+      "(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
       (compiler_lower.CompilerLowerMode.Avx2)
       32)
     (compiler-lower-spmd-bool-reduce-shape-ok?
-      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
+      "(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
       (compiler_lower.CompilerLowerMode.Avx2)
       32)))
 
@@ -13559,37 +13559,37 @@
   (and
     (compiler-lower-and8
       (compiler-lower-avx512-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
         (compiler_ast_types.AstType.I64)
         8
         4
         1)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (compiler_ast_types.AstType.I64)
         8
         4
         0)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (compiler_ast_types.AstType.I64)
         8
         4
         0)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
         (compiler_ast_types.AstType.F64)
         8
         2
         0)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (compiler_ast_types.AstType.I32)
         16
         4
         0)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (compiler_ast_types.AstType.I32)
         16
         4
@@ -13598,7 +13598,7 @@
         (compiler_lower.CompilerLowerMode.Avx512)
         8)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
-        "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
         (compiler_ast_types.AstType.F32)
         16
         2
@@ -13610,11 +13610,11 @@
       (compiler_lower.CompilerLowerMode.Avx512)
       16)
     (compiler-lower-spmd-bool-reduce-shape-ok?
-      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
+      "(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
       (compiler_lower.CompilerLowerMode.Avx512)
       64)
     (compiler-lower-spmd-bool-reduce-shape-ok?
-      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
+      "(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
       (compiler_lower.CompilerLowerMode.Avx512)
       64)))
 
@@ -13624,21 +13624,21 @@
 (define (compiler-lower-spmd-reduce-tests-ok?) : bool
   (and
     (compiler-lower-ok?
-      "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
+      "(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
     (compiler-lower-ok?
-      "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))")
+      "(define (f [xs : (__tl_dyn-array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))")
     (compiler-lower-ok?
-      "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))")
+      "(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))")
     (compiler-lower-foreach-shape-ok?
       "(define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 i))")
     (compiler-lower-ok?
-      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))")
+      "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))")
     (compiler-lower-ok?
-      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
+      "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
     (compiler-lower-ok?
-      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))")
+      "(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))")
     (compiler-lower-ok?
-      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))")
+      "(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))")
     (compiler-lower-avx2-spmd-reduce-tests-ok?)
     (compiler-lower-avx512-spmd-reduce-tests-ok?)))
 
@@ -17259,8 +17259,8 @@
 ;; offset). `plain-cast` is the consumer negative: a width-64 cast that feeds no
 ;; bounds check is untouched.
 (define (compiler-lower-bounds-operand-source) : String
-  "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
-(define (get-narrow [a : (Array i64)] [i : i32]) : i64 (array-ref a i))
+  "(define (get [a : (__tl_dyn-array i64)] [i : i64]) : i64 (array-ref a i))
+(define (get-narrow [a : (__tl_dyn-array i64)] [i : i32]) : i64 (array-ref a i))
 (define (plain-cast [x : i64]) : u64 (cast x : u64))
 (define (main) : i64 0)")
 

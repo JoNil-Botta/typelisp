@@ -876,7 +876,7 @@
     [cell : (__tl_dyn-array CompilerLoadSessionState) (__tl_make-array initial)]
     [address : u64
       (unsafe
-        (ptr->int (array-data cell)))]
+        (ptr->int (__tl_array-data cell)))]
     [canonical : CompilerLoadSessionState
       (compiler-load-global-array-element-shared-view cell 0)]
     (begin

@@ -22,7 +22,7 @@
   [items : Expr]
   [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (cfg
   (any
@@ -88,7 +88,7 @@
 (cfg
   (any compiler-surface-producer compiler-surface-selftest)
   (define (surface-identity-empty-bytes) : (__tl_dyn-array u8)
-    (make-array u8 0)))
+    (__tl_make-array u8 0)))
 
 (define (surface-identity-string-eq?
   [left : (& left str)]
@@ -759,7 +759,7 @@
     (let
       [source-count : i64 (array-length payload.source-names)]
       [remap : (__tl_dyn-array i64)
-        (make-array i64 (+ source-count (array-length payload.generated)))]
+        (__tl_make-array i64 (+ source-count (array-length payload.generated)))]
       [index : i64 0]
       (begin
         (while (< index source-count)

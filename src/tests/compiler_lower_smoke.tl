@@ -21,7 +21,7 @@
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (compiler-lower-smoke-foreach-multi-output-source) : String
-  "(define (fill [a : (Array i64)] [b : (Array i64)] [out-x : (Array i64)] [out-y : (Array i64)] [n : i64] [scale : i64] [offset : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [out-x : (__tl_dyn-array i64)] [out-y : (__tl_dyn-array i64)] [n : i64] [scale : i64] [offset : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (begin
@@ -29,7 +29,7 @@
       (set! (array-ref out-y i) (+ (* (array-ref a i) scale) offset)))))")
 
 (define (compiler-lower-smoke-foreach-multi-output-same-destination-source) : String
-  "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (begin
@@ -37,7 +37,7 @@
       (set! (array-ref out i) (+ (array-ref a i) 2)))))")
 
 (define (compiler-lower-smoke-foreach-multi-output-alias-source) : String
-  "(define (fill [out-x : (Array i64)] [out-y : (Array i64)] [n : i64]) : unit
+  "(define (fill [out-x : (__tl_dyn-array i64)] [out-y : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (begin
@@ -45,7 +45,7 @@
       (set! (array-ref out-y i) (+ (array-ref out-x i) 2)))))")
 
 (define (compiler-lower-smoke-foreach-multi-output-mixed-source) : String
-  "(define (fill [a : (Array i64)] [b : (Array i32)] [out-x : (Array i64)] [out-y : (Array i32)] [n : i64]) : unit
+  "(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i32)] [out-x : (__tl_dyn-array i64)] [out-y : (__tl_dyn-array i32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (begin
@@ -129,7 +129,7 @@
       (compiler_lower.lower-simd-foreach-fallback-diagnostic))))
 
 (define (compiler-lower-smoke-masked-full-gang-source) : String
-  "(define (fill [xs : (Array i64)] [copy : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  "(define (fill [xs : (__tl_dyn-array i64)] [copy : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (let
@@ -190,15 +190,15 @@
 ;; exit `(* trip-count U)` (visible as a single `Mul` in the lowered IR), while
 ;; the guarded-away shapes keep the per-iteration add (no `Mul`).
 (define (compiler-lower-smoke-spmd-reduce-split-source) : String
-  "(define (reduce_split_pos [a : (Array i64)] [n : i64] [r : i64]) : i64
+  "(define (reduce_split_pos [a : (__tl_dyn-array i64)] [n : i64] [r : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref a i) r)))
-(define (reduce_split_pos_swapped [a : (Array i64)] [n : i64] [r : i64]) : i64
+(define (reduce_split_pos_swapped [a : (__tl_dyn-array i64)] [n : i64] [r : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (+ r (array-ref a i))))
-(define (reduce_split_neg_i32 [g : (Array i32)] [n : i64] [r : i32]) : i32
+(define (reduce_split_neg_i32 [g : (__tl_dyn-array i32)] [n : i64] [r : i32]) : i32
   (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (+ (array-ref g i) r)))
-(define (reduce_split_neg_index [a : (Array i64)] [n : i64]) : i64
+(define (reduce_split_neg_index [a : (__tl_dyn-array i64)] [n : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref a i) i)))
-(define (reduce_split_neg_rebind [a : (Array i64)] [n : i64] [r : i64]) : i64
+(define (reduce_split_neg_rebind [a : (__tl_dyn-array i64)] [n : i64] [r : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (+ (let [r : i64 9] (+ (array-ref a i) r)) r)))")
 
 (define (compiler-lower-smoke-spmd-reduce-split-ok?) : bool
@@ -913,22 +913,22 @@
     (unless
       (compiler_lower_tests.compiler-lower-error-ok?
         (compiler_lower_tests.compiler-lower-fixed-array-push-source)
-        "typecheck: array-push! requires dynamic array type")
+        "typecheck: __tl_array-push! requires dynamic array type")
       (io.panic "lower: fixed array push diagnostic smoke mismatch"))
     (unless
       (compiler_lower_tests.compiler-lower-make-array-shape-ok?
         (compiler_lower_tests.compiler-lower-make-array-source))
-      (io.panic "lower: make-array smoke mismatch"))
+      (io.panic "lower: __tl_make-array smoke mismatch"))
     (unless
       (compiler_lower_tests.compiler-lower-make-array-init-shape-ok?
         (compiler_lower_tests.compiler-lower-make-array-init-source))
-      (io.panic "lower: make-array init smoke mismatch"))
+      (io.panic "lower: __tl_make-array init smoke mismatch"))
     (unless
       (compiler_lower_tests.compiler-lower-dyn-array-literal-shape-ok?)
       (io.panic "lower: dynamic array literal smoke mismatch"))
     (unless
       (compiler_lower_tests.compiler-lower-make-array-register-resident-zero-fill-shape-ok?)
-      (io.panic "lower: make-array fill8 smoke mismatch"))
+      (io.panic "lower: __tl_make-array fill8 smoke mismatch"))
     (unless
       (compiler_lower_tests.compiler-lower-runtime-helper-tests-ok?)
       (io.panic "lower: runtime helper smoke mismatch"))

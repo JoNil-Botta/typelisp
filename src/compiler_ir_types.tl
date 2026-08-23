@@ -26,7 +26,7 @@
 
 (defmacro (compiler-ir-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defmacro (compiler-ir-box-shared-view [value : Expr]) : Expr
   (let
@@ -1592,7 +1592,7 @@
   `(= (__tl-project-field-name ,instrs "len") 0))
 
 ;; MUST stay on the checked array-ref path. `CompilerIrInstr` is an inline-by-value enum,
-;; so the raw `(ptr-read (ptr-offset (ptr-cast (array-data ...) :
+;; so the raw `(ptr-read (ptr-offset (ptr-cast (__tl_array-data ...) :
 ;; (Ptr CompilerIrInstr)) index))` form mis-scales the element stride and reads
 ;; garbage; the array macro lowers with the correct element size.
 (defmacro (compiler-ir-instr-seq-ref
@@ -3997,7 +3997,7 @@
         ")")]
     [(ast.AstType.DynArray elem)
       (str_cat.str-cat
-        "(Array "
+        "(__tl_dyn-array "
         (compiler-ir-type-render
           structural-session
           type-segment-bases
@@ -7205,7 +7205,7 @@
         ")")]
     [(ast.AstType.DynArray elem)
       (str_cat.str-cat
-        "(Array "
+        "(__tl_dyn-array "
         (compiler-ir-type-name
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases elem))

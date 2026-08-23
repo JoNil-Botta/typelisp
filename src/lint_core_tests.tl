@@ -238,7 +238,7 @@
     (lint-test-expect-registry-text
       (lint_core.lint-rule-message
         (lint_core.lint-rule-prefer-dynamic-array-literal-id))
-      "hand-filled dynamic array: prefer (make-array v0 v1 ...)"
+      "hand-filled private dynamic buffer: prefer (__tl_make-array v0 v1 ...)"
       "lint: prefer-dynamic-array-literal message should be registered")
     (lint-test-expect-registry-text
       (lint_core.lint-rule-suggestion (lint_core.lint-rule-unused-unsafe-id))

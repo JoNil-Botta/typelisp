@@ -408,7 +408,7 @@
   [labels : (& labels CompilerDiagnosticLabelList)]
   [index : i64]) : CompilerDiagnosticLabel
   (unsafe
-    (ptr-read (ptr-offset (array-data labels.slots) index))))
+    (ptr-read (ptr-offset (__tl_array-data labels.slots) index))))
 
 ;; Label attachment is a persistent update. A right-sized replacement keeps the
 ;; source diagnostic isolated while retaining the established newest-first order.
@@ -442,7 +442,7 @@
         (let
           [label : CompilerDiagnosticLabel
             (unsafe
-              (ptr-read (ptr-offset (array-data src) index)))]
+              (ptr-read (ptr-offset (__tl_array-data src) index)))]
           (begin
             (set!
               (array-ref dst index)
@@ -457,7 +457,7 @@
   (let
     [count : i64 labels.len]
     [dst : (__tl_dyn-array CompilerDiagnosticLabel)
-      (make-array CompilerDiagnosticLabel count)]
+      (__tl_make-array CompilerDiagnosticLabel count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -484,7 +484,7 @@
   [notes : (& notes CompilerDiagnosticNoteList)]
   [index : i64]) : String
   (unsafe
-    (ptr-read (ptr-offset (array-data notes.slots) index))))
+    (ptr-read (ptr-offset (__tl_array-data notes.slots) index))))
 
 ;; Notes have the same persistent newest-first attachment contract as labels.
 (define (compiler-diagnostic-note-list-prepend
@@ -521,7 +521,7 @@
   [notes : (& notes CompilerDiagnosticNoteList)]) : CompilerDiagnosticNoteList
   (let
     [count : i64 notes.len]
-    [dst : (__tl_dyn-array String) (make-array String count)]
+    [dst : (__tl_dyn-array String) (__tl_make-array String count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -558,7 +558,7 @@
             (array-ref dst index)
             (compiler-diagnostic-copy-text-edit
               (unsafe
-                (ptr-read (ptr-offset (array-data src) index)))))
+                (ptr-read (ptr-offset (__tl_array-data src) index)))))
           (set! index (+ index 1))))
       (CompilerDiagnosticTextEditSeq dst count))))
 
@@ -582,7 +582,7 @@
             (array-ref dst index)
             (compiler-diagnostic-copy-fix
               (unsafe
-                (ptr-read (ptr-offset (array-data src) index)))))
+                (ptr-read (ptr-offset (__tl_array-data src) index)))))
           (set! index (+ index 1))))
       (CompilerDiagnosticFixSeq dst count))))
 
@@ -591,14 +591,14 @@
   (let
     [count : i64 fixes.len]
     [dst : (__tl_dyn-array CompilerDiagnosticFix)
-      (make-array CompilerDiagnosticFix count)]
+      (__tl_make-array CompilerDiagnosticFix count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (let
           [fix : CompilerDiagnosticFix
             (unsafe
-              (ptr-read (ptr-offset (array-data fixes.slots) index)))]
+              (ptr-read (ptr-offset (__tl_array-data fixes.slots) index)))]
           (begin
             (set! (array-ref dst index) (compiler-diagnostic-copy-fix fix))
             (set! index (+ index 1)))))
@@ -747,7 +747,7 @@
         (let
           [edit : CompilerDiagnosticTextEdit
             (unsafe
-              (ptr-read (ptr-offset (array-data slots) index)))]
+              (ptr-read (ptr-offset (__tl_array-data slots) index)))]
           (begin
             (if (and
               (compiler-diagnostic-span-valid-for-edit?
@@ -807,7 +807,7 @@
             (array-ref dst index)
             (compiler-diagnostic-repath-text-edit
               (unsafe
-                (ptr-read (ptr-offset (array-data src) index)))
+                (ptr-read (ptr-offset (__tl_array-data src) index)))
               path))
           (set! index (+ index 1))))
       (CompilerDiagnosticTextEditSeq dst count))))
@@ -826,7 +826,7 @@
         (let
           [fix : CompilerDiagnosticFix
             (unsafe
-              (ptr-read (ptr-offset (array-data src) index)))]
+              (ptr-read (ptr-offset (__tl_array-data src) index)))]
           (begin
             (set!
               (array-ref dst index)

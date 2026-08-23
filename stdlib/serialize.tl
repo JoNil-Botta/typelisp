@@ -68,7 +68,7 @@
 
 (defmacro (serialize-array-element-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 ;: Emit the fixed length suffix from array type keys such as `array_i64_3`.
 (defmacro (array-fixed-length [T : type]) : i64

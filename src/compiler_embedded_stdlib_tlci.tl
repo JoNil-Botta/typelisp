@@ -44,7 +44,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 (defenum CompilerEmbeddedStdlibTlciValidation
   (Ok i64)
@@ -134,7 +134,9 @@
     (array-ref compiler-embedded-stdlib-tlci-session-image 0)
     (unsafe
       (ptr-read
-        (ptr-offset (array-data compiler-embedded-stdlib-tlci-session-image) 0)))))
+        (ptr-offset
+          (__tl_array-data compiler-embedded-stdlib-tlci-session-image)
+          0)))))
 
 (define (compiler-embedded-stdlib-tlci-session-error-shared-view) : String
   (cfg
@@ -142,7 +144,9 @@
     (array-ref compiler-embedded-stdlib-tlci-session-error 0)
     (unsafe
       (ptr-read
-        (ptr-offset (array-data compiler-embedded-stdlib-tlci-session-error) 0)))))
+        (ptr-offset
+          (__tl_array-data compiler-embedded-stdlib-tlci-session-error)
+          0)))))
 
 ;; R3-P2d. The session is opened LAZILY, from inside whatever the compiler
 ;; happens to be doing when the first embedded-stdlib macro fires, and it is
@@ -465,7 +469,9 @@
       (unsafe
         (ptr-read
           (ptr-offset
-            (ptr-cast (array-data compiler-comptime-host-pools) : (Ptr u64))
+            (ptr-cast
+              (__tl_array-data compiler-comptime-host-pools)
+              : (Ptr u64))
             field-index)))]
     (unsafe
       (ptr-read (int->ptr descriptor-address : (Ptr u64))))))
@@ -1246,8 +1252,8 @@
                 (ast.AstType.Expr)))))))))
 
 ;; Pop a type value and push the composite that wraps it: kind 0 is
-;; `(Ptr T)`/`(MutPtr T)` selected by `flag`, 1 is `(Box T)`, 2 is the unsized
-;; `(Array T)`, 3 is `(Array T N)` with `flag` as the count, and 4 is
+;; `(Ptr T)`/`(MutPtr T)` selected by `flag`, 1 is `(Box T)`, 2 is the private
+;; `(__tl_dyn-array T)`, 3 is `(Array T N)` with `flag` as the count, and 4 is
 ;; `(& r T)`/`(&mut r T)` with `flag` selecting mutability and the lifetime name
 ;; arriving as caller bytes, and 5 is `(Slice T)`. The lifetime name is
 ;; interned through the same source-slice path template variable names use.

@@ -1022,7 +1022,7 @@
 ;; Composite type templates (refs #5605). `embedded-native-template-type-ops`
 ;; rendered only `AstType.Var` and scalars, which is what actually kept the
 ;; `stdlib.text_buf_family` generators and generated vector modules on the
-;; interpreted route -- their annotations are `(Array String)`, `(Ptr u8)`,
+;; interpreted route -- their annotations are `(__tl_dyn-array String)`, `(Ptr u8)`,
 ;; `(MutPtr i64)`, `(& text str)` and `(&mut buf TextBuf)`, not any missing
 ;; expression node kind. Each callback pops the element/inner type value and
 ;; pushes the wrapper, so a nested annotation builds bottom-up like an
@@ -1369,7 +1369,8 @@
 (define (tlci-native-package-entries [input : (& input TlciNativePackageInput)]) : (__tl_dyn-array
     u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 tlci-section-entry-record-size)]
+    [out : (__tl_dyn-array u8)
+      (__tl_make-array u8 tlci-section-entry-record-size)]
     [symbol : String (string.copy (& tlci-macro-table-symbol))]
     (begin
       (tlci-set-u64! (&mut out) 0 0)
@@ -4600,10 +4601,10 @@
     [sections : (__tl_dyn-array TlciAuxSection)
       (array.make-array TlciAuxSection 1)]
     [unsupported : (__tl_dyn-array u8) (tlci-string->bytes "future")]
-    [short : (__tl_dyn-array u8) (make-array u8 7)]
-    [zero : (__tl_dyn-array u8) (make-array u8 8)]
-    [negative : (__tl_dyn-array u8) (make-array u8 8)]
-    [limit : (__tl_dyn-array u8) (make-array u8 8)]
+    [short : (__tl_dyn-array u8) (__tl_make-array u8 7)]
+    [zero : (__tl_dyn-array u8) (__tl_make-array u8 8)]
+    [negative : (__tl_dyn-array u8) (__tl_make-array u8 8)]
+    [limit : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     [empty : (__tl_dyn-array u8) (tlci-empty-bytes)]
     (begin
       (set! (array-ref sections 0) (tlci-package-source-binding-section 12345))

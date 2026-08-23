@@ -55,7 +55,7 @@
 
 (defmacro (array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defenum ResultTokens
   (Ok (__tl_dyn-array token.Token))
@@ -1161,8 +1161,8 @@
   [owner : (LexerInternOwner intern-state)]) : ResultTokens
   (let
     [cap : i64 (+ (string.string-length src) 1)]
-    [toks : (__tl_dyn-array token.Token) (make-array token.Token cap)]
-    [starts : (__tl_dyn-array i64) (make-array i64 cap)]
+    [toks : (__tl_dyn-array token.Token) (__tl_make-array token.Token cap)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
     (match (into-spanned-result (& src) (&mut toks) (&mut starts) owner)
       [(ResultLexIntoSpanned.Ok _) (ResultTokens.Ok toks)]
       [(ResultLexIntoSpanned.Err err)
@@ -1418,13 +1418,13 @@
                 (token.tag
                   (token.spanned-token-tok
                     (unsafe
-                      (ptr-read (ptr-offset (array-data tokens) 0)))))
+                      (ptr-read (ptr-offset (__tl_array-data tokens) 0)))))
                 (token.tag-lparen))
               (=
                 (token.tag
                   (token.spanned-token-tok
                     (unsafe
-                      (ptr-read (ptr-offset (array-data tokens) 3)))))
+                      (ptr-read (ptr-offset (__tl_array-data tokens) 3)))))
                 (token.tag-end)))]
           [(ResultSpannedTokens.Err _) false])))))
 

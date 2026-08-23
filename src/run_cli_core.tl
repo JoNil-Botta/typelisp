@@ -351,7 +351,7 @@
       (let
         [text : String (byte_buf.to-string contents)]
         [reports : (__tl_dyn-array doc_test.DocTestRunReport)
-          (make-array
+          (__tl_make-array
             (doc_test.doc-test-typecheck-source-with-roots
               source
               text
@@ -376,9 +376,9 @@
   [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
   (let
     [stdlib-roots-cell : (__tl_dyn-array cli_svec.Vec)
-      (make-array stdlib-roots)]
+      (__tl_make-array stdlib-roots)]
     [cfgs-cell : (__tl_dyn-array build_run_core.SourceToolCfgNames)
-      (make-array cfgs)]
+      (__tl_make-array cfgs)]
     [doctest-status : i64
       (run-cli-typecheck-doctests
         (string.copy (& source))
@@ -491,7 +491,7 @@
               1)
             (let
               [stdlib-roots-cell : (__tl_dyn-array cli_svec.Vec)
-                (make-array stdlib-roots)]
+                (__tl_make-array stdlib-roots)]
               [build-status : i64
                 (build_cli_core.build-package-from-path-announce
                   (string.copy (& manifest-path))

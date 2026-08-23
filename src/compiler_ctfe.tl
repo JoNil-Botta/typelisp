@@ -2955,14 +2955,14 @@
     [(ast.AstExpr.Tuple _) "tuple"]
     [(ast.AstExpr.TupleRef _ _) "tuple-ref"]
     [(ast.AstExpr.Array _) "array"]
-    [(ast.AstExpr.DynArray _) "make-array"]
-    [(ast.AstExpr.MakeArray _ _) "make-array"]
+    [(ast.AstExpr.DynArray _) "__tl_make-array"]
+    [(ast.AstExpr.MakeArray _ _) "__tl_make-array"]
     [(ast.AstExpr.ArrayRef _ _) "array-ref"]
     [(ast.AstExpr.ArraySet _ _ _) "array-set!"]
     [(ast.AstExpr.ArrayTake _ _ _) "array-take!"]
     [(ast.AstExpr.FixedArrayTake _ _) "array-take!"]
     [(ast.AstExpr.Replace _ _) "replace!"]
-    [(ast.AstExpr.ArrayPush _ _) "array-push!"]
+    [(ast.AstExpr.ArrayPush _ _) "__tl_array-push!"]
     [(ast.AstExpr.StringRef _ _) "string-ref"]
     [(ast.AstExpr.While _ _) "while"]
     [(ast.AstExpr.ForOwnedState _) "scalar for owned-array state"]
@@ -3017,7 +3017,7 @@
     [(ast.AstExpr.BoxSet _ _) "set!"]
     [(ast.AstExpr.StringData _) "string-data"]
     [(ast.AstExpr.StringFromBytes _ _) "string-from-bytes"]
-    [(ast.AstExpr.ArrayData _) "array-data"]
+    [(ast.AstExpr.ArrayData _) "__tl_array-data"]
     [(ast.AstExpr.BinaryData _) "binary-data"]
     [(ast.AstExpr.SpmdProgramIndex) "program-index"]
     [(ast.AstExpr.SpmdProgramCount) "program-count"]
@@ -6703,7 +6703,8 @@
     "\n"
     (ctfe-embedded-stdlib-lzss-compress source)))
 
-;; `(expr-binary-data bytes)` builds an opaque static `(Array u8)` payload.
+;; `(expr-binary-data bytes)` builds an opaque static private
+;; `(__tl_dyn-array u8)` payload.
 (define (ctfe-eval-expr-binary-data-call
   [args : ast.AstExprList]
   [expr : ast.AstExpr]
@@ -11529,10 +11530,10 @@
     [syntax-address : u64 (ctfe-env-syntax-pool-context-address-live env)]
     [captured-expr-cell-address : u64
       (unsafe
-        (ptr->int (array-data captured.expr-pool)))]
+        (ptr->int (__tl_array-data captured.expr-pool)))]
     [captured-type-cell-address : u64
       (unsafe
-        (ptr->int (array-data captured.type-pool)))]
+        (ptr->int (__tl_array-data captured.type-pool)))]
     (begin
       (ast.ast-node-pool-context-adopt-newer-cells!
         (ctfe-pool-context-cell-address-at owner-address 0)

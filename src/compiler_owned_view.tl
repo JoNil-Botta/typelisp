@@ -23,14 +23,15 @@
             [address : u64
               (unsafe
                 (ptr-read
-                  (ptr-cast (array-data (array ,reference)) : (Ptr u64))))]
+                  (ptr-cast (__tl_array-data (array ,reference)) : (Ptr u64))))]
             (unsafe
               (ptr-read (int->ptr address : (Ptr ,value-ty))))))]
       [_
         `(let
           [address : u64
             (unsafe
-              (ptr-read (ptr-cast (array-data (array ,reference)) : (Ptr u64))))]
+              (ptr-read
+                (ptr-cast (__tl_array-data (array ,reference)) : (Ptr u64))))]
           (unsafe
             (ptr-read (int->ptr address : (Ptr ,value-ty)))))])))
 
@@ -128,7 +129,7 @@
   [items : Expr]
   [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defmacro (compiler-owned-typed-box-shared-view
   [value : Expr]

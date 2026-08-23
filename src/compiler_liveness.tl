@@ -27,7 +27,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 (defmacro (compiler-live-box-shared-view [value : Expr]) : Expr
   (let
@@ -2190,7 +2190,7 @@
   [ids : (& ids live_label_map.Map)]) : CompilerLiveIndexVec
   (let
     [items : (__tl_dyn-array i64)
-      (make-array
+      (__tl_make-array
         i64
         (compiler-live-label-set-count (compiler-live-shared-view labels)))]
     [count : i64

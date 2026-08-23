@@ -103,7 +103,7 @@
 
 (defmacro (intern-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (define (intern-private-string-length [text : (& text str)]) : i64
   (__tl_string_length text))

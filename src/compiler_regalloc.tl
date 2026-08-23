@@ -36,7 +36,7 @@
     stage0-seed-bootstrap
     `(array-ref ,items ,index)
     `(unsafe
-      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
 (defmacro (compiler-reg-box-shared-view [value : Expr]) : Expr
   (let
@@ -6896,6 +6896,47 @@
       (<= (+ start count) limit)
       (compiler-reg-call-args-gp-class? type-segment-bases args types))))
 
+;; The same class for a call that OVERFLOWS the ABI's argument registers.
+;;
+;; The old rule's hard arity bound existed only because the backend's naive
+;; ascending marshalling is sound just while no argument source can be
+;; overwritten before it is read -- which is exactly what a frame home on every
+;; arg var bought. The backend now marshals an overflowing all-GP call
+;; stack-first (compiler-backend-emit-call-args-stack-first-into): the stack
+;; args whose source is a register home are stored before any argument register
+;; is written, the register prefix goes through the sound parallel move, and the
+;; memory-sourced stack args follow it. No argument source is destroyed before
+;; it is read at ANY arity, so soundness no longer bounds the rule.
+;;
+;; What bounds it instead is the allocation it competes for. Every arg var this
+;; admits is one more candidate in the greedy, and its payoff is its uses AWAY
+;; from the call: an argument of a very wide call is typically used once, at the
+;; call, so it pays nothing and still displaces a loop's own value from a
+;; callee-saved home. `liveness_scan`'s hot token loop is the measured case --
+;; two fourteen-argument calls (eight stack slots) in the same function cost it
+;; %r14 and +0.11% -- so the overflow may be at most as wide as the register
+;; window itself. cfg_domloops' seven-argument and gvn_table's eight-argument
+;; calls, which this packet exists for, sit inside that.
+;;
+;; The rule is only for the call kinds whose emitter reaches the stack-first
+;; path with the whole argument list in hand -- the direct `Call`. Indirect and
+;; tail shapes keep the arity-bounded rule: their emitters interleave a
+;; closure/callee load or an epilogue with the marshalling, and relaxing
+;; eligibility for an emitter that was not changed is how the first prototype of
+;; this miscompiled.
+(define (compiler-reg-call-gp-overflow-from?
+  [type-segment-bases : i64]
+  [args : ir.CompilerIrCallArgs]
+  [types : CompilerRegVarTypes]
+  [target-abi : cabi.CompilerRegTargetAbi]) : bool
+  (let
+    [count : i64
+      (ir.compiler-ir-call-args-count (compiler-reg-global-shared-view args))]
+    (and
+      (> count 0)
+      (<= count (* 2 (compiler-reg-arg-reg-limit-for-abi target-abi)))
+      (compiler-reg-call-args-gp-class? type-segment-bases args types))))
+
 (define (compiler-reg-call-arg-float?
   [value : ir.CompilerIrValue]
   [types : CompilerRegVarTypes]) : bool
@@ -7092,19 +7133,29 @@
         0
         start)]))
 
+;; `overflow-ok?` is set by the call kinds the backend marshals stack-first, and
+;; drops the arg-register arity bound for them; every other kind keeps the
+;; bounded rule. The float/register-group rules are the same either way.
 (define (compiler-reg-call-arg-vars-unless-gp-parallel
   [type-segment-bases : i64]
   [out : live.CompilerLiveI64Set]
   [args : ir.CompilerIrCallArgs]
   [types : CompilerRegVarTypes]
   [start : i64]
-  [target-abi : cabi.CompilerRegTargetAbi]) : live.CompilerLiveI64Set
-  (if (compiler-reg-call-gp-parallel-from?
-    type-segment-bases
-    (compiler-reg-global-shared-view args)
-    (compiler-reg-global-shared-view types)
-    start
-    (compiler-reg-arg-reg-limit-for-abi target-abi))
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [overflow-ok? : bool]) : live.CompilerLiveI64Set
+  (if (if overflow-ok?
+    (compiler-reg-call-gp-overflow-from?
+      type-segment-bases
+      (compiler-reg-global-shared-view args)
+      (compiler-reg-global-shared-view types)
+      target-abi)
+    (compiler-reg-call-gp-parallel-from?
+      type-segment-bases
+      (compiler-reg-global-shared-view args)
+      (compiler-reg-global-shared-view types)
+      start
+      (compiler-reg-arg-reg-limit-for-abi target-abi)))
     out
     (if (compiler-reg-call-args-have-group?
       type-segment-bases
@@ -7133,12 +7184,15 @@
             out
             (match (array-ref slots index)
               [(ir.CompilerIrInstr.Call _ _ args _)
-                ;; GP-parallel call (every arg passed in ONE GP arg register,
-                ;; within the per-ABI arity): scalars and 8-byte handles are the
-                ;; same register class to the backend, whose marshalling resolves
-                ;; every register source/dest conflict with the sound parallel
-                ;; move (compiler-backend-emit-call-args), so ALL arg vars --
-                ;; handle args included -- may stay register-homed. Zero-arg
+                ;; GP-class direct call (every arg passed in ONE GP arg
+                ;; register, and past the ABI's window as well -- see
+                ;; compiler-reg-call-gp-overflow-from? for how far): scalars and
+                ;; 8-byte handles are the same register class to the backend,
+                ;; whose marshalling resolves every register source/dest
+                ;; conflict with the sound parallel move and stores an
+                ;; over-arity call's stack args before it writes any argument
+                ;; register (compiler-backend-emit-call-args-into), so ALL arg
+                ;; vars -- handle args included -- stay register-homed. Zero-arg
                 ;; calls have no arg vars to disqualify. Register groups retain
                 ;; the all-memory rule. A register-passed float may reach the
                 ;; XMM greedy, but its final home is retained only when it equals
@@ -7149,7 +7203,8 @@
                   args
                   (compiler-reg-global-shared-view types)
                   0
-                  target-abi)]
+                  target-abi
+                  true)]
               [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
                 (let
                   [base (compiler-reg-box-field-shared-view payload-box base)]
@@ -7160,7 +7215,8 @@
                     args
                     (compiler-reg-global-shared-view types)
                     0
-                    target-abi))]
+                    target-abi
+                    false))]
               [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
                 (let
                   [base (compiler-reg-box-field-shared-view payload-box base)]
@@ -7174,7 +7230,8 @@
                     args
                     (compiler-reg-global-shared-view types)
                     0
-                    target-abi))]
+                    target-abi
+                    false))]
               ;; Tail calls (M-G2a): the true tail-jump path marshals args FIRST
               ;; (compiler-backend-emit-tail-call routes a gp-parallel shape --
               ;; tail-stack-count 0, target always an in-program function, so
@@ -7196,7 +7253,8 @@
                   args
                   (compiler-reg-global-shared-view types)
                   0
-                  target-abi)]
+                  target-abi
+                  false)]
               ;; Indirect tail calls marshal at base 1 (closure env reserved in
               ;; ABI arg-register 0). The backend's base-aware parallel move can
               ;; safely marshal register-homed GP user args, but the closure
@@ -7209,7 +7267,8 @@
                   args
                   (compiler-reg-global-shared-view types)
                   1
-                  target-abi)]
+                  target-abi
+                  false)]
               ;; Closure/indirect calls reserve ABI arg-register 0 for the env and
               ;; marshal user args at base 1. Register-homed GP user args are safe
               ;; through the same base-aware backend parallel move; the closure
@@ -7222,7 +7281,8 @@
                   args
                   (compiler-reg-global-shared-view types)
                   1
-                  target-abi)]
+                  target-abi
+                  false)]
               [(ir.CompilerIrInstr.CallIndirectC _ func args _)
                 (compiler-reg-call-arg-vars-unless-gp-parallel
                   type-segment-bases
@@ -7230,7 +7290,8 @@
                   args
                   (compiler-reg-global-shared-view types)
                   0
-                  target-abi)]
+                  target-abi
+                  false)]
               [_ out]))
           (set! index (+ index 1))))
       out)))
@@ -20453,14 +20514,17 @@
                 (set! edge (+ edge 1))))))))))
 
 ;; Is there a loop the bypass runs and the arm skips? `visited` holds the
-;; entry-avoiding-`block` set and `seen` the from-`block` set, both under
-;; `generation`; a block inside a loop that is in the first and not the second
-;; is work reachable only by NOT taking the arm.
+;; bypass set and `seen` the from-`block` set, both under `generation`; a block
+;; inside a loop DEEPER than `floor` that is in the first and not the second is
+;; work reachable only by NOT taking the arm. The depth-0 rule passes floor 0
+;; ("any loop at all"); the in-loop rule passes the arm's own loop depth, so
+;; there the question is about a loop nested strictly inside it.
 (define (compiler-reg-call-hole-bypass-runs-loop?
   [depths : (__tl_dyn-array i64)]
   [visited : (__tl_dyn-array i64)]
   [seen : (__tl_dyn-array i64)]
-  [generation : i64]) : bool
+  [generation : i64]
+  [floor : i64]) : bool
   (let
     [count : i64 (array-length depths)]
     [index : i64 0]
@@ -20469,7 +20533,7 @@
       (while (and (< index count) (not found))
         (begin
           (if (and
-            (> (array-ref depths index) 0)
+            (> (array-ref depths index) floor)
             (= (array-ref visited index) generation)
             (not (= (array-ref seen index) generation)))
             (set! found true)
@@ -20595,6 +20659,296 @@
               (set! index (+ index 1))))
           found))]))
 
+;; The IN-LOOP arm discount, and why it is a different trade from the one
+;; above rather than a relaxation of it.
+;;
+;; The depth-0 rule is bounded the way it is because what a cold-arm prediction
+;; buys the CSR class is a saving at ENTRY frequency -- a push, a pop, a
+;; parameter entry copy -- while a mispredicted arm inside a loop costs its
+;; carriers once per ITERATION, so the two sides of that trade are not even the
+;; same frequency scale (see the paragraph above).
+;;
+;; The MEMORY class's trade is not that trade. Both of its sides are
+;; per-iteration quantities: giving a spilled value a register home removes one
+;; RELOAD per reference and adds one store plus one reload per CROSSING, and the
+;; round already refuses the case where references and crossings run equally
+;; often (`compiler-reg-call-hole-qualifies?`'s `max-clobber < max-ref`). So the
+;; only thing that class is missing inside a loop is a weight that says "this
+;; block runs less often than the loop body" -- and a conditional arm INSIDE the
+;; loop is exactly such a block: control can get from the loop's header back to
+;; a latch without it, so it runs at most as often as the loop iterates, and
+;; absent any profile it is estimated at half that. W/2 is strictly below the
+;; body's W, which is all the strict comparison needs; and because the ratio is
+;; 2 rather than the depth ladder's 8, a value whose references sit on the hot
+;; path still has to be referenced more than it is crossed.
+;;
+;; `cold` is deliberately NOT set, so the CSR class keeps its depth-0-only
+;; discount. Its crossings therefore stay in `max-clobber-hot` at the halved
+;; weight, and its second condition -- the carriers must cost strictly less than
+;; the push/pop pair they buy back -- refuses the class on its own: one in-loop
+;; crossing already costs a store plus a reload at the halved in-loop weight,
+;; which no pair priced at the entry weight can pay for.
+;;
+;; Both exclusions of the depth-0 rule carry over unchanged. A block holding a
+;; call to the function being allocated is never discounted (PRED_RECURSIVE_CALL:
+;; the arm's frequency IS the entry frequency), and a block whose BYPASS RUNS A
+;; LOOP THE ARM SKIPS is not a detour but the fast arm of a versioned region --
+;; the same test as the depth-0 rule, evaluated inside the arm's own loop, so
+;; "a loop" there means one nested strictly deeper than the arm's.
+;; `compiler-reg-call-hole-loop-arm-weight-ok?` pins the discount, the
+;; every-path in-loop call block that keeps its full weight, and the csr/memory
+;; split; `compiler-reg-call-hole-loop-arm-bypass-loop-ok?` pins the versioned
+;; region.
+(define (compiler-reg-call-hole-loop-arm-weight [weight : i64]) : i64
+  (let
+    [half : i64 (/ weight 2)]
+    (if (< half 1)
+      1
+      half)))
+
+;; The innermost loop header of every block: among the loops a block belongs to,
+;; the one whose header sits at the greatest depth. A header is its own answer,
+;; which is what keeps a loop header -- a block that runs on every iteration of
+;; its own loop -- out of the discount. One stamped member walk per header, the
+;; same cost `compiler-reg-loop-nest-depths!` already pays, and the stamp
+;; generations continue above the ones that walk issued so no member set reads
+;; stale. Returns the last generation used.
+(define (compiler-reg-call-hole-innermost-headers!
+  [nest : CompilerRegLoopNest]
+  [depths : (__tl_dyn-array i64)]
+  [best : (__tl_dyn-array i64)]
+  [best-depth : (__tl_dyn-array i64)]
+  [generation : i64]) : i64
+  (let
+    [count : i64 (array-length best)]
+    [headers : i64 nest.header-count]
+    [index : i64 0]
+    [gen : i64 generation]
+    (begin
+      (while (< index count)
+        (begin
+          (set! (array-ref best index) (- 0 1))
+          (set! (array-ref best-depth index) (- 0 1))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index headers)
+        (begin
+          (let
+            [header : i64 (array-ref nest.headers index)]
+            [depth : i64 (array-ref depths header)]
+            [total : i64 0]
+            [member : i64 0]
+            (begin
+              (set! gen (+ gen 1))
+              (set!
+                total
+                (compiler-reg-loop-nest-header-members!
+                  (compiler-reg-global-shared-view nest)
+                  header
+                  gen))
+              (if (> depth (array-ref best-depth header))
+                (begin
+                  (set! (array-ref best-depth header) depth)
+                  (set! (array-ref best header) header))
+                unit)
+              (while (< member total)
+                (begin
+                  (let
+                    [block : i64 (array-ref nest.members member)]
+                    (if (> depth (array-ref best-depth block))
+                      (begin
+                        (set! (array-ref best-depth block) depth)
+                        (set! (array-ref best block) header))
+                      unit))
+                  (set! member (+ member 1))))))
+          (set! index (+ index 1))))
+      gen)))
+
+;; Can one iteration of the loop stamped under `stamp-generation` get from its
+;; header back to the header without running `arm`? Walks forward inside that
+;; loop's members only and runs to completion, so the blocks it reached are left
+;; in `visited` under `visit-generation` -- that set is "the work the bypass
+;; does", which the versioned-region test below reads.
+(define (compiler-reg-call-hole-loop-arm-bypass!
+  [cfg : CompilerRegCallHoleCfg]
+  [nest : CompilerRegLoopNest]
+  [stamp-generation : i64]
+  [visited : (__tl_dyn-array i64)]
+  [stack : (__tl_dyn-array i64)]
+  [visit-generation : i64]
+  [header : i64]
+  [arm : i64]) : bool
+  (let
+    [stamp : (__tl_dyn-array i64) nest.stamp]
+    [top : i64 0]
+    [found : bool false]
+    (begin
+      (set! (array-ref visited header) visit-generation)
+      (set! (array-ref stack top) header)
+      (set! top (+ top 1))
+      (while (> top 0)
+        (begin
+          (set! top (- top 1))
+          (let
+            [node : i64 (array-ref stack top)]
+            [edge : i64 (array-ref cfg.succ-offsets node)]
+            [stop : i64 (array-ref cfg.succ-offsets (+ node 1))]
+            (while (< edge stop)
+              (begin
+                (let
+                  [target : i64 (array-ref cfg.succ-targets edge)]
+                  (cond
+                    [(< target 0) unit]
+                    [(= target header) (set! found true)]
+                    [(or
+                        (= target arm)
+                        (= (array-ref visited target) visit-generation)
+                        (not (= (array-ref stamp target) stamp-generation)))
+                      unit]
+                    [else
+                      (begin
+                        (set! (array-ref visited target) visit-generation)
+                        (set! (array-ref stack top) target)
+                        (set! top (+ top 1)))]))
+                (set! edge (+ edge 1)))))))
+      found)))
+
+;; Every block one iteration can still run AFTER `arm`, inside the loop stamped
+;; under `stamp-generation`: forward from `arm` through members only, and
+;; stopping AT the header, because going round again is the NEXT iteration and
+;; not work this one did. That stop is what makes the versioned-region exclusion
+;; mean anything inside a loop: without it the latch edge puts every member in
+;; reach of every other, and no arm could ever be said to skip anything.
+(define (compiler-reg-call-hole-loop-arm-reach!
+  [cfg : CompilerRegCallHoleCfg]
+  [nest : CompilerRegLoopNest]
+  [stamp-generation : i64]
+  [seen : (__tl_dyn-array i64)]
+  [stack : (__tl_dyn-array i64)]
+  [seen-generation : i64]
+  [header : i64]
+  [arm : i64]) : unit
+  (let
+    [stamp : (__tl_dyn-array i64) nest.stamp]
+    [top : i64 0]
+    (begin
+      (set! (array-ref seen arm) seen-generation)
+      (set! (array-ref stack top) arm)
+      (set! top (+ top 1))
+      (while (> top 0)
+        (begin
+          (set! top (- top 1))
+          (let
+            [node : i64 (array-ref stack top)]
+            [edge : i64 (array-ref cfg.succ-offsets node)]
+            [stop : i64 (array-ref cfg.succ-offsets (+ node 1))]
+            (while (< edge stop)
+              (begin
+                (let
+                  [target : i64 (array-ref cfg.succ-targets edge)]
+                  (if (or
+                    (< target 0)
+                    (= (array-ref seen target) seen-generation)
+                    (not (= (array-ref stamp target) stamp-generation)))
+                    unit
+                    (begin
+                      (set! (array-ref seen target) seen-generation)
+                      (if (= target header)
+                        unit
+                        (begin
+                          (set! (array-ref stack top) target)
+                          (set! top (+ top 1)))))))
+                (set! edge (+ edge 1))))))))))
+
+;; Halve the weight of every in-loop conditional arm that holds a crossing.
+;; `visited`, `seen` and `stack` are the depth-0 pass's own scratch, reused with
+;; generations continuing above the ones it issued.
+(define (compiler-reg-call-hole-loop-arm-weights!
+  [type-segment-bases : i64]
+  [self-name : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [nest : CompilerRegLoopNest]
+  [depths : (__tl_dyn-array i64)]
+  [cfg : CompilerRegCallHoleCfg]
+  [visited : (__tl_dyn-array i64)]
+  [seen : (__tl_dyn-array i64)]
+  [stack : (__tl_dyn-array i64)]
+  [weights : (__tl_dyn-array i64)]
+  [generation : i64]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [best : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [best-depth : (__tl_dyn-array i64) (array.make-array i64 count)]
+    ;; `compiler-reg-loop-nest-depths!` issued stamp generations 1..header-count
+    ;; on this nest, so the innermost-header walk continues strictly above them.
+    [stamp-generation : i64
+      (compiler-reg-call-hole-innermost-headers!
+        (compiler-reg-global-shared-view nest)
+        (compiler-reg-global-shared-view depths)
+        (compiler-reg-global-shared-view best)
+        (compiler-reg-global-shared-view best-depth)
+        nest.header-count)]
+    [gen : i64 generation]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (let
+          [header : i64 (array-ref best index)]
+          (if (and
+            (>= header 0)
+            (not (= header index))
+            (compiler-reg-call-hole-block-has-clobber?
+              type-segment-bases
+              (ir.compiler-ir-block-seq-ref
+                (compiler-reg-global-shared-view seq)
+                index))
+            (not
+              (compiler-reg-call-hole-block-self-call?
+                self-name
+                (ir.compiler-ir-block-seq-ref
+                  (compiler-reg-global-shared-view seq)
+                  index))))
+            (begin
+              (set! stamp-generation (+ stamp-generation 1))
+              (compiler-reg-loop-nest-header-members!
+                (compiler-reg-global-shared-view nest)
+                header
+                stamp-generation)
+              (set! gen (+ gen 1))
+              (if (compiler-reg-call-hole-loop-arm-bypass!
+                (compiler-reg-global-shared-view cfg)
+                (compiler-reg-global-shared-view nest)
+                stamp-generation
+                (compiler-reg-global-shared-view visited)
+                (compiler-reg-global-shared-view stack)
+                gen
+                header
+                index)
+                (begin
+                  (compiler-reg-call-hole-loop-arm-reach!
+                    (compiler-reg-global-shared-view cfg)
+                    (compiler-reg-global-shared-view nest)
+                    stamp-generation
+                    (compiler-reg-global-shared-view seen)
+                    (compiler-reg-global-shared-view stack)
+                    gen
+                    header
+                    index)
+                  (if (compiler-reg-call-hole-bypass-runs-loop?
+                    (compiler-reg-global-shared-view depths)
+                    (compiler-reg-global-shared-view visited)
+                    (compiler-reg-global-shared-view seen)
+                    gen
+                    (array-ref depths header))
+                    unit
+                    (set!
+                      (array-ref weights index)
+                      (compiler-reg-call-hole-loop-arm-weight
+                        (array-ref weights index)))))
+                unit))
+            unit))
+        (set! index (+ index 1))))))
+
 ;; This decision's block weights, plus the flag that says which of them were
 ;; discounted. The csr class's qualification rule asks the question per CROSSING
 ;; ("is this crossing on a cold arm?"), which is a property of the block and not
@@ -20609,7 +20963,8 @@
   [self-name : i64]
   [seq : ir.CompilerIrBlockSeq]) : CompilerRegCallHoleWeights
   (let
-    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-reg-global-shared-view seq))]
     [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
     [cold : (__tl_dyn-array bool) (array.make-array bool count)]
     (if (< count 1)
@@ -20620,7 +20975,7 @@
             (compiler-reg-global-shared-view seq))]
         [_depths : unit
           (compiler-reg-loop-nest-depths!
-            nest
+            (compiler-reg-global-shared-view nest)
             (compiler-reg-global-shared-view depths))]
         [weights : (__tl_dyn-array i64)
           (compiler-reg-call-hole-block-weights
@@ -20640,11 +20995,15 @@
                 (<= (array-ref depths index) 0)
                 (compiler-reg-call-hole-block-has-clobber?
                   type-segment-bases
-                  (ir.compiler-ir-block-seq-ref seq index))
+                  (ir.compiler-ir-block-seq-ref
+                    (compiler-reg-global-shared-view seq)
+                    index))
                 (not
                   (compiler-reg-call-hole-block-self-call?
                     self-name
-                    (ir.compiler-ir-block-seq-ref seq index))))
+                    (ir.compiler-ir-block-seq-ref
+                      (compiler-reg-global-shared-view seq)
+                      index))))
                 (begin
                   (set! generation (+ generation 1))
                   (if (compiler-reg-call-hole-entry-escapes?
@@ -20664,7 +21023,8 @@
                         (compiler-reg-global-shared-view depths)
                         (compiler-reg-global-shared-view visited)
                         (compiler-reg-global-shared-view seen)
-                        generation)
+                        generation
+                        0)
                         unit
                         (begin
                           (set! (array-ref cold index) true)
@@ -20675,6 +21035,20 @@
                     unit))
                 unit)
               (set! index (+ index 1))))
+          (if (> nest.header-count 0)
+            (compiler-reg-call-hole-loop-arm-weights!
+              type-segment-bases
+              self-name
+              (compiler-reg-global-shared-view seq)
+              (compiler-reg-global-shared-view nest)
+              (compiler-reg-global-shared-view depths)
+              (compiler-reg-global-shared-view cfg)
+              (compiler-reg-global-shared-view visited)
+              (compiler-reg-global-shared-view seen)
+              (compiler-reg-global-shared-view stack)
+              (compiler-reg-global-shared-view weights)
+              generation)
+            unit)
           (CompilerRegCallHoleWeights weights cold))))))
 
 ;; The per-function cap on selections, so one rewrite stays bounded no matter

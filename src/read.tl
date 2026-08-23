@@ -1376,12 +1376,12 @@
           (token.sym-id
             (token.spanned-token-token
               (unsafe
-                (ptr-read (ptr-offset (array-data toks) 1)))))]
+                (ptr-read (ptr-offset (__tl_array-data toks) 1)))))]
         [second-id : ci.InternId
           (token.sym-id
             (token.spanned-token-token
               (unsafe
-                (ptr-read (ptr-offset (array-data toks) 2)))))]
+                (ptr-read (ptr-offset (__tl_array-data toks) 2)))))]
         [pool-len-before : i64 (ci.intern-pool-len)]
         (begin
           (sp-node-pool-reset!)

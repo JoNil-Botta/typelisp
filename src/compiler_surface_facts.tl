@@ -20,7 +20,7 @@
 
 (defmacro (surface-facts-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defstruct SurfaceTypecheckFacts
   (macro-prefix-decl-count i64)
@@ -290,9 +290,9 @@
       [observations : SurfaceCloneObservationSeq
         (surface-typecheck-facts-recording-observations-shared-view)]
       [count : i64 observations.len]
-      [decl-keys : (__tl_dyn-array i64) (make-array i64 count)]
-      [root-keys : (__tl_dyn-array i64) (make-array i64 count)]
-      [call-indices : (__tl_dyn-array i64) (make-array i64 count)]
+      [decl-keys : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [root-keys : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [call-indices : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [index : i64 0]
       [slots : (__tl_dyn-array SurfaceCloneObservation)
         (surface-facts-shared-view observations.slots)]

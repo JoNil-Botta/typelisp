@@ -35,7 +35,7 @@
   [items : Expr]
   [index : Expr]) : Expr
   `(unsafe
-    (ptr-read (ptr-offset (array-data ,items) ,index))))
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (define (compiler-profile-summary-keys
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)

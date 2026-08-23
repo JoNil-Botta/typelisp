@@ -52,11 +52,11 @@
 
 (define (compiler-typecheck-reference-array-push-ok-source) : String
   "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
-  (array-push! items (& x)))")
+  (__tl_array-push! items (& x)))")
 
 (define (compiler-typecheck-reference-array-push-escape-source) : String
   "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
-  (let [x : i64 1] (array-push! items (& x))))")
+  (let [x : i64 1] (__tl_array-push! items (& x))))")
 
 (define (compiler-typecheck-reference-arena-store-escape-source) : String
   (compiler_typecheck.compiler-typecheck-with-alloc-string-helper-source
@@ -320,25 +320,25 @@
 
 (define (compiler-typecheck-reference-dyn-array-make-reject-source) : String
   "(define (main [n : i64]) : unit
-  (let [items : (__tl_dyn-array (& n i64)) (make-array (& n i64) 0)] unit))")
+  (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array (& n i64) 0)] unit))")
 
 (define (compiler-typecheck-reference-dyn-array-push-read-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
     [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
     (begin
-      (array-push! items (& n))
+      (__tl_array-push! items (& n))
       (let [r : (& n i64) (array-ref items 0)] unit))))")
 
 (define (compiler-typecheck-reference-dyn-array-push-escape-source) : String
   "(define (main [n : i64]) : unit
   (let
     [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
-    (let [n : i64 1] (array-push! items (& n)))))")
+    (let [n : i64 1] (__tl_array-push! items (& n)))))")
 
 (define (compiler-typecheck-reference-dyn-array-hidden-source) : String
   "(define (main) : unit
-  (let [items : (__tl_dyn-array (& n i64)) (make-array (& n i64) 0)] unit))")
+  (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array (& n i64) 0)] unit))")
 
 (define (compiler-typecheck-signature-lifetime-alias-positive-source) : String
   "(defstruct SignatureAliasRec
@@ -348,7 +348,7 @@
   (pair (Tuple i64 i64))
   (fixed (Array i64 1)))
 (define (signature-alias-touch!
-  [items : (&mut source (Array SignatureAliasRec))]
+  [items : (&mut source (__tl_dyn-array SignatureAliasRec))]
   [index : i64]) : unit
   (let
     [item : (&mut source SignatureAliasRec)
@@ -420,7 +420,7 @@
 (define (compiler-typecheck-zero-make-array-recursive-source) : String
   "(defenum Loop (LoopBox (Box Loop)))
 (define (main) : unit
-  (let [items : (__tl_dyn-array Loop) (make-array Loop 0)] unit))")
+  (let [items : (__tl_dyn-array Loop) (__tl_make-array Loop 0)] unit))")
 
 (define (compiler-typecheck-auto-borrow-ok-source) : String
   "(defstruct RefBox (:lifetimes owner) (value (& owner i64)))
@@ -699,8 +699,8 @@
   (right (__tl_dyn-array i64)))
 (define (main) : unit
   (let
-    [left-items : (__tl_dyn-array i64) (make-array i64 1)]
-    [right-items : (__tl_dyn-array i64) (make-array i64 1)]
+    [left-items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [right-items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
       [left : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
@@ -714,8 +714,8 @@
 (define (write-array-ref [items : (&mut bags (__tl_dyn-array i64))]) : unit unit)
 (define (main) : unit
   (let
-    [left-items : (__tl_dyn-array i64) (make-array i64 1)]
-    [right-items : (__tl_dyn-array i64) (make-array i64 1)]
+    [left-items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [right-items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
       [first : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
@@ -728,8 +728,8 @@
   (right (__tl_dyn-array i64)))
 (define (main) : unit
   (let
-    [left-items : (__tl_dyn-array i64) (make-array i64 1)]
-    [right-items : (__tl_dyn-array i64) (make-array i64 1)]
+    [left-items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [right-items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
       [whole-left : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
@@ -761,7 +761,7 @@
 (define (compiler-typecheck-mut-borrow-read-array-length-source) : String
   "(define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-length items)]
     (begin
@@ -771,7 +771,7 @@
 (define (compiler-typecheck-mut-borrow-read-array-ref-source) : String
   "(define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-ref items 0)]
     (begin
@@ -784,7 +784,7 @@
   (right i64))
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [bag : Bag (Bag items 42)]
     [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut bag.left)]
     [copy : (__tl_dyn-array i64) bag.left]
@@ -798,7 +798,7 @@
   (right i64))
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [bag : Bag (Bag items 42)]
     [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut bag.left)]
     [right : i64 bag.right]
@@ -809,7 +809,7 @@
 (define (compiler-typecheck-mut-borrow-read-through-ref-source) : String
   "(define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-length borrowed)]
     (begin
@@ -819,7 +819,7 @@
 (define (compiler-typecheck-mut-borrow-owner-read-after-last-use-source) : String
   "(define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     (begin
       (set! (array-ref borrowed 0) 41)
@@ -829,20 +829,20 @@
   "(define (read-len [items : (& items (__tl_dyn-array i64))]) : i64
   (array-length items))
 (define (push-with-len [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
-  (array-push! items value))
+  (__tl_array-push! items value))
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (push-with-len (&mut items) (read-len (& items)))
       (array-length items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-direct-read-source) : String
   "(define (push-with-len [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
-  (array-push! items value))
+  (__tl_array-push! items value))
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (push-with-len (&mut items) (array-length items))
       (array-length items))))")
@@ -854,7 +854,7 @@
   unit)
 (define (main) : unit
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (take-two (&mut items) (&mut items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-escaping-shared-source) : String
@@ -866,7 +866,7 @@
   unit)
 (define (main) : unit
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (take-mut-and-view (&mut items) (borrow-items (& items)))))")
 
 (define (compiler-typecheck-two-phase-mut-call-mutate-owner-source) : String
@@ -876,8 +876,8 @@
   unit)
 (define (main) : unit
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
-    (take-mut-and-value (&mut items) (begin (array-push! items 1) 0))))")
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (take-mut-and-value (&mut items) (begin (__tl_array-push! items 1) 0))))")
 
 (define (compiler-typecheck-borrow-if-conservative-source) : String
   "(define (take [n : (& n i64)]) : i64 1)
@@ -1291,7 +1291,7 @@
       "typecheck: init unsupported type (& n i64)")
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-reference-dyn-array-hidden-source)
-      "typecheck: make-array element type is not supported")))
+      "typecheck: __tl_make-array element type is not supported")))
 
 (define (compiler-typecheck-signature-lifetime-alias-tests-ok?) : bool
   (and
@@ -3742,7 +3742,7 @@
             [borrowed : (& items i64) (& (array-ref items 0))]
             (take-array-ref borrowed))]
         (begin
-          (array-push! items 9)
+          (__tl_array-push! items 9)
           (+ borrow-score (+ (array-length items) (array-ref items 0))))))))")
 
 (define (compiler-typecheck-smoke-qualified-array-ok?) : bool

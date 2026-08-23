@@ -64,7 +64,7 @@
   `(let
     [shared-ref (& ,items)]
     (unsafe
-      (ptr-read (ptr-cast (array-data (array shared-ref)) : (Ptr u64))))))
+      (ptr-read (ptr-cast (__tl_array-data (array shared-ref)) : (Ptr u64))))))
 
 ;; TcTypeEnv cache fields: ids map, values, unsafe flags, raw C fnptr flags,
 ;; default-shadow flags, scan-through, partial, rest head, below head. The flag
@@ -1510,7 +1510,7 @@
       [cell : (Array u64 1) (array word)]
       (unsafe
         (ptr-read
-          (ptr-cast (array-data cell) : (Ptr (& ctx csym.CompilerSymbols))))))))
+          (ptr-cast (__tl_array-data cell) : (Ptr (& ctx csym.CompilerSymbols))))))))
 
 (cfg
   stage0-borrowed-inline-bootstrap
@@ -1522,19 +1522,21 @@
       [cell : (Array u64 1) (array word)]
       (unsafe
         (ptr-read
-          (ptr-cast (array-data cell) : (Ptr (& ctx csym.CompilerRegistries))))))))
+          (ptr-cast
+            (__tl_array-data cell)
+            : (Ptr (& ctx csym.CompilerRegistries))))))))
 
 (define (tc-context-expr-cell-address-live [ctx : TcContext]) : u64
   (match ctx
     [(TcContext _ _ _ _ _ _ pools _ _)
       (unsafe
-        (ptr->int (array-data (__tl-project-field pools expr-pool))))]))
+        (ptr->int (__tl_array-data (__tl-project-field pools expr-pool))))]))
 
 (define (tc-context-type-cell-address-live [ctx : TcContext]) : u64
   (match ctx
     [(TcContext _ _ _ _ _ _ pools _ _)
       (unsafe
-        (ptr->int (array-data (__tl-project-field pools type-pool))))]))
+        (ptr->int (__tl_array-data (__tl-project-field pools type-pool))))]))
 
 (define (tc-context-expr-push-cell-addresses
   [expr-cell-address : u64]
@@ -3292,7 +3294,7 @@
       [(TcPrefixSnapshotSlot.Empty)
         (let
           [summary-cell : (__tl_dyn-array CompilerTypecheckSummary)
-            (make-array summary)]
+            (__tl_make-array summary)]
           (begin
             (set!
               (array-ref state.slots index)
@@ -3302,14 +3304,14 @@
                 module
                 module-id
                 (unsafe
-                  (ptr->int (array-data summary-cell)))))
+                  (ptr->int (__tl_array-data summary-cell)))))
             (tc-prefix-snapshot-cache-note-store-for-state! state)
             true))]
       [(TcPrefixSnapshotSlot.Full slot-key _ _ _ _)
         (if (string.eq slot-key key)
           (let
             [summary-cell : (__tl_dyn-array CompilerTypecheckSummary)
-              (make-array summary)]
+              (__tl_make-array summary)]
             (begin
               (set!
                 (array-ref state.slots index)
@@ -3319,7 +3321,7 @@
                   module
                   module-id
                   (unsafe
-                    (ptr->int (array-data summary-cell)))))
+                    (ptr->int (__tl_array-data summary-cell)))))
               (tc-prefix-snapshot-cache-note-store-for-state! state)
               true))
           (tc-prefix-snapshot-cache-store-at-for-state
@@ -10646,7 +10648,7 @@
   (let
     [address : u64
       (unsafe
-        (ptr->int (ptr-offset (array-data stack.slots) index)))]
+        (ptr->int (ptr-offset (__tl_array-data stack.slots) index)))]
     (unsafe
       (ptr-read (int->ptr address : (Ptr TcTypeEnvScopedSlot))))))
 
@@ -14639,7 +14641,10 @@
         (string.int->string count)
         ")")]
     [(ast.AstType.DynArray elem)
-      (str_cat.str-cat "(Array " (tc-type-render (ast.ty-node-get elem)) ")")]
+      (str_cat.str-cat
+        "(__tl_dyn-array "
+        (tc-type-render (ast.ty-node-get elem))
+        ")")]
     [(ast.AstType.Slice elem)
       (str_cat.str-cat "(Slice " (tc-type-render (ast.ty-node-get elem)) ")")]
     [(ast.AstType.Box elem)
@@ -15384,7 +15389,7 @@
         ")")]
     [(TcStdlibTypeSpec.ArrayName name)
       (str_cat.str-cat
-        "(Array "
+        "(__tl_dyn-array "
         (tc-env-key-name-text-for-session
           (tc-context-structural-session ctx)
           name)
@@ -22219,7 +22224,8 @@
       (unsafe
         (ptr->int
           (ptr-offset
-            (array-data (tc-macro-walk-field state dotted-macro-journal-exprs))
+            (__tl_array-data
+              (tc-macro-walk-field state dotted-macro-journal-exprs))
             index)))]
     ;; Journal storage lives in the job owner arena. The integer round-trip
     ;; deliberately hides the temporary array borrow while retaining that
@@ -22234,7 +22240,8 @@
       (unsafe
         (ptr->int
           (ptr-offset
-            (array-data (tc-macro-walk-field state dotted-macro-journal-pools))
+            (__tl_array-data
+              (tc-macro-walk-field state dotted-macro-journal-pools))
             index)))]
     ;; Like saved expressions, pool contexts remain owned by the macro job.
     (unsafe
@@ -31084,7 +31091,7 @@
                       (ResultTcType.Ok (ast.ty-node-get elem-ty))]
                     [(ast.AstType.DynArray _)
                       (ResultTcType.Err
-                        "typecheck: ptr-addr-of dynamic array elements are not addressable; use array-data plus ptr-offset")]
+                        "typecheck: ptr-addr-of dynamic array elements are not addressable; use __tl_array-data plus ptr-offset")]
                     [_
                       (ResultTcType.Err
                         "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")])]
@@ -31359,7 +31366,7 @@
   (let
     [address : u64
       (unsafe
-        (ptr->int (ptr-offset (array-data bindings) index)))]
+        (ptr->int (ptr-offset (__tl_array-data bindings) index)))]
     ;; SPMD environments own their dense binding storage. Erase the temporary
     ;; array-place provenance while preserving the environment-owned value.
     (unsafe
@@ -35189,7 +35196,7 @@
   (let
     [address : u64
       (unsafe
-        (ptr->int (ptr-offset (array-data decls) slot)))]
+        (ptr->int (ptr-offset (__tl_array-data decls) slot)))]
     (unsafe
       (ptr-read (int->ptr address : (Ptr ast.AstDeclList))))))
 
@@ -35569,7 +35576,7 @@
       (let
         [target-decls : ast.AstDeclList
           (unsafe
-            (ptr-read (ptr-offset (array-data summary-index.decls) slot)))]
+            (ptr-read (ptr-offset (__tl_array-data summary-index.decls) slot)))]
         (match (tc-bind-import-alias-module-list
           (tc-global-shared-view ctx)
           (& target-decls)
@@ -40256,7 +40263,8 @@
           (let
             [address : u64
               (unsafe
-                (ptr->int (ptr-offset (array-data data.type-fact-types) slot)))]
+                (ptr->int
+                  (ptr-offset (__tl_array-data data.type-fact-types) slot)))]
             (TcBodyTypeFact.Hit
               (unsafe
                 (ptr-read (int->ptr address : (Ptr ast.AstType))))))
@@ -63489,7 +63497,7 @@
         "struct field assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
     [(ast.AstExpr.ArrayPush _ _)
       (ResultTcUnit.Err
-        "`array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+        "`__tl_array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
     [(ast.AstExpr.Call _ _)
       (ResultTcUnit.Err
         "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md 5.15)")]
@@ -63930,7 +63938,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [array : ast.AstExpr]) : ResultTcType
-  (match (tc-require-unsafe (tc-global-shared-view ctx) env "array-data")
+  (match (tc-require-unsafe (tc-global-shared-view ctx) env "__tl_array-data")
     [(ResultTcUnit.Ok)
       (match (tc-expr (tc-global-shared-view ctx) env array)
         [(ResultTcType.Ok array-ty)
@@ -63940,7 +63948,8 @@
               (ResultTcType.Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
             [(ast.AstType.DynArray elem-ty)
               (ResultTcType.Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
-            [_ (ResultTcType.Err "typecheck: array-data requires an array")])]
+            [_
+              (ResultTcType.Err "typecheck: __tl_array-data requires an array")])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
@@ -65622,15 +65631,15 @@
         (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
     [(ast.AstType.Array _ _)
       (ResultTcArrayReceiver.Err
-        "typecheck: array-push! requires dynamic array type")]
+        "typecheck: __tl_array-push! requires dynamic array type")]
     [(ast.AstType.MutRef _ referent-ty)
       (tc-array-push-receiver ctx (ast.ty-node-get referent-ty))]
     [(ast.AstType.Ref _ _)
       (ResultTcArrayReceiver.Err
-        "typecheck: array-push! requires mutable dynamic array access")]
+        "typecheck: __tl_array-push! requires mutable dynamic array access")]
     [_
       (ResultTcArrayReceiver.Err
-        "typecheck: array-push! requires dynamic array type")]))
+        "typecheck: __tl_array-push! requires dynamic array type")]))
 
 (define (tc-array-mutation-value
   [ctx : TcContext]
@@ -66389,13 +66398,13 @@
             (cond
               [(not (tc-integer-type? (tc-global-shared-view len-ty)))
                 (ResultTcType.Err
-                  "typecheck: make-array length must be integer")]
+                  "typecheck: __tl_make-array length must be integer")]
               [(not
                   (tc-dyn-array-elem-supported?
                     (tc-global-shared-view env)
                     (tc-global-shared-view elem)))
                 (ResultTcType.Err
-                  "typecheck: make-array element type is not supported")]
+                  "typecheck: __tl_make-array element type is not supported")]
               [(not
                   (tc-make-array-requires-element-init?
                     (tc-global-shared-view elem)
@@ -66584,7 +66593,7 @@
                       (tc-global-shared-view container-ty)
                       (tc-global-shared-view elem-ty)
                       (tc-global-shared-view value)
-                      "typecheck: array-push! value type mismatch")])]
+                      "typecheck: __tl_array-push! value type mismatch")])]
               [(ResultTcArrayReceiver.Err message) (ResultTcType.Err message)])]
           [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ast.AstExpr.StringRef str-box index-box)
@@ -69112,7 +69121,7 @@
         (tc-global-shared-view seen)
         template?
         expr
-        "array-data"
+        "__tl_array-data"
         "unsafe FFI bridge"
         array)]
     [(ast.AstExpr.BinaryData _) ResultTcUnit.Ok]
@@ -100309,7 +100318,7 @@
     [(ast.AstType.DynArray elem)
       (macro-type-unary-sexpr-id
         session
-        (cbi.compiler-builtin-ctfe-ref 109)
+        (ci.intern "__tl_dyn-array")
         elem
         span
         origin)]
@@ -100912,7 +100921,9 @@
             source-id)]
         (ResultMacroSexpr.Ok
           (macro-spanned-symbol-id
-            (if (= tag (parser.compiler-parse-tag-unknown))
+            (if (or
+              (= tag (parser.compiler-parse-tag-unknown))
+              (macro-hygiene-global-id? session name-id))
               (macro-output-source-identity-id-at session name-id "call-head")
               source-id)
             span)))]
@@ -101026,7 +101037,7 @@
     [(ast.AstExpr.DynArray exprs)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 114)
+        (ci.intern "__tl_make-array")
         exprs
         span
         origin)]
@@ -101165,11 +101176,7 @@
           (match (macro-child-to-spanned-sexpr session len-id span origin)
             [(ResultMacroSexpr.Ok slen)
               (ResultMacroSexpr.Ok
-                (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 114)
-                  sty
-                  slen
-                  span))]
+                (macro-form2-id (ci.intern "__tl_make-array") sty slen span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayRef array-id index-id)
@@ -101288,7 +101295,7 @@
             [(ResultMacroSexpr.Ok svalue)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 116)
+                  (ci.intern "__tl_array-push!")
                   sarray
                   svalue
                   span))]
@@ -101602,7 +101609,7 @@
     [(ast.AstExpr.ArrayData value-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 199)
+        (ci.intern "__tl_array-data")
         value-id
         span
         origin)]

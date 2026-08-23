@@ -84,10 +84,11 @@
   [shadow-head : i64]) : SpecTemplateEnv
   (let
     [cell : (__tl_dyn-array SpecTemplateEnvData)
-      (make-array (SpecTemplateEnvData index values shadow-state shadow-head))]
+      (__tl_make-array
+        (SpecTemplateEnvData index values shadow-state shadow-head))]
     (SpecTemplateEnv
       (unsafe
-        (ptr->int (array-data cell))))))
+        (ptr->int (__tl_array-data cell))))))
 
 (define (spec-template-env-data [templates : SpecTemplateEnv]) : SpecTemplateEnvData
   (unsafe
@@ -159,16 +160,16 @@
       (cfg
         (any compile-profile test)
         (SpecOwnerContext
-          (make-array pools)
+          (__tl_make-array pools)
           expr-segment-bases
-          (make-array intern-state)
+          (__tl_make-array intern-state)
           records
           (profile_state.compiler-profile-state-metrics
             (owned_view.compiler-owned-shared-view _state)))
         (SpecOwnerContext
-          (make-array pools)
+          (__tl_make-array pools)
           expr-segment-bases
-          (make-array intern-state)
+          (__tl_make-array intern-state)
           records)))))
 
 (define (spec-owner-context-new
@@ -192,9 +193,9 @@
             (array.make-array SpecGeneratedSymbolRecord 0)
             0))
         (SpecOwnerContext
-          (make-array pools)
+          (__tl_make-array pools)
           expr-segment-bases
-          (make-array intern-state)
+          (__tl_make-array intern-state)
           records)))))
 
 (define (spec-generated-symbol-records-copy-range
@@ -523,7 +524,7 @@
   [len : i64]) : SpecValueSubst
   (SpecValueSubst
     (unsafe
-      (ptr->int (array-data slots)))
+      (ptr->int (__tl_array-data slots)))
     len))
 
 (define (spec-type-subst-from-slots
@@ -531,7 +532,7 @@
   [len : i64]) : SpecTypeSubst
   (SpecTypeSubst
     (unsafe
-      (ptr->int (array-data slots)))
+      (ptr->int (__tl_array-data slots)))
     len))
 
 (define (spec-value-subst-at [subs : (& subs SpecValueSubst)] [index : i64]) : SpecValueBinding
@@ -9957,7 +9958,7 @@
 
 (define (compiler-specialize-type-param-source) : String
   "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64)
-  (make-array T n))
+  (__tl_make-array T n))
 (define (main) : (__tl_dyn-array i64)
   (alloc (type i64) 4))")
 
@@ -10541,7 +10542,7 @@
 ;: must share one generated decl via the specialization cache, not emit two.
 (define (compiler-specialize-reuse-source) : String
   "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64)
-  (make-array T n))
+  (__tl_make-array T n))
 (define (main) : (__tl_dyn-array i64)
   (begin (alloc (type i64) 4) (alloc (type i64) 8)))")
 

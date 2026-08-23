@@ -9584,10 +9584,11 @@
   [expected-module : ast.AstMaybeModuleName]
   [alias : ast.AstMaybeImportAlias]
   [span : ast.AstSourceSpan]
+  [source : ast.AstDeclList]
   [rest : ast.AstDeclList]) : ast.AstDeclList
   (match alias
     [(ast.AstMaybeImportAlias.Some _)
-      (compiler-load-decl-list-prepend
+      (compiler-load-decl-list-prepend-from-source
         (ast.AstDecl.Import
           (ast.ast-decl-meta-runtime-shared-view)
           (ast.AstImportSpec.Spec
@@ -9596,6 +9597,7 @@
             expected-module
             alias
             (box span)))
+        source
         rest)]
     [(ast.AstMaybeImportAlias.No) rest]))
 
@@ -9633,6 +9635,7 @@
   [span : ast.AstSourceSpan]
   [_importer-source-module : String]
   [importer-source-module-id : i64]
+  [source : ast.AstDeclList]
   [imported-decls : ast.AstDeclList]
   [rest : ast.AstDeclList]) : ast.AstDeclList
   (let
@@ -9643,6 +9646,7 @@
         expected-module
         alias
         span
+        source
         rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
       (compiler-load-decl-list-prepend
@@ -10003,6 +10007,7 @@
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
+                                          decls
                                           (ast.ast-decl-list-new)
                                           rest-decls)
                                         (compiler-load-paths-after-import
@@ -10029,6 +10034,7 @@
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
+                                          decls
                                           imported-decls
                                           rest-decls))
                                       (compiler-load-decl-path-list-append-onto
@@ -13246,6 +13252,7 @@
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
+                                          decls
                                           (ast.ast-decl-list-new)
                                           rest-decls)
                                         (compiler-load-paths-after-import
@@ -13272,6 +13279,7 @@
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
+                                          decls
                                           imported-decls
                                           rest-decls))
                                       (compiler-load-decl-path-list-append-onto

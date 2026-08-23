@@ -39730,6 +39730,125 @@ g:
           (set! i (+ i 1))))
       unit)))
 
+;; Any-arity GP argument marshalling: where the register prefix ends, where the
+;; overflow lands, and the one register class whose stack mirror the peephole may
+;; NOT learn from a store.
+;;
+;; The prefix is the ABI's GP argument-register count minus the caller's current
+;; bank base (a closure/indirect shape starts at one), and the overflow is packed
+;; from the base of the outgoing area -- 0 on System V, past the shadow space on
+;; Windows. The owner-key store bit (`compiler-backend-peephole-owner-key-mark-store`)
+;; is what keeps a `movq %reg, off(%rsp)` argument store from teaching the
+;; peephole owner map a mirror that outlives the call which invalidates it: the
+;; outgoing area belongs to the callee, and only the volatile registers have
+;; their owners cleared at the call anyway.
+;; A PLANNED stack-argument stage register must have its preservation ARMED.
+;;
+;; The call-stage constraint admits callee-saved registers as well as %r10
+;; (compiler-reg-scratch-call-target-allowed), and the plan marks such a pick
+;; PRESERVE -- the consumer owes it the save/restore bracket. The stack-argument
+;; emitters used to consume the spelling raw, so under `--cfg scratch-vreg` a
+;; six-argument call in `compiler-backend-peephole-pair-action-desc` staged both
+;; of its stack arguments through %r12 while %r12 held a parameter read after the
+;; call, and the Windows scratch-vreg bootstrap segfaulted. This pins the arming:
+;; consuming a marked stage register clears its planned-preserve entry and pushes
+;; it onto the emergency set, and an UNPLANNED stage still arms nothing.
+(define (compiler-backend-stack-call-arg-stage-preserves-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [function-state : compiler_backend.CompilerBackendFunctionState
+      (compiler_backend.compiler-backend-state-function-state backend-state)]
+    [before-pending : i64
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
+        function-state)]
+    [_plan : unit
+      (compiler_backend.compiler-backend-current-planned-preserve-add!
+        function-state
+        compiler_abi.compiler-reg-id-r12)]
+    [marked? : bool
+      (compiler_backend.compiler-backend-planned-register-preserve?
+        "%r12"
+        backend-state)]
+    [staged : String
+      (compiler_backend.compiler-backend-stack-call-arg-stage
+        "%r12"
+        backend-state)]
+    [after-pending : i64
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
+        function-state)]
+    [still-marked? : bool
+      (compiler_backend.compiler-backend-planned-register-preserve?
+        "%r12"
+        backend-state)]
+    [unplanned : String
+      (compiler_backend.compiler-backend-stack-call-arg-stage "" backend-state)]
+    [after-unplanned : i64
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
+        function-state)]
+    (and
+      ;; the plan marked it, and the stage hands back exactly that register
+      marked?
+      (string.eq staged "%r12")
+      ;; ... with its bracket armed: the entry is consumed and the emergency
+      ;; save/restore now covers it
+      (not still-marked?)
+      (= after-pending (+ before-pending 1))
+      ;; an unplanned stage scavenges and arms nothing new
+      (not (string.eq unplanned ""))
+      (= after-unplanned after-pending))))
+
+(define (compiler-backend-any-arity-stack-arg-shape-ok?) : bool
+  (and
+    (=
+      (compiler_backend.compiler-backend-call-args-gp-register-prefix
+        (compiler_backend.CompilerBackendTarget.Linux)
+        9
+        0
+        0)
+      6)
+    (=
+      (compiler_backend.compiler-backend-call-args-gp-register-prefix
+        (compiler_backend.CompilerBackendTarget.Linux)
+        9
+        1
+        1)
+      5)
+    (=
+      (compiler_backend.compiler-backend-call-args-gp-register-prefix
+        (compiler_backend.CompilerBackendTarget.Linux)
+        4
+        0
+        0)
+      4)
+    (=
+      (compiler_backend.compiler-backend-call-args-gp-register-prefix
+        (compiler_backend.CompilerBackendTarget.Windows)
+        9
+        0
+        0)
+      4)
+    (=
+      (compiler_backend.compiler-backend-outgoing-stack-arg-offset
+        (compiler_backend.CompilerBackendTarget.Linux)
+        0)
+      0)
+    (=
+      (compiler_backend.compiler-backend-outgoing-stack-arg-offset
+        (compiler_backend.CompilerBackendTarget.Linux)
+        2)
+      16)
+    (=
+      (compiler_backend.compiler-backend-outgoing-stack-arg-offset
+        (compiler_backend.CompilerBackendTarget.Windows)
+        0)
+      32)
+    ;; A store-marked owner key compares equal to the plain one it was made
+    ;; from -- every rule inside a call-free run reads it as the same mirror --
+    ;; and only the call boundary tells them apart.
+    (compiler_backend.compiler-backend-owner-key-store-mark-ok?)))
+
 (define (compiler-backend-scavenge-special-reg-bit-map-ok?) : bool
   (let
     [rax : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%rax")]
@@ -48287,6 +48406,8 @@ b_keep:
         (compiler-backend-scavenge-operand-excludes-keep-pooled-ok?)
         (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?)
         (compiler-backend-scavenge-special-reg-bit-map-ok?)
+        (compiler-backend-any-arity-stack-arg-shape-ok?)
+        (compiler-backend-stack-call-arg-stage-preserves-ok?)
         (compiler-backend-emergency-vector-width-ok?)
         (compiler-backend-scavenge-widened-pool-picks-rsi-ok?)
         (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?)

@@ -79,6 +79,7 @@ argv|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.t
 # syscall_arg_alias and dead_frame_store stay Linux-only via windows_integration_non_applicable_cases.
 arg_register_swap_cycle|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdlib/io.tl
 arg_cycle_stack_break|tests/integration/arg_cycle_stack_break.tl|42|-|-|stdlib/io.tl
+arg_stack_overflow_registers|tests/integration/arg_stack_overflow_registers.tl|42|-|-|stdlib/io.tl
 save_reload_elide|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl
 global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 scalar_indexed_snapshot|tests/integration/scalar_indexed_snapshot.tl|42|-|-|stdlib/io.tl stdlib/array.tl

@@ -18,7 +18,7 @@
 (define cmp-mem-fold-smoke-n : i64
   257)
 
-(define (cmp-mem-fold-smoke-fill [values : (Array i64)] [seed : i64]) : unit
+(define (cmp-mem-fold-smoke-fill [values : (__tl_dyn-array i64)] [seed : i64]) : unit
   (let
     [i : i64 0]
     [state : i64 seed]
@@ -28,10 +28,10 @@
         (set! (array-ref values i) (bit-and (shr state 7) 1023))
         (set! i (+ i 1))))))
 
-;; The folded shape: `(= (array-ref flags i) 1)` and `(>= (array-ref marks i) 0)`
-;; are single-use element loads feeding compares that feed branches, which is
-;; the M6-B/M6-D shape (`cmpq $1, (base,index,8)`).
-(define (cmp-mem-fold-smoke-folded [flags : (Array i64)] [marks : (Array i64)]) : i64
+;; Folded M6-B/M6-D: single-use element loads feed branch compares such as `cmpq $1, (base,index,8)`.
+(define (cmp-mem-fold-smoke-folded
+  [flags : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array i64)]) : i64
   (let
     [i : i64 0]
     [total : i64 0]
@@ -47,8 +47,8 @@
 ;; The refused shape: each element is bound to a local that is read twice, so
 ;; the single-use gate declines and the ordinary load-then-compare is emitted.
 (define (cmp-mem-fold-smoke-unfolded
-  [flags : (Array i64)]
-  [marks : (Array i64)]) : i64
+  [flags : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array i64)]) : i64
   (let
     [i : i64 0]
     [total : i64 0]
@@ -67,9 +67,9 @@
 ;; The GAP8/GAP8-B shape: `uses | (live-out & ~defs)` over word arrays, with the
 ;; single-use element loads sitting on BOTH sides of the commutative ops.
 (define (cmp-mem-fold-smoke-words-folded
-  [uses : (Array i64)]
-  [live : (Array i64)]
-  [defs : (Array i64)]) : i64
+  [uses : (__tl_dyn-array i64)]
+  [live : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -87,9 +87,9 @@
       acc)))
 
 (define (cmp-mem-fold-smoke-words-unfolded
-  [uses : (Array i64)]
-  [live : (Array i64)]
-  [defs : (Array i64)]) : i64
+  [uses : (__tl_dyn-array i64)]
+  [live : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -118,10 +118,10 @@
 ;; Each op reads a DIFFERENT array so every load stays single use; four reads of
 ;; one element would be CSE'd into a multi-use load, which retires the fold.
 (define (cmp-mem-fold-smoke-acc-folded
-  [a : (Array i64)]
-  [b : (Array i64)]
-  [c : (Array i64)]
-  [d : (Array i64)]
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [c : (__tl_dyn-array i64)]
+  [d : (__tl_dyn-array i64)]
   [seed : i64]) : i64
   (let
     [i : i64 0]
@@ -137,10 +137,10 @@
       acc)))
 
 (define (cmp-mem-fold-smoke-acc-unfolded
-  [a : (Array i64)]
-  [b : (Array i64)]
-  [c : (Array i64)]
-  [d : (Array i64)]
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [c : (__tl_dyn-array i64)]
+  [d : (__tl_dyn-array i64)]
   [seed : i64]) : i64
   (let
     [i : i64 0]
@@ -163,8 +163,8 @@
 ;; Indirect indexing: the loaded value becomes the NEXT access's index, so its
 ;; bounds check and the compare behind it must keep reading the same element.
 (define (cmp-mem-fold-smoke-indirect
-  [index : (Array i64)]
-  [table : (Array i64)]) : i64
+  [index : (__tl_dyn-array i64)]
+  [table : (__tl_dyn-array i64)]) : i64
   (let
     [i : i64 0]
     [total : i64 0]
@@ -180,12 +180,12 @@
 
 (define (main) : i64
   (let
-    [flags : (Array i64) (make-array i64 cmp-mem-fold-smoke-n)]
-    [marks : (Array i64) (make-array i64 cmp-mem-fold-smoke-n)]
-    [uses : (Array i64) (make-array i64 cmp-mem-fold-smoke-n)]
-    [live : (Array i64) (make-array i64 cmp-mem-fold-smoke-n)]
-    [defs : (Array i64) (make-array i64 cmp-mem-fold-smoke-n)]
-    [index : (Array i64) (make-array i64 cmp-mem-fold-smoke-n)]
+    [flags : (__tl_dyn-array i64) (__tl_make-array i64 cmp-mem-fold-smoke-n)]
+    [marks : (__tl_dyn-array i64) (__tl_make-array i64 cmp-mem-fold-smoke-n)]
+    [uses : (__tl_dyn-array i64) (__tl_make-array i64 cmp-mem-fold-smoke-n)]
+    [live : (__tl_dyn-array i64) (__tl_make-array i64 cmp-mem-fold-smoke-n)]
+    [defs : (__tl_dyn-array i64) (__tl_make-array i64 cmp-mem-fold-smoke-n)]
+    [index : (__tl_dyn-array i64) (__tl_make-array i64 cmp-mem-fold-smoke-n)]
     (begin
       (cmp-mem-fold-smoke-fill flags 1)
       (cmp-mem-fold-smoke-fill marks 2)

@@ -3201,8 +3201,13 @@
 
 (define (lower-test-pack-values-shape?
   [values : compiler_ir_types.CompilerIrValueSeq]) : bool
-  (if (= (compiler_ir_types.compiler-ir-value-seq-count values) 2)
-    (match (compiler_ir_types.compiler-ir-value-seq-ref values 1)
+  (if (=
+    (compiler_ir_types.compiler-ir-value-seq-count
+      (owned_view.compiler-owned-shared-view values))
+    2)
+    (match (compiler_ir_types.compiler-ir-value-seq-ref
+      (owned_view.compiler-owned-shared-view values)
+      1)
       [(compiler_ir_types.CompilerIrValue.I64 length) (= length 3)]
       [_ false])
     false))
@@ -3467,6 +3472,7 @@
 (define (lower-test-instr-seq-spmd-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
+    [count : i64 instrs.len]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
@@ -3854,7 +3860,10 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-load-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-phi-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -3880,41 +3889,6 @@
                   index)
                 lanes
                 (owned_view.compiler-owned-shared-view elem-ty))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-branch-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+ acc (lower-test-instr-branch-count (array-ref slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-total-enum-branch-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-phi-count
-                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 

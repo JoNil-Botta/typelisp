@@ -77412,6 +77412,12 @@
   [program : ast.AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
+    ;; A standalone source entry constructs its compatibility state before
+    ;; resetting and parsing the next source. Rebind to the active post-parse
+    ;; interner so structural name keys use the same owner as typechecking.
+    (compiler-lower-state-use-intern-state!
+      lower-state
+      (ci.intern-compat-state-capture-active))
     (tc_core.tc-agg-caches-reset!)
     ;; Generate declaration families before macro expansion (see
     ;; typecheck-compiler-program-with-paths for why).

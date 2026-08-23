@@ -26821,6 +26821,311 @@
                   (compiler_ir_types.CompilerIrValue.Var 11)))))
           (compiler_ir_types.CompilerIrBlockList.Nil))))))
 
+;; Entry-preheader profitability fixture. The first two arithmetic values are
+;; consumed only by the bypassable `cold` arm. The loaded value is likewise
+;; cold-only, but its Gep/Load chain is outside the arithmetic profitability
+;; gate.
+(define (opt-licm-profitability-loop-tail) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "loop")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          4
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.UnOp
+          5
+          (compiler_ir_types.CompilerIrUnOp.Neg)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          6
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          7
+          (compiler_ir_types.CompilerIrValue.Var 6)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "cold")
+          (compiler_ir_types.compiler-ir-label "latch"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "cold")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            8
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Mov
+            12
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Mov
+            13
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "latch"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "latch")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "loop")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              ;; A real instruction on the exit path keeps this out of LICM's
+              ;; separate return-shaped-loop suppression.
+              (compiler_ir_types.CompilerIrInstr.StorePtr
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-licm-profitability-blocks [non-entry-preheader? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          3
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (if non-entry-preheader?
+            (compiler_ir_types.compiler-ir-label "pre")
+            (compiler_ir_types.compiler-ir-label "loop")))))
+    (if non-entry-preheader?
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "pre")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))))
+        (opt-licm-profitability-loop-tail))
+      (opt-licm-profitability-loop-tail))))
+
+;; One outer loop with four consumer classes: a bypassable cold sibling, two
+;; nested-loop blocks, the outer latch, and the function exit.
+(define (opt-licm-hot-use-test-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "outer"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "outer")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "cold")
+            (compiler_ir_types.compiler-ir-label "inner"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "cold")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              20
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 10)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "outer-latch"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "inner")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                21
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 11)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "inner-body")
+                (compiler_ir_types.compiler-ir-label "outer-latch"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "inner-body")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.UnOp
+                  22
+                  (compiler_ir_types.CompilerIrUnOp.Neg)
+                  (compiler_ir_types.CompilerIrValue.Var 12)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "inner"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "outer-latch")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    23
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    (compiler_ir_types.CompilerIrValue.Var 13)
+                    (compiler_ir_types.CompilerIrValue.I64 1)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 0)
+                    (compiler_ir_types.compiler-ir-label "outer")
+                    (compiler_ir_types.compiler-ir-label "exit"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "exit")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 14)))))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (opt-licm-hot-use-self-test) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-licm-hot-use-test-blocks)]
+    [context : compiler_optimize.OptCfgContext
+      (compiler_optimize.opt-cfg-context-build blocks)]
+    [loops : compiler_optimize.OptNaturalLoopList
+      (compiler_optimize.opt-cfg-natural-loops-with-context blocks context)]
+    (match (compiler_optimize.opt-natural-loop-find
+      loops
+      (compiler_ir_types.compiler-ir-label "outer")
+      (compiler_ir_types.compiler-ir-label "outer-latch"))
+      [(compiler_optimize.OptMaybeNaturalLoop.No) 1]
+      [(compiler_optimize.OptMaybeNaturalLoop.Some outer)
+        (match (compiler_optimize.opt-cfg-index-id
+          context.index
+          (compiler_ir_types.compiler-ir-label "outer-latch"))
+          [(option_i64.None) 2]
+          [(option_i64.Some latch-id)
+            (let
+              [hot : opt_i64_i64_map.Map
+                (compiler_optimize.opt-licm-hot-use-vars
+                  context
+                  latch-id
+                  loops
+                  (compiler_optimize.opt-natural-loop-header outer)
+                  (compiler_optimize.opt-natural-loop-body outer)
+                  true
+                  blocks
+                  (opt_i64_i64_map.with-capacity 16))]
+              [ungated : opt_i64_i64_map.Map
+                (compiler_optimize.opt-licm-hot-use-vars
+                  context
+                  latch-id
+                  loops
+                  (compiler_optimize.opt-natural-loop-header outer)
+                  (compiler_optimize.opt-natural-loop-body outer)
+                  false
+                  blocks
+                  (opt_i64_i64_map.with-capacity 16))]
+              (cond
+                [(compiler_optimize.opt-used-contains hot 10) 3]
+                [(not (compiler_optimize.opt-used-contains hot 11)) 4]
+                [(not (compiler_optimize.opt-used-contains hot 12)) 5]
+                [(not (compiler_optimize.opt-used-contains hot 13)) 6]
+                [(not (compiler_optimize.opt-used-contains hot 14)) 7]
+                [(not (compiler_optimize.opt-used-contains ungated 10)) 8]
+                [else 42]))])])))
+
+(define (compiler-optimize-licm-profitability-self-test) : i64
+  (let
+    [entry-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-profitability-blocks false))]
+    [entry : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks entry-func)]
+    [non-entry-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-profitability-blocks true))]
+    [non-entry : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks non-entry-func)]
+    (cond
+      [(not (= (opt-licm-hot-use-self-test) 42)) 1]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function entry-func)))
+        2]
+      [(not
+          (=
+            (opt-count-arith-label-blocks
+              entry
+              (compiler_ir_types.compiler-ir-label "loop"))
+            2))
+        3]
+      [(not
+          (=
+            (opt-count-arith-label-blocks
+              entry
+              (compiler_ir_types.compiler-ir-label "cold"))
+            2))
+        4]
+      [(not
+          (=
+            (opt-count-gep-label-blocks
+              entry
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        5]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              entry
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        6]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function non-entry-func)))
+        7]
+      [(not
+          (=
+            (opt-count-arith-label-blocks
+              non-entry
+              (compiler_ir_types.compiler-ir-label "pre"))
+            4))
+        8]
+      [(not
+          (=
+            (opt-count-arith-label-blocks
+              non-entry
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        9]
+      [(not
+          (=
+            (opt-count-arith-label-blocks
+              non-entry
+              (compiler_ir_types.compiler-ir-label "cold"))
+            0))
+        10]
+      [else 42])))
+
 (define (opt-licm-trap-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.CompilerIrBlock.Block

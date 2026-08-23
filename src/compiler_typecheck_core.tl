@@ -107307,18 +107307,20 @@
       [pools-b : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 4 4)]
       [child-a : i64
-        (ast.ast-node-pool-context-type-push pools-a (ast.AstType.I64))]
+        (ast.ast-node-pool-context-type-push
+          (tc-global-shared-view pools-a)
+          (ast.AstType.I64))]
       [parent-a : i64
         (ast.ast-node-pool-context-type-push
-          pools-a
+          (tc-global-shared-view pools-a)
           (ast.AstType.Array child-a 3))]
       [child-b : i64
         (ast.ast-node-pool-context-type-push
-          pools-b
+          (tc-global-shared-view pools-b)
           (ast.AstType.Var (ci.intern "resolution-owner-b")))]
       [parent-b : i64
         (ast.ast-node-pool-context-type-push
-          pools-b
+          (tc-global-shared-view pools-b)
           (ast.AstType.Array child-b 3))]
       [initially-lazy? : bool
         (and
@@ -107336,13 +107338,13 @@
           [answer-a : bool
             (tc-type-needs-resolution-for-job-and-pools?
               job-a
-              pools-a
+              (tc-global-shared-view pools-a)
               (ast.ast-node-pool-context-type-segment-bases pools-a)
               (ast.ast-node-pool-context-type-get pools-a parent-a))]
           [answer-b : bool
             (tc-type-needs-resolution-for-job-and-pools?
               job-b
-              pools-b
+              (tc-global-shared-view pools-b)
               (ast.ast-node-pool-context-type-segment-bases pools-b)
               (ast.ast-node-pool-context-type-get pools-b parent-b))]
           [hit-a : bool

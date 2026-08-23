@@ -2758,11 +2758,18 @@
           [(CompilerSemanticMaybeHandle.Some handle)
             (let
               [module-id : i64 (compiler-semantic-handle-module-id ctx handle)]
+              [handle-kind : i64 (csym.compiler-symbol-handle-kind handle)]
               [use-span : CompilerSemanticSpan
-                (compiler-semantic-value-use-span! state name-id span module-id)]
-              (if (=
-                (csym.compiler-symbol-handle-kind handle)
-                (csym.compiler-symbol-kind-enum-variant))
+                (compiler-semantic-value-use-span!
+                  state
+                  name-id
+                  span
+                  module-id
+                  (or
+                    (= handle-kind (csym.compiler-symbol-kind-defstruct))
+                    (= handle-kind (csym.compiler-symbol-kind-defenum))
+                    (= handle-kind (csym.compiler-symbol-kind-enum-variant))))]
+              (if (= handle-kind (csym.compiler-symbol-kind-enum-variant))
                 (compiler-semantic-record-variant-use!
                   state
                   lookup-id
@@ -2969,31 +2976,60 @@
 (define (compiler-semantic-record-value-qualifiers-before!
   [state : CompilerSemanticWalkState]
   [ordinal-limit : i64]
-  [target-module-id : i64]) : unit
+  [target-module-id : i64]) : CompilerSemanticMaybeOrigin
   (let
     [done : bool false]
-    (while (not done)
-      (match (compiler-semantic-origin-take-before!
-        state
-        parse_core.CompilerParseSemanticOriginKind.ValueQualifier
-        ordinal-limit)
-        [(CompilerSemanticMaybeOrigin.Some origin)
-          (compiler-semantic-record-module-origin!
-            state
-            origin
-            target-module-id
-            CompilerSemanticRecordRole.Use)]
-        [(CompilerSemanticMaybeOrigin.None) (set! done true)]))))
+    [first : CompilerSemanticMaybeOrigin CompilerSemanticMaybeOrigin.None]
+    (begin
+      (while (not done)
+        (match (compiler-semantic-origin-take-before!
+          state
+          parse_core.CompilerParseSemanticOriginKind.ValueQualifier
+          ordinal-limit)
+          [(CompilerSemanticMaybeOrigin.Some origin)
+            (begin
+              (match first
+                [(CompilerSemanticMaybeOrigin.None)
+                  (set! first (CompilerSemanticMaybeOrigin.Some origin))]
+                [(CompilerSemanticMaybeOrigin.Some _) unit])
+              (compiler-semantic-record-module-origin!
+                state
+                origin
+                target-module-id
+                CompilerSemanticRecordRole.Use))]
+          [(CompilerSemanticMaybeOrigin.None) (set! done true)]))
+      first)))
+
+(define (compiler-semantic-span-through
+  [start : CompilerSemanticSpan]
+  [end : CompilerSemanticSpan]) : CompilerSemanticSpan
+  (CompilerSemanticSpan
+    (string.copy (& start.path))
+    start.start-byte
+    end.end-byte
+    (ast.ast-source-span
+      (ast.ast-source-span-start-line start.source)
+      (ast.ast-source-span-start-col start.source)
+      (ast.ast-source-span-end-line end.source)
+      (ast.ast-source-span-end-col end.source))
+    start.utf16-start-col
+    end.utf16-end-col))
 
 (define (compiler-semantic-value-use-span!
   [state : CompilerSemanticWalkState]
   [source-name-id : i64]
   [fallback : CompilerSemanticSpan]
-  [target-module-id : i64]) : CompilerSemanticSpan
+  [target-module-id : i64]
+  [component-only : bool]) : CompilerSemanticSpan
   (let
     [session : cis.InternStructuralSessionHandle
       (tc.tc-context-structural-session state.ctx)]
     [written-id : i64 (tc.tc-dotted-name-source-id session source-name-id)]
+    ;; Value/function consumers historically select the whole qualified token.
+    ;; Preserve that public range from the first exact qualifier through the
+    ;; exact final name while retaining separate module-component records.
+    ;; Nominal constructors use their final component because their public
+    ;; type/member facts are explicitly componentized.
     (if (or
       (< written-id 0)
       (>= written-id (ci.intern-capacity))
@@ -3004,12 +3040,22 @@
         parse_core.CompilerParseSemanticOriginKind.ValueName)
         [(CompilerSemanticMaybeOrigin.None) fallback]
         [(CompilerSemanticMaybeOrigin.Some origin)
-          (begin
-            (compiler-semantic-record-value-qualifiers-before!
-              state
-              origin.ordinal
-              target-module-id)
-            (compiler-semantic-exact-span-from-origin state origin))]))))
+          (let
+            [final-span : CompilerSemanticSpan
+              (compiler-semantic-exact-span-from-origin state origin)]
+            [first-qualifier : CompilerSemanticMaybeOrigin
+              (compiler-semantic-record-value-qualifiers-before!
+                state
+                origin.ordinal
+                target-module-id)]
+            (if component-only
+              final-span
+              (match first-qualifier
+                [(CompilerSemanticMaybeOrigin.Some qualifier)
+                  (compiler-semantic-span-through
+                    (compiler-semantic-exact-span-from-origin state qualifier)
+                    final-span)]
+                [(CompilerSemanticMaybeOrigin.None) final-span])))]))))
 
 (define (compiler-semantic-type-name-handle
   [ctx : tc.TcContext]
@@ -7630,6 +7676,7 @@
   (let
     [record-index : i64 0]
     [found : i64 -1]
+    [found-priority : i64 -1]
     [found-width : i64 999999999]
     (begin
       (while (< record-index index.len)
@@ -7640,6 +7687,15 @@
           [start : i64 span.start-byte]
           [end : i64 span.end-byte]
           [width : i64 (- end start)]
+          ;; A qualified value/function retains its legacy whole-token record
+          ;; alongside narrower module-component facts. Point queries keep the
+          ;; value fact authoritative over the overlapping qualifier; module
+          ;; components remain directly queryable where no value fact covers
+          ;; them and remain enumerable for component-aware consumers.
+          [priority : i64
+            (match record.kind
+              [(CompilerSemanticSymbolKind.Module) 0]
+              [_ 1])]
           (begin
             (if (and
               record.editable
@@ -7649,9 +7705,12 @@
               (>= byte-position start)
               (< byte-position end)
               (string.eq (& span.path) wanted-path)
-              (< width found-width))
+              (or
+                (> priority found-priority)
+                (and (= priority found-priority) (< width found-width))))
               (begin
                 (set! found record-index)
+                (set! found-priority priority)
                 (set! found-width width))
               unit)
             (set! record-index (+ record-index 1)))))
@@ -8082,13 +8141,19 @@
         "answer"
         CompilerSemanticRecordRole.Definition
         2)]
+    [qualified-import-index : i64
+      (compiler-semantic-source-index-find-editable-record-at
+        index
+        (& path)
+        init-offset)]
     (if (or
       (< init-offset 0)
       (< body-marker 0)
       (< after-offset 0)
       (< top-index 0)
       (< parameter-index 0)
-      (< local-index 0))
+      (< local-index 0)
+      (< qualified-import-index 0))
       false
       (let
         [init-query : CompilerSemanticVisibleBindingQuery
@@ -8108,6 +8173,8 @@
           (compiler-semantic-source-index-get index parameter-index)]
         [local-record : CompilerSemanticRecord
           (compiler-semantic-source-index-get index local-index)]
+        [qualified-import-record : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index qualified-import-index)]
         [repeated-count : i64
           (compiler-semantic-source-index-visible-binding-count
             index
@@ -8131,6 +8198,11 @@
             (>= init-query.path-index 0)
             (>= bound-query.path-index 0)
             (>= after-query.path-index 0)
+            (string.eq qualified-import-record.display-name "imported-value")
+            (compiler-semantic-record-span-text-eq?
+              source
+              qualified-import-record
+              "dep.imported-value")
             (compiler-semantic-test-visible-symbol?
               index
               init-query
@@ -8623,7 +8695,7 @@
                         (compiler-semantic-record-span-text-eq?
                           source
                           import-use
-                          "imported-value")
+                          "dep.imported-value")
                         (compiler-semantic-symbol-id-eq?
                           import-definition.symbol
                           import-use.symbol)
